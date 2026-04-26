@@ -8,6 +8,30 @@ export { withTransaction } from './transaction.ts';
 export * from './schema/index.ts';
 
 // Re-export commonly used Drizzle query helpers so that other packages
-// (e.g. packages/auth) can use them without importing drizzle-orm directly.
-// Only packages/db may import drizzle-orm (architecture rule).
-export { eq, and, or, sql } from 'drizzle-orm';
+// (e.g. packages/auth, packages/memory) can use them without importing
+// drizzle-orm directly. Only packages/db may import drizzle-orm (architecture rule).
+export {
+  eq,
+  and,
+  or,
+  sql,
+  desc,
+  asc,
+  not,
+  ne,
+  gte,
+  lte,
+  gt,
+  lt,
+  inArray,
+  notInArray,
+  isNull,
+  isNotNull,
+  ilike,
+  like,
+  count,
+  avg,
+  sum,
+  max,
+  min,
+} from 'drizzle-orm';
