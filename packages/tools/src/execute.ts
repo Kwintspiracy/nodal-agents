@@ -1,0 +1,211 @@
+// @nodalai/tools — execution wrapper with approval gate and audit trail
+
+import { approvalRequests, toolCalls } from '@nodalai/db';
+import { MessageStructureError, QuotaExhaustedError } from '@nodalai/llm';
+import type { z } from 'zod';
+import type {
+  ToolDefinition,
+  ToolContext,
+  ExecuteOptions,
+  ToolExecutionResult,
+  ApprovalGateRequest,
+} from './types.js';
+import { InvalidInputError } from './errors.js';
+
+// ─── executeTool ──────────────────────────────────────────────────────────────
+
+/**
+ * Execute a registered tool with:
+ *   1. Input validation (Zod)
+ *   2. Approval gate check (against rules from DB)
+ *   3. Tool execution
+ *   4. Audit trail write (tool_calls row, always)
+ *
+ * IMPORTANT: MessageStructureError and QuotaExhaustedError are re-thrown
+ * unconditionally — the runner must handle them to fail the job loud.
+ *
+ * The approval gate:
+ *   - rule action 'require_approval' → insert approval_requests row, call
+ *     onApprovalRequired, return { outcome: 'awaiting_approval' }.
+ *   - rule action 'block' → return { outcome: 'error', error: 'blocked' }.
+ *   - rule action 'auto_approve' or no matching rule → execute normally.
+ *
+ * Rule matching: tool-specific rules take precedence over wildcard.
+ * Agent-scoped rules take precedence over entity-scoped rules.
+ * If multiple rules match, the most specific one wins (agent+tool > entity+tool).
+ */
+export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
+  tool: ToolDefinition<TInput, TOutput>,
+  rawInput: unknown,
+  ctx: ToolContext,
+  opts: ExecuteOptions,
+): Promise<ToolExecutionResult> {
+  const startMs = Date.now();
+
+  // ── 1. Input validation ────────────────────────────────────────────────────
+  const parsed = tool.inputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    const detail = parsed.error.message;
+    const result: ToolExecutionResult = {
+      outcome: 'error',
+      error: `invalid_input: ${detail}`,
+    };
+    // Still write audit row for failed validations
+    await _writeToolCall(ctx, tool.name, rawInput, JSON.stringify(result), Date.now() - startMs);
+    return result;
+  }
+
+  const validatedInput = parsed.data as z.infer<typeof tool.inputSchema>;
+
+  // ── 2. Approval gate ───────────────────────────────────────────────────────
+  const matchedRule = _matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
+
+  if (matchedRule?.action === 'block') {
+    const result: ToolExecutionResult = { outcome: 'error', error: 'blocked' };
+    await _writeToolCall(
+      ctx,
+      tool.name,
+      validatedInput,
+      JSON.stringify(result),
+      Date.now() - startMs,
+    );
+    return result;
+  }
+
+  if (matchedRule?.action === 'require_approval') {
+    // Insert approval_requests row
+    const [row] = await ctx.db
+      .insert(approvalRequests)
+      .values({
+        entityId: ctx.entityId,
+        jobId: ctx.jobId,
+        agentId: ctx.agentId,
+        toolName: tool.name,
+        toolInput: validatedInput as Record<string, unknown>,
+        status: 'pending',
+      })
+      .returning();
+
+    if (!row) {
+      // Fallthrough — fail loud
+      const result: ToolExecutionResult = { outcome: 'error', error: 'approval_insert_failed' };
+      await _writeToolCall(
+        ctx,
+        tool.name,
+        validatedInput,
+        JSON.stringify(result),
+        Date.now() - startMs,
+      );
+      return result;
+    }
+
+    const gateRequest: ApprovalGateRequest = {
+      approvalRequestId: row.id,
+      toolName: tool.name,
+      toolInput: validatedInput,
+      jobId: ctx.jobId,
+      agentId: ctx.agentId,
+      entityId: ctx.entityId,
+    };
+
+    await opts.onApprovalRequired(gateRequest);
+
+    const approvalResult: ToolExecutionResult = {
+      outcome: 'awaiting_approval',
+      approvalRequestId: row.id,
+    };
+    await _writeToolCall(
+      ctx,
+      tool.name,
+      validatedInput,
+      JSON.stringify(approvalResult),
+      Date.now() - startMs,
+    );
+    return approvalResult;
+  }
+
+  // ── 3. Execute ─────────────────────────────────────────────────────────────
+  try {
+    const output = await tool.execute(validatedInput, ctx);
+    const durationMs = Date.now() - startMs;
+    await _writeToolCall(ctx, tool.name, validatedInput, JSON.stringify(output), durationMs);
+    return { outcome: 'success', output };
+  } catch (err) {
+    // Re-throw fatal runner errors — never swallow these
+    if (err instanceof MessageStructureError || err instanceof QuotaExhaustedError) {
+      throw err;
+    }
+
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const result: ToolExecutionResult = { outcome: 'error', error: errorMsg };
+    await _writeToolCall(
+      ctx,
+      tool.name,
+      validatedInput,
+      JSON.stringify(result),
+      Date.now() - startMs,
+    );
+    return result;
+  }
+}
+
+// ─── Approval rule matcher ────────────────────────────────────────────────────
+
+/**
+ * Find the most specific matching approval rule.
+ * Specificity: agent-scoped + tool-name > entity-scoped + tool-name > wildcard.
+ * Returns undefined if no rule matches (default: execute without approval).
+ */
+function _matchApprovalRule(
+  rules: ExecuteOptions['approvalRules'],
+  toolName: string,
+  agentId: string,
+  entityId: string,
+): ExecuteOptions['approvalRules'][number] | undefined {
+  // Priority 1: agent-scoped rule for this exact tool
+  const agentToolRule = rules.find((r) => r.toolName === toolName && r.agentId === agentId);
+  if (agentToolRule) return agentToolRule;
+
+  // Priority 2: entity-scoped rule for this exact tool (no agent filter)
+  const entityToolRule = rules.find(
+    (r) => r.toolName === toolName && r.agentId === null && r.entityId === entityId,
+  );
+  if (entityToolRule) return entityToolRule;
+
+  // Priority 3: agent-scoped wildcard (toolName = '*')
+  const agentWild = rules.find((r) => r.toolName === '*' && r.agentId === agentId);
+  if (agentWild) return agentWild;
+
+  // Priority 4: entity-scoped wildcard
+  const entityWild = rules.find(
+    (r) => r.toolName === '*' && r.agentId === null && r.entityId === entityId,
+  );
+  return entityWild;
+}
+
+// ─── Audit trail writer ───────────────────────────────────────────────────────
+
+async function _writeToolCall(
+  ctx: ToolContext,
+  toolName: string,
+  input: unknown,
+  output: string,
+  durationMs: number,
+): Promise<void> {
+  try {
+    await ctx.db.insert(toolCalls).values({
+      entityId: ctx.entityId,
+      jobId: ctx.jobId,
+      toolName,
+      toolInput: input as Record<string, unknown>,
+      toolOutput: output,
+      durationMs,
+    });
+  } catch {
+    // Audit write failure must never crash the tool execution path.
+    // The runner can detect missing audit rows via monitoring, not via exceptions.
+  }
+}
+
+// Re-export error for downstream convenience
+export { InvalidInputError };
