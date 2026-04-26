@@ -2,6 +2,7 @@
   "name": "nodalai",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "description": "All-Node monorepo for the NodalAI agent platform.",
   "scripts": {
     "build": "turbo build",
