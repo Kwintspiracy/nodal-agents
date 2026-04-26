@@ -3,9 +3,18 @@
 
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import * as schema from './schema/index.ts';
 
 export type DbClient = ReturnType<typeof createClient>;
+
+/**
+ * Shared Drizzle DB instance type.
+ * Both the postgres-js and pglite drivers extend PgDatabase, so this type
+ * is satisfied by either. Use this when accepting a Drizzle instance as a
+ * parameter without caring about the underlying driver.
+ */
+export type AnyDrizzleDb = PgDatabase<PgQueryResultHKT, Record<string, unknown>>;
 
 export interface CreateClientOptions {
   /** Max connections in the pool. Default: 10 */

@@ -21,6 +21,7 @@ export default defineConfig({
     './src/schema/runs.ts',
     './src/schema/mcp.ts',
     './src/schema/misc.ts',
+    './src/schema/auth.ts',
   ],
   out: './migrations',
   // Connection string for drizzle-kit push/generate against a real DB.

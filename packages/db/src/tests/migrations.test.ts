@@ -41,6 +41,10 @@ const expectedTables = [
   'agent_assignments',
   'agent_budgets',
   'rate_limits',
+  // auth tables (better-auth)
+  'sessions',
+  'accounts',
+  'verifications',
 ];
 
 describe('migrations: all tables exist', () => {

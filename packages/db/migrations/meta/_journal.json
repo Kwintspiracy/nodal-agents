@@ -8,6 +8,20 @@
       "when": 1777221376983,
       "tag": "0000_flashy_clea",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777222639218,
+      "tag": "0001_exotic_shooting_star",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777222668100,
+      "tag": "0002_gray_devos",
+      "breakpoints": true
     }
   ]
 }
