@@ -1,0 +1,31 @@
+{
+  "name": "nodalai",
+  "version": "0.0.0",
+  "private": true,
+  "description": "All-Node monorepo for the NodalAI agent platform.",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^22.10.5",
+    "dependency-cruiser": "^16.8.0",
+    "eslint": "^9.18.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.21.0",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=20"
+  }
+}
