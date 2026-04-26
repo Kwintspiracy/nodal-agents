@@ -1,0 +1,118 @@
+// agent_skills, skill_versions, skill_connectors, agent_skill_assignments tables
+
+import {
+  pgTable,
+  text,
+  uuid,
+  boolean,
+  integer,
+  jsonb,
+  timestamp,
+  index,
+} from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { entities } from './entities.ts';
+import { agents } from './agents.ts';
+import { connectors } from './connectors.ts';
+
+// ─── agent_skills ─────────────────────────────────────────────────────────────
+
+export const agentSkills = pgTable(
+  'agent_skills',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
+    name: text('name').notNull().unique(),
+    slug: text('slug').notNull().unique(),
+    content: text('content').notNull(),
+    active: boolean('active').default(true),
+    description: text('description'),
+    defaultContent: text('default_content'),
+    contentOverridden: boolean('content_overridden').default(false),
+    requiredConfig: jsonb('required_config').default(sql`'[]'::jsonb`),
+    operations: jsonb('operations').default(sql`'[]'::jsonb`),
+    requiredBuiltins: text('required_builtins')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index('idx_agent_skills_entity_id').on(table.entityId),
+    index('idx_skills_active').on(table.active, table.slug),
+  ],
+);
+
+export type AgentSkillRow = typeof agentSkills.$inferSelect;
+export type AgentSkillInsert = typeof agentSkills.$inferInsert;
+
+// ─── skill_versions ───────────────────────────────────────────────────────────
+
+export const skillVersions = pgTable(
+  'skill_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id').references(() => agentSkills.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    content: text('content').notNull(),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index('idx_skill_versions_entity_id').on(table.entityId),
+    index('idx_skill_versions_skill_id').on(table.skillId, sql`${table.version} DESC`),
+  ],
+);
+
+export type SkillVersionRow = typeof skillVersions.$inferSelect;
+export type SkillVersionInsert = typeof skillVersions.$inferInsert;
+
+// ─── skill_connectors ─────────────────────────────────────────────────────────
+
+export const skillConnectors = pgTable(
+  'skill_connectors',
+  {
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => agentSkills.id, { onDelete: 'cascade' }),
+    connectorId: uuid('connector_id')
+      .notNull()
+      .references(() => connectors.id, { onDelete: 'cascade' }),
+    entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    index('idx_skill_connectors_entity_id').on(table.entityId),
+    index('idx_skill_connectors_skill_id').on(table.skillId),
+  ],
+);
+
+export type SkillConnectorRow = typeof skillConnectors.$inferSelect;
+export type SkillConnectorInsert = typeof skillConnectors.$inferInsert;
+
+// ─── agent_skill_assignments ──────────────────────────────────────────────────
+
+export const agentSkillAssignments = pgTable(
+  'agent_skill_assignments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entityId: uuid('entity_id')
+      .notNull()
+      .references(() => entities.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => agentSkills.id, { onDelete: 'cascade' }),
+    approvalOverrides: jsonb('approval_overrides').default(sql`'{}'::jsonb`),
+    useCustomInstructions: boolean('use_custom_instructions').notNull().default(false),
+    enabledOperations: text('enabled_operations').array(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [],
+);
+
+export type AgentSkillAssignmentRow = typeof agentSkillAssignments.$inferSelect;
+export type AgentSkillAssignmentInsert = typeof agentSkillAssignments.$inferInsert;
