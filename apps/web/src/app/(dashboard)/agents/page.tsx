@@ -4,6 +4,11 @@ import DeleteAgentButton from './DeleteAgentButton.tsx';
 import { getConfiguredLlmProviders } from '@/lib/llm-providers.ts';
 import AgentsErrorRetry from './AgentsErrorRetry.tsx';
 
+// Force dynamic rendering — this page reads per-request DB state. Without
+// this, Next.js may statically render at build time (with the placeholder
+// DATABASE_URL from env.ts) and serve cached error HTML at runtime.
+export const dynamic = 'force-dynamic';
+
 export default async function AgentsPage() {
   const result = await listAgentsAction();
   const models = getConfiguredLlmProviders();

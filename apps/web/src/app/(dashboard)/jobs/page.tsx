@@ -2,6 +2,9 @@ import Link from 'next/link';
 import { listJobsAction } from '@/lib/actions.ts';
 import StatusBadge from '@/components/StatusBadge.tsx';
 
+// Force dynamic — this page reads per-request DB state.
+export const dynamic = 'force-dynamic';
+
 function formatDate(d: Date | null) {
   if (!d) return '—';
   return new Date(d).toLocaleString();

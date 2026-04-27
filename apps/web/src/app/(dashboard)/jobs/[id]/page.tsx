@@ -5,6 +5,9 @@ import StatusBadge from '@/components/StatusBadge.tsx';
 import JobMessages from '@/components/JobMessages.tsx';
 import JobStatusPoller from '@/components/JobStatusPoller.tsx';
 
+// Force dynamic — this page reads per-request DB state.
+export const dynamic = 'force-dynamic';
+
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
 function formatDate(d: Date | null) {
