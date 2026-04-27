@@ -2,6 +2,7 @@
 
 import 'server-only';
 import { revalidatePath } from 'next/cache';
+import { headers } from 'next/headers';
 import { z } from 'zod';
 import { eq, and, desc, agents, agentJobs, agentTasks } from '@nodalai/db';
 import { getDb, getAuthProvider } from './server.ts';
@@ -23,12 +24,24 @@ function fail(code: string, message: string): ActionResult<never> {
 }
 
 // ─── Auth helper ──────────────────────────────────────────────────────────────
-// Server Actions don't receive a Request; we pass a dummy one.
-// LocalTrustProvider ignores it — safe in local-trust mode.
+// Server Actions don't receive a Request directly, but we can reconstruct one
+// from the request headers (including cookies) via next/headers.
+// This is critical for local-auth mode: better-auth needs the session cookie
+// to resolve the authenticated user. LocalTrustProvider ignores the request,
+// so the same code path works in both modes.
 
 async function getSession() {
   const provider = getAuthProvider();
-  const req = new Request('http://localhost/');
+  // headers() throws outside a Next.js request scope (e.g. unit tests).
+  // Fall back to an empty request — LocalTrustProvider ignores it anyway,
+  // and tests inject their own auth state separately.
+  let req: Request;
+  try {
+    const h = await headers();
+    req = new Request('http://localhost/', { headers: h });
+  } catch {
+    req = new Request('http://localhost/');
+  }
   return requireAuth(req, provider);
 }
 
