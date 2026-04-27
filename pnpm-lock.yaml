@@ -51,6 +51,21 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
 
+  packages/adapters/google-docs:
+    dependencies:
+      '@nodalai/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nodalai/tools':
+        specifier: workspace:*
+        version: link:../../tools
+      googleapis:
+        specifier: ^144.0.0
+        version: 144.0.0
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
   packages/adapters/google-drive:
     dependencies:
       '@nodalai/shared':
