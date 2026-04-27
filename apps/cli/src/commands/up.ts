@@ -66,21 +66,64 @@ export async function runUp(): Promise<void> {
   // web/runner alive. Without this, EADDRINUSE crashes web mid-startup,
   // triggers shutdown, and leaves the user staring at "Stopping NodalAI…".
 
+  // Sweep orphans automatically. If we detect any of our configured ports
+  // are held, kill those PIDs and continue. The user shouldn't have to
+  // copy-paste taskkill commands every time their terminal closes badly.
+  const orphans: Array<{ name: string; port: number; pid: number }> = [];
   for (const [name, port] of [
     ['web', config.ports.web],
     ['runner', config.ports.runner],
     ['postgres', config.ports.postgres],
   ] as const) {
     const pid = await pidListeningOnPort(port);
-    if (pid !== null) {
-      console.log(
-        chalk.red(`Port ${port} (${name}) is already in use by PID ${pid}.`) +
-          chalk.gray(`\n  An orphan from a previous run is still alive.`) +
-          chalk.gray(`\n  Stop it with:  taskkill /PID ${pid} /F`) +
-          chalk.gray(`\n  Or run:        nodalai down`),
-      );
-      throw new Error(`port_conflict: ${name}=${port} held by PID ${pid}`);
+    if (pid !== null) orphans.push({ name, port, pid });
+  }
+
+  if (orphans.length > 0) {
+    console.log(
+      chalk.yellow(
+        `Found ${orphans.length} orphan process${orphans.length === 1 ? '' : 'es'} on configured ports:`,
+      ),
+    );
+    for (const o of orphans) {
+      console.log(chalk.gray(`  - ${o.name} on :${o.port} (pid ${o.pid})`));
     }
+    console.log(chalk.yellow('Cleaning up before starting…'));
+
+    const { execa } = await import('execa');
+    for (const o of orphans) {
+      try {
+        if (process.platform === 'win32') {
+          await execa('taskkill', ['/PID', String(o.pid), '/F'], { reject: false });
+        } else {
+          process.kill(o.pid, 'SIGKILL');
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    // Wait for OS to release the port (TCP sockets stick in TIME_WAIT briefly).
+    // Re-poll for up to 10s before giving up.
+    const deadline = Date.now() + 10_000;
+    let stillHeld: typeof orphans = [];
+    while (Date.now() < deadline) {
+      stillHeld = [];
+      for (const o of orphans) {
+        const pid = await pidListeningOnPort(o.port);
+        if (pid !== null) stillHeld.push({ ...o, pid });
+      }
+      if (stillHeld.length === 0) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    if (stillHeld.length > 0) {
+      const list = stillHeld.map((o) => `${o.name}:${o.port}=${o.pid}`).join(', ');
+      throw new Error(
+        `Could not free ports after killing orphans: ${list}. Try again or restart your machine.`,
+      );
+    }
+    console.log(chalk.green('Orphans cleaned up.\n'));
   }
 
   // ── 2. Start embedded Postgres ────────────────────────────────────────────
