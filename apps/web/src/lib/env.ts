@@ -8,6 +8,10 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
+  // LLM provider configuration — set by CLI via buildEnvForWeb()
+  LLM_PROVIDER: z.string().optional(),
+  LLM_MODEL: z.string().optional(),
+  LLM_BASE_URL: z.string().optional(),
 });
 
 // Build-time validation: if DATABASE_URL is absent (e.g. during static `next build`
@@ -21,6 +25,9 @@ const raw = {
   GOOGLE_CLIENT_ID: process.env['GOOGLE_CLIENT_ID'],
   GOOGLE_CLIENT_SECRET: process.env['GOOGLE_CLIENT_SECRET'],
   NEXT_PUBLIC_APP_URL: process.env['NEXT_PUBLIC_APP_URL'],
+  LLM_PROVIDER: process.env['LLM_PROVIDER'],
+  LLM_MODEL: process.env['LLM_MODEL'],
+  LLM_BASE_URL: process.env['LLM_BASE_URL'],
 };
 
 export const env = envSchema.parse(raw);

@@ -42,7 +42,7 @@ const CreateAgentSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with dashes'),
   name: z.string().min(1).max(120),
   personality: z.string().min(1),
-  model: z.string().min(1).default('claude-sonnet-4-6-20260217'),
+  model: z.string().min(1),
 });
 
 const SendTaskSchema = z.object({

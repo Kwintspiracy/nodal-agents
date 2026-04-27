@@ -1,31 +1,37 @@
 import { listAgentsAction, deleteAgentAction } from '@/lib/actions.ts';
 import AgentForm from '@/components/AgentForm.tsx';
 import DeleteAgentButton from './DeleteAgentButton.tsx';
+import { getConfiguredLlmProviders } from '@/lib/llm-providers.ts';
+import AgentsErrorRetry from './AgentsErrorRetry.tsx';
 
 export default async function AgentsPage() {
   const result = await listAgentsAction();
-  const agents = result.ok ? result.data : [];
+  const models = getConfiguredLlmProviders();
 
   return (
     <div className="space-y-6 max-w-4xl">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Agents</h1>
-          <p className="text-sm text-neutral-500 mt-0.5">
-            {agents.length} agent{agents.length !== 1 ? 's' : ''}
-          </p>
+          {result.ok && (
+            <p className="text-sm text-neutral-500 mt-0.5">
+              {result.data.length} agent{result.data.length !== 1 ? 's' : ''}
+            </p>
+          )}
         </div>
-        <AgentForm />
+        <AgentForm models={models} />
       </div>
 
-      {!result.ok && <p className="text-sm text-red-400">{result.message}</p>}
-
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
-        {agents.length === 0 ? (
+      {!result.ok ? (
+        <AgentsErrorRetry message={result.message} />
+      ) : result.data.length === 0 ? (
+        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
           <div className="px-6 py-12 text-center text-neutral-600 text-sm">
             No agents yet. Create one above.
           </div>
-        ) : (
+        </div>
+      ) : (
+        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-neutral-800/60">
@@ -45,7 +51,7 @@ export default async function AgentsPage() {
               </tr>
             </thead>
             <tbody>
-              {agents.map((agent) => (
+              {result.data.map((agent) => (
                 <tr key={agent.id} className="border-b border-neutral-800/40 last:border-0">
                   <td className="px-5 py-3">
                     <span className="text-white font-medium">{agent.name}</span>
@@ -73,8 +79,8 @@ export default async function AgentsPage() {
               ))}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

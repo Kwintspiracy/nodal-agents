@@ -16,6 +16,7 @@ export const STARTER_AGENT_SLUG = 'starter';
  */
 export async function seedDefaultUserEntityAgent(
   db: AnyDrizzleDb,
+  model: string | null = null,
 ): Promise<{ userId: string; entityId: string; agentId: string }> {
   // 1. Seed local user + entity (from @nodalai/auth — already idempotent)
   const { userId, entityId } = await seedLocalUser(db);
@@ -39,7 +40,7 @@ export async function seedDefaultUserEntityAgent(
         slug: STARTER_AGENT_SLUG,
         personality:
           'You are a helpful assistant. When you have a response, use the return_result tool to deliver it.',
-        model: 'claude-sonnet-4-6-20260217',
+        model: model,
         active: true,
         isDefault: true,
         role: 'agent',

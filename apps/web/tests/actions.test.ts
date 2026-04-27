@@ -159,6 +159,7 @@ describe('createAgentAction — db path', () => {
       slug: 'my-agent',
       name: 'My Agent',
       personality: 'Hello.',
+      model: 'google/gemma-4-31b',
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.id).toBe('aaaaaaaa-0000-0000-0000-000000000001');
@@ -171,9 +172,21 @@ describe('createAgentAction — db path', () => {
       slug: 'my-agent',
       name: 'My Agent',
       personality: 'Hello.',
+      model: 'google/gemma-4-31b',
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('db_error');
+  });
+
+  it('rejects missing model', async () => {
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'my-agent',
+      name: 'My Agent',
+      personality: 'Hello.',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 });
 

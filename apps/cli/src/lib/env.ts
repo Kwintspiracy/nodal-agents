@@ -47,6 +47,14 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
  * Web expects DATABASE_URL, RUNNER_URL, AUTH_MODE, AUTH_SECRET, NEXT_PUBLIC_APP_URL.
  */
 export function buildEnvForWeb(config: Config, databaseUrl: string): Record<string, string> {
+  const providerSlug =
+    config.llm.provider === 'lm-studio' ||
+    config.llm.provider === 'jan-ai' ||
+    config.llm.provider === 'llamacpp' ||
+    config.llm.provider === 'vllm'
+      ? 'openai-compatible'
+      : config.llm.provider;
+
   const env: Record<string, string> = {
     DATABASE_URL: databaseUrl,
     RUNNER_URL: `http://localhost:${config.ports.runner}`,
@@ -56,6 +64,10 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     NODE_ENV: 'production',
     // In local-trust mode, we still need a valid AUTH_SECRET even if it's not used for session signing
     AUTH_SECRET: config.workerSecret,
+    // LLM provider — mirrors buildEnvForRunner so the web can render the model dropdown
+    LLM_PROVIDER: providerSlug,
+    LLM_MODEL: config.llm.model,
+    LLM_BASE_URL: config.llm.baseURL,
   };
 
   if (config.bind === 'lan' && config.bearerToken) {
