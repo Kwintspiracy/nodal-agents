@@ -175,6 +175,15 @@ export function createLocalAuthProvider(options: LocalAuthProviderOptions): Loca
       enabled: true,
     },
     socialProviders,
+    // Our `users.id` column is uuid, but better-auth's default ID generator
+    // produces opaque strings (e.g. "k3IAKlN99X2Jp8n0imo7QHtlLwnPQMcf"). Postgres
+    // rejects those with "invalid input syntax for type uuid". Override with
+    // crypto.randomUUID() so user/session/account/verification all use UUIDs.
+    advanced: {
+      database: {
+        generateId: () => crypto.randomUUID(),
+      },
+    },
   };
 
   const auth = betterAuth(authOptions) as BetterAuthInstance;
