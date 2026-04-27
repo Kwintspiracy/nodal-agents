@@ -7,7 +7,7 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import type { BetterAuthOptions } from 'better-auth';
-import { eq } from '@nodalai/db';
+import { eq, users, sessions, accounts, verifications } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 import type { AuthProvider, AuthSession } from '../types.ts';
 
@@ -109,8 +109,16 @@ export function createLocalAuthProvider(options: LocalAuthProviderOptions): Loca
       provider: 'pg',
       // camelCase: Drizzle maps column names to JS field names (userId, expiresAt…)
       camelCase: true,
-      // usePlural: our tables are named 'sessions', 'accounts', 'verifications'
-      usePlural: true,
+      // Pass the schema explicitly. Without this, better-auth's adapter
+      // pluralizes its singular model names ('user' → 'userss', 'session' →
+      // 'sessionss') and fails to find any of our tables. With an explicit
+      // schema map, our table objects are used directly.
+      schema: {
+        users,
+        sessions,
+        accounts,
+        verifications,
+      },
     }),
     // Map better-auth's "user" model to our extended `users` table.
     user: {
