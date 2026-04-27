@@ -80,10 +80,20 @@ describe('server boot', () => {
     expect(res.status).toBe(404);
   });
 
-  it('POST /api/cron returns stub response', async () => {
+  it('POST /api/cron returns tick result', async () => {
     const res = await app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { tasksProcessed: number };
-    expect(body.tasksProcessed).toBe(0);
+    const body = (await res.json()) as {
+      ok: boolean;
+      orphansReset: number;
+      tasksUnblocked: number;
+      tasksExecuted: number;
+      rootsDelivered: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(typeof body.orphansReset).toBe('number');
+    expect(typeof body.tasksUnblocked).toBe('number');
+    expect(typeof body.tasksExecuted).toBe('number');
+    expect(typeof body.rootsDelivered).toBe('number');
   });
 });

@@ -1,17 +1,15 @@
-// routes/cron.ts — POST /api/cron — STUB
-// Brique 14 implements the full cron tick logic:
-//   - Reset orphaned tasks (in_progress without job_id > 5 min)
-//   - Unblock tasks whose deps are done
-//   - Execute todo tasks (max 5 per tick)
-//   - Deliver compiled results when all tasks for root_job_id are done
-//
-// For now: returns { tasksProcessed: 0 } immediately.
+// routes/cron.ts — POST /api/cron
+// Triggers a single cron tick synchronously and returns a summary.
+// Used by external managed crons (Vercel cron, Fly scheduled task, etc.).
+// For local installs the in-process ticker in server.ts fires automatically.
 
 import type { Context } from 'hono';
+import { runCronTick } from '../cron/tick.ts';
+import type { RunnerDeps } from '../deps.ts';
 
 // ─── cronRoute ────────────────────────────────────────────────────────────────
 
-export async function cronRoute(c: Context): Promise<Response> {
-  // TODO(brique-14): implement cron tick
-  return c.json({ ok: true, tasksProcessed: 0 }, 200);
+export async function cronRoute(c: Context, deps: RunnerDeps): Promise<Response> {
+  const result = await runCronTick(deps);
+  return c.json({ ok: true, ...result }, 200);
 }

@@ -12,6 +12,7 @@ import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
 import { telegramRoute } from './routes/telegram.ts';
+import { startCronTicker } from './cron/ticker.ts';
 import { AuthError } from '@nodalai/auth';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ export function createApp(
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
-  app.post('/api/cron', (c) => cronRoute(c));
+  app.post('/api/cron', (c) => cronRoute(c, deps));
 
   app.post('/api/telegram', (c) => telegramRoute(c, deps, runnerEnv));
 
@@ -97,6 +98,14 @@ async function main(): Promise<void> {
   const port = runnerEnv.PORT;
   const hostname = runnerEnv.BIND;
 
+  // Start the in-process cron ticker (default: every 2 min).
+  // Disable with CRON_TICKER_ENABLED=false if using an external managed cron.
+  const cronTickerEnabled = process.env['CRON_TICKER_ENABLED'] !== 'false';
+  const ticker = cronTickerEnabled ? startCronTicker(deps) : null;
+  if (cronTickerEnabled) {
+    console.warn('[runner] cron ticker started (120s interval)');
+  }
+
   serve(
     {
       fetch: app.fetch,
@@ -110,10 +119,12 @@ async function main(): Promise<void> {
 
   // Graceful shutdown
   process.on('SIGTERM', async () => {
+    ticker?.stop();
     await deps.close();
     process.exit(0);
   });
   process.on('SIGINT', async () => {
+    ticker?.stop();
     await deps.close();
     process.exit(0);
   });
