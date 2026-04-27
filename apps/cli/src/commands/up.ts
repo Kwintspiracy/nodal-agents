@@ -94,8 +94,12 @@ export async function runUp(): Promise<void> {
     for (const o of orphans) {
       try {
         if (process.platform === 'win32') {
-          await execa('taskkill', ['/PID', String(o.pid), '/F'], { reject: false });
+          // /T = kill the whole process tree (Postgres spawns workers; the
+          // parent dying without /T leaves them holding the port).
+          await execa('taskkill', ['/T', '/PID', String(o.pid), '/F'], { reject: false });
         } else {
+          // SIGKILL the leader; on Unix-likes Postgres workers usually die
+          // when the postmaster does. If not we'd need to lookup PG children.
           process.kill(o.pid, 'SIGKILL');
         }
       } catch {
