@@ -1,6 +1,8 @@
-// delivery-stub.ts — stub for cross-package result delivery (Brique 15 implements)
-// When a job completes, this is called to deliver the result to the user.
-// For now: no-op. Brique 15 will implement Telegram + email delivery.
+// delivery-stub.ts — wires @nodalai/delivery into the runner
+// Brique 15: real Telegram + email (placeholder) delivery implemented.
+
+import { deliverResult as _deliverResult } from '@nodalai/delivery';
+import type { AnyDrizzleDb } from '@nodalai/db';
 
 export interface DeliveryTarget {
   channel: string;
@@ -11,13 +13,20 @@ export interface DeliveryTarget {
   entityId: string | null;
 }
 
+export interface DeliveryRunnerDeps {
+  db: AnyDrizzleDb;
+  env: { TELEGRAM_BOT_TOKEN?: string };
+}
+
 /**
  * Deliver a completed job result to the appropriate channel.
  *
- * STUB: Brique 15 (packages/delivery) will implement this.
- * Current behavior: no-op (result is stored in DB, dashboard polls it).
+ * Delegates to @nodalai/delivery.deliverResult — resolves channel, formats,
+ * splits long messages, and dispatches via Telegram / email (placeholder) / log.
  */
-export async function deliverResult(_target: DeliveryTarget): Promise<void> {
-  // TODO(brique-15): implement Telegram + email delivery
-  // For now the result lives in agent_jobs.result — dashboard polls via SSE
+export async function deliverResult(jobId: string, deps: DeliveryRunnerDeps): Promise<void> {
+  await _deliverResult(jobId, {
+    db: deps.db,
+    telegramBotToken: deps.env.TELEGRAM_BOT_TOKEN,
+  });
 }

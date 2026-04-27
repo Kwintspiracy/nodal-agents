@@ -13,6 +13,10 @@ import { checkRootJobComplete } from '@nodalai/orchestration';
 import type { JobId } from '@nodalai/orchestration';
 import { deliverResult } from '../job/delivery-stub.ts';
 
+export interface DeliveryEnv {
+  TELEGRAM_BOT_TOKEN?: string;
+}
+
 // ─── deliverCompletedRoots ────────────────────────────────────────────────────
 
 /**
@@ -28,7 +32,7 @@ import { deliverResult } from '../job/delivery-stub.ts';
  *
  * @returns count of root jobs delivered
  */
-export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
+export async function deliverCompletedRoots(db: AnyDrizzleDb, env?: DeliveryEnv): Promise<number> {
   // Find distinct root_job_ids that have at least one task and haven't been delivered
   const rootJobCandidates = await db
     .selectDistinct({ rootJobId: agentTasks.rootJobId })
@@ -101,15 +105,8 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
       continue;
     }
 
-    // Deliver via the stub (Brique 15 will implement Telegram/email)
-    await deliverResult({
-      channel: rootJob.channel ?? 'internal',
-      chatId: rootJob.chatId ?? null,
-      result: compiledResult,
-      jobId: rootJobId,
-      agentId: rootJob.agentId ?? null,
-      entityId: rootJob.entityId ?? null,
-    });
+    // Deliver via @nodalai/delivery (dispatches to Telegram / email / log)
+    await deliverResult(rootJobId, { db, env: { TELEGRAM_BOT_TOKEN: env?.TELEGRAM_BOT_TOKEN } });
 
     delivered++;
   }

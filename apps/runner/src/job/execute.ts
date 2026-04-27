@@ -294,13 +294,9 @@ export async function executeJob(
         messages = [...messages, toolResultMsg];
 
         await completeJob(db, jobId as string, finalResult, toolsUsed);
-        await deliverResult({
-          channel: job.channel,
-          chatId: job.chatId,
-          result: finalResult,
-          jobId: jobId as string,
-          agentId: agentRow.id,
-          entityId: job.entityId,
+        await deliverResult(jobId as string, {
+          db,
+          env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
         });
         return { status: 'completed', result: finalResult };
       }
@@ -310,13 +306,9 @@ export async function executeJob(
         const textContent = response.text ?? '';
         if (textContent) {
           await completeJob(db, jobId as string, textContent, toolsUsed);
-          await deliverResult({
-            channel: job.channel,
-            chatId: job.chatId,
-            result: textContent,
-            jobId: jobId as string,
-            agentId: agentRow.id,
-            entityId: job.entityId,
+          await deliverResult(jobId as string, {
+            db,
+            env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
           });
           return { status: 'completed', result: textContent };
         }

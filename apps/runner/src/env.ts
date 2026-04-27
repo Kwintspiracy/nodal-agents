@@ -30,6 +30,9 @@ const envSchema = z.object({
   EMBEDDING_MODEL: z.string().optional(),
   EMBEDDING_BASE_URL: z.string().optional(),
 
+  // Delivery
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+
   // Auth
   AUTH_MODE: z.enum(['local-trust', 'local-auth', 'bearer-token']).default('local-trust'),
   WORKER_SECRET: z.string().default(''),
