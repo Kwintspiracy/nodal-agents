@@ -26,6 +26,28 @@ function killSilent(child: SpawnResult): void {
   }
 }
 
+/**
+ * Returns the PID of a process listening on the given port, or null if free.
+ * Windows-aware (uses netstat). Returns null on Unix (where we'd use lsof,
+ * but the user's environment is Windows for now).
+ */
+async function pidListeningOnPort(port: number): Promise<number | null> {
+  const { execa } = await import('execa');
+  try {
+    const { stdout } = await execa('netstat', ['-ano'], { reject: false });
+    for (const line of stdout.split(/\r?\n/)) {
+      // "  TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       14568"
+      const m = line.match(/\s+TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)/);
+      if (m && m[1] && m[2] && Number.parseInt(m[1], 10) === port) {
+        return Number.parseInt(m[2], 10);
+      }
+    }
+  } catch {
+    /* ignore — best-effort */
+  }
+  return null;
+}
+
 export async function runUp(): Promise<void> {
   // ── 1. Load config (run init if missing) ──────────────────────────────────
 
@@ -37,6 +59,29 @@ export async function runUp(): Promise<void> {
 
   const webUrl = `http://localhost:${config.ports.web}`;
   const runnerUrl = `http://localhost:${config.ports.runner}`;
+
+  // ── 1.5 Port-conflict pre-flight ──────────────────────────────────────────
+  // Catch orphans from a previous crashed run BEFORE spawning anything.
+  // Common cause on Windows: terminal was closed without Ctrl+C, leaving
+  // web/runner alive. Without this, EADDRINUSE crashes web mid-startup,
+  // triggers shutdown, and leaves the user staring at "Stopping NodalAI…".
+
+  for (const [name, port] of [
+    ['web', config.ports.web],
+    ['runner', config.ports.runner],
+    ['postgres', config.ports.postgres],
+  ] as const) {
+    const pid = await pidListeningOnPort(port);
+    if (pid !== null) {
+      console.log(
+        chalk.red(`Port ${port} (${name}) is already in use by PID ${pid}.`) +
+          chalk.gray(`\n  An orphan from a previous run is still alive.`) +
+          chalk.gray(`\n  Stop it with:  taskkill /PID ${pid} /F`) +
+          chalk.gray(`\n  Or run:        nodalai down`),
+      );
+      throw new Error(`port_conflict: ${name}=${port} held by PID ${pid}`);
+    }
+  }
 
   // ── 2. Start embedded Postgres ────────────────────────────────────────────
 
