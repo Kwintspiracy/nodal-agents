@@ -1,0 +1,31 @@
+{
+  "name": "@nodalai/runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@nodalai/auth": "workspace:*",
+    "@nodalai/db": "workspace:*",
+    "@nodalai/llm": "workspace:*",
+    "@nodalai/memory": "workspace:*",
+    "@nodalai/orchestration": "workspace:*",
+    "@nodalai/shared": "workspace:*",
+    "@nodalai/tools": "workspace:*",
+    "hono": "^4.6.18",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "ai": "^4.1.0",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.9"
+  }
+}

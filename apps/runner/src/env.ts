@@ -1,0 +1,76 @@
+// env.ts — Zod-validated environment for the runner
+// All required and optional env vars are declared here.
+// Import `env` from this file to get a fully-typed, validated env object.
+
+import { z } from 'zod';
+
+const envSchema = z.object({
+  // Database
+  DATABASE_URL: z.string().min(1),
+
+  // LLM Provider
+  LLM_PROVIDER: z
+    .enum([
+      'anthropic',
+      'openai',
+      'ollama',
+      'openai-compatible',
+      'google',
+      'mistral',
+      'groq',
+      'openrouter',
+    ])
+    .default('anthropic'),
+  LLM_MODEL: z.string().default('claude-sonnet-4-6-20260217'),
+  LLM_API_KEY: z.string().optional(),
+  LLM_BASE_URL: z.string().optional(),
+
+  // Embeddings (optional — falls back to keyword search)
+  EMBEDDING_PROVIDER: z.enum(['ollama', 'openai', 'keyword']).default('keyword'),
+  EMBEDDING_MODEL: z.string().optional(),
+  EMBEDDING_BASE_URL: z.string().optional(),
+
+  // Auth
+  AUTH_MODE: z.enum(['local-trust', 'local-auth', 'bearer-token']).default('local-trust'),
+  WORKER_SECRET: z.string().default(''),
+
+  // Bearer token mode (required when AUTH_MODE=bearer-token)
+  BEARER_TOKEN: z.string().optional(),
+
+  // Server
+  PORT: z.coerce.number().default(3001),
+  BIND: z.string().default('127.0.0.1'),
+  APP_URL: z.string().default('http://localhost:3001'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+});
+
+export type RunnerEnv = z.infer<typeof envSchema>;
+
+let _env: RunnerEnv | undefined;
+
+/**
+ * Parse and validate the environment.
+ * Throws a descriptive error on first call if any required var is missing.
+ * Results are cached after first parse.
+ */
+export function parseEnv(raw: Record<string, string | undefined> = process.env): RunnerEnv {
+  if (_env) return _env;
+  const result = envSchema.safeParse(raw);
+  if (!result.success) {
+    const issues = result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+    throw new Error(`Runner env validation failed:\n${issues}`);
+  }
+  _env = result.data;
+  return _env;
+}
+
+/** Reset cached env — only for tests. */
+export function _resetEnvCache(): void {
+  _env = undefined;
+}
+
+export const env = new Proxy({} as RunnerEnv, {
+  get(_target, prop) {
+    return parseEnv()[prop as keyof RunnerEnv];
+  },
+});

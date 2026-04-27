@@ -31,7 +31,11 @@ module.exports = {
       severity: 'error',
       comment: 'apps/* must not depend on other apps/* (communicate via DB or HTTP API only).',
       from: { path: '^apps/([^/]+)/' },
-      to: { path: '^apps/(?!\\1/)' },
+      to: {
+        path: '^apps/',
+        // Same app is fine — only block crossing into a *different* app dir.
+        pathNot: '^apps/$1/',
+      },
     },
     {
       name: 'packages-cant-import-apps',
