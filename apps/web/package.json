@@ -1,0 +1,45 @@
+{
+  "name": "@nodalai/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@nodalai/auth": "workspace:*",
+    "@nodalai/db": "workspace:*",
+    "@nodalai/delivery": "workspace:*",
+    "@nodalai/llm": "workspace:*",
+    "@nodalai/memory": "workspace:*",
+    "@nodalai/orchestration": "workspace:*",
+    "@nodalai/shared": "workspace:*",
+    "@nodalai/tools": "workspace:*",
+    "@phosphor-icons/react": "^2.1.10",
+    "next": "16.2.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "server-only": "^0.0.1",
+    "sonner": "^2.0.7",
+    "swr": "^2.4.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@tailwindcss/postcss": "^4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "16.2.1",
+    "jsdom": "^26.1.0",
+    "tailwindcss": "^4",
+    "vitest": "^2.1.8"
+  }
+}

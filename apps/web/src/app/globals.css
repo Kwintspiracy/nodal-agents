@@ -1,0 +1,137 @@
+@import 'tailwindcss';
+
+/* ═══════════════════════════════════════════════════
+   FONT SCALE
+   ═══════════════════════════════════════════════════ */
+
+html {
+  font-size: 112.5%;
+}
+
+/* ═══════════════════════════════════════════════════
+   THEME VARIABLES
+   ═══════════════════════════════════════════════════ */
+
+:root,
+[data-theme='dark'] {
+  --bg-body: #0a0a0a;
+  --bg-surface: rgba(23, 23, 23, 0.5);
+  --bg-elevated: #171717;
+  --bg-input: rgba(38, 38, 38, 0.5);
+  --bg-hover: rgba(38, 38, 38, 0.3);
+  --border: rgba(38, 38, 38, 0.5);
+  --border-focus: #555;
+  --text-primary: #e5e5e5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #9a9a9a;
+  --text-faint: #787878;
+  --sidebar-bg: #0a0a0a;
+  --scrollbar-thumb: #333;
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg-body: #f5f5f5;
+  --bg-surface: rgba(255, 255, 255, 0.8);
+  --bg-elevated: #ffffff;
+  --bg-input: rgba(245, 245, 245, 0.8);
+  --bg-hover: rgba(0, 0, 0, 0.03);
+  --border: rgba(229, 229, 229, 0.8);
+  --border-focus: #a3a3a3;
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-muted: #4f4f4f;
+  --text-faint: #666666;
+  --sidebar-bg: #ffffff;
+  --scrollbar-thumb: #d4d4d4;
+  color-scheme: light;
+}
+
+body {
+  background-color: var(--bg-body);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ═══════════════════════════════════════════════════
+   SCROLLBARS
+   ═══════════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 2px;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* ═══════════════════════════════════════════════════
+   FORM ELEMENTS
+   ═══════════════════════════════════════════════════ */
+
+input,
+select,
+textarea {
+  outline: none;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--border-focus);
+}
+
+/* ═══════════════════════════════════════════════════
+   UTILITY CLASSES
+   ═══════════════════════════════════════════════════ */
+
+.card {
+  background-color: rgb(23 23 23);
+  border: 1px solid rgba(38, 38, 38, 0.6);
+  border-radius: 0.75rem;
+}
+
+.input {
+  width: 100%;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  color: var(--text-primary);
+  transition: border-color 150ms ease;
+}
+.input:focus {
+  border-color: var(--border-focus);
+}
+.input::placeholder {
+  color: var(--text-faint);
+}
+
+/* ═══════════════════════════════════════════════════
+   PAGE TRANSITIONS
+   ═══════════════════════════════════════════════════ */
+
+main {
+  animation: page-enter 150ms ease-out;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

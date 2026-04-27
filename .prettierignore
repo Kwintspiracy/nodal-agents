@@ -9,3 +9,4 @@ pnpm-lock.yaml
 *.md
 playwright-report
 test-results
+next-env.d.ts

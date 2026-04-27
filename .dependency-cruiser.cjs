@@ -22,6 +22,12 @@ module.exports = {
           '\\.d\\.ts$',
           '(^|/)tsconfig\\.json$',
           '(^|/)(eslint|babel|jest|vitest|playwright|tailwind|postcss|next|turbo)\\.config\\.[^/]+$',
+          // Next.js App Router conventions: page.tsx, layout.tsx, route.ts, etc. are routed by filesystem, not imports.
+          '(^|/)app/.+/(page|layout|loading|error|not-found|template|default)\\.tsx?$',
+          '(^|/)app/.+/route\\.ts$',
+          '(^|/)app/(page|layout|loading|error|not-found|template|default|globals)\\.(tsx?|css)$',
+          '(^|/)proxy\\.ts$',
+          '(^|/)next-env\\.d\\.ts$',
         ],
       },
       to: {},
@@ -64,6 +70,7 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
+    exclude: { path: '(^|/)\\.next/' },
     tsConfig: { fileName: 'tsconfig.json' },
     // Follow import type { ... } statements — otherwise type-only modules appear as orphans
     tsPreCompilationDeps: true,
