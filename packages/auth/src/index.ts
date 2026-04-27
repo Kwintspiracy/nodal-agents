@@ -27,3 +27,7 @@ export { BearerTokenProvider } from './providers/bearer-token.ts';
 export type { BearerTokenProviderOptions } from './providers/bearer-token.ts';
 
 export { requireAuth, requireAuthWithEntity } from './helpers.ts';
+
+// Re-export the Next.js handler helper so apps/web can call it without
+// importing better-auth directly (apps/web doesn't list better-auth as a dep).
+export { toNextJsHandler } from 'better-auth/next-js';

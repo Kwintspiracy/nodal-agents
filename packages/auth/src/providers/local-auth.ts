@@ -46,6 +46,14 @@ export class LocalAuthProvider implements AuthProvider {
     this.#db = db;
   }
 
+  /**
+   * Exposes the underlying better-auth instance so the Next.js API catch-all
+   * route can delegate requests to it via `toNextJsHandler`.
+   */
+  get auth(): BetterAuthInstance {
+    return this.#auth;
+  }
+
   async getSession(req: Request): Promise<AuthSession | null> {
     // Use better-auth's built-in session resolution.
     // Returns null (via catch) when no valid session cookie is present.

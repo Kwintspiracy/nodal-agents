@@ -133,7 +133,7 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
         description: 'Recommended for single-user local use',
       },
       {
-        title: 'LAN (accessible on your network, generates bearer token)',
+        title: 'LAN (accessible on your network, sign up with email + password)',
         value: 'lan',
         description: 'Use when accessing from other devices on your network',
       },
@@ -146,7 +146,6 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
   // ── Build config ──────────────────────────────────────────────────────────
 
   const workerSecret = generateSecret(32);
-  const bearerToken = (bind as string) === 'lan' ? generateSecret(32) : undefined;
 
   const config: Config = {
     llm: {
@@ -162,7 +161,6 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
     },
     workerSecret,
     bind: bind as 'loopback' | 'lan',
-    bearerToken,
   };
 
   // ── Warn if endpoint not reachable ────────────────────────────────────────
@@ -182,10 +180,10 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
   console.log('');
   console.log(chalk.green('  Config saved to ~/.nodalai/config.json'));
 
-  if (bearerToken) {
+  if ((bind as string) === 'lan') {
     console.log('');
-    console.log(chalk.bold.yellow('  LAN bearer token (keep this secret):'));
-    console.log(chalk.cyan(`  ${bearerToken}`));
+    console.log(chalk.bold.cyan('  LAN mode: sign up at http://<your-ip>:3000/login'));
+    console.log(chalk.gray('  The first user to sign up becomes the admin.'));
   }
 
   console.log('');

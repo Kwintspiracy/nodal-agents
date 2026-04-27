@@ -23,7 +23,7 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
               : config.llm.provider,
     LLM_MODEL: config.llm.model,
     LLM_BASE_URL: config.llm.baseURL,
-    AUTH_MODE: config.bind === 'lan' ? 'bearer-token' : 'local-trust',
+    AUTH_MODE: config.bind === 'lan' ? 'local-auth' : 'local-trust',
     WORKER_SECRET: config.workerSecret,
     PORT: String(config.ports.runner),
     BIND: bind,
@@ -33,10 +33,6 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
 
   if (config.llm.apiKey) {
     env['LLM_API_KEY'] = config.llm.apiKey;
-  }
-
-  if (config.bind === 'lan' && config.bearerToken) {
-    env['BEARER_TOKEN'] = config.bearerToken;
   }
 
   return env;
@@ -55,24 +51,24 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
       ? 'openai-compatible'
       : config.llm.provider;
 
+  const authMode = config.bind === 'lan' ? 'local-auth' : 'local-trust';
+
   const env: Record<string, string> = {
     DATABASE_URL: databaseUrl,
     RUNNER_URL: `http://localhost:${config.ports.runner}`,
-    AUTH_MODE: config.bind === 'lan' ? 'bearer-token' : 'local-trust',
+    AUTH_MODE: authMode,
+    // Expose auth mode to the client so login/page.tsx can render the right form.
+    NEXT_PUBLIC_AUTH_MODE: authMode,
     NEXT_PUBLIC_APP_URL: `http://localhost:${config.ports.web}`,
     PORT: String(config.ports.web),
     NODE_ENV: 'production',
-    // In local-trust mode, we still need a valid AUTH_SECRET even if it's not used for session signing
+    // AUTH_SECRET is required by better-auth in local-auth mode; harmless in local-trust.
     AUTH_SECRET: config.workerSecret,
     // LLM provider — mirrors buildEnvForRunner so the web can render the model dropdown
     LLM_PROVIDER: providerSlug,
     LLM_MODEL: config.llm.model,
     LLM_BASE_URL: config.llm.baseURL,
   };
-
-  if (config.bind === 'lan' && config.bearerToken) {
-    env['BEARER_TOKEN'] = config.bearerToken;
-  }
 
   return env;
 }

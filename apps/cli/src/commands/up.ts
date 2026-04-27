@@ -120,8 +120,8 @@ export async function runUp(): Promise<void> {
 
   console.log('');
   console.log(chalk.bold.green(`  NodalAI ready at ${webUrl}`));
-  if (config.bind === 'lan' && config.bearerToken) {
-    console.log(chalk.yellow(`  LAN bearer token: ${config.bearerToken}`));
+  if (config.bind === 'lan') {
+    console.log(chalk.cyan(`  LAN mode — sign up at ${webUrl}/login`));
   }
   console.log(chalk.gray('  Ctrl+C to stop all services'));
   console.log('');

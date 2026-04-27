@@ -64,6 +64,19 @@ export function getAuthProvider(): AuthProvider {
   return _authProvider;
 }
 
+// ─── better-auth direct access ────────────────────────────────────────────────
+// Returns the underlying better-auth instance so the API catch-all route
+// (/api/auth/[...all]) can delegate requests directly to it.
+// Only valid in local-auth mode — throws in any other mode.
+
+export function getBetterAuth() {
+  const provider = getAuthProvider();
+  if (!(provider instanceof LocalAuthProvider)) {
+    throw new Error('better-auth API is only available in local-auth mode');
+  }
+  return provider.auth;
+}
+
 // ─── Request-level helpers ─────────────────────────────────────────────────────
 
 /**

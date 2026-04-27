@@ -49,4 +49,19 @@ describe('env', () => {
     expect(env.AUTH_MODE).toBe('local-trust');
     expect(env.RUNNER_URL).toBe('http://localhost:3001');
   });
+
+  it('NEXT_PUBLIC_AUTH_MODE defaults to local-trust when not set', async () => {
+    const { env } = await import('../src/lib/env.ts');
+    // Not set in beforeAll → should default to local-trust
+    expect(env.NEXT_PUBLIC_AUTH_MODE).toBe('local-trust');
+  });
+});
+
+describe('getBetterAuth', () => {
+  it('throws when auth provider is not LocalAuthProvider (local-trust mode)', async () => {
+    // The singleton was already initialized as LocalTrustProvider in the
+    // getAuthProvider tests above — calling getBetterAuth must throw.
+    const { getBetterAuth } = await import('../src/lib/server.ts');
+    expect(() => getBetterAuth()).toThrow('better-auth API is only available in local-auth mode');
+  });
 });
