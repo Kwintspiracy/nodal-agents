@@ -1,0 +1,35 @@
+{
+  "name": "@nodalai/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "nodalai": "./dist/index.js"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsup src/index.ts --format esm --out-dir dist --no-splitting --no-shims",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@nodalai/auth": "workspace:*",
+    "@nodalai/db": "workspace:*",
+    "@nodalai/shared": "workspace:*",
+    "chalk": "^5.4.1",
+    "commander": "^13.0.0",
+    "embedded-postgres": "^18.3.0-beta.17",
+    "execa": "^9.5.2",
+    "open": "^10.1.0",
+    "ora": "^8.1.1",
+    "prompts": "^2.4.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/prompts": "^2.4.9",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.8"
+  }
+}

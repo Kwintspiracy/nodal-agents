@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./test-utils": "./src/tests/helpers.ts"
+    "./test-utils": "./src/tests/helpers.ts",
+    "./migrate": "./src/migrate.ts"
   },
   "scripts": {
     "lint": "eslint src",
