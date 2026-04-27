@@ -7,7 +7,7 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import type { BetterAuthOptions } from 'better-auth';
-import { eq, users, sessions, accounts, verifications } from '@nodalai/db';
+import { eq, users, sessions, accounts, verifications, entities, entityMembers } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 import type { AuthProvider, AuthSession } from '../types.ts';
 
@@ -61,23 +61,40 @@ export class LocalAuthProvider implements AuthProvider {
 
     if (!result?.session || !result?.user) return null;
 
-    // Map better-auth user id → entity via entity_members table.
-    const { entityMembers } = await import('@nodalai/db/schema');
     const userId = result.user.id;
 
+    // Map better-auth user id → entity via entity_members table.
     const rows = await this.#db
       .select({ entityId: entityMembers.entityId })
       .from(entityMembers)
       .where(eq(entityMembers.userId, userId));
 
-    if (rows.length === 0) return null;
-    const first = rows[0];
-    if (!first) return null;
+    let entityId: string;
+    if (rows.length > 0 && rows[0]) {
+      entityId = String(rows[0]['entityId']);
+    } else {
+      // Self-heal: any authenticated user without an entity gets one auto-created.
+      // Covers users created BEFORE the post-signup hook was wired up, and any
+      // edge case where the hook didn't fire (e.g., legacy import). Idempotent
+      // because a successfully-created entity_member will be picked up by the
+      // SELECT next time.
+      entityId = crypto.randomUUID();
+      const slug = `personal-${entityId.slice(0, 8)}`;
+      await this.#db.insert(entities).values({
+        id: entityId,
+        userId,
+        name: 'Personal',
+        slug,
+        icon: '🏠',
+      });
+      await this.#db.insert(entityMembers).values({
+        entityId,
+        userId,
+        role: 'owner',
+      });
+    }
 
-    return {
-      userId,
-      entityId: String(first['entityId']),
-    };
+    return { userId, entityId };
   }
 
   async handleAuthRequest(req: Request): Promise<Response | null> {
@@ -182,6 +199,31 @@ export function createLocalAuthProvider(options: LocalAuthProviderOptions): Loca
     advanced: {
       database: {
         generateId: () => crypto.randomUUID(),
+      },
+    },
+    // Auto-create a personal entity (workspace) + entity_member row for each new
+    // user. Without this, the user has no entity to scope their data and every
+    // entity-filtered query returns "Failed to load" (entire app gates on entity).
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (user) => {
+            const entityId = crypto.randomUUID();
+            const slug = `personal-${entityId.slice(0, 8)}`;
+            await db.insert(entities).values({
+              id: entityId,
+              userId: user.id,
+              name: 'Personal',
+              slug,
+              icon: '🏠',
+            });
+            await db.insert(entityMembers).values({
+              entityId,
+              userId: user.id,
+              role: 'owner',
+            });
+          },
+        },
       },
     },
   };
