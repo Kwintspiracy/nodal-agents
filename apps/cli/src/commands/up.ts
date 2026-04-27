@@ -56,7 +56,7 @@ export async function runUp(): Promise<void> {
 
   const migrateSpinner = ora('Applying database migrations…').start();
   try {
-    await runMigrations(databaseUrl);
+    await runMigrations(databaseUrl, { patchVectorAsText: !pg.vectorAvailable });
     migrateSpinner.succeed(chalk.green('Migrations applied'));
   } catch (err) {
     migrateSpinner.fail('Migration failed');

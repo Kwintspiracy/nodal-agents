@@ -1,9 +1,13 @@
 // postgres.ts — start/stop embedded Postgres using the embedded-postgres package
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { PG_DATA_DIR } from './config.ts';
 
 export interface PostgresHandle {
   url: string;
+  /** True when pgvector extension was successfully loaded; false when we fell back to keyword-only memory. */
+  vectorAvailable: boolean;
   stop: () => Promise<void>;
 }
 
@@ -12,6 +16,12 @@ export interface PostgresHandle {
  *
  * Uses the `embedded-postgres` npm package which downloads a real PG binary
  * on first run (~50-80 MB). Data is persisted at ~/.nodalai/pg-data/.
+ *
+ * - On first boot: runs initdb with UTF-8 encoding (must override the
+ *   Windows default WIN1252 locale, which can't represent emojis used in
+ *   our seed/migration default values like entity icons).
+ * - On subsequent boots: detects existing cluster (PG_VERSION file) and
+ *   skips initdb, so a partial-failure leftover doesn't block the next run.
  *
  * pgvector: if CREATE EXTENSION vector fails we log a yellow warning and
  * continue in keyword-only memory mode (no halt).
@@ -29,9 +39,19 @@ export async function startEmbeddedPostgres(
     password: 'nodalai',
     port,
     persistent: true,
+    // Force UTF-8 encoding regardless of host locale — needed on Windows
+    // where the default LC_* (e.g. English_United States.1252) breaks on
+    // any non-Western char (emojis, accented chars beyond Latin-1, etc.).
+    initdbFlags: ['--encoding=UTF8', '--locale=C'],
   });
 
-  await pg.initialise();
+  // Skip initdb if a cluster already exists in the data dir. This handles
+  // both "previous successful run" and "previous partial-failure leftover"
+  // — the latter would otherwise crash with "directory exists but is not empty".
+  const alreadyInitialised = existsSync(join(dataDir, 'PG_VERSION'));
+  if (!alreadyInitialised) {
+    await pg.initialise();
+  }
   await pg.start();
 
   // Create the database if it doesn't exist
@@ -44,21 +64,24 @@ export async function startEmbeddedPostgres(
   const url = `postgresql://nodalai:nodalai@localhost:${port}/nodalai`;
 
   // Try to enable pgvector; if unavailable, warn and continue
+  let vectorAvailable = false;
   try {
     const client = pg.getPgClient('nodalai');
     await client.connect();
     await client.query('CREATE EXTENSION IF NOT EXISTS vector');
     await client.end();
+    vectorAvailable = true;
   } catch {
     process.stderr.write(
       '\x1b[33m[nodalai] pgvector extension not available — semantic memory search disabled.\n' +
         '  To enable: install pgvector (Mac: brew install pgvector; Win: see README).\n' +
-        '  Continuing in keyword-only memory mode.\x1b[0m\n',
+        '  Continuing in keyword-only memory mode (vector columns rewritten to text).\x1b[0m\n',
     );
   }
 
   return {
     url,
+    vectorAvailable,
     stop: async () => {
       await pg.stop();
     },
@@ -71,8 +94,14 @@ export async function startEmbeddedPostgres(
  * Run Drizzle migrations against the given database URL.
  * Delegates to @nodalai/db/migrate to respect the architecture rule:
  * only packages/db may import drizzle-orm or postgres directly.
+ *
+ * @param patchVectorAsText when true, rewrite `vector(N)` columns to `text`
+ *   in migration SQL — used when pgvector wasn't loaded (keyword-only mode).
  */
-export async function runMigrations(databaseUrl: string): Promise<void> {
+export async function runMigrations(
+  databaseUrl: string,
+  opts: { patchVectorAsText?: boolean } = {},
+): Promise<void> {
   const { runMigrations: migrate } = await import('@nodalai/db/migrate');
-  await migrate(databaseUrl);
+  await migrate(databaseUrl, opts);
 }

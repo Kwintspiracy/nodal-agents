@@ -2,36 +2,71 @@
 
 import { execa, type ResultPromise } from 'execa';
 import { createWriteStream, writeFileSync, readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname, resolve } from 'path';
+import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
 
 export type SpawnResult = ResultPromise;
 
 /**
- * Resolve the path to the apps/runner directory relative to this CLI package.
- * In dist/ or dev, the CLI lives at apps/cli/dist/ or apps/cli/src/,
- * so apps/runner is always 2 levels up + runner.
+ * Resolve the path to apps/{appName} relative to this CLI source/dist file.
+ *
+ * This file lives at `apps/cli/src/lib/processes.ts` (dev via tsx) or
+ * `apps/cli/dist/index.js` (built). In both cases the repo root is reached
+ * by going up from the file's directory through `cli`, then `apps`.
+ *
+ * Layout (dev):  NodalAI / apps / cli / src / lib / processes.ts   → 4 levels up from dirname
+ * Layout (dist): NodalAI / apps / cli / dist / index.js             → 3 levels up from dirname
  */
 function resolveAppDir(appName: string): string {
-  const cliRoot = join(new URL(import.meta.url).pathname.replace(/\\/g, '/'), '../../../..');
-  const normalized =
-    process.platform === 'win32' ? cliRoot.replace(/^\/([A-Za-z]:)/, '$1') : cliRoot;
-  return join(normalized, appName);
+  const here = fileURLToPath(import.meta.url);
+  const fileDir = dirname(here);
+
+  // Walk up until we hit a dir that contains both `apps/` and a top-level package.json
+  // (the monorepo root). Cap the walk to avoid infinite loops.
+  let cursor = fileDir;
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(cursor, 'pnpm-workspace.yaml'))) {
+      return join(cursor, appName);
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+
+  // Fallback: assume dev layout (4 dirs up from src/lib)
+  return resolve(fileDir, '..', '..', '..', '..', appName);
 }
 
 /**
  * Spawn the runner (apps/runner) as a child process.
+ *
+ * Uses tsx to run the TypeScript source directly — no separate build step
+ * required. tsx is in apps/runner's devDeps. On Windows we resolve the
+ * .CMD wrapper explicitly because Node's spawn doesn't auto-add the .CMD
+ * extension (and execa's preferLocal proved unreliable in our test).
  */
 export function spawnRunner(env: Record<string, string>): ResultPromise {
   const runnerDir = resolveAppDir('apps/runner');
   const logFile = join(LOG_DIR, 'runner.log');
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
-  const child = execa('node', ['dist/server.js'], {
+  const tsxBin = resolveLocalBin(runnerDir, 'tsx');
+
+  // Sync log a startup marker so even instant-crashes leave a trace
+  outStream.write(
+    `\n--- spawnRunner ${new Date().toISOString()} ---\n` +
+      `cwd: ${runnerDir}\n` +
+      `bin: ${tsxBin}\n` +
+      `env keys: ${Object.keys(env).join(',')}\n\n`,
+  );
+
+  const child = execa(tsxBin, ['src/server.ts'], {
     cwd: runnerDir,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
     reject: false,
+    shell: process.platform === 'win32',
   });
 
   child.stdout?.pipe(outStream);
@@ -48,17 +83,36 @@ export function spawnWeb(env: Record<string, string>): ResultPromise {
   const logFile = join(LOG_DIR, 'web.log');
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
-  const child = execa('node', ['.next/standalone/server.js'], {
+  const nextBin = resolveLocalBin(webDir, 'next');
+
+  outStream.write(
+    `\n--- spawnWeb ${new Date().toISOString()} ---\n` +
+      `cwd: ${webDir}\n` +
+      `bin: ${nextBin}\n` +
+      `env keys: ${Object.keys(env).join(',')}\n\n`,
+  );
+
+  const child = execa(nextBin, ['start'], {
     cwd: webDir,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
     reject: false,
+    shell: process.platform === 'win32',
   });
 
   child.stdout?.pipe(outStream);
   child.stderr?.pipe(outStream);
 
   return child;
+}
+
+/**
+ * Resolve the path to a local node_modules/.bin entry, picking the .CMD
+ * wrapper on Windows so Node's spawn can find and execute it directly.
+ */
+function resolveLocalBin(packageDir: string, binName: string): string {
+  const ext = process.platform === 'win32' ? '.CMD' : '';
+  return join(packageDir, 'node_modules', '.bin', `${binName}${ext}`);
 }
 
 // ─── PID file helpers ─────────────────────────────────────────────────────────
