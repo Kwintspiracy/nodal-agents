@@ -214,6 +214,28 @@ importers:
         specifier: ^0.2.17
         version: 0.2.17
 
+  packages/orchestration:
+    dependencies:
+      '@nodalai/db':
+        specifier: workspace:*
+        version: link:../db
+      '@nodalai/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@nodalai/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@nodalai/tools':
+        specifier: workspace:*
+        version: link:../tools
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.2.17
+        version: 0.2.17
+
   packages/shared:
     dependencies:
       zod:
