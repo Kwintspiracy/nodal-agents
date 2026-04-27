@@ -158,7 +158,7 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
     ports: {
       web: 3000,
       runner: 3001,
-      postgres: 54329,
+      postgres: 25432,
     },
     workerSecret,
     bind: bind as 'loopback' | 'lan',

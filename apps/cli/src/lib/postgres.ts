@@ -28,10 +28,15 @@ export interface PostgresHandle {
  */
 export async function startEmbeddedPostgres(
   dataDir: string = PG_DATA_DIR,
-  port: number = 54329,
+  port: number = 25432,
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep
   const EmbeddedPostgres = (await import('embedded-postgres')).default;
+
+  // Capture errors that embedded-postgres surfaces via its onError callback —
+  // some failures throw nothing useful (e.g. "Error: undefined") because the
+  // real diagnostic only flows through this stream.
+  const capturedErrors: string[] = [];
 
   const pg = new EmbeddedPostgres({
     databaseDir: dataDir,
@@ -43,16 +48,35 @@ export async function startEmbeddedPostgres(
     // where the default LC_* (e.g. English_United States.1252) breaks on
     // any non-Western char (emojis, accented chars beyond Latin-1, etc.).
     initdbFlags: ['--encoding=UTF8', '--locale=C'],
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      capturedErrors.push(msg);
+    },
+    // Keep onLog quiet by default; if user wants to see, set NODALAI_PG_LOG=1
+    onLog:
+      process.env['NODALAI_PG_LOG'] === '1'
+        ? (m) => process.stdout.write('[pg] ' + m + '\n')
+        : () => {},
   });
 
   // Skip initdb if a cluster already exists in the data dir. This handles
   // both "previous successful run" and "previous partial-failure leftover"
   // — the latter would otherwise crash with "directory exists but is not empty".
   const alreadyInitialised = existsSync(join(dataDir, 'PG_VERSION'));
-  if (!alreadyInitialised) {
-    await pg.initialise();
+  try {
+    if (!alreadyInitialised) {
+      await pg.initialise();
+    }
+    await pg.start();
+  } catch (err) {
+    const errMsg = err instanceof Error && err.message ? err.message : String(err);
+    const detail = capturedErrors.length
+      ? `\n  Captured Postgres errors:\n    ${capturedErrors.join('\n    ')}`
+      : '';
+    throw new Error(
+      `Postgres ${alreadyInitialised ? 'start' : 'init+start'} failed: ${errMsg}${detail}`,
+    );
   }
-  await pg.start();
 
   // Create the database if it doesn't exist
   try {

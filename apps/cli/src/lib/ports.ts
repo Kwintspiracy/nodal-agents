@@ -36,5 +36,5 @@ export function findFreePort(preferred: number, maxAttempts = 20): Promise<numbe
 export const DEFAULT_PORTS = {
   web: 3000,
   runner: 3001,
-  postgres: 54329,
+  postgres: 25432,
 } as const;

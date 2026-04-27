@@ -27,7 +27,7 @@ export const ConfigSchema = z.object({
   ports: z.object({
     web: z.number().int().min(1024).max(65535).default(3000),
     runner: z.number().int().min(1024).max(65535).default(3001),
-    postgres: z.number().int().min(1024).max(65535).default(54329),
+    postgres: z.number().int().min(1024).max(65535).default(25432),
   }),
   workerSecret: z.string().min(32),
   bind: z.enum(['loopback', 'lan']).default('loopback'),

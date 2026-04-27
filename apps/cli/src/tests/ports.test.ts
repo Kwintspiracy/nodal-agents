@@ -82,6 +82,6 @@ describe('DEFAULT_PORTS', () => {
   it('has the expected default values', () => {
     expect(DEFAULT_PORTS.web).toBe(3000);
     expect(DEFAULT_PORTS.runner).toBe(3001);
-    expect(DEFAULT_PORTS.postgres).toBe(54329);
+    expect(DEFAULT_PORTS.postgres).toBe(25432);
   });
 });

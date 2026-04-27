@@ -19,7 +19,7 @@ const VALID_CONFIG: Config = {
   ports: {
     web: 3000,
     runner: 3001,
-    postgres: 54329,
+    postgres: 25432,
   },
   workerSecret: 'a'.repeat(32),
   bind: 'loopback',
@@ -127,13 +127,13 @@ describe('config file I/O', () => {
   it('returns correct defaults for ports', () => {
     const partial = {
       llm: VALID_CONFIG.llm,
-      ports: { web: 3000, runner: 3001, postgres: 54329 },
+      ports: { web: 3000, runner: 3001, postgres: 25432 },
       workerSecret: 'a'.repeat(32),
       bind: 'loopback',
     };
     const result = ConfigSchema.parse(partial);
     expect(result.ports.web).toBe(3000);
     expect(result.ports.runner).toBe(3001);
-    expect(result.ports.postgres).toBe(54329);
+    expect(result.ports.postgres).toBe(25432);
   });
 });
