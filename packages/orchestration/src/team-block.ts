@@ -107,6 +107,12 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
         `- **${agentName}**${roleTag} — use \`assign_${toolSlug}\` to assign work${skillsTag}${instrTag}`,
       );
     }
+    // Flow control: without this the router-mode LLM keeps re-delegating after
+    // the child returns instead of finishing the request, exhausting the chain
+    // limit. Generic instruction for the router role — not agent-specific.
+    lines.push(
+      '\nAfter a sub-agent returns its result, call `return_result` with the final answer for the user. Do NOT delegate again unless the user\'s request explicitly requires another agent.',
+    );
   } else {
     // planner
     lines.push('## Your team\n');

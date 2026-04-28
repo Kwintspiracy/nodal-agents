@@ -168,6 +168,31 @@ describe('executeTool', () => {
     ).rejects.toBeInstanceOf(QuotaExhaustedError);
   });
 
+  it('re-throws DelegationPendingError — assign_* tools rely on it as a control signal', async () => {
+    // Constructed inline to avoid a circular dep on @nodalai/orchestration.
+    // The runner detects this error by `name`, not instanceof, for the same reason.
+    class DelegationPendingError extends Error {
+      readonly code = 'delegation_pending' as const;
+      constructor(
+        public readonly childJobId: string,
+        public readonly childSlug: string,
+      ) {
+        super(`delegation_pending: ${childSlug} (${childJobId})`);
+        this.name = 'DelegationPendingError';
+      }
+    }
+
+    const assignTool = makeSimpleTool({
+      execute: async () => {
+        throw new DelegationPendingError('child-job-1', 'worker-fr');
+      },
+    });
+
+    await expect(
+      executeTool(assignTool, { value: 'x' }, makeCtx(), makeOpts()),
+    ).rejects.toMatchObject({ name: 'DelegationPendingError', code: 'delegation_pending' });
+  });
+
   // ── Approval gate — require_approval ─────────────────────────────────────────
 
   it('inserts approval_requests row and returns awaiting_approval for require_approval rule', async () => {

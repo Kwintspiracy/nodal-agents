@@ -50,11 +50,17 @@ async function seedParentJob(
   agentId: string,
   toolUseId: string,
   childJobId: string,
-  sideToolResults?: Array<{ type: string; tool_use_id: string; content: string }>,
+  sideToolResults?: Array<{
+    type: string;
+    tool_use_id: string;
+    toolName?: string;
+    content: string;
+  }>,
 ) {
   const pendingDelegation: Record<string, unknown> = {
     type: 'single',
     toolUseId,
+    toolName: 'assign_test_agent',
     subJobId: childJobId,
   };
   if (sideToolResults && sideToolResults.length > 0) {
@@ -117,25 +123,28 @@ describe('resumeDelegated', () => {
 
     expect(updatedParent?.status).toBe('pending');
 
-    // The last message should be a user message with tool_result
+    // The last message should be a tool-role message with tool-result parts
+    // (AI SDK v4 CoreMessage format).
     const msgs = updatedParent?.messages as Array<{
       role: string;
       content: unknown;
     }>;
     const lastMsg = msgs[msgs.length - 1];
-    expect(lastMsg?.role).toBe('user');
+    expect(lastMsg?.role).toBe('tool');
 
     const content = lastMsg?.content as Array<{
       type: string;
-      tool_use_id?: string;
-      content?: string;
+      toolCallId?: string;
+      toolName?: string;
+      result?: unknown;
     }>;
     expect(Array.isArray(content)).toBe(true);
 
-    const toolResult = content.find((b) => b.type === 'tool_result');
+    const toolResult = content.find((b) => b.type === 'tool-result');
     expect(toolResult).toBeDefined();
-    expect(toolResult?.tool_use_id).toBe(toolUseId);
-    expect(toolResult?.content).toBe(childResult);
+    expect(toolResult?.toolCallId).toBe(toolUseId);
+    expect(toolResult?.toolName).toBe('assign_test_agent');
+    expect(toolResult?.result).toBe(childResult);
   });
 
   it('sets parent status back to pending', async () => {
@@ -168,13 +177,14 @@ describe('resumeDelegated', () => {
     expect(row?.pendingDelegation).toBeNull();
   });
 
-  it('includes sideToolResults in the injected user message (message-integrity)', async () => {
+  it('includes sideToolResults in the injected tool message (message-integrity)', async () => {
     const { entityId, orchId } = await seedContext(db);
     const toolUseId = 'tu_resume_004';
     const sideResults = [
       {
         type: 'tool_result',
         tool_use_id: 'tu_deferred_side',
+        toolName: 'assign_other_agent',
         content: 'Deferred — another handoff took priority',
       },
     ];
@@ -198,12 +208,18 @@ describe('resumeDelegated', () => {
 
     const msgs = row?.messages as Array<{ role: string; content: unknown }>;
     const lastMsg = msgs[msgs.length - 1];
-    const content = lastMsg?.content as Array<{ type: string; tool_use_id?: string }>;
+    expect(lastMsg?.role).toBe('tool');
+    const content = lastMsg?.content as Array<{
+      type: string;
+      toolCallId?: string;
+      toolName?: string;
+    }>;
 
-    // Should have both: main tool_result + side tool_result
+    // Should have both: main tool-result + side tool-result
     expect(content).toHaveLength(2);
-    const sideResult = content.find((b) => b.tool_use_id === 'tu_deferred_side');
+    const sideResult = content.find((b) => b.toolCallId === 'tu_deferred_side');
     expect(sideResult).toBeDefined();
+    expect(sideResult?.toolName).toBe('assign_other_agent');
   });
 
   it('throws OrchestrationError if parent not found', async () => {

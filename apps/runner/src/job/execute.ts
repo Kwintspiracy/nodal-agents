@@ -29,6 +29,7 @@ import {
   generateAssignTools,
   generateTaskTools,
   handleDelegation,
+  resumeDelegated,
   filterToolCallsForDelegation,
   buildDeferredToolResults,
   buildSystemPrompt,
@@ -70,6 +71,10 @@ export async function executeJob(
 ): Promise<ExecuteJobResult> {
   const { db, llmClient, registry } = deps;
 
+  // Wall-clock timer for total_duration_ms persistence. Captured at function
+  // entry so it includes job/agent loading, not just the LLM loop.
+  const startedAt = Date.now();
+
   // ── 1. Load job ───────────────────────────────────────────────────────────────
   const jobRows = await db
     .select()
@@ -87,12 +92,47 @@ export async function executeJob(
     return { status: 'already_handled' };
   }
 
+  // Invariant 8: chain_count is bumped on every resume from awaiting_delegation
+  // (and would also be bumped on awaiting_approval resume once that path ships).
+  // Cap at maxChains so a runaway orchestrator that delegates forever instead
+  // of calling return_result fails loud rather than spinning indefinitely.
+  if ((job.chainCount ?? 0) >= DEFAULT_LIMITS.maxChains) {
+    await failJob(db, jobId as string, 'chain_limit_exceeded', {
+      inputTokens: job.inputTokens ?? 0,
+      outputTokens: job.outputTokens ?? 0,
+      turn: job.turn ?? 0,
+      totalDurationMs: 0,
+    });
+    return { status: 'failed', error: 'chain_limit_exceeded' };
+  }
+
+  // Run-stats accumulators — declared before the first failJob call so all
+  // failure paths persist tokens / turn / duration. Seeded from the row so
+  // resumed jobs don't reset to 0. AI SDK v4 returns
+  // `usage: { promptTokens, completionTokens, totalTokens }`.
+  let inputTokens = job.inputTokens ?? 0;
+  let outputTokens = job.outputTokens ?? 0;
+  let turn = job.turn ?? 0;
+  let toolsUsed: string[] = Array.isArray(job.toolsUsed) ? (job.toolsUsed as string[]) : [];
+
+  const runStats = (): {
+    inputTokens: number;
+    outputTokens: number;
+    turn: number;
+    totalDurationMs: number;
+  } => ({
+    inputTokens,
+    outputTokens,
+    turn,
+    totalDurationMs: Date.now() - startedAt,
+  });
+
   // ── 2. Transition to processing ───────────────────────────────────────────────
   await setJobStatus(db, jobId as string, 'processing');
 
   // ── 3. Load agent ─────────────────────────────────────────────────────────────
   if (!job.agentId) {
-    await failJob(db, jobId as string, 'agent_not_found');
+    await failJob(db, jobId as string, 'agent_not_found', runStats());
     return { status: 'failed', error: 'agent_not_found' };
   }
 
@@ -100,7 +140,7 @@ export async function executeJob(
 
   const agentRow = agentRows[0];
   if (!agentRow || !agentRow.active) {
-    await failJob(db, jobId as string, 'agent_not_found');
+    await failJob(db, jobId as string, 'agent_not_found', runStats());
     return { status: 'failed', error: 'agent_not_found' };
   }
 
@@ -195,7 +235,7 @@ export async function executeJob(
     }
   } catch (err) {
     const errorCode = err instanceof Error ? err.message : 'whitelist_computation_failed';
-    await failJob(db, jobId as string, errorCode);
+    await failJob(db, jobId as string, errorCode, runStats());
     return { status: 'failed', error: errorCode };
   }
 
@@ -227,9 +267,6 @@ export async function executeJob(
     messages = [{ role: 'user', content: job.task }];
   }
 
-  let toolsUsed: string[] = Array.isArray(job.toolsUsed) ? (job.toolsUsed as string[]) : [];
-  let turn = job.turn ?? 0;
-
   // ── 12. Main LLM loop ─────────────────────────────────────────────────────────
   try {
     while (true) {
@@ -255,6 +292,16 @@ export async function executeJob(
         tools: aiSdkTools,
         toolChoice,
       });
+
+      // Accumulate token usage. Some providers may return undefined/NaN for
+      // either field — coerce to 0 so we never persist NaN. Local providers
+      // (LM Studio, Ollama) sometimes omit usage entirely; that just means
+      // those turns won't add to the total, not that the call failed.
+      const usage = response.usage;
+      const promptT = Number(usage?.promptTokens ?? 0);
+      const completionT = Number(usage?.completionTokens ?? 0);
+      inputTokens += Number.isFinite(promptT) ? promptT : 0;
+      outputTokens += Number.isFinite(completionT) ? completionT : 0;
 
       const rawToolCalls = response.toolCalls ?? [];
 
@@ -293,7 +340,7 @@ export async function executeJob(
         };
         messages = [...messages, toolResultMsg];
 
-        await completeJob(db, jobId as string, finalResult, toolsUsed);
+        await completeJob(db, jobId as string, finalResult, toolsUsed, runStats());
         await deliverResult(jobId as string, {
           db,
           env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
@@ -305,7 +352,7 @@ export async function executeJob(
       if (rawToolCalls.length === 0) {
         const textContent = response.text ?? '';
         if (textContent) {
-          await completeJob(db, jobId as string, textContent, toolsUsed);
+          await completeJob(db, jobId as string, textContent, toolsUsed, runStats());
           await deliverResult(jobId as string, {
             db,
             env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
@@ -313,7 +360,7 @@ export async function executeJob(
           return { status: 'completed', result: textContent };
         }
         // No text, no tool calls — fail loud (invariant 4)
-        await failJob(db, jobId as string, 'no_tool_calls_no_text');
+        await failJob(db, jobId as string, 'no_tool_calls_no_text', runStats());
         return { status: 'failed', error: 'no_tool_calls_no_text' };
       }
 
@@ -350,7 +397,7 @@ export async function executeJob(
 
         const toolDef = toolMap.get(call.name);
         if (!toolDef) {
-          await failJob(db, jobId as string, `whitelist_violation:${call.name}`);
+          await failJob(db, jobId as string, `whitelist_violation:${call.name}`, runStats());
           return { status: 'failed', error: `whitelist_violation:${call.name}` };
         }
 
@@ -383,7 +430,7 @@ export async function executeJob(
                 chatId: job.chatId,
               };
 
-              await handleDelegation(
+              const delegation = await handleDelegation(
                 jobShape,
                 childSlug,
                 call.id,
@@ -396,8 +443,55 @@ export async function executeJob(
                 db,
               );
 
-              awaitingDelegation = true;
-              break;
+              // Drive the child synchronously, then resume the parent. In
+              // single-process local mode this is the simplest correct flow:
+              // no queue, no orphaned children, no separate delivery cron.
+              // The recursion is bounded by DelegationDepthExceededError
+              // (max 3) thrown from bumpDelegationDepth above.
+              const childOutcome = await executeJob(
+                delegation.childJobId,
+                deps,
+                _runnerEnv,
+              );
+
+              if (childOutcome.status === 'failed') {
+                const childErr = childOutcome.error || 'unknown';
+                await failJob(
+                  db,
+                  jobId as string,
+                  `child_failed:${childErr}`,
+                  runStats(),
+                );
+                return { status: 'failed', error: `child_failed:${childErr}` };
+              }
+
+              if (childOutcome.status !== 'completed') {
+                // Child suspended (awaiting approval / its own delegation /
+                // already_handled). For a smoke-quality flow we treat this as
+                // a failure on the parent; a fuller resume mechanism (poll +
+                // re-trigger) would be needed to support nested suspensions.
+                await failJob(
+                  db,
+                  jobId as string,
+                  `child_suspended:${childOutcome.status}`,
+                  runStats(),
+                );
+                return {
+                  status: 'failed',
+                  error: `child_suspended:${childOutcome.status}`,
+                };
+              }
+
+              // Inject child's result as tool_result on the parent and flip
+              // status back to 'pending' so we can re-enter executeJob.
+              await resumeDelegated(
+                jobId as JobId,
+                delegation.childJobId,
+                childOutcome.result,
+                db,
+              );
+
+              return executeJob(jobId, deps, _runnerEnv);
             }
             throw err;
           }
@@ -445,6 +539,8 @@ export async function executeJob(
           turn,
           chainCount: job.chainCount ?? 0,
           toolsUsed,
+          inputTokens,
+          outputTokens,
         });
         return { status: 'awaiting_delegation' };
       }
@@ -458,6 +554,8 @@ export async function executeJob(
           turn,
           chainCount: job.chainCount ?? 0,
           toolsUsed,
+          inputTokens,
+          outputTokens,
         });
         await setJobStatus(db, jobId as string, 'awaiting_approval');
         return { status: 'awaiting_approval' };
@@ -471,27 +569,27 @@ export async function executeJob(
   } catch (err) {
     // Typed errors — error codes only (invariant 2)
     if (err instanceof ToolCallLimitExceededError) {
-      await failJob(db, jobId as string, err.code);
+      await failJob(db, jobId as string, err.code, runStats());
       return { status: 'failed', error: err.code };
     }
 
     if (err instanceof ChainLimitExceededError) {
-      await failJob(db, jobId as string, err.code);
+      await failJob(db, jobId as string, err.code, runStats());
       return { status: 'failed', error: err.code };
     }
 
     if (err instanceof DelegationDepthExceededError) {
-      await failJob(db, jobId as string, err.code);
+      await failJob(db, jobId as string, err.code, runStats());
       return { status: 'failed', error: err.code };
     }
 
     if (err instanceof QuotaExhaustedError) {
-      await failJob(db, jobId as string, 'quota_exhausted');
+      await failJob(db, jobId as string, 'quota_exhausted', runStats());
       return { status: 'failed', error: 'quota_exhausted' };
     }
 
     if (err instanceof MessageStructureError) {
-      await failJob(db, jobId as string, `message_structure_invalid:${err.code}`);
+      await failJob(db, jobId as string, `message_structure_invalid:${err.code}`, runStats());
       return { status: 'failed', error: `message_structure_invalid:${err.code}` };
     }
 
@@ -503,14 +601,14 @@ export async function executeJob(
       if (unavailableMatch) {
         const toolName = unavailableMatch[1] ?? 'unknown_tool';
         const code = `whitelist_violation:${toolName}`;
-        await failJob(db, jobId as string, code);
+        await failJob(db, jobId as string, code, runStats());
         return { status: 'failed', error: code };
       }
     }
 
     // Invariant 3: never catch agent-specific exceptions. All errors fail loud.
     const errorCode = err instanceof Error ? err.message.slice(0, 200) : 'unknown_error';
-    await failJob(db, jobId as string, errorCode);
+    await failJob(db, jobId as string, errorCode, runStats());
     return { status: 'failed', error: errorCode };
   }
 }

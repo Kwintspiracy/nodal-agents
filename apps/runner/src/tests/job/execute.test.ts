@@ -177,14 +177,63 @@ describe('executeJob', () => {
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('completed');
 
-    // Verify DB row
+    // Verify DB row, including token usage / turn / duration persisted on completion
     const rows = await db
-      .select({ status: agentJobs.status, result: agentJobs.result })
+      .select({
+        status: agentJobs.status,
+        result: agentJobs.result,
+        inputTokens: agentJobs.inputTokens,
+        outputTokens: agentJobs.outputTokens,
+        turn: agentJobs.turn,
+        totalDurationMs: agentJobs.totalDurationMs,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
     expect(rows[0]?.status).toBe('completed');
     expect(rows[0]?.result).toBe('Here is my answer to the task.');
+    expect(rows[0]?.inputTokens).toBe(10);
+    expect(rows[0]?.outputTokens).toBe(5);
+    expect(rows[0]?.turn).toBe(1); // single LLM call → turn 1
+    // Wall-clock timer: should have elapsed time (>= 0, often > 0). On very
+    // fast runs Date.now() can resolve to the same ms, so assert non-null.
+    expect(rows[0]?.totalDurationMs).not.toBeNull();
+    expect(rows[0]?.totalDurationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('accumulates token usage across multiple LLM turns', async () => {
+    const job = await createTestJob(db, seed);
+
+    // Two-turn scenario: first calls save_memory, second returns final text.
+    // Mock returns 10/5 per call → expected 20/10 totals after 2 calls.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-mem-1',
+            toolName: 'save_memory',
+            args: { fact: 'remembered', category: 'context' },
+          },
+        ],
+      },
+      { text: 'Done.' },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const rows = await db
+      .select({
+        inputTokens: agentJobs.inputTokens,
+        outputTokens: agentJobs.outputTokens,
+        turn: agentJobs.turn,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(rows[0]?.inputTokens).toBe(20);
+    expect(rows[0]?.outputTokens).toBe(10);
+    expect(rows[0]?.turn).toBe(2); // two LLM calls → turn 2
   });
 
   it('completes when LLM calls return_result', async () => {

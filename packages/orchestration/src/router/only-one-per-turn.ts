@@ -61,10 +61,17 @@ export function filterToolCallsForDelegation(rawCalls: ToolCallBlock[]): {
  */
 export function buildDeferredToolResults(
   dropped: ToolCallBlock[],
-): Array<{ type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }> {
+): Array<{
+  type: 'tool_result';
+  tool_use_id: string;
+  toolName: string;
+  content: string;
+  is_error: boolean;
+}> {
   return dropped.map((block) => ({
     type: 'tool_result' as const,
     tool_use_id: block.id,
+    toolName: block.name,
     content:
       'Deferred — another handoff in this turn took priority. ' +
       'Call me again after the first handoff completes and you have its result.',

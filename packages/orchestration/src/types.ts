@@ -71,6 +71,11 @@ export interface DelegationContext {
 export interface PendingDelegation {
   type: 'single';
   toolUseId: string;
+  /**
+   * Name of the assign_* tool that triggered this delegation (e.g. assign_worker_fr).
+   * Required by AI SDK v4 tool-result message format on resume.
+   */
+  toolName?: string;
   subJobId: JobId;
   /** tool_results for sibling tool_use blocks in the same response (message-integrity) */
   sideToolResults?: SideToolResult[];
@@ -79,6 +84,11 @@ export interface PendingDelegation {
 export interface SideToolResult {
   type: 'tool_result';
   tool_use_id: string;
+  /**
+   * Name of the dropped tool_use block (e.g. assign_other_agent).
+   * Required to rebuild the tool-result in AI SDK v4 format on resume.
+   */
+  toolName?: string;
   content: string;
   is_error?: boolean;
 }

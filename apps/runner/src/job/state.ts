@@ -108,14 +108,23 @@ export async function claimJob(
   return rows.length > 0 && rows[0]?.id === jobId;
 }
 
+interface RunStats {
+  inputTokens: number;
+  outputTokens: number;
+  turn: number;
+  totalDurationMs?: number;
+}
+
 /**
  * Mark a job as completed. Sets result, completedAt, and clears error.
+ * Persists per-turn accumulated token counts and final turn when provided.
  */
 export async function completeJob(
   db: AnyDrizzleDb,
   jobId: string,
   result: string,
   toolsUsed: string[] = [],
+  stats?: RunStats,
 ): Promise<void> {
   await db
     .update(agentJobs)
@@ -123,22 +132,44 @@ export async function completeJob(
       status: 'completed',
       result,
       toolsUsed,
+      // Clear stale error from any prior failed attempt — the docstring already
+      // promised this; without it, a resumed/retried job ends up `completed` with
+      // a leftover error column, which is confusing in the dashboard.
+      error: null,
       completedAt: new Date(),
       updatedAt: new Date(),
+      ...(stats && {
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        turn: stats.turn,
+        ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
+      }),
     })
     .where(eq(agentJobs.id, jobId));
 }
 
 /**
  * Mark a job as failed. Stores the error code/message.
+ * Persists tokens + turn + duration when provided so partial run state isn't lost.
  */
-export async function failJob(db: AnyDrizzleDb, jobId: string, errorCode: string): Promise<void> {
+export async function failJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  errorCode: string,
+  stats?: RunStats,
+): Promise<void> {
   await db
     .update(agentJobs)
     .set({
       status: 'failed',
       error: errorCode,
       updatedAt: new Date(),
+      ...(stats && {
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        turn: stats.turn,
+        ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
+      }),
     })
     .where(eq(agentJobs.id, jobId));
 }
@@ -155,6 +186,8 @@ export async function saveCheckpoint(
     turn: number;
     chainCount: number;
     toolsUsed: string[];
+    inputTokens?: number;
+    outputTokens?: number;
   },
 ): Promise<void> {
   await db
@@ -165,6 +198,8 @@ export async function saveCheckpoint(
       chainCount: checkpoint.chainCount,
       toolsUsed: checkpoint.toolsUsed,
       updatedAt: new Date(),
+      ...(checkpoint.inputTokens !== undefined && { inputTokens: checkpoint.inputTokens }),
+      ...(checkpoint.outputTokens !== undefined && { outputTokens: checkpoint.outputTokens }),
     })
     .where(eq(agentJobs.id, jobId));
 }

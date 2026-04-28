@@ -81,10 +81,14 @@ export async function handleDelegation(
     throw new OrchestrationError('task_board_error', 'Failed to create child job row');
   }
 
-  // 3. Build pending_delegation payload
+  // 3. Build pending_delegation payload.
+  // toolName mirrors the assign_<slug> tool name the LLM called; resumeDelegated
+  // needs it to construct an AI SDK v4 `tool-result` message part on resume.
+  const toolName = `assign_${childSlug.replace(/-/g, '_')}`;
   const pendingDelegation = {
     type: 'single' as const,
     toolUseId,
+    toolName,
     subJobId: childJob.id,
     ...(sideToolResults.length > 0 ? { sideToolResults } : {}),
   };

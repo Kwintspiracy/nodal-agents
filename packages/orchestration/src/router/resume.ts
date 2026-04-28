@@ -70,8 +70,15 @@ export async function resumeDelegated(
   // 3. Extract the tool_use_id we need to match
   const pending = parent.pendingDelegation as {
     toolUseId?: string;
+    toolName?: string;
     subJobId?: string;
-    sideToolResults?: Array<{ type: string; tool_use_id: string; content: string }>;
+    sideToolResults?: Array<{
+      type: string;
+      tool_use_id: string;
+      toolName?: string;
+      content: string;
+      is_error?: boolean;
+    }>;
   } | null;
 
   if (!pending?.toolUseId) {
@@ -83,25 +90,54 @@ export async function resumeDelegated(
 
   const toolUseId = pending.toolUseId;
 
-  // 4. Build the user message with tool_result + any side results
-  const userContent: Array<{
-    type: string;
-    tool_use_id?: string;
-    content?: string;
-    is_error?: boolean;
+  // toolName is required by AI SDK v4 tool-result format. It was added to
+  // pending_delegation by handleDelegation; legacy rows without it are
+  // unrecoverable at this layer (we can't reconstruct the assign_<slug> tool
+  // name without re-querying the orchestrator's children).
+  const toolName = pending.toolName;
+  if (!toolName) {
+    throw new OrchestrationError(
+      'missing_tool_use_id',
+      `Parent job ${parentJobId} has no toolName in pending_delegation (legacy row?)`,
+    );
+  }
+
+  // 4. Build a tool-role message in AI SDK v4 CoreMessage format.
+  // Shape: { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName, result }, …] }
+  // (camelCase + hyphenated 'tool-result' — distinct from the legacy Anthropic
+  // {role:'user', content:[{type:'tool_result', tool_use_id, content}]} shape.)
+  const toolResultParts: Array<{
+    type: 'tool-result';
+    toolCallId: string;
+    toolName: string;
+    result: unknown;
+    isError?: boolean;
   }> = [
     {
-      type: 'tool_result',
-      tool_use_id: toolUseId,
-      content: childResult,
+      type: 'tool-result',
+      toolCallId: toolUseId,
+      toolName,
+      result: childResult,
     },
   ];
 
-  // Append side_tool_results (deferred assign_* that were dropped in the same turn)
-  // This satisfies the message-structure invariant: every tool_use must have a tool_result.
+  // Append deferred siblings (other assign_* dropped this turn). They share the
+  // message-integrity invariant: every tool_use needs a matching tool_result.
   const sideResults = pending.sideToolResults ?? [];
   for (const sr of sideResults) {
-    userContent.push(sr);
+    if (!sr.toolName) {
+      throw new OrchestrationError(
+        'missing_tool_use_id',
+        `Side tool_result for ${sr.tool_use_id} has no toolName (legacy row?)`,
+      );
+    }
+    toolResultParts.push({
+      type: 'tool-result',
+      toolCallId: sr.tool_use_id,
+      toolName: sr.toolName,
+      result: sr.content,
+      ...(sr.is_error ? { isError: true } : {}),
+    });
   }
 
   // 5. Build updated messages array
@@ -109,15 +145,20 @@ export async function resumeDelegated(
     ? (parent.messages as unknown[])
     : (JSON.parse(String(parent.messages ?? '[]')) as unknown[]);
 
-  const updatedMessages = [...existingMessages, { role: 'user', content: userContent }];
+  const updatedMessages = [...existingMessages, { role: 'tool', content: toolResultParts }];
 
-  // 6. Update parent: inject messages, set status → pending, clear pending_delegation
+  // 6. Update parent: inject messages, set status → pending, clear pending_delegation,
+  // bump chain_count. Each resume from a delegation suspension counts as one
+  // self-chain step — invariant 8 caps this at maxChains (5) to prevent runaway
+  // orchestrators that delegate forever instead of returning a result.
+  const nextChainCount = (parent.chainCount ?? 0) + 1;
   const [updated] = await db
     .update(agentJobs)
     .set({
       messages: updatedMessages,
       status: 'pending',
       pendingDelegation: null,
+      chainCount: nextChainCount,
       updatedAt: new Date(),
     })
     .where(eq(agentJobs.id, parentJobId as string))

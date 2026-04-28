@@ -136,6 +136,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       throw err;
     }
 
+    // Re-throw delegation signal — assign_* tools throw DelegationPendingError
+    // as a control-flow primitive: the runner catches it to suspend the parent
+    // job and create the child. Swallowing it would convert the signal into a
+    // tool error and leave the assistant message with an unresolved tool_call.
+    // Detected by name (not instanceof) because @nodalai/tools must not depend
+    // on @nodalai/orchestration (which depends on us — would be a cycle).
+    if (err instanceof Error && err.name === 'DelegationPendingError') {
+      throw err;
+    }
+
     const errorMsg = err instanceof Error ? err.message : String(err);
     const result: ToolExecutionResult = { outcome: 'error', error: errorMsg };
     await _writeToolCall(
