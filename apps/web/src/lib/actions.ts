@@ -237,15 +237,24 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');
 
-    // Fire-and-forget: wake the runner
+    // Fire-and-forget: wake the runner. The /api/worker route requires the
+    // shared WORKER_SECRET as a bearer token — without it the runner 403s
+    // silently and the job stays `pending` forever.
     const runnerUrl = `${env.RUNNER_URL}/api/worker`;
-    void fetch(runnerUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId: job.id }),
-    }).catch((err: unknown) => {
-      console.error('[sendTaskAction] runner ping failed:', err);
-    });
+    if (!env.WORKER_SECRET) {
+      console.error('[sendTaskAction] WORKER_SECRET missing — cannot ping runner');
+    } else {
+      void fetch(runnerUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ jobId: job.id }),
+      }).catch((err: unknown) => {
+        console.error('[sendTaskAction] runner ping failed:', err);
+      });
+    }
 
     revalidatePath('/tasks');
     revalidatePath('/jobs');

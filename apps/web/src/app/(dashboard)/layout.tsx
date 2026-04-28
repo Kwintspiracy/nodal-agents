@@ -1,6 +1,24 @@
+import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { AuthError, NoEntityError } from '@nodalai/auth';
 import Sidebar from '@/components/Sidebar';
+import { requireUserWithEntity } from '@/lib/server.ts';
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+// Gate every dashboard route. The proxy only checks cookie *presence*,
+// so a stale/invalidated cookie (DB reset, expired session) reaches the
+// dashboard, every action throws AuthError, and the user sees "Failed
+// to load X" instead of being sent back to /login. Validate here.
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  try {
+    const h = await headers();
+    const req = new Request('http://localhost/', { headers: h });
+    await requireUserWithEntity(req);
+  } catch (err) {
+    if (err instanceof AuthError) redirect('/login');
+    if (err instanceof NoEntityError) redirect('/onboarding');
+    throw err;
+  }
+
   return (
     <>
       <Sidebar />

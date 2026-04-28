@@ -11,6 +11,9 @@ const envSchema = z.object({
     .enum(['local-trust', 'local-auth', 'bearer-token'])
     .default('local-trust'),
   AUTH_SECRET: z.string().min(32).optional(),
+  // Shared with the runner. Required for sendTaskAction to authenticate its
+  // POST /api/worker call. Optional in tests (where the worker isn't pinged).
+  WORKER_SECRET: z.string().min(1).optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
@@ -29,6 +32,7 @@ const raw = {
   AUTH_MODE: process.env['AUTH_MODE'],
   NEXT_PUBLIC_AUTH_MODE: process.env['NEXT_PUBLIC_AUTH_MODE'],
   AUTH_SECRET: process.env['AUTH_SECRET'],
+  WORKER_SECRET: process.env['WORKER_SECRET'],
   GOOGLE_CLIENT_ID: process.env['GOOGLE_CLIENT_ID'],
   GOOGLE_CLIENT_SECRET: process.env['GOOGLE_CLIENT_SECRET'],
   NEXT_PUBLIC_APP_URL: process.env['NEXT_PUBLIC_APP_URL'],

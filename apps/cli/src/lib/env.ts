@@ -64,6 +64,10 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     NODE_ENV: 'production',
     // AUTH_SECRET is required by better-auth in local-auth mode; harmless in local-trust.
     AUTH_SECRET: config.workerSecret,
+    // WORKER_SECRET — same value as the runner — so sendTaskAction can sign
+    // the POST /api/worker call. Without this the runner returns 403 and the
+    // job stays pending forever (cron only scans task-board, not API jobs).
+    WORKER_SECRET: config.workerSecret,
     // LLM provider — mirrors buildEnvForRunner so the web can render the model dropdown
     LLM_PROVIDER: providerSlug,
     LLM_MODEL: config.llm.model,
