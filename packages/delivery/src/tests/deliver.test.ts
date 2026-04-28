@@ -9,7 +9,6 @@ import { deliverResult } from '../deliver.ts';
 import { DeliveryError } from '../errors.ts';
 
 let db: TestDb;
-let userId: string;
 let entityId: string;
 let agentId: string;
 
@@ -17,7 +16,6 @@ beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
   const seeds = await seedMinimal(db);
-  userId = seeds.userId;
   entityId = seeds.entityId;
   agentId = seeds.agentId;
 });
