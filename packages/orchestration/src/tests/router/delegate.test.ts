@@ -120,6 +120,49 @@ describe('handleDelegation', () => {
     expect(updatedParent?.status).toBe('awaiting_delegation');
   });
 
+  it('persists parent messages — without this, resume sees only the tool-result and the LLM has no context', async () => {
+    const { entityId, orchId, workerSlug, parentJobId } = await seedContext(db);
+    // Parent is mid-loop: it has the original user task AND its own
+    // tool-call assistant message in memory. Both must survive the suspend
+    // so the next executeJob entry sees the full conversation.
+    const parentJob = {
+      ...makeParentJob(parentJobId, orchId, entityId),
+      messages: [
+        { role: 'user', content: 'do X via worker' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'tu_msg_persist',
+              toolName: 'assign_worker',
+              args: { task: 'X' },
+            },
+          ],
+        },
+      ],
+    };
+
+    await handleDelegation(
+      parentJob,
+      workerSlug,
+      'tu_msg_persist',
+      { task: 'X' },
+      [],
+      db,
+    );
+
+    const [updatedParent] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJobId));
+
+    const msgs = updatedParent?.messages as Array<{ role: string }>;
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]?.role).toBe('user');
+    expect(msgs[1]?.role).toBe('assistant');
+  });
+
   it('creates a child job with parent_job_id set', async () => {
     const { entityId, orchId, workerSlug, parentJobId } = await seedContext(db);
     const parentJob = makeParentJob(parentJobId, orchId, entityId);

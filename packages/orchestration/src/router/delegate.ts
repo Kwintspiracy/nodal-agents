@@ -93,12 +93,18 @@ export async function handleDelegation(
     ...(sideToolResults.length > 0 ? { sideToolResults } : {}),
   };
 
-  // 4. Update parent: status → awaiting_delegation, store pending_delegation
+  // 4. Update parent: status → awaiting_delegation, store pending_delegation,
+  //    and persist `messages` so the [user, assistant tool_call] turn-1 history
+  //    isn't lost. resumeDelegated reads `messages` back from DB to append the
+  //    tool-result; without persisting here, the parent re-enters executeJob
+  //    seeing only the tool-result with no user input or its own tool_call,
+  //    and the LLM blindly re-delegates because it has no context.
   const [updatedParent] = await db
     .update(agentJobs)
     .set({
       status: 'awaiting_delegation',
       pendingDelegation,
+      messages: parentJob.messages,
       updatedAt: new Date(),
     })
     .where(eq(agentJobs.id, parentJob.id as string))

@@ -326,6 +326,10 @@ export async function executeJob(
         const input = returnResultCall.args as { status?: string; summary?: string };
         const finalResult = input.summary ?? '';
 
+        // Track in toolsUsed before completion — return_result is processed
+        // outside the per-call loop below, so it would otherwise be missing.
+        toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
+
         // Append tool_result for return_result
         const toolResultMsg: CoreMessage = {
           role: 'tool',
@@ -414,6 +418,22 @@ export async function executeJob(
           } catch (err) {
             if (err instanceof DelegationPendingError) {
               counters.bumpDelegationDepth();
+
+              // Track the assign_* call in toolsUsed BEFORE persisting — without
+              // this the parent loses its turn-1 tool list across the suspend.
+              toolsUsed = [...new Set([...toolsUsed, call.name])];
+
+              // Persist run-state (turn, tokens, toolsUsed) before transitioning
+              // to awaiting_delegation. handleDelegation persists messages +
+              // status atomically; this complements it for observability.
+              await saveCheckpoint(db, jobId as string, {
+                messages,
+                turn,
+                chainCount: job.chainCount ?? 0,
+                toolsUsed,
+                inputTokens,
+                outputTokens,
+              });
 
               const jobShape = {
                 id: jobId,
