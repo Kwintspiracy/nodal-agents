@@ -188,6 +188,7 @@ export async function saveCheckpoint(
     toolsUsed: string[];
     inputTokens?: number;
     outputTokens?: number;
+    totalDurationMs?: number;
   },
 ): Promise<void> {
   await db
@@ -200,6 +201,9 @@ export async function saveCheckpoint(
       updatedAt: new Date(),
       ...(checkpoint.inputTokens !== undefined && { inputTokens: checkpoint.inputTokens }),
       ...(checkpoint.outputTokens !== undefined && { outputTokens: checkpoint.outputTokens }),
+      ...(checkpoint.totalDurationMs !== undefined && {
+        totalDurationMs: checkpoint.totalDurationMs,
+      }),
     })
     .where(eq(agentJobs.id, jobId));
 }

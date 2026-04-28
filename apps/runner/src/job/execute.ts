@@ -11,6 +11,7 @@ import {
   agentJobs,
   agents,
   agentAssignments,
+  agentTasks,
   approvalRules,
   agentSkillAssignments,
 } from '@nodalai/db';
@@ -53,6 +54,7 @@ export type ExecuteJobResult =
   | { status: 'failed'; error: string }
   | { status: 'awaiting_approval' }
   | { status: 'awaiting_delegation' }
+  | { status: 'awaiting_tasks' }
   | { status: 'already_handled' };
 
 // ─── AnyToolDef ──────────────────────────────────────────────────────────────
@@ -74,6 +76,13 @@ export async function executeJob(
   // Wall-clock timer for total_duration_ms persistence. Captured at function
   // entry so it includes job/agent loading, not just the LLM loop.
   const startedAt = Date.now();
+
+  // Trace logger — minimal, prefixed with jobId for grep. Goes to runner.log
+  // via stderr so we can reconstruct what happened to a job after the fact.
+  const trace = (event: string, data?: Record<string, unknown>): void => {
+    console.error(`[exec ${jobId}] ${event}`, data ? JSON.stringify(data) : '');
+  };
+  trace('enter');
 
   // ── 1. Load job ───────────────────────────────────────────────────────────────
   const jobRows = await db
@@ -286,6 +295,7 @@ export async function executeJob(
       }
 
       // d. Call LLM
+      trace('llm_call_start', { turn, msgCount: messages.length });
       const response = await llmClient.generateText({
         system: systemPrompt,
         messages,
@@ -304,6 +314,12 @@ export async function executeJob(
       outputTokens += Number.isFinite(completionT) ? completionT : 0;
 
       const rawToolCalls = response.toolCalls ?? [];
+      trace('llm_call_done', {
+        turn,
+        toolCalls: rawToolCalls.map((tc) => tc.toolName),
+        textLen: (response.text ?? '').length,
+        usage: { in: promptT, out: completionT },
+      });
 
       // e. Append assistant message (use text or build from tool calls)
       const assistantMsg: CoreMessage = {
@@ -320,40 +336,14 @@ export async function executeJob(
       };
       messages = [...messages, assistantMsg];
 
-      // f. Check for return_result
+      // f. Note return_result presence — but do NOT short-circuit. If the LLM
+      // returns it alongside other tools (e.g. [create_task, return_result]),
+      // we must execute the others first. Finalization happens at step (j+).
       const returnResultCall = rawToolCalls.find((tc) => tc.toolName === 'return_result');
-      if (returnResultCall) {
-        const input = returnResultCall.args as { status?: string; summary?: string };
-        const finalResult = input.summary ?? '';
-
-        // Track in toolsUsed before completion — return_result is processed
-        // outside the per-call loop below, so it would otherwise be missing.
-        toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
-
-        // Append tool_result for return_result
-        const toolResultMsg: CoreMessage = {
-          role: 'tool',
-          content: [
-            {
-              type: 'tool-result',
-              toolCallId: returnResultCall.toolCallId,
-              toolName: 'return_result',
-              result: { acknowledged: true },
-            },
-          ],
-        };
-        messages = [...messages, toolResultMsg];
-
-        await completeJob(db, jobId as string, finalResult, toolsUsed, runStats());
-        await deliverResult(jobId as string, {
-          db,
-          env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
-        });
-        return { status: 'completed', result: finalResult };
-      }
 
       // g. No tool calls
       if (rawToolCalls.length === 0) {
+        trace('no_tool_calls_branch', { turn, hasText: Boolean(response.text) });
         const textContent = response.text ?? '';
         if (textContent) {
           await completeJob(db, jobId as string, textContent, toolsUsed, runStats());
@@ -382,7 +372,12 @@ export async function executeJob(
         others,
       } = filterToolCallsForDelegation(rawCallBlocks);
       const sideToolResults = buildDeferredToolResults(droppedAssign);
-      const callsToProcess = keptAssign ? [keptAssign, ...others] : others;
+      // Strip return_result from the for-loop processing — it's handled
+      // separately after the loop so we can execute siblings (e.g. create_task)
+      // before finalizing. Without this, an LLM that emits both in one turn
+      // would have its real work discarded.
+      const othersWithoutReturn = others.filter((b) => b.name !== 'return_result');
+      const callsToProcess = keptAssign ? [keptAssign, ...othersWithoutReturn] : othersWithoutReturn;
 
       // i. Process tool calls
       const toolResultBlocks: Array<{
@@ -581,12 +576,73 @@ export async function executeJob(
         return { status: 'awaiting_approval' };
       }
 
+      // j-bis. return_result finalization — runs AFTER all sibling tools have
+      // executed, so a turn like [create_task, return_result] still creates the
+      // task before completing. The synthetic tool-result for return_result is
+      // appended alongside other tool-results to satisfy the message-structure
+      // invariant (every tool_use has a matching tool_result).
+      if (returnResultCall) {
+        trace('return_result_branch', { turn });
+        const input = returnResultCall.args as { status?: string; summary?: string };
+        const finalResult = input.summary ?? '';
+        toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
+
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: returnResultCall.toolCallId,
+          toolName: 'return_result',
+          result: { acknowledged: true },
+        });
+        messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
+
+        // If this run created tasks on the board, the workflow continues
+        // asynchronously: the cron's executeReadyTasks runs each task and
+        // deliverCompletedRoots compiles + finalizes the parent once all tasks
+        // are done. Calling completeJob here would set completedAt and lock
+        // out the cron's delivery (it gates on `completedAt IS NULL`), so the
+        // user would never see the compiled task results — only the
+        // orchestrator's summary. Instead, save a checkpoint and let the cron
+        // own the final state. Status stays 'processing' until the cron flips
+        // it to 'completed'.
+        const taskRows = await db
+          .select({ id: agentTasks.id })
+          .from(agentTasks)
+          .where(eq(agentTasks.rootJobId, jobId as string));
+
+        if (taskRows.length > 0) {
+          trace('return_result_with_tasks', { taskCount: taskRows.length });
+          await saveCheckpoint(db, jobId as string, {
+            messages,
+            turn,
+            chainCount: job.chainCount ?? 0,
+            toolsUsed,
+            inputTokens,
+            outputTokens,
+            totalDurationMs: Date.now() - startedAt,
+          });
+          return { status: 'awaiting_tasks' };
+        }
+
+        trace('completeJob_call', { turn, toolsUsed, stats: runStats() });
+        await completeJob(db, jobId as string, finalResult, toolsUsed, runStats());
+        await deliverResult(jobId as string, {
+          db,
+          env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
+        });
+        trace('exit_completed_via_return_result');
+        return { status: 'completed', result: finalResult };
+      }
+
       // k. Append tool results and continue
       if (toolResultBlocks.length > 0) {
         messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
       }
     }
   } catch (err) {
+    trace('catch', {
+      errName: err instanceof Error ? err.name : 'unknown',
+      errMsg: err instanceof Error ? err.message.slice(0, 200) : String(err),
+    });
     // Typed errors — error codes only (invariant 2)
     if (err instanceof ToolCallLimitExceededError) {
       await failJob(db, jobId as string, err.code, runStats());

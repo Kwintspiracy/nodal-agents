@@ -129,6 +129,14 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
         `- **${agentName}**${roleTag} (assigned_to: \`${agentSlug}\`)${skillsTag}${instrTag}`,
       );
     }
+    // Flow control: planner tasks are executed asynchronously by the cron;
+    // the orchestrator must NOT poll list_tasks waiting for them. Without this
+    // line, gemma-3-27b-class models call list_tasks every turn until they
+    // hit a tool-call limit. After creating tasks the orchestrator's job ends,
+    // and `deliverCompletedRoots` compiles + delivers the final result later.
+    lines.push(
+      '\nAfter creating the tasks you need (one or more `create_task` calls), call `return_result` with a brief acknowledgment. Tasks run asynchronously in the background — do NOT call `list_tasks` to wait for them. Only use `list_tasks` if you need a previously created task\'s ID to set up a `depends_on` reference for the next task.',
+    );
   }
 
   return lines.join('\n');
