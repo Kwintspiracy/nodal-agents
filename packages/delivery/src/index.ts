@@ -7,8 +7,13 @@ export { formatJobResult } from './format.ts';
 export type { FormatJobInput } from './format.ts';
 export type { FormatOpts } from './types.ts';
 
-export { sendTelegramMessage } from './channels/telegram.ts';
-export type { TelegramSendOpts } from './channels/telegram.ts';
+export {
+  sendTelegramMessage,
+  getTelegramBotInfo,
+  setTelegramWebhook,
+  deleteTelegramWebhook,
+} from './channels/telegram.ts';
+export type { TelegramSendOpts, TelegramBotInfo } from './channels/telegram.ts';
 
 export { sendEmail } from './channels/email.ts';
 export type { EmailSendOpts } from './channels/email.ts';

@@ -5,6 +5,8 @@ export type DeliveryErrorCode =
   | 'telegram_chat_not_found'
   | 'telegram_rate_limited'
   | 'telegram_request_failed'
+  | 'telegram_invalid_token'
+  | 'telegram_webhook_failed'
   | 'telegram_no_token'
   | 'telegram_no_chat_id'
   | 'delivery_email_not_configured'

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { listAgentsAction, deleteAgentAction } from '@/lib/actions.ts';
 import AgentForm from '@/components/AgentForm.tsx';
 import DeleteAgentButton from './DeleteAgentButton.tsx';
@@ -74,11 +75,19 @@ export default async function AgentsPage() {
                     {agent.role ?? 'agent'}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <DeleteAgentButton
-                      id={agent.id}
-                      name={agent.name}
-                      deleteAction={deleteAgentAction}
-                    />
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/agents/${agent.id}/telegram`}
+                        className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-lg hover:border-neutral-700 hover:text-white transition-colors"
+                      >
+                        Telegram
+                      </Link>
+                      <DeleteAgentButton
+                        id={agent.id}
+                        name={agent.name}
+                        deleteAction={deleteAgentAction}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}
