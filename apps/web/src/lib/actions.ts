@@ -253,6 +253,20 @@ export type JobDetailRow = JobRow & {
   turn: number | null;
   totalDurationMs: number | null;
   delegationDepth: number | null;
+  parentJobId: string | null;
+  agentName: string | null;
+  agentSlug: string | null;
+  /** Direct children (delegated jobs) — id, agent, status. */
+  children: Array<{
+    id: string;
+    agentName: string | null;
+    agentSlug: string | null;
+    status: string | null;
+    result: string | null;
+    error: string | null;
+    createdAt: Date | null;
+    completedAt: Date | null;
+  }>;
 };
 
 /**
@@ -357,12 +371,44 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
       return fail('validation_failed', 'Invalid job id');
     }
     const db = getDb();
+
+    // Job + the agent that ran it. Left-join because legacy / orphaned jobs
+    // may have a null agent_id.
     const [row] = await db
-      .select()
+      .select({
+        job: agentJobs,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+      })
       .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
       .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
+
     if (!row) return fail('not_found', 'Job not found');
-    return ok(row as JobDetailRow);
+
+    // Children (delegated jobs whose parent_job_id is this one).
+    const childRows = await db
+      .select({
+        id: agentJobs.id,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        status: agentJobs.status,
+        result: agentJobs.result,
+        error: agentJobs.error,
+        createdAt: agentJobs.createdAt,
+        completedAt: agentJobs.completedAt,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(eq(agentJobs.parentJobId, id))
+      .orderBy(agentJobs.createdAt);
+
+    return ok({
+      ...(row.job as Omit<JobDetailRow, 'agentName' | 'agentSlug' | 'children'>),
+      agentName: row.agentName,
+      agentSlug: row.agentSlug,
+      children: childRows,
+    });
   } catch (err) {
     console.error('[getJobDetailAction]', err);
     return fail('db_error', 'Failed to load job');

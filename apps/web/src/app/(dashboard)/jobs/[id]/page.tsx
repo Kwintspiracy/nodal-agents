@@ -39,12 +39,62 @@ export default async function JobDetailPage({ params }: Props) {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Link href="/jobs" className="text-xs text-neutral-500 hover:text-neutral-300">
           ← Jobs
         </Link>
-        <span className="text-neutral-700 text-xs font-mono">{job.id}</span>
+        {job.agentName && (
+          <span className="text-sm font-medium text-white">
+            {job.agentName}
+            {job.agentSlug && (
+              <span className="ml-1.5 text-neutral-500 font-mono text-xs">({job.agentSlug})</span>
+            )}
+          </span>
+        )}
+        <span className="text-neutral-700 text-xs font-mono ml-auto">{job.id}</span>
       </div>
+
+      {/* Delegation context: parent + children */}
+      {(job.parentJobId || job.children.length > 0) && (
+        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3">
+          <h2 className="text-xs text-neutral-500 font-semibold uppercase tracking-wider">
+            Delegation
+          </h2>
+          {job.parentJobId && (
+            <div className="text-xs">
+              <span className="text-neutral-600 mr-2">↑ parent</span>
+              <Link
+                href={`/jobs/${job.parentJobId}`}
+                className="font-mono text-violet-400 hover:text-violet-300"
+              >
+                {job.parentJobId}
+              </Link>
+            </div>
+          )}
+          {job.children.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-neutral-600">
+                ↓ children ({job.children.length})
+              </p>
+              {job.children.map((child) => (
+                <Link
+                  key={child.id}
+                  href={`/jobs/${child.id}`}
+                  className="flex items-center gap-3 text-xs px-3 py-2 bg-neutral-950 border border-neutral-800/40 rounded-lg hover:border-neutral-700"
+                >
+                  <span className="text-white font-medium min-w-0">
+                    {child.agentName ?? '—'}
+                  </span>
+                  <StatusBadge status={child.status ?? 'pending'} />
+                  <span className="text-neutral-500 truncate min-w-0 flex-1">
+                    {child.result ?? child.error ?? ''}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-5">
         {/* Live status poller when job is active, static badge otherwise */}
@@ -83,6 +133,7 @@ export default async function JobDetailPage({ params }: Props) {
             ['Channel', job.channel],
             ['Turn', String(job.turn ?? 0)],
             ['Chain count', String(job.chainCount ?? 0)],
+            ['Delegation depth', String(job.delegationDepth ?? 0)],
             ['Input tokens', String(job.inputTokens ?? 0)],
             ['Output tokens', String(job.outputTokens ?? 0)],
             ['Duration ms', String(job.totalDurationMs ?? '—')],

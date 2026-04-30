@@ -42,6 +42,13 @@ function chain(rows: unknown[]): unknown {
     'returning',
     'set',
     'onConflictDoNothing',
+    'leftJoin',
+    'innerJoin',
+    'rightJoin',
+    'fullJoin',
+    'groupBy',
+    'having',
+    'offset',
   ]) {
     c[m] = vi.fn().mockReturnValue(c);
   }
@@ -348,32 +355,45 @@ describe('getJobDetailAction — db path', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('returns ok when job row exists', async () => {
+  it('returns ok with agent name + children when job row exists', async () => {
+    // Action now does a join → row shape is { job: {...}, agentName, agentSlug }.
+    // Same chain mock returns the same rows for the children query, which is
+    // fine: the test only asserts on the job's id + agent metadata.
     currentDb = makeDb([
       {
-        id: 'cccccccc-0000-0000-0000-000000000001',
-        entityId: '00000000-0000-0000-0000-000000000002',
-        status: 'completed',
-        channel: 'api',
-        task: 'Test',
-        messages: [],
-        result: null,
-        error: null,
-        chainCount: 0,
-        turn: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalDurationMs: 0,
-        delegationDepth: 0,
-        systemPrompt: null,
-        createdAt: new Date(),
-        completedAt: null,
+        job: {
+          id: 'cccccccc-0000-0000-0000-000000000001',
+          entityId: '00000000-0000-0000-0000-000000000002',
+          status: 'completed',
+          channel: 'api',
+          task: 'Test',
+          messages: [],
+          result: null,
+          error: null,
+          chainCount: 0,
+          turn: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalDurationMs: 0,
+          delegationDepth: 0,
+          systemPrompt: null,
+          parentJobId: null,
+          createdAt: new Date(),
+          completedAt: null,
+        },
+        agentName: 'Concierge',
+        agentSlug: 'concierge',
       },
     ]) as typeof currentDb;
     const { getJobDetailAction } = await import('../src/lib/actions.ts');
     const r = await getJobDetailAction('cccccccc-0000-0000-0000-000000000001');
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.data.id).toBe('cccccccc-0000-0000-0000-000000000001');
+    if (r.ok) {
+      expect(r.data.id).toBe('cccccccc-0000-0000-0000-000000000001');
+      expect(r.data.agentName).toBe('Concierge');
+      expect(r.data.agentSlug).toBe('concierge');
+      expect(Array.isArray(r.data.children)).toBe(true);
+    }
   });
 });
 
