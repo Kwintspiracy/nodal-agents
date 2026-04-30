@@ -388,7 +388,6 @@ export async function executeJob(
       }> = [];
 
       let awaitingApproval = false;
-      let awaitingDelegation = false;
 
       for (const call of callsToProcess) {
         counters.bumpToolCall();
@@ -511,7 +510,6 @@ export async function executeJob(
             throw err;
           }
 
-          if (awaitingDelegation) break;
           continue;
         }
 
@@ -548,18 +546,6 @@ export async function executeJob(
       }
 
       // j. Suspension states
-      if (awaitingDelegation) {
-        await saveCheckpoint(db, jobId as string, {
-          messages,
-          turn,
-          chainCount: job.chainCount ?? 0,
-          toolsUsed,
-          inputTokens,
-          outputTokens,
-        });
-        return { status: 'awaiting_delegation' };
-      }
-
       if (awaitingApproval) {
         if (toolResultBlocks.length > 0) {
           messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
