@@ -1,5 +1,7 @@
 // types.ts — DeliveryChannel, DeliveryResult, and related interfaces
 
+import type { AnyDrizzleDb } from '@nodalai/db';
+
 export type DeliveryChannel = 'telegram' | 'email' | 'log';
 
 export type DeliveryStatus = 'sent' | 'skipped' | 'failed';
@@ -12,7 +14,7 @@ export interface DeliveryResult {
 }
 
 export interface DeliveryDeps {
-  db: import('@nodalai/db').AnyDrizzleDb;
+  db: AnyDrizzleDb;
   telegramBotToken?: string;
   emailFrom?: string;
 }

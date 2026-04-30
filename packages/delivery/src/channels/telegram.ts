@@ -93,7 +93,12 @@ export async function sendTelegramMessage(opts: TelegramSendOpts): Promise<{ mes
 // but are read/admin operations, not message sends. They share the auth surface
 // (the bot token IS the credential) so they live in the same module.
 
-async function callBotApi<T>(botToken: string, method: string, body?: unknown): Promise<T> {
+async function callBotApi<T>(
+  botToken: string,
+  method: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
 
   let response: Response;
@@ -102,6 +107,7 @@ async function callBotApi<T>(botToken: string, method: string, body?: unknown): 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : '{}',
+      signal,
     });
   } catch (err) {
     throw new DeliveryError(
@@ -149,45 +155,54 @@ export async function getTelegramBotInfo(botToken: string): Promise<TelegramBotI
   };
 }
 
-/**
- * Register a webhook URL with Telegram. The `secretToken` is sent back in the
- * `X-Telegram-Bot-Api-Secret-Token` header on every incoming update so the
- * runner can authenticate the request.
- *
- * Throws `telegram_webhook_failed` on registration failure.
- */
-export async function setTelegramWebhook(opts: {
-  botToken: string;
-  url: string;
-  secretToken: string;
-}): Promise<void> {
-  try {
-    await callBotApi(opts.botToken, 'setWebhook', {
-      url: opts.url,
-      secret_token: opts.secretToken,
-      allowed_updates: ['message', 'callback_query'],
-    });
-  } catch (err) {
-    if (err instanceof DeliveryError && err.code === 'telegram_invalid_token') {
-      throw err;
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new DeliveryError('telegram_webhook_failed', `telegram_webhook_failed: ${msg}`);
-  }
+// ─── Long-polling helpers ─────────────────────────────────────────────────────
+//
+// NodalAI runs locally — no public URL — so we receive Telegram updates by
+// long-polling getUpdates rather than by webhook. The runner spawns one poll
+// loop per configured agent.
+
+/** A single Telegram update — minimal shape we care about. */
+export interface TelegramUpdate {
+  update_id: number;
+  message?: {
+    message_id?: number;
+    text?: string;
+    chat?: { id?: number; type?: string };
+    from?: { id?: number; first_name?: string; username?: string; is_bot?: boolean };
+    reply_to_message?: { from?: { is_bot?: boolean } };
+  };
+  callback_query?: {
+    id: string;
+    data?: string;
+    from?: { id?: number; first_name?: string; username?: string };
+  };
 }
 
 /**
- * Remove the webhook registration. Telegram returns ok=true even when no
- * webhook is set, so this is safe to call as a "best effort" cleanup.
+ * Long-poll Telegram for new updates. `offset` is the `update_id + 1` of the
+ * last update we processed; pass `0` to fetch from scratch (useful on first
+ * boot — Telegram retains a 24h backlog).
+ *
+ * `timeout` is in seconds (Telegram parameter), capped at 50 by the API.
+ * The HTTP request blocks for up to `timeout` seconds waiting for new data,
+ * so callers should expect this call to take a while.
  */
-export async function deleteTelegramWebhook(botToken: string): Promise<void> {
-  try {
-    await callBotApi(botToken, 'deleteWebhook', { drop_pending_updates: false });
-  } catch (err) {
-    if (err instanceof DeliveryError && err.code === 'telegram_invalid_token') {
-      throw err;
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new DeliveryError('telegram_webhook_failed', `telegram_webhook_failed: ${msg}`);
-  }
+export async function getTelegramUpdates(opts: {
+  botToken: string;
+  offset: number;
+  timeout?: number;
+  /** Abort the long-poll request (e.g. on runner shutdown). */
+  signal?: AbortSignal;
+}): Promise<TelegramUpdate[]> {
+  const result = await callBotApi<TelegramUpdate[]>(
+    opts.botToken,
+    'getUpdates',
+    {
+      offset: opts.offset,
+      timeout: opts.timeout ?? 25,
+      allowed_updates: ['message', 'callback_query'],
+    },
+    opts.signal,
+  );
+  return result;
 }

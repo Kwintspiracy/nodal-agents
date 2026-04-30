@@ -1,12 +1,10 @@
-// telegram-config.test.ts — getTelegramBotInfo / setTelegramWebhook /
-// deleteTelegramWebhook: fetch shape, response parsing, error mapping.
+// telegram-config.test.ts — bot config helpers for the long-polling pipeline.
+//
+// Covers: getTelegramBotInfo (token validation via getMe) and
+// getTelegramUpdates (long-polling for new messages).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  getTelegramBotInfo,
-  setTelegramWebhook,
-  deleteTelegramWebhook,
-} from '../channels/telegram.ts';
+import { getTelegramBotInfo, getTelegramUpdates } from '../channels/telegram.ts';
 import { DeliveryError } from '../errors.ts';
 
 const FAKE_TOKEN = '123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -84,7 +82,7 @@ describe('getTelegramBotInfo', () => {
   });
 });
 
-describe('setTelegramWebhook', () => {
+describe('getTelegramUpdates', () => {
   beforeEach(() => {
     vi.spyOn(globalThis, 'fetch');
   });
@@ -93,76 +91,93 @@ describe('setTelegramWebhook', () => {
     vi.restoreAllMocks();
   });
 
-  it('posts url + secret_token + allowed_updates to setWebhook', async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(makeFetchResponse(200, { ok: true, result: true }));
+  it('posts offset + timeout + allowed_updates to getUpdates', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: [] }),
+    );
 
-    await setTelegramWebhook({
-      botToken: FAKE_TOKEN,
-      url: 'https://example.com/api/telegram?agent_slug=foo',
-      secretToken: 'sekret',
-    });
+    await getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 42, timeout: 30 });
 
     const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
-    expect(String(url)).toBe(`https://api.telegram.org/bot${FAKE_TOKEN}/setWebhook`);
+    expect(String(url)).toBe(`https://api.telegram.org/bot${FAKE_TOKEN}/getUpdates`);
     expect(init?.method).toBe('POST');
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(body['url']).toBe('https://example.com/api/telegram?agent_slug=foo');
-    expect(body['secret_token']).toBe('sekret');
+    expect(body['offset']).toBe(42);
+    expect(body['timeout']).toBe(30);
     expect(body['allowed_updates']).toEqual(['message', 'callback_query']);
   });
 
-  it('throws telegram_invalid_token on bad bot token (401)', async () => {
+  it('defaults timeout to 25 when not specified', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
-      makeFetchResponse(401, { ok: false, description: 'Unauthorized' }),
+      makeFetchResponse(200, { ok: true, result: [] }),
     );
 
-    await expect(
-      setTelegramWebhook({ botToken: 'bad', url: 'https://x/y', secretToken: 's' }),
-    ).rejects.toSatisfy((err: unknown) => {
-      return err instanceof DeliveryError && err.code === 'telegram_invalid_token';
-    });
-  });
+    await getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 0 });
 
-  it('wraps other errors as telegram_webhook_failed', async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
-      makeFetchResponse(400, { ok: false, description: 'Bad Request: bad webhook' }),
-    );
-
-    await expect(
-      setTelegramWebhook({ botToken: FAKE_TOKEN, url: 'http://localhost/y', secretToken: 's' }),
-    ).rejects.toSatisfy((err: unknown) => {
-      return err instanceof DeliveryError && err.code === 'telegram_webhook_failed';
-    });
-  });
-});
-
-describe('deleteTelegramWebhook', () => {
-  beforeEach(() => {
-    vi.spyOn(globalThis, 'fetch');
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('hits deleteWebhook with drop_pending_updates=false', async () => {
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(makeFetchResponse(200, { ok: true, result: true }));
-
-    await deleteTelegramWebhook(FAKE_TOKEN);
-
-    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
-    expect(String(url)).toBe(`https://api.telegram.org/bot${FAKE_TOKEN}/deleteWebhook`);
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(body['drop_pending_updates']).toBe(false);
+    expect(body['timeout']).toBe(25);
   });
 
-  it('throws telegram_invalid_token on bad bot token', async () => {
+  it('returns the array of updates from the response', async () => {
+    const updates = [
+      {
+        update_id: 100,
+        message: {
+          message_id: 1,
+          chat: { id: 555, type: 'private' },
+          from: { id: 7, first_name: 'A', is_bot: false },
+          text: 'hello',
+        },
+      },
+      {
+        update_id: 101,
+        message: {
+          message_id: 2,
+          chat: { id: 555, type: 'private' },
+          from: { id: 7, first_name: 'A', is_bot: false },
+          text: 'world',
+        },
+      },
+    ];
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: updates }),
+    );
+
+    const result = await getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 99 });
+    expect(result).toEqual(updates);
+  });
+
+  it('returns empty array when no updates pending', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: [] }),
+    );
+
+    const result = await getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 0 });
+    expect(result).toEqual([]);
+  });
+
+  it('throws telegram_invalid_token on 401 (re-poll loop must stop on this)', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       makeFetchResponse(401, { ok: false, description: 'Unauthorized' }),
     );
 
-    await expect(deleteTelegramWebhook('bad')).rejects.toSatisfy((err: unknown) => {
+    await expect(
+      getTelegramUpdates({ botToken: 'bad', offset: 0 }),
+    ).rejects.toSatisfy((err: unknown) => {
       return err instanceof DeliveryError && err.code === 'telegram_invalid_token';
+    });
+  });
+
+  it('throws telegram_request_failed on transient errors (caller backs off and retries)', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(500, { ok: false, description: 'Internal Server Error' }),
+    );
+
+    await expect(
+      getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 0 }),
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof DeliveryError && err.code === 'telegram_request_failed';
     });
   });
 });

@@ -11,8 +11,8 @@ import { agentRoute } from './routes/agent.ts';
 import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
-import { telegramRoute } from './routes/telegram.ts';
 import { startCronTicker } from './cron/ticker.ts';
+import { startTelegramManager } from './telegram/manager.ts';
 import { AuthError } from '@nodalai/auth';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
@@ -30,7 +30,6 @@ export function createApp(
   // ── Auth middleware (applied to all routes except /api/worker and /api/health) ──
   // /api/worker uses its own WORKER_SECRET check
   // /api/health is always public (liveness probe)
-  // /api/telegram handles its own webhook secret
   app.use('/api/agent', async (c, next) => {
     try {
       const session = await deps.authProvider.getSession(c.req.raw);
@@ -73,8 +72,6 @@ export function createApp(
 
   app.post('/api/cron', (c) => cronRoute(c, deps, runnerEnv));
 
-  app.post('/api/telegram', (c) => telegramRoute(c, deps, runnerEnv));
-
   // ── 404 fallback ──────────────────────────────────────────────────────────────
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
 
@@ -106,6 +103,17 @@ async function main(): Promise<void> {
     console.warn('[runner] cron ticker started (120s interval)');
   }
 
+  // Start the Telegram poller manager — long-polls Telegram for each agent
+  // that has a bot token configured. Refreshes the bot list every 30s.
+  // Disable with TELEGRAM_POLLER_ENABLED=false (e.g. tests).
+  const telegramEnabled = process.env['TELEGRAM_POLLER_ENABLED'] !== 'false';
+  const telegramManager = telegramEnabled
+    ? startTelegramManager(deps, { env: runnerEnv })
+    : null;
+  if (telegramEnabled) {
+    console.warn('[runner] telegram manager started');
+  }
+
   serve(
     {
       fetch: app.fetch,
@@ -118,16 +126,14 @@ async function main(): Promise<void> {
   );
 
   // Graceful shutdown
-  process.on('SIGTERM', async () => {
+  const shutdown = async (): Promise<void> => {
     ticker?.stop();
+    await telegramManager?.stop();
     await deps.close();
     process.exit(0);
-  });
-  process.on('SIGINT', async () => {
-    ticker?.stop();
-    await deps.close();
-    process.exit(0);
-  });
+  };
+  process.on('SIGTERM', () => void shutdown());
+  process.on('SIGINT', () => void shutdown());
 }
 
 // Only run when this is the entry point (not when imported by tests).

@@ -37,27 +37,13 @@ export default async function AgentTelegramPage({
         </Link>
         <h1 className="text-2xl font-bold text-white mt-2">Telegram</h1>
         <p className="text-sm text-neutral-500 mt-1">
-          Connect a Telegram bot to <span className="font-mono text-neutral-300">{cfg.agentSlug}</span>.
-          Users can then chat with the agent directly in Telegram.
+          Connect a Telegram bot to{' '}
+          <span className="font-mono text-neutral-300">{cfg.agentSlug}</span>. The runner long-polls
+          Telegram for new messages — no public URL needed.
         </p>
       </div>
 
-      {!cfg.publicUrlConfigured && (
-        <div className="bg-amber-950/30 border border-amber-900/50 rounded-xl px-5 py-4 text-sm text-amber-200">
-          <p className="font-semibold mb-1">Runner not publicly reachable</p>
-          <p className="text-amber-300/80">
-            <span className="font-mono">RUNNER_PUBLIC_URL</span> is not set, so we can save your bot
-            token but Telegram can&apos;t deliver messages here yet. Expose the runner publicly
-            (ngrok, Cloudflare Tunnel, or a deployed instance) and re-save the token to register
-            the webhook.
-          </p>
-        </div>
-      )}
-
-      <TelegramConfigForm
-        agentId={cfg.agentId}
-        initialConfig={cfg}
-      />
+      <TelegramConfigForm agentId={cfg.agentId} initialConfig={cfg} />
 
       <details className="text-sm text-neutral-500">
         <summary className="cursor-pointer hover:text-neutral-300">How to get a bot token</summary>
@@ -78,7 +64,10 @@ export default async function AgentTelegramPage({
             Send <span className="font-mono text-neutral-300">/newbot</span> and follow the prompts
             to pick a name and username.
           </li>
-          <li>BotFather replies with a token of the form <span className="font-mono">123456789:ABC...</span> — paste it above.</li>
+          <li>
+            BotFather replies with a token of the form{' '}
+            <span className="font-mono">123456789:ABC...</span> — paste it above.
+          </li>
           <li>
             For group chats: also send <span className="font-mono text-neutral-300">/setprivacy</span>{' '}
             → choose your bot → <span className="font-mono">Disable</span> so it can read all

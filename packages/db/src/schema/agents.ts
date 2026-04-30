@@ -29,8 +29,9 @@ export const agents = pgTable(
     orchestratorMode: text('orchestrator_mode'),
     telegramBotToken: text('telegram_bot_token'),
     telegramBotUsername: text('telegram_bot_username'),
-    telegramWebhookSecret: text('telegram_webhook_secret'),
-    telegramWebhookUrl: text('telegram_webhook_url'),
+    // Telegram getUpdates `offset` cursor — long-poll mode persists the
+    // next-update-id here so a runner restart resumes without replay.
+    telegramOffset: bigint('telegram_offset', { mode: 'number' }),
     requiresApproval: text('requires_approval')
       .array()
       .default(sql`'{}'::text[]`),

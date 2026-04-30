@@ -1,7 +1,6 @@
 'use server';
 
 import 'server-only';
-import { randomBytes } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 import { z } from 'zod';
@@ -15,12 +14,7 @@ import {
   agentJobs,
   agentTasks,
 } from '@nodalai/db';
-import {
-  DeliveryError,
-  deleteTelegramWebhook,
-  getTelegramBotInfo,
-  setTelegramWebhook,
-} from '@nodalai/delivery';
+import { DeliveryError, getTelegramBotInfo } from '@nodalai/delivery';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
@@ -406,17 +400,13 @@ export async function getJobStatusAction(
 
 // ─── Telegram Actions ─────────────────────────────────────────────────────────
 //
-// Each agent can have its own Telegram bot. Configuration is per-agent:
-// the user pastes a bot token from BotFather, we validate it against
-// `getMe`, generate a webhook secret, and (if RUNNER_PUBLIC_URL is set)
-// register the webhook with Telegram. The runner already knows how to
-// authenticate inbound updates by the secret and route them to the agent
-// by `?agent_slug=` (see apps/runner/src/routes/telegram.ts).
+// Each agent can have its own Telegram bot. The user pastes a bot token from
+// BotFather, we validate it via `getMe`, and persist token + bot username.
+// The runner's TelegramManager picks up the new token within ~30s and starts
+// long-polling Telegram for that bot — no public URL required, since this is
+// a local-first product.
 
-export type TelegramConfigStatus =
-  | 'unconfigured' // no bot token saved
-  | 'token-only' // token saved, no webhook (e.g. RUNNER_PUBLIC_URL missing)
-  | 'webhook-active'; // token saved + webhook registered
+export type TelegramConfigStatus = 'connected' | 'disconnected';
 
 export type TelegramConfigRow = {
   agentId: string;
@@ -424,9 +414,6 @@ export type TelegramConfigRow = {
   agentName: string;
   status: TelegramConfigStatus;
   botUsername: string | null;
-  webhookUrl: string | null;
-  hasToken: boolean;
-  publicUrlConfigured: boolean;
 };
 
 const ConfigureTelegramSchema = z.object({
@@ -455,30 +442,18 @@ export async function getAgentTelegramConfigAction(
         name: agents.name,
         botToken: agents.telegramBotToken,
         botUsername: agents.telegramBotUsername,
-        webhookUrl: agents.telegramWebhookUrl,
       })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
 
     if (!row) return fail('not_found', 'Agent not found');
 
-    const hasToken = !!row.botToken;
-    const hasWebhook = !!row.webhookUrl;
-    const status: TelegramConfigStatus = !hasToken
-      ? 'unconfigured'
-      : hasWebhook
-        ? 'webhook-active'
-        : 'token-only';
-
     return ok({
       agentId: row.id,
       agentSlug: row.slug,
       agentName: row.name,
-      status,
+      status: row.botToken ? 'connected' : 'disconnected',
       botUsername: row.botUsername,
-      webhookUrl: row.webhookUrl,
-      hasToken,
-      publicUrlConfigured: !!env.RUNNER_PUBLIC_URL,
     });
   } catch (err) {
     console.error('[getAgentTelegramConfigAction]', err);
@@ -499,53 +474,36 @@ export async function configureAgentTelegramAction(
 
     const db = getDb();
     const [agent] = await db
-      .select({ id: agents.id, slug: agents.slug })
+      .select({ id: agents.id, slug: agents.slug, name: agents.name })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // 1. Validate the token against Telegram's getMe.
+    // Validate the token against Telegram's getMe. We need the bot's
+    // username for display anyway, and getMe doubles as a token check.
     let botInfo: Awaited<ReturnType<typeof getTelegramBotInfo>>;
     try {
       botInfo = await getTelegramBotInfo(botToken);
     } catch (err) {
       if (err instanceof DeliveryError && err.code === 'telegram_invalid_token') {
-        return fail('telegram_invalid_token', 'Telegram rejected this token. Double-check it from @BotFather.');
+        return fail(
+          'telegram_invalid_token',
+          'Telegram rejected this token. Double-check it from @BotFather.',
+        );
       }
       throw err;
     }
 
-    // 2. If we have a public URL, register the webhook. Generate a fresh
-    //    secret on every (re)configuration so old bots can't replay.
-    let webhookUrl: string | null = null;
-    let webhookSecret: string | null = null;
-
-    if (env.RUNNER_PUBLIC_URL) {
-      webhookSecret = randomBytes(32).toString('hex');
-      webhookUrl = `${env.RUNNER_PUBLIC_URL.replace(/\/$/, '')}/api/telegram?agent_slug=${encodeURIComponent(agent.slug)}`;
-      try {
-        await setTelegramWebhook({
-          botToken,
-          url: webhookUrl,
-          secretToken: webhookSecret,
-        });
-      } catch (err) {
-        if (err instanceof DeliveryError) {
-          return fail(err.code, `Failed to register webhook: ${err.message}`);
-        }
-        throw err;
-      }
-    }
-
-    // 3. Persist. We store webhook fields even when no public URL — they're
-    //    cleared in that case so the next configure-with-URL is fresh.
+    // Persist. The runner's TelegramManager will pick this up on its next
+    // refresh tick (~30s) and start long-polling Telegram for this bot.
+    // Reset the offset to 0 so a freshly-rotated bot starts clean — getUpdates
+    // with offset=0 fetches whatever's been buffered (max 24h on Telegram's side).
     await db
       .update(agents)
       .set({
         telegramBotToken: botToken,
         telegramBotUsername: botInfo.username,
-        telegramWebhookUrl: webhookUrl,
-        telegramWebhookSecret: webhookSecret,
+        telegramOffset: 0,
         updatedAt: new Date(),
       })
       .where(eq(agents.id, agentId));
@@ -556,12 +514,9 @@ export async function configureAgentTelegramAction(
     return ok({
       agentId: agent.id,
       agentSlug: agent.slug,
-      agentName: '',
-      status: webhookUrl ? 'webhook-active' : 'token-only',
+      agentName: agent.name,
+      status: 'connected',
       botUsername: botInfo.username,
-      webhookUrl,
-      hasToken: true,
-      publicUrlConfigured: !!env.RUNNER_PUBLIC_URL,
     });
   } catch (err) {
     console.error('[configureAgentTelegramAction]', err);
@@ -579,32 +534,19 @@ export async function disconnectAgentTelegramAction(
     }
     const db = getDb();
     const [row] = await db
-      .select({
-        id: agents.id,
-        botToken: agents.telegramBotToken,
-        webhookUrl: agents.telegramWebhookUrl,
-      })
+      .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!row) return fail('not_found', 'Agent not found');
 
-    // Best-effort: tell Telegram to drop the webhook. Failure here doesn't
-    // block us — we still clear the local rows so the user isn't stuck.
-    if (row.botToken && row.webhookUrl) {
-      try {
-        await deleteTelegramWebhook(row.botToken);
-      } catch (err) {
-        console.warn('[disconnectAgentTelegramAction] deleteWebhook failed:', err);
-      }
-    }
-
+    // Clear the token. The runner's TelegramManager will detect this on its
+    // next refresh tick and abort the poller for this agent.
     await db
       .update(agents)
       .set({
         telegramBotToken: null,
         telegramBotUsername: null,
-        telegramWebhookUrl: null,
-        telegramWebhookSecret: null,
+        telegramOffset: null,
         updatedAt: new Date(),
       })
       .where(eq(agents.id, agentId));

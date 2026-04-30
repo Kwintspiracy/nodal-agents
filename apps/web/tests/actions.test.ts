@@ -395,7 +395,7 @@ describe('getAgentTelegramConfigAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('returns unconfigured when agent has no token', async () => {
+  it('returns disconnected when agent has no token', async () => {
     currentDb = makeDb([
       {
         id: 'aaaaaaaa-0000-0000-0000-000000000010',
@@ -403,20 +403,18 @@ describe('getAgentTelegramConfigAction', () => {
         name: 'My Agent',
         botToken: null,
         botUsername: null,
-        webhookUrl: null,
       },
     ]) as typeof currentDb;
     const { getAgentTelegramConfigAction } = await import('../src/lib/actions.ts');
     const r = await getAgentTelegramConfigAction('aaaaaaaa-0000-0000-0000-000000000010');
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.data.status).toBe('unconfigured');
-      expect(r.data.hasToken).toBe(false);
-      expect(r.data.publicUrlConfigured).toBe(false);
+      expect(r.data.status).toBe('disconnected');
+      expect(r.data.botUsername).toBe(null);
     }
   });
 
-  it('returns token-only when token exists but no webhook', async () => {
+  it('returns connected when agent has a token', async () => {
     currentDb = makeDb([
       {
         id: 'aaaaaaaa-0000-0000-0000-000000000011',
@@ -424,34 +422,15 @@ describe('getAgentTelegramConfigAction', () => {
         name: 'My Agent',
         botToken: 'tok',
         botUsername: 'my_bot',
-        webhookUrl: null,
       },
     ]) as typeof currentDb;
     const { getAgentTelegramConfigAction } = await import('../src/lib/actions.ts');
     const r = await getAgentTelegramConfigAction('aaaaaaaa-0000-0000-0000-000000000011');
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.data.status).toBe('token-only');
-      expect(r.data.hasToken).toBe(true);
+      expect(r.data.status).toBe('connected');
       expect(r.data.botUsername).toBe('my_bot');
     }
-  });
-
-  it('returns webhook-active when both token and webhook are set', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000012',
-        slug: 'my-agent',
-        name: 'My Agent',
-        botToken: 'tok',
-        botUsername: 'my_bot',
-        webhookUrl: 'https://example.com/api/telegram?agent_slug=my-agent',
-      },
-    ]) as typeof currentDb;
-    const { getAgentTelegramConfigAction } = await import('../src/lib/actions.ts');
-    const r = await getAgentTelegramConfigAction('aaaaaaaa-0000-0000-0000-000000000012');
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.data.status).toBe('webhook-active');
   });
 });
 
@@ -478,9 +457,8 @@ describe('configureAgentTelegramAction', () => {
   });
 
   it('maps invalid token from Telegram to telegram_invalid_token', async () => {
-    // agent lookup hits the same chain mock; return one row so we proceed
     currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000022', slug: 'agent-x' },
+      { id: 'aaaaaaaa-0000-0000-0000-000000000022', slug: 'agent-x', name: 'Agent X' },
     ]) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValueOnce(
@@ -497,12 +475,9 @@ describe('configureAgentTelegramAction', () => {
     fetchSpy.mockRestore();
   });
 
-  it('persists token + status=token-only when no public URL set', async () => {
-    delete process.env['RUNNER_PUBLIC_URL'];
-    // agent lookup row, then later update returns nothing — chain mock returns
-    // the same rows for both, which is fine here.
+  it('persists token + bot_username + offset=0 on success', async () => {
     currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000023', slug: 'agent-y' },
+      { id: 'aaaaaaaa-0000-0000-0000-000000000023', slug: 'agent-y', name: 'Agent Y' },
     ]) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValueOnce(
@@ -528,75 +503,24 @@ describe('configureAgentTelegramAction', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.data.status).toBe('token-only');
+      expect(r.data.status).toBe('connected');
       expect(r.data.botUsername).toBe('my_bot');
-      expect(r.data.webhookUrl).toBe(null);
-      expect(r.data.publicUrlConfigured).toBe(false);
     }
 
-    // Verify only ONE fetch (getMe) was made — no setWebhook attempt
+    // Exactly one fetch — getMe — and no other Telegram API calls.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url] = fetchSpy.mock.calls[0]!;
     expect(String(url)).toContain('/getMe');
 
-    // Verify update() was called clearing the webhook fields
+    // update() persisted the bot fields and reset the offset.
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const setSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
     const setArg = setSpy.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg['telegramBotToken']).toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
     expect(setArg['telegramBotUsername']).toBe('my_bot');
-    expect(setArg['telegramWebhookUrl']).toBe(null);
-    expect(setArg['telegramWebhookSecret']).toBe(null);
+    expect(setArg['telegramOffset']).toBe(0);
 
     fetchSpy.mockRestore();
-  });
-
-  it('registers webhook when RUNNER_PUBLIC_URL is set', async () => {
-    process.env['RUNNER_PUBLIC_URL'] = 'https://nodal.example.com';
-
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000024', slug: 'agent-z' },
-    ]) as typeof currentDb;
-
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          ok: true,
-          result: { id: 1, is_bot: true, first_name: 'Z', username: 'z_bot' },
-        }),
-        { status: 200 },
-      ),
-    );
-    fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true, result: true }), { status: 200 }),
-    );
-
-    // Re-import after env change so the env module re-parses.
-    vi.resetModules();
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
-      agentId: 'aaaaaaaa-0000-0000-0000-000000000024',
-      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
-    });
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.status).toBe('webhook-active');
-      expect(r.data.webhookUrl).toBe(
-        'https://nodal.example.com/api/telegram?agent_slug=agent-z',
-      );
-    }
-
-    // Two fetch calls: getMe, then setWebhook with secret_token + correct url
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    const [url2, init2] = fetchSpy.mock.calls[1]!;
-    expect(String(url2)).toContain('/setWebhook');
-    const body = JSON.parse(init2?.body as string) as Record<string, unknown>;
-    expect(body['url']).toBe('https://nodal.example.com/api/telegram?agent_slug=agent-z');
-    expect(typeof body['secret_token']).toBe('string');
-    expect((body['secret_token'] as string).length).toBe(64); // 32 bytes hex
-
-    fetchSpy.mockRestore();
-    delete process.env['RUNNER_PUBLIC_URL'];
   });
 });
 
@@ -616,59 +540,28 @@ describe('disconnectAgentTelegramAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('clears all telegram fields and best-effort calls deleteWebhook', async () => {
+  it('clears all telegram fields without calling Telegram', async () => {
     currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000031',
-        botToken: '123456789:tok',
-        webhookUrl: 'https://nodal.example.com/api/telegram?agent_slug=x',
-      },
+      { id: 'aaaaaaaa-0000-0000-0000-000000000031' },
     ]) as typeof currentDb;
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true, result: true }), { status: 200 }),
-    );
 
     const { disconnectAgentTelegramAction } = await import('../src/lib/actions.ts');
     const r = await disconnectAgentTelegramAction('aaaaaaaa-0000-0000-0000-000000000031');
     expect(r.ok).toBe(true);
 
-    // deleteWebhook was called
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url] = fetchSpy.mock.calls[0]!;
-    expect(String(url)).toContain('/deleteWebhook');
+    // No Telegram API call needed — disconnect is a pure DB clear.
+    // The runner's TelegramManager will detect the cleared token on its next
+    // refresh tick and abort the poller.
+    expect(fetchSpy).not.toHaveBeenCalled();
 
-    // update() set all telegram fields to null
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const setSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
     const setArg = setSpy.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg['telegramBotToken']).toBe(null);
     expect(setArg['telegramBotUsername']).toBe(null);
-    expect(setArg['telegramWebhookUrl']).toBe(null);
-    expect(setArg['telegramWebhookSecret']).toBe(null);
-
-    fetchSpy.mockRestore();
-  });
-
-  it('still clears local rows when deleteWebhook fails (best-effort)', async () => {
-    currentDb = makeDb([
-      {
-        id: 'aaaaaaaa-0000-0000-0000-000000000032',
-        botToken: '123456789:tok',
-        webhookUrl: 'https://x/y',
-      },
-    ]) as typeof currentDb;
-
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy.mockRejectedValueOnce(new Error('telegram unreachable'));
-
-    const { disconnectAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await disconnectAgentTelegramAction('aaaaaaaa-0000-0000-0000-000000000032');
-    expect(r.ok).toBe(true);
-
-    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
-    expect(updateSpy).toHaveBeenCalled();
+    expect(setArg['telegramOffset']).toBe(null);
 
     fetchSpy.mockRestore();
   });

@@ -10,10 +10,13 @@ export type { FormatOpts } from './types.ts';
 export {
   sendTelegramMessage,
   getTelegramBotInfo,
-  setTelegramWebhook,
-  deleteTelegramWebhook,
+  getTelegramUpdates,
 } from './channels/telegram.ts';
-export type { TelegramSendOpts, TelegramBotInfo } from './channels/telegram.ts';
+export type {
+  TelegramSendOpts,
+  TelegramBotInfo,
+  TelegramUpdate,
+} from './channels/telegram.ts';
 
 export { sendEmail } from './channels/email.ts';
 export type { EmailSendOpts } from './channels/email.ts';

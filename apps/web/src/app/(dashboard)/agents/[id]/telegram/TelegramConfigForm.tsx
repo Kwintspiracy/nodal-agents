@@ -30,15 +30,9 @@ export default function TelegramConfigForm({
         toast.error(result.message);
         return;
       }
-      // Server returns the new config but with empty agentName; preserve the
-      // local one so the page header doesn't blink.
-      setConfig({ ...result.data, agentName: config.agentName });
+      setConfig(result.data);
       setToken('');
-      toast.success(
-        result.data.status === 'webhook-active'
-          ? `Connected as @${result.data.botUsername} — webhook registered`
-          : `Bot @${result.data.botUsername} validated`,
-      );
+      toast.success(`Connected as @${result.data.botUsername}`);
       router.refresh();
     });
   }
@@ -51,17 +45,13 @@ export default function TelegramConfigForm({
         toast.error(result.message);
         return;
       }
-      setConfig({
-        ...config,
-        status: 'unconfigured',
-        botUsername: null,
-        webhookUrl: null,
-        hasToken: false,
-      });
+      setConfig({ ...config, status: 'disconnected', botUsername: null });
       toast.success('Telegram disconnected');
       router.refresh();
     });
   }
+
+  const connected = config.status === 'connected';
 
   return (
     <div className="space-y-5">
@@ -70,18 +60,14 @@ export default function TelegramConfigForm({
         <div className="flex items-center gap-2">
           <span
             className={
-              config.status === 'webhook-active'
+              connected
                 ? 'inline-block w-2 h-2 rounded-full bg-emerald-500'
-                : config.status === 'token-only'
-                  ? 'inline-block w-2 h-2 rounded-full bg-amber-500'
-                  : 'inline-block w-2 h-2 rounded-full bg-neutral-600'
+                : 'inline-block w-2 h-2 rounded-full bg-neutral-600'
             }
             aria-hidden="true"
           />
           <span className="text-sm font-medium text-white">
-            {config.status === 'webhook-active' && 'Connected'}
-            {config.status === 'token-only' && 'Token saved (no webhook)'}
-            {config.status === 'unconfigured' && 'Not connected'}
+            {connected ? 'Connected' : 'Not connected'}
           </span>
         </div>
         {config.botUsername && (
@@ -95,11 +81,6 @@ export default function TelegramConfigForm({
             >
               @{config.botUsername}
             </a>
-          </p>
-        )}
-        {config.webhookUrl && (
-          <p className="text-xs text-neutral-600 mt-1 truncate">
-            Webhook: <span className="font-mono">{config.webhookUrl}</span>
           </p>
         )}
       </div>
@@ -126,13 +107,9 @@ export default function TelegramConfigForm({
             disabled={isPending || !token}
             className="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isPending
-              ? 'Saving…'
-              : config.hasToken
-                ? 'Replace token'
-                : 'Connect'}
+            {isPending ? 'Saving…' : connected ? 'Replace token' : 'Connect'}
           </button>
-          {config.hasToken && (
+          {connected && (
             <button
               type="button"
               onClick={handleDisconnect}

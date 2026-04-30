@@ -17,12 +17,6 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
-  // Public URL the runner is reachable at — required for Telegram webhook
-  // registration. Optional: if absent, the dashboard saves the bot token but
-  // tells the user to expose the runner publicly before incoming messages
-  // can be received. Configured by CLI via buildEnvForWeb() once we add a
-  // public-URL flag, otherwise user sets it manually.
-  RUNNER_PUBLIC_URL: z.string().url().optional(),
   // LLM provider configuration — set by CLI via buildEnvForWeb()
   LLM_PROVIDER: z.string().optional(),
   LLM_MODEL: z.string().optional(),
@@ -42,7 +36,6 @@ const raw = {
   GOOGLE_CLIENT_ID: process.env['GOOGLE_CLIENT_ID'],
   GOOGLE_CLIENT_SECRET: process.env['GOOGLE_CLIENT_SECRET'],
   NEXT_PUBLIC_APP_URL: process.env['NEXT_PUBLIC_APP_URL'],
-  RUNNER_PUBLIC_URL: process.env['RUNNER_PUBLIC_URL'],
   LLM_PROVIDER: process.env['LLM_PROVIDER'],
   LLM_MODEL: process.env['LLM_MODEL'],
   LLM_BASE_URL: process.env['LLM_BASE_URL'],

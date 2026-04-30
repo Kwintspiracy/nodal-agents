@@ -665,15 +665,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "telegram_webhook_secret": {
-          "name": "telegram_webhook_secret",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "telegram_webhook_url": {
-          "name": "telegram_webhook_url",
-          "type": "text",
+        "telegram_offset": {
+          "name": "telegram_offset",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": false
         },
