@@ -1,9 +1,12 @@
-// cron/reset-orphans.ts — resetOrphanedTasks
-// Find tasks in `in_progress` status that have been stuck without a job_id
-// for more than 5 minutes (machine suspended between claim and job creation).
-// Reset them to `todo` so the next tick can re-execute them.
+// cron/reset-orphans.ts — resetOrphanedTasks + resetOrphanedJobs
+// Two cleanup phases for state left behind by abrupt shutdown (Ctrl+C, crash,
+// suspended laptop). Without these, the dashboard accumulates stuck rows that
+// can never recover on their own.
+//   - resetOrphanedTasks: tasks claimed but never executed → back to `todo`
+//   - resetOrphanedJobs:  jobs in `processing` / `awaiting_delegation` with
+//                         no recent activity → marked `failed`
 
-import { and, eq, isNull, lt, or } from '@nodalai/db';
+import { and, eq, inArray, isNull, lt, or } from '@nodalai/db';
 import { agentJobs, agentTasks } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 
@@ -99,4 +102,41 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
   }
 
   return caseA.length + caseBCount;
+}
+
+// ─── resetOrphanedJobs ────────────────────────────────────────────────────────
+
+/**
+ * Mark as `failed` any job stuck in `processing` or `awaiting_delegation`
+ * whose `updated_at` is older than `staleMinutes` minutes (default 5).
+ *
+ * Covers Ctrl+C / crash / laptop-suspend during execution: the runner died
+ * mid-loop and nothing else will ever advance these rows, so they pile up in
+ * the dashboard. Marking them `failed` (not `cancelled`) is intentional — the
+ * job started, then state was lost; that's a failure outcome.
+ *
+ * Both `processing → failed` and `awaiting_delegation → failed` are valid
+ * transitions (see job/state.ts VALID_TRANSITIONS).
+ *
+ * @returns count of jobs reset
+ */
+export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Promise<number> {
+  const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000);
+
+  const updated = await db
+    .update(agentJobs)
+    .set({
+      status: 'failed',
+      error: 'orphan_job_reset',
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        inArray(agentJobs.status, ['processing', 'awaiting_delegation']),
+        lt(agentJobs.updatedAt, cutoff),
+      ),
+    )
+    .returning({ id: agentJobs.id });
+
+  return updated.length;
 }

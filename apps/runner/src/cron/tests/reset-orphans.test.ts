@@ -11,7 +11,7 @@ import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
 import type { TestDb } from '@nodalai/db/test-utils';
 import { eq } from '@nodalai/db';
 import { agentJobs, agentTasks } from '@nodalai/db';
-import { resetOrphanedTasks } from '../reset-orphans.ts';
+import { resetOrphanedTasks, resetOrphanedJobs } from '../reset-orphans.ts';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -166,6 +166,122 @@ describe('resetOrphanedTasks', () => {
     await createTask({ status: 'in_progress', lockedAt: staleDate, jobId: null });
 
     const count = await resetOrphanedTasks(db, 5);
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─── resetOrphanedJobs ────────────────────────────────────────────────────────
+
+async function createJob(overrides: {
+  status: string;
+  updatedAt?: Date;
+}) {
+  const [row] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'api',
+      task: 'orphan candidate',
+      status: overrides.status,
+      // updatedAt defaults to now() — we override with a raw update post-insert
+      // because Drizzle's defaultNow() is computed in JS for postgres-js but
+      // pglite + DEFAULT now() in DDL means a value passed as updatedAt is
+      // honored. We pass it directly.
+      updatedAt: overrides.updatedAt ?? new Date(),
+    })
+    .returning();
+  if (!row) throw new Error('Failed to seed job');
+  return row;
+}
+
+describe('resetOrphanedJobs', () => {
+  it('marks a stale processing job as failed with orphan_job_reset', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const job = await createJob({ status: 'processing', updatedAt: staleDate });
+
+    const count = await resetOrphanedJobs(db, 5);
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('orphan_job_reset');
+  });
+
+  it('marks a stale awaiting_delegation job as failed', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const job = await createJob({ status: 'awaiting_delegation', updatedAt: staleDate });
+
+    await resetOrphanedJobs(db, 5);
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('orphan_job_reset');
+  });
+
+  it('does NOT touch a fresh processing job (1 min old)', async () => {
+    const freshDate = new Date(Date.now() - 60 * 1000);
+    const job = await createJob({ status: 'processing', updatedAt: freshDate });
+
+    await resetOrphanedJobs(db, 5);
+
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(row?.status).toBe('processing');
+  });
+
+  it('does NOT touch jobs in terminal states (completed/failed/cancelled)', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const completed = await createJob({ status: 'completed', updatedAt: staleDate });
+    const failed = await createJob({ status: 'failed', updatedAt: staleDate });
+    const cancelled = await createJob({ status: 'cancelled', updatedAt: staleDate });
+
+    await resetOrphanedJobs(db, 5);
+
+    for (const j of [completed, failed, cancelled]) {
+      const [row] = await db
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, j.id));
+      expect(row?.status).toBe(j.status);
+    }
+  });
+
+  it('does NOT touch awaiting_approval jobs (humans may resolve them later)', async () => {
+    const staleDate = new Date(Date.now() - 60 * 60 * 1000); // 1 hour
+    const job = await createJob({ status: 'awaiting_approval', updatedAt: staleDate });
+
+    await resetOrphanedJobs(db, 5);
+
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    // awaiting_approval is gated on a human acting; its TTL is enforced
+    // separately via approval_requests.expires_at — this cron must not
+    // pre-empt that.
+    expect(row?.status).toBe('awaiting_approval');
+  });
+
+  it('returns count of jobs reset', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    await createJob({ status: 'processing', updatedAt: staleDate });
+    await createJob({ status: 'awaiting_delegation', updatedAt: staleDate });
+
+    const count = await resetOrphanedJobs(db, 5);
+    // ≥ 2 because earlier tests in this file may have left stale rows.
     expect(count).toBeGreaterThanOrEqual(2);
   });
 });

@@ -1,11 +1,12 @@
 // cron/tick.ts — runCronTick
-// Orchestrates the four cron phases in order:
-//   1. resetOrphanedTasks   — recover in_progress tasks with no job
-//   2. unblockReadyTasks    — inject dep results for tasks whose deps are done
-//   3. executeReadyTasks    — claim and run up to 5 ready tasks
-//   4. deliverCompletedRoots — compile and deliver results for finished root jobs
+// Orchestrates the cron phases in order:
+//   1. resetOrphanedJobs    — fail jobs stuck in processing/awaiting_delegation
+//   2. resetOrphanedTasks   — recover in_progress tasks with no job
+//   3. unblockReadyTasks    — inject dep results for tasks whose deps are done
+//   4. executeReadyTasks    — claim and run up to 5 ready tasks
+//   5. deliverCompletedRoots — compile and deliver results for finished root jobs
 
-import { resetOrphanedTasks } from './reset-orphans.ts';
+import { resetOrphanedJobs, resetOrphanedTasks } from './reset-orphans.ts';
 import { unblockReadyTasks } from './unblock-ready.ts';
 import { executeReadyTasks } from './execute-ready.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
@@ -15,6 +16,7 @@ import type { RunnerEnv } from '../env.ts';
 // ─── CronTickResult ───────────────────────────────────────────────────────────
 
 export interface CronTickResult {
+  orphanJobsReset: number;
   orphansReset: number;
   tasksUnblocked: number;
   tasksExecuted: number;
@@ -41,10 +43,11 @@ export async function runCronTick(
   maxTasksPerTick = 5,
   env?: Pick<RunnerEnv, 'TELEGRAM_BOT_TOKEN'>,
 ): Promise<CronTickResult> {
+  const orphanJobsReset = await resetOrphanedJobs(deps.db);
   const orphansReset = await resetOrphanedTasks(deps.db);
   const tasksUnblocked = await unblockReadyTasks(deps.db);
   const tasksExecuted = await executeReadyTasks(deps.db, deps, maxTasksPerTick);
   const rootsDelivered = await deliverCompletedRoots(deps.db, env);
 
-  return { orphansReset, tasksUnblocked, tasksExecuted, rootsDelivered };
+  return { orphanJobsReset, orphansReset, tasksUnblocked, tasksExecuted, rootsDelivered };
 }

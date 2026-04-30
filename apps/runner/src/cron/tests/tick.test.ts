@@ -86,14 +86,16 @@ beforeAll(async () => {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('runCronTick (integration)', () => {
-  it('returns a CronTickResult with all four phase counts', async () => {
+  it('returns a CronTickResult with all phase counts', async () => {
     const deps = makeDeps(db);
     const result = await runCronTick(deps);
 
+    expect(result).toHaveProperty('orphanJobsReset');
     expect(result).toHaveProperty('orphansReset');
     expect(result).toHaveProperty('tasksUnblocked');
     expect(result).toHaveProperty('tasksExecuted');
     expect(result).toHaveProperty('rootsDelivered');
+    expect(typeof result.orphanJobsReset).toBe('number');
     expect(typeof result.orphansReset).toBe('number');
     expect(typeof result.tasksUnblocked).toBe('number');
     expect(typeof result.tasksExecuted).toBe('number');

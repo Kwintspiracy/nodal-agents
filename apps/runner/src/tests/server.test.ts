@@ -85,12 +85,14 @@ describe('server boot', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       ok: boolean;
+      orphanJobsReset: number;
       orphansReset: number;
       tasksUnblocked: number;
       tasksExecuted: number;
       rootsDelivered: number;
     };
     expect(body.ok).toBe(true);
+    expect(typeof body.orphanJobsReset).toBe('number');
     expect(typeof body.orphansReset).toBe('number');
     expect(typeof body.tasksUnblocked).toBe('number');
     expect(typeof body.tasksExecuted).toBe('number');
