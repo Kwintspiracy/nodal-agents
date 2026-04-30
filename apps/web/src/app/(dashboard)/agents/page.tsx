@@ -24,7 +24,7 @@ export default async function AgentsPage() {
             </p>
           )}
         </div>
-        <AgentForm models={models} />
+        <AgentForm models={models} agents={result.ok ? result.data : []} />
       </div>
 
       {!result.ok ? (

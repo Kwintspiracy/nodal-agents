@@ -4,7 +4,16 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 import { z } from 'zod';
-import { eq, and, desc, agents, agentJobs, agentTasks } from '@nodalai/db';
+import {
+  eq,
+  and,
+  desc,
+  inArray,
+  agents,
+  agentAssignments,
+  agentJobs,
+  agentTasks,
+} from '@nodalai/db';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
@@ -47,16 +56,23 @@ async function getSession() {
 
 // ─── Zod schemas (input validation) ──────────────────────────────────────────
 
-const CreateAgentSchema = z.object({
-  slug: z
-    .string()
-    .min(1)
-    .max(80)
-    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with dashes'),
-  name: z.string().min(1).max(120),
-  personality: z.string().min(1),
-  model: z.string().min(1),
-});
+const CreateAgentSchema = z
+  .object({
+    slug: z
+      .string()
+      .min(1)
+      .max(80)
+      .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with dashes'),
+    name: z.string().min(1).max(120),
+    personality: z.string().min(1),
+    model: z.string().min(1),
+    role: z.enum(['worker', 'router', 'planner']).default('worker'),
+    subAgentIds: z.array(z.string().uuid()).default([]),
+  })
+  .refine((d) => d.role !== 'worker' || d.subAgentIds.length === 0, {
+    message: 'Sub-agents only apply when role is router or planner',
+    path: ['subAgentIds'],
+  });
 
 const SendTaskSchema = z.object({
   title: z.string().min(1).max(200),
@@ -102,7 +118,28 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
+    const { role, subAgentIds } = parsed.data;
     const db = getDb();
+
+    // Verify all sub-agents exist in the same entity. We do this BEFORE the
+    // insert so we don't end up with a half-created orchestrator pointing at
+    // ghost sub-agents.
+    if (subAgentIds.length > 0) {
+      const found = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(inArray(agents.id, subAgentIds), eq(agents.entityId, session.entityId)));
+      if (found.length !== subAgentIds.length) {
+        return fail('validation_failed', 'One or more sub-agents not found in this workspace');
+      }
+    }
+
+    // role/orchestrator_mode mapping. The DB enum is { agent, orchestrator,
+    // system } — we expose a friendlier UX-level enum (worker/router/planner)
+    // and translate here.
+    const dbRole = role === 'worker' ? 'agent' : 'orchestrator';
+    const orchestratorMode = role === 'worker' ? null : role;
+
     const [row] = await db
       .insert(agents)
       .values({
@@ -111,9 +148,22 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
         name: parsed.data.name,
         personality: parsed.data.personality,
         model: parsed.data.model,
+        role: dbRole,
+        orchestratorMode,
       })
       .returning({ id: agents.id });
     if (!row) return fail('db_error', 'Insert returned no row');
+
+    if (subAgentIds.length > 0) {
+      await db.insert(agentAssignments).values(
+        subAgentIds.map((subId) => ({
+          orchestratorId: row.id,
+          subAgentId: subId,
+          entityId: session.entityId,
+        })),
+      );
+    }
+
     revalidatePath('/agents');
     return ok({ id: row.id });
   } catch (err: unknown) {

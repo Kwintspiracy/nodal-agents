@@ -165,6 +165,119 @@ describe('createAgentAction — db path', () => {
     if (r.ok) expect(r.data.id).toBe('aaaaaaaa-0000-0000-0000-000000000001');
   });
 
+  it('defaults role to worker (no orchestrator_mode, no assignments)', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000002' }]) as typeof currentDb;
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'worker-agent',
+      name: 'Worker',
+      personality: 'I do work.',
+      model: 'gpt-4',
+    });
+    expect(r.ok).toBe(true);
+    // Capture the values passed to insert(...).values(...)
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    // First insert is into `agents`. Assert role/orchestrator_mode.
+    const firstInsert = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(firstInsert?.['role']).toBe('agent');
+    expect(firstInsert?.['orchestratorMode']).toBe(null);
+  });
+
+  it('rejects subAgentIds when role is worker', async () => {
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'bad',
+      name: 'Bad',
+      personality: 'Hi',
+      model: 'gpt-4',
+      role: 'worker',
+      subAgentIds: ['11111111-1111-1111-1111-111111111111'],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects subAgentIds that do not belong to the entity', async () => {
+    // First select() returns [] (no matching subagents found)
+    currentDb = makeDb([]) as typeof currentDb;
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'router',
+      name: 'Router',
+      personality: 'I delegate',
+      model: 'gpt-4',
+      role: 'router',
+      subAgentIds: ['11111111-1111-1111-1111-111111111111'],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('creates a router with role=orchestrator and orchestrator_mode=router', async () => {
+    // The chain mock returns the same rows for every awaited query, so we
+    // pick a single row that satisfies BOTH the validation select (must
+    // return exactly subAgentIds.length rows) AND the agents insert
+    // (.returning() needs at least one row with an id).
+    const subId = '22222222-2222-2222-2222-222222222222';
+    currentDb = makeDb([{ id: subId }]) as typeof currentDb;
+
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'my-router',
+      name: 'My Router',
+      personality: 'I route.',
+      model: 'gpt-4',
+      role: 'router',
+      subAgentIds: [subId],
+    });
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    // Two inserts must have happened: agents + agentAssignments
+    expect(insertSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+
+    // First insert: agents row with role='orchestrator', orchestratorMode='router'
+    const agentValues = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(agentValues?.['role']).toBe('orchestrator');
+    expect(agentValues?.['orchestratorMode']).toBe('router');
+
+    // Second insert: agent_assignments with one row pointing at subId
+    const assignmentValues = valuesCalls[1]?.[0] as Array<Record<string, unknown>> | undefined;
+    expect(Array.isArray(assignmentValues)).toBe(true);
+    expect(assignmentValues?.[0]?.['subAgentId']).toBe(subId);
+  });
+
+  it('creates a planner with orchestrator_mode=planner', async () => {
+    const subId = '33333333-3333-3333-3333-333333333333';
+    currentDb = makeDb([{ id: subId }]) as typeof currentDb;
+
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'my-planner',
+      name: 'My Planner',
+      personality: 'I plan.',
+      model: 'gpt-4',
+      role: 'planner',
+      subAgentIds: [subId],
+    });
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    const agentValues = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(agentValues?.['role']).toBe('orchestrator');
+    expect(agentValues?.['orchestratorMode']).toBe('planner');
+  });
+
   it('returns db_error when insert returns no row', async () => {
     currentDb = makeDb([]) as typeof currentDb;
     const { createAgentAction } = await import('../src/lib/actions.ts');
