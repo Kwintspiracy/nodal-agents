@@ -48,7 +48,16 @@ async function pidListeningOnPort(port: number): Promise<number | null> {
   return null;
 }
 
-export async function runUp(): Promise<void> {
+export interface RunUpOptions {
+  /**
+   * Use `next dev` (HMR) for the web app instead of `next start`.
+   * Skips the prod build and rebuilds modules on the fly. Slower first
+   * page load, far faster iteration loop. Off by default.
+   */
+  dev?: boolean;
+}
+
+export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 1. Load config (run init if missing) ──────────────────────────────────
 
   let config = readConfig();
@@ -181,8 +190,9 @@ export async function runUp(): Promise<void> {
   // ── 6. Spawn web ──────────────────────────────────────────────────────────
 
   const webEnv = buildEnvForWeb(config, databaseUrl);
-  const webSpinner = ora('Starting web…').start();
-  const webProcess = spawnWeb(webEnv);
+  const webSpinnerLabel = opts.dev ? 'Starting web (dev — HMR)…' : 'Starting web…';
+  const webSpinner = ora(webSpinnerLabel).start();
+  const webProcess = spawnWeb(webEnv, { dev: opts.dev });
   const webPid = webProcess.pid ?? 0;
   webSpinner.succeed(chalk.green(`Web started (pid ${webPid})`));
 
@@ -192,8 +202,10 @@ export async function runUp(): Promise<void> {
   // ── 7. Wait for health ────────────────────────────────────────────────────
 
   const healthSpinner = ora('Waiting for services to be healthy…').start();
+  // `next dev` first-compile can blow past 30s on a cold cache.
+  const webHealthMs = opts.dev ? 90_000 : 30_000;
   try {
-    await Promise.all([waitForHealth(runnerUrl, 30_000), waitForHealth(webUrl, 30_000)]);
+    await Promise.all([waitForHealth(runnerUrl, 30_000), waitForHealth(webUrl, webHealthMs)]);
     healthSpinner.succeed(chalk.green('All services healthy'));
   } catch (err) {
     healthSpinner.fail('Health check timed out');

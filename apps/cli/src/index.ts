@@ -14,15 +14,17 @@ program
 
 // ── nodalai (default: up) ─────────────────────────────────────────────────────
 
-program.action(async () => {
-  const { runUp } = await import('./commands/up.ts');
-  try {
-    await runUp();
-  } catch (err) {
-    console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-});
+program
+  .option('--dev', 'Run web in `next dev` mode (HMR, no prebuild required)')
+  .action(async (opts: { dev?: boolean }) => {
+    const { runUp } = await import('./commands/up.ts');
+    try {
+      await runUp({ dev: opts.dev });
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
 
 // ── nodalai init ──────────────────────────────────────────────────────────────
 
@@ -45,10 +47,11 @@ program
 program
   .command('up')
   .description('Start Postgres, runner, and web — open browser when ready')
-  .action(async () => {
+  .option('--dev', 'Run web in `next dev` mode (HMR, no prebuild required)')
+  .action(async (opts: { dev?: boolean }) => {
     const { runUp } = await import('./commands/up.ts');
     try {
-      await runUp();
+      await runUp({ dev: opts.dev });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);

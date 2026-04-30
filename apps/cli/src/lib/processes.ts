@@ -75,24 +75,38 @@ export function spawnRunner(env: Record<string, string>): ResultPromise {
   return child;
 }
 
+export interface SpawnWebOptions {
+  /**
+   * When true, spawn `next dev` (HMR enabled, no build required).
+   * When false (default), spawn `next start` against a prebuilt `.next/` dir.
+   *
+   * Dev mode is the right choice for active migration work: edits to web
+   * source reload in the browser without rebuilding. Start mode is a couple
+   * hundred ms faster on response and matches what we'd ship.
+   */
+  dev?: boolean;
+}
+
 /**
  * Spawn the web (apps/web — Next.js) as a child process.
  */
-export function spawnWeb(env: Record<string, string>): ResultPromise {
+export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}): ResultPromise {
   const webDir = resolveAppDir('apps/web');
   const logFile = join(LOG_DIR, 'web.log');
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
   const nextBin = resolveLocalBin(webDir, 'next');
+  const subcommand = opts.dev ? 'dev' : 'start';
 
   outStream.write(
     `\n--- spawnWeb ${new Date().toISOString()} ---\n` +
       `cwd: ${webDir}\n` +
       `bin: ${nextBin}\n` +
+      `mode: ${subcommand}\n` +
       `env keys: ${Object.keys(env).join(',')}\n\n`,
   );
 
-  const child = execa(nextBin, ['start'], {
+  const child = execa(nextBin, [subcommand], {
     cwd: webDir,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
