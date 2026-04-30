@@ -59,6 +59,7 @@ export function startTelegramManager(
       id: string;
       entityId: string | null;
       botToken: string | null;
+      botUsername: string | null;
       offset: number | null;
     }>;
     try {
@@ -67,6 +68,7 @@ export function startTelegramManager(
           id: agents.id,
           entityId: agents.entityId,
           botToken: agents.telegramBotToken,
+          botUsername: agents.telegramBotUsername,
           offset: agents.telegramOffset,
         })
         .from(agents)
@@ -91,12 +93,12 @@ export function startTelegramManager(
         if (existing.botToken !== token) {
           existing.controller.abort();
           await existing.exit;
-          spawn(row.id, row.entityId, token, row.offset ?? 0);
+          spawn(row.id, row.entityId, token, row.botUsername, row.offset ?? 0);
         }
         continue;
       }
 
-      spawn(row.id, row.entityId, token, row.offset ?? 0);
+      spawn(row.id, row.entityId, token, row.botUsername, row.offset ?? 0);
     }
 
     // Stop pollers whose agent disappeared or had its token cleared
@@ -112,6 +114,7 @@ export function startTelegramManager(
     agentId: string,
     agentEntityId: string,
     botToken: string,
+    botUsername: string | null,
     startOffset: number,
   ): void {
     const controller = new AbortController();
@@ -119,6 +122,7 @@ export function startTelegramManager(
       agentId,
       agentEntityId,
       botToken,
+      botUsername,
       startOffset,
       signal: controller.signal,
       deps,

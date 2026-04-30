@@ -475,11 +475,12 @@ describe('configureAgentTelegramAction', () => {
     fetchSpy.mockRestore();
   });
 
-  it('persists token + bot_username + offset=0 on success', async () => {
+  it('persists token + bot_username + offset=0 when no backlog', async () => {
     currentDb = makeDb([
       { id: 'aaaaaaaa-0000-0000-0000-000000000023', slug: 'agent-y', name: 'Agent Y' },
     ]) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    // 1st: getMe → ok
     fetchSpy.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -495,6 +496,10 @@ describe('configureAgentTelegramAction', () => {
         { status: 200 },
       ),
     );
+    // 2nd: getUpdates(-1, 0) → empty backlog
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 }),
+    );
 
     const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
     const r = await configureAgentTelegramAction({
@@ -507,17 +512,116 @@ describe('configureAgentTelegramAction', () => {
       expect(r.data.botUsername).toBe('my_bot');
     }
 
-    // Exactly one fetch — getMe — and no other Telegram API calls.
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url] = fetchSpy.mock.calls[0]!;
-    expect(String(url)).toContain('/getMe');
+    // Two fetches: getMe + drain (getUpdates).
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain('/getMe');
+    expect(String(fetchSpy.mock.calls[1]![0])).toContain('/getUpdates');
 
-    // update() persisted the bot fields and reset the offset.
+    // No backlog → offset stays at 0.
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const setSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
     const setArg = setSpy.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg['telegramBotToken']).toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
     expect(setArg['telegramBotUsername']).toBe('my_bot');
+    expect(setArg['telegramOffset']).toBe(0);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('drains backlog: offset = max(update_id) + 1 when reconnecting', async () => {
+    // Simulates user disconnecting, sending messages while disconnected, then
+    // reconnecting. Telegram returns the buffered updates. We must NOT replay
+    // them.
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000040', slug: 'agent-r', name: 'Reconnect' },
+    ]) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    // 1st: getMe
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { id: 1, is_bot: true, first_name: 'R', username: 'r_bot' },
+        }),
+        { status: 200 },
+      ),
+    );
+    // 2nd: getUpdates(-1, 0, limit:1) → returns the latest pending update
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: [
+            {
+              update_id: 12345,
+              message: {
+                chat: { id: 1, type: 'private' },
+                from: { first_name: 'X' },
+                text: 'I sent this while you were disconnected',
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentTelegramAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000040',
+      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+    });
+    expect(r.ok).toBe(true);
+
+    // Verify drain hits getUpdates with offset=-1, timeout=0, limit=1
+    const drainCall = fetchSpy.mock.calls[1]!;
+    expect(String(drainCall[0])).toContain('/getUpdates');
+    const drainBody = JSON.parse(drainCall[1]?.body as string) as Record<string, unknown>;
+    expect(drainBody['offset']).toBe(-1);
+    expect(drainBody['timeout']).toBe(0);
+    expect(drainBody['limit']).toBe(1);
+
+    // Persisted offset must be update_id + 1 so the poller starts AFTER the
+    // buffered update — no replay.
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
+    const setArg = setSpy.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg['telegramOffset']).toBe(12346);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('still configures (offset=0) when the drain call fails', async () => {
+    // Drain is best-effort. A network blip during configure must not block
+    // the user from connecting their bot.
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000041', slug: 'agent-d', name: 'Drain Fail' },
+    ]) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { id: 1, is_bot: true, first_name: 'D', username: 'd_bot' },
+        }),
+        { status: 200 },
+      ),
+    );
+    // Drain throws — caught, configure proceeds.
+    fetchSpy.mockRejectedValueOnce(new Error('network down'));
+
+    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentTelegramAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000041',
+      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
+    const setArg = setSpy.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg['telegramBotToken']).toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    // Fallback to 0 when drain failed
     expect(setArg['telegramOffset']).toBe(0);
 
     fetchSpy.mockRestore();

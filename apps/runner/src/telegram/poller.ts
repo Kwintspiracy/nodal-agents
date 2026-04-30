@@ -24,6 +24,12 @@ export interface PollerOpts {
   agentId: string;
   agentEntityId: string;
   botToken: string;
+  /**
+   * Bot's @username (without the @). Used by the handler to detect mentions
+   * in group chats. Null is allowed for bots that haven't been getMe-validated
+   * yet (mention triggers will simply be ignored in that case).
+   */
+  botUsername: string | null;
   /** The starting offset (next update_id to fetch). Loaded from DB. */
   startOffset: number;
   signal: AbortSignal;
@@ -49,7 +55,7 @@ const BACKOFF_MAX_MS = 30_000;
  * so they can await all pollers on shutdown.
  */
 export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
-  const { agentId, agentEntityId, botToken, signal, deps, env } = opts;
+  const { agentId, agentEntityId, botToken, botUsername, signal, deps, env } = opts;
   const longPoll = opts.longPollSeconds ?? 25;
   let offset = opts.startOffset;
   let backoffMs = BACKOFF_INITIAL_MS;
@@ -103,6 +109,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
             update,
             receivingAgentId: agentId,
             receivingAgentEntityId: agentEntityId,
+            receivingAgentBotUsername: botUsername,
             tx: tx as unknown as RunnerDeps['db'],
           });
           await tx

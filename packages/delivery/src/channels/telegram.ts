@@ -191,17 +191,21 @@ export async function getTelegramUpdates(opts: {
   botToken: string;
   offset: number;
   timeout?: number;
+  /** Cap on number of updates returned. Telegram allows 1..100, default 100. */
+  limit?: number;
   /** Abort the long-poll request (e.g. on runner shutdown). */
   signal?: AbortSignal;
 }): Promise<TelegramUpdate[]> {
+  const body: Record<string, unknown> = {
+    offset: opts.offset,
+    timeout: opts.timeout ?? 25,
+    allowed_updates: ['message', 'callback_query'],
+  };
+  if (opts.limit !== undefined) body['limit'] = opts.limit;
   const result = await callBotApi<TelegramUpdate[]>(
     opts.botToken,
     'getUpdates',
-    {
-      offset: opts.offset,
-      timeout: opts.timeout ?? 25,
-      allowed_updates: ['message', 'callback_query'],
-    },
+    body,
     opts.signal,
   );
   return result;

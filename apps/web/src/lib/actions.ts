@@ -14,7 +14,7 @@ import {
   agentJobs,
   agentTasks,
 } from '@nodalai/db';
-import { DeliveryError, getTelegramBotInfo } from '@nodalai/delivery';
+import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
@@ -494,16 +494,37 @@ export async function configureAgentTelegramAction(
       throw err;
     }
 
+    // Drain any backlog Telegram has buffered for this bot. Otherwise the
+    // poller would replay messages sent BEFORE the (re)connect — including
+    // ones sent during a disconnected window — which surprises the user
+    // ("why is the bot answering my old messages?"). One getUpdates(-1, 0)
+    // call fetches the latest pending update; we set the next offset to
+    // that.update_id + 1 so the poller starts from "now".
+    let initialOffset = 0;
+    try {
+      const recent = await getTelegramUpdates({
+        botToken,
+        offset: -1,
+        timeout: 0,
+        limit: 1,
+      });
+      if (recent.length > 0) {
+        initialOffset = Math.max(...recent.map((u) => u.update_id)) + 1;
+      }
+    } catch {
+      // Best-effort drain. If this single call fails (network blip), we
+      // accept the small UX regression — the poller will still work, just
+      // potentially replay a few seconds of backlog.
+    }
+
     // Persist. The runner's TelegramManager will pick this up on its next
     // refresh tick (~30s) and start long-polling Telegram for this bot.
-    // Reset the offset to 0 so a freshly-rotated bot starts clean — getUpdates
-    // with offset=0 fetches whatever's been buffered (max 24h on Telegram's side).
     await db
       .update(agents)
       .set({
         telegramBotToken: botToken,
         telegramBotUsername: botInfo.username,
-        telegramOffset: 0,
+        telegramOffset: initialOffset,
         updatedAt: new Date(),
       })
       .where(eq(agents.id, agentId));

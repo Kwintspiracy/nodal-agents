@@ -51,6 +51,7 @@ describe('handleTelegramUpdate — private chats', () => {
       update: privateMessage('hello world', 999),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result.jobId).toBeDefined();
@@ -71,6 +72,7 @@ describe('handleTelegramUpdate — private chats', () => {
       update: { update_id: 2 },
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result).toEqual({ skipped: 'no_message' });
@@ -84,6 +86,7 @@ describe('handleTelegramUpdate — private chats', () => {
       },
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result).toEqual({ skipped: 'no_text' });
@@ -91,11 +94,12 @@ describe('handleTelegramUpdate — private chats', () => {
 });
 
 describe('handleTelegramUpdate — group chats', () => {
-  it('skips plain text in group chats (no command, no bot reply)', async () => {
+  it('skips plain text in group chats (no command, no bot reply, no mention)', async () => {
     const result = await handleTelegramUpdate({
       update: groupMessage('just chatting'),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result).toEqual({ skipped: 'group_filter' });
@@ -106,6 +110,7 @@ describe('handleTelegramUpdate — group chats', () => {
       update: groupMessage('thanks for the answer', { replyToBot: true }),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result.jobId).toBeDefined();
@@ -117,6 +122,51 @@ describe('handleTelegramUpdate — group chats', () => {
     // Group messages get the sender prefix so the agent knows who said what
     expect(job?.task).toContain('[Message from Alice');
     expect(job?.task).toContain('thanks for the answer');
+  });
+
+  it('handles @mention in a group chat (case-insensitive, mention stripped)', async () => {
+    const result = await handleTelegramUpdate({
+      update: groupMessage('@Test_Bot dis bonjour'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result.jobId).toBeDefined();
+
+    const [job] = await db
+      .select()
+      .from(agentJobs)
+      .where(eq(agentJobs.id, result.jobId!));
+    expect(job?.task).toContain('[Message from Alice');
+    // The mention itself must be stripped — only the actual ask remains
+    expect(job?.task).toContain('dis bonjour');
+    expect(job?.task).not.toContain('@Test_Bot');
+    expect(job?.task).not.toContain('@test_bot');
+  });
+
+  it('skips @mention with no payload (just "@bot")', async () => {
+    const result = await handleTelegramUpdate({
+      update: groupMessage('@test_bot'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result).toEqual({ skipped: 'mention_no_text' });
+  });
+
+  it('falls back to group_filter when bot username is unknown', async () => {
+    // Bot configured but getMe never resolved username — should ignore
+    // mention-shaped text rather than misroute it.
+    const result = await handleTelegramUpdate({
+      update: groupMessage('@some_other_bot do something'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: null,
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result).toEqual({ skipped: 'group_filter' });
   });
 });
 
@@ -138,6 +188,7 @@ describe('handleTelegramUpdate — /ask command', () => {
       update: privateMessage(`/ask ${otherAgent!.slug} what is the time`),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result.jobId).toBeDefined();
@@ -155,6 +206,7 @@ describe('handleTelegramUpdate — /ask command', () => {
       update: privateMessage('/ask agent-x'),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result).toEqual({ skipped: 'ask_no_text' });
@@ -165,6 +217,7 @@ describe('handleTelegramUpdate — /ask command', () => {
       update: privateMessage('/ask not-a-real-agent please help'),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     expect(result).toEqual({ skipped: 'ask_unknown_agent' });
@@ -198,6 +251,7 @@ describe('handleTelegramUpdate — /ask command', () => {
       update: privateMessage(`/ask ${foreignAgent!.slug} hello`),
       receivingAgentId: seed.agentId,
       receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
       tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
     });
     // Cross-entity routing must be denied — agents in another workspace are

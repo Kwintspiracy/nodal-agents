@@ -169,6 +169,37 @@ describe('getTelegramUpdates', () => {
     });
   });
 
+  it('passes limit when provided (used by configure-time backlog drain)', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: [] }),
+    );
+
+    await getTelegramUpdates({
+      botToken: FAKE_TOKEN,
+      offset: -1,
+      timeout: 0,
+      limit: 1,
+    });
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['limit']).toBe(1);
+    expect(body['offset']).toBe(-1);
+    expect(body['timeout']).toBe(0);
+  });
+
+  it('does NOT include limit when not specified (default polling)', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      makeFetchResponse(200, { ok: true, result: [] }),
+    );
+
+    await getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 0 });
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect('limit' in body).toBe(false);
+  });
+
   it('throws telegram_request_failed on transient errors (caller backs off and retries)', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       makeFetchResponse(500, { ok: false, description: 'Internal Server Error' }),
