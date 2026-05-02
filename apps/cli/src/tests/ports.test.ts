@@ -1,7 +1,7 @@
 // ports.test.ts — findFreePort returns a usable port
 
 import { describe, it, expect } from 'vitest';
-import { findFreePort, DEFAULT_PORTS } from '../lib/ports.ts';
+import { findFreePort, isPortBindable, DEFAULT_PORTS } from '../lib/ports.ts';
 import { createServer } from 'net';
 
 describe('findFreePort', () => {
@@ -75,6 +75,41 @@ describe('findFreePort', () => {
     } finally {
       await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
     }
+  });
+});
+
+describe('isPortBindable', () => {
+  it('returns true for a port that nothing is holding', async () => {
+    const port = await findFreePort(60100);
+    await expect(isPortBindable(port)).resolves.toBe(true);
+  });
+
+  it('returns false when the port is already in use', async () => {
+    const blocker = createServer();
+    const blockedPort = await new Promise<number>((resolve, reject) => {
+      blocker.listen(0, '127.0.0.1', () => {
+        const addr = blocker.address();
+        if (typeof addr === 'object' && addr) resolve(addr.port);
+        else reject(new Error('No address'));
+      });
+    });
+
+    try {
+      await expect(isPortBindable(blockedPort)).resolves.toBe(false);
+    } finally {
+      await new Promise<void>((r) => blocker.close(() => r()));
+    }
+  });
+
+  it('returns false for an out-of-range port (negative)', async () => {
+    // Out-of-range integers raise on listen(); the helper resolves to false.
+    await expect(isPortBindable(-1)).resolves.toBe(false);
+  });
+
+  it('does not throw — always resolves boolean', async () => {
+    // Whatever the kernel says, the helper must not reject.
+    const result = await isPortBindable(0).catch(() => 'rejected');
+    expect(typeof result).toBe('boolean');
   });
 });
 

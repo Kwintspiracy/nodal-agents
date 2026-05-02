@@ -3,11 +3,12 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import open from 'open';
-import { readConfig } from '../lib/config.ts';
+import { readConfig, writeConfig } from '../lib/config.ts';
 import { runInit } from './init.ts';
 import { startEmbeddedPostgres, runMigrations } from '../lib/postgres.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
 import { buildEnvForRunner, buildEnvForWeb, buildDatabaseUrl } from '../lib/env.ts';
+import { isPortBindable, findFreePort } from '../lib/ports.ts';
 import {
   spawnRunner,
   spawnWeb,
@@ -66,8 +67,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     config = await runInit();
   }
 
-  const webUrl = `http://localhost:${config.ports.web}`;
-  const runnerUrl = `http://localhost:${config.ports.runner}`;
+  // URLs are computed after the port-rotation guard below — config.ports may
+  // change between here and there if the OS has reserved the configured port.
 
   // ── 1.5 Port-conflict pre-flight ──────────────────────────────────────────
   // Catch orphans from a previous crashed run BEFORE spawning anything.
@@ -138,6 +139,35 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     }
     console.log(chalk.green('Orphans cleaned up.\n'));
   }
+
+  // ── 1.6 Port-reservation guard (Windows Hyper-V/WinNAT excluded ranges) ──
+  // Even with no orphan, a port can be unbindable because the OS has
+  // reserved it. listen() returns EACCES and we'd fail downstream with a
+  // confusing "Postgres start failed". Probe each configured port; if it's
+  // not bindable, rotate to a free one nearby and persist so the next boot
+  // uses the working port directly.
+
+  const portChanges: Array<{ name: 'web' | 'runner' | 'postgres'; from: number; to: number }> = [];
+  for (const name of ['web', 'runner', 'postgres'] as const) {
+    const configured = config.ports[name];
+    if (await isPortBindable(configured)) continue;
+    const next = await findFreePort(configured + 1);
+    portChanges.push({ name, from: configured, to: next });
+    config.ports[name] = next;
+  }
+
+  if (portChanges.length > 0) {
+    console.log(chalk.yellow('Configured ports unavailable — rotating:'));
+    for (const c of portChanges) {
+      console.log(chalk.gray(`  - ${c.name}: ${c.from} → ${c.to}`));
+    }
+    writeConfig(config);
+    console.log(chalk.gray('  Updated ~/.nodalai/config.json.\n'));
+  }
+
+  // Now that ports are finalised, derive the user-facing URLs.
+  const webUrl = `http://localhost:${config.ports.web}`;
+  const runnerUrl = `http://localhost:${config.ports.runner}`;
 
   // ── 2. Start embedded Postgres ────────────────────────────────────────────
 
