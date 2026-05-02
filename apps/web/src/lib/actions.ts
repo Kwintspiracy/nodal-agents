@@ -1712,3 +1712,45 @@ export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>>
     return fail('db_error', 'Failed to load stats');
   }
 }
+
+// ─── Settings Action ──────────────────────────────────────────────────────────
+
+export type SettingsView = {
+  llm: {
+    provider: string | null;
+    model: string | null;
+    baseURL: string | null;
+  };
+  authMode: 'local-trust' | 'local-auth' | 'bearer-token';
+  runnerUrl: string;
+  appUrl: string;
+  workerSecretConfigured: boolean;
+  user: {
+    userId: string;
+    entityId: string;
+  };
+};
+
+export async function getSettingsAction(): Promise<ActionResult<SettingsView>> {
+  try {
+    const session = await getSession();
+    return ok({
+      llm: {
+        provider: env.LLM_PROVIDER ?? null,
+        model: env.LLM_MODEL ?? null,
+        baseURL: env.LLM_BASE_URL ?? null,
+      },
+      authMode: env.AUTH_MODE,
+      runnerUrl: env.RUNNER_URL,
+      appUrl: env.NEXT_PUBLIC_APP_URL,
+      workerSecretConfigured: Boolean(env.WORKER_SECRET),
+      user: {
+        userId: session.userId,
+        entityId: session.entityId,
+      },
+    });
+  } catch (err) {
+    console.error('[getSettingsAction]', err);
+    return fail('db_error', 'Failed to load settings');
+  }
+}

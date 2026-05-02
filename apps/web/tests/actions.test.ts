@@ -1375,3 +1375,18 @@ describe('getEntityStatsAction', () => {
     }
   });
 });
+
+describe('getSettingsAction', () => {
+  it('returns env-derived settings + session ids', async () => {
+    const { getSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await getSettingsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.authMode).toBe('local-trust');
+      expect(r.data.runnerUrl).toBe('http://localhost:3001');
+      expect(r.data.workerSecretConfigured).toBe(true);
+      expect(typeof r.data.user.userId).toBe('string');
+      expect(typeof r.data.user.entityId).toBe('string');
+    }
+  });
+});
