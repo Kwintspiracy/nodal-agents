@@ -13,6 +13,7 @@ import {
   agentAssignments,
   agentJobs,
   agentTasks,
+  connectors,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import {
@@ -773,5 +774,287 @@ export async function deleteMemoryAction(id: string): Promise<ActionResult<void>
     }
     console.error('[deleteMemoryAction]', err);
     return fail('db_error', 'Failed to delete memory');
+  }
+}
+
+// ─── Connector Actions ────────────────────────────────────────────────────────
+
+const CONNECTOR_AUTH_TYPES = ['api_key', 'oauth2', 'bearer', 'basic', 'none'] as const;
+type ConnectorAuthType = (typeof CONNECTOR_AUTH_TYPES)[number];
+
+/**
+ * Catalog of adapter slugs the runner knows about. UI surfaces these so the
+ * user picks from a list instead of typing a slug that no adapter listens to.
+ * Order matters: we render them in this order on the page.
+ */
+export const CONNECTOR_CATALOG = [
+  {
+    slug: 'notion',
+    label: 'Notion',
+    authType: 'api_key' as ConnectorAuthType,
+    docsHint: 'Create a Notion integration at notion.so/my-integrations and copy its internal secret.',
+  },
+  {
+    slug: 'google-drive',
+    label: 'Google Drive',
+    authType: 'oauth2' as ConnectorAuthType,
+    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
+  },
+  {
+    slug: 'gmail',
+    label: 'Gmail',
+    authType: 'oauth2' as ConnectorAuthType,
+    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
+  },
+  {
+    slug: 'google-sheets',
+    label: 'Google Sheets',
+    authType: 'oauth2' as ConnectorAuthType,
+    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
+  },
+  {
+    slug: 'google-docs',
+    label: 'Google Docs',
+    authType: 'oauth2' as ConnectorAuthType,
+    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
+  },
+] as const;
+
+export type ConnectorRow = {
+  id: string;
+  slug: string;
+  name: string;
+  authType: string;
+  active: boolean;
+  hasApiKey: boolean;
+  hasOauthAccessToken: boolean;
+  hasOauthRefreshToken: boolean;
+  oauthAccountName: string | null;
+  oauthClientId: string | null;
+  oauthScopes: string | null;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+};
+
+export type ConnectorListEntry = {
+  catalogSlug: string;
+  label: string;
+  authType: ConnectorAuthType;
+  docsHint: string;
+  /** Configured connector for this slug, if any. */
+  connector: ConnectorRow | null;
+};
+
+export async function listConnectorsAction(): Promise<ActionResult<ConnectorListEntry[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(connectors)
+      .where(eq(connectors.entityId, session.entityId));
+
+    const bySlug = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) bySlug.set(r.slug, r);
+
+    const entries: ConnectorListEntry[] = CONNECTOR_CATALOG.map((c) => {
+      const row = bySlug.get(c.slug);
+      return {
+        catalogSlug: c.slug,
+        label: c.label,
+        authType: c.authType,
+        docsHint: c.docsHint,
+        connector: row
+          ? {
+              id: row.id,
+              slug: row.slug,
+              name: row.name,
+              authType: row.authType,
+              active: row.active ?? true,
+              hasApiKey: !!row.apiKey,
+              hasOauthAccessToken: !!row.oauthAccessToken,
+              hasOauthRefreshToken: !!row.oauthRefreshToken,
+              oauthAccountName: row.oauthAccountName,
+              oauthClientId: row.oauthClientId,
+              oauthScopes: row.oauthScopes,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+            }
+          : null,
+      };
+    });
+
+    return ok(entries);
+  } catch (err) {
+    console.error('[listConnectorsAction]', err);
+    return fail('db_error', 'Failed to load connectors');
+  }
+}
+
+const SaveApiKeyConnectorSchema = z.object({
+  slug: z.string().min(1).max(80),
+  name: z.string().min(1).max(120).optional(),
+  apiKey: z.string().min(1, 'API key is required'),
+});
+
+export async function saveApiKeyConnectorAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = SaveApiKeyConnectorSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const catalog = CONNECTOR_CATALOG.find((c) => c.slug === parsed.data.slug);
+    if (!catalog) {
+      return fail('validation_failed', 'Unknown connector slug');
+    }
+    if (catalog.authType !== 'api_key') {
+      return fail(
+        'validation_failed',
+        `Connector ${parsed.data.slug} uses ${catalog.authType}, not api_key`,
+      );
+    }
+
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, parsed.data.slug)));
+
+    const name = parsed.data.name ?? catalog.label;
+
+    if (existing) {
+      await db
+        .update(connectors)
+        .set({
+          name,
+          apiKey: parsed.data.apiKey,
+          authType: 'api_key',
+          active: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(connectors.id, existing.id));
+      revalidatePath('/connectors');
+      return ok({ id: existing.id });
+    }
+
+    const [row] = await db
+      .insert(connectors)
+      .values({
+        entityId: session.entityId,
+        slug: parsed.data.slug,
+        name,
+        apiKey: parsed.data.apiKey,
+        authType: 'api_key',
+        active: true,
+      })
+      .returning({ id: connectors.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+    revalidatePath('/connectors');
+    return ok({ id: row.id });
+  } catch (err) {
+    console.error('[saveApiKeyConnectorAction]', err);
+    return fail('db_error', 'Failed to save connector');
+  }
+}
+
+const SaveOauthConnectorSchema = z.object({
+  slug: z.string().min(1).max(80),
+  name: z.string().min(1).max(120).optional(),
+  oauthClientId: z.string().min(1, 'Client ID is required'),
+  oauthClientSecret: z.string().min(1, 'Client secret is required'),
+  oauthRefreshToken: z.string().min(1, 'Refresh token is required'),
+  oauthAccessToken: z.string().optional(),
+  oauthTokenUrl: z.string().url().optional(),
+  oauthScopes: z.string().optional(),
+  oauthAccountName: z.string().optional(),
+});
+
+export async function saveOauthConnectorAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = SaveOauthConnectorSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const catalog = CONNECTOR_CATALOG.find((c) => c.slug === parsed.data.slug);
+    if (!catalog) {
+      return fail('validation_failed', 'Unknown connector slug');
+    }
+    if (catalog.authType !== 'oauth2') {
+      return fail(
+        'validation_failed',
+        `Connector ${parsed.data.slug} uses ${catalog.authType}, not oauth2`,
+      );
+    }
+
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, parsed.data.slug)));
+
+    const name = parsed.data.name ?? catalog.label;
+    const fields = {
+      name,
+      authType: 'oauth2' as const,
+      active: true,
+      oauthClientId: parsed.data.oauthClientId,
+      oauthClientSecret: parsed.data.oauthClientSecret,
+      oauthRefreshToken: parsed.data.oauthRefreshToken,
+      oauthAccessToken: parsed.data.oauthAccessToken ?? null,
+      oauthTokenUrl: parsed.data.oauthTokenUrl ?? null,
+      oauthScopes: parsed.data.oauthScopes ?? null,
+      oauthAccountName: parsed.data.oauthAccountName ?? null,
+    };
+
+    if (existing) {
+      await db
+        .update(connectors)
+        .set({ ...fields, updatedAt: new Date() })
+        .where(eq(connectors.id, existing.id));
+      revalidatePath('/connectors');
+      return ok({ id: existing.id });
+    }
+
+    const [row] = await db
+      .insert(connectors)
+      .values({
+        entityId: session.entityId,
+        slug: parsed.data.slug,
+        ...fields,
+      })
+      .returning({ id: connectors.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+    revalidatePath('/connectors');
+    return ok({ id: row.id });
+  } catch (err) {
+    console.error('[saveOauthConnectorAction]', err);
+    return fail('db_error', 'Failed to save connector');
+  }
+}
+
+export async function deleteConnectorAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid connector id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .where(and(eq(connectors.id, id), eq(connectors.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Connector not found');
+    await db.delete(connectors).where(eq(connectors.id, id));
+    revalidatePath('/connectors');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteConnectorAction]', err);
+    return fail('db_error', 'Failed to delete connector');
   }
 }

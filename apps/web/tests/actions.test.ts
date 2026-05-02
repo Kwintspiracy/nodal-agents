@@ -856,3 +856,165 @@ describe('deleteMemoryAction', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+// ─── Connector Actions ────────────────────────────────────────────────────────
+
+describe('listConnectorsAction', () => {
+  it('returns the full catalog with null connectors when entity has none', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listConnectorsAction, CONNECTOR_CATALOG } = await import('../src/lib/actions.ts');
+    const r = await listConnectorsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.length).toBe(CONNECTOR_CATALOG.length);
+      expect(r.data.every((e) => e.connector === null)).toBe(true);
+    }
+  });
+
+  it('attaches a connector row to its catalog slug', async () => {
+    const id = 'aaaaaaaa-0000-0000-0000-000000000070';
+    currentDb = makeDb([
+      {
+        id,
+        slug: 'notion',
+        name: 'Notion',
+        authType: 'api_key',
+        active: true,
+        apiKey: 'secret_xxx',
+        oauthAccessToken: null,
+        oauthRefreshToken: null,
+        oauthClientId: null,
+        oauthAccountName: null,
+        oauthScopes: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]) as typeof currentDb;
+    const { listConnectorsAction } = await import('../src/lib/actions.ts');
+    const r = await listConnectorsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const notion = r.data.find((e) => e.catalogSlug === 'notion');
+      expect(notion?.connector?.id).toBe(id);
+      expect(notion?.connector?.hasApiKey).toBe(true);
+      // Other catalog entries stay null
+      expect(r.data.find((e) => e.catalogSlug === 'gmail')?.connector).toBe(null);
+    }
+  });
+});
+
+describe('saveApiKeyConnectorAction', () => {
+  it('rejects unknown slug', async () => {
+    const { saveApiKeyConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await saveApiKeyConnectorAction({ slug: 'mystery', apiKey: 'x' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty apiKey', async () => {
+    const { saveApiKeyConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await saveApiKeyConnectorAction({ slug: 'notion', apiKey: '' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects an oauth slug for the api-key path', async () => {
+    const { saveApiKeyConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await saveApiKeyConnectorAction({ slug: 'gmail', apiKey: 'x' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('updates an existing row in place (chain mock takes the existing branch)', async () => {
+    // The chain mock returns the same rows for every awaited query, so the
+    // initial existing-check select returns a row → UPDATE path. We assert
+    // on the .set() payload to confirm the api_key + active flags land.
+    const id = 'aaaaaaaa-0000-0000-0000-000000000071';
+    currentDb = makeDb([{ id }]) as typeof currentDb;
+    const { saveApiKeyConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await saveApiKeyConnectorAction({
+      slug: 'notion',
+      name: 'My Notion',
+      apiKey: 'secret_abc',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.id).toBe(id);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setSpy = updateSpy.mock.results.at(-1)!.value as { set: ReturnType<typeof vi.fn> };
+    const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(setArg['apiKey']).toBe('secret_abc');
+    expect(setArg['authType']).toBe('api_key');
+    expect(setArg['active']).toBe(true);
+  });
+});
+
+describe('saveOauthConnectorAction', () => {
+  it('rejects missing clientId', async () => {
+    const { saveOauthConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await saveOauthConnectorAction({
+      slug: 'gmail',
+      oauthClientSecret: 'x',
+      oauthRefreshToken: 'y',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects api_key slug for the oauth path', async () => {
+    const { saveOauthConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await saveOauthConnectorAction({
+      slug: 'notion',
+      oauthClientId: 'a',
+      oauthClientSecret: 'b',
+      oauthRefreshToken: 'c',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('updates existing row with oauth2 auth_type and rotated tokens', async () => {
+    // The chain mock returns the same rows for every awaited query, so
+    // when select() returns a row the action takes the UPDATE branch.
+    // We assert on the .set() payload instead of .insert().values().
+    const existingId = 'aaaaaaaa-0000-0000-0000-000000000072';
+    currentDb = makeDb([{ id: existingId }]) as typeof currentDb;
+    const { saveOauthConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await saveOauthConnectorAction({
+      slug: 'gmail',
+      oauthClientId: 'cid',
+      oauthClientSecret: 'sec',
+      oauthRefreshToken: 'ref',
+    });
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setSpy = updateSpy.mock.results.at(-1)!.value as { set: ReturnType<typeof vi.fn> };
+    const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(setArg['authType']).toBe('oauth2');
+    expect(setArg['oauthClientId']).toBe('cid');
+    expect(setArg['oauthRefreshToken']).toBe('ref');
+  });
+});
+
+describe('deleteConnectorAction', () => {
+  it('rejects non-uuid id', async () => {
+    const { deleteConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await deleteConnectorAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when connector does not exist', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { deleteConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await deleteConnectorAction('aaaaaaaa-0000-0000-0000-000000000073');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('returns ok when delete succeeds', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000074' }]) as typeof currentDb;
+    const { deleteConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await deleteConnectorAction('aaaaaaaa-0000-0000-0000-000000000074');
+    expect(r.ok).toBe(true);
+  });
+});
