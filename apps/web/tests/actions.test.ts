@@ -81,6 +81,25 @@ vi.mock('../src/lib/server.ts', async () => {
   };
 });
 
+// ─── Mock @nodalai/memory ─────────────────────────────────────────────────────
+// The memory package's chained queries don't fit our simple chainable mock
+// (count + items in two distinct selects); we stub the public API directly.
+const memoryMocks = {
+  listMemories: vi.fn(),
+  deleteMemory: vi.fn(),
+  updateMemory: vi.fn(),
+};
+
+vi.mock('@nodalai/memory', async () => {
+  const actual = await vi.importActual<typeof import('@nodalai/memory')>('@nodalai/memory');
+  return {
+    ...actual,
+    listMemories: (...args: unknown[]) => memoryMocks.listMemories(...args),
+    deleteMemory: (...args: unknown[]) => memoryMocks.deleteMemory(...args),
+    updateMemory: (...args: unknown[]) => memoryMocks.updateMemory(...args),
+  };
+});
+
 // ─── Validation tests (no DB needed) ─────────────────────────────────────────
 
 describe('createAgentAction — validation', () => {
@@ -688,5 +707,152 @@ describe('disconnectAgentTelegramAction', () => {
     expect(setArg['telegramOffset']).toBe(null);
 
     fetchSpy.mockRestore();
+  });
+});
+
+// ─── Memory Actions ───────────────────────────────────────────────────────────
+
+describe('listMemoriesAction', () => {
+  it('rejects invalid agentId', async () => {
+    const { listMemoriesAction } = await import('../src/lib/actions.ts');
+    const r = await listMemoriesAction({ agentId: 'not-uuid' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects invalid category', async () => {
+    const { listMemoriesAction } = await import('../src/lib/actions.ts');
+    const r = await listMemoriesAction({ category: 'bogus' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns paged result with agent name resolved', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000040';
+    memoryMocks.listMemories.mockResolvedValue({
+      items: [
+        {
+          id: 'bbbbbbbb-0000-0000-0000-000000000040',
+          entity_id: 'cccccccc-0000-0000-0000-000000000000',
+          agent_id: agentId,
+          fact: 'User likes concise answers.',
+          category: 'preference',
+          importance: 4,
+          source: 'agent',
+          skill_tags: ['style'],
+          memory_layer: null,
+          valid_from: null,
+          valid_to: null,
+          fact_hash: null,
+          archived: false,
+          last_accessed_at: null,
+          access_count: 2,
+          created_at: '2026-05-02T10:00:00.000Z',
+          updated_at: '2026-05-02T10:00:00.000Z',
+        },
+      ],
+      page: 1,
+      pageSize: 50,
+      totalCount: 1,
+      hasMore: false,
+    });
+    // Second call (db lookup for agent name) returns the agent row
+    currentDb = makeDb([{ id: agentId, name: 'Boris', slug: 'boris' }]) as typeof currentDb;
+
+    const { listMemoriesAction } = await import('../src/lib/actions.ts');
+    const r = await listMemoriesAction({});
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.items.length).toBe(1);
+      expect(r.data.items[0]!.agentName).toBe('Boris');
+      expect(r.data.items[0]!.agentSlug).toBe('boris');
+      expect(r.data.totalCount).toBe(1);
+    }
+  });
+
+  it('passes archived flag through to listMemories', async () => {
+    memoryMocks.listMemories.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 50,
+      totalCount: 0,
+      hasMore: false,
+    });
+    const { listMemoriesAction } = await import('../src/lib/actions.ts');
+    const r = await listMemoriesAction({ archived: true });
+    expect(r.ok).toBe(true);
+    expect(memoryMocks.listMemories).toHaveBeenCalled();
+    const call = memoryMocks.listMemories.mock.calls.at(-1)!;
+    expect((call[1] as { archived: boolean }).archived).toBe(true);
+  });
+});
+
+describe('archiveMemoryAction', () => {
+  it('rejects non-uuid id', async () => {
+    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await archiveMemoryAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('translates MemoryNotFoundError into not_found', async () => {
+    const { MemoryNotFoundError } = await import('@nodalai/memory');
+    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
+    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await archiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000050');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('calls updateMemory with archived: true', async () => {
+    memoryMocks.updateMemory.mockResolvedValueOnce({});
+    const { archiveMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await archiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000051');
+    expect(r.ok).toBe(true);
+    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
+    expect((call[3] as { archived: boolean }).archived).toBe(true);
+  });
+});
+
+describe('unarchiveMemoryAction', () => {
+  it('rejects non-uuid id', async () => {
+    const { unarchiveMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await unarchiveMemoryAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('calls updateMemory with archived: false', async () => {
+    memoryMocks.updateMemory.mockResolvedValueOnce({});
+    const { unarchiveMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await unarchiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000052');
+    expect(r.ok).toBe(true);
+    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
+    expect((call[3] as { archived: boolean }).archived).toBe(false);
+  });
+});
+
+describe('deleteMemoryAction', () => {
+  it('rejects non-uuid id', async () => {
+    const { deleteMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await deleteMemoryAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('translates MemoryNotFoundError into not_found', async () => {
+    const { MemoryNotFoundError } = await import('@nodalai/memory');
+    memoryMocks.deleteMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
+    const { deleteMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await deleteMemoryAction('aaaaaaaa-0000-0000-0000-000000000060');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('returns ok on successful delete', async () => {
+    memoryMocks.deleteMemory.mockResolvedValueOnce(undefined);
+    const { deleteMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await deleteMemoryAction('aaaaaaaa-0000-0000-0000-000000000061');
+    expect(r.ok).toBe(true);
   });
 });

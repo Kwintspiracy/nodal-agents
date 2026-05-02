@@ -15,6 +15,13 @@ import {
   agentTasks,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
+import {
+  listMemories,
+  deleteMemory,
+  updateMemory,
+  MemoryNotFoundError,
+} from '@nodalai/memory';
+import type { AgentMemory } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
@@ -624,5 +631,147 @@ export async function disconnectAgentTelegramAction(
   } catch (err) {
     console.error('[disconnectAgentTelegramAction]', err);
     return fail('db_error', 'Failed to disconnect Telegram');
+  }
+}
+
+// ─── Memory Actions ───────────────────────────────────────────────────────────
+
+const MEMORY_CATEGORIES = ['preference', 'context', 'outcome', 'learned_rule'] as const;
+type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
+
+const ListMemoriesSchema = z.object({
+  agentId: z.string().uuid().optional(),
+  category: z.enum(MEMORY_CATEGORIES).optional(),
+  tag: z.string().min(1).max(80).optional(),
+  archived: z.boolean().default(false),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(200).default(50),
+});
+
+export type MemoryListRow = AgentMemory & {
+  agentName: string | null;
+  agentSlug: string | null;
+};
+
+export type MemoryListResult = {
+  items: MemoryListRow[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  hasMore: boolean;
+};
+
+export async function listMemoriesAction(
+  raw: unknown = {},
+): Promise<ActionResult<MemoryListResult>> {
+  try {
+    const session = await getSession();
+    const parsed = ListMemoriesSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+
+    const result = await listMemories(db, {
+      entityId: session.entityId,
+      agentId: parsed.data.agentId,
+      category: parsed.data.category as MemoryCategory | undefined,
+      tags: parsed.data.tag ? [parsed.data.tag] : undefined,
+      archived: parsed.data.archived,
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      sort: 'recent',
+    });
+
+    // Resolve agent name+slug for each unique agentId in the page so the UI
+    // can render a friendly label instead of a raw uuid. Single roundtrip.
+    const agentIds = Array.from(
+      new Set(result.items.map((m) => m.agent_id).filter((x): x is string => x !== null)),
+    );
+    const agentLookup = new Map<string, { name: string; slug: string }>();
+    if (agentIds.length > 0) {
+      const rows = await db
+        .select({ id: agents.id, name: agents.name, slug: agents.slug })
+        .from(agents)
+        .where(inArray(agents.id, agentIds));
+      for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
+    }
+
+    const items: MemoryListRow[] = result.items.map((m) => {
+      const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
+      return {
+        ...m,
+        agentName: agent?.name ?? null,
+        agentSlug: agent?.slug ?? null,
+      };
+    });
+
+    return ok({
+      items,
+      page: result.page,
+      pageSize: result.pageSize,
+      totalCount: result.totalCount,
+      hasMore: result.hasMore,
+    });
+  } catch (err) {
+    console.error('[listMemoriesAction]', err);
+    return fail('db_error', 'Failed to load memories');
+  }
+}
+
+export async function archiveMemoryAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid memory id');
+    }
+    const db = getDb();
+    await updateMemory(db, id, session.entityId, { archived: true });
+    revalidatePath('/memories');
+    return ok(undefined);
+  } catch (err) {
+    if (err instanceof MemoryNotFoundError) {
+      return fail('not_found', 'Memory not found');
+    }
+    console.error('[archiveMemoryAction]', err);
+    return fail('db_error', 'Failed to archive memory');
+  }
+}
+
+export async function unarchiveMemoryAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid memory id');
+    }
+    const db = getDb();
+    await updateMemory(db, id, session.entityId, { archived: false });
+    revalidatePath('/memories');
+    return ok(undefined);
+  } catch (err) {
+    if (err instanceof MemoryNotFoundError) {
+      return fail('not_found', 'Memory not found');
+    }
+    console.error('[unarchiveMemoryAction]', err);
+    return fail('db_error', 'Failed to unarchive memory');
+  }
+}
+
+export async function deleteMemoryAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid memory id');
+    }
+    const db = getDb();
+    await deleteMemory(db, id, session.entityId);
+    revalidatePath('/memories');
+    return ok(undefined);
+  } catch (err) {
+    if (err instanceof MemoryNotFoundError) {
+      return fail('not_found', 'Memory not found');
+    }
+    console.error('[deleteMemoryAction]', err);
+    return fail('db_error', 'Failed to delete memory');
   }
 }
