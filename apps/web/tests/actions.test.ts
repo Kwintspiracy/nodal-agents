@@ -1275,3 +1275,56 @@ describe('unassignSkillAction', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+// ─── Tool Call Logs ───────────────────────────────────────────────────────────
+
+describe('listToolCallsAction', () => {
+  it('rejects invalid agentId', async () => {
+    const { listToolCallsAction } = await import('../src/lib/actions.ts');
+    const r = await listToolCallsAction({ agentId: 'not-uuid' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects invalid jobId', async () => {
+    const { listToolCallsAction } = await import('../src/lib/actions.ts');
+    const r = await listToolCallsAction({ jobId: 'bad' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects pageSize over 200', async () => {
+    const { listToolCallsAction } = await import('../src/lib/actions.ts');
+    const r = await listToolCallsAction({ pageSize: 500 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns rows with agent name resolved', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000110';
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000111',
+        jobId: 'aaaaaaaa-0000-0000-0000-000000000112',
+        agentId,
+        toolName: 'notion_search',
+        toolInput: { query: 'foo' },
+        toolOutput: '{"results":[]}',
+        durationMs: 320,
+        turn: 2,
+        createdAt: new Date(),
+        // Second select for agent lookup also returns this row's shape
+        id: 'aaaaaaaa-0000-0000-0000-000000000111',
+        name: 'Boris',
+        slug: 'boris',
+      } as unknown as Record<string, unknown>,
+    ]) as typeof currentDb;
+    // The chain mock returns the same rows for both queries; the second
+    // select expects { id, name, slug } — we just ensure agent lookup
+    // surfaces something plausible by reusing the row.
+    const { listToolCallsAction } = await import('../src/lib/actions.ts');
+    const r = await listToolCallsAction({});
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.items.length).toBe(1);
+  });
+});

@@ -18,6 +18,7 @@ import {
   approvalRequests,
   agentSkills,
   agentSkillAssignments,
+  toolCalls,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import {
@@ -1469,5 +1470,129 @@ export async function unassignSkillAction(raw: unknown): Promise<ActionResult<vo
   } catch (err) {
     console.error('[unassignSkillAction]', err);
     return fail('db_error', 'Failed to unassign skill');
+  }
+}
+
+// ─── Log Actions ──────────────────────────────────────────────────────────────
+
+export type ToolCallLogRow = {
+  id: string;
+  jobId: string | null;
+  agentId: string | null;
+  agentName: string | null;
+  agentSlug: string | null;
+  toolName: string;
+  toolInput: unknown;
+  toolOutput: string | null;
+  durationMs: number | null;
+  turn: number | null;
+  createdAt: Date | null;
+};
+
+const ListToolCallsSchema = z.object({
+  agentId: z.string().uuid().optional(),
+  toolName: z.string().min(1).max(120).optional(),
+  jobId: z.string().uuid().optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(200).default(50),
+});
+
+export type ToolCallLogResult = {
+  items: ToolCallLogRow[];
+  page: number;
+  pageSize: number;
+};
+
+export async function listToolCallsAction(
+  raw: unknown = {},
+): Promise<ActionResult<ToolCallLogResult>> {
+  try {
+    const session = await getSession();
+    const parsed = ListToolCallsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+
+    const conditions = [eq(toolCalls.entityId, session.entityId)];
+    if (parsed.data.toolName) conditions.push(eq(toolCalls.toolName, parsed.data.toolName));
+    if (parsed.data.jobId) conditions.push(eq(toolCalls.jobId, parsed.data.jobId));
+    // Filtering by agentId requires a join via agentJobs — we add it conditionally
+    // below since the query shape changes when joined.
+
+    const offset = (parsed.data.page - 1) * parsed.data.pageSize;
+
+    const baseRows = parsed.data.agentId
+      ? await db
+          .select({
+            id: toolCalls.id,
+            jobId: toolCalls.jobId,
+            agentId: agentJobs.agentId,
+            toolName: toolCalls.toolName,
+            toolInput: toolCalls.toolInput,
+            toolOutput: toolCalls.toolOutput,
+            durationMs: toolCalls.durationMs,
+            turn: toolCalls.turn,
+            createdAt: toolCalls.createdAt,
+          })
+          .from(toolCalls)
+          .leftJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
+          .where(and(...conditions, eq(agentJobs.agentId, parsed.data.agentId)))
+          .orderBy(desc(toolCalls.createdAt))
+          .limit(parsed.data.pageSize)
+          .offset(offset)
+      : await db
+          .select({
+            id: toolCalls.id,
+            jobId: toolCalls.jobId,
+            agentId: agentJobs.agentId,
+            toolName: toolCalls.toolName,
+            toolInput: toolCalls.toolInput,
+            toolOutput: toolCalls.toolOutput,
+            durationMs: toolCalls.durationMs,
+            turn: toolCalls.turn,
+            createdAt: toolCalls.createdAt,
+          })
+          .from(toolCalls)
+          .leftJoin(agentJobs, eq(agentJobs.id, toolCalls.jobId))
+          .where(and(...conditions))
+          .orderBy(desc(toolCalls.createdAt))
+          .limit(parsed.data.pageSize)
+          .offset(offset);
+
+    // Resolve agent name+slug per unique agentId.
+    const agentIds = Array.from(
+      new Set(baseRows.map((r) => r.agentId).filter((x): x is string => x !== null)),
+    );
+    const lookup = new Map<string, { name: string; slug: string }>();
+    if (agentIds.length > 0) {
+      const rows = await db
+        .select({ id: agents.id, name: agents.name, slug: agents.slug })
+        .from(agents)
+        .where(inArray(agents.id, agentIds));
+      for (const r of rows) lookup.set(r.id, { name: r.name, slug: r.slug });
+    }
+
+    const items: ToolCallLogRow[] = baseRows.map((r) => {
+      const agent = r.agentId ? lookup.get(r.agentId) : null;
+      return {
+        id: r.id,
+        jobId: r.jobId,
+        agentId: r.agentId,
+        agentName: agent?.name ?? null,
+        agentSlug: agent?.slug ?? null,
+        toolName: r.toolName,
+        toolInput: r.toolInput,
+        toolOutput: r.toolOutput,
+        durationMs: r.durationMs,
+        turn: r.turn,
+        createdAt: r.createdAt,
+      };
+    });
+
+    return ok({ items, page: parsed.data.page, pageSize: parsed.data.pageSize });
+  } catch (err) {
+    console.error('[listToolCallsAction]', err);
+    return fail('db_error', 'Failed to load tool calls');
   }
 }
