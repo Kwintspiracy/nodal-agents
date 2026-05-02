@@ -1390,3 +1390,98 @@ describe('getSettingsAction', () => {
     }
   });
 });
+
+// ─── Automation Actions ──────────────────────────────────────────────────────
+
+describe('listSchedulesAction', () => {
+  it('returns ok with array', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listSchedulesAction } = await import('../src/lib/actions.ts');
+    const r = await listSchedulesAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(Array.isArray(r.data)).toBe(true);
+  });
+});
+
+describe('createScheduleAction', () => {
+  it('rejects bad agentId', async () => {
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'not-uuid',
+      name: 'X',
+      cronExpr: '0 9 * * *',
+      task: 'Y',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty cron expr', async () => {
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000130',
+      name: 'X',
+      cronExpr: '',
+      task: 'Y',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns ok when insert succeeds', async () => {
+    const id = 'aaaaaaaa-0000-0000-0000-000000000131';
+    currentDb = makeDb([{ id }]) as typeof currentDb;
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000132',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('toggleScheduleAction', () => {
+  it('rejects non-uuid', async () => {
+    const { toggleScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await toggleScheduleAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when missing', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { toggleScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await toggleScheduleAction('aaaaaaaa-0000-0000-0000-000000000133');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('flips active when row exists', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000134', active: true },
+    ]) as typeof currentDb;
+    const { toggleScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await toggleScheduleAction('aaaaaaaa-0000-0000-0000-000000000134');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.active).toBe(false);
+  });
+});
+
+describe('deleteScheduleAction', () => {
+  it('rejects non-uuid', async () => {
+    const { deleteScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await deleteScheduleAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when missing', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { deleteScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await deleteScheduleAction('aaaaaaaa-0000-0000-0000-000000000135');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});

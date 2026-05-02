@@ -19,6 +19,7 @@ import {
   agentSkills,
   agentSkillAssignments,
   toolCalls,
+  agentSchedules,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import {
@@ -1752,5 +1753,156 @@ export async function getSettingsAction(): Promise<ActionResult<SettingsView>> {
   } catch (err) {
     console.error('[getSettingsAction]', err);
     return fail('db_error', 'Failed to load settings');
+  }
+}
+
+// ─── Automation Actions ───────────────────────────────────────────────────────
+
+export type ScheduleRow = {
+  id: string;
+  agentId: string;
+  agentName: string | null;
+  agentSlug: string | null;
+  name: string;
+  cronExpr: string;
+  task: string | null;
+  active: boolean;
+  lastRun: Date | null;
+  nextRun: Date | null;
+  lastStatus: string | null;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+};
+
+export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select({
+        id: agentSchedules.id,
+        agentId: agentSchedules.agentId,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        name: agentSchedules.name,
+        cronExpr: agentSchedules.cronExpr,
+        task: agentSchedules.task,
+        active: agentSchedules.active,
+        lastRun: agentSchedules.lastRun,
+        nextRun: agentSchedules.nextRun,
+        lastStatus: agentSchedules.lastStatus,
+        createdAt: agentSchedules.createdAt,
+        updatedAt: agentSchedules.updatedAt,
+      })
+      .from(agentSchedules)
+      .leftJoin(agents, eq(agents.id, agentSchedules.agentId))
+      .where(eq(agentSchedules.entityId, session.entityId))
+      .orderBy(desc(agentSchedules.updatedAt));
+
+    return ok(
+      rows.map((r) => ({
+        ...r,
+        active: r.active ?? true,
+      })) as ScheduleRow[],
+    );
+  } catch (err) {
+    console.error('[listSchedulesAction]', err);
+    return fail('db_error', 'Failed to load schedules');
+  }
+}
+
+const CreateScheduleSchema = z.object({
+  agentId: z.string().uuid('Pick an agent'),
+  name: z.string().min(1).max(120),
+  cronExpr: z.string().min(1).max(100),
+  task: z.string().min(1).max(2000),
+});
+
+export async function createScheduleAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = CreateScheduleSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+
+    // Verify the agent belongs to this entity.
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const [row] = await db
+      .insert(agentSchedules)
+      .values({
+        entityId: session.entityId,
+        agentId: parsed.data.agentId,
+        type: 'cron',
+        name: parsed.data.name,
+        cronExpr: parsed.data.cronExpr,
+        task: parsed.data.task,
+        active: true,
+      })
+      .returning({ id: agentSchedules.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+
+    revalidatePath('/automations');
+    return ok({ id: row.id });
+  } catch (err) {
+    console.error('[createScheduleAction]', err);
+    return fail('db_error', 'Failed to create schedule');
+  }
+}
+
+export async function toggleScheduleAction(
+  id: string,
+): Promise<ActionResult<{ active: boolean }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid schedule id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: agentSchedules.id, active: agentSchedules.active })
+      .from(agentSchedules)
+      .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Schedule not found');
+
+    const next = !(existing.active ?? true);
+    await db
+      .update(agentSchedules)
+      .set({ active: next, updatedAt: new Date() })
+      .where(eq(agentSchedules.id, id));
+    revalidatePath('/automations');
+    return ok({ active: next });
+  } catch (err) {
+    console.error('[toggleScheduleAction]', err);
+    return fail('db_error', 'Failed to toggle schedule');
+  }
+}
+
+export async function deleteScheduleAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid schedule id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: agentSchedules.id })
+      .from(agentSchedules)
+      .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Schedule not found');
+    await db.delete(agentSchedules).where(eq(agentSchedules.id, id));
+    revalidatePath('/automations');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteScheduleAction]', err);
+    return fail('db_error', 'Failed to delete schedule');
   }
 }
