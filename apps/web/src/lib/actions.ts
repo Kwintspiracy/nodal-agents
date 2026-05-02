@@ -14,6 +14,7 @@ import {
   agentJobs,
   agentTasks,
   connectors,
+  approvalRequests,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import {
@@ -1056,5 +1057,133 @@ export async function deleteConnectorAction(id: string): Promise<ActionResult<vo
   } catch (err) {
     console.error('[deleteConnectorAction]', err);
     return fail('db_error', 'Failed to delete connector');
+  }
+}
+
+// ─── Approval Actions ─────────────────────────────────────────────────────────
+
+export type ApprovalRow = {
+  id: string;
+  jobId: string;
+  agentId: string | null;
+  agentName: string | null;
+  agentSlug: string | null;
+  toolName: string;
+  toolInput: unknown;
+  status: string;
+  requestedAt: Date | null;
+  resolvedAt: Date | null;
+  resolvedBy: string | null;
+  expiresAt: Date | null;
+  notes: string | null;
+  jobTask: string | null;
+};
+
+export async function listApprovalsAction(
+  opts: { status?: 'pending' | 'approved' | 'rejected' | 'expired' | 'all' } = {},
+): Promise<ActionResult<ApprovalRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const status = opts.status ?? 'pending';
+
+    const baseConditions = eq(approvalRequests.entityId, session.entityId);
+    const where =
+      status === 'all' ? baseConditions : and(baseConditions, eq(approvalRequests.status, status));
+
+    const rows = await db
+      .select({
+        id: approvalRequests.id,
+        jobId: approvalRequests.jobId,
+        agentId: approvalRequests.agentId,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        toolName: approvalRequests.toolName,
+        toolInput: approvalRequests.toolInput,
+        status: approvalRequests.status,
+        requestedAt: approvalRequests.requestedAt,
+        resolvedAt: approvalRequests.resolvedAt,
+        resolvedBy: approvalRequests.resolvedBy,
+        expiresAt: approvalRequests.expiresAt,
+        notes: approvalRequests.notes,
+        jobTask: agentJobs.task,
+      })
+      .from(approvalRequests)
+      .leftJoin(agents, eq(agents.id, approvalRequests.agentId))
+      .leftJoin(agentJobs, eq(agentJobs.id, approvalRequests.jobId))
+      .where(where)
+      .orderBy(desc(approvalRequests.requestedAt))
+      .limit(100);
+
+    return ok(
+      rows.map((r) => ({
+        ...r,
+        status: r.status ?? 'pending',
+      })) as ApprovalRow[],
+    );
+  } catch (err) {
+    console.error('[listApprovalsAction]', err);
+    return fail('db_error', 'Failed to load approvals');
+  }
+}
+
+const ResolveApprovalSchema = z.object({
+  approvalRequestId: z.string().uuid(),
+  decision: z.enum(['approve', 'reject']),
+  notes: z.string().max(500).optional(),
+});
+
+/**
+ * Resolve an approval request by calling the runner's /api/approve endpoint.
+ * The runner mutates the parent job's messages, marks the approval row, and
+ * resumes the worker — single source of truth for resolution logic.
+ *
+ * Auth: signs the request with WORKER_SECRET (the runner's /api/approve
+ * middleware accepts session OR bearer; cross-process cookies don't work).
+ */
+export async function resolveApprovalAction(
+  raw: unknown,
+): Promise<ActionResult<{ jobId: string; decision: string }>> {
+  try {
+    await getSession();
+    const parsed = ResolveApprovalSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[resolveApprovalAction] WORKER_SECRET missing');
+      return fail('config_error', 'WORKER_SECRET is not set');
+    }
+
+    const url = `${env.RUNNER_URL}/api/approve`;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify(parsed.data),
+      });
+    } catch (err) {
+      console.error('[resolveApprovalAction] fetch failed', err);
+      return fail('runner_unreachable', 'Runner did not respond');
+    }
+
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const code = body.error ?? `runner_${res.status}`;
+      return fail(code, `Runner rejected: ${code}`);
+    }
+
+    const body = (await res.json()) as { jobId: string; decision: string };
+    revalidatePath('/approvals');
+    revalidatePath('/jobs');
+    revalidatePath(`/jobs/${body.jobId}`);
+    return ok({ jobId: body.jobId, decision: body.decision });
+  } catch (err) {
+    console.error('[resolveApprovalAction]', err);
+    return fail('db_error', 'Failed to resolve approval');
   }
 }

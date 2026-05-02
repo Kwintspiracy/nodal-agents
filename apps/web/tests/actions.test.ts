@@ -15,6 +15,7 @@ beforeAll(() => {
   process.env['DATABASE_URL'] = 'postgres://placeholder:5432/placeholder';
   process.env['AUTH_MODE'] = 'local-trust';
   process.env['RUNNER_URL'] = 'http://localhost:3001';
+  process.env['WORKER_SECRET'] = 'test-bearer-789';
 });
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -1016,5 +1017,120 @@ describe('deleteConnectorAction', () => {
     const { deleteConnectorAction } = await import('../src/lib/actions.ts');
     const r = await deleteConnectorAction('aaaaaaaa-0000-0000-0000-000000000074');
     expect(r.ok).toBe(true);
+  });
+});
+
+// ─── Approval Actions ─────────────────────────────────────────────────────────
+
+describe('listApprovalsAction', () => {
+  it('returns ok with array (may be empty)', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listApprovalsAction } = await import('../src/lib/actions.ts');
+    const r = await listApprovalsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(Array.isArray(r.data)).toBe(true);
+  });
+
+  it('joins agent name and job task into the row', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000080',
+        jobId: 'aaaaaaaa-0000-0000-0000-000000000081',
+        agentId: 'aaaaaaaa-0000-0000-0000-000000000082',
+        agentName: 'Boris',
+        agentSlug: 'boris',
+        toolName: 'gmail_send',
+        toolInput: { to: 'x@example.com' },
+        status: 'pending',
+        requestedAt: new Date(),
+        resolvedAt: null,
+        resolvedBy: null,
+        expiresAt: new Date(),
+        notes: null,
+        jobTask: 'send the email',
+      },
+    ]) as typeof currentDb;
+    const { listApprovalsAction } = await import('../src/lib/actions.ts');
+    const r = await listApprovalsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.length).toBe(1);
+      expect(r.data[0]!.agentName).toBe('Boris');
+      expect(r.data[0]!.jobTask).toBe('send the email');
+    }
+  });
+});
+
+describe('resolveApprovalAction', () => {
+  it('rejects invalid uuid', async () => {
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({ approvalRequestId: 'bad', decision: 'approve' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects unknown decision', async () => {
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({
+      approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000090',
+      decision: 'maybe',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('signs the runner call with WORKER_SECRET and returns ok on 200', async () => {
+const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          jobId: 'aaaaaaaa-0000-0000-0000-000000000091',
+          status: 'pending',
+          decision: 'approve',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({
+      approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000092',
+      decision: 'approve',
+    });
+    expect(r.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const headers = (fetchSpy.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer test-bearer-789');
+    fetchSpy.mockRestore();
+  });
+
+  it('returns runner_unreachable when fetch throws', async () => {
+const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('ECONNREFUSED'));
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({
+      approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000093',
+      decision: 'approve',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('runner_unreachable');
+    fetchSpy.mockRestore();
+  });
+
+  it('forwards the runner error code on non-200', async () => {
+const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: 'approval_already_resolved' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({
+      approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000094',
+      decision: 'approve',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('approval_already_resolved');
+    fetchSpy.mockRestore();
   });
 });

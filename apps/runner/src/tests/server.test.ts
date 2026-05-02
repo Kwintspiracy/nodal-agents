@@ -99,3 +99,82 @@ describe('server boot', () => {
     expect(typeof body.rootsDelivered).toBe('number');
   });
 });
+
+describe('/api/approve auth — bearer fallback (cross-process call from web)', () => {
+  // Build a NEW app with AUTH_MODE='local-auth' and a provider that returns
+  // null. Without the bearer fallback this would 401 every request — only
+  // a valid WORKER_SECRET should let the call through.
+  let nullSessionApp: ReturnType<typeof createApp>;
+  const lockedEnv: RunnerEnv = { ...testEnv, AUTH_MODE: 'local-auth' };
+
+  beforeAll(async () => {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const llmClient = createLlmClient({
+      provider: 'anthropic',
+      model: 'test',
+      apiKey: 'k',
+    });
+    const embeddingClient = createEmbeddingClient({ provider: 'keyword' });
+    const deps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient,
+      registry,
+      authProvider: { getSession: async () => null },
+      close: async () => {},
+    };
+    nullSessionApp = createApp(deps, lockedEnv);
+  });
+
+  it('returns 401 when neither session nor bearer is provided', async () => {
+    const res = await nullSessionApp.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalRequestId: '00000000-0000-0000-0000-000000000099',
+          decision: 'approve',
+        }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 when bearer is wrong', async () => {
+    const res = await nullSessionApp.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer wrong-secret',
+        },
+        body: JSON.stringify({
+          approvalRequestId: '00000000-0000-0000-0000-000000000099',
+          decision: 'approve',
+        }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('passes through to the route when bearer matches WORKER_SECRET', async () => {
+    // The route itself returns 404 (approval doesn't exist) — that proves
+    // the middleware let us through; the bearer bypass works.
+    const res = await nullSessionApp.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${lockedEnv.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({
+          approvalRequestId: '00000000-0000-0000-0000-000000000099',
+          decision: 'approve',
+        }),
+      }),
+    );
+    // 404 (approval_not_found) means we successfully reached the route.
+    expect(res.status).toBe(404);
+  });
+});

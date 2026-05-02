@@ -46,6 +46,17 @@ export function createApp(
   });
 
   app.use('/api/approve', async (c, next) => {
+    // Accept either:
+    //   - a valid auth-provider session (for browser → runner direct calls), OR
+    //   - the WORKER_SECRET bearer token (for web → runner cross-process
+    //     calls; the web app and runner run in separate processes/ports so
+    //     session cookies aren't shared).
+    const auth = c.req.header('authorization') ?? '';
+    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (bearer && runnerEnv.WORKER_SECRET && bearer === runnerEnv.WORKER_SECRET) {
+      await next();
+      return;
+    }
     try {
       const session = await deps.authProvider.getSession(c.req.raw);
       if (!session && runnerEnv.AUTH_MODE !== 'local-trust') {
