@@ -1118,7 +1118,7 @@ const fetchSpy = vi
   });
 
   it('forwards the runner error code on non-200', async () => {
-const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ error: 'approval_already_resolved' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -1132,5 +1132,146 @@ const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('approval_already_resolved');
     fetchSpy.mockRestore();
+  });
+});
+
+// ─── Skill Actions ────────────────────────────────────────────────────────────
+
+describe('listSkillsAction', () => {
+  it('returns empty array when entity has no skills', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listSkillsAction } = await import('../src/lib/actions.ts');
+    const r = await listSkillsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual([]);
+  });
+
+  it('attaches assignment count from the second query', async () => {
+    // Chain mock returns the same rows for every awaited query, so the
+    // skills list select AND the tally select both resolve to the seeded
+    // array. We pack both shapes into one object for the test.
+    const skillId = 'aaaaaaaa-0000-0000-0000-000000000100';
+    currentDb = makeDb([
+      {
+        id: skillId,
+        name: 'Notion Power User',
+        slug: 'notion-power',
+        content: 'Use Notion well',
+        description: 'Helpful Notion stuff',
+        active: true,
+        requiredBuiltins: ['save_memory'],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        skillId,
+        c: '3',
+      },
+    ]) as typeof currentDb;
+    const { listSkillsAction } = await import('../src/lib/actions.ts');
+    const r = await listSkillsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.length).toBe(1);
+      expect(r.data[0]!.assignmentCount).toBe(3);
+      expect(r.data[0]!.requiredBuiltins).toEqual(['save_memory']);
+    }
+  });
+});
+
+describe('createSkillAction', () => {
+  it('rejects bad slug', async () => {
+    const { createSkillAction } = await import('../src/lib/actions.ts');
+    const r = await createSkillAction({
+      slug: 'BadSlug',
+      name: 'X',
+      content: 'Y',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty content', async () => {
+    const { createSkillAction } = await import('../src/lib/actions.ts');
+    const r = await createSkillAction({
+      slug: 'ok-slug',
+      name: 'X',
+      content: '',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns ok with id on insert', async () => {
+    const id = 'aaaaaaaa-0000-0000-0000-000000000101';
+    currentDb = makeDb([{ id }]) as typeof currentDb;
+    const { createSkillAction } = await import('../src/lib/actions.ts');
+    const r = await createSkillAction({
+      slug: 'my-skill',
+      name: 'My Skill',
+      content: 'Do X.',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.id).toBe(id);
+  });
+});
+
+describe('deleteSkillAction', () => {
+  it('rejects non-uuid', async () => {
+    const { deleteSkillAction } = await import('../src/lib/actions.ts');
+    const r = await deleteSkillAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when missing', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { deleteSkillAction } = await import('../src/lib/actions.ts');
+    const r = await deleteSkillAction('aaaaaaaa-0000-0000-0000-000000000102');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
+describe('listSkillAssignmentsAction', () => {
+  it('rejects non-uuid', async () => {
+    const { listSkillAssignmentsAction } = await import('../src/lib/actions.ts');
+    const r = await listSkillAssignmentsAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when skill does not exist', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listSkillAssignmentsAction } = await import('../src/lib/actions.ts');
+    const r = await listSkillAssignmentsAction('aaaaaaaa-0000-0000-0000-000000000103');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
+describe('assignSkillAction', () => {
+  it('rejects bad input', async () => {
+    const { assignSkillAction } = await import('../src/lib/actions.ts');
+    const r = await assignSkillAction({ skillId: 'bad', agentId: 'also bad' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('unassignSkillAction', () => {
+  it('rejects bad input', async () => {
+    const { unassignSkillAction } = await import('../src/lib/actions.ts');
+    const r = await unassignSkillAction({});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns ok on successful delete', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { unassignSkillAction } = await import('../src/lib/actions.ts');
+    const r = await unassignSkillAction({
+      skillId: 'aaaaaaaa-0000-0000-0000-000000000104',
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000105',
+    });
+    expect(r.ok).toBe(true);
   });
 });

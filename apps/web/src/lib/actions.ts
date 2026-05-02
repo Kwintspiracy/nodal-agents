@@ -9,12 +9,15 @@ import {
   and,
   desc,
   inArray,
+  sql,
   agents,
   agentAssignments,
   agentJobs,
   agentTasks,
   connectors,
   approvalRequests,
+  agentSkills,
+  agentSkillAssignments,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import {
@@ -1185,5 +1188,286 @@ export async function resolveApprovalAction(
   } catch (err) {
     console.error('[resolveApprovalAction]', err);
     return fail('db_error', 'Failed to resolve approval');
+  }
+}
+
+// ─── Skill Actions ────────────────────────────────────────────────────────────
+
+export type SkillRow = {
+  id: string;
+  name: string;
+  slug: string;
+  content: string;
+  description: string | null;
+  active: boolean;
+  requiredBuiltins: string[];
+  assignmentCount: number;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+};
+
+export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    const rows = await db
+      .select({
+        id: agentSkills.id,
+        name: agentSkills.name,
+        slug: agentSkills.slug,
+        content: agentSkills.content,
+        description: agentSkills.description,
+        active: agentSkills.active,
+        requiredBuiltins: agentSkills.requiredBuiltins,
+        createdAt: agentSkills.createdAt,
+        updatedAt: agentSkills.updatedAt,
+      })
+      .from(agentSkills)
+      .where(eq(agentSkills.entityId, session.entityId))
+      .orderBy(desc(agentSkills.updatedAt));
+
+    if (rows.length === 0) return ok([]);
+
+    // Tally assignments per skill in a single roundtrip.
+    const tallies = await db
+      .select({
+        skillId: agentSkillAssignments.skillId,
+        c: sql<string>`count(*)`,
+      })
+      .from(agentSkillAssignments)
+      .where(
+        and(
+          eq(agentSkillAssignments.entityId, session.entityId),
+          inArray(
+            agentSkillAssignments.skillId,
+            rows.map((r) => r.id),
+          ),
+        ),
+      )
+      .groupBy(agentSkillAssignments.skillId);
+
+    const tallyMap = new Map<string, number>();
+    for (const t of tallies) tallyMap.set(t.skillId, Number(t.c));
+
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        content: r.content,
+        description: r.description,
+        active: r.active ?? true,
+        requiredBuiltins: (r.requiredBuiltins as string[] | null) ?? [],
+        assignmentCount: tallyMap.get(r.id) ?? 0,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      })),
+    );
+  } catch (err) {
+    console.error('[listSkillsAction]', err);
+    return fail('db_error', 'Failed to load skills');
+  }
+}
+
+const CreateSkillSchema = z.object({
+  slug: z
+    .string()
+    .min(1)
+    .max(80)
+    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with dashes'),
+  name: z.string().min(1).max(120),
+  content: z.string().min(1),
+  description: z.string().max(500).optional(),
+});
+
+export async function createSkillAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = CreateSkillSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const [row] = await db
+      .insert(agentSkills)
+      .values({
+        entityId: session.entityId,
+        slug: parsed.data.slug,
+        name: parsed.data.name,
+        content: parsed.data.content,
+        defaultContent: parsed.data.content,
+        description: parsed.data.description ?? null,
+        active: true,
+      })
+      .returning({ id: agentSkills.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+    revalidatePath('/skills');
+    return ok({ id: row.id });
+  } catch (err: unknown) {
+    console.error('[createSkillAction]', err);
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('unique') || msg.includes('23505')) {
+      return fail('conflict', 'A skill with this slug already exists');
+    }
+    return fail('db_error', 'Failed to create skill');
+  }
+}
+
+export async function deleteSkillAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid skill id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: agentSkills.id })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Skill not found');
+    // The schema has ON DELETE CASCADE on agent_skill_assignments, so
+    // assignments are cleared automatically.
+    await db.delete(agentSkills).where(eq(agentSkills.id, id));
+    revalidatePath('/skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteSkillAction]', err);
+    return fail('db_error', 'Failed to delete skill');
+  }
+}
+
+const SkillAssignmentSchema = z.object({
+  skillId: z.string().uuid(),
+  agentId: z.string().uuid(),
+});
+
+export type SkillAssignmentRow = {
+  agentId: string;
+  agentName: string;
+  agentSlug: string;
+  assigned: boolean;
+};
+
+/**
+ * For a skill, return every agent in the entity with whether the skill is
+ * currently assigned. Powers the per-skill assignment toggle UI.
+ */
+export async function listSkillAssignmentsAction(
+  skillId: string,
+): Promise<ActionResult<SkillAssignmentRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(skillId).success) {
+      return fail('validation_failed', 'Invalid skill id');
+    }
+    const db = getDb();
+    const [skill] = await db
+      .select({ id: agentSkills.id })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, skillId), eq(agentSkills.entityId, session.entityId)));
+    if (!skill) return fail('not_found', 'Skill not found');
+
+    const allAgents = await db
+      .select({ id: agents.id, name: agents.name, slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.entityId, session.entityId))
+      .orderBy(agents.name);
+
+    const assignments = await db
+      .select({ agentId: agentSkillAssignments.agentId })
+      .from(agentSkillAssignments)
+      .where(eq(agentSkillAssignments.skillId, skillId));
+    const assigned = new Set(assignments.map((a) => a.agentId));
+
+    return ok(
+      allAgents.map((a) => ({
+        agentId: a.id,
+        agentName: a.name,
+        agentSlug: a.slug,
+        assigned: assigned.has(a.id),
+      })),
+    );
+  } catch (err) {
+    console.error('[listSkillAssignmentsAction]', err);
+    return fail('db_error', 'Failed to load skill assignments');
+  }
+}
+
+export async function assignSkillAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SkillAssignmentSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+
+    // Confirm both rows belong to the entity (defence in depth — a forged
+    // request shouldn't be able to point one entity's skill at another's
+    // agent).
+    const [skill] = await db
+      .select({ id: agentSkills.id })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, parsed.data.skillId), eq(agentSkills.entityId, session.entityId)));
+    if (!skill) return fail('not_found', 'Skill not found');
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Idempotent: skip if already assigned.
+    const [existing] = await db
+      .select({ id: agentSkillAssignments.id })
+      .from(agentSkillAssignments)
+      .where(
+        and(
+          eq(agentSkillAssignments.skillId, parsed.data.skillId),
+          eq(agentSkillAssignments.agentId, parsed.data.agentId),
+        ),
+      );
+    if (existing) {
+      revalidatePath('/skills');
+      return ok(undefined);
+    }
+
+    await db.insert(agentSkillAssignments).values({
+      entityId: session.entityId,
+      skillId: parsed.data.skillId,
+      agentId: parsed.data.agentId,
+    });
+    revalidatePath('/skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[assignSkillAction]', err);
+    return fail('db_error', 'Failed to assign skill');
+  }
+}
+
+export async function unassignSkillAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SkillAssignmentSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    // Scope the delete by the skill's entity (the agent_skill_assignments row
+    // has its own entityId column for fast lookups).
+    await db
+      .delete(agentSkillAssignments)
+      .where(
+        and(
+          eq(agentSkillAssignments.skillId, parsed.data.skillId),
+          eq(agentSkillAssignments.agentId, parsed.data.agentId),
+          eq(agentSkillAssignments.entityId, session.entityId),
+        ),
+      );
+    revalidatePath('/skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[unassignSkillAction]', err);
+    return fail('db_error', 'Failed to unassign skill');
   }
 }
