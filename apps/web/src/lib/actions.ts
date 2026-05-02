@@ -1596,3 +1596,119 @@ export async function listToolCallsAction(
     return fail('db_error', 'Failed to load tool calls');
   }
 }
+
+// ─── Stats Actions ────────────────────────────────────────────────────────────
+
+export type EntityStats = {
+  totalJobs: number;
+  statusCounts: Record<string, number>;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalDurationMs: number;
+  avgDurationMs: number | null;
+  totalToolCalls: number;
+  agentCount: number;
+  perAgent: Array<{
+    agentId: string;
+    agentName: string;
+    agentSlug: string;
+    jobCount: number;
+    inputTokens: number;
+    outputTokens: number;
+  }>;
+};
+
+export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    // Status counts + token / duration totals in a single roundtrip.
+    const jobAgg = await db
+      .select({
+        status: agentJobs.status,
+        count: sql<string>`count(*)`,
+        inputTokens: sql<string>`coalesce(sum(${agentJobs.inputTokens}), 0)`,
+        outputTokens: sql<string>`coalesce(sum(${agentJobs.outputTokens}), 0)`,
+        durationMs: sql<string>`coalesce(sum(${agentJobs.totalDurationMs}), 0)`,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.entityId, session.entityId))
+      .groupBy(agentJobs.status);
+
+    const statusCounts: Record<string, number> = {};
+    let totalJobs = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalDurationMs = 0;
+    for (const row of jobAgg) {
+      const s = row.status ?? 'unknown';
+      const n = Number(row.count);
+      statusCounts[s] = (statusCounts[s] ?? 0) + n;
+      totalJobs += n;
+      totalInputTokens += Number(row.inputTokens);
+      totalOutputTokens += Number(row.outputTokens);
+      totalDurationMs += Number(row.durationMs);
+    }
+
+    const completedCount = statusCounts['completed'] ?? 0;
+    const avgDurationMs = completedCount > 0 ? totalDurationMs / completedCount : null;
+
+    // Tool call count
+    const [tcRow] = await db
+      .select({ count: sql<string>`count(*)` })
+      .from(toolCalls)
+      .where(eq(toolCalls.entityId, session.entityId));
+    const totalToolCalls = Number(tcRow?.count ?? 0);
+
+    // Per-agent rollup
+    const perAgentRaw = await db
+      .select({
+        agentId: agentJobs.agentId,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        jobCount: sql<string>`count(*)`,
+        inputTokens: sql<string>`coalesce(sum(${agentJobs.inputTokens}), 0)`,
+        outputTokens: sql<string>`coalesce(sum(${agentJobs.outputTokens}), 0)`,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(eq(agentJobs.entityId, session.entityId))
+      .groupBy(agentJobs.agentId, agents.name, agents.slug)
+      .orderBy(desc(sql`count(*)`));
+
+    const perAgent = perAgentRaw
+      .filter((r): r is typeof r & { agentId: string; agentName: string; agentSlug: string } =>
+        Boolean(r.agentId && r.agentName && r.agentSlug),
+      )
+      .map((r) => ({
+        agentId: r.agentId,
+        agentName: r.agentName,
+        agentSlug: r.agentSlug,
+        jobCount: Number(r.jobCount),
+        inputTokens: Number(r.inputTokens),
+        outputTokens: Number(r.outputTokens),
+      }));
+
+    const [agentRow] = await db
+      .select({ count: sql<string>`count(*)` })
+      .from(agents)
+      .where(eq(agents.entityId, session.entityId));
+    const agentCount = Number(agentRow?.count ?? 0);
+
+    return ok({
+      totalJobs,
+      statusCounts,
+      totalInputTokens,
+      totalOutputTokens,
+      totalDurationMs,
+      avgDurationMs,
+      totalToolCalls,
+      agentCount,
+      perAgent,
+    });
+  } catch (err) {
+    console.error('[getEntityStatsAction]', err);
+    return fail('db_error', 'Failed to load stats');
+  }
+}

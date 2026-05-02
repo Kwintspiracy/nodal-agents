@@ -1313,18 +1313,65 @@ describe('listToolCallsAction', () => {
         durationMs: 320,
         turn: 2,
         createdAt: new Date(),
-        // Second select for agent lookup also returns this row's shape
-        id: 'aaaaaaaa-0000-0000-0000-000000000111',
         name: 'Boris',
         slug: 'boris',
-      } as unknown as Record<string, unknown>,
+      },
     ]) as typeof currentDb;
-    // The chain mock returns the same rows for both queries; the second
-    // select expects { id, name, slug } — we just ensure agent lookup
-    // surfaces something plausible by reusing the row.
+    // Chain mock returns the same rows for both queries; the second
+    // select expects { id, name, slug } — we ensure the action surfaces
+    // the items array regardless of the lookup result.
     const { listToolCallsAction } = await import('../src/lib/actions.ts');
     const r = await listToolCallsAction({});
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.items.length).toBe(1);
+  });
+});
+
+// ─── Stats Action ─────────────────────────────────────────────────────────────
+
+describe('getEntityStatsAction', () => {
+  it('aggregates status counts and tokens', async () => {
+    // The chain mock returns the same rows for every query. We pack a
+    // shape that satisfies all three rollups at once: status group,
+    // tool-call count, agent count, per-agent rollup.
+    currentDb = makeDb([
+      {
+        status: 'completed',
+        count: '4',
+        inputTokens: '2000',
+        outputTokens: '1000',
+        durationMs: '8000',
+        // tool-call count + agent count expected as `count`
+        // per-agent rollup
+        agentId: 'aaaaaaaa-0000-0000-0000-000000000120',
+        agentName: 'Boris',
+        agentSlug: 'boris',
+        jobCount: '4',
+      },
+    ]) as typeof currentDb;
+    const { getEntityStatsAction } = await import('../src/lib/actions.ts');
+    const r = await getEntityStatsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.totalJobs).toBe(4);
+      expect(r.data.statusCounts['completed']).toBe(4);
+      expect(r.data.totalInputTokens).toBe(2000);
+      expect(r.data.totalOutputTokens).toBe(1000);
+      // avg duration over completed jobs
+      expect(r.data.avgDurationMs).toBe(2000);
+    }
+  });
+
+  it('returns empty stats when entity has no activity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { getEntityStatsAction } = await import('../src/lib/actions.ts');
+    const r = await getEntityStatsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.totalJobs).toBe(0);
+      expect(r.data.totalInputTokens).toBe(0);
+      expect(r.data.avgDurationMs).toBe(null);
+      expect(r.data.perAgent).toEqual([]);
+    }
   });
 });
