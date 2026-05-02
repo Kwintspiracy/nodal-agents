@@ -32,6 +32,7 @@ import type { AgentMemory } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
+import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1904,5 +1905,129 @@ export async function deleteScheduleAction(id: string): Promise<ActionResult<voi
   } catch (err) {
     console.error('[deleteScheduleAction]', err);
     return fail('db_error', 'Failed to delete schedule');
+  }
+}
+
+// ─── Auth Settings (Security) ─────────────────────────────────────────────────
+
+export type SecurityView = {
+  /** Mode currently in effect for this running web process. */
+  runtimeMode: 'local-trust' | 'local-auth' | 'bearer-token';
+  /**
+   * Mode persisted in ~/.nodalai/config.json. Differs from runtimeMode after
+   * a settings save until the user restarts `nodalai up`.
+   */
+  configuredMode: 'local-trust' | 'local-auth';
+  /** True when Google OAuth client id/secret are present in config. */
+  googleConfigured: boolean;
+  /** True when GOOGLE_CLIENT_ID/SECRET are exposed to the running process. */
+  googleAvailableInRuntime: boolean;
+  configPathExists: boolean;
+};
+
+function readConfiguredAuth(): {
+  configuredMode: 'local-trust' | 'local-auth';
+  googleConfigured: boolean;
+  configPathExists: boolean;
+} {
+  const cfg = readNodalaiConfig();
+  if (!cfg) {
+    return {
+      configuredMode: 'local-trust',
+      googleConfigured: false,
+      configPathExists: false,
+    };
+  }
+  const auth = (cfg['auth'] ?? null) as
+    | { mode?: 'local-trust' | 'local-auth'; googleClientId?: string; googleClientSecret?: string }
+    | null;
+  const bind = cfg['bind'] as 'loopback' | 'lan' | undefined;
+  const fallback: 'local-trust' | 'local-auth' = bind === 'lan' ? 'local-auth' : 'local-trust';
+  return {
+    configuredMode: auth?.mode ?? fallback,
+    googleConfigured: Boolean(auth?.googleClientId && auth?.googleClientSecret),
+    configPathExists: true,
+  };
+}
+
+export async function getSecuritySettingsAction(): Promise<ActionResult<SecurityView>> {
+  try {
+    await getSession();
+    const persisted = readConfiguredAuth();
+    return ok({
+      runtimeMode: env.AUTH_MODE,
+      configuredMode: persisted.configuredMode,
+      googleConfigured: persisted.googleConfigured,
+      googleAvailableInRuntime: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+      configPathExists: persisted.configPathExists,
+    });
+  } catch (err) {
+    console.error('[getSecuritySettingsAction]', err);
+    return fail('db_error', 'Failed to load security settings');
+  }
+}
+
+const UpdateAuthSchema = z.object({
+  mode: z.enum(['local-trust', 'local-auth']),
+  googleClientId: z.string().max(200).optional(),
+  googleClientSecret: z.string().max(200).optional(),
+  /** When true, clear googleClientId+Secret from config. */
+  clearGoogle: z.boolean().default(false),
+});
+
+export async function updateAuthSettingsAction(
+  raw: unknown,
+): Promise<ActionResult<{ requiresRestart: boolean }>> {
+  try {
+    await getSession();
+    const parsed = UpdateAuthSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+
+    const existing = readNodalaiConfig();
+    if (!existing) {
+      return fail(
+        'cli_config_missing',
+        'Cannot find ~/.nodalai/config.json — run `nodalai init` first.',
+      );
+    }
+
+    const prevAuth = (existing['auth'] ?? {}) as Record<string, unknown>;
+    const nextAuth: Record<string, unknown> = {
+      ...prevAuth,
+      mode: parsed.data.mode,
+    };
+
+    if (parsed.data.clearGoogle) {
+      delete nextAuth['googleClientId'];
+      delete nextAuth['googleClientSecret'];
+    } else {
+      // Only overwrite when a non-empty value is provided so users can edit
+      // the mode without re-pasting their secrets.
+      if (parsed.data.googleClientId && parsed.data.googleClientId.trim().length > 0) {
+        nextAuth['googleClientId'] = parsed.data.googleClientId.trim();
+      }
+      if (parsed.data.googleClientSecret && parsed.data.googleClientSecret.trim().length > 0) {
+        nextAuth['googleClientSecret'] = parsed.data.googleClientSecret.trim();
+      }
+    }
+
+    try {
+      mergeNodalaiConfig({ auth: nextAuth });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg === 'cli_config_missing') {
+        return fail('cli_config_missing', 'Config file disappeared between read and write.');
+      }
+      throw err;
+    }
+
+    revalidatePath('/settings');
+    const requiresRestart = parsed.data.mode !== env.AUTH_MODE;
+    return ok({ requiresRestart });
+  } catch (err) {
+    console.error('[updateAuthSettingsAction]', err);
+    return fail('db_error', 'Failed to update auth settings');
   }
 }

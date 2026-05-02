@@ -85,4 +85,62 @@ describe('buildEnvForWeb', () => {
     const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
     expect(env['AUTH_SECRET']).toBe(BASE_CONFIG.workerSecret);
   });
+
+  it('config.auth.mode overrides bind-derived auth mode', () => {
+    // Loopback bind would default to local-trust, but explicit override wins.
+    const cfg: Config = {
+      ...BASE_CONFIG,
+      auth: { mode: 'local-auth' },
+    };
+    const env = buildEnvForWeb(cfg, DB_URL);
+    expect(env['AUTH_MODE']).toBe('local-auth');
+    expect(env['NEXT_PUBLIC_AUTH_MODE']).toBe('local-auth');
+  });
+
+  it('does not surface Google OAuth creds when auth field is empty', () => {
+    const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
+    expect(env['GOOGLE_CLIENT_ID']).toBeUndefined();
+    expect(env['GOOGLE_CLIENT_SECRET']).toBeUndefined();
+  });
+
+  it('surfaces Google OAuth creds when configured', () => {
+    const cfg: Config = {
+      ...BASE_CONFIG,
+      auth: {
+        mode: 'local-auth',
+        googleClientId: 'cid.apps.googleusercontent.com',
+        googleClientSecret: 'gocspx-abc',
+      },
+    };
+    const env = buildEnvForWeb(cfg, DB_URL);
+    expect(env['GOOGLE_CLIENT_ID']).toBe('cid.apps.googleusercontent.com');
+    expect(env['GOOGLE_CLIENT_SECRET']).toBe('gocspx-abc');
+  });
+});
+
+// ── resolveAuthMode ──────────────────────────────────────────────────────────
+
+describe('resolveAuthMode', () => {
+  it('uses bind-derived default when config.auth is missing', async () => {
+    const { resolveAuthMode } = await import('../lib/env.ts');
+    expect(resolveAuthMode(BASE_CONFIG)).toBe('local-trust');
+    expect(resolveAuthMode({ ...BASE_CONFIG, bind: 'lan' })).toBe('local-auth');
+  });
+
+  it('uses explicit override when set', async () => {
+    const { resolveAuthMode } = await import('../lib/env.ts');
+    expect(
+      resolveAuthMode({
+        ...BASE_CONFIG,
+        auth: { mode: 'local-auth' },
+      }),
+    ).toBe('local-auth');
+    expect(
+      resolveAuthMode({
+        ...BASE_CONFIG,
+        bind: 'lan',
+        auth: { mode: 'local-trust' },
+      }),
+    ).toBe('local-trust');
+  });
 });

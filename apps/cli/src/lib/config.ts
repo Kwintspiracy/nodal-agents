@@ -32,6 +32,20 @@ export const ConfigSchema = z.object({
   workerSecret: z.string().min(32),
   bind: z.enum(['loopback', 'lan']).default('loopback'),
   bearerToken: z.string().optional(),
+  /**
+   * Auth provider override. When unset, the auth mode is derived from `bind`
+   * (loopback → local-trust, lan → local-auth). Set explicitly to enable
+   * email+password (and optionally Google OAuth) on a loopback install.
+   *
+   * Edited from the dashboard via Settings → Security; CLI restart required.
+   */
+  auth: z
+    .object({
+      mode: z.enum(['local-trust', 'local-auth']).optional(),
+      googleClientId: z.string().optional(),
+      googleClientSecret: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

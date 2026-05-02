@@ -23,7 +23,7 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
               : config.llm.provider,
     LLM_MODEL: config.llm.model,
     LLM_BASE_URL: config.llm.baseURL,
-    AUTH_MODE: config.bind === 'lan' ? 'local-auth' : 'local-trust',
+    AUTH_MODE: resolveAuthMode(config),
     WORKER_SECRET: config.workerSecret,
     PORT: String(config.ports.runner),
     BIND: bind,
@@ -39,6 +39,16 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
 }
 
 /**
+ * Resolve the auth mode for runtime processes.
+ * Explicit `config.auth.mode` wins; otherwise we fall back to the legacy
+ * mapping (loopback → local-trust, lan → local-auth).
+ */
+export function resolveAuthMode(config: Config): 'local-trust' | 'local-auth' {
+  if (config.auth?.mode) return config.auth.mode;
+  return config.bind === 'lan' ? 'local-auth' : 'local-trust';
+}
+
+/**
  * Build env vars for the web (Next.js) process.
  * Web expects DATABASE_URL, RUNNER_URL, AUTH_MODE, AUTH_SECRET, NEXT_PUBLIC_APP_URL.
  */
@@ -51,7 +61,7 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
       ? 'openai-compatible'
       : config.llm.provider;
 
-  const authMode = config.bind === 'lan' ? 'local-auth' : 'local-trust';
+  const authMode = resolveAuthMode(config);
 
   const env: Record<string, string> = {
     DATABASE_URL: databaseUrl,
@@ -73,6 +83,13 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     LLM_MODEL: config.llm.model,
     LLM_BASE_URL: config.llm.baseURL,
   };
+
+  // Surface Google OAuth creds to the web process when configured. Required
+  // for better-auth's Google provider in local-auth mode; ignored otherwise.
+  if (config.auth?.googleClientId) env['GOOGLE_CLIENT_ID'] = config.auth.googleClientId;
+  if (config.auth?.googleClientSecret) {
+    env['GOOGLE_CLIENT_SECRET'] = config.auth.googleClientSecret;
+  }
 
   return env;
 }

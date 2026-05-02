@@ -1,9 +1,13 @@
-import { getSettingsAction } from '@/lib/actions.ts';
+import { getSettingsAction, getSecuritySettingsAction } from '@/lib/actions.ts';
+import SecurityForm from './SecurityForm.tsx';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const result = await getSettingsAction();
+  const [result, securityResult] = await Promise.all([
+    getSettingsAction(),
+    getSecuritySettingsAction(),
+  ]);
 
   if (!result.ok) {
     return (
@@ -58,6 +62,17 @@ export default async function SettingsPage() {
         />
       </Section>
 
+      {securityResult.ok && (
+        <div>
+          <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+            Security
+          </h2>
+          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-5 py-5">
+            <SecurityForm initial={securityResult.data} />
+          </div>
+        </div>
+      )}
+
       <Section title="Network">
         <Field label="App URL" value={s.appUrl} mono />
         <Field label="Runner URL" value={s.runnerUrl} mono />
@@ -70,8 +85,8 @@ export default async function SettingsPage() {
 
       <div className="bg-neutral-950 border border-neutral-800/40 rounded-xl px-5 py-4 text-xs text-neutral-500">
         <strong className="text-neutral-300 block mb-1">Coming soon</strong>
-        Switching auth modes (trust ↔ password ↔ Google OAuth) and rotating LLM provider keys
-        from the dashboard. Today both require a CLI restart.
+        Rotating LLM provider keys from the dashboard. Today this still requires{' '}
+        <code className="font-mono">nodalai init</code>.
       </div>
     </div>
   );

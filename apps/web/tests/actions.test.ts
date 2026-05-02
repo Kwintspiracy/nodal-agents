@@ -101,6 +101,21 @@ vi.mock('@nodalai/memory', async () => {
   };
 });
 
+// ─── Mock cli-config (filesystem access) ─────────────────────────────────────
+const cliConfigMocks: {
+  read: ReturnType<typeof vi.fn>;
+  merge: ReturnType<typeof vi.fn>;
+} = {
+  read: vi.fn(),
+  merge: vi.fn(),
+};
+
+vi.mock('../src/lib/cli-config.ts', () => ({
+  NODALAI_CONFIG_PATH: '/tmp/test/config.json',
+  readNodalaiConfig: () => cliConfigMocks.read(),
+  mergeNodalaiConfig: (patch: unknown) => cliConfigMocks.merge(patch),
+}));
+
 // ─── Validation tests (no DB needed) ─────────────────────────────────────────
 
 describe('createAgentAction — validation', () => {
@@ -1483,5 +1498,126 @@ describe('deleteScheduleAction', () => {
     const r = await deleteScheduleAction('aaaaaaaa-0000-0000-0000-000000000135');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
+// ─── Security / Auth Settings ────────────────────────────────────────────────
+
+describe('getSecuritySettingsAction', () => {
+  it('returns runtime mode + configured mode (config missing → trust default)', async () => {
+    cliConfigMocks.read.mockReturnValue(null);
+    const { getSecuritySettingsAction } = await import('../src/lib/actions.ts');
+    const r = await getSecuritySettingsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.runtimeMode).toBe('local-trust');
+      expect(r.data.configuredMode).toBe('local-trust');
+      expect(r.data.googleConfigured).toBe(false);
+      expect(r.data.configPathExists).toBe(false);
+    }
+  });
+
+  it('reads explicit auth.mode from config', async () => {
+    cliConfigMocks.read.mockReturnValue({
+      bind: 'loopback',
+      auth: { mode: 'local-auth', googleClientId: 'cid', googleClientSecret: 'sec' },
+    });
+    const { getSecuritySettingsAction } = await import('../src/lib/actions.ts');
+    const r = await getSecuritySettingsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.configuredMode).toBe('local-auth');
+      expect(r.data.googleConfigured).toBe(true);
+      expect(r.data.configPathExists).toBe(true);
+    }
+  });
+
+  it('falls back to bind-derived default when auth.mode is absent', async () => {
+    cliConfigMocks.read.mockReturnValue({ bind: 'lan' });
+    const { getSecuritySettingsAction } = await import('../src/lib/actions.ts');
+    const r = await getSecuritySettingsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.configuredMode).toBe('local-auth');
+  });
+});
+
+describe('updateAuthSettingsAction', () => {
+  it('rejects bad mode', async () => {
+    const { updateAuthSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateAuthSettingsAction({ mode: 'bogus' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns cli_config_missing when config file is absent', async () => {
+    cliConfigMocks.read.mockReturnValue(null);
+    const { updateAuthSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateAuthSettingsAction({ mode: 'local-auth' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('cli_config_missing');
+  });
+
+  it('writes auth.mode change and reports requiresRestart=true when mode differs from runtime', async () => {
+    cliConfigMocks.read.mockReturnValue({ bind: 'loopback', auth: {} });
+    cliConfigMocks.merge.mockReset();
+    const { updateAuthSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateAuthSettingsAction({ mode: 'local-auth' });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.requiresRestart).toBe(true);
+    expect(cliConfigMocks.merge).toHaveBeenCalledTimes(1);
+    const patch = cliConfigMocks.merge.mock.calls[0]![0] as { auth: { mode: string } };
+    expect(patch.auth.mode).toBe('local-auth');
+  });
+
+  it('preserves existing google fields when only mode changes', async () => {
+    cliConfigMocks.read.mockReturnValue({
+      bind: 'loopback',
+      auth: { mode: 'local-trust', googleClientId: 'cid', googleClientSecret: 'sec' },
+    });
+    cliConfigMocks.merge.mockReset();
+    const { updateAuthSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateAuthSettingsAction({ mode: 'local-auth' });
+    expect(r.ok).toBe(true);
+    const patch = cliConfigMocks.merge.mock.calls[0]![0] as {
+      auth: { googleClientId?: string; googleClientSecret?: string };
+    };
+    expect(patch.auth.googleClientId).toBe('cid');
+    expect(patch.auth.googleClientSecret).toBe('sec');
+  });
+
+  it('clears google fields when clearGoogle=true', async () => {
+    cliConfigMocks.read.mockReturnValue({
+      bind: 'loopback',
+      auth: { mode: 'local-auth', googleClientId: 'cid', googleClientSecret: 'sec' },
+    });
+    cliConfigMocks.merge.mockReset();
+    const { updateAuthSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateAuthSettingsAction({ mode: 'local-auth', clearGoogle: true });
+    expect(r.ok).toBe(true);
+    const patch = cliConfigMocks.merge.mock.calls[0]![0] as {
+      auth: { googleClientId?: string; googleClientSecret?: string };
+    };
+    expect(patch.auth.googleClientId).toBeUndefined();
+    expect(patch.auth.googleClientSecret).toBeUndefined();
+  });
+
+  it('overwrites google fields when new values are provided', async () => {
+    cliConfigMocks.read.mockReturnValue({
+      bind: 'loopback',
+      auth: { mode: 'local-auth', googleClientId: 'old', googleClientSecret: 'old' },
+    });
+    cliConfigMocks.merge.mockReset();
+    const { updateAuthSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateAuthSettingsAction({
+      mode: 'local-auth',
+      googleClientId: 'new-id',
+      googleClientSecret: 'new-secret',
+    });
+    expect(r.ok).toBe(true);
+    const patch = cliConfigMocks.merge.mock.calls[0]![0] as {
+      auth: { googleClientId?: string; googleClientSecret?: string };
+    };
+    expect(patch.auth.googleClientId).toBe('new-id');
+    expect(patch.auth.googleClientSecret).toBe('new-secret');
   });
 });
