@@ -160,16 +160,24 @@ describe('deleteAgentAction — validation', () => {
 describe('sendTaskAction — validation', () => {
   it('rejects non-uuid agentId', async () => {
     const { sendTaskAction } = await import('../src/lib/actions.ts');
-    const r = await sendTaskAction({ title: 'Do X', agentId: 'bad' });
+    const r = await sendTaskAction({ prompt: 'Do X', agentId: 'bad' });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('rejects empty title', async () => {
+  it('rejects empty prompt', async () => {
     const { sendTaskAction } = await import('../src/lib/actions.ts');
-    const r = await sendTaskAction({ title: '', agentId: 'aaaaaaaa-0000-0000-0000-000000000001' });
+    const r = await sendTaskAction({ prompt: '', agentId: 'aaaaaaaa-0000-0000-0000-000000000001' });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('accepts a long prompt (no upper bound — agent prompts are arbitrarily long)', async () => {
+    const { sendTaskAction } = await import('../src/lib/actions.ts');
+    const longPrompt = 'a'.repeat(5000);
+    const r = await sendTaskAction({ prompt: longPrompt, agentId: 'aaaaaaaa-0000-0000-0000-000000000001' });
+    // Will likely fail downstream (no such agent in mock DB) but NOT on validation_failed.
+    expect(r.ok === false && r.code === 'validation_failed').toBe(false);
   });
 });
 
@@ -878,7 +886,8 @@ describe('deleteMemoryAction', () => {
 describe('listConnectorsAction', () => {
   it('returns the full catalog with null connectors when entity has none', async () => {
     currentDb = makeDb([]) as typeof currentDb;
-    const { listConnectorsAction, CONNECTOR_CATALOG } = await import('../src/lib/actions.ts');
+    const { listConnectorsAction } = await import('../src/lib/actions.ts');
+    const { CONNECTOR_CATALOG } = await import('../src/lib/connector-catalog.ts');
     const r = await listConnectorsAction();
     expect(r.ok).toBe(true);
     if (r.ok) {

@@ -13,7 +13,6 @@ import {
   agents,
   agentAssignments,
   agentJobs,
-  agentTasks,
   connectors,
   approvalRequests,
   agentSkills,
@@ -33,6 +32,7 @@ import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
+import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ const CreateAgentSchema = z
   });
 
 const SendTaskSchema = z.object({
-  title: z.string().min(1).max(200),
+  prompt: z.string().min(1),
   agentId: z.string().uuid('Must select a valid agent'),
   priority: z.enum(['low', 'medium', 'high']).default('medium'),
 });
@@ -214,8 +214,11 @@ export async function deleteAgentAction(id: string): Promise<ActionResult<void>>
   }
 }
 
-// ─── Task / Job Actions ───────────────────────────────────────────────────────
+// ─── Job Actions ──────────────────────────────────────────────────────────────
 
+// Kept for type completeness — agent_tasks rows are still produced by planner
+// orchestrators internally (cron + child jobs). No UI exposes them currently;
+// see plan: a kanban view on /jobs may surface them later.
 export type AgentTaskRow = {
   id: string;
   entityId: string;
@@ -229,22 +232,6 @@ export type AgentTaskRow = {
   createdAt: Date;
 };
 
-export async function listTasksAction(): Promise<ActionResult<AgentTaskRow[]>> {
-  try {
-    const session = await getSession();
-    const db = getDb();
-    const rows = await db
-      .select()
-      .from(agentTasks)
-      .where(eq(agentTasks.entityId, session.entityId))
-      .orderBy(desc(agentTasks.createdAt))
-      .limit(50);
-    return ok(rows as AgentTaskRow[]);
-  } catch (err) {
-    console.error('[listTasksAction]', err);
-    return fail('db_error', 'Failed to load tasks');
-  }
-}
 
 export type JobRow = {
   id: string;
@@ -312,7 +299,7 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
         agentId: agent.id,
         status: 'pending',
         channel: 'api',
-        task: parsed.data.title,
+        task: parsed.data.prompt,
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');
@@ -336,7 +323,6 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
       });
     }
 
-    revalidatePath('/tasks');
     revalidatePath('/jobs');
     return ok({ jobId: job.id });
   } catch (err) {
@@ -786,47 +772,6 @@ export async function deleteMemoryAction(id: string): Promise<ActionResult<void>
 
 // ─── Connector Actions ────────────────────────────────────────────────────────
 
-const CONNECTOR_AUTH_TYPES = ['api_key', 'oauth2', 'bearer', 'basic', 'none'] as const;
-type ConnectorAuthType = (typeof CONNECTOR_AUTH_TYPES)[number];
-
-/**
- * Catalog of adapter slugs the runner knows about. UI surfaces these so the
- * user picks from a list instead of typing a slug that no adapter listens to.
- * Order matters: we render them in this order on the page.
- */
-export const CONNECTOR_CATALOG = [
-  {
-    slug: 'notion',
-    label: 'Notion',
-    authType: 'api_key' as ConnectorAuthType,
-    docsHint: 'Create a Notion integration at notion.so/my-integrations and copy its internal secret.',
-  },
-  {
-    slug: 'google-drive',
-    label: 'Google Drive',
-    authType: 'oauth2' as ConnectorAuthType,
-    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
-  },
-  {
-    slug: 'gmail',
-    label: 'Gmail',
-    authType: 'oauth2' as ConnectorAuthType,
-    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
-  },
-  {
-    slug: 'google-sheets',
-    label: 'Google Sheets',
-    authType: 'oauth2' as ConnectorAuthType,
-    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
-  },
-  {
-    slug: 'google-docs',
-    label: 'Google Docs',
-    authType: 'oauth2' as ConnectorAuthType,
-    docsHint: 'OAuth flow not yet automated — paste raw tokens (clientId, clientSecret, refreshToken).',
-  },
-] as const;
-
 export type ConnectorRow = {
   id: string;
   slug: string;
@@ -1136,7 +1081,7 @@ export async function listApprovalsAction(
 const ResolveApprovalSchema = z.object({
   approvalRequestId: z.string().uuid(),
   decision: z.enum(['approve', 'reject']),
-  notes: z.string().max(500).optional(),
+  notes: z.string().max(5000).optional(),
 });
 
 /**
@@ -1816,7 +1761,7 @@ const CreateScheduleSchema = z.object({
   agentId: z.string().uuid('Pick an agent'),
   name: z.string().min(1).max(120),
   cronExpr: z.string().min(1).max(100),
-  task: z.string().min(1).max(2000),
+  task: z.string().min(1),
 });
 
 export async function createScheduleAction(

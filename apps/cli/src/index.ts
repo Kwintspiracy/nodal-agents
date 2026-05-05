@@ -10,7 +10,14 @@ const program = new Command();
 program
   .name('nodalai')
   .description('Local AI agent platform — one command to start everything')
-  .version('0.0.0');
+  .version('0.0.0')
+  // Without this, options registered both at program-level (e.g. --dev for the
+  // default action) and at subcommand-level (e.g. up --dev) collide: commander
+  // greedily consumes the flag at the program level, so `nodalai up --dev`
+  // silently runs `up` with opts={}. enablePositionalOptions tells commander
+  // that anything after a positional argument (the subcommand name) belongs
+  // to the subcommand. See regression test in apps/cli/tests/dev-flag.test.ts.
+  .enablePositionalOptions();
 
 // ── nodalai (default: up) ─────────────────────────────────────────────────────
 

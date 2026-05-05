@@ -197,12 +197,23 @@ export async function executeJob(
   // ── 7. Build tool set ─────────────────────────────────────────────────────────
   let toolDefs: AnyToolDef[];
 
+  // Always-on built-ins (excluding return_result, which is handled per-branch
+  // because orchestrators add it after their orchestration tools and workers
+  // pull it via computeToolWhitelist's alwaysOn). The system prompt advertises
+  // these to every agent — they MUST be in the runtime toolset too, otherwise
+  // the LLM sees them in its prompt and trips AI_NoSuchToolError.
+  const memoryBuiltins = ALWAYS_ON_TOOLS.filter((n) => n !== 'return_result')
+    .map((n) => registry.get(n))
+    .filter((t): t is AnyToolDef => t !== undefined);
+
   try {
     if (isOrchestrator) {
       if (orchestratorMode === 'router') {
         const assignTools = (await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[];
         const returnResult = registry.get('return_result');
-        toolDefs = returnResult ? [...assignTools, returnResult] : [...assignTools];
+        toolDefs = returnResult
+          ? [...assignTools, ...memoryBuiltins, returnResult]
+          : [...assignTools, ...memoryBuiltins];
       } else {
         const [createTaskTool, listTasksTool] = generateTaskTools(agent.id, db);
         const returnResult = registry.get('return_result');
@@ -210,9 +221,14 @@ export async function executeJob(
           ? [
               createTaskTool as unknown as AnyToolDef,
               listTasksTool as unknown as AnyToolDef,
+              ...memoryBuiltins,
               returnResult,
             ]
-          : [createTaskTool as unknown as AnyToolDef, listTasksTool as unknown as AnyToolDef];
+          : [
+              createTaskTool as unknown as AnyToolDef,
+              listTasksTool as unknown as AnyToolDef,
+              ...memoryBuiltins,
+            ];
       }
     } else {
       // Worker: whitelist from skill assignments + always-on tools
@@ -377,7 +393,13 @@ export async function executeJob(
       // before finalizing. Without this, an LLM that emits both in one turn
       // would have its real work discarded.
       const othersWithoutReturn = others.filter((b) => b.name !== 'return_result');
-      const callsToProcess = keptAssign ? [keptAssign, ...othersWithoutReturn] : othersWithoutReturn;
+      // Order matters: non-assign tool calls (save_memory, query_memory, etc.)
+      // run FIRST, then the assign call. If the assign triggers delegation,
+      // the loop exits via recursive executeJob — anything queued AFTER would
+      // be silently dropped, leaving the LLM's tool_use blocks unmatched at
+      // resume time (unmatched_tool_use error). Their results are forwarded to
+      // handleDelegation as sideToolResults so resumeDelegated re-injects them.
+      const callsToProcess = keptAssign ? [...othersWithoutReturn, keptAssign] : othersWithoutReturn;
 
       // i. Process tool calls
       const toolResultBlocks: Array<{
@@ -444,6 +466,18 @@ export async function executeJob(
                 chatId: job.chatId,
               };
 
+              // Forward any non-assign tool results we already executed in this
+              // turn (e.g. save_memory ran before the assign) as additional
+              // sideToolResults. Without this, the LLM's earlier tool_use
+              // blocks have no matching tool_result on resume → unmatched_tool_use.
+              const preAssignSideResults = toolResultBlocks.map((b) => ({
+                type: 'tool_result' as const,
+                tool_use_id: b.toolCallId,
+                toolName: b.toolName,
+                content:
+                  typeof b.result === 'string' ? b.result : JSON.stringify(b.result ?? null),
+              }));
+
               const delegation = await handleDelegation(
                 jobShape,
                 childSlug,
@@ -453,7 +487,7 @@ export async function executeJob(
                   data: call.input['data'] as string | undefined,
                   chatId: job.chatId,
                 },
-                sideToolResults,
+                [...sideToolResults, ...preAssignSideResults],
                 db,
               );
 

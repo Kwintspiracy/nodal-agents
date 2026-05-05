@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
     '@nodalai/shared',
     '@nodalai/tools',
   ],
+  // Empty turbopack config silences the "webpack config exists, no turbopack
+  // config" warning in Next 16 dev. Turbopack handles TypeScript and workspace
+  // .js → .ts resolution natively, so no resolver alias needed here.
+  turbopack: {},
   experimental: {
     // Restore a 30-second TTL so sidebar links don't spam the server on every request.
     staleTimes: {

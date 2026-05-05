@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { updateAuthSettingsAction, type SecurityView } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 
 interface Props {
   initial: SecurityView;
@@ -13,6 +14,7 @@ export default function SecurityForm({ initial }: Props) {
   const [editGoogle, setEditGoogle] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [restartHint, setRestartHint] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -32,8 +34,8 @@ export default function SecurityForm({ initial }: Props) {
     });
   }
 
-  function handleClearGoogle() {
-    if (!confirm('Remove Google OAuth credentials from the config?')) return;
+  function performClearGoogle() {
+    setConfirmOpen(false);
     startTransition(async () => {
       const r = await updateAuthSettingsAction({ mode, clearGoogle: true });
       if (!r.ok) toast.error(r.message);
@@ -83,7 +85,7 @@ export default function SecurityForm({ initial }: Props) {
               {initial.googleConfigured && (
                 <button
                   type="button"
-                  onClick={handleClearGoogle}
+                  onClick={() => setConfirmOpen(true)}
                   disabled={isPending}
                   className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
                 >
@@ -165,6 +167,14 @@ export default function SecurityForm({ initial }: Props) {
           activate the new auth mode.
         </div>
       )}
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Remove Google OAuth credentials?"
+        message="The clientId and clientSecret will be removed from ~/.nodalai/config.json. Users with active Google sessions will need to sign in again with email + password."
+        confirmLabel="Remove"
+        onConfirm={performClearGoogle}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </form>
   );
 }

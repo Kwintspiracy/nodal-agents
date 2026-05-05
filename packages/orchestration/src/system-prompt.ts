@@ -1,11 +1,22 @@
 // system-prompt.ts — assemble the full system prompt for an agent
-// Concatenates: personality (raw, untouched) + team block + skills metadata block
+// Concatenates: personality (raw, untouched) + team block + built-in capabilities + skills metadata block
 // Invariant 2: no hardcoded user-facing strings injected into the prompt.
 
 import { eq } from '@nodalai/db';
 import { agentSkillAssignments, agentSkills } from '@nodalai/db';
+import { ALWAYS_ON_TOOL_DOCS } from '@nodalai/tools';
 import { buildTeamBlock } from './team-block.js';
 import type { Agent, AnyDrizzleDb } from './types.js';
+
+// ─── buildBuiltinCapabilitiesBlock ────────────────────────────────────────────
+// Renders the always-on built-in tools so EVERY agent sees them explicitly in
+// its system prompt — not buried in the LLM SDK's tool definitions, which can
+// be ignored when the personality is strongly worded ("just do math").
+// Data-driven from ALWAYS_ON_TOOL_DOCS — invariant #1 (no hardcoded metadata).
+function buildBuiltinCapabilitiesBlock(): string {
+  const lines = ALWAYS_ON_TOOL_DOCS.map((t) => `- **${t.name}**: ${t.description}`).join('\n');
+  return `## Built-in capabilities\n\nThese tools are always available to you. Use them proactively when they fit:\n\n${lines}`;
+}
 
 // ─── buildSystemPrompt ────────────────────────────────────────────────────────
 
@@ -54,5 +65,10 @@ export async function buildSystemPrompt(agent: Agent, db: AnyDrizzleDb): Promise
     }
   }
 
-  return personality + skillsMetadataBlock;
+  // 5. Built-in capabilities block — injected for every agent so the LLM sees
+  //    save_memory / query_memory / return_result as first-class capabilities,
+  //    not just optional tools buried in the SDK's tool list.
+  const builtinBlock = buildBuiltinCapabilitiesBlock();
+
+  return personality + '\n\n' + builtinBlock + skillsMetadataBlock;
 }

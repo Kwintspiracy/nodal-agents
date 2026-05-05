@@ -1,5 +1,6 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { Toaster } from 'sonner';
 import { AuthError, NoEntityError } from '@nodalai/auth';
 import Sidebar from '@/components/Sidebar';
 import { requireUserWithEntity } from '@/lib/server.ts';
@@ -25,6 +26,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <main className="flex-1 w-full lg:ml-56 pt-[72px] lg:pt-4 p-3 sm:p-5 lg:p-8 min-w-0">
         {children}
       </main>
+      <Toaster theme="dark" position="bottom-right" richColors closeButton />
     </>
   );
 }

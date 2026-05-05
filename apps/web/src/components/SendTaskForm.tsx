@@ -49,16 +49,16 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
       <h3 className="text-sm font-semibold text-white">Send a task</h3>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="task-title">
+        <label className="block text-xs text-neutral-500 mb-1" htmlFor="task-prompt">
           Task description
         </label>
         <textarea
-          id="task-title"
-          name="title"
+          id="task-prompt"
+          name="prompt"
           required
-          rows={3}
+          rows={6}
           placeholder="Summarise the last 10 emails from my inbox…"
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-none"
+          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-y min-h-[80px]"
         />
       </div>
 

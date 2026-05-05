@@ -10,6 +10,7 @@ import {
   type SkillRow,
   type SkillAssignmentRow,
 } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 
 interface Props {
   skill: SkillRow;
@@ -20,6 +21,7 @@ export default function SkillRowComponent({ skill }: Props) {
   const [assignments, setAssignments] = useState<SkillAssignmentRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!open || assignments) return;
@@ -53,8 +55,8 @@ export default function SkillRowComponent({ skill }: Props) {
     });
   }
 
-  function handleDelete() {
-    if (!confirm(`Delete skill "${skill.name}"? Assignments will be removed.`)) return;
+  function performDelete() {
+    setConfirmOpen(false);
     startTransition(async () => {
       const r = await deleteSkillAction(skill.id);
       if (!r.ok) toast.error(r.message);
@@ -98,13 +100,21 @@ export default function SkillRowComponent({ skill }: Props) {
 
         <button
           type="button"
-          onClick={handleDelete}
+          onClick={() => setConfirmOpen(true)}
           disabled={isPending}
           className="shrink-0 px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
         >
           Delete
         </button>
       </div>
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Delete skill "${skill.name}"?`}
+        message="The skill and all its agent assignments will be removed. Existing job logs are kept."
+        confirmLabel="Delete"
+        onConfirm={performDelete}
+        onCancel={() => setConfirmOpen(false)}
+      />
 
       {open && (
         <div className="border-t border-neutral-800/60 px-5 py-4 space-y-4 bg-neutral-950/40">

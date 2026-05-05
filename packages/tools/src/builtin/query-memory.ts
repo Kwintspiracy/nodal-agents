@@ -1,5 +1,6 @@
 // Built-in: query_memory
-// Read agent's memories with optional skill filter.
+// Read entity-scoped memories with optional skill filter.
+// Entity-scoped, not agent-scoped: agents within the same entity share knowledge.
 
 import { z } from 'zod';
 import { agentMemory, eq, and } from '@nodalai/db';
@@ -11,7 +12,7 @@ export const QueryMemoryInputSchema = z.object({
     .optional()
     .describe(
       'Optional skill slugs to filter memories by. Returns all non-archived memories ' +
-        'for this agent if omitted.',
+        'for this entity if omitted.',
     ),
   limit: z
     .number()
@@ -37,12 +38,17 @@ export interface MemoryRecord {
 export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, MemoryRecord[]> = {
   name: 'query_memory',
   description:
-    'Read your persistent memories. Use before starting a task to recall relevant context, ' +
-    'preferences, and learned rules. Filter by skill_tags to retrieve skill-specific memories.',
+    'Read persistent memories shared across all agents in your entity. Use before starting a ' +
+    'task to recall relevant context, user preferences, and learned rules — including memories ' +
+    'saved by other agents in this same workspace. Filter by skill_tags for narrower lookups.',
   inputSchema: QueryMemoryInputSchema,
   riskLevel: 'write', // write because it updates last_accessed_at — consistent with legacy
   execute: async (input, ctx) => {
-    const conditions = [eq(agentMemory.agentId, ctx.agentId), eq(agentMemory.archived, false)];
+    // Entity-scoped read: any agent in the same entity sees the same memories.
+    // Memories ARE still tagged with the agentId that wrote them (audit trail
+    // via save_memory) but reads are entity-wide so knowledge follows the user
+    // across agents.
+    const conditions = [eq(agentMemory.entityId, ctx.entityId), eq(agentMemory.archived, false)];
 
     const rows = await ctx.db
       .select({

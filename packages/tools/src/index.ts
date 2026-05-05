@@ -44,6 +44,7 @@ export type { WhitelistInput } from './whitelist.js';
 export {
   registerBuiltins,
   ALWAYS_ON_TOOLS,
+  ALWAYS_ON_TOOL_DOCS,
   returnResultTool,
   saveMemoryTool,
   queryMemoryTool,

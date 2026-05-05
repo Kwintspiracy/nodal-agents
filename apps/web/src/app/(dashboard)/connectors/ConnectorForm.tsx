@@ -8,6 +8,7 @@ import {
   deleteConnectorAction,
   type ConnectorListEntry,
 } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 
 interface Props {
   entry: ConnectorListEntry;
@@ -16,6 +17,7 @@ interface Props {
 export default function ConnectorForm({ entry }: Props) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const isApiKey = entry.authType === 'api_key';
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -50,9 +52,9 @@ export default function ConnectorForm({ entry }: Props) {
     });
   }
 
-  function handleDelete() {
+  function performDelete() {
+    setConfirmOpen(false);
     if (!entry.connector) return;
-    if (!confirm(`Disconnect ${entry.label}? Tools that depend on it will fail.`)) return;
     const id = entry.connector.id;
     startTransition(async () => {
       const r = await deleteConnectorAction(id);
@@ -107,7 +109,7 @@ export default function ConnectorForm({ entry }: Props) {
               </button>
               <button
                 type="button"
-                onClick={handleDelete}
+                onClick={() => setConfirmOpen(true)}
                 disabled={isPending}
                 className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
               >
@@ -237,6 +239,14 @@ export default function ConnectorForm({ entry }: Props) {
           </div>
         </form>
       )}
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Disconnect ${entry.label}?`}
+        message="Tools that depend on this connector will fail until you reconnect. Existing job history is preserved."
+        confirmLabel="Disconnect"
+        onConfirm={performDelete}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }

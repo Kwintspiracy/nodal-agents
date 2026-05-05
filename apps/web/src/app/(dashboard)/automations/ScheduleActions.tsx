@@ -1,8 +1,9 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { toggleScheduleAction, deleteScheduleAction } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 
 interface Props {
   id: string;
@@ -11,6 +12,7 @@ interface Props {
 
 export default function ScheduleActions({ id, active }: Props) {
   const [isPending, startTransition] = useTransition();
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function handleToggle() {
     startTransition(async () => {
@@ -20,8 +22,8 @@ export default function ScheduleActions({ id, active }: Props) {
     });
   }
 
-  function handleDelete() {
-    if (!confirm('Delete this schedule?')) return;
+  function performDelete() {
+    setConfirmOpen(false);
     startTransition(async () => {
       const r = await deleteScheduleAction(id);
       if (!r.ok) toast.error(r.message);
@@ -30,23 +32,33 @@ export default function ScheduleActions({ id, active }: Props) {
   }
 
   return (
-    <div className="flex items-center gap-1.5">
-      <button
-        type="button"
-        onClick={handleToggle}
-        disabled={isPending}
-        className="px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
-      >
-        {active ? 'Pause' : 'Enable'}
-      </button>
-      <button
-        type="button"
-        onClick={handleDelete}
-        disabled={isPending}
-        className="px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
-      >
-        Delete
-      </button>
-    </div>
+    <>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={handleToggle}
+          disabled={isPending}
+          className="px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+        >
+          {active ? 'Pause' : 'Enable'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirmOpen(true)}
+          disabled={isPending}
+          className="px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+        >
+          Delete
+        </button>
+      </div>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Delete schedule?"
+        message="This cron schedule will be removed. Past runs are kept for audit."
+        confirmLabel="Delete"
+        onConfirm={performDelete}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </>
   );
 }

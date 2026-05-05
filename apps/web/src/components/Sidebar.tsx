@@ -13,7 +13,6 @@ import {
   ClockCountdown,
   ListMagnifyingGlass,
   ShieldCheck,
-  CheckSquare,
   List,
   X,
   GearSix,
@@ -35,7 +34,7 @@ const NAV_ITEMS: NavGroup[] = [
   {
     section: 'Data',
     items: [
-      { href: '/jobs', label: 'Sessions', icon: ClipboardText },
+      { href: '/jobs', label: 'Jobs', icon: ClipboardText },
       { href: '/memories', label: 'Memories', icon: Brain },
       { href: '/connectors', label: 'Connectors', icon: Plug },
       { href: '/skills', label: 'Skills', icon: BookOpenText },
@@ -44,7 +43,6 @@ const NAV_ITEMS: NavGroup[] = [
   {
     section: 'Automation',
     items: [
-      { href: '/tasks', label: 'Tasks', icon: CheckSquare },
       { href: '/automations', label: 'Automations', icon: ClockCountdown },
       { href: '/approvals', label: 'Approvals', icon: ShieldCheck },
       { href: '/logs', label: 'Logs', icon: ListMagnifyingGlass },

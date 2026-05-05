@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { listJobsAction } from '@/lib/actions.ts';
+import { listJobsAction, listAgentsAction } from '@/lib/actions.ts';
+import SendTaskForm from '@/components/SendTaskForm.tsx';
 import StatusBadge from '@/components/StatusBadge.tsx';
 
 // Force dynamic — this page reads per-request DB state.
@@ -15,28 +16,31 @@ function truncate(s: string, n: number) {
 }
 
 export default async function JobsPage() {
-  const result = await listJobsAction({ limit: 50 });
-  const jobs = result.ok ? result.data : [];
+  const [jobsResult, agentsResult] = await Promise.all([
+    listJobsAction({ limit: 50 }),
+    listAgentsAction(),
+  ]);
+  const jobs = jobsResult.ok ? jobsResult.data : [];
+  const agents = agentsResult.ok ? agentsResult.data : [];
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Jobs</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">
-          {jobs.length} recent job{jobs.length !== 1 ? 's' : ''}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Jobs</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">
+            {jobs.length} recent job{jobs.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <SendTaskForm agents={agents} />
       </div>
 
-      {!result.ok && <p className="text-sm text-red-400">{result.message}</p>}
+      {!jobsResult.ok && <p className="text-sm text-red-400">{jobsResult.message}</p>}
 
       <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
         {jobs.length === 0 ? (
           <div className="px-6 py-12 text-center text-neutral-600 text-sm">
-            No jobs yet.{' '}
-            <Link href="/tasks" className="text-violet-400 hover:underline">
-              Send a task
-            </Link>{' '}
-            to create one.
+            No jobs yet. Use the form above to send your first task to an agent.
           </div>
         ) : (
           <div className="overflow-x-auto">

@@ -96,6 +96,13 @@ export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
   const nextBin = resolveLocalBin(webDir, 'next');
+  // `next dev` runs Turbopack (Next 16 default). It handles workspace
+  // .js → .ts resolution natively for transpiled packages, so the webpack()
+  // hook in next.config.ts (used only by `next build --webpack`) is a no-op
+  // in dev mode. Forcing --webpack in dev triggers a regression in Next 16
+  // where next-flight-css-loader no longer chains PostCSS, which breaks
+  // tailwind imports. Keeping Turbopack for dev and webpack for prod build
+  // is the canonical Next 16 setup.
   const subcommand = opts.dev ? 'dev' : 'start';
 
   outStream.write(

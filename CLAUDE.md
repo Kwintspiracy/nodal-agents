@@ -24,6 +24,7 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 7. **Always use official SDKs** when available (`@anthropic-ai/sdk`, `googleapis`, `@notionhq/client`, etc.).
 8. **Anti-loop guards baked in** (max 5 chains, max 50 tool calls/turn, max 3 delegation depth).
 9. **Tool whitelist explicit per agent** — no defaults, list calculated from DB per job.
+10. **No native browser dialogs** — `window.confirm` / `window.alert` / `window.prompt` are banned. Use `<ConfirmDialog />` (`apps/web/src/components/ConfirmDialog.tsx`) for confirmations and the Sonner toaster for notifications. Enforced by ESLint `no-restricted-globals` in `apps/web/eslint.config.mjs`.
 
 ## Workflow rules
 

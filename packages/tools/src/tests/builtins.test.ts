@@ -176,6 +176,25 @@ describe('query_memory', () => {
     expect(results.length).toBeLessThanOrEqual(1);
   });
 
+  it('returns memories saved by OTHER agents in the same entity (entity-scoped)', async () => {
+    // Regression: query_memory used to filter by agentId only, hiding memories
+    // saved by other agents. Knowledge should follow the entity, not the agent.
+    const otherAgentCtx: ToolContext = {
+      jobId: seed.jobId,
+      agentId: '00000000-0000-0000-0000-000000000099', // synthetic, not seeded
+      entityId: seed.entityId, // SAME entity
+      db: db as unknown as ToolContext['db'],
+    };
+    // First save under the seeded agent
+    await saveMemoryTool.execute(
+      { fact: 'Cross-agent visibility fact', category: 'context', importance: 3 },
+      makeCtx(),
+    );
+    // Now read from a different agent in the same entity
+    const results = await queryMemoryTool.execute({ limit: 50 }, otherAgentCtx);
+    expect(results.some((r) => r.fact === 'Cross-agent visibility fact')).toBe(true);
+  });
+
   it('has riskLevel write', () => {
     expect(queryMemoryTool.riskLevel).toBe('write');
   });

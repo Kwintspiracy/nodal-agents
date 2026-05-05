@@ -8,6 +8,7 @@ import {
   disconnectAgentTelegramAction,
   type TelegramConfigRow,
 } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 
 export default function TelegramConfigForm({
   agentId,
@@ -20,6 +21,7 @@ export default function TelegramConfigForm({
   const [config, setConfig] = useState(initialConfig);
   const [token, setToken] = useState('');
   const [isPending, startTransition] = useTransition();
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -37,8 +39,8 @@ export default function TelegramConfigForm({
     });
   }
 
-  function handleDisconnect() {
-    if (!confirm('Disconnect this Telegram bot? Incoming messages will stop.')) return;
+  function performDisconnect() {
+    setConfirmOpen(false);
     startTransition(async () => {
       const result = await disconnectAgentTelegramAction(agentId);
       if (!result.ok) {
@@ -112,7 +114,7 @@ export default function TelegramConfigForm({
           {connected && (
             <button
               type="button"
-              onClick={handleDisconnect}
+              onClick={() => setConfirmOpen(true)}
               disabled={isPending}
               className="px-4 py-2 text-sm font-medium border border-neutral-800 text-neutral-400 rounded-lg hover:border-red-800/60 hover:text-red-400 transition-colors disabled:opacity-50"
             >
@@ -121,6 +123,14 @@ export default function TelegramConfigForm({
           )}
         </div>
       </form>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Disconnect Telegram bot?"
+        message="Incoming messages to this bot will stop being processed. You can reconnect later by pasting the token again."
+        confirmLabel="Disconnect"
+        onConfirm={performDisconnect}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }
