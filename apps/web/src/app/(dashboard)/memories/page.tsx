@@ -93,9 +93,7 @@ export default async function MemoriesPage({ searchParams }: PageProps) {
                     <td className="px-5 py-3">
                       <div className="text-white">{m.fact}</div>
                       <div className="text-xs text-neutral-600 mt-1">
-                        {m.created_at
-                          ? new Date(m.created_at).toLocaleString()
-                          : '—'}
+                        {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
                         {m.access_count > 0 ? ` · accessed ${m.access_count}×` : ''}
                         {m.archived ? ' · archived' : ''}
                       </div>
@@ -155,13 +153,7 @@ interface PaginationProps {
   currentSearch: Awaited<PageProps['searchParams']>;
 }
 
-function Pagination({
-  page,
-  hasMore,
-  totalCount,
-  pageSize,
-  currentSearch,
-}: PaginationProps) {
+function Pagination({ page, hasMore, totalCount, pageSize, currentSearch }: PaginationProps) {
   const lastPage = Math.max(1, Math.ceil(totalCount / pageSize));
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(currentSearch)) {

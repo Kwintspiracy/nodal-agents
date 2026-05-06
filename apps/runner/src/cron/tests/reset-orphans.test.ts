@@ -172,10 +172,7 @@ describe('resetOrphanedTasks', () => {
 
 // ─── resetOrphanedJobs ────────────────────────────────────────────────────────
 
-async function createJob(overrides: {
-  status: string;
-  updatedAt?: Date;
-}) {
+async function createJob(overrides: { status: string; updatedAt?: Date }) {
   const [row] = await db
     .insert(agentJobs)
     .values({

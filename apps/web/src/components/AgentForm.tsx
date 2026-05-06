@@ -60,9 +60,7 @@ export default function AgentForm({ models, agents = [] }: AgentFormProps) {
   }
 
   function toggleSubAgent(id: string) {
-    setSubAgentIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+    setSubAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
   const noModels = models.length === 0;
@@ -179,14 +177,12 @@ export default function AgentForm({ models, agents = [] }: AgentFormProps) {
                 <div>
                   <label className="block text-xs text-neutral-500 mb-1">
                     Sub-agents{' '}
-                    <span className="text-neutral-600">
-                      ({subAgentIds.length} selected)
-                    </span>
+                    <span className="text-neutral-600">({subAgentIds.length} selected)</span>
                   </label>
                   {noAgentsForPicker ? (
                     <p className="text-xs text-amber-400 mt-1">
-                      Create at least one worker agent first — orchestrators need someone
-                      to delegate to.
+                      Create at least one worker agent first — orchestrators need someone to
+                      delegate to.
                     </p>
                   ) : (
                     <div className="max-h-40 overflow-y-auto bg-neutral-800/60 border border-neutral-700 rounded-lg divide-y divide-neutral-800">

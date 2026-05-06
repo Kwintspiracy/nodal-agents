@@ -122,10 +122,7 @@ describe('runTelegramPoller', () => {
     expect(exit.reason).toBe('aborted');
     expect(exit.finalOffset).toBe(102);
 
-    const jobs = await db
-      .select()
-      .from(agentJobs)
-      .where(eq(agentJobs.channel, 'telegram'));
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
     expect(jobs.length).toBe(2);
     expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
 
@@ -137,9 +134,7 @@ describe('runTelegramPoller', () => {
   });
 
   it('exits with reason="invalid_token" when Telegram rejects the token', async () => {
-    fetchSpy.mockResolvedValueOnce(
-      fakeResponse(401, { ok: false, description: 'Unauthorized' }),
-    );
+    fetchSpy.mockResolvedValueOnce(fakeResponse(401, { ok: false, description: 'Unauthorized' }));
 
     const controller = new AbortController();
     const exit = await runTelegramPoller({
@@ -156,10 +151,7 @@ describe('runTelegramPoller', () => {
 
     expect(exit.reason).toBe('invalid_token');
     // No jobs created
-    const jobs = await db
-      .select()
-      .from(agentJobs)
-      .where(eq(agentJobs.channel, 'telegram'));
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
     expect(jobs.length).toBe(0);
   });
 

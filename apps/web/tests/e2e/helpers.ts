@@ -65,11 +65,7 @@ export async function waitForJob(jobId: string, timeoutMs = 120_000) {
   try {
     return await pollDb(
       async () => {
-        const rows = await db
-          .select()
-          .from(agentJobs)
-          .where(eq(agentJobs.id, jobId))
-          .limit(1);
+        const rows = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId)).limit(1);
         const row = rows[0];
         if (!row) return null;
         if (row.status === 'completed' || row.status === 'failed') return row;
@@ -114,9 +110,7 @@ export async function waitForMemories(
             ),
           );
         // Filter by creation time (after test started)
-        const fresh = rows.filter(
-          (r) => r.createdAt !== null && r.createdAt.getTime() >= afterMs,
-        );
+        const fresh = rows.filter((r) => r.createdAt !== null && r.createdAt.getTime() >= afterMs);
         if (fresh.length >= minCount) return fresh;
         return null;
       },
@@ -177,7 +171,12 @@ export async function getChildJobs(parentJobId: string) {
   const { db, close } = makeDbClient();
   try {
     return await db
-      .select({ id: agentJobs.id, status: agentJobs.status, agentId: agentJobs.agentId, result: agentJobs.result })
+      .select({
+        id: agentJobs.id,
+        status: agentJobs.status,
+        agentId: agentJobs.agentId,
+        result: agentJobs.result,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.parentJobId, parentJobId));
   } finally {
@@ -223,7 +222,9 @@ export async function requireLmStudio(timeoutMs = 10_000): Promise<void> {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
-      throw new Error(`LM_Studio_unresponsive — /v1/models returned ${res.status}. Restart LM Studio manually.`);
+      throw new Error(
+        `LM_Studio_unresponsive — /v1/models returned ${res.status}. Restart LM Studio manually.`,
+      );
     }
   } catch (err) {
     const msg = (err as Error).message;
@@ -278,7 +279,11 @@ export async function insertMemory(
         entityId,
         fact,
         source: (opts.source ?? 'manual') as 'manual' | 'agent' | 'reflection',
-        category: (opts.category ?? 'context') as 'preference' | 'context' | 'outcome' | 'learned_rule',
+        category: (opts.category ?? 'context') as
+          | 'preference'
+          | 'context'
+          | 'outcome'
+          | 'learned_rule',
         agentId: opts.agentId ?? null,
       })
       .returning({ id: agentMemory.id });
@@ -320,8 +325,7 @@ export async function insertJob(opts: {
  * Wake the runner for a pending job by posting to /api/worker with WORKER_SECRET.
  */
 export async function triggerRunner(jobId: string): Promise<void> {
-  const WORKER_SECRET =
-    'cd5da6649755081810a44954e0fc62fe23729476c2b958aff354557d2d46febc';
+  const WORKER_SECRET = 'cd5da6649755081810a44954e0fc62fe23729476c2b958aff354557d2d46febc';
   const RUNNER_URL = 'http://localhost:3001';
   const res = await fetch(`${RUNNER_URL}/api/worker`, {
     method: 'POST',
@@ -373,10 +377,7 @@ Si tu sautes l'étape 3, ton travail est incomplet — c'est une violation direc
     let plannerId: string;
     if (existing.length > 0) {
       plannerId = existing[0]!.id;
-      await db
-        .update(agents)
-        .set({ personality })
-        .where(eq(agents.id, plannerId));
+      await db.update(agents).set({ personality }).where(eq(agents.id, plannerId));
     } else {
       const [row] = await db
         .insert(agents)

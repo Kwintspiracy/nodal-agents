@@ -5,11 +5,7 @@ import TelegramConfigForm from './TelegramConfigForm.tsx';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AgentTelegramPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function AgentTelegramPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const result = await getAgentTelegramConfigAction(id);
   if (!result.ok) {
@@ -69,9 +65,10 @@ export default async function AgentTelegramPage({
             <span className="font-mono">123456789:ABC...</span> — paste it above.
           </li>
           <li>
-            For group chats: also send <span className="font-mono text-neutral-300">/setprivacy</span>{' '}
-            → choose your bot → <span className="font-mono">Disable</span> so it can read all
-            messages, otherwise it only sees commands.
+            For group chats: also send{' '}
+            <span className="font-mono text-neutral-300">/setprivacy</span> → choose your bot →{' '}
+            <span className="font-mono">Disable</span> so it can read all messages, otherwise it
+            only sees commands.
           </li>
         </ol>
       </details>

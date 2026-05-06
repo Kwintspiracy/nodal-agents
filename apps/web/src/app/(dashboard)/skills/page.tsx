@@ -24,8 +24,8 @@ export default async function SkillsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Skills</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {result.data.length} skill{result.data.length === 1 ? '' : 's'} · reusable
-            instructions you can attach to any agent
+            {result.data.length} skill{result.data.length === 1 ? '' : 's'} · reusable instructions
+            you can attach to any agent
           </p>
         </div>
       </div>
@@ -34,8 +34,8 @@ export default async function SkillsPage() {
 
       {result.data.length === 0 ? (
         <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
-          No skills yet. Create one above — the instructions get appended to the agent's
-          system prompt when assigned.
+          No skills yet. Create one above — the instructions get appended to the agent&apos;s system
+          prompt when assigned.
         </div>
       ) : (
         <div className="space-y-3">

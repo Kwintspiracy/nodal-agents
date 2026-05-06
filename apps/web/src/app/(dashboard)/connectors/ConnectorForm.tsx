@@ -91,9 +91,7 @@ export default function ConnectorForm({ entry }: Props) {
             {entry.catalogSlug} · {entry.authType}
           </p>
           {entry.connector?.oauthAccountName && (
-            <p className="text-xs text-neutral-400 mt-1">
-              {entry.connector.oauthAccountName}
-            </p>
+            <p className="text-xs text-neutral-400 mt-1">{entry.connector.oauthAccountName}</p>
           )}
         </div>
 

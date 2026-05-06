@@ -38,9 +38,7 @@ function groupMessage(text: string, opts: { replyToBot?: boolean } = {}): Telegr
       chat: { id: -100123, type: 'group' },
       from: { id: 7, first_name: 'Alice', is_bot: false },
       text,
-      ...(opts.replyToBot
-        ? { reply_to_message: { from: { is_bot: true } } }
-        : {}),
+      ...(opts.replyToBot ? { reply_to_message: { from: { is_bot: true } } } : {}),
     },
   };
 }
@@ -56,10 +54,7 @@ describe('handleTelegramUpdate — private chats', () => {
     });
     expect(result.jobId).toBeDefined();
 
-    const [job] = await db
-      .select()
-      .from(agentJobs)
-      .where(eq(agentJobs.id, result.jobId!));
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.channel).toBe('telegram');
     expect(job?.task).toBe('hello world');
     expect(job?.chatId).toBe('999');
@@ -115,10 +110,7 @@ describe('handleTelegramUpdate — group chats', () => {
     });
     expect(result.jobId).toBeDefined();
 
-    const [job] = await db
-      .select()
-      .from(agentJobs)
-      .where(eq(agentJobs.id, result.jobId!));
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     // Group messages get the sender prefix so the agent knows who said what
     expect(job?.task).toContain('[Message from Alice');
     expect(job?.task).toContain('thanks for the answer');
@@ -134,10 +126,7 @@ describe('handleTelegramUpdate — group chats', () => {
     });
     expect(result.jobId).toBeDefined();
 
-    const [job] = await db
-      .select()
-      .from(agentJobs)
-      .where(eq(agentJobs.id, result.jobId!));
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.task).toContain('[Message from Alice');
     // The mention itself must be stripped — only the actual ask remains
     expect(job?.task).toContain('dis bonjour');
@@ -193,10 +182,7 @@ describe('handleTelegramUpdate — /ask command', () => {
     });
     expect(result.jobId).toBeDefined();
 
-    const [job] = await db
-      .select()
-      .from(agentJobs)
-      .where(eq(agentJobs.id, result.jobId!));
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.agentId).toBe(otherAgent!.id);
     expect(job?.task).toBe('what is the time');
   });

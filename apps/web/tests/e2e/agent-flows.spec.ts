@@ -107,7 +107,10 @@ test.describe('Scenario A — Proactive save_memory', () => {
       timeoutMs: 10_000,
       afterMs: testStartMs,
     });
-    expect(memories.length, 'Should have saved at least 1 memory about "français"').toBeGreaterThanOrEqual(1);
+    expect(
+      memories.length,
+      'Should have saved at least 1 memory about "français"',
+    ).toBeGreaterThanOrEqual(1);
     expect(memories[0]!.source).toBe('agent');
   });
 });
@@ -139,10 +142,9 @@ test.describe('Scenario B — Mid-delegation + save_memory', () => {
 
     // Delegation (summarizer child job) can add ~60s on top
     const job = await waitForJob(jobId, JOB_TIMEOUT_MS + 60_000);
-    expect(
-      job.status,
-      `Job ${jobId} status: ${job.status} — error: ${job.error ?? 'none'}`,
-    ).toBe('completed');
+    expect(job.status, `Job ${jobId} status: ${job.status} — error: ${job.error ?? 'none'}`).toBe(
+      'completed',
+    );
 
     // Assert: memory containing "Bali" created after test start
     const memories = await waitForMemories(ENTITY_ID, 'Bali', {
@@ -150,7 +152,10 @@ test.describe('Scenario B — Mid-delegation + save_memory', () => {
       timeoutMs: 10_000,
       afterMs: testStartMs,
     });
-    expect(memories.length, 'Should have saved at least 1 memory about "Bali"').toBeGreaterThanOrEqual(1);
+    expect(
+      memories.length,
+      'Should have saved at least 1 memory about "Bali"',
+    ).toBeGreaterThanOrEqual(1);
     expect(memories[0]!.source).toBe('agent');
 
     // Assert: at least 1 child job (delegation to summarizer)
@@ -205,10 +210,9 @@ test.describe('Scenario C — Planner save_memory', () => {
 
     // Planner spawns child jobs → double the normal job timeout
     const job = await waitForJob(jobId, JOB_TIMEOUT_MS * 2);
-    expect(
-      job.status,
-      `Job ${jobId} status: ${job.status} — error: ${job.error ?? 'none'}`,
-    ).toBe('completed');
+    expect(job.status, `Job ${jobId} status: ${job.status} — error: ${job.error ?? 'none'}`).toBe(
+      'completed',
+    );
 
     // Assert: agent_tasks row created (planner uses create_task)
     const { agentTasks, eq } = await import('@nodalai/db');
@@ -228,10 +232,7 @@ test.describe('Scenario C — Planner save_memory', () => {
 
     // Assert: child job for calculator completed with the correct result
     const children = await getChildJobs(jobId);
-    expect(
-      children.length,
-      'Expected at least one calculator child job',
-    ).toBeGreaterThanOrEqual(1);
+    expect(children.length, 'Expected at least one calculator child job').toBeGreaterThanOrEqual(1);
     const calcChild = children.find((c) => c.agentId === CALCULATOR_AGENT_ID);
     expect(calcChild, 'Expected a child job assigned to calculator agent').toBeTruthy();
     expect(calcChild?.status, 'Calculator child job should complete').toBe('completed');
@@ -363,10 +364,9 @@ test.describe('Scenario E — Telegram channel', () => {
 
     // Validate channel is still 'telegram' (unchanged by runner)
     expect(job.channel, 'Channel must remain telegram').toBe('telegram');
-    expect(
-      job.status,
-      `Job status: ${job.status} — error: ${job.error ?? 'none'}`,
-    ).toBe('completed');
+    expect(job.status, `Job status: ${job.status} — error: ${job.error ?? 'none'}`).toBe(
+      'completed',
+    );
 
     // Assert: memory containing "vacances" created after test start
     const memories = await waitForMemories(ENTITY_ID, 'vacances', {

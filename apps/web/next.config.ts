@@ -13,8 +13,9 @@ const nextConfig: NextConfig = {
     '@nodalai/tools',
   ],
   // Empty turbopack config silences the "webpack config exists, no turbopack
-  // config" warning in Next 16 dev. Turbopack handles TypeScript and workspace
-  // .js → .ts resolution natively, so no resolver alias needed here.
+  // config" warning. Workspace packages use extension-less relative imports
+  // (e.g. `from './foo'`), which both Turbopack and webpack resolve natively
+  // via tsconfig moduleResolution: Bundler. No resolver alias needed.
   turbopack: {},
   experimental: {
     // Restore a 30-second TTL so sidebar links don't spam the server on every request.
@@ -25,9 +26,10 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ['@phosphor-icons/react'],
   },
   webpack(config: Configuration) {
-    // Workspace packages use .js extensions in TypeScript ESM source (e.g. './ids.js').
-    // Webpack cannot natively resolve .js → .ts without this resolver plugin.
-    // This is safe: it only applies to transpiled workspace packages.
+    // Safety net: workspace package source no longer uses `.js` extensions in
+    // relative imports (Turbopack-compatible), but if a future contributor
+    // reintroduces a `.js` import, this alias keeps webpack resolving correctly.
+    // Harmless no-op when no `.js` imports exist.
     if (!config.resolve) config.resolve = {};
     const prev = config.resolve.extensionAlias ?? {};
     config.resolve.extensionAlias = {

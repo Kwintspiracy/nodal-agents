@@ -70,8 +70,7 @@ export async function handleTelegramUpdate(args: {
 
   // Group chat: only respond to commands, mentions, or replies to the bot.
   if (isGroup) {
-    const isCommand =
-      text.startsWith('/ask ') || text.startsWith('/agents') || text === '/start';
+    const isCommand = text.startsWith('/ask ') || text.startsWith('/agents') || text === '/start';
     const replyToBot = message.reply_to_message?.from?.is_bot === true;
     if (!isCommand && !isMention && !replyToBot) return { skipped: 'group_filter' };
   }

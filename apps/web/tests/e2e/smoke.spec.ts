@@ -41,9 +41,7 @@ test.describe('login + dashboard navigation', () => {
 });
 
 test.describe('agent → task → job flow', () => {
-  test('creates an agent, sends a task, and shows the job in the list', async ({
-    page,
-  }) => {
+  test('creates an agent, sends a task, and shows the job in the list', async ({ page }) => {
     await page.goto('/agents');
 
     const slug = testSlugSuffix();

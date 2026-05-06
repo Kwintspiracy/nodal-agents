@@ -2,11 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import {
-  archiveMemoryAction,
-  unarchiveMemoryAction,
-  deleteMemoryAction,
-} from '@/lib/actions.ts';
+import { archiveMemoryAction, unarchiveMemoryAction, deleteMemoryAction } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 
 interface Props {

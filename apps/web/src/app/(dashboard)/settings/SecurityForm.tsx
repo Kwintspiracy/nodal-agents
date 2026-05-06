@@ -98,10 +98,7 @@ export default function SecurityForm({ initial }: Props) {
           {editGoogle && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label
-                  className="block text-xs text-neutral-500 mb-1"
-                  htmlFor="google-client-id"
-                >
+                <label className="block text-xs text-neutral-500 mb-1" htmlFor="google-client-id">
                   Client ID
                 </label>
                 <input
@@ -130,8 +127,8 @@ export default function SecurityForm({ initial }: Props) {
               <p className="sm:col-span-2 text-[11px] text-neutral-600">
                 Use authorized JavaScript origins{' '}
                 <code className="font-mono">http://localhost:3000</code> and redirect URI{' '}
-                <code className="font-mono">http://localhost:3000/api/auth/callback/google</code>{' '}
-                in the Google Cloud Console.
+                <code className="font-mono">http://localhost:3000/api/auth/callback/google</code> in
+                the Google Cloud Console.
               </p>
             </div>
           )}
@@ -140,7 +137,7 @@ export default function SecurityForm({ initial }: Props) {
 
       {!initial.configPathExists && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 text-xs text-amber-300">
-          ~/.nodalai/config.json wasn't found. Save here will fail until you've run{' '}
+          ~/.nodalai/config.json wasn&apos;t found. Save here will fail until you&apos;ve run{' '}
           <code className="font-mono">nodalai init</code> at least once.
         </div>
       )}

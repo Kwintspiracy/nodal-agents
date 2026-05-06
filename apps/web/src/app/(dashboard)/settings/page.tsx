@@ -27,9 +27,8 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-neutral-500 mt-0.5">
-          Read-only view. Edit via{' '}
-          <code className="font-mono text-neutral-400">nodalai init</code> in the CLI, then
-          restart with{' '}
+          Read-only view. Edit via <code className="font-mono text-neutral-400">nodalai init</code>{' '}
+          in the CLI, then restart with{' '}
           <code className="font-mono text-neutral-400">nodalai up</code>.
         </p>
       </div>
@@ -105,15 +104,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Field({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: React.ReactNode;
-  mono?: boolean;
-}) {
+function Field({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-4 px-5 py-3">
       <span className="text-sm text-neutral-400 shrink-0">{label}</span>

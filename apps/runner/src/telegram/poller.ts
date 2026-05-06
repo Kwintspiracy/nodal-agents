@@ -11,11 +11,7 @@
 
 import { eq } from '@nodalai/db';
 import { agents } from '@nodalai/db';
-import {
-  getTelegramUpdates,
-  DeliveryError,
-  type TelegramUpdate,
-} from '@nodalai/delivery';
+import { getTelegramUpdates, DeliveryError, type TelegramUpdate } from '@nodalai/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { handleTelegramUpdate, triggerJobWorker } from './handler.ts';
@@ -75,9 +71,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       if (err instanceof DeliveryError && err.code === 'telegram_invalid_token') {
         // The token was revoked, deleted, or rotated. Stop polling — the next
         // (re)configuration via the dashboard will respawn this poller.
-        console.warn(
-          `[telegram-poller agent=${agentId}] invalid_token; stopping`,
-        );
+        console.warn(`[telegram-poller agent=${agentId}] invalid_token; stopping`);
         return { reason: 'invalid_token', finalOffset: offset };
       }
 

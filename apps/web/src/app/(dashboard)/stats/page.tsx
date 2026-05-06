@@ -50,9 +50,7 @@ export default async function StatsPage() {
   const s = result.data;
   const totalTokens = s.totalInputTokens + s.totalOutputTokens;
   const successRate =
-    s.totalJobs > 0
-      ? Math.round(((s.statusCounts['completed'] ?? 0) / s.totalJobs) * 100)
-      : null;
+    s.totalJobs > 0 ? Math.round(((s.statusCounts['completed'] ?? 0) / s.totalJobs) * 100) : null;
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -70,13 +68,15 @@ export default async function StatsPage() {
           label="Success rate"
           value={successRate === null ? '—' : `${successRate}%`}
           subtle={
-            s.totalJobs > 0
-              ? `${s.statusCounts['completed'] ?? 0} / ${s.totalJobs}`
-              : undefined
+            s.totalJobs > 0 ? `${s.statusCounts['completed'] ?? 0} / ${s.totalJobs}` : undefined
           }
         />
         <Card label="Tool calls" value={formatNumber(s.totalToolCalls)} />
-        <Card label="Avg duration" value={formatDuration(s.avgDurationMs)} subtle="completed jobs" />
+        <Card
+          label="Avg duration"
+          value={formatDuration(s.avgDurationMs)}
+          subtle="completed jobs"
+        />
         <Card
           label="Input tokens"
           value={formatNumber(s.totalInputTokens)}
@@ -85,9 +85,7 @@ export default async function StatsPage() {
         <Card label="Output tokens" value={formatNumber(s.totalOutputTokens)} />
         <Card
           label="Tokens / job"
-          value={
-            s.totalJobs > 0 ? formatNumber(Math.round(totalTokens / s.totalJobs)) : '—'
-          }
+          value={s.totalJobs > 0 ? formatNumber(Math.round(totalTokens / s.totalJobs)) : '—'}
         />
       </div>
 
@@ -102,18 +100,13 @@ export default async function StatsPage() {
                 {Object.entries(s.statusCounts)
                   .sort((a, b) => b[1] - a[1])
                   .map(([status, count]) => (
-                    <tr
-                      key={status}
-                      className="border-b border-neutral-800/40 last:border-0"
-                    >
+                    <tr key={status} className="border-b border-neutral-800/40 last:border-0">
                       <td className="px-5 py-3">
                         <span className={STATUS_COLOR[status] ?? 'text-neutral-300'}>
                           {STATUS_LABEL[status] ?? status}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-right text-neutral-300 font-mono">
-                        {count}
-                      </td>
+                      <td className="px-5 py-3 text-right text-neutral-300 font-mono">{count}</td>
                     </tr>
                   ))}
               </tbody>

@@ -25,6 +25,9 @@ export default function SkillRowComponent({ skill }: Props) {
 
   useEffect(() => {
     if (!open || assignments) return;
+    // Lazy fetch on first expand: setLoading(true) gates the spinner while the
+    // server action resolves. This is the standard "fetch on open" pattern.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     listSkillAssignmentsAction(skill.id).then((r) => {
       setLoading(false);
@@ -36,9 +39,7 @@ export default function SkillRowComponent({ skill }: Props) {
   function toggleAssignment(agentId: string, isAssigned: boolean) {
     // Optimistic UI update
     setAssignments((prev) =>
-      prev
-        ? prev.map((a) => (a.agentId === agentId ? { ...a, assigned: !isAssigned } : a))
-        : prev,
+      prev ? prev.map((a) => (a.agentId === agentId ? { ...a, assigned: !isAssigned } : a)) : prev,
     );
     startTransition(async () => {
       const action = isAssigned ? unassignSkillAction : assignSkillAction;
@@ -76,9 +77,7 @@ export default function SkillRowComponent({ skill }: Props) {
           onClick={() => setOpen((v) => !v)}
           className="flex-1 text-left flex items-center gap-3 hover:bg-neutral-800/30 -m-2 p-2 rounded-lg"
         >
-          <span className="text-neutral-500 text-xs font-mono w-3">
-            {open ? '▾' : '▸'}
-          </span>
+          <span className="text-neutral-500 text-xs font-mono w-3">{open ? '▾' : '▸'}</span>
           <div className="flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-white font-medium">{skill.name}</span>
@@ -93,9 +92,7 @@ export default function SkillRowComponent({ skill }: Props) {
               <p className="text-xs text-neutral-500 mt-0.5">{skill.description}</p>
             )}
           </div>
-          <span className="text-xs text-neutral-500 shrink-0">
-            {liveCount} assigned
-          </span>
+          <span className="text-xs text-neutral-500 shrink-0">{liveCount} assigned</span>
         </button>
 
         <button
@@ -151,7 +148,9 @@ export default function SkillRowComponent({ skill }: Props) {
                       className="accent-violet-500"
                     />
                     <span className="text-white">{a.agentName}</span>
-                    <span className="font-mono text-xs text-neutral-500 ml-auto">{a.agentSlug}</span>
+                    <span className="font-mono text-xs text-neutral-500 ml-auto">
+                      {a.agentSlug}
+                    </span>
                   </label>
                 ))}
               </div>

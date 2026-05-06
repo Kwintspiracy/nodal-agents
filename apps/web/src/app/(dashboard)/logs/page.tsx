@@ -62,8 +62,12 @@ export default async function LogsPage({ searchParams }: PageProps) {
             : `${result.data.items.length} tool call${result.data.items.length === 1 ? '' : 's'}`}
           {sp.job && (
             <>
-              {' '}for job{' '}
-              <Link href={`/jobs/${sp.job}`} className="font-mono text-neutral-300 hover:text-white">
+              {' '}
+              for job{' '}
+              <Link
+                href={`/jobs/${sp.job}`}
+                className="font-mono text-neutral-300 hover:text-white"
+              >
                 {sp.job.slice(0, 8)}
               </Link>
             </>
@@ -159,20 +163,12 @@ export default async function LogsPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {result.data.items.length === PAGE_SIZE && (
-        <Pagination page={page} sp={sp} />
-      )}
+      {result.data.items.length === PAGE_SIZE && <Pagination page={page} sp={sp} />}
     </div>
   );
 }
 
-function Pagination({
-  page,
-  sp,
-}: {
-  page: number;
-  sp: Awaited<PageProps['searchParams']>;
-}) {
+function Pagination({ page, sp }: { page: number; sp: Awaited<PageProps['searchParams']> }) {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(sp)) {
     if (v && k !== 'page') params.set(k, v);

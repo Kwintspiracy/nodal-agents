@@ -73,18 +73,14 @@ export default async function JobDetailPage({ params }: Props) {
           )}
           {job.children.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-xs text-neutral-600">
-                ↓ children ({job.children.length})
-              </p>
+              <p className="text-xs text-neutral-600">↓ children ({job.children.length})</p>
               {job.children.map((child) => (
                 <Link
                   key={child.id}
                   href={`/jobs/${child.id}`}
                   className="flex items-center gap-3 text-xs px-3 py-2 bg-neutral-950 border border-neutral-800/40 rounded-lg hover:border-neutral-700"
                 >
-                  <span className="text-white font-medium min-w-0">
-                    {child.agentName ?? '—'}
-                  </span>
+                  <span className="text-white font-medium min-w-0">{child.agentName ?? '—'}</span>
                   <StatusBadge status={child.status ?? 'pending'} />
                   <span className="text-neutral-500 truncate min-w-0 flex-1">
                     {child.result ?? child.error ?? ''}

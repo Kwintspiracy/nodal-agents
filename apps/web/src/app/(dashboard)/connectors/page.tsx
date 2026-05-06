@@ -37,10 +37,10 @@ export default async function ConnectorsPage() {
 
       <div className="bg-neutral-950 border border-neutral-800/40 rounded-xl px-5 py-4 text-xs text-neutral-500">
         <strong className="text-neutral-300 block mb-1">Note on OAuth</strong>
-        The automated Google OAuth flow (redirect + callback) is not wired in yet — paste raw
-        tokens generated elsewhere (e.g. via{' '}
-        <code className="font-mono text-neutral-400">gcloud</code> or the OAuth playground). Adapter
-        tools fetch a fresh access token from the refresh token at call-time.
+        The automated Google OAuth flow (redirect + callback) is not wired in yet — paste raw tokens
+        generated elsewhere (e.g. via <code className="font-mono text-neutral-400">gcloud</code> or
+        the OAuth playground). Adapter tools fetch a fresh access token from the refresh token at
+        call-time.
       </div>
     </div>
   );

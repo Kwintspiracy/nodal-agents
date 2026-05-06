@@ -175,7 +175,10 @@ describe('sendTaskAction — validation', () => {
   it('accepts a long prompt (no upper bound — agent prompts are arbitrarily long)', async () => {
     const { sendTaskAction } = await import('../src/lib/actions.ts');
     const longPrompt = 'a'.repeat(5000);
-    const r = await sendTaskAction({ prompt: longPrompt, agentId: 'aaaaaaaa-0000-0000-0000-000000000001' });
+    const r = await sendTaskAction({
+      prompt: longPrompt,
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000001',
+    });
     // Will likely fail downstream (no such agent in mock DB) but NOT on validation_failed.
     expect(r.ok === false && r.code === 'validation_failed').toBe(false);
   });
@@ -708,9 +711,7 @@ describe('disconnectAgentTelegramAction', () => {
   });
 
   it('clears all telegram fields without calling Telegram', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000031' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000031' }]) as typeof currentDb;
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
@@ -1104,7 +1105,7 @@ describe('resolveApprovalAction', () => {
   });
 
   it('signs the runner call with WORKER_SECRET and returns ok on 200', async () => {
-const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
           ok: true,
@@ -1128,9 +1129,7 @@ const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
   });
 
   it('returns runner_unreachable when fetch throws', async () => {
-const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockRejectedValue(new Error('ECONNREFUSED'));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
     const { resolveApprovalAction } = await import('../src/lib/actions.ts');
     const r = await resolveApprovalAction({
       approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000093',

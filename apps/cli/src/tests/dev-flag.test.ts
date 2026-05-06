@@ -7,16 +7,20 @@
 import { describe, it, expect } from 'vitest';
 import { Command } from 'commander';
 
-function buildCli(): { program: Command; capture: { up: Record<string, unknown> | null; default: Record<string, unknown> | null } } {
-  const capture = { up: null as Record<string, unknown> | null, default: null as Record<string, unknown> | null };
+function buildCli(): {
+  program: Command;
+  capture: { up: Record<string, unknown> | null; default: Record<string, unknown> | null };
+} {
+  const capture = {
+    up: null as Record<string, unknown> | null,
+    default: null as Record<string, unknown> | null,
+  };
   const program = new Command();
   program.exitOverride();
   program.enablePositionalOptions();
-  program
-    .option('--dev', 'program-level dev')
-    .action((opts: Record<string, unknown>) => {
-      capture.default = opts;
-    });
+  program.option('--dev', 'program-level dev').action((opts: Record<string, unknown>) => {
+    capture.default = opts;
+  });
   program
     .command('up')
     .option('--dev', 'subcommand dev')

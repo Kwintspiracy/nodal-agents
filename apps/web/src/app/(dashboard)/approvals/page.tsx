@@ -93,10 +93,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                     {a.agentName ? (
                       <>
                         by{' '}
-                        <Link
-                          href={`/agents`}
-                          className="text-neutral-300 hover:text-white"
-                        >
+                        <Link href={`/agents`} className="text-neutral-300 hover:text-white">
                           {a.agentName}
                         </Link>
                       </>
@@ -111,7 +108,9 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                     )}
                   </div>
                   {a.jobTask && (
-                    <p className="text-xs text-neutral-400 mt-2 italic">"{a.jobTask}"</p>
+                    <p className="text-xs text-neutral-400 mt-2 italic">
+                      &ldquo;{a.jobTask}&rdquo;
+                    </p>
                   )}
                 </div>
                 <Link

@@ -2,13 +2,7 @@
 // surfaced by the connectors UI. Lives outside actions.ts because Next.js 16
 // forbids non-async exports from "use server" files.
 
-export const CONNECTOR_AUTH_TYPES = [
-  'api_key',
-  'oauth2',
-  'bearer',
-  'basic',
-  'none',
-] as const;
+export const CONNECTOR_AUTH_TYPES = ['api_key', 'oauth2', 'bearer', 'basic', 'none'] as const;
 
 export type ConnectorAuthType = (typeof CONNECTOR_AUTH_TYPES)[number];
 

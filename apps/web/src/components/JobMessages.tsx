@@ -97,11 +97,7 @@ export default function JobMessages({ messages }: { messages: Message[] }) {
           >
             <span
               className={`inline-block text-[10px] font-semibold uppercase tracking-wider mb-1.5 ${
-                isAssistant
-                  ? 'text-violet-400'
-                  : isTool
-                    ? 'text-emerald-400'
-                    : 'text-neutral-600'
+                isAssistant ? 'text-violet-400' : isTool ? 'text-emerald-400' : 'text-neutral-600'
               }`}
             >
               {roleLabel(role)}

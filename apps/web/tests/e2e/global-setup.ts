@@ -27,8 +27,7 @@ const E2E_NAME = 'E2E Playwright';
 export const AUTH_STATE_PATH = path.join(__dirname, '.auth', 'user.json');
 
 async function globalSetup(config: FullConfig): Promise<void> {
-  const baseURL: string =
-    config.projects[0]?.use.baseURL ?? 'http://localhost:3000';
+  const baseURL: string = config.projects[0]?.use.baseURL ?? 'http://localhost:3000';
 
   // ── 1. Ensure stack is reachable ────────────────────────────────────────────
   try {
@@ -61,7 +60,10 @@ async function globalSetup(config: FullConfig): Promise<void> {
   if (!signupRes.ok) {
     const status = signupRes.status;
     // Only hard-fail on auth-layer errors (not server errors from duplicate email).
-    if (status < 400 || (status >= 400 && status < 500 && status !== 422 && status !== 409 && status !== 400)) {
+    if (
+      status < 400 ||
+      (status >= 400 && status < 500 && status !== 422 && status !== 409 && status !== 400)
+    ) {
       const body = await signupRes.text();
       throw new Error(`Sign-up failed unexpectedly (${status}): ${body}`);
     }

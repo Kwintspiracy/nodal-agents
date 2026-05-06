@@ -37,6 +37,9 @@ export default function ConfirmDialog({
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    // SSR-safe portal gate: createPortal needs document, which is only present
+    // after hydration. Setting state in this effect is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
   }, []);
 
@@ -69,15 +72,10 @@ export default function ConfirmDialog({
         aria-hidden="true"
       />
       <div className="relative bg-neutral-900 border border-neutral-800/60 rounded-xl p-6 max-w-md w-full shadow-2xl">
-        <h2
-          id="confirm-dialog-title"
-          className="text-base font-semibold text-white"
-        >
+        <h2 id="confirm-dialog-title" className="text-base font-semibold text-white">
           {title}
         </h2>
-        {message && (
-          <p className="mt-2 text-sm text-neutral-400 leading-relaxed">{message}</p>
-        )}
+        {message && <p className="mt-2 text-sm text-neutral-400 leading-relaxed">{message}</p>}
         <div className="mt-6 flex justify-end gap-2">
           <button
             ref={cancelRef}

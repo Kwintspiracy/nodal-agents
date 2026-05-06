@@ -81,10 +81,7 @@ describe('startTelegramManager', () => {
   });
 
   it('spawns a poller for each agent with a bot token', async () => {
-    await db
-      .update(agents)
-      .set({ telegramBotToken: '111:abc' })
-      .where(eq(agents.id, seed.agentId));
+    await db.update(agents).set({ telegramBotToken: '111:abc' }).where(eq(agents.id, seed.agentId));
 
     const manager = startTelegramManager(makeDeps(db), {
       env: testEnv,
@@ -97,10 +94,7 @@ describe('startTelegramManager', () => {
   });
 
   it('removes a poller when the agent token is cleared', async () => {
-    await db
-      .update(agents)
-      .set({ telegramBotToken: '111:abc' })
-      .where(eq(agents.id, seed.agentId));
+    await db.update(agents).set({ telegramBotToken: '111:abc' }).where(eq(agents.id, seed.agentId));
 
     const manager = startTelegramManager(makeDeps(db), {
       env: testEnv,
@@ -110,10 +104,7 @@ describe('startTelegramManager', () => {
     expect(manager.activeCount()).toBe(1);
 
     // User disconnected the bot — clear the token
-    await db
-      .update(agents)
-      .set({ telegramBotToken: null })
-      .where(eq(agents.id, seed.agentId));
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
 
     await manager.refreshNow();
     expect(manager.activeCount()).toBe(0);
@@ -121,10 +112,7 @@ describe('startTelegramManager', () => {
   });
 
   it('restarts a poller when the bot token is rotated', async () => {
-    await db
-      .update(agents)
-      .set({ telegramBotToken: '111:old' })
-      .where(eq(agents.id, seed.agentId));
+    await db.update(agents).set({ telegramBotToken: '111:old' }).where(eq(agents.id, seed.agentId));
 
     const manager = startTelegramManager(makeDeps(db), {
       env: testEnv,
@@ -133,10 +121,7 @@ describe('startTelegramManager', () => {
     await manager.refreshNow();
     expect(manager.activeCount()).toBe(1);
 
-    await db
-      .update(agents)
-      .set({ telegramBotToken: '222:new' })
-      .where(eq(agents.id, seed.agentId));
+    await db.update(agents).set({ telegramBotToken: '222:new' }).where(eq(agents.id, seed.agentId));
 
     await manager.refreshNow();
     // Same agent, count stays 1, but the underlying poller was rotated.

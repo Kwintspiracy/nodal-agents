@@ -118,9 +118,7 @@ async function main(): Promise<void> {
   // that has a bot token configured. Refreshes the bot list every 30s.
   // Disable with TELEGRAM_POLLER_ENABLED=false (e.g. tests).
   const telegramEnabled = process.env['TELEGRAM_POLLER_ENABLED'] !== 'false';
-  const telegramManager = telegramEnabled
-    ? startTelegramManager(deps, { env: runnerEnv })
-    : null;
+  const telegramManager = telegramEnabled ? startTelegramManager(deps, { env: runnerEnv }) : null;
   if (telegramEnabled) {
     console.warn('[runner] telegram manager started');
   }
