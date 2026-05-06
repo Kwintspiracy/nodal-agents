@@ -21,18 +21,14 @@ import {
   agentSchedules,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
-import {
-  listMemories,
-  deleteMemory,
-  updateMemory,
-  MemoryNotFoundError,
-} from '@nodalai/memory';
+import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
 import type { AgentMemory } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
+import { computeNextRun } from './cron.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -231,7 +227,6 @@ export type AgentTaskRow = {
   result: string | null;
   createdAt: Date;
 };
-
 
 export type JobRow = {
   id: string;
@@ -592,9 +587,7 @@ export async function configureAgentTelegramAction(
   }
 }
 
-export async function disconnectAgentTelegramAction(
-  agentId: string,
-): Promise<ActionResult<void>> {
+export async function disconnectAgentTelegramAction(agentId: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
     if (!z.string().uuid().safeParse(agentId).success) {
@@ -1357,7 +1350,9 @@ export async function assignSkillAction(raw: unknown): Promise<ActionResult<void
     const [skill] = await db
       .select({ id: agentSkills.id })
       .from(agentSkills)
-      .where(and(eq(agentSkills.id, parsed.data.skillId), eq(agentSkills.entityId, session.entityId)));
+      .where(
+        and(eq(agentSkills.id, parsed.data.skillId), eq(agentSkills.entityId, session.entityId)),
+      );
     if (!skill) return fail('not_found', 'Skill not found');
     const [agent] = await db
       .select({ id: agents.id })
@@ -1764,9 +1759,7 @@ const CreateScheduleSchema = z.object({
   task: z.string().min(1),
 });
 
-export async function createScheduleAction(
-  raw: unknown,
-): Promise<ActionResult<{ id: string }>> {
+export async function createScheduleAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
   try {
     const session = await getSession();
     const parsed = CreateScheduleSchema.safeParse(raw);
@@ -1782,6 +1775,11 @@ export async function createScheduleAction(
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
+    const nextRun = computeNextRun(parsed.data.cronExpr);
+    if (!nextRun) {
+      return fail('validation_failed', 'Invalid cron expression');
+    }
+
     const [row] = await db
       .insert(agentSchedules)
       .values({
@@ -1792,6 +1790,7 @@ export async function createScheduleAction(
         cronExpr: parsed.data.cronExpr,
         task: parsed.data.task,
         active: true,
+        nextRun,
       })
       .returning({ id: agentSchedules.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -1804,9 +1803,65 @@ export async function createScheduleAction(
   }
 }
 
-export async function toggleScheduleAction(
-  id: string,
-): Promise<ActionResult<{ active: boolean }>> {
+const UpdateScheduleSchema = z.object({
+  id: z.string().uuid(),
+  agentId: z.string().uuid('Pick an agent'),
+  name: z.string().min(1).max(120),
+  cronExpr: z.string().min(1).max(100),
+  task: z.string().min(1),
+});
+
+export async function updateScheduleAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = UpdateScheduleSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+
+    // Verify schedule exists and belongs to this entity
+    const [existing] = await db
+      .select({ id: agentSchedules.id })
+      .from(agentSchedules)
+      .where(
+        and(eq(agentSchedules.id, parsed.data.id), eq(agentSchedules.entityId, session.entityId)),
+      );
+    if (!existing) return fail('not_found', 'Schedule not found');
+
+    // Verify the agent belongs to this entity
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const nextRun = computeNextRun(parsed.data.cronExpr);
+    if (!nextRun) {
+      return fail('validation_failed', 'Invalid cron expression');
+    }
+
+    await db
+      .update(agentSchedules)
+      .set({
+        agentId: parsed.data.agentId,
+        name: parsed.data.name,
+        cronExpr: parsed.data.cronExpr,
+        task: parsed.data.task,
+        nextRun,
+        updatedAt: new Date(),
+      })
+      .where(eq(agentSchedules.id, parsed.data.id));
+
+    revalidatePath('/automations');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateScheduleAction]', err);
+    return fail('db_error', 'Failed to update schedule');
+  }
+}
+
+export async function toggleScheduleAction(id: string): Promise<ActionResult<{ active: boolean }>> {
   try {
     const session = await getSession();
     if (!z.string().uuid().safeParse(id).success) {
@@ -1883,9 +1938,11 @@ function readConfiguredAuth(): {
       configPathExists: false,
     };
   }
-  const auth = (cfg['auth'] ?? null) as
-    | { mode?: 'local-trust' | 'local-auth'; googleClientId?: string; googleClientSecret?: string }
-    | null;
+  const auth = (cfg['auth'] ?? null) as {
+    mode?: 'local-trust' | 'local-auth';
+    googleClientId?: string;
+    googleClientSecret?: string;
+  } | null;
   const bind = cfg['bind'] as 'loopback' | 'lan' | undefined;
   const fallback: 'local-trust' | 'local-auth' = bind === 'lan' ? 'local-auth' : 'local-trust';
   return {

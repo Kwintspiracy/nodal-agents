@@ -20,6 +20,7 @@
     "@nodalai/orchestration": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
+    "cron-parser": "^5.5.0",
     "hono": "^4.6.18",
     "zod": "^3.24.1"
   },

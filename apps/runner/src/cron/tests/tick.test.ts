@@ -94,10 +94,12 @@ describe('runCronTick (integration)', () => {
     expect(result).toHaveProperty('orphansReset');
     expect(result).toHaveProperty('tasksUnblocked');
     expect(result).toHaveProperty('tasksExecuted');
+    expect(result).toHaveProperty('schedulesFired');
     expect(result).toHaveProperty('rootsDelivered');
     expect(typeof result.orphanJobsReset).toBe('number');
     expect(typeof result.orphansReset).toBe('number');
     expect(typeof result.tasksUnblocked).toBe('number');
+    expect(typeof result.schedulesFired).toBe('number');
     expect(typeof result.tasksExecuted).toBe('number');
     expect(typeof result.rootsDelivered).toBe('number');
   });

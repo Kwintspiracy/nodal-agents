@@ -4,11 +4,13 @@
 //   2. resetOrphanedTasks   — recover in_progress tasks with no job
 //   3. unblockReadyTasks    — inject dep results for tasks whose deps are done
 //   4. executeReadyTasks    — claim and run up to 5 ready tasks
-//   5. deliverCompletedRoots — compile and deliver results for finished root jobs
+//   5. runScheduleTick      — fire active agent_schedules whose next_run is due
+//   6. deliverCompletedRoots — compile and deliver results for finished root jobs
 
 import { resetOrphanedJobs, resetOrphanedTasks } from './reset-orphans.ts';
 import { unblockReadyTasks } from './unblock-ready.ts';
 import { executeReadyTasks } from './execute-ready.ts';
+import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -20,6 +22,7 @@ export interface CronTickResult {
   orphansReset: number;
   tasksUnblocked: number;
   tasksExecuted: number;
+  schedulesFired: number;
   rootsDelivered: number;
 }
 
@@ -47,7 +50,15 @@ export async function runCronTick(
   const orphansReset = await resetOrphanedTasks(deps.db);
   const tasksUnblocked = await unblockReadyTasks(deps.db);
   const tasksExecuted = await executeReadyTasks(deps.db, deps, maxTasksPerTick);
+  const schedulesFired = await runScheduleTick(deps.db, deps, maxTasksPerTick);
   const rootsDelivered = await deliverCompletedRoots(deps.db, env);
 
-  return { orphanJobsReset, orphansReset, tasksUnblocked, tasksExecuted, rootsDelivered };
+  return {
+    orphanJobsReset,
+    orphansReset,
+    tasksUnblocked,
+    tasksExecuted,
+    schedulesFired,
+    rootsDelivered,
+  };
 }
