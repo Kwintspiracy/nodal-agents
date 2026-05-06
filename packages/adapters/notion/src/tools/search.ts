@@ -3,8 +3,8 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { Client } from '@notionhq/client';
-import { mapNotionError } from '../errors.js';
-import { extractTitle } from '../helpers/property-coerce.js';
+import { mapNotionError } from '../errors';
+import { extractTitle } from '../helpers/property-coerce';
 
 const SearchInput = z.object({
   query: z.string().describe('Text to search for in page and database titles.'),

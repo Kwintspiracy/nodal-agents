@@ -6,8 +6,8 @@ import {
   createFormatTextTool,
   createApplyNamedStyleTool,
   createBatchUpdateTool,
-} from '../../tools/format.js';
-import { DocsAdapterError } from '../../errors.js';
+} from '../../tools/format';
+import { DocsAdapterError } from '../../errors';
 
 function makeDocs(): docs_v1.Docs {
   return {

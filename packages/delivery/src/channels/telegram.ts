@@ -202,11 +202,6 @@ export async function getTelegramUpdates(opts: {
     allowed_updates: ['message', 'callback_query'],
   };
   if (opts.limit !== undefined) body['limit'] = opts.limit;
-  const result = await callBotApi<TelegramUpdate[]>(
-    opts.botToken,
-    'getUpdates',
-    body,
-    opts.signal,
-  );
+  const result = await callBotApi<TelegramUpdate[]>(opts.botToken, 'getUpdates', body, opts.signal);
   return result;
 }

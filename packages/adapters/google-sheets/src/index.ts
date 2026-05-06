@@ -3,35 +3,35 @@
 
 import type { ToolDefinition } from '@nodalai/tools';
 import type { z } from 'zod';
-import { createSheetsClient } from './client.js';
+import { createSheetsClient } from './client';
 
 // Values (8)
-import { createReadRangeTool } from './tools/values.js';
-import { createReadAllTool } from './tools/values.js';
-import { createBatchReadRangesTool } from './tools/values.js';
-import { createWriteRangeTool } from './tools/values.js';
-import { createAppendRowTool } from './tools/values.js';
-import { createClearRangeTool } from './tools/values.js';
-import { createBatchUpdateValuesTool } from './tools/values.js';
-import { createFindRowsTool } from './tools/values.js';
+import { createReadRangeTool } from './tools/values';
+import { createReadAllTool } from './tools/values';
+import { createBatchReadRangesTool } from './tools/values';
+import { createWriteRangeTool } from './tools/values';
+import { createAppendRowTool } from './tools/values';
+import { createClearRangeTool } from './tools/values';
+import { createBatchUpdateValuesTool } from './tools/values';
+import { createFindRowsTool } from './tools/values';
 
 // Structure (6)
-import { createGetMetadataTool } from './tools/structure.js';
-import { createCreateSpreadsheetTool } from './tools/structure.js';
-import { createAddSheetTool } from './tools/structure.js';
-import { createDeleteSheetTool } from './tools/structure.js';
-import { createDuplicateSheetTool } from './tools/structure.js';
-import { createRenameSheetTool } from './tools/structure.js';
+import { createGetMetadataTool } from './tools/structure';
+import { createCreateSpreadsheetTool } from './tools/structure';
+import { createAddSheetTool } from './tools/structure';
+import { createDeleteSheetTool } from './tools/structure';
+import { createDuplicateSheetTool } from './tools/structure';
+import { createRenameSheetTool } from './tools/structure';
 
 // Format (3)
-import { createFormatRangeTool } from './tools/format.js';
-import { createResizeColumnsTool } from './tools/format.js';
-import { createFreezePanesTool } from './tools/format.js';
+import { createFormatRangeTool } from './tools/format';
+import { createResizeColumnsTool } from './tools/format';
+import { createFreezePanesTool } from './tools/format';
 
 // Filters (3)
-import { createSetBasicFilterTool } from './tools/filters.js';
-import { createClearBasicFilterTool } from './tools/filters.js';
-import { createSortRangeTool } from './tools/filters.js';
+import { createSetBasicFilterTool } from './tools/filters';
+import { createClearBasicFilterTool } from './tools/filters';
+import { createSortRangeTool } from './tools/filters';
 
 export interface SheetsAdapterOptions {
   /**
@@ -91,5 +91,5 @@ export function createSheetsTools(
 }
 
 // Re-export error types for consumers
-export { SheetsAdapterError } from './errors.js';
-export type { SheetsErrorCode } from './errors.js';
+export { SheetsAdapterError } from './errors';
+export type { SheetsErrorCode } from './errors';

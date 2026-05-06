@@ -8,7 +8,7 @@ import {
   createUpdateDraftTool,
   createSendDraftTool,
   createDeleteDraftTool,
-} from '../../tools/drafts.js';
+} from '../../tools/drafts';
 
 function makeGmail(): gmail_v1.Gmail {
   return {

@@ -2,8 +2,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { createToolRegistry } from '../registry.js';
-import type { ToolDefinition, ToolContext } from '../types.js';
+import { createToolRegistry } from '../registry';
+import type { ToolDefinition, ToolContext } from '../types';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 

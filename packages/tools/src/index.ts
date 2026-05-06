@@ -11,11 +11,11 @@ export type {
   ApprovalGateRequest,
   ApprovalRule,
   ToolExecutionResult,
-} from './types.js';
+} from './types';
 
 // RiskLevel (re-exported from @nodalai/shared via types.ts) + runtime constant
-export type { RiskLevel } from './types.js';
-export { RISK_LEVELS } from './types.js';
+export type { RiskLevel } from './types';
+export { RISK_LEVELS } from './types';
 
 // Errors
 export {
@@ -24,21 +24,21 @@ export {
   ToolNotFoundError,
   WhitelistDriftError,
   WebSearchNotConfiguredError,
-} from './errors.js';
+} from './errors';
 
 // Registry
-export { createToolRegistry } from './registry.js';
+export { createToolRegistry } from './registry';
 
 // Execution wrapper
-export { executeTool } from './execute.js';
+export { executeTool } from './execute';
 
 // tool_choice discipline
-export { computeToolChoice } from './tool-choice.js';
-export type { ToolChoiceConfig, ToolChoice } from './tool-choice.js';
+export { computeToolChoice } from './tool-choice';
+export type { ToolChoiceConfig, ToolChoice } from './tool-choice';
 
 // Whitelist computation
-export { computeToolWhitelist } from './whitelist.js';
-export type { WhitelistInput } from './whitelist.js';
+export { computeToolWhitelist } from './whitelist';
+export type { WhitelistInput } from './whitelist';
 
 // Built-in tools
 export {
@@ -49,5 +49,5 @@ export {
   saveMemoryTool,
   queryMemoryTool,
   webSearchTool,
-} from './builtin/index.js';
-export type { AlwaysOnTool } from './builtin/index.js';
+} from './builtin/index';
+export type { AlwaysOnTool } from './builtin/index';

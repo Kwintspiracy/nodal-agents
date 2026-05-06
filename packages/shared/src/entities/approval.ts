@@ -2,7 +2,7 @@
 // Matches approval_requests and approval_rules tables
 
 import { z } from 'zod';
-import { ApprovalStatusSchema, ApprovalRuleActionSchema } from '../enums.js';
+import { ApprovalStatusSchema, ApprovalRuleActionSchema } from '../enums';
 
 // ─── ApprovalRequest ──────────────────────────────────────────────────────────
 

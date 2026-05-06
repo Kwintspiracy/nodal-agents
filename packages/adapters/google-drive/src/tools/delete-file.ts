@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { drive_v3 } from 'googleapis';
-import { mapDriveError } from '../errors.js';
+import { mapDriveError } from '../errors';
 
 const DeleteFileInput = z.object({
   file_id: z.string().describe('File ID to move to trash.'),

@@ -4,8 +4,8 @@
 import { z } from 'zod';
 import { eq, and } from '@nodalai/db';
 import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
-import { DelegationPendingError } from '../errors.js';
-import type { AgentId, AnyDrizzleDb, ToolDefinition, ChildAgent } from '../types.js';
+import { DelegationPendingError } from '../errors';
+import type { AgentId, AnyDrizzleDb, ToolDefinition, ChildAgent } from '../types';
 
 // ─── Input schema for every assign_* tool ────────────────────────────────────
 

@@ -2,8 +2,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { drive_v3 } from 'googleapis';
-import { createShareFileTool } from '../../tools/share-file.js';
-import { createListPermissionsTool } from '../../tools/list-permissions.js';
+import { createShareFileTool } from '../../tools/share-file';
+import { createListPermissionsTool } from '../../tools/list-permissions';
 
 function makeDrive(): drive_v3.Drive {
   return {

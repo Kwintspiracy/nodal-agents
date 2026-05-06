@@ -1,16 +1,16 @@
 // Built-in tools registration
 // Call registerBuiltins(registry) once at startup to make all built-in tools available.
 
-import type { ToolRegistry } from '../types.js';
-import { returnResultTool } from './return-result.js';
-import { saveMemoryTool } from './save-memory.js';
-import { queryMemoryTool } from './query-memory.js';
-import { webSearchTool } from './web-search.js';
+import type { ToolRegistry } from '../types';
+import { returnResultTool } from './return-result';
+import { saveMemoryTool } from './save-memory';
+import { queryMemoryTool } from './query-memory';
+import { webSearchTool } from './web-search';
 
-export { returnResultTool } from './return-result.js';
-export { saveMemoryTool } from './save-memory.js';
-export { queryMemoryTool } from './query-memory.js';
-export { webSearchTool } from './web-search.js';
+export { returnResultTool } from './return-result';
+export { saveMemoryTool } from './save-memory';
+export { queryMemoryTool } from './query-memory';
+export { webSearchTool } from './web-search';
 
 /**
  * Register all built-in tools into the given registry.

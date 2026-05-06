@@ -2,7 +2,7 @@
 // Agent reports its final result. Required for any agent — the exit door.
 
 import { z } from 'zod';
-import type { ToolDefinition } from '../types.js';
+import type { ToolDefinition } from '../types';
 
 export const ReturnResultInputSchema = z.object({
   status: z.enum(['success', 'blocked']),

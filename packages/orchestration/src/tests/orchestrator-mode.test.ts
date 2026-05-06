@@ -2,7 +2,7 @@
 // Pure logic, no DB needed. Uses synthesized fixture data (no real agent slugs).
 
 import { describe, it, expect } from 'vitest';
-import { detectOrchestratorMode } from '../orchestrator-mode.js';
+import { detectOrchestratorMode } from '../orchestrator-mode';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 

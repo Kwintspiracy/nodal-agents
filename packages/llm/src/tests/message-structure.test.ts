@@ -1,8 +1,8 @@
 // message-structure.test.ts — all resilience.py invariants encoded
 
 import { describe, it, expect } from 'vitest';
-import { validateMessageStructure } from '../message-structure.js';
-import { MessageStructureError } from '../errors.js';
+import { validateMessageStructure } from '../message-structure';
+import { MessageStructureError } from '../errors';
 import type { CoreMessage } from 'ai';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────

@@ -3,9 +3,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentTasks } from '@nodalai/db';
-import { validateDependencies, checkAllDepsResolved } from '../../planner/dependencies.js';
-import { OrchestrationError } from '../../errors.js';
-import type { TaskId } from '../../types.js';
+import { validateDependencies, checkAllDepsResolved } from '../../planner/dependencies';
+import { OrchestrationError } from '../../errors';
+import type { TaskId } from '../../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;

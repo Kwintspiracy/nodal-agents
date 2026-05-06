@@ -1,6 +1,6 @@
 // @nodalai/llm — provider registry: presets + capability matrix
 
-import type { ProviderName, ProviderCapabilities } from '../types.js';
+import type { ProviderName, ProviderCapabilities } from '../types';
 
 // ─── Provider presets (default baseURL + model) ────────────────────────────────
 

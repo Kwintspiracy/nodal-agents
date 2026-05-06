@@ -1,7 +1,7 @@
 // embeddings.test.ts — EmbeddingClient paths
 
 import { describe, it, expect } from 'vitest';
-import { createEmbeddingClient } from '../embeddings.js';
+import { createEmbeddingClient } from '../embeddings';
 
 describe('createEmbeddingClient — keyword fallback', () => {
   it('returns null for embed() with keyword provider', async () => {

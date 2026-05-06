@@ -5,10 +5,10 @@ import type { AnyDrizzleDb } from '@nodalai/db';
 import { agentMemory } from '@nodalai/db';
 import type { AgentMemory } from '@nodalai/shared';
 import type { EmbeddingClient } from '@nodalai/llm';
-import type { SearchOptions } from './types.js';
-import { rowToMemory } from './crud.js';
-import type { MemoryRow } from './crud.js';
-import { touchMemories } from './access-tracking.js';
+import type { SearchOptions } from './types';
+import { rowToMemory } from './crud';
+import type { MemoryRow } from './crud';
+import { touchMemories } from './access-tracking';
 
 export async function searchMemories(
   db: AnyDrizzleDb,

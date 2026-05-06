@@ -1,7 +1,7 @@
 // Connector — API key / OAuth token holder per entity per provider, matches connectors table
 
 import { z } from 'zod';
-import { ConnectorAuthTypeSchema } from '../enums.js';
+import { ConnectorAuthTypeSchema } from '../enums';
 
 export const ConnectorSchema = z
   .object({

@@ -1,7 +1,7 @@
 // AgentTask — task board items managed by planner orchestrators, matches agent_tasks table
 
 import { z } from 'zod';
-import { TaskStatusSchema, TaskPrioritySchema } from '../enums.js';
+import { TaskStatusSchema, TaskPrioritySchema } from '../enums';
 
 // description max 2000 chars enforced by DB CHECK
 const TaskDescriptionSchema = z.string().max(2000).nullable();

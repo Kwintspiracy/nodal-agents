@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { docs_v1 } from 'googleapis';
-import { docBodyToText } from '../../helpers/doc-to-text.js';
+import { docBodyToText } from '../../helpers/doc-to-text';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 

@@ -3,8 +3,8 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { drive_v3 } from 'googleapis';
-import { mapDriveError, DriveAdapterError } from '../errors.js';
-import { extractFileText, FILE_SIZE_CAP_BYTES } from '../extractors/index.js';
+import { mapDriveError, DriveAdapterError } from '../errors';
+import { extractFileText, FILE_SIZE_CAP_BYTES } from '../extractors/index';
 
 const CHAR_CAP = 15000;
 

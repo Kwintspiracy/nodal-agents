@@ -2,7 +2,7 @@
 // Note: embedding (vector(1536)) is excluded — it's a pgvector column not surfaced to JS callers
 
 import { z } from 'zod';
-import { MemoryCategorySchema, MemorySourceSchema, MemoryLayerSchema } from '../enums.js';
+import { MemoryCategorySchema, MemorySourceSchema, MemoryLayerSchema } from '../enums';
 
 // importance is 1-5 per DB CHECK (dashboard schema uses 1-10 for input but DB stores 1-5)
 // We follow the DB constraint here (source of truth)

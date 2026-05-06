@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { drive_v3 } from 'googleapis';
-import { mapDriveError } from '../errors.js';
+import { mapDriveError } from '../errors';
 
 const GetFileInfoInput = z.object({
   file_id: z.string().describe('Google Drive file ID.'),

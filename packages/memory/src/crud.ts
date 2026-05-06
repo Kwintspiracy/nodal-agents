@@ -5,7 +5,7 @@ import type { AnyDrizzleDb } from '@nodalai/db';
 import { agentMemory } from '@nodalai/db';
 import type { AgentMemory, AgentMemoryInsert } from '@nodalai/shared';
 import { AgentMemoryInsertSchema } from '@nodalai/shared';
-import { MemoryNotFoundError } from './errors.js';
+import { MemoryNotFoundError } from './errors';
 
 // ─── Get ───────────────────────────────────────────────────────────────────────
 

@@ -3,44 +3,44 @@
 
 import type { ToolDefinition } from '@nodalai/tools';
 import type { z } from 'zod';
-import { createGmailClient } from './client.js';
+import { createGmailClient } from './client';
 
 // Messages (8)
-import { createSendEmailTool } from './tools/messages.js';
-import { createListMessagesTool } from './tools/messages.js';
-import { createGetMessageTool } from './tools/messages.js';
-import { createReplyMessageTool } from './tools/messages.js';
-import { createForwardMessageTool } from './tools/messages.js';
-import { createModifyLabelsTool } from './tools/messages.js';
-import { createTrashMessageTool } from './tools/messages.js';
-import { createUntrashMessageTool } from './tools/messages.js';
-import { createDeleteMessageTool } from './tools/messages.js';
+import { createSendEmailTool } from './tools/messages';
+import { createListMessagesTool } from './tools/messages';
+import { createGetMessageTool } from './tools/messages';
+import { createReplyMessageTool } from './tools/messages';
+import { createForwardMessageTool } from './tools/messages';
+import { createModifyLabelsTool } from './tools/messages';
+import { createTrashMessageTool } from './tools/messages';
+import { createUntrashMessageTool } from './tools/messages';
+import { createDeleteMessageTool } from './tools/messages';
 
 // Threads (4)
-import { createListThreadsTool } from './tools/threads.js';
-import { createGetThreadTool } from './tools/threads.js';
-import { createModifyThreadLabelsTool } from './tools/threads.js';
-import { createTrashThreadTool } from './tools/threads.js';
+import { createListThreadsTool } from './tools/threads';
+import { createGetThreadTool } from './tools/threads';
+import { createModifyThreadLabelsTool } from './tools/threads';
+import { createTrashThreadTool } from './tools/threads';
 
 // Labels (5)
-import { createListLabelsTool } from './tools/labels.js';
-import { createGetLabelTool } from './tools/labels.js';
-import { createCreateLabelTool } from './tools/labels.js';
-import { createUpdateLabelTool } from './tools/labels.js';
-import { createDeleteLabelTool } from './tools/labels.js';
+import { createListLabelsTool } from './tools/labels';
+import { createGetLabelTool } from './tools/labels';
+import { createCreateLabelTool } from './tools/labels';
+import { createUpdateLabelTool } from './tools/labels';
+import { createDeleteLabelTool } from './tools/labels';
 
 // Drafts (5)
-import { createListDraftsTool } from './tools/drafts.js';
-import { createCreateDraftTool } from './tools/drafts.js';
-import { createUpdateDraftTool } from './tools/drafts.js';
-import { createSendDraftTool } from './tools/drafts.js';
-import { createDeleteDraftTool } from './tools/drafts.js';
+import { createListDraftsTool } from './tools/drafts';
+import { createCreateDraftTool } from './tools/drafts';
+import { createUpdateDraftTool } from './tools/drafts';
+import { createSendDraftTool } from './tools/drafts';
+import { createDeleteDraftTool } from './tools/drafts';
 
 // Attachments (1)
-import { createGetAttachmentTool } from './tools/attachments.js';
+import { createGetAttachmentTool } from './tools/attachments';
 
 // History (1)
-import { createListHistoryTool } from './tools/history.js';
+import { createListHistoryTool } from './tools/history';
 
 export interface GmailAdapterOptions {
   /**
@@ -106,5 +106,5 @@ export function createGmailTools(
 }
 
 // Re-export error types for consumers
-export { GmailAdapterError } from './errors.js';
-export type { GmailErrorCode } from './errors.js';
+export { GmailAdapterError } from './errors';
+export type { GmailErrorCode } from './errors';

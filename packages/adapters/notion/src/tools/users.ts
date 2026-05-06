@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { Client } from '@notionhq/client';
-import { mapNotionError } from '../errors.js';
+import { mapNotionError } from '../errors';
 
 // ── notion_list_users ─────────────────────────────────────────────────────────
 

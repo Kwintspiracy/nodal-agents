@@ -3,29 +3,29 @@
 
 import type { ToolDefinition } from '@nodalai/tools';
 import type { z } from 'zod';
-import { createDocsClient } from './client.js';
+import { createDocsClient } from './client';
 
 // Lifecycle (3)
-import { createCreateDocTool } from './tools/lifecycle.js';
-import { createGetDocTool } from './tools/lifecycle.js';
-import { createGetDocTextTool } from './tools/lifecycle.js';
+import { createCreateDocTool } from './tools/lifecycle';
+import { createGetDocTool } from './tools/lifecycle';
+import { createGetDocTextTool } from './tools/lifecycle';
 
 // Text (4)
-import { createInsertTextTool } from './tools/text.js';
-import { createAppendTextTool } from './tools/text.js';
-import { createReplaceTextTool } from './tools/text.js';
-import { createDeleteContentRangeTool } from './tools/text.js';
+import { createInsertTextTool } from './tools/text';
+import { createAppendTextTool } from './tools/text';
+import { createReplaceTextTool } from './tools/text';
+import { createDeleteContentRangeTool } from './tools/text';
 
 // Structure (4)
-import { createInsertParagraphTool } from './tools/structure.js';
-import { createInsertPageBreakTool } from './tools/structure.js';
-import { createInsertTableTool } from './tools/structure.js';
-import { createInsertImageTool } from './tools/structure.js';
+import { createInsertParagraphTool } from './tools/structure';
+import { createInsertPageBreakTool } from './tools/structure';
+import { createInsertTableTool } from './tools/structure';
+import { createInsertImageTool } from './tools/structure';
 
 // Format (3)
-import { createFormatTextTool } from './tools/format.js';
-import { createApplyNamedStyleTool } from './tools/format.js';
-import { createBatchUpdateTool } from './tools/format.js';
+import { createFormatTextTool } from './tools/format';
+import { createApplyNamedStyleTool } from './tools/format';
+import { createBatchUpdateTool } from './tools/format';
 
 export interface DocsAdapterOptions {
   /**
@@ -75,5 +75,5 @@ export function createDocsTools(opts: DocsAdapterOptions): ToolDefinition<z.ZodT
 }
 
 // Re-export error types for consumers
-export { DocsAdapterError } from './errors.js';
-export type { DocsErrorCode } from './errors.js';
+export { DocsAdapterError } from './errors';
+export type { DocsErrorCode } from './errors';

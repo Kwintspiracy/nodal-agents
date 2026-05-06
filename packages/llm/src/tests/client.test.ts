@@ -2,10 +2,10 @@
 
 import { describe, it, expect } from 'vitest';
 import { MockLanguageModelV1 } from 'ai/test';
-import { createLlmClient } from '../client.js';
-import { ProviderConfigError, MessageStructureError } from '../errors.js';
-import { CAPABILITY_MATRIX } from '../providers/registry.js';
-import type { ProviderName } from '../types.js';
+import { createLlmClient } from '../client';
+import { ProviderConfigError, MessageStructureError } from '../errors';
+import { CAPABILITY_MATRIX } from '../providers/registry';
+import type { ProviderName } from '../types';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 

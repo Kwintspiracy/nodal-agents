@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import { agentMemory } from '@nodalai/db';
 import { MEMORY_CATEGORIES } from '@nodalai/shared';
-import type { ToolDefinition } from '../types.js';
+import type { ToolDefinition } from '../types';
 
 export const SaveMemoryInputSchema = z.object({
   fact: z
@@ -36,7 +36,7 @@ export const saveMemoryTool: ToolDefinition<typeof SaveMemoryInputSchema, { id: 
     'explicitly asks you to remember, save, or store something, OR (b) you learn a ' +
     'stable preference, rule, or context that will improve future unrelated tasks. ' +
     'Each call saves one fact — call multiple times if the user gives you multiple ' +
-    'facts. Skip ephemeral details (today\'s weather, transient calculation results).',
+    "facts. Skip ephemeral details (today's weather, transient calculation results).",
   inputSchema: SaveMemoryInputSchema,
   riskLevel: 'write',
   execute: async (input, ctx) => {

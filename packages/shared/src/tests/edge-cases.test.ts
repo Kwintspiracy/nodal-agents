@@ -14,7 +14,7 @@ import {
   WebhookTriggerSchema,
   JobChannelSchema,
   JobStatusSchema,
-} from '../index.js';
+} from '../index';
 
 const now = '2026-04-26T10:00:00.000Z';
 const uuid = '00000000-0000-4000-8000-000000000001';

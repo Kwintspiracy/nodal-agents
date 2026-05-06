@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { drive_v3 } from 'googleapis';
-import { createUploadFileTool } from '../../tools/upload-file.js';
+import { createUploadFileTool } from '../../tools/upload-file';
 
 function makeDrive(): drive_v3.Drive {
   return {

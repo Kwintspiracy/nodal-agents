@@ -1,7 +1,7 @@
 // AgentRun — historical execution record (denormalized from job), matches agent_runs table
 
 import { z } from 'zod';
-import { RunKeySourceSchema } from '../enums.js';
+import { RunKeySourceSchema } from '../enums';
 
 export const AgentRunSchema = z
   .object({

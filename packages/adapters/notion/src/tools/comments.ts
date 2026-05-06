@@ -3,8 +3,8 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { Client } from '@notionhq/client';
-import { mapNotionError } from '../errors.js';
-import { chunkRichText } from '../helpers/property-coerce.js';
+import { mapNotionError } from '../errors';
+import { chunkRichText } from '../helpers/property-coerce';
 
 // ── notion_list_comments ──────────────────────────────────────────────────────
 

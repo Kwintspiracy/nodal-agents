@@ -1,11 +1,7 @@
 // @nodalai/adapter-gmail — RFC 2822 round-trip tests
 
 import { describe, it, expect } from 'vitest';
-import {
-  buildRfc2822Message,
-  decodeRfc2822Message,
-  parseRawHeaders,
-} from '../../helpers/rfc2822.js';
+import { buildRfc2822Message, decodeRfc2822Message, parseRawHeaders } from '../../helpers/rfc2822';
 
 describe('buildRfc2822Message', () => {
   it('builds a base64url-encoded message for simple plain text', () => {

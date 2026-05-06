@@ -1,8 +1,8 @@
 // capabilities.test.ts — every provider has a complete, documented capability matrix
 
 import { describe, it, expect } from 'vitest';
-import { CAPABILITY_MATRIX } from '../providers/registry.js';
-import type { ProviderName, ProviderCapabilities } from '../types.js';
+import { CAPABILITY_MATRIX } from '../providers/registry';
+import type { ProviderName, ProviderCapabilities } from '../types';
 
 const PROVIDERS: ProviderName[] = [
   'anthropic',

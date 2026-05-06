@@ -7,27 +7,27 @@ export type {
   PagedResult,
   MemoryStats,
   MemorySortField,
-} from './types.js';
+} from './types';
 
 // Errors
-export { MemoryError, MemoryNotFoundError } from './errors.js';
-export type { MemoryErrorCode } from './errors.js';
+export { MemoryError, MemoryNotFoundError } from './errors';
+export type { MemoryErrorCode } from './errors';
 
 // CRUD
-export { getMemory, createMemory, updateMemory, deleteMemory, rowToMemory } from './crud.js';
-export type { MemoryRow } from './crud.js';
+export { getMemory, createMemory, updateMemory, deleteMemory, rowToMemory } from './crud';
+export type { MemoryRow } from './crud';
 
 // List
-export { listMemories } from './list.js';
+export { listMemories } from './list';
 
 // Search
-export { searchMemories } from './search.js';
+export { searchMemories } from './search';
 
 // Filter (pure functions)
-export { applySkillFilter, filterByTags } from './filter.js';
+export { applySkillFilter, filterByTags } from './filter';
 
 // Stats
-export { getMemoryStats } from './stats.js';
+export { getMemoryStats } from './stats';
 
 // Access tracking
-export { touchMemory, touchMemories } from './access-tracking.js';
+export { touchMemory, touchMemories } from './access-tracking';

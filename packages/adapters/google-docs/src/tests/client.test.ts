@@ -1,7 +1,7 @@
 // @nodalai/adapter-google-docs — client factory tests
 
 import { describe, it, expect } from 'vitest';
-import { createDocsClient } from '../client.js';
+import { createDocsClient } from '../client';
 
 describe('createDocsClient', () => {
   it('returns a docs_v1.Docs instance with a documents resource', () => {

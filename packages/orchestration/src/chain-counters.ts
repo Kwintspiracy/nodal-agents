@@ -6,8 +6,8 @@ import {
   ChainLimitExceededError,
   ToolCallLimitExceededError,
   DelegationDepthExceededError,
-} from './errors.js';
-import type { ChainLimits } from './types.js';
+} from './errors';
+import type { ChainLimits } from './types';
 
 // ─── DEFAULT_LIMITS ───────────────────────────────────────────────────────────
 // Hard-coded per invariant 8. Override only in tests via constructor argument.

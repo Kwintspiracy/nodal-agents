@@ -4,8 +4,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from '@nodalai/db';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentTasks, agentJobs } from '@nodalai/db';
-import { generateTaskTools } from '../../planner/task-tools.js';
-import type { AgentId } from '../../types.js';
+import { generateTaskTools } from '../../planner/task-tools';
+import type { AgentId } from '../../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 import type { ToolContext } from '@nodalai/tools';
 

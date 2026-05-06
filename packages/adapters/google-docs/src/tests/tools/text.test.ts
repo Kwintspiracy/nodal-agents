@@ -7,8 +7,8 @@ import {
   createAppendTextTool,
   createReplaceTextTool,
   createDeleteContentRangeTool,
-} from '../../tools/text.js';
-import { DocsAdapterError } from '../../errors.js';
+} from '../../tools/text';
+import { DocsAdapterError } from '../../errors';
 
 function makeDocs(): docs_v1.Docs {
   return {

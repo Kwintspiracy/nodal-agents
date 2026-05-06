@@ -3,13 +3,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { Client } from '@notionhq/client';
-import { mapNotionError } from '../errors.js';
+import { mapNotionError } from '../errors';
 import {
   extractPropertyValue,
   chunkRichText,
   buildNotionProperty,
-} from '../helpers/property-coerce.js';
-import { paginateAll } from '../helpers/pagination.js';
+} from '../helpers/property-coerce';
+import { paginateAll } from '../helpers/pagination';
 
 // ── notion_query_database ─────────────────────────────────────────────────────
 

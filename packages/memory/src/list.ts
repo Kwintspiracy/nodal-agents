@@ -4,10 +4,10 @@ import { eq, and, sql, desc } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 import { agentMemory } from '@nodalai/db';
 import type { AgentMemory } from '@nodalai/shared';
-import { MemoryError } from './errors.js';
-import type { ListOptions, PagedResult } from './types.js';
-import { rowToMemory } from './crud.js';
-import type { MemoryRow } from './crud.js';
+import { MemoryError } from './errors';
+import type { ListOptions, PagedResult } from './types';
+import { rowToMemory } from './crud';
+import type { MemoryRow } from './crud';
 
 const MAX_PAGE_SIZE = 200;
 const DEFAULT_PAGE_SIZE = 50;

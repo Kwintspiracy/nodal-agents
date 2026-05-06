@@ -1,7 +1,7 @@
 // @nodalai/adapter-google-sheets — client factory tests
 
 import { describe, it, expect } from 'vitest';
-import { createSheetsClient } from '../client.js';
+import { createSheetsClient } from '../client';
 
 describe('createSheetsClient', () => {
   it('returns a sheets_v4.Sheets instance with a spreadsheets resource', () => {

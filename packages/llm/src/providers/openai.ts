@@ -2,7 +2,7 @@
 
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModel } from 'ai';
-import type { ProviderConfig } from '../types.js';
+import type { ProviderConfig } from '../types';
 
 export function buildOpenAIModel(config: ProviderConfig): LanguageModel {
   const provider = createOpenAI({

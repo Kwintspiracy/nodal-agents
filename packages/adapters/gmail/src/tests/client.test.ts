@@ -1,7 +1,7 @@
 // @nodalai/adapter-gmail — client factory tests
 
 import { describe, it, expect } from 'vitest';
-import { createGmailClient } from '../client.js';
+import { createGmailClient } from '../client';
 
 describe('createGmailClient', () => {
   it('returns a gmail_v1.Gmail instance with a users resource', () => {

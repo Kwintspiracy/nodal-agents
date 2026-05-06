@@ -6,7 +6,7 @@ import {
   createFormatRangeTool,
   createResizeColumnsTool,
   createFreezePanesTool,
-} from '../../tools/format.js';
+} from '../../tools/format';
 
 function makeSheets(): sheets_v4.Sheets {
   return {

@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { gmail_v1 } from 'googleapis';
-import { mapGmailError } from '../errors.js';
+import { mapGmailError } from '../errors';
 
 const ListHistoryInput = z.object({
   start_history_id: z

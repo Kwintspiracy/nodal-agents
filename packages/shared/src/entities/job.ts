@@ -3,7 +3,7 @@
 // Side states: awaiting_delegation, awaiting_approval, cancelled
 
 import { z } from 'zod';
-import { JobStatusSchema, JobChannelSchema } from '../enums.js';
+import { JobStatusSchema, JobChannelSchema } from '../enums';
 
 // chain_count must never be negative (DB default 0, runner enforces non-negative increments)
 const ChainCountSchema = z.number().int().min(0);

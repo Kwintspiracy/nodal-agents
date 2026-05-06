@@ -4,12 +4,12 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { sheets_v4 } from 'googleapis';
-import { mapSheetsError } from '../errors.js';
+import { mapSheetsError } from '../errors';
 import {
   buildClearBasicFilterRequest,
   buildSetBasicFilterRequest,
   buildSortRangeRequest,
-} from '../helpers/batch-update.js';
+} from '../helpers/batch-update';
 
 // ── sheets_set_basic_filter ────────────────────────────────────────────────
 

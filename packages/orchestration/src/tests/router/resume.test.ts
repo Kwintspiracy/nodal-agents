@@ -5,9 +5,9 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from '@nodalai/db';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentJobs } from '@nodalai/db';
-import { resumeDelegated } from '../../router/resume.js';
-import { OrchestrationError } from '../../errors.js';
-import type { JobId } from '../../types.js';
+import { resumeDelegated } from '../../router/resume';
+import { OrchestrationError } from '../../errors';
+import type { JobId } from '../../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;

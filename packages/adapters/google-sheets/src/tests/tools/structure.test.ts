@@ -9,7 +9,7 @@ import {
   createDeleteSheetTool,
   createDuplicateSheetTool,
   createRenameSheetTool,
-} from '../../tools/structure.js';
+} from '../../tools/structure';
 
 function makeSheets(): sheets_v4.Sheets {
   return {

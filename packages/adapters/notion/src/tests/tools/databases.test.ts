@@ -10,7 +10,7 @@ import {
   createUpdateDatabaseEntryTool,
   createCreateDatabaseTool,
   createUpdateDatabaseTool,
-} from '../../tools/databases.js';
+} from '../../tools/databases';
 
 function makeClient(): Client {
   return {

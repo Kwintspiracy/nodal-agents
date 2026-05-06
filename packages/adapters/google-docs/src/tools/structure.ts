@@ -4,14 +4,14 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { docs_v1 } from 'googleapis';
-import { mapDocsError, DocsAdapterError } from '../errors.js';
+import { mapDocsError, DocsAdapterError } from '../errors';
 import {
   buildInsertParagraphRequest,
   buildInsertPageBreakRequest,
   buildInsertTableRequest,
   buildInsertImageRequest,
   buildApplyNamedStyleRequest,
-} from '../helpers/batch-update.js';
+} from '../helpers/batch-update';
 
 // Named paragraph style types supported by Docs API
 const NamedStyleType = z.enum([

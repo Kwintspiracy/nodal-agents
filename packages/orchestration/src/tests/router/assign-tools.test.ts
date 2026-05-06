@@ -4,9 +4,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
-import { generateAssignTools } from '../../router/assign-tools.js';
-import { DelegationPendingError } from '../../errors.js';
-import type { AgentId } from '../../types.js';
+import { generateAssignTools } from '../../router/assign-tools';
+import { DelegationPendingError } from '../../errors';
+import type { AgentId } from '../../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;

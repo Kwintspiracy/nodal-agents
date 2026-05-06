@@ -2,7 +2,7 @@
 // Ports the invariants from AgentOne/agent/resilience.py
 
 import type { CoreMessage } from 'ai';
-import { MessageStructureError } from './errors.js';
+import { MessageStructureError } from './errors';
 
 /**
  * Validates that a conversation history satisfies all tool-use invariants

@@ -3,7 +3,7 @@
 
 import { eq, and } from '@nodalai/db';
 import { agentTasks } from '@nodalai/db';
-import type { JobId, AnyDrizzleDb } from '../types.js';
+import type { JobId, AnyDrizzleDb } from '../types';
 
 // ─── checkRootJobComplete ─────────────────────────────────────────────────────
 

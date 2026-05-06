@@ -1,7 +1,7 @@
 // tool-choice.test.ts — computeToolChoice invariants
 
 import { describe, it, expect } from 'vitest';
-import { computeToolChoice } from '../tool-choice.js';
+import { computeToolChoice } from '../tool-choice';
 
 describe('computeToolChoice', () => {
   // ── Orchestrator rules ──────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 // and handles the full OOXML spec reliably. We return a typed error so the caller
 // can surface a clear, actionable message rather than crashing or returning garbage.
 
-import { DriveAdapterError } from '../errors.js';
+import { DriveAdapterError } from '../errors';
 
 /**
  * Attempt PPTX text extraction.

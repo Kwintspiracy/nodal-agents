@@ -3,9 +3,9 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { Client } from '@notionhq/client';
-import { mapNotionError } from '../errors.js';
-import { chunkRichText } from '../helpers/property-coerce.js';
-import { blockToText } from '../helpers/block-to-text.js';
+import { mapNotionError } from '../errors';
+import { chunkRichText } from '../helpers/property-coerce';
+import { blockToText } from '../helpers/block-to-text';
 import type { BlockObjectResponse } from '@notionhq/client/build/src/api-endpoints.js';
 
 // ── notion_get_block ──────────────────────────────────────────────────────────

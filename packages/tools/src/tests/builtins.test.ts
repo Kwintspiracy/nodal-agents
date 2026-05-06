@@ -3,14 +3,14 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
 import { agentMemory, eq } from '@nodalai/db';
-import { createToolRegistry } from '../registry.js';
-import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index.js';
-import { returnResultTool } from '../builtin/return-result.js';
-import { saveMemoryTool } from '../builtin/save-memory.js';
-import { queryMemoryTool } from '../builtin/query-memory.js';
-import { webSearchTool } from '../builtin/web-search.js';
-import { WebSearchNotConfiguredError } from '../errors.js';
-import type { ToolContext } from '../types.js';
+import { createToolRegistry } from '../registry';
+import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
+import { returnResultTool } from '../builtin/return-result';
+import { saveMemoryTool } from '../builtin/save-memory';
+import { queryMemoryTool } from '../builtin/query-memory';
+import { webSearchTool } from '../builtin/web-search';
+import { WebSearchNotConfiguredError } from '../errors';
+import type { ToolContext } from '../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;

@@ -1,7 +1,7 @@
 // Entity (workspace) and EntityMember schemas
 
 import { z } from 'zod';
-import { EntityIndustrySchema } from '../enums.js';
+import { EntityIndustrySchema } from '../enums';
 
 // ─── Entity ──────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ export type EntityInsert = z.infer<typeof EntityInsertSchema>;
 
 // ─── EntityMember ─────────────────────────────────────────────────────────────
 
-import { EntityMemberRoleSchema } from '../enums.js';
+import { EntityMemberRoleSchema } from '../enums';
 
 export const EntityMemberSchema = z
   .object({

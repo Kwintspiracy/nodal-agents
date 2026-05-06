@@ -1,7 +1,7 @@
 // AgentSkill and AgentSkillAssignment — matches agent_skills and agent_skill_assignments tables
 
 import { z } from 'zod';
-import { OperationRiskLevelSchema } from '../enums.js';
+import { OperationRiskLevelSchema } from '../enums';
 
 // ─── Skill operation item (embedded in operations JSONB column) ────────────────
 

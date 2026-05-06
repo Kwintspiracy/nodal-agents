@@ -5,7 +5,7 @@ import type { AnyDrizzleDb } from '@nodalai/db';
 import { agentMemory } from '@nodalai/db';
 import type { MemoryCategory } from '@nodalai/shared';
 import { MEMORY_CATEGORIES } from '@nodalai/shared';
-import type { MemoryStats } from './types.js';
+import type { MemoryStats } from './types';
 
 export async function getMemoryStats(
   db: AnyDrizzleDb,

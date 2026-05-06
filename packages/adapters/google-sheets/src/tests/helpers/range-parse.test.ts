@@ -1,8 +1,8 @@
 // @nodalai/adapter-google-sheets — range parser tests
 
 import { describe, it, expect } from 'vitest';
-import { parseRange, buildRange } from '../../helpers/range-parse.js';
-import { SheetsAdapterError } from '../../errors.js';
+import { parseRange, buildRange } from '../../helpers/range-parse';
+import { SheetsAdapterError } from '../../errors';
 
 describe('parseRange', () => {
   it('parses Sheet1!A1:C10', () => {

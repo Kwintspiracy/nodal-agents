@@ -1,14 +1,8 @@
 // @nodalai/tools — ToolRegistry implementation
 
 import type { z } from 'zod';
-import { RISK_LEVELS } from './types.js';
-import type {
-  ToolDefinition,
-  ToolRegistry,
-  ToolListFilter,
-  AiSdkTool,
-  RiskLevel,
-} from './types.js';
+import { RISK_LEVELS } from './types';
+import type { ToolDefinition, ToolRegistry, ToolListFilter, AiSdkTool, RiskLevel } from './types';
 
 // ─── createToolRegistry ────────────────────────────────────────────────────────
 

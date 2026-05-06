@@ -2,7 +2,7 @@
 
 import { createMistral } from '@ai-sdk/mistral';
 import type { LanguageModel } from 'ai';
-import type { ProviderConfig } from '../types.js';
+import type { ProviderConfig } from '../types';
 
 export function buildMistralModel(config: ProviderConfig): LanguageModel {
   const provider = createMistral({

@@ -1,11 +1,11 @@
 // @nodalai/adapter-google-drive — file text extractor dispatcher
 
-import { DriveAdapterError } from '../errors.js';
-import { extractDocxText } from './docx.js';
-import { extractPdfText } from './pdf.js';
-import { extractXlsxText } from './xlsx.js';
-import { extractPptxText } from './pptx.js';
-import { extractPlainText } from './plain.js';
+import { DriveAdapterError } from '../errors';
+import { extractDocxText } from './docx';
+import { extractPdfText } from './pdf';
+import { extractXlsxText } from './xlsx';
+import { extractPptxText } from './pptx';
+import { extractPlainText } from './plain';
 
 /** 25 MB file size cap — refuse extraction above this to avoid OOM */
 export const FILE_SIZE_CAP_BYTES = 25 * 1024 * 1024;

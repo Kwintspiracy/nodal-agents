@@ -3,20 +3,20 @@
 import { generateText, streamText, generateObject } from 'ai';
 import type { CoreMessage, LanguageModel } from 'ai';
 
-import type { ProviderConfig, NodalLlmClient, ProviderCapabilities } from './types.js';
-import { ProviderConfigError } from './errors.js';
-import { CAPABILITY_MATRIX } from './providers/registry.js';
-import { validateMessageStructure } from './message-structure.js';
-import { withRetry } from './retry.js';
+import type { ProviderConfig, NodalLlmClient, ProviderCapabilities } from './types';
+import { ProviderConfigError } from './errors';
+import { CAPABILITY_MATRIX } from './providers/registry';
+import { validateMessageStructure } from './message-structure';
+import { withRetry } from './retry';
 
-import { buildAnthropicModel } from './providers/anthropic.js';
-import { buildOpenAIModel } from './providers/openai.js';
-import { buildOllamaModel } from './providers/ollama.js';
-import { buildOpenAICompatibleModel } from './providers/openai-compatible.js';
-import { buildGoogleModel } from './providers/google.js';
-import { buildMistralModel } from './providers/mistral.js';
-import { buildGroqModel } from './providers/groq.js';
-import { buildOpenRouterModel } from './providers/openrouter.js';
+import { buildAnthropicModel } from './providers/anthropic';
+import { buildOpenAIModel } from './providers/openai';
+import { buildOllamaModel } from './providers/ollama';
+import { buildOpenAICompatibleModel } from './providers/openai-compatible';
+import { buildGoogleModel } from './providers/google';
+import { buildMistralModel } from './providers/mistral';
+import { buildGroqModel } from './providers/groq';
+import { buildOpenRouterModel } from './providers/openrouter';
 
 // ─── Model builder dispatch ────────────────────────────────────────────────────
 

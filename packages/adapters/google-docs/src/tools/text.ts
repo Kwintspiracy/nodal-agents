@@ -4,13 +4,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { docs_v1 } from 'googleapis';
-import { mapDocsError, DocsAdapterError } from '../errors.js';
+import { mapDocsError, DocsAdapterError } from '../errors';
 import {
   buildInsertTextRequest,
   buildAppendTextRequest,
   buildReplaceAllTextRequest,
   buildDeleteContentRangeRequest,
-} from '../helpers/batch-update.js';
+} from '../helpers/batch-update';
 
 // ── docs_insert_text ───────────────────────────────────────────────────────
 

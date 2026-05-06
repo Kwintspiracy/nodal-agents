@@ -3,21 +3,21 @@
 
 import type { ToolDefinition } from '@nodalai/tools';
 import type { z } from 'zod';
-import { createNotionClient } from './client.js';
-import { createSearchTool } from './tools/search.js';
+import { createNotionClient } from './client';
+import { createSearchTool } from './tools/search';
 import {
   createGetPageTool,
   createGetPageContentTool,
   createCreatePageTool,
   createUpdatePageTool,
   createArchivePageTool,
-} from './tools/pages.js';
+} from './tools/pages';
 import {
   createGetBlockTool,
   createAppendBlocksTool,
   createUpdateBlockTool,
   createDeleteBlockTool,
-} from './tools/blocks.js';
+} from './tools/blocks';
 import {
   createQueryDatabaseTool,
   createGetDatabaseTool,
@@ -25,9 +25,9 @@ import {
   createUpdateDatabaseEntryTool,
   createCreateDatabaseTool,
   createUpdateDatabaseTool,
-} from './tools/databases.js';
-import { createListCommentsTool, createAddCommentTool } from './tools/comments.js';
-import { createListUsersTool, createGetUserTool } from './tools/users.js';
+} from './tools/databases';
+import { createListCommentsTool, createAddCommentTool } from './tools/comments';
+import { createListUsersTool, createGetUserTool } from './tools/users';
 
 export interface NotionAdapterOptions {
   /**
@@ -90,5 +90,5 @@ export function createNotionTools(
 }
 
 // Re-export error types for consumers
-export { NotionAdapterError } from './errors.js';
-export type { NotionErrorCode } from './errors.js';
+export { NotionAdapterError } from './errors';
+export type { NotionErrorCode } from './errors';

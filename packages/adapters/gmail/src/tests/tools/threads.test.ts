@@ -7,7 +7,7 @@ import {
   createGetThreadTool,
   createModifyThreadLabelsTool,
   createTrashThreadTool,
-} from '../../tools/threads.js';
+} from '../../tools/threads';
 
 function makeGmail(): gmail_v1.Gmail {
   return {

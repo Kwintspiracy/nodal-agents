@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Client } from '@notionhq/client';
 import { APIResponseError, APIErrorCode } from '@notionhq/client';
-import { createListUsersTool, createGetUserTool } from '../../tools/users.js';
+import { createListUsersTool, createGetUserTool } from '../../tools/users';
 
 function makeClient(): Client {
   return {

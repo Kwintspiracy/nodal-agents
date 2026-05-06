@@ -2,12 +2,12 @@
 // Pure logic, no DB needed.
 
 import { describe, it, expect } from 'vitest';
-import { ChainCounters, DEFAULT_LIMITS } from '../chain-counters.js';
+import { ChainCounters, DEFAULT_LIMITS } from '../chain-counters';
 import {
   ChainLimitExceededError,
   ToolCallLimitExceededError,
   DelegationDepthExceededError,
-} from '../errors.js';
+} from '../errors';
 
 describe('ChainCounters', () => {
   describe('DEFAULT_LIMITS', () => {

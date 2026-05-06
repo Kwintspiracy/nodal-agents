@@ -2,9 +2,9 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import { createMemory } from '../crud.js';
-import { listMemories } from '../list.js';
-import { MemoryError } from '../errors.js';
+import { createMemory } from '../crud';
+import { listMemories } from '../list';
+import { MemoryError } from '../errors';
 
 let db: Awaited<ReturnType<typeof spinUpTestDb>>['db'];
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };

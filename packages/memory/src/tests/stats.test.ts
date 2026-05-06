@@ -2,8 +2,8 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import { createMemory } from '../crud.js';
-import { getMemoryStats } from '../stats.js';
+import { createMemory } from '../crud';
+import { getMemoryStats } from '../stats';
 
 let db: Awaited<ReturnType<typeof spinUpTestDb>>['db'];
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };

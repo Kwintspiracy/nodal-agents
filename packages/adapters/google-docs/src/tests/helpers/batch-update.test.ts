@@ -12,7 +12,7 @@ import {
   buildInsertTableRequest,
   buildInsertImageRequest,
   buildUpdateTextStyleRequest,
-} from '../../helpers/batch-update.js';
+} from '../../helpers/batch-update';
 
 describe('buildInsertTextRequest', () => {
   it('builds correct insertText request with index location', () => {

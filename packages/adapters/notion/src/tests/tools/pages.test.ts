@@ -9,7 +9,7 @@ import {
   createCreatePageTool,
   createUpdatePageTool,
   createArchivePageTool,
-} from '../../tools/pages.js';
+} from '../../tools/pages';
 
 function makeClient(methods: Partial<Record<string, unknown>> = {}): Client {
   return {

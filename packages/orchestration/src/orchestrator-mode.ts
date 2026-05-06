@@ -1,7 +1,7 @@
 // orchestrator-mode.ts — detect whether an agent is router / planner / worker
 // Data-driven from DB child list. Never hardcoded by name.
 
-import type { OrchestratorMode, Agent, ChildAgent } from './types.js';
+import type { OrchestratorMode, Agent, ChildAgent } from './types';
 
 /**
  * Detect the orchestration mode for an agent based on its children.

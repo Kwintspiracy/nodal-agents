@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 import { agentMemory, eq, and } from '@nodalai/db';
-import type { ToolDefinition } from '../types.js';
+import type { ToolDefinition } from '../types';
 
 export const QueryMemoryInputSchema = z.object({
   skill_tags: z

@@ -5,9 +5,9 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { sheets_v4 } from 'googleapis';
-import { mapSheetsError, SheetsAdapterError } from '../errors.js';
-import { coerceGrid } from '../helpers/value-coerce.js';
-import { parseRange } from '../helpers/range-parse.js';
+import { mapSheetsError, SheetsAdapterError } from '../errors';
+import { coerceGrid } from '../helpers/value-coerce';
+import { parseRange } from '../helpers/range-parse';
 
 /** Max rows allowed in a single read before throwing sheets_range_too_large */
 const ROW_CAP = 10_000;

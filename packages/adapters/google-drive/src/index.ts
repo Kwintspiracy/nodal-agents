@@ -3,19 +3,19 @@
 
 import type { ToolDefinition } from '@nodalai/tools';
 import type { z } from 'zod';
-import { createDriveClient } from './client.js';
-import { createListFilesTool } from './tools/list-files.js';
-import { createReadFileTool } from './tools/read-file.js';
-import { createUploadFileTool } from './tools/upload-file.js';
-import { createGetFileInfoTool } from './tools/get-file-info.js';
-import { createCreateFolderTool } from './tools/create-folder.js';
-import { createMoveFileTool } from './tools/move-file.js';
-import { createRenameFileTool } from './tools/rename-file.js';
-import { createCopyFileTool } from './tools/copy-file.js';
-import { createDeleteFileTool } from './tools/delete-file.js';
-import { createShareFileTool } from './tools/share-file.js';
-import { createListPermissionsTool } from './tools/list-permissions.js';
-import { createExportFileTool } from './tools/export-file.js';
+import { createDriveClient } from './client';
+import { createListFilesTool } from './tools/list-files';
+import { createReadFileTool } from './tools/read-file';
+import { createUploadFileTool } from './tools/upload-file';
+import { createGetFileInfoTool } from './tools/get-file-info';
+import { createCreateFolderTool } from './tools/create-folder';
+import { createMoveFileTool } from './tools/move-file';
+import { createRenameFileTool } from './tools/rename-file';
+import { createCopyFileTool } from './tools/copy-file';
+import { createDeleteFileTool } from './tools/delete-file';
+import { createShareFileTool } from './tools/share-file';
+import { createListPermissionsTool } from './tools/list-permissions';
+import { createExportFileTool } from './tools/export-file';
 
 export interface DriveAdapterOptions {
   /**
@@ -64,5 +64,5 @@ export function createDriveTools(
 }
 
 // Re-export error types for consumers
-export { DriveAdapterError } from './errors.js';
-export type { DriveErrorCode } from './errors.js';
+export { DriveAdapterError } from './errors';
+export type { DriveErrorCode } from './errors';

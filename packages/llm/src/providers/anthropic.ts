@@ -2,7 +2,7 @@
 
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { LanguageModel } from 'ai';
-import type { ProviderConfig } from '../types.js';
+import type { ProviderConfig } from '../types';
 
 export function buildAnthropicModel(config: ProviderConfig): LanguageModel {
   const provider = createAnthropic({

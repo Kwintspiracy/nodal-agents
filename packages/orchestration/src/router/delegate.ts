@@ -3,7 +3,7 @@
 
 import { eq } from '@nodalai/db';
 import { agentJobs, agents } from '@nodalai/db';
-import { OrchestrationError } from '../errors.js';
+import { OrchestrationError } from '../errors';
 import type {
   AgentId,
   EntityId,
@@ -13,7 +13,7 @@ import type {
   DelegationResult,
   PendingDelegation,
   SideToolResult,
-} from '../types.js';
+} from '../types';
 
 // ─── handleDelegation ─────────────────────────────────────────────────────────
 

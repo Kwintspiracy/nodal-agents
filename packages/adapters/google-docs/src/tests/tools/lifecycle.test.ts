@@ -2,12 +2,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { docs_v1 } from 'googleapis';
-import {
-  createCreateDocTool,
-  createGetDocTool,
-  createGetDocTextTool,
-} from '../../tools/lifecycle.js';
-import { DocsAdapterError } from '../../errors.js';
+import { createCreateDocTool, createGetDocTool, createGetDocTextTool } from '../../tools/lifecycle';
+import { DocsAdapterError } from '../../errors';
 
 function makeDocs(): docs_v1.Docs {
   return {

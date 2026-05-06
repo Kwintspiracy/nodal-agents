@@ -59,9 +59,7 @@ export function filterToolCallsForDelegation(rawCalls: ToolCallBlock[]): {
  * These are injected into the parent's pending_delegation.sideToolResults
  * so the message-structure invariant (every tool_use has a tool_result) holds.
  */
-export function buildDeferredToolResults(
-  dropped: ToolCallBlock[],
-): Array<{
+export function buildDeferredToolResults(dropped: ToolCallBlock[]): Array<{
   type: 'tool_result';
   tool_use_id: string;
   toolName: string;

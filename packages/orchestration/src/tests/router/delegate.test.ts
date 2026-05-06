@@ -5,9 +5,9 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from '@nodalai/db';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentJobs } from '@nodalai/db';
-import { handleDelegation } from '../../router/delegate.js';
-import { OrchestrationError } from '../../errors.js';
-import type { AgentId, JobId, AgentJob, EntityId } from '../../types.js';
+import { handleDelegation } from '../../router/delegate';
+import { OrchestrationError } from '../../errors';
+import type { AgentId, JobId, AgentJob, EntityId } from '../../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;
@@ -143,14 +143,7 @@ describe('handleDelegation', () => {
       ],
     };
 
-    await handleDelegation(
-      parentJob,
-      workerSlug,
-      'tu_msg_persist',
-      { task: 'X' },
-      [],
-      db,
-    );
+    await handleDelegation(parentJob, workerSlug, 'tu_msg_persist', { task: 'X' }, [], db);
 
     const [updatedParent] = await db
       .select({ messages: agentJobs.messages })

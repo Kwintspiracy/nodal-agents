@@ -1,6 +1,6 @@
 // @nodalai/adapter-google-sheets — A1 notation range parser
 
-import { SheetsAdapterError } from '../errors.js';
+import { SheetsAdapterError } from '../errors';
 
 export interface ParsedRange {
   /** The sheet name, unquoted. Undefined if no sheet name prefix was given. */

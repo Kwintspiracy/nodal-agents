@@ -8,7 +8,7 @@ import {
   createAppendBlocksTool,
   createUpdateBlockTool,
   createDeleteBlockTool,
-} from '../../tools/blocks.js';
+} from '../../tools/blocks';
 
 function makeClient(): Client {
   return {

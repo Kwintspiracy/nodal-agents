@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { drive_v3 } from 'googleapis';
-import { mapDriveError } from '../errors.js';
+import { mapDriveError } from '../errors';
 
 const UploadFileInput = z.object({
   name: z.string().describe("File name including extension, e.g. 'cover_letter.txt'."),

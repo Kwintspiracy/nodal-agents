@@ -3,8 +3,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Client } from '@notionhq/client';
 import { APIResponseError, APIErrorCode } from '@notionhq/client';
-import { createSearchTool } from '../../tools/search.js';
-import { NotionAdapterError } from '../../errors.js';
+import { createSearchTool } from '../../tools/search';
+import { NotionAdapterError } from '../../errors';
 
 // Minimal mock client
 function makeClient(overrides: Partial<{ search: Client['search'] }> = {}): Client {

@@ -9,8 +9,8 @@ import type {
   ExecuteOptions,
   ToolExecutionResult,
   ApprovalGateRequest,
-} from './types.js';
-import { InvalidInputError } from './errors.js';
+} from './types';
+import { InvalidInputError } from './errors';
 
 // ─── executeTool ──────────────────────────────────────────────────────────────
 

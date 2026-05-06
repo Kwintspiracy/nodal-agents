@@ -7,7 +7,7 @@ import {
   decodeBase64Url,
   extractAttachmentInfos,
   parseGmailHeaders,
-} from '../../helpers/parse-payload.js';
+} from '../../helpers/parse-payload';
 
 function encodeBase64Url(text: string): string {
   return Buffer.from(text, 'utf-8')

@@ -3,8 +3,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentTasks, agentJobs } from '@nodalai/db';
-import { checkRootJobComplete } from '../../planner/completion.js';
-import type { JobId } from '../../types.js';
+import { checkRootJobComplete } from '../../planner/completion';
+import type { JobId } from '../../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;

@@ -11,8 +11,8 @@ import {
   createClearRangeTool,
   createBatchUpdateValuesTool,
   createFindRowsTool,
-} from '../../tools/values.js';
-import { SheetsAdapterError } from '../../errors.js';
+} from '../../tools/values';
+import { SheetsAdapterError } from '../../errors';
 
 function makeSheets(): sheets_v4.Sheets {
   return {

@@ -7,14 +7,14 @@ import { eq } from '@nodalai/db';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
 import { approvalRequests, toolCalls } from '@nodalai/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodalai/llm';
-import { executeTool } from '../execute.js';
+import { executeTool } from '../execute';
 import type {
   ToolDefinition,
   ToolContext,
   ExecuteOptions,
   ApprovalGateRequest,
   ApprovalRule,
-} from '../types.js';
+} from '../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import {
   createInsertPageBreakTool,
   createInsertTableTool,
   createInsertImageTool,
-} from '../../tools/structure.js';
+} from '../../tools/structure';
 
 function makeDocs(): docs_v1.Docs {
   return {

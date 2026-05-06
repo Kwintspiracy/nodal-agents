@@ -3,8 +3,8 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { drive_v3 } from 'googleapis';
-import { mapDriveError } from '../errors.js';
-import { paginateDrive } from '../helpers/pagination.js';
+import { mapDriveError } from '../errors';
+import { paginateDrive } from '../helpers/pagination';
 
 const ListFilesInput = z.object({
   query: z

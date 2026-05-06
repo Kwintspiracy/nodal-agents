@@ -2,10 +2,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { drive_v3 } from 'googleapis';
-import { createCreateFolderTool } from '../../tools/create-folder.js';
-import { createMoveFileTool } from '../../tools/move-file.js';
-import { createRenameFileTool } from '../../tools/rename-file.js';
-import { createCopyFileTool } from '../../tools/copy-file.js';
+import { createCreateFolderTool } from '../../tools/create-folder';
+import { createMoveFileTool } from '../../tools/move-file';
+import { createRenameFileTool } from '../../tools/rename-file';
+import { createCopyFileTool } from '../../tools/copy-file';
 
 function makeDrive(): drive_v3.Drive {
   return {

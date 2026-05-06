@@ -5,8 +5,8 @@ import { describe, it, expect } from 'vitest';
 import {
   filterToolCallsForDelegation,
   buildDeferredToolResults,
-} from '../../router/only-one-per-turn.js';
-import type { ToolCallBlock } from '../../router/only-one-per-turn.js';
+} from '../../router/only-one-per-turn';
+import type { ToolCallBlock } from '../../router/only-one-per-turn';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 

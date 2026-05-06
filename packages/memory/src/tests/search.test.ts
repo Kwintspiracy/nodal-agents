@@ -3,8 +3,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
 import type { EmbeddingClient } from '@nodalai/llm';
-import { createMemory } from '../crud.js';
-import { searchMemories } from '../search.js';
+import { createMemory } from '../crud';
+import { searchMemories } from '../search';
 
 let db: Awaited<ReturnType<typeof spinUpTestDb>>['db'];
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -221,7 +221,7 @@ describe('searchMemories — access tracking', () => {
       entityId: freshSeed.entityId,
     });
 
-    const { getMemory } = await import('../crud.js');
+    const { getMemory } = await import('../crud');
     const fetched = await getMemory(freshDb, m.id, freshSeed.entityId);
     expect(fetched.access_count).toBe(1);
   });

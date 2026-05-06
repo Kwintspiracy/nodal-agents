@@ -1,8 +1,8 @@
 // quota.test.ts — quota detection logic
 
 import { describe, it, expect, vi } from 'vitest';
-import { withRetry } from '../retry.js';
-import { QuotaExhaustedError } from '../errors.js';
+import { withRetry } from '../retry';
+import { QuotaExhaustedError } from '../errors';
 
 vi.useFakeTimers();
 

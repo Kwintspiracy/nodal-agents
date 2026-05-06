@@ -3,15 +3,15 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { Client } from '@notionhq/client';
-import { mapNotionError } from '../errors.js';
+import { mapNotionError } from '../errors';
 import {
   extractTitle,
   extractPropertyValue,
   chunkRichText,
   buildNotionProperty,
-} from '../helpers/property-coerce.js';
-import { paginateBlockChildren } from '../helpers/pagination.js';
-import { blocksToText } from '../helpers/block-to-text.js';
+} from '../helpers/property-coerce';
+import { paginateBlockChildren } from '../helpers/pagination';
+import { blocksToText } from '../helpers/block-to-text';
 
 // ── notion_get_page ───────────────────────────────────────────────────────────
 

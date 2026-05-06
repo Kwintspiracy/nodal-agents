@@ -3,8 +3,8 @@
 
 import { eq } from '@nodalai/db';
 import { agentJobs } from '@nodalai/db';
-import { OrchestrationError } from '../errors.js';
-import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types.js';
+import { OrchestrationError } from '../errors';
+import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
 
 // ─── resumeDelegated ──────────────────────────────────────────────────────────
 

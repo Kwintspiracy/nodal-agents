@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { gmail_v1 } from 'googleapis';
-import { createGetAttachmentTool } from '../../tools/attachments.js';
+import { createGetAttachmentTool } from '../../tools/attachments';
 
 function makeGmail(): gmail_v1.Gmail {
   return {

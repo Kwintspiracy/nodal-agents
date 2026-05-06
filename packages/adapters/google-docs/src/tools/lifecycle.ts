@@ -4,9 +4,9 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { docs_v1 } from 'googleapis';
-import { mapDocsError, DocsAdapterError } from '../errors.js';
-import { docBodyToText } from '../helpers/doc-to-text.js';
-import { buildAppendTextRequest } from '../helpers/batch-update.js';
+import { mapDocsError, DocsAdapterError } from '../errors';
+import { docBodyToText } from '../helpers/doc-to-text';
+import { buildAppendTextRequest } from '../helpers/batch-update';
 
 /** Max characters allowed in get/get_text before throwing docs_document_too_large */
 const CHAR_CAP = 100_000;

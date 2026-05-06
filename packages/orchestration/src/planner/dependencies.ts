@@ -3,8 +3,8 @@
 
 import { eq, inArray } from '@nodalai/db';
 import { agentTasks } from '@nodalai/db';
-import { OrchestrationError } from '../errors.js';
-import type { TaskId, AnyDrizzleDb } from '../types.js';
+import { OrchestrationError } from '../errors';
+import type { TaskId, AnyDrizzleDb } from '../types';
 
 // ─── validateDependencies ─────────────────────────────────────────────────────
 

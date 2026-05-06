@@ -1,7 +1,7 @@
 // @nodalai/llm — retry with exponential backoff + jitter
 // Ports retry_with_backoff from AgentOne/agent/resilience.py
 
-import { QuotaExhaustedError, MessageStructureError, RetryExhaustedError } from './errors.js';
+import { QuotaExhaustedError, MessageStructureError, RetryExhaustedError } from './errors';
 
 const RETRYABLE_HTTP_STATUSES = new Set([429, 500, 502, 503]);
 

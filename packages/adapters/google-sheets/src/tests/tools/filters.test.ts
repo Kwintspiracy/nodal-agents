@@ -6,7 +6,7 @@ import {
   createSetBasicFilterTool,
   createClearBasicFilterTool,
   createSortRangeTool,
-} from '../../tools/filters.js';
+} from '../../tools/filters';
 
 function makeSheets(): sheets_v4.Sheets {
   return {

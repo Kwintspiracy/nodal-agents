@@ -1,7 +1,7 @@
 // filter.test.ts — applySkillFilter + filterByTags
 
 import { describe, it, expect } from 'vitest';
-import { applySkillFilter, filterByTags } from '../filter.js';
+import { applySkillFilter, filterByTags } from '../filter';
 import type { AgentMemory } from '@nodalai/shared';
 
 // ─── Test fixtures ─────────────────────────────────────────────────────────────

@@ -4,12 +4,12 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { sheets_v4 } from 'googleapis';
-import { mapSheetsError, SheetsAdapterError } from '../errors.js';
+import { mapSheetsError, SheetsAdapterError } from '../errors';
 import {
   buildDeleteSheetRequest,
   buildDuplicateSheetRequest,
   buildRenameSheetRequest,
-} from '../helpers/batch-update.js';
+} from '../helpers/batch-update';
 
 // ── sheets_get_metadata ────────────────────────────────────────────────────
 

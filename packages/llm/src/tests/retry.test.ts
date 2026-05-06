@@ -1,8 +1,8 @@
 // retry.test.ts — withRetry() behavior
 
 import { describe, it, expect, vi } from 'vitest';
-import { withRetry } from '../retry.js';
-import { QuotaExhaustedError, MessageStructureError, RetryExhaustedError } from '../errors.js';
+import { withRetry } from '../retry';
+import { QuotaExhaustedError, MessageStructureError, RetryExhaustedError } from '../errors';
 
 // Override setTimeout globally for tests so backoff doesn't slow things down
 vi.useFakeTimers();

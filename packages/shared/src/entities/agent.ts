@@ -1,7 +1,7 @@
 // Agent definition schema — matches agents table
 
 import { z } from 'zod';
-import { AgentRoleSchema, OrchestratorModeSchema } from '../enums.js';
+import { AgentRoleSchema, OrchestratorModeSchema } from '../enums';
 
 export const AgentSchema = z
   .object({

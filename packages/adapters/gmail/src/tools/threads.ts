@@ -4,9 +4,9 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { gmail_v1 } from 'googleapis';
-import { mapGmailError } from '../errors.js';
-import { paginateGmail } from '../helpers/pagination.js';
-import { extractTextFromPayload, parseGmailHeaders } from '../helpers/parse-payload.js';
+import { mapGmailError } from '../errors';
+import { paginateGmail } from '../helpers/pagination';
+import { extractTextFromPayload, parseGmailHeaders } from '../helpers/parse-payload';
 
 const BODY_CHAR_CAP = 5000;
 

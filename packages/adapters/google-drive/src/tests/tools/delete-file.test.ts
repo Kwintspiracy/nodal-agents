@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { drive_v3 } from 'googleapis';
-import { createDeleteFileTool } from '../../tools/delete-file.js';
+import { createDeleteFileTool } from '../../tools/delete-file';
 
 function makeDrive(): drive_v3.Drive {
   return {

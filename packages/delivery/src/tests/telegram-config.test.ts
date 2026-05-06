@@ -162,11 +162,11 @@ describe('getTelegramUpdates', () => {
       makeFetchResponse(401, { ok: false, description: 'Unauthorized' }),
     );
 
-    await expect(
-      getTelegramUpdates({ botToken: 'bad', offset: 0 }),
-    ).rejects.toSatisfy((err: unknown) => {
-      return err instanceof DeliveryError && err.code === 'telegram_invalid_token';
-    });
+    await expect(getTelegramUpdates({ botToken: 'bad', offset: 0 })).rejects.toSatisfy(
+      (err: unknown) => {
+        return err instanceof DeliveryError && err.code === 'telegram_invalid_token';
+      },
+    );
   });
 
   it('passes limit when provided (used by configure-time backlog drain)', async () => {
@@ -205,10 +205,10 @@ describe('getTelegramUpdates', () => {
       makeFetchResponse(500, { ok: false, description: 'Internal Server Error' }),
     );
 
-    await expect(
-      getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 0 }),
-    ).rejects.toSatisfy((err: unknown) => {
-      return err instanceof DeliveryError && err.code === 'telegram_request_failed';
-    });
+    await expect(getTelegramUpdates({ botToken: FAKE_TOKEN, offset: 0 })).rejects.toSatisfy(
+      (err: unknown) => {
+        return err instanceof DeliveryError && err.code === 'telegram_request_failed';
+      },
+    );
   });
 });

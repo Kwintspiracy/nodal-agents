@@ -2,7 +2,7 @@
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';
-import { createDocsTools } from '../index.js';
+import { createDocsTools } from '../index';
 import { z } from 'zod';
 
 // Use a fake token — tools are instantiated but never called here

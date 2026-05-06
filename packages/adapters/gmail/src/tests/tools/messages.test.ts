@@ -12,7 +12,7 @@ import {
   createUntrashMessageTool,
   createDeleteMessageTool,
   createForwardMessageTool,
-} from '../../tools/messages.js';
+} from '../../tools/messages';
 
 function makeGmail(): gmail_v1.Gmail {
   return {

@@ -3,8 +3,8 @@
 // Real implementation deferred to a future brick.
 
 import { z } from 'zod';
-import type { ToolDefinition } from '../types.js';
-import { WebSearchNotConfiguredError } from '../errors.js';
+import type { ToolDefinition } from '../types';
+import { WebSearchNotConfiguredError } from '../errors';
 
 export const WebSearchInputSchema = z.object({
   query: z.string().min(1).describe('The search query.'),

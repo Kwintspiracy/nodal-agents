@@ -2,9 +2,9 @@
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
-import type { ProviderConfig } from '../types.js';
-import { PROVIDER_PRESETS } from './registry.js';
-import { ProviderConfigError } from '../errors.js';
+import type { ProviderConfig } from '../types';
+import { PROVIDER_PRESETS } from './registry';
+import { ProviderConfigError } from '../errors';
 
 export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
   if (!config.apiKey) {

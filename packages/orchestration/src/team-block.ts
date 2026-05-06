@@ -4,8 +4,8 @@
 
 import { eq, and } from '@nodalai/db';
 import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
-import type { AgentId, AnyDrizzleDb } from './types.js';
-import { detectOrchestratorMode } from './orchestrator-mode.js';
+import type { AgentId, AnyDrizzleDb } from './types';
+import { detectOrchestratorMode } from './orchestrator-mode';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
 
@@ -111,7 +111,7 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     // the child returns instead of finishing the request, exhausting the chain
     // limit. Generic instruction for the router role — not agent-specific.
     lines.push(
-      '\nAfter a sub-agent returns its result, call `return_result` with the final answer for the user. Do NOT delegate again unless the user\'s request explicitly requires another agent.',
+      "\nAfter a sub-agent returns its result, call `return_result` with the final answer for the user. Do NOT delegate again unless the user's request explicitly requires another agent.",
     );
   } else {
     // planner
@@ -135,7 +135,7 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     // hit a tool-call limit. After creating tasks the orchestrator's job ends,
     // and `deliverCompletedRoots` compiles + delivers the final result later.
     lines.push(
-      '\nAfter creating the tasks you need (one or more `create_task` calls), call `return_result` with a brief acknowledgment. Tasks run asynchronously in the background — do NOT call `list_tasks` to wait for them. Only use `list_tasks` if you need a previously created task\'s ID to set up a `depends_on` reference for the next task.',
+      "\nAfter creating the tasks you need (one or more `create_task` calls), call `return_result` with a brief acknowledgment. Tasks run asynchronously in the background — do NOT call `list_tasks` to wait for them. Only use `list_tasks` if you need a previously created task's ID to set up a `depends_on` reference for the next task.",
     );
   }
 

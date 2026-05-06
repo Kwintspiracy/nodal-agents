@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractPdfText } from '../../extractors/pdf.js';
+import { extractPdfText } from '../../extractors/pdf';
 
 const __filename = fileURLToPath(import.meta.url);
 const fixturesDir = join(__filename, '..', '..', 'fixtures');

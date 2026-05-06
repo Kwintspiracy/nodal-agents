@@ -2,10 +2,10 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { z } from 'zod';
-import { createToolRegistry } from '../registry.js';
-import { computeToolWhitelist } from '../whitelist.js';
-import { WhitelistDriftError } from '../errors.js';
-import type { ToolRegistry, ToolDefinition, ToolContext } from '../types.js';
+import { createToolRegistry } from '../registry';
+import { computeToolWhitelist } from '../whitelist';
+import { WhitelistDriftError } from '../errors';
+import type { ToolRegistry, ToolDefinition, ToolContext } from '../types';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 

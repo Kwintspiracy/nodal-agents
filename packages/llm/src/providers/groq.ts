@@ -2,7 +2,7 @@
 
 import { createGroq } from '@ai-sdk/groq';
 import type { LanguageModel } from 'ai';
-import type { ProviderConfig } from '../types.js';
+import type { ProviderConfig } from '../types';
 
 export function buildGroqModel(config: ProviderConfig): LanguageModel {
   const provider = createGroq({

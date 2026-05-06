@@ -1,7 +1,7 @@
 // @nodalai/adapter-google-drive — client factory tests
 
 import { describe, it, expect } from 'vitest';
-import { createDriveClient } from '../client.js';
+import { createDriveClient } from '../client';
 
 describe('createDriveClient', () => {
   it('returns a drive_v3.Drive instance with a files resource', () => {

@@ -1,7 +1,7 @@
 // AgentSchedule — cron/heartbeat automation entries, matches agent_schedules table
 
 import { z } from 'zod';
-import { ScheduleTypeSchema, ScheduleLastStatusSchema } from '../enums.js';
+import { ScheduleTypeSchema, ScheduleLastStatusSchema } from '../enums';
 
 export const AgentScheduleSchema = z
   .object({

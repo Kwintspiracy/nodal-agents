@@ -2,8 +2,8 @@
 // Invariant 9: every agent's tool list is explicit. No undeclared defaults.
 
 import type { z } from 'zod';
-import type { ToolDefinition, ToolRegistry } from './types.js';
-import { WhitelistDriftError } from './errors.js';
+import type { ToolDefinition, ToolRegistry } from './types';
+import { WhitelistDriftError } from './errors';
 
 export interface WhitelistInput {
   agentId: string;

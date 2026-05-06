@@ -5,8 +5,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from '@nodalai/db';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
-import { buildTeamBlock } from '../team-block.js';
-import type { AgentId } from '../types.js';
+import { buildTeamBlock } from '../team-block';
+import type { AgentId } from '../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;

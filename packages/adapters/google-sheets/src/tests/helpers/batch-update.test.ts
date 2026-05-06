@@ -12,7 +12,7 @@ import {
   buildSetBasicFilterRequest,
   buildClearBasicFilterRequest,
   buildSortRangeRequest,
-} from '../../helpers/batch-update.js';
+} from '../../helpers/batch-update';
 
 describe('buildRenameSheetRequest', () => {
   it('builds correct updateSheetProperties request', () => {

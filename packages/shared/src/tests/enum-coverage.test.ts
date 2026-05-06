@@ -44,7 +44,7 @@ import {
   PluginTypeSchema,
   PluginHookSchema,
   McpTransportSchema,
-} from '../index.js';
+} from '../index';
 
 // Helper: assert every value in the array is accepted by its schema, and a random other value is not
 function testEnum(

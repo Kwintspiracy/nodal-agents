@@ -4,15 +4,15 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { gmail_v1 } from 'googleapis';
-import { mapGmailError, GmailAdapterError } from '../errors.js';
-import { paginateGmail } from '../helpers/pagination.js';
+import { mapGmailError, GmailAdapterError } from '../errors';
+import { paginateGmail } from '../helpers/pagination';
 import {
   extractTextFromPayload,
   extractAttachmentInfos,
   parseGmailHeaders,
-} from '../helpers/parse-payload.js';
-import { buildRfc2822Message } from '../helpers/rfc2822.js';
-import type { AttachmentSpec } from '../helpers/rfc2822.js';
+} from '../helpers/parse-payload';
+import { buildRfc2822Message } from '../helpers/rfc2822';
+import type { AttachmentSpec } from '../helpers/rfc2822';
 
 // Max body chars to return (avoid context overload)
 const BODY_CHAR_CAP = 10000;

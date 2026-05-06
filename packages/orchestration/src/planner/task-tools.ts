@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import { eq, and, inArray } from '@nodalai/db';
 import { agentTasks, agents } from '@nodalai/db';
-import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId } from '../types.js';
+import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId } from '../types';
 import type { ToolContext } from '@nodalai/tools';
 
 // ─── create_task schema ───────────────────────────────────────────────────────

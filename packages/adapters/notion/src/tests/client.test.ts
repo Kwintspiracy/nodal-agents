@@ -1,7 +1,7 @@
 // @nodalai/adapter-notion — client factory tests
 
 import { describe, it, expect } from 'vitest';
-import { createNotionClient } from '../client.js';
+import { createNotionClient } from '../client';
 import { Client } from '@notionhq/client';
 
 describe('createNotionClient', () => {

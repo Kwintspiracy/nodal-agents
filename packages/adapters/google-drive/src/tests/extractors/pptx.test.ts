@@ -1,8 +1,8 @@
 // @nodalai/adapter-google-drive — PPTX extractor tests
 
 import { describe, it, expect } from 'vitest';
-import { extractPptxText } from '../../extractors/pptx.js';
-import { DriveAdapterError } from '../../errors.js';
+import { extractPptxText } from '../../extractors/pptx';
+import { DriveAdapterError } from '../../errors';
 
 describe('extractPptxText', () => {
   it('throws DriveAdapterError with code drive_pptx_extraction_unsupported', () => {

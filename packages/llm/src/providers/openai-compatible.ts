@@ -2,8 +2,8 @@
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';
-import type { ProviderConfig } from '../types.js';
-import { ProviderConfigError } from '../errors.js';
+import type { ProviderConfig } from '../types';
+import { ProviderConfigError } from '../errors';
 
 export function buildOpenAICompatibleModel(config: ProviderConfig): LanguageModel {
   if (!config.baseURL) {

@@ -8,7 +8,7 @@ import {
   createCreateLabelTool,
   createUpdateLabelTool,
   createDeleteLabelTool,
-} from '../../tools/labels.js';
+} from '../../tools/labels';
 
 function makeGmail(): gmail_v1.Gmail {
   return {

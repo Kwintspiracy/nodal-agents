@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { gmail_v1 } from 'googleapis';
-import { mapGmailError, GmailAdapterError } from '../errors.js';
+import { mapGmailError, GmailAdapterError } from '../errors';
 
 // 25 MB consistent with Drive adapter
 const ATTACHMENT_SIZE_CAP_BYTES = 25 * 1024 * 1024;
