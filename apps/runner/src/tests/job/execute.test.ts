@@ -201,6 +201,110 @@ describe('executeJob', () => {
     expect(rows[0]?.totalDurationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('persists a system prompt with a Delivery context block matching job.channel', async () => {
+    // channel='telegram' → the persisted system prompt should mention Telegram
+    // so the LLM does not hallucinate about a missing send tool.
+    const [tgJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Say hi via telegram',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!tgJob) throw new Error('Failed to create telegram test job');
+
+    const llmClient = makeMockLlmClient([{ text: 'hi' }]);
+    await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+
+    const tgRows = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, tgJob.id));
+    expect(tgRows[0]?.systemPrompt).toContain('## Delivery context');
+    expect(tgRows[0]?.systemPrompt).toContain('Telegram');
+
+    // channel='cron' → the same code path with different wording
+    const [cronJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        task: 'Periodic check',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!cronJob) throw new Error('Failed to create cron test job');
+
+    const llmClientCron = makeMockLlmClient([{ text: 'ok' }]);
+    await executeJob(cronJob.id as JobId, makeDeps(llmClientCron), testEnv);
+
+    const cronRows = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, cronJob.id));
+    expect(cronRows[0]?.systemPrompt).toContain('## Delivery context');
+    expect(cronRows[0]?.systemPrompt).toContain('automated run');
+  });
+
+  it('a delegated child inherits the ROOT job channel for Delivery context (not its own internal channel)', async () => {
+    // Simulate delegation: parent has channel='telegram', child has channel='internal'
+    // (the actual value the orchestration layer sets — see router/delegate.ts).
+    // The child's Delivery context block must reflect the ROOT's channel,
+    // otherwise the LLM thinks its reply goes nowhere user-facing.
+    const [parentJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Delegate this',
+        status: 'awaiting_delegation',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!parentJob) throw new Error('Failed to create parent job');
+
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'internal', // what the orchestration layer assigns to delegated children
+        task: 'Child task',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+        parentJobId: parentJob.id,
+        delegationDepth: 1,
+      })
+      .returning();
+    if (!childJob) throw new Error('Failed to create child job');
+
+    const llmClient = makeMockLlmClient([{ text: 'reply from child' }]);
+    await executeJob(childJob.id as JobId, makeDeps(llmClient), testEnv);
+
+    const childRows = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, childJob.id));
+
+    // The block must reference the root channel (telegram), not the child's internal label
+    expect(childRows[0]?.systemPrompt).toContain('## Delivery context');
+    expect(childRows[0]?.systemPrompt).toContain('Telegram');
+    expect(childRows[0]?.systemPrompt).not.toContain('an internal record');
+  });
+
   it('accumulates token usage across multiple LLM turns', async () => {
     const job = await createTestJob(db, seed);
 

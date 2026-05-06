@@ -1,12 +1,26 @@
 // system-prompt.ts — assemble the full system prompt for an agent
-// Concatenates: personality (raw, untouched) + team block + built-in capabilities + skills metadata block
+// Concatenates: personality (raw, untouched) + team block + built-in capabilities
+// + skills metadata block + (optional) delivery context block.
 // Invariant 2: no hardcoded user-facing strings injected into the prompt.
 
 import { eq } from '@nodalai/db';
 import { agentSkillAssignments, agentSkills } from '@nodalai/db';
+import { JOB_CHANNEL_DELIVERY_DOCS, type JobChannel } from '@nodalai/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodalai/tools';
-import { buildTeamBlock } from './team-block.js';
-import type { Agent, AnyDrizzleDb } from './types.js';
+import { buildTeamBlock } from './team-block';
+import type { Agent, AnyDrizzleDb } from './types';
+
+// ─── DeliveryContext ──────────────────────────────────────────────────────────
+
+/**
+ * Per-job delivery information injected into the system prompt so the agent
+ * knows where its `return_result` text will be delivered. Invariant: data, not
+ * code — the description text is looked up in JOB_CHANNEL_DELIVERY_DOCS.
+ */
+export interface DeliveryContext {
+  /** The job's `channel` field (any string — fallback applies if unknown). */
+  channel: string;
+}
 
 // ─── buildBuiltinCapabilitiesBlock ────────────────────────────────────────────
 // Renders the always-on built-in tools so EVERY agent sees them explicitly in
@@ -18,6 +32,19 @@ function buildBuiltinCapabilitiesBlock(): string {
   return `## Built-in capabilities\n\nThese tools are always available to you. Use them proactively when they fit:\n\n${lines}`;
 }
 
+// ─── buildDeliveryContextBlock ────────────────────────────────────────────────
+// Tells the agent where its final `return_result` text will be delivered.
+// Without this block, an agent asked "post X on Telegram" scans its tool list,
+// finds no telegram-send tool, and concludes "I can't" — even though the
+// runner's delivery layer auto-routes return_result based on job.channel.
+// Data-driven from JOB_CHANNEL_DELIVERY_DOCS (single source of truth in
+// @nodalai/shared, exhaustive Record<JobChannel, string>).
+function buildDeliveryContextBlock(ctx: DeliveryContext): string {
+  const description =
+    JOB_CHANNEL_DELIVERY_DOCS[ctx.channel as JobChannel] ?? 'the channel configured for this job';
+  return `## Delivery context\n\nWhen this job completes, your \`return_result\` text is delivered as ${description}. The platform handles transport — you do not need a separate "send" tool. Just write the text you want delivered.`;
+}
+
 // ─── buildSystemPrompt ────────────────────────────────────────────────────────
 
 /**
@@ -26,15 +53,24 @@ function buildBuiltinCapabilitiesBlock(): string {
  * Parts (in order):
  * 1. agent.personality — raw, untouched. The LLM speaks in its own voice.
  * 2. team block — `## Your team` section, data-driven from DB (empty for workers)
- * 3. skills metadata block — list of adapter names + tool counts (data-driven)
+ * 3. built-in capabilities — always-on tools (return_result, save_memory, etc.)
+ * 4. skills metadata block — list of adapter names + tool counts (data-driven)
+ * 5. delivery context (optional) — per-job: where return_result is delivered
  *
  * The personality may contain `{{team}}` placeholder — if so, inject there.
  * Otherwise append the team block after the personality.
  *
- * @param agent  Agent row (must include id, personality, role, entityId)
- * @param db     Drizzle DB handle
+ * @param agent             Agent row (must include id, personality, role, entityId)
+ * @param db                Drizzle DB handle
+ * @param deliveryContext   Optional per-job delivery info; when provided, adds
+ *                          the "## Delivery context" block so the LLM knows
+ *                          what its final reply text becomes.
  */
-export async function buildSystemPrompt(agent: Agent, db: AnyDrizzleDb): Promise<string> {
+export async function buildSystemPrompt(
+  agent: Agent,
+  db: AnyDrizzleDb,
+  deliveryContext?: DeliveryContext,
+): Promise<string> {
   // 1. Start with the raw personality (never modify the agent's voice)
   let personality = agent.personality;
 
@@ -70,5 +106,10 @@ export async function buildSystemPrompt(agent: Agent, db: AnyDrizzleDb): Promise
   //    not just optional tools buried in the SDK's tool list.
   const builtinBlock = buildBuiltinCapabilitiesBlock();
 
-  return personality + '\n\n' + builtinBlock + skillsMetadataBlock;
+  // 6. Delivery context — per-job. Tells the LLM where its return_result text
+  //    is going, so it stops speculating about transport ("I don't have a
+  //    Telegram tool"). Data-driven, no hardcoded channel strings here.
+  const deliveryBlock = deliveryContext ? '\n\n' + buildDeliveryContextBlock(deliveryContext) : '';
+
+  return personality + '\n\n' + builtinBlock + skillsMetadataBlock + deliveryBlock;
 }

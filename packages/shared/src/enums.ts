@@ -16,6 +16,27 @@ export const JOB_CHANNELS = [
 export const JobChannelSchema = z.enum(JOB_CHANNELS);
 export type JobChannel = z.infer<typeof JobChannelSchema>;
 
+/**
+ * Per-channel description of where a job's final result is delivered.
+ * Used by the orchestration layer to inject a "Delivery context" block into
+ * agent system prompts, so the LLM understands what its `return_result` text
+ * becomes (chat message vs API response vs internal record vs log).
+ *
+ * Adding a new channel: add it to JOB_CHANNELS above AND add an entry here.
+ * The Record<JobChannel, string> typing enforces exhaustiveness — TypeScript
+ * fails compilation if any channel is missing a description.
+ */
+export const JOB_CHANNEL_DELIVERY_DOCS: Record<JobChannel, string> = {
+  telegram: 'a chat message back to the user on Telegram',
+  whatsapp: 'a chat message back to the user on WhatsApp',
+  slack: 'a chat message back to the user on Slack',
+  discord: 'a chat message back to the user on Discord',
+  api: 'a JSON response to the calling API client',
+  internal: 'an internal record (no user-facing delivery)',
+  cron: "an automated run — your reply is routed to the agent's most recent user conversation if one exists, otherwise written to logs only",
+  'task-board': 'a result returned to the parent orchestrator (not directly to a user)',
+};
+
 // agent_jobs.status CHECK constraint
 export const JOB_STATUSES = [
   'pending',

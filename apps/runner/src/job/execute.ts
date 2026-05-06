@@ -47,6 +47,35 @@ import { deliverResult } from './delivery-stub.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 
+// ─── resolveRootChannel ──────────────────────────────────────────────────────
+// Walks up the parent_job_id chain to find the channel of the root job.
+// Why: a delegated child has channel='internal' (router) or 'task-board' (planner)
+// — those are runtime routing labels, NOT what the user sees. The user-facing
+// channel is the root job's. The system prompt's Delivery context block must
+// reflect the root, otherwise children think their reply goes "nowhere user-
+// facing" and produce text like "I have no tool for Telegram".
+//
+// Bounded by DEFAULT_LIMITS.maxDelegationDepth (3) — at worst 3 SELECTs.
+
+async function resolveRootChannel(
+  db: RunnerDeps['db'],
+  startJob: { channel: string; parentJobId: string | null },
+): Promise<string> {
+  let current = startJob;
+  for (let hop = 0; hop < 5; hop++) {
+    if (!current.parentJobId) return current.channel;
+    const rows = await db
+      .select({ channel: agentJobs.channel, parentJobId: agentJobs.parentJobId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, current.parentJobId))
+      .limit(1);
+    if (!rows[0]) return current.channel;
+    current = rows[0];
+  }
+  // Defensive: if depth exceeds the cap, fall back to whatever we have
+  return current.channel;
+}
+
 // ─── JobStatus type (what we return) ─────────────────────────────────────────
 
 export type ExecuteJobResult =
@@ -185,9 +214,18 @@ export async function executeJob(
   const isOrchestrator = agent.role === 'orchestrator';
 
   // ── 6. Build system prompt ────────────────────────────────────────────────────
+  // Pass the ROOT job's channel as deliveryContext, not job.channel directly:
+  // for a delegated child, job.channel is 'internal' or 'task-board' (routing
+  // label), but the user sees the root's channel (telegram, slack, etc.). All
+  // agents in a delegation chain should see the same delivery context — the
+  // one that reflects how the user will receive the eventual reply.
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt) {
-    systemPrompt = await buildSystemPrompt(agent, db);
+    const effectiveChannel = await resolveRootChannel(db, {
+      channel: job.channel,
+      parentJobId: job.parentJobId ?? null,
+    });
+    systemPrompt = await buildSystemPrompt(agent, db, { channel: effectiveChannel });
     await db
       .update(agentJobs)
       .set({ systemPrompt, updatedAt: new Date() })
@@ -399,7 +437,9 @@ export async function executeJob(
       // be silently dropped, leaving the LLM's tool_use blocks unmatched at
       // resume time (unmatched_tool_use error). Their results are forwarded to
       // handleDelegation as sideToolResults so resumeDelegated re-injects them.
-      const callsToProcess = keptAssign ? [...othersWithoutReturn, keptAssign] : othersWithoutReturn;
+      const callsToProcess = keptAssign
+        ? [...othersWithoutReturn, keptAssign]
+        : othersWithoutReturn;
 
       // i. Process tool calls
       const toolResultBlocks: Array<{
@@ -474,8 +514,7 @@ export async function executeJob(
                 type: 'tool_result' as const,
                 tool_use_id: b.toolCallId,
                 toolName: b.toolName,
-                content:
-                  typeof b.result === 'string' ? b.result : JSON.stringify(b.result ?? null),
+                content: typeof b.result === 'string' ? b.result : JSON.stringify(b.result ?? null),
               }));
 
               const delegation = await handleDelegation(
@@ -496,20 +535,11 @@ export async function executeJob(
               // no queue, no orphaned children, no separate delivery cron.
               // The recursion is bounded by DelegationDepthExceededError
               // (max 3) thrown from bumpDelegationDepth above.
-              const childOutcome = await executeJob(
-                delegation.childJobId,
-                deps,
-                _runnerEnv,
-              );
+              const childOutcome = await executeJob(delegation.childJobId, deps, _runnerEnv);
 
               if (childOutcome.status === 'failed') {
                 const childErr = childOutcome.error || 'unknown';
-                await failJob(
-                  db,
-                  jobId as string,
-                  `child_failed:${childErr}`,
-                  runStats(),
-                );
+                await failJob(db, jobId as string, `child_failed:${childErr}`, runStats());
                 return { status: 'failed', error: `child_failed:${childErr}` };
               }
 
@@ -532,12 +562,7 @@ export async function executeJob(
 
               // Inject child's result as tool_result on the parent and flip
               // status back to 'pending' so we can re-enter executeJob.
-              await resumeDelegated(
-                jobId as JobId,
-                delegation.childJobId,
-                childOutcome.result,
-                db,
-              );
+              await resumeDelegated(jobId as JobId, delegation.childJobId, childOutcome.result, db);
 
               return executeJob(jobId, deps, _runnerEnv);
             }

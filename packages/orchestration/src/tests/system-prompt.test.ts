@@ -3,8 +3,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
-import { buildSystemPrompt } from '../system-prompt.js';
-import type { Agent, AgentId, EntityId } from '../types.js';
+import { buildSystemPrompt } from '../system-prompt';
+import type { Agent, AgentId, EntityId } from '../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
 let db: TestDb;
@@ -188,6 +188,115 @@ describe('buildSystemPrompt', () => {
 
     expect(prompt).toContain('Your available adapters');
     expect(prompt).toContain('Google Sheets');
+  });
+
+  describe('delivery context block', () => {
+    it('omits the "Delivery context" block when no deliveryContext is passed (back-compat)', async () => {
+      const { entityId } = await seedContext(db);
+      const [agentRow] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'SP Delivery Off',
+          slug: `test-sp-deliv-off-${Date.now()}`,
+          personality: 'baseline',
+          role: 'agent',
+        })
+        .returning();
+
+      const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+      const prompt = await buildSystemPrompt(agent, db);
+
+      expect(prompt).not.toContain('Delivery context');
+    });
+
+    it('adds a Telegram-flavored delivery block for channel="telegram"', async () => {
+      const { entityId } = await seedContext(db);
+      const [agentRow] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'SP Delivery TG',
+          slug: `test-sp-deliv-tg-${Date.now()}`,
+          personality: 'baseline',
+          role: 'agent',
+        })
+        .returning();
+
+      const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+      const prompt = await buildSystemPrompt(agent, db, { channel: 'telegram' });
+
+      expect(prompt).toContain('## Delivery context');
+      expect(prompt).toContain('Telegram');
+      expect(prompt).toContain('return_result');
+      // Reassures the LLM that no separate "send" tool is needed
+      expect(prompt).toContain('do not need a separate "send" tool');
+    });
+
+    it('adds a cron-flavored delivery block for channel="cron"', async () => {
+      const { entityId } = await seedContext(db);
+      const [agentRow] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'SP Delivery Cron',
+          slug: `test-sp-deliv-cron-${Date.now()}`,
+          personality: 'baseline',
+          role: 'agent',
+        })
+        .returning();
+
+      const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+      const prompt = await buildSystemPrompt(agent, db, { channel: 'cron' });
+
+      expect(prompt).toContain('## Delivery context');
+      expect(prompt).toContain('automated run');
+    });
+
+    it('uses parent-orchestrator wording for channel="task-board" (no "user")', async () => {
+      const { entityId } = await seedContext(db);
+      const [agentRow] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'SP Delivery TB',
+          slug: `test-sp-deliv-tb-${Date.now()}`,
+          personality: 'baseline',
+          role: 'agent',
+        })
+        .returning();
+
+      const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+      const prompt = await buildSystemPrompt(agent, db, { channel: 'task-board' });
+
+      // Find the delivery context paragraph and assert against just that slice;
+      // other parts of the prompt may legitimately mention "user".
+      const idx = prompt.indexOf('## Delivery context');
+      expect(idx).toBeGreaterThan(-1);
+      const deliverySection = prompt.slice(idx);
+      expect(deliverySection).toContain('parent orchestrator');
+      expect(deliverySection.toLowerCase()).not.toContain('to the user');
+    });
+
+    it('falls back to a generic description for an unknown future channel', async () => {
+      const { entityId } = await seedContext(db);
+      const [agentRow] = await db
+        .insert(agents)
+        .values({
+          entityId,
+          name: 'SP Delivery Unknown',
+          slug: `test-sp-deliv-unknown-${Date.now()}`,
+          personality: 'baseline',
+          role: 'agent',
+        })
+        .returning();
+
+      const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+      const prompt = await buildSystemPrompt(agent, db, { channel: 'unknown-future-channel' });
+
+      expect(prompt).toContain('## Delivery context');
+      expect(prompt).toContain('the channel configured for this job');
+    });
   });
 
   it('no team block for worker agent', async () => {
