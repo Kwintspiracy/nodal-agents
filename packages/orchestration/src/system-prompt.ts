@@ -1,6 +1,6 @@
 // system-prompt.ts — assemble the full system prompt for an agent
 // Concatenates: personality (raw, untouched) + team block + built-in capabilities
-// + skills metadata block.
+// + skills metadata block + job context (when provided by the runner).
 // Invariant 2: no hardcoded user-facing strings injected into the prompt.
 
 import { eq } from '@nodalai/db';
@@ -8,6 +8,29 @@ import { agentSkillAssignments, agentSkills } from '@nodalai/db';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodalai/tools';
 import { buildTeamBlock } from './team-block';
 import type { Agent, AnyDrizzleDb } from './types';
+
+// ─── JobContext ────────────────────────────────────────────────────────────────
+
+/**
+ * Runtime context for the current job. Provided by the runner and injected into
+ * the system prompt as a structured `## Job context` block. The agent's
+ * personality decides what to do with this data (e.g. "if telegram_chat_id is
+ * present, reply via telegram_send_message"). Never hardcoded in the runner.
+ */
+export interface JobContext {
+  /** Origin channel of the job: 'api', 'telegram', 'cron', etc. */
+  origin: string;
+  /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
+  telegramChatId?: string;
+}
+
+// ─── buildJobContextBlock ─────────────────────────────────────────────────────
+
+function buildJobContextBlock(ctx: JobContext): string {
+  const lines = [`- origin: ${ctx.origin}`];
+  if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
+  return `\n\n## Job context\n${lines.join('\n')}`;
+}
 
 // ─── buildBuiltinCapabilitiesBlock ────────────────────────────────────────────
 // Renders the always-on built-in tools so EVERY agent sees them explicitly in
@@ -29,14 +52,20 @@ function buildBuiltinCapabilitiesBlock(): string {
  * 2. team block — `## Your team` section, data-driven from DB (empty for workers)
  * 3. built-in capabilities — always-on tools (return_result, save_memory, etc.)
  * 4. skills metadata block — list of adapter names + tool counts (data-driven)
+ * 5. job context block — `## Job context` section with runtime data (when provided)
  *
  * The personality may contain `{{team}}` placeholder — if so, inject there.
  * Otherwise append the team block after the personality.
  *
- * @param agent  Agent row (must include id, personality, role, entityId)
- * @param db     Drizzle DB handle
+ * @param agent       Agent row (must include id, personality, role, entityId)
+ * @param db          Drizzle DB handle
+ * @param jobContext  Optional runtime context for the current job (origin, telegramChatId, etc.)
  */
-export async function buildSystemPrompt(agent: Agent, db: AnyDrizzleDb): Promise<string> {
+export async function buildSystemPrompt(
+  agent: Agent,
+  db: AnyDrizzleDb,
+  jobContext?: JobContext,
+): Promise<string> {
   // 1. Start with the raw personality (never modify the agent's voice)
   let personality = agent.personality;
 
@@ -72,5 +101,10 @@ export async function buildSystemPrompt(agent: Agent, db: AnyDrizzleDb): Promise
   //    not just optional tools buried in the SDK's tool list.
   const builtinBlock = buildBuiltinCapabilitiesBlock();
 
-  return personality + '\n\n' + builtinBlock + skillsMetadataBlock;
+  // 6. Job context block — runtime data provided by the runner per-job.
+  //    Only appended when jobContext is provided. The agent's personality
+  //    decides how to use this data (e.g. send via Telegram if chat_id is set).
+  const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
+
+  return personality + '\n\n' + builtinBlock + skillsMetadataBlock + jobContextBlock;
 }

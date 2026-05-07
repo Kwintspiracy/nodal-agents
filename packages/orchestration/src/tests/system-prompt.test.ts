@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
 import { buildSystemPrompt } from '../system-prompt';
+import type { JobContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
 import type { TestDb } from '@nodalai/db/test-utils';
 
@@ -209,5 +210,70 @@ describe('buildSystemPrompt', () => {
     // No team block for a pure worker
     expect(prompt).not.toContain('Your team');
     expect(prompt).toContain('You execute tasks.'); // personality preserved
+  });
+
+  // ─── Brique 31: jobContext block tests ─────────────────────────────────────
+
+  it('appends ## Job context block with telegramChatId when jobContext is provided', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP JC Agent',
+        slug: `test-sp-jc-${Date.now()}`,
+        personality: 'You use context.',
+        role: 'agent',
+      })
+      .returning();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    const jobContext: JobContext = { origin: 'telegram', telegramChatId: '99887766' };
+    const prompt = await buildSystemPrompt(agent, db, jobContext);
+
+    expect(prompt).toContain('## Job context');
+    expect(prompt).toContain('- origin: telegram');
+    expect(prompt).toContain('- telegram_chat_id: 99887766');
+  });
+
+  it('appends ## Job context with origin only when telegramChatId is absent', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP JC No Chat Agent',
+        slug: `test-sp-jc-nochat-${Date.now()}`,
+        personality: 'You use context.',
+        role: 'agent',
+      })
+      .returning();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    const jobContext: JobContext = { origin: 'api' };
+    const prompt = await buildSystemPrompt(agent, db, jobContext);
+
+    expect(prompt).toContain('## Job context');
+    expect(prompt).toContain('- origin: api');
+    expect(prompt).not.toContain('telegram_chat_id');
+  });
+
+  it('does NOT include ## Job context when jobContext is not provided', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP No JC Agent',
+        slug: `test-sp-nojc-${Date.now()}`,
+        personality: 'You are standalone.',
+        role: 'agent',
+      })
+      .returning();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    const prompt = await buildSystemPrompt(agent, db);
+
+    expect(prompt).not.toContain('## Job context');
   });
 });

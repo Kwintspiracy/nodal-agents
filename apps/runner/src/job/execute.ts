@@ -47,7 +47,14 @@ import {
   DelegationDepthExceededError,
   DelegationPendingError,
 } from '@nodalai/orchestration';
-import type { AgentId, JobId, EntityId, OrchestratorMode, Agent } from '@nodalai/orchestration';
+import type {
+  AgentId,
+  JobId,
+  EntityId,
+  OrchestratorMode,
+  Agent,
+  JobContext,
+} from '@nodalai/orchestration';
 import type { z } from 'zod';
 import type { CoreMessage } from 'ai';
 import { failJob, completeJob, setJobStatus, saveCheckpoint } from './state.ts';
@@ -240,9 +247,16 @@ export async function executeJob(
   const isOrchestrator = agent.role === 'orchestrator';
 
   // ── 6. Build system prompt ────────────────────────────────────────────────────
+  // Build jobContext from job columns — the runner exposes data, the agent
+  // personality decides what to do with it (invariant #1: data-driven behavior).
+  const jobContext: JobContext = {
+    origin: job.channel ?? 'unknown',
+    ...(job.chatId ? { telegramChatId: job.chatId } : {}),
+  };
+
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt) {
-    systemPrompt = await buildSystemPrompt(agent, db);
+    systemPrompt = await buildSystemPrompt(agent, db, jobContext);
     await db
       .update(agentJobs)
       .set({ systemPrompt, updatedAt: new Date() })

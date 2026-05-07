@@ -31,7 +31,6 @@ import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { computeNextRun } from './cron.ts';
-import { formatPromptDeliverySuffix, type DeliveryChannel } from './delivery-suffix.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -421,8 +420,12 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // Resolve delivery channels (prompt injection — channel stays 'api', chatId stays null)
-    const channels: DeliveryChannel[] = [];
+    // Resolve chatId for Telegram delivery.
+    // When sendViaTelegram=true, the agent's lastSeenChatIdTelegram is set as
+    // chatId on the job row. The runner reads this to populate the Job context
+    // block in the system_prompt. The agent's personality decides how to use it.
+    // task field stays pristine (= exact user input, no suffix injection).
+    let resolvedChatId: string | null = null;
     if (parsed.data.sendViaTelegram) {
       const [agentTg] = await db
         .select({ chatId: agents.lastSeenChatIdTelegram })
@@ -432,11 +435,12 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
       if (!agentTg?.chatId) {
         return fail('no_telegram_recipient_known', 'DM the bot first to register a recipient.');
       }
-      channels.push({ kind: 'telegram', identifier: agentTg.chatId });
+      resolvedChatId = agentTg.chatId;
     }
-    const finalTask = parsed.data.prompt + formatPromptDeliverySuffix(channels);
 
-    // Insert job
+    // Insert job — task is the pure user prompt (no suffix injection).
+    // channel stays 'api' (origin = dashboard). chatId carries the Telegram
+    // recipient when sendViaTelegram is checked, null otherwise.
     const [job] = await db
       .insert(agentJobs)
       .values({
@@ -444,7 +448,8 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
         agentId: agent.id,
         status: 'pending',
         channel: 'api',
-        task: finalTask,
+        task: parsed.data.prompt,
+        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');

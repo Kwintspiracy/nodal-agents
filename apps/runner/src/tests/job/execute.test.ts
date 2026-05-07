@@ -707,4 +707,91 @@ describe('executeJob', () => {
     // Restore llmKeyId for subsequent tests
     await db.update(agents).set({ llmKeyId: seed.llmKeyId }).where(eq(agents.id, seed.agentId));
   });
+
+  // ─── Brique 31: Job context block in system_prompt ────────────────────────────
+
+  it('Brique 31: Telegram-channel job persists ## Job context block in system_prompt', async () => {
+    const [tgContextJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Context test',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!tgContextJob) throw new Error('Failed to create telegram context test job');
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-rr-ctx',
+            toolName: 'return_result',
+            args: { status: 'success', text: 'done' },
+          },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(tgContextJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Assert the persisted system_prompt contains the Job context block
+    const rows = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, tgContextJob.id));
+
+    const sp = rows[0]?.systemPrompt ?? '';
+    expect(sp).toContain('## Job context');
+    expect(sp).toContain('- origin: telegram');
+    expect(sp).toContain('- telegram_chat_id: 12345');
+  });
+
+  it('Brique 31: api-channel job system_prompt has Job context with origin=api, no telegram_chat_id', async () => {
+    const [apiContextJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        chatId: null,
+        task: 'API context test',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!apiContextJob) throw new Error('Failed to create api context test job');
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-rr-api',
+            toolName: 'return_result',
+            args: { status: 'success', text: 'done' },
+          },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(apiContextJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const rows = await db
+      .select({ systemPrompt: agentJobs.systemPrompt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, apiContextJob.id));
+
+    const sp = rows[0]?.systemPrompt ?? '';
+    expect(sp).toContain('## Job context');
+    expect(sp).toContain('- origin: api');
+    expect(sp).not.toContain('telegram_chat_id');
+  });
 });

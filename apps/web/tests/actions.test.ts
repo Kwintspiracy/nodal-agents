@@ -1905,7 +1905,7 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(insertSpy).not.toHaveBeenCalled();
   });
 
-  it('injects delivery suffix when sendViaTelegram=true and lastSeenChatIdTelegram is populated', async () => {
+  it('sets chatId on job row when sendViaTelegram=true and lastSeenChatIdTelegram is populated (Brique 31: no suffix injection)', async () => {
     currentDb = makeDbSeq(
       [
         [{ id: AGENT_UUID, slug: 'test-agent' }], // ownership check
@@ -1929,14 +1929,15 @@ describe('sendTaskAction — Telegram delivery channel', () => {
       .filter(Boolean) as unknown[][];
     const jobValues = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
 
-    expect(typeof jobValues?.['task']).toBe('string');
-    expect(jobValues?.['task'] as string).toContain('## Delivery channels');
-    expect(jobValues?.['task'] as string).toContain('Telegram (chat_id: 12345)');
-    expect(jobValues?.['chatId']).toBeUndefined(); // dashboard job: no chatId
+    // Brique 31: task is pure user prompt — no suffix injection
+    expect(jobValues?.['task']).toBe('Do something');
+    expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
+    // chatId is set on the job row (runner will build Job context block in system_prompt)
+    expect(jobValues?.['chatId']).toBe('12345');
     expect(jobValues?.['channel']).toBe('api');
   });
 
-  it('does NOT inject suffix when sendViaTelegram is absent (regression)', async () => {
+  it('does NOT set chatId and task is pure prompt when sendViaTelegram is absent (regression)', async () => {
     currentDb = makeDbSeq(
       [
         [{ id: AGENT_UUID, slug: 'test-agent' }], // ownership check only (no TG lookup)
@@ -1957,8 +1958,10 @@ describe('sendTaskAction — Telegram delivery channel', () => {
       .filter(Boolean) as unknown[][];
     const jobValues = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
 
+    // task is pure prompt, no suffix, no chatId
     expect(jobValues?.['task']).toBe('Plain prompt');
     expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
+    // chatId not set (key absent or undefined — no spread)
     expect(jobValues?.['chatId']).toBeUndefined();
     expect(jobValues?.['channel']).toBe('api');
   });

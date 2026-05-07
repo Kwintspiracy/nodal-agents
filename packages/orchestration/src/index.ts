@@ -63,3 +63,4 @@ export { buildTeamBlock } from './team-block';
 
 // ─── System prompt assembly ───────────────────────────────────────────────────
 export { buildSystemPrompt } from './system-prompt';
+export type { JobContext } from './system-prompt';
