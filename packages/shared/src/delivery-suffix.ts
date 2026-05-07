@@ -1,6 +1,11 @@
 // delivery-suffix.ts — format a prompt delivery instruction suffix.
-// Server-safe (no 'use client'). Used by sendTaskAction to inject channel
-// delivery instructions into the task prompt.
+//
+// Used by job creation entry points (dashboard sendTaskAction, Telegram
+// inbound handler, future Slack/Discord/etc.) to append a structured
+// "## Delivery channels" block to the task. The agent's personality reads
+// this block and uses the listed tools to deliver the final result.
+//
+// Single source of truth so cross-app drift can't introduce divergent formats.
 
 export interface DeliveryChannel {
   kind: 'telegram'; // future: 'whatsapp', 'slack', etc.

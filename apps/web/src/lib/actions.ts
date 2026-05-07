@@ -31,7 +31,7 @@ import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { computeNextRun } from './cron.ts';
-import { formatPromptDeliverySuffix, type DeliveryChannel } from './delivery-suffix.ts';
+import { formatPromptDeliverySuffix, type DeliveryChannel } from '@nodalai/shared';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
