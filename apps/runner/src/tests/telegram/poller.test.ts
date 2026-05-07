@@ -124,13 +124,7 @@ describe('runTelegramPoller', () => {
 
     const jobs = await db.select().from(agentJobs).where(eq(agentJobs.channel, 'telegram'));
     expect(jobs.length).toBe(2);
-
-    // Each job's task starts with the original user text and is followed by a
-    // "## Delivery channels" block listing this Telegram chat_id (Brique 30).
-    // The agent personality reads the block and uses telegram_send_message.
-    const sortedTasks = jobs.map((j) => j.task ?? '').sort();
-    expect(sortedTasks[0]).toMatch(/^first\n\n## Delivery channels\n- Telegram \(chat_id: 555\)/);
-    expect(sortedTasks[1]).toMatch(/^second\n\n## Delivery channels\n- Telegram \(chat_id: 555\)/);
+    expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
 
     const [agentRow] = await db
       .select({

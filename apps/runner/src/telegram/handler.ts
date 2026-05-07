@@ -14,7 +14,6 @@
 import { eq, and } from '@nodalai/db';
 import { agentJobs, agents } from '@nodalai/db';
 import type { TelegramUpdate } from '@nodalai/delivery';
-import { formatPromptDeliverySuffix, type DeliveryChannel } from '@nodalai/shared';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
@@ -116,25 +115,16 @@ export async function handleTelegramUpdate(args: {
     taskText = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: ${body}`;
   }
 
-  // Inject a "## Delivery channels" suffix so the agent knows the user is on
-  // Telegram and must call telegram_send_message with this chat_id. The agent
-  // personality reads the block and uses the listed tools — same contract as
-  // dashboard send-task with the Telegram checkbox toggled. Without this,
-  // Telegram-inbound jobs only call return_result and the user never gets a
-  // reply on Telegram.
-  const deliveryChannels: DeliveryChannel[] = [{ kind: 'telegram', identifier: String(chatId) }];
-  const finalTask = taskText + formatPromptDeliverySuffix(deliveryChannels);
-
   const [job] = await tx
     .insert(agentJobs)
     .values({
       entityId: receivingAgentEntityId,
       agentId: targetAgentId,
       channel: 'telegram',
-      task: finalTask,
+      task: taskText,
       chatId: String(chatId),
       status: 'pending',
-      messages: [{ role: 'user', content: finalTask }],
+      messages: [{ role: 'user', content: taskText }],
     })
     .returning({ id: agentJobs.id });
 

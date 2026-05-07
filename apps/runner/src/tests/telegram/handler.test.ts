@@ -56,9 +56,7 @@ describe('handleTelegramUpdate — private chats', () => {
 
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.channel).toBe('telegram');
-    // Brique 30: task gets a "## Delivery channels" suffix so the agent
-    // knows the user is on Telegram and must reply via telegram_send_message.
-    expect(job?.task).toMatch(/^hello world\n\n## Delivery channels\n- Telegram \(chat_id: 999\)/);
+    expect(job?.task).toBe('hello world');
     expect(job?.chatId).toBe('999');
     expect(job?.agentId).toBe(seed.agentId);
     expect(job?.entityId).toBe(seed.entityId);
@@ -186,10 +184,7 @@ describe('handleTelegramUpdate — /ask command', () => {
 
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.agentId).toBe(otherAgent!.id);
-    // Brique 30: same suffix injection on /ask routing path
-    expect(job?.task).toMatch(
-      /^what is the time\n\n## Delivery channels\n- Telegram \(chat_id: \d+\)/,
-    );
+    expect(job?.task).toBe('what is the time');
   });
 
   it('skips /ask with no text payload', async () => {

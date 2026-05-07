@@ -1,7 +1,7 @@
 // delivery-suffix.test.ts — pure unit tests for formatPromptDeliverySuffix
 
 import { describe, it, expect } from 'vitest';
-import { formatPromptDeliverySuffix, type DeliveryChannel } from '@nodalai/shared';
+import { formatPromptDeliverySuffix, type DeliveryChannel } from '../src/lib/delivery-suffix.ts';
 
 describe('formatPromptDeliverySuffix', () => {
   it('returns empty string for empty array', () => {
