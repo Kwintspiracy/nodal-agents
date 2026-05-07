@@ -285,7 +285,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', summary: 'Sent.' },
+            args: { status: 'success', text: 'Sent.' },
           },
         ],
       },
@@ -343,7 +343,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', summary: 'sent' },
+            args: { status: 'success', text: 'sent' },
           },
         ],
       },
@@ -352,7 +352,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr2',
             toolName: 'return_result',
-            args: { status: 'blocked', summary: 'cannot send' },
+            args: { status: 'blocked', text: 'cannot send' },
           },
         ],
       },
@@ -427,7 +427,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', summary: 'sent on retry' },
+            args: { status: 'success', text: 'sent on retry' },
           },
         ],
       },
@@ -481,7 +481,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', summary: 'done' },
+            args: { status: 'success', text: 'done' },
           },
         ],
       },
@@ -553,7 +553,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-1',
             toolName: 'return_result',
-            args: { status: 'success', summary: 'Task is done!' },
+            args: { status: 'success', text: 'Task is done!' },
           },
         ],
       },

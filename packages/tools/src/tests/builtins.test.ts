@@ -37,17 +37,16 @@ function makeCtx(): ToolContext {
 describe('return_result', () => {
   it('passes through input as output', async () => {
     const result = await returnResultTool.execute(
-      { status: 'success', summary: 'Task done', data: { count: 5 } },
+      { status: 'success', text: 'Task done — full answer goes here.' },
       makeCtx(),
     );
     expect(result.status).toBe('success');
-    expect(result.summary).toBe('Task done');
-    expect(result.data).toEqual({ count: 5 });
+    expect(result.text).toBe('Task done — full answer goes here.');
   });
 
   it('works with status blocked', async () => {
     const result = await returnResultTool.execute(
-      { status: 'blocked', summary: 'Could not find the data' },
+      { status: 'blocked', text: 'Could not find the data after 2 attempts.' },
       makeCtx(),
     );
     expect(result.status).toBe('blocked');
@@ -56,14 +55,32 @@ describe('return_result', () => {
   it('rejects invalid status', () => {
     const parsed = returnResultTool.inputSchema.safeParse({
       status: 'unknown_status',
-      summary: 'hi',
+      text: 'hi',
     });
     expect(parsed.success).toBe(false);
   });
 
-  it('rejects empty summary', () => {
-    const parsed = returnResultTool.inputSchema.safeParse({ status: 'success', summary: '' });
+  it('rejects empty text', () => {
+    const parsed = returnResultTool.inputSchema.safeParse({ status: 'success', text: '' });
     expect(parsed.success).toBe(false);
+  });
+
+  it('rejects unknown extra fields like the legacy `data` channel (Brique 29)', () => {
+    // The old schema had `data: unknown.optional()`. We dropped it because models
+    // were stuffing the real answer in `data` and a label in `summary`, so the
+    // user-facing result came from the wrong field. The schema is now strict —
+    // only `status` and `text` are accepted.
+    const parsed = returnResultTool.inputSchema.safeParse({
+      status: 'success',
+      text: 'real answer',
+      data: 'should not be allowed',
+    });
+    // Zod default mode is passthrough/strip. The schema doesn't .strict() so
+    // extra keys are dropped silently; verify the parsed result has no `data`.
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect((parsed.data as Record<string, unknown>)['data']).toBeUndefined();
+    }
   });
 
   it('has riskLevel write', () => {

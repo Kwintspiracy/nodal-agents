@@ -712,8 +712,8 @@ export async function executeJob(
       // invariant (every tool_use has a matching tool_result).
       if (returnResultCall) {
         trace('return_result_branch', { turn });
-        const input = returnResultCall.args as { status?: string; summary?: string };
-        const finalResult = input.summary ?? '';
+        const input = returnResultCall.args as { status?: string; text?: string };
+        const finalResult = input.text ?? '';
         toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
         toolResultBlocks.push({

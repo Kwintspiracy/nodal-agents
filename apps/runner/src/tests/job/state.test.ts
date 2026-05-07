@@ -155,7 +155,7 @@ describe('DB state helpers', () => {
             type: 'tool-call',
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', summary: 'CMB is the relic radiation from the Big Bang.' },
+            args: { status: 'success', text: 'CMB is the relic radiation from the Big Bang.' },
           },
         ],
       },
