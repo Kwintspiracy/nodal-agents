@@ -7,7 +7,7 @@
 //   - completed task → status set to done with result
 //   - failed task → status set to blocked with error
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { MockLanguageModelV1 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
@@ -19,6 +19,31 @@ import { createEmbeddingClient } from '@nodalai/llm';
 import { LocalTrustProvider } from '@nodalai/auth';
 import type { RunnerDeps } from '../../deps.ts';
 import { executeReadyTasks } from '../execute-ready.ts';
+
+// Brique 25: execute.ts calls createLlmClient() from @nodalai/llm directly.
+// Intercept so tests continue using the per-call mock client.
+const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+  let _active: RunnerDeps['llmClient'] | null = null;
+  return {
+    getActiveLlmClient: () => _active,
+    setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
+      _active = c;
+    },
+  };
+});
+
+vi.mock('@nodalai/llm', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('@nodalai/llm')>();
+  return {
+    ...actual,
+    createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
+      const active = getActiveLlmClient();
+      if (!active) throw new Error('execute-ready.test: no active LLM client');
+      return active;
+    },
+  };
+});
 
 // ─── Mock LLM helpers ─────────────────────────────────────────────────────────
 
@@ -80,10 +105,14 @@ function makeMockLlmClient(
 function makeDeps(db: TestDb, llmResponses: Parameters<typeof makeMockLlmClient>[0]): RunnerDeps {
   const registry = createToolRegistry();
   registerBuiltins(registry);
+  const client = makeMockLlmClient(llmResponses);
+  // Register so the vi.mock('@nodalai/llm') intercept returns this client
+  // when execute.ts calls createLlmClient() (Brique 25).
+  setActiveLlmClient(client);
 
   return {
     db: db as RunnerDeps['db'],
-    llmClient: makeMockLlmClient(llmResponses),
+    llmClient: client,
     embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
     registry,
     authProvider: new LocalTrustProvider(),

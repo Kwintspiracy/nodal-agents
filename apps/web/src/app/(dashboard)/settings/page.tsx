@@ -1,12 +1,14 @@
-import { getSettingsAction, getSecuritySettingsAction } from '@/lib/actions.ts';
+import { getSettingsAction, getSecuritySettingsAction, listLlmKeysAction } from '@/lib/actions.ts';
 import SecurityForm from './SecurityForm.tsx';
+import LlmKeysList from './LlmKeysList.tsx';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const [result, securityResult] = await Promise.all([
+  const [result, securityResult, llmKeysResult] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
+    listLlmKeysAction(),
   ]);
 
   if (!result.ok) {
@@ -27,17 +29,28 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-neutral-500 mt-0.5">
-          Read-only view. Edit via <code className="font-mono text-neutral-400">nodalai init</code>{' '}
-          in the CLI, then restart with{' '}
-          <code className="font-mono text-neutral-400">nodalai up</code>.
+          LLM providers and security mode are editable here. Network, session, and worker secret are
+          seeded by <code className="font-mono text-neutral-400">nodalai init</code> and surfaced
+          read-only.
         </p>
       </div>
 
-      <Section title="LLM Provider">
-        <Field label="Provider" value={s.llm.provider ?? <Missing>not configured</Missing>} />
-        <Field label="Model" value={s.llm.model ?? <Missing>not configured</Missing>} mono />
-        <Field label="Endpoint" value={s.llm.baseURL ?? <Missing>not configured</Missing>} mono />
-      </Section>
+      <div>
+        <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+          LLM providers
+        </h2>
+        <p className="text-xs text-neutral-500 mb-3">
+          Configure providers your agents can use. Each agent picks one provider and types its own
+          model on top.
+        </p>
+        {llmKeysResult.ok ? (
+          <LlmKeysList initialRows={llmKeysResult.data} />
+        ) : (
+          <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-4 text-sm text-red-300">
+            {llmKeysResult.message}
+          </div>
+        )}
+      </div>
 
       <Section title="Auth">
         <Field
@@ -81,12 +94,6 @@ export default async function SettingsPage() {
         <Field label="User ID" value={s.user.userId} mono />
         <Field label="Workspace ID" value={s.user.entityId} mono />
       </Section>
-
-      <div className="bg-neutral-950 border border-neutral-800/40 rounded-xl px-5 py-4 text-xs text-neutral-500">
-        <strong className="text-neutral-300 block mb-1">Coming soon</strong>
-        Rotating LLM provider keys from the dashboard. Today this still requires{' '}
-        <code className="font-mono">nodalai init</code>.
-      </div>
     </div>
   );
 }

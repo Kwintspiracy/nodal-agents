@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   deleteSkillAction,
@@ -52,6 +53,8 @@ export default function SkillRowComponent({ skill }: Props) {
             ? prev.map((a) => (a.agentId === agentId ? { ...a, assigned: isAssigned } : a))
             : prev,
         );
+      } else {
+        toast.success(isAssigned ? 'Skill unassigned' : 'Skill assigned');
       }
     });
   }
@@ -95,6 +98,12 @@ export default function SkillRowComponent({ skill }: Props) {
           <span className="text-xs text-neutral-500 shrink-0">{liveCount} assigned</span>
         </button>
 
+        <Link
+          href={`/skills/${skill.id}/edit`}
+          className="shrink-0 px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-600 hover:text-white transition-colors"
+        >
+          Edit
+        </Link>
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}

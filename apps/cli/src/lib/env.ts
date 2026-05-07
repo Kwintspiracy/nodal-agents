@@ -11,18 +11,6 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
 
   const env: Record<string, string> = {
     DATABASE_URL: databaseUrl,
-    LLM_PROVIDER:
-      config.llm.provider === 'lm-studio'
-        ? 'openai-compatible'
-        : config.llm.provider === 'jan-ai'
-          ? 'openai-compatible'
-          : config.llm.provider === 'llamacpp'
-            ? 'openai-compatible'
-            : config.llm.provider === 'vllm'
-              ? 'openai-compatible'
-              : config.llm.provider,
-    LLM_MODEL: config.llm.model,
-    LLM_BASE_URL: config.llm.baseURL,
     AUTH_MODE: resolveAuthMode(config),
     WORKER_SECRET: config.workerSecret,
     PORT: String(config.ports.runner),
@@ -31,8 +19,25 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
     NODE_ENV: 'production',
   };
 
-  if (config.llm.apiKey) {
-    env['LLM_API_KEY'] = config.llm.apiKey;
+  // llm section is optional (Brique 25): runner reads LLM config from DB at
+  // runtime. Set env vars when present so the seeder can populate entity_llm_keys
+  // on first boot; omit them if the section is absent (DB-only installs).
+  if (config.llm) {
+    const providerSlug =
+      config.llm.provider === 'lm-studio' ||
+      config.llm.provider === 'jan-ai' ||
+      config.llm.provider === 'llamacpp' ||
+      config.llm.provider === 'vllm'
+        ? 'openai-compatible'
+        : config.llm.provider;
+
+    env['LLM_PROVIDER'] = providerSlug;
+    env['LLM_MODEL'] = config.llm.model;
+    env['LLM_BASE_URL'] = config.llm.baseURL;
+
+    if (config.llm.apiKey) {
+      env['LLM_API_KEY'] = config.llm.apiKey;
+    }
   }
 
   return env;
@@ -53,14 +58,6 @@ export function resolveAuthMode(config: Config): 'local-trust' | 'local-auth' {
  * Web expects DATABASE_URL, RUNNER_URL, AUTH_MODE, AUTH_SECRET, NEXT_PUBLIC_APP_URL.
  */
 export function buildEnvForWeb(config: Config, databaseUrl: string): Record<string, string> {
-  const providerSlug =
-    config.llm.provider === 'lm-studio' ||
-    config.llm.provider === 'jan-ai' ||
-    config.llm.provider === 'llamacpp' ||
-    config.llm.provider === 'vllm'
-      ? 'openai-compatible'
-      : config.llm.provider;
-
   const authMode = resolveAuthMode(config);
 
   const env: Record<string, string> = {
@@ -78,11 +75,23 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     // the POST /api/worker call. Without this the runner returns 403 and the
     // job stays pending forever (cron only scans task-board, not API jobs).
     WORKER_SECRET: config.workerSecret,
-    // LLM provider — mirrors buildEnvForRunner so the web can render the model dropdown
-    LLM_PROVIDER: providerSlug,
-    LLM_MODEL: config.llm.model,
-    LLM_BASE_URL: config.llm.baseURL,
   };
+
+  // llm section is optional (Brique 25): set LLM_* env vars for the web's
+  // model dropdown only when the section is present.
+  if (config.llm) {
+    const providerSlug =
+      config.llm.provider === 'lm-studio' ||
+      config.llm.provider === 'jan-ai' ||
+      config.llm.provider === 'llamacpp' ||
+      config.llm.provider === 'vllm'
+        ? 'openai-compatible'
+        : config.llm.provider;
+
+    env['LLM_PROVIDER'] = providerSlug;
+    env['LLM_MODEL'] = config.llm.model;
+    env['LLM_BASE_URL'] = config.llm.baseURL;
+  }
 
   // Surface Google OAuth creds to the web process when configured. Required
   // for better-auth's Google provider in local-auth mode; ignored otherwise.

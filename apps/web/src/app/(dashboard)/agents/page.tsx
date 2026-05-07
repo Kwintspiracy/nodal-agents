@@ -1,8 +1,7 @@
 import Link from 'next/link';
-import { listAgentsAction, deleteAgentAction } from '@/lib/actions.ts';
+import { listAgentsAction, listLlmKeysAction, deleteAgentAction } from '@/lib/actions.ts';
 import AgentForm from '@/components/AgentForm.tsx';
 import DeleteAgentButton from './DeleteAgentButton.tsx';
-import { getConfiguredLlmProviders } from '@/lib/llm-providers.ts';
 import AgentsErrorRetry from './AgentsErrorRetry.tsx';
 
 // Force dynamic rendering — this page reads per-request DB state. Without
@@ -11,8 +10,8 @@ import AgentsErrorRetry from './AgentsErrorRetry.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function AgentsPage() {
-  const result = await listAgentsAction();
-  const models = getConfiguredLlmProviders();
+  const [result, llmKeysResult] = await Promise.all([listAgentsAction(), listLlmKeysAction()]);
+  const llmKeys = llmKeysResult.ok ? llmKeysResult.data : [];
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -25,7 +24,7 @@ export default async function AgentsPage() {
             </p>
           )}
         </div>
-        <AgentForm models={models} agents={result.ok ? result.data : []} />
+        <AgentForm llmKeys={llmKeys} agents={result.ok ? result.data : []} />
       </div>
 
       {!result.ok ? (

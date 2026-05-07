@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getAgentForEditAction, listAgentsAction } from '@/lib/actions.ts';
-import { getConfiguredLlmProviders } from '@/lib/llm-providers.ts';
+import { getAgentForEditAction, listAgentsAction, listLlmKeysAction } from '@/lib/actions.ts';
 import AgentForm from '@/components/AgentForm.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -9,9 +8,10 @@ export const dynamic = 'force-dynamic';
 export default async function EditAgentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  const [agentResult, peersResult] = await Promise.all([
+  const [agentResult, peersResult, llmKeysResult] = await Promise.all([
     getAgentForEditAction(id),
     listAgentsAction(),
+    listLlmKeysAction(),
   ]);
 
   if (!agentResult.ok) {
@@ -19,7 +19,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
     redirect('/agents');
   }
 
-  const models = getConfiguredLlmProviders();
+  const llmKeys = llmKeysResult.ok ? llmKeysResult.data : [];
   const agent = agentResult.data;
 
   // Peer agents: all agents in entity excluding the one being edited
@@ -43,7 +43,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       </div>
 
       <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-6">
-        <AgentForm mode="edit" initial={agent} models={models} agents={peers} />
+        <AgentForm mode="edit" initial={agent} llmKeys={llmKeys} agents={peers} />
       </div>
     </div>
   );

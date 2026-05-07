@@ -8,22 +8,32 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
-  llm: z.object({
-    provider: z.enum([
-      'ollama',
-      'lm-studio',
-      'jan-ai',
-      'llamacpp',
-      'vllm',
-      'openai-compatible',
-      'anthropic',
-      'openai',
-      'openrouter',
-    ]),
-    baseURL: z.string().url(),
-    model: z.string().min(1),
-    apiKey: z.string().optional(),
-  }),
+  /**
+   * LLM provider configuration.
+   * Optional since Brique 25: existing installs that have removed the `llm`
+   * section from config.json don't fail validation. The runner reads LLM config
+   * from entity_llm_keys at runtime; the `llm` section is only used by the
+   * seeder on first boot and by the web's model dropdown.
+   * New installs created via `nodalai init` still write this section.
+   */
+  llm: z
+    .object({
+      provider: z.enum([
+        'ollama',
+        'lm-studio',
+        'jan-ai',
+        'llamacpp',
+        'vllm',
+        'openai-compatible',
+        'anthropic',
+        'openai',
+        'openrouter',
+      ]),
+      baseURL: z.string().url(),
+      model: z.string().min(1),
+      apiKey: z.string().optional(),
+    })
+    .optional(),
   ports: z.object({
     web: z.number().int().min(1024).max(65535).default(3000),
     runner: z.number().int().min(1024).max(65535).default(3001),
@@ -49,7 +59,7 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
-export type LlmProvider = Config['llm']['provider'];
+export type LlmProvider = NonNullable<Config['llm']>['provider'];
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 

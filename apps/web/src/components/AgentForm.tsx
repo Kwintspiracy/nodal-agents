@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -9,21 +9,22 @@ import {
   updateAgentAction,
   type AgentRow,
   type AgentEditRow,
+  type LlmKeyUiRow,
 } from '@/lib/actions.ts';
-import type { ConfiguredLlmProvider } from '@/lib/llm-providers.ts';
+import { prettyProviderName } from '@/lib/provider-names.ts';
 
 type AgentRole = 'worker' | 'router' | 'planner';
 
 interface CreateProps {
   mode?: 'create';
-  models: ConfiguredLlmProvider[];
+  llmKeys: LlmKeyUiRow[];
   agents?: AgentRow[];
   initial?: undefined;
 }
 
 interface EditProps {
   mode: 'edit';
-  models: ConfiguredLlmProvider[];
+  llmKeys: LlmKeyUiRow[];
   agents?: AgentRow[];
   initial: AgentEditRow;
 }
@@ -56,6 +57,33 @@ export default function AgentForm(props: Props) {
   const [role, setRole] = useState<AgentRole>(initialRole);
   const [subAgentIds, setSubAgentIds] = useState<string[]>(isEdit ? props.initial.subAgentIds : []);
 
+  // LLM provider + model state. In edit mode, prefill from initial.llmKeyId
+  // (if set) or fall back to the first active key. In create mode, default to
+  // the first active key.
+  const activeKeys = useMemo(() => props.llmKeys.filter((k) => k.isActive), [props.llmKeys]);
+  const initialLlmKeyId: string =
+    (isEdit ? (props.initial.llmKeyId ?? null) : null) ?? activeKeys[0]?.id ?? '';
+  const [llmKeyId, setLlmKeyId] = useState<string>(initialLlmKeyId);
+  const [model, setModel] = useState<string>(isEdit ? (props.initial.model ?? '') : '');
+
+  const selectedKey = useMemo(
+    () => props.llmKeys.find((k) => k.id === llmKeyId) ?? null,
+    [props.llmKeys, llmKeyId],
+  );
+
+  function handleLlmKeyChange(id: string) {
+    const newKey = props.llmKeys.find((row) => row.id === id);
+    const oldDefaultModel = selectedKey?.defaultModel ?? null;
+    setLlmKeyId(id);
+    // Auto-fill model with the new provider's defaultModel if (a) model is empty,
+    // OR (b) the current model exactly matches the previous provider's default
+    // (= user hadn't customized it, so switching providers can safely refresh).
+    // Preserves a user's hand-typed custom model across provider switches.
+    if (newKey?.defaultModel && (!model || model === oldDefaultModel)) {
+      setModel(newKey.defaultModel);
+    }
+  }
+
   useEffect(() => {
     if (!open || isEdit) return;
     function onKey(e: KeyboardEvent) {
@@ -75,7 +103,8 @@ export default function AgentForm(props: Props) {
         id: props.initial.id,
         name: fd.get('name'),
         personality: fd.get('personality'),
-        model: fd.get('model'),
+        model,
+        llmKeyId: llmKeyId || null,
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
       };
@@ -93,7 +122,8 @@ export default function AgentForm(props: Props) {
         slug: fd.get('slug'),
         name: fd.get('name'),
         personality: fd.get('personality'),
-        model: fd.get('model'),
+        model,
+        llmKeyId: llmKeyId || undefined,
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
       };
@@ -107,6 +137,8 @@ export default function AgentForm(props: Props) {
         formRef.current?.reset();
         setRole('worker');
         setSubAgentIds([]);
+        setLlmKeyId(activeKeys[0]?.id ?? '');
+        setModel('');
         setOpen(false);
       });
     }
@@ -117,7 +149,7 @@ export default function AgentForm(props: Props) {
   }
 
   const agents = props.agents ?? [];
-  const noModels = props.models.length === 0;
+  const noLlmKeys = activeKeys.length === 0;
   const showSubAgents = role !== 'worker';
   const noAgentsForPicker = agents.length === 0;
 
@@ -125,7 +157,6 @@ export default function AgentForm(props: Props) {
 
   if (isEdit) {
     const initial = props.initial;
-    const modelDefault = initial.model ?? props.models[0]?.model ?? '';
 
     return (
       <form ref={formRef} onSubmit={handleSubmit} className="w-full max-w-lg space-y-4">
@@ -175,30 +206,53 @@ export default function AgentForm(props: Props) {
           />
         </div>
 
-        <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-model">
-            Model
-          </label>
-          {noModels ? (
-            <p className="text-xs text-amber-400 mt-1">
-              No LLM provider configured — run <code className="font-mono">nodalai init</code>{' '}
-              first.
-            </p>
-          ) : (
-            <select
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-llm-key">
+              LLM provider
+            </label>
+            {noLlmKeys ? (
+              <p className="text-xs text-amber-400 mt-1">
+                No active LLM providers. Add one in{' '}
+                <a href="/settings" className="underline">
+                  Settings → LLM providers
+                </a>
+                .
+              </p>
+            ) : (
+              <select
+                id="agent-llm-key"
+                value={llmKeyId}
+                onChange={(e) => handleLlmKeyChange(e.target.value)}
+                required
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+              >
+                {activeKeys.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {(k.nickname ?? prettyProviderName(k.provider)) +
+                      ' (' +
+                      prettyProviderName(k.provider) +
+                      ')'}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-model">
+              Model
+            </label>
+            <input
               id="agent-model"
               name="model"
+              type="text"
               required
-              defaultValue={modelDefault}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
-            >
-              {props.models.map((m) => (
-                <option key={m.id} value={m.model}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          )}
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
+              className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+            />
+          </div>
         </div>
 
         <div>
@@ -254,7 +308,7 @@ export default function AgentForm(props: Props) {
         <div className="flex gap-2 pt-1">
           <button
             type="submit"
-            disabled={isPending || noModels}
+            disabled={isPending || noLlmKeys}
             className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50"
           >
             {isPending ? 'Saving…' : 'Save changes'}
@@ -304,7 +358,7 @@ export default function AgentForm(props: Props) {
                     id="agent-slug"
                     name="slug"
                     required
-                    pattern="[a-z0-9-]+"
+                    pattern="[a-z0-9\-]+"
                     placeholder="my-agent"
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
                   />
@@ -337,30 +391,53 @@ export default function AgentForm(props: Props) {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-model">
-                  Model
-                </label>
-                {noModels ? (
-                  <p className="text-xs text-amber-400 mt-1">
-                    No LLM provider configured — run <code className="font-mono">nodalai init</code>{' '}
-                    first.
-                  </p>
-                ) : (
-                  <select
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-llm-key">
+                    LLM provider
+                  </label>
+                  {noLlmKeys ? (
+                    <p className="text-xs text-amber-400 mt-1">
+                      No active LLM providers. Add one in{' '}
+                      <a href="/settings" className="underline">
+                        Settings → LLM providers
+                      </a>
+                      .
+                    </p>
+                  ) : (
+                    <select
+                      id="agent-llm-key"
+                      value={llmKeyId}
+                      onChange={(e) => handleLlmKeyChange(e.target.value)}
+                      required
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+                    >
+                      {activeKeys.map((k) => (
+                        <option key={k.id} value={k.id}>
+                          {(k.nickname ?? prettyProviderName(k.provider)) +
+                            ' (' +
+                            prettyProviderName(k.provider) +
+                            ')'}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-model">
+                    Model
+                  </label>
+                  <input
                     id="agent-model"
                     name="model"
+                    type="text"
                     required
-                    defaultValue={props.models[0]?.model}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
-                  >
-                    {props.models.map((m) => (
-                      <option key={m.id} value={m.model}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                  />
+                </div>
               </div>
 
               <div>
@@ -420,7 +497,7 @@ export default function AgentForm(props: Props) {
               <div className="flex gap-2 pt-1">
                 <button
                   type="submit"
-                  disabled={isPending || noModels}
+                  disabled={isPending || noLlmKeys}
                   className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50"
                 >
                   {isPending ? 'Creating…' : 'Create agent'}

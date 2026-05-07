@@ -13,6 +13,7 @@ import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
+import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { AuthError } from '@nodalai/auth';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
@@ -101,6 +102,11 @@ export function createApp(
 async function main(): Promise<void> {
   const runnerEnv = parseEnv();
   const deps = await createRunnerDeps(runnerEnv);
+
+  // One-shot: if the local entity has no entity_llm_keys rows yet, seed one
+  // from env so existing agents keep working post-Brique-24 (idempotent).
+  await seedDefaultLlmKey(deps.db, runnerEnv);
+
   const app = createApp(deps, runnerEnv);
 
   const port = runnerEnv.PORT;

@@ -1982,3 +1982,457 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 });
+
+// ─── updateSkillAction ────────────────────────────────────────────────────────
+
+describe('updateSkillAction — validation', () => {
+  it('rejects non-uuid id', async () => {
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'not-a-uuid',
+      name: 'Test',
+      content: 'Some instructions',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty name', async () => {
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: '',
+      content: 'Some instructions',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty content', async () => {
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'My Skill',
+      content: '',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('strips slug even if passed in raw payload (slug is not in schema)', async () => {
+    // Security invariant: slug must be immutable.
+    // Verify that a payload WITH a slug field still passes schema validation
+    // (not validation_failed), then aborts at not_found since mock DB is empty.
+    currentDb = makeDb([]) as typeof currentDb;
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'Renamed',
+      content: 'Some instructions',
+      slug: 'injected-slug', // should be silently stripped by safeParse
+    });
+    // validation_failed would mean schema rejected the slug field — that's wrong.
+    // We expect not_found (no skill in mock DB).
+    expect(r.ok === false && (r as { code: string }).code === 'validation_failed').toBe(false);
+  });
+});
+
+describe('updateSkillAction — db path', () => {
+  it('returns not_found when skill does not belong to entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb; // ownership select returns empty
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'Test',
+      content: 'Some instructions',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('happy path — UPDATE receives correct fields', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000001' }]) as typeof currentDb;
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'New Skill Name',
+      content: 'Updated instructions.',
+      description: 'A short description',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setCalls = updateSpy.mock.results
+      .map((res) => (res.value as { set?: ReturnType<typeof vi.fn> }).set)
+      .filter(Boolean);
+    const firstSet = setCalls[0];
+    expect(firstSet).toBeDefined();
+    const firstSetArg = (firstSet as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(firstSetArg?.['name']).toBe('New Skill Name');
+    expect(firstSetArg?.['content']).toBe('Updated instructions.');
+    expect(firstSetArg?.['description']).toBe('A short description');
+    // slug must NOT appear in the update payload
+    expect(firstSetArg?.['slug']).toBeUndefined();
+  });
+
+  it('slug NOT changed — schema does not accept slug field', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000002' }]) as typeof currentDb;
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000002',
+      name: 'Renamed Skill',
+      content: 'New content.',
+      slug: 'attempted-slug-change',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setCalls = updateSpy.mock.results
+      .map((res) => (res.value as { set?: ReturnType<typeof vi.fn> }).set)
+      .filter(Boolean);
+    const setArg = (setCalls[0] as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    // Slug must not be present in the SET payload at all
+    expect(setArg?.['slug']).toBeUndefined();
+  });
+});
+
+// ─── LLM key actions (Brique 24) ─────────────────────────────────────────────
+//
+// Critical invariants enforced by these tests:
+//   (1) listLlmKeysAction NEVER returns an `apiKey` field.
+//   (2) testLlmKeyAction redacts the apiKey in any error message.
+//
+// Both are non-negotiable. Breaking either is a security regression.
+
+describe('listLlmKeysAction', () => {
+  it('returns rows WITHOUT an apiKey field (security invariant #1)', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000010',
+        provider: 'anthropic',
+        baseUrl: null,
+        nickname: 'My Anthropic',
+        defaultModel: 'claude-haiku-4-5-20251001',
+        isActive: true,
+        hasApiKey: true,
+      },
+    ]) as typeof currentDb;
+    const { listLlmKeysAction } = await import('../src/lib/actions.ts');
+    const r = await listLlmKeysAction();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data).toHaveLength(1);
+    const row = r.data[0]!;
+    // CRITICAL: apiKey must NEVER be present, even as null/empty.
+    expect(Object.keys(row)).not.toContain('apiKey');
+    expect(row.hasApiKey).toBe(true);
+    expect(row.nickname).toBe('My Anthropic');
+  });
+
+  it('returns empty array on no rows', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listLlmKeysAction } = await import('../src/lib/actions.ts');
+    const r = await listLlmKeysAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual([]);
+  });
+});
+
+describe('createLlmKeyAction — validation', () => {
+  it('rejects unknown provider', async () => {
+    const { createLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await createLlmKeyAction({
+      provider: 'made-up',
+      nickname: 'X',
+      defaultModel: 'm',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty nickname', async () => {
+    const { createLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await createLlmKeyAction({
+      provider: 'anthropic',
+      nickname: '',
+      defaultModel: 'claude-haiku-4-5',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty defaultModel', async () => {
+    const { createLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await createLlmKeyAction({
+      provider: 'anthropic',
+      nickname: 'X',
+      defaultModel: '',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects malformed baseUrl', async () => {
+    const { createLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await createLlmKeyAction({
+      provider: 'anthropic',
+      nickname: 'X',
+      defaultModel: 'm',
+      baseUrl: 'not a url',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('createLlmKeyAction — db path', () => {
+  it('returns ok with id on successful insert', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000011' }]) as typeof currentDb;
+    const { createLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await createLlmKeyAction({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-secret-1',
+      nickname: 'Anthropic main',
+      defaultModel: 'claude-haiku-4-5-20251001',
+      isActive: true,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.id).toBe('aaaaaaaa-0000-0000-0000-000000000011');
+    // The insert payload must include the apiKey (it's stored, not echoed).
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesArg = (insertSpy.mock.results[0]?.value as { values: ReturnType<typeof vi.fn> })
+      ?.values?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+    expect(valuesArg?.['apiKey']).toBe('sk-ant-secret-1');
+    expect(valuesArg?.['provider']).toBe('anthropic');
+  });
+
+  it('apiKey defaults to empty string when not provided', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000012' }]) as typeof currentDb;
+    const { createLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await createLlmKeyAction({
+      provider: 'ollama',
+      baseUrl: 'http://localhost:11434',
+      nickname: 'Local Ollama',
+      defaultModel: 'llama3.3:70b',
+    });
+    expect(r.ok).toBe(true);
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesArg = (insertSpy.mock.results[0]?.value as { values: ReturnType<typeof vi.fn> })
+      ?.values?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+    expect(valuesArg?.['apiKey']).toBe('');
+  });
+});
+
+describe('updateLlmKeyAction', () => {
+  it('rejects bad uuid', async () => {
+    const { updateLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await updateLlmKeyAction({
+      id: 'not-a-uuid',
+      provider: 'anthropic',
+      nickname: 'X',
+      defaultModel: 'm',
+      isActive: true,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when row is in another entity', async () => {
+    // Empty rows from the ownership check → not_found
+    currentDb = makeDb([]) as typeof currentDb;
+    const { updateLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await updateLlmKeyAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000020',
+      provider: 'anthropic',
+      nickname: 'X',
+      defaultModel: 'm',
+      isActive: true,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('keeps existing apiKey when new apiKey is omitted', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000020' }]) as typeof currentDb;
+    const { updateLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await updateLlmKeyAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000020',
+      provider: 'anthropic',
+      nickname: 'Renamed',
+      defaultModel: 'claude-haiku-4-5',
+      isActive: true,
+      // apiKey absent → should NOT appear in the SET payload
+    });
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setArg = (updateSpy.mock.results[0]?.value as { set: ReturnType<typeof vi.fn> })?.set
+      ?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+    expect(setArg?.['apiKey']).toBeUndefined();
+    expect(setArg?.['nickname']).toBe('Renamed');
+  });
+
+  it('updates apiKey when a new value is provided', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000020' }]) as typeof currentDb;
+    const { updateLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await updateLlmKeyAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000020',
+      provider: 'anthropic',
+      apiKey: 'sk-ant-rotated',
+      nickname: 'Rotated',
+      defaultModel: 'claude-haiku-4-5',
+      isActive: true,
+    });
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setArg = (updateSpy.mock.results[0]?.value as { set: ReturnType<typeof vi.fn> })?.set
+      ?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+    expect(setArg?.['apiKey']).toBe('sk-ant-rotated');
+  });
+});
+
+describe('deleteLlmKeyAction', () => {
+  it('rejects non-uuid id', async () => {
+    const { deleteLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await deleteLlmKeyAction('not-uuid');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when id is in another entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { deleteLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await deleteLlmKeyAction('aaaaaaaa-0000-0000-0000-000000000030');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('happy path: delete is called', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000030' }]) as typeof currentDb;
+    const { deleteLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await deleteLlmKeyAction('aaaaaaaa-0000-0000-0000-000000000030');
+    expect(r.ok).toBe(true);
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalled();
+  });
+});
+
+describe('testLlmKeyAction', () => {
+  it('rejects unknown provider', async () => {
+    const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await testLlmKeyAction({ provider: 'made-up' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns ok with model count on 200 response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+      json: () =>
+        Promise.resolve({
+          data: [{ id: 'claude-haiku-4-5' }, { id: 'claude-sonnet-4-6' }],
+        }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'anthropic',
+        apiKey: 'sk-ant-secret-test',
+      });
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.data.message).toContain('2');
+      // Sanity: the request used the x-api-key header, not the URL
+      const callArgs = fetchMock.mock.calls[0];
+      expect(callArgs?.[0]).toBe('https://api.anthropic.com/v1/models');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('SECURITY: apiKey is REDACTED in error messages (security invariant #2)', async () => {
+    const SECRET = 'sk-ant-this-is-a-real-secret-do-not-leak';
+    // First-line defense: mock fetch to throw with the apiKey embedded in the
+    // error message. The action MUST scrub it before returning.
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new Error(`Connection failed for ${SECRET} (network unreachable)`));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'anthropic',
+        apiKey: SECRET,
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      // CRITICAL: the apiKey must NEVER appear in the message.
+      expect(r.message).not.toContain(SECRET);
+      expect(r.message).toContain('[REDACTED]');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('SECURITY: apiKey is REDACTED in non-2xx response bodies', async () => {
+    const SECRET = 'sk-leaked-in-body-do-not-echo';
+    // Provider echoes back the key in its 401 response (some do). The action
+    // must scrub it before returning to the UI.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve(`Invalid key: ${SECRET}`),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'openai',
+        apiKey: SECRET,
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.message).not.toContain(SECRET);
+      expect(r.message).toContain('[REDACTED]');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('ollama: builds request from baseUrl with no apiKey header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+      json: () => Promise.resolve({ models: [{ name: 'llama3.3' }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'ollama',
+        baseUrl: 'http://localhost:11434',
+      });
+      expect(r.ok).toBe(true);
+      const url = fetchMock.mock.calls[0]?.[0];
+      expect(url).toBe('http://localhost:11434/api/tags');
+      const headers = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> }).headers;
+      expect(headers['Authorization']).toBeUndefined();
+      expect(headers['x-api-key']).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('openai-compatible without baseUrl returns validation_failed', async () => {
+    const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await testLlmKeyAction({ provider: 'openai-compatible' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});

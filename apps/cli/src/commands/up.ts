@@ -200,7 +200,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const seedSpinner = ora('Seeding default user and agent…').start();
   try {
     const { db, close } = createClient(databaseUrl, { max: 5 });
-    await seedDefaultUserEntityAgent(db, config.llm.model);
+    await seedDefaultUserEntityAgent(db, config.llm?.model ?? null);
     await close();
     seedSpinner.succeed(chalk.green('Seed complete'));
   } catch (err) {

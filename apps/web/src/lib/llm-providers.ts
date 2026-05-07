@@ -1,5 +1,6 @@
 import 'server-only';
 import { env } from './env.ts';
+import { prettyProviderName } from './provider-names.ts';
 
 export interface ConfiguredLlmProvider {
   /** Stable identifier (used as form value) — e.g., 'lm-studio:google/gemma-4-31b' */
@@ -33,27 +34,4 @@ export function getConfiguredLlmProviders(): ConfiguredLlmProvider[] {
       label: `${prettyProviderName(providerSlug)} · ${model}`,
     },
   ];
-}
-
-export function prettyProviderName(slug: string): string {
-  switch (slug) {
-    case 'openai-compatible':
-      return 'Local LLM'; // wizard maps lm-studio/jan-ai/etc to openai-compatible
-    case 'anthropic':
-      return 'Anthropic';
-    case 'openai':
-      return 'OpenAI';
-    case 'ollama':
-      return 'Ollama';
-    case 'openrouter':
-      return 'OpenRouter';
-    case 'google':
-      return 'Google';
-    case 'mistral':
-      return 'Mistral';
-    case 'groq':
-      return 'Groq';
-    default:
-      return slug;
-  }
 }

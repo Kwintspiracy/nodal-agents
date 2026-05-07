@@ -15,6 +15,13 @@ import type { RunnerEnv } from './env.ts';
 
 export interface RunnerDeps {
   db: AnyDrizzleDb;
+  /**
+   * Kept for backward compatibility with tests.
+   * execute.ts no longer reads this field at runtime (Brique 25): every job
+   * resolves its LLM client from the agent's entity_llm_keys row. Tests that
+   * populate llmKeyId supply their own client via that row; tests that don't
+   * need LLM calls can pass `{} as RunnerDeps['llmClient']`.
+   */
   llmClient: NodalLlmClient;
   embeddingClient: EmbeddingClient;
   registry: ToolRegistry;
@@ -35,12 +42,19 @@ export async function createRunnerDeps(runnerEnv: RunnerEnv): Promise<RunnerDeps
   const { db, close: closeDb } = createClient(runnerEnv.DATABASE_URL);
 
   // ── LLM ─────────────────────────────────────────────────────────────────────
-  const llmClient = createLlmClient({
-    provider: runnerEnv.LLM_PROVIDER,
-    model: runnerEnv.LLM_MODEL,
-    apiKey: runnerEnv.LLM_API_KEY,
-    baseURL: runnerEnv.LLM_BASE_URL,
-  });
+  // LLM_PROVIDER / LLM_MODEL are optional since Brique 25 (runner reads from DB).
+  // Build a real client only when the env vars are present (first-boot / legacy
+  // config.json installs). When absent, use a no-op placeholder — execute.ts
+  // never reads deps.llmClient at runtime; it resolves per-job from entity_llm_keys.
+  const llmClient: NodalLlmClient =
+    runnerEnv.LLM_PROVIDER && runnerEnv.LLM_MODEL
+      ? createLlmClient({
+          provider: runnerEnv.LLM_PROVIDER,
+          model: runnerEnv.LLM_MODEL,
+          apiKey: runnerEnv.LLM_API_KEY,
+          baseURL: runnerEnv.LLM_BASE_URL,
+        })
+      : createLlmClient({ provider: 'anthropic', model: 'claude-sonnet-4-6-20260217' });
 
   // ── Embeddings ───────────────────────────────────────────────────────────────
   // keyword fallback: use EmbeddingProviderConfig with provider='keyword'

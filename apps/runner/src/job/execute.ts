@@ -14,8 +14,15 @@ import {
   agentTasks,
   approvalRules,
   agentSkillAssignments,
+  entityLlmKeys,
 } from '@nodalai/db';
-import { QuotaExhaustedError, MessageStructureError, validateMessageStructure } from '@nodalai/llm';
+import {
+  QuotaExhaustedError,
+  MessageStructureError,
+  validateMessageStructure,
+  createLlmClient,
+} from '@nodalai/llm';
+import type { NodalLlmClient } from '@nodalai/llm';
 import {
   computeToolWhitelist,
   computeToolChoice,
@@ -71,7 +78,14 @@ export async function executeJob(
   deps: RunnerDeps,
   _runnerEnv?: RunnerEnv,
 ): Promise<ExecuteJobResult> {
-  const { db, llmClient, registry } = deps;
+  const { db, registry } = deps;
+  // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
+  // Agents MUST have an llmKeyId — if absent we fail loud (invariant 4).
+  // deps.llmClient is kept in RunnerDeps for backward compat with tests but
+  // execute.ts no longer reads from it at runtime.
+  // Definite assignment: llmClient is set unconditionally in the resolution
+  // block below (or the function returns early with a failed status).
+  let llmClient!: NodalLlmClient;
 
   // Wall-clock timer for total_duration_ms persistence. Captured at function
   // entry so it includes job/agent loading, not just the LLM loop.
@@ -164,6 +178,47 @@ export async function executeJob(
     active: agentRow.active ?? true,
     orchestratorMode: (agentRow.orchestratorMode ?? null) as 'router' | 'planner' | null,
   };
+
+  // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
+  // Agents MUST have an llmKeyId pointing at an active entity_llm_keys row.
+  // No env-based fallback — fail loud (invariant 4).
+  // The agent's `model` column wins over the key's defaultModel (the key's
+  // defaultModel is just a UI suggestion).
+  if (!agentRow.llmKeyId) {
+    await failJob(db, jobId as string, 'agent_no_llm_configured', runStats());
+    return { status: 'failed', error: 'agent_no_llm_configured' };
+  }
+
+  {
+    const [keyRow] = await db
+      .select()
+      .from(entityLlmKeys)
+      .where(eq(entityLlmKeys.id, agentRow.llmKeyId))
+      .limit(1);
+
+    if (!keyRow || !keyRow.isActive) {
+      await failJob(db, jobId as string, 'agent_no_llm_configured', runStats());
+      return { status: 'failed', error: 'agent_no_llm_configured' };
+    }
+
+    try {
+      llmClient = createLlmClient({
+        provider: keyRow.provider as Parameters<typeof createLlmClient>[0]['provider'],
+        model: agent.model,
+        apiKey: keyRow.apiKey || undefined,
+        baseURL: keyRow.baseUrl ?? undefined,
+      });
+      trace('llm_client_from_key', {
+        keyId: keyRow.id,
+        provider: keyRow.provider,
+      });
+    } catch (err) {
+      // Bad provider config in the DB row — fail loud (invariant 4).
+      const errorCode = err instanceof Error ? err.message.slice(0, 200) : 'llm_key_invalid';
+      await failJob(db, jobId as string, `llm_key_invalid:${errorCode}`, runStats());
+      return { status: 'failed', error: `llm_key_invalid:${errorCode}` };
+    }
+  }
 
   // ── 4. Load child agents ──────────────────────────────────────────────────────
   const childRows = await db

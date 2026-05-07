@@ -14,6 +14,7 @@ export const entityLlmKeys = pgTable(
     apiKey: text('api_key').notNull().default(''),
     baseUrl: text('base_url'),
     nickname: text('nickname'),
+    defaultModel: text('default_model'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -21,7 +22,8 @@ export const entityLlmKeys = pgTable(
   (table) => [index('idx_entity_llm_keys_entity_id').on(table.entityId)],
 );
 
-// Unique constraint: (entity_id, provider) — enforced in migration SQL
+// Multiple configs per provider are allowed (e.g. one Anthropic key for prod,
+// another for dev) — no unique constraint on (entity_id, provider).
 
 export type EntityLlmKeyRow = typeof entityLlmKeys.$inferSelect;
 export type EntityLlmKeyInsert = typeof entityLlmKeys.$inferInsert;

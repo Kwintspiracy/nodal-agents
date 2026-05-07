@@ -79,6 +79,18 @@ describe('ConfigSchema', () => {
     expect(() => ConfigSchema.parse(lan)).not.toThrow();
   });
 
+  it('accepts config without llm section (Brique 25: llm is optional)', () => {
+    const noLlm: Config = {
+      ...VALID_CONFIG,
+      llm: undefined,
+    };
+    const result = ConfigSchema.safeParse(noLlm);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.llm).toBeUndefined();
+    }
+  });
+
   it('preserves all providers in the enum', () => {
     const providers = [
       'ollama',
@@ -118,8 +130,8 @@ describe('config file I/O', () => {
     const raw = JSON.parse(readFileSync(configFile, 'utf-8')) as unknown;
     const parsed = ConfigSchema.parse(raw);
 
-    expect(parsed.llm.provider).toBe(VALID_CONFIG.llm.provider);
-    expect(parsed.llm.model).toBe(VALID_CONFIG.llm.model);
+    expect(parsed.llm?.provider).toBe(VALID_CONFIG.llm?.provider);
+    expect(parsed.llm?.model).toBe(VALID_CONFIG.llm?.model);
     expect(parsed.ports.web).toBe(3000);
     expect(parsed.workerSecret).toBe(VALID_CONFIG.workerSecret);
   });

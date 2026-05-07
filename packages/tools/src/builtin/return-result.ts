@@ -15,7 +15,7 @@ export type ReturnResultInput = z.infer<typeof ReturnResultInputSchema>;
 export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, ReturnResultInput> = {
   name: 'return_result',
   description:
-    'Report the final result of your task. Call this when the task is complete or when ' +
+    'Report the final result of your task. Use `return_result` when the task is complete or when ' +
     "you are blocked and cannot proceed. Use status='success' when the task succeeded, " +
     "status='blocked' when data is not found or you cannot proceed after 2 attempts.",
   inputSchema: ReturnResultInputSchema,

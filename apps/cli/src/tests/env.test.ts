@@ -48,6 +48,18 @@ describe('buildEnvForRunner', () => {
     const env = buildEnvForRunner(lanConfig, DB_URL);
     expect(env['BIND']).toBe('0.0.0.0');
   });
+
+  it('omits LLM_* vars when llm section is absent (Brique 25)', () => {
+    const noLlmConfig: Config = { ...BASE_CONFIG, llm: undefined };
+    const env = buildEnvForRunner(noLlmConfig, DB_URL);
+    expect(env['LLM_PROVIDER']).toBeUndefined();
+    expect(env['LLM_MODEL']).toBeUndefined();
+    expect(env['LLM_BASE_URL']).toBeUndefined();
+    expect(env['LLM_API_KEY']).toBeUndefined();
+    // Core vars still set
+    expect(env['DATABASE_URL']).toBe(DB_URL);
+    expect(env['AUTH_MODE']).toBe('local-trust');
+  });
 });
 
 // ── buildEnvForWeb ────────────────────────────────────────────────────────────

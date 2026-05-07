@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
+import { entityLlmKeys } from './llm_keys.ts';
 
 export const agents = pgTable(
   'agents',
@@ -23,6 +24,7 @@ export const agents = pgTable(
     slug: text('slug').notNull().unique(),
     personality: text('personality').notNull(),
     model: text('model').default('claude-sonnet-4-6-20260217'),
+    llmKeyId: uuid('llm_key_id').references(() => entityLlmKeys.id, { onDelete: 'set null' }),
     active: boolean('active').default(true),
     isDefault: boolean('is_default').default(false),
     role: text('role').default('agent'),

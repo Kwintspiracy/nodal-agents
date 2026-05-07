@@ -21,17 +21,43 @@ import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
 import type { JobId } from '@nodalai/orchestration';
 
-// Mock sendTelegramMessage so the tool test doesn't actually call the Telegram API.
-// vi.mock is hoisted by Vitest — use vi.hoisted so the factory can access the mock fn.
-const { sendTelegramMessageMock } = vi.hoisted(() => ({
-  sendTelegramMessageMock: vi.fn().mockResolvedValue({ messageId: 999 }),
-}));
+// ─── Module-level mock registry ───────────────────────────────────────────────
+// execute.ts calls createLlmClient() directly (Brique 25: no env fallback).
+// We intercept that call here and forward to the per-test mock client.
+// vi.hoisted ensures the factory runs before module imports are resolved.
+const { sendTelegramMessageMock, getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+  let _activeLlmClient: RunnerDeps['llmClient'] | null = null;
+  return {
+    sendTelegramMessageMock: vi.fn().mockResolvedValue({ messageId: 999 }),
+    getActiveLlmClient: () => _activeLlmClient,
+    setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
+      _activeLlmClient = c;
+    },
+  };
+});
+
 vi.mock('@nodalai/delivery', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@nodalai/delivery')>();
   return {
     ...actual,
     sendTelegramMessage: sendTelegramMessageMock,
+  };
+});
+
+// Intercept createLlmClient called by execute.ts so it returns the per-test mock.
+// createEmbeddingClient and all other exports are passed through unchanged.
+vi.mock('@nodalai/llm', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('@nodalai/llm')>();
+  return {
+    ...actual,
+    createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
+      const active = getActiveLlmClient();
+      if (!active)
+        throw new Error('execute.test: no active LLM client set — call setActiveLlmClient() first');
+      return active;
+    },
   };
 });
 
@@ -148,6 +174,10 @@ beforeAll(async () => {
 function makeDeps(llmClient: RunnerDeps['llmClient']): RunnerDeps {
   const registry = createToolRegistry();
   registerBuiltins(registry);
+
+  // Register the mock client so the vi.mock('@nodalai/llm') intercept returns it
+  // when execute.ts calls createLlmClient() for this test (Brique 25).
+  setActiveLlmClient(llmClient);
 
   return {
     db: db as RunnerDeps['db'],
@@ -647,5 +677,34 @@ describe('executeJob', () => {
 
     expect(rows[0]?.status).toBe('failed');
     expect(rows[0]?.error).toBe('whitelist_violation:telegram_send_message');
+  });
+
+  // ─── Brique 25: fail-loud on missing llmKeyId ──────────────────────────────
+
+  it('Brique 25: agent without llmKeyId fails with agent_no_llm_configured', async () => {
+    // Clear the llmKeyId that seedMinimal sets — simulates a legacy/misconfigured agent.
+    await db.update(agents).set({ llmKeyId: null }).where(eq(agents.id, seed.agentId));
+
+    const job = await createTestJob(db, seed);
+
+    const llmClient = makeMockLlmClient([{ text: 'Should never reach LLM' }]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('agent_no_llm_configured');
+    }
+
+    // Verify DB row reflects the error
+    const rows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(rows[0]?.status).toBe('failed');
+    expect(rows[0]?.error).toBe('agent_no_llm_configured');
+
+    // Restore llmKeyId for subsequent tests
+    await db.update(agents).set({ llmKeyId: seed.llmKeyId }).where(eq(agents.id, seed.agentId));
   });
 });

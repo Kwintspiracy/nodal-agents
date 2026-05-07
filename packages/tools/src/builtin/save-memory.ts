@@ -32,10 +32,10 @@ export type SaveMemoryInput = z.infer<typeof SaveMemoryInputSchema>;
 export const saveMemoryTool: ToolDefinition<typeof SaveMemoryInputSchema, { id: string }> = {
   name: 'save_memory',
   description:
-    'Save a durable fact to long-term memory. Call this whenever (a) the user ' +
+    'Save a durable fact to long-term memory. Use the `save_memory` tool whenever (a) the user ' +
     'explicitly asks you to remember, save, or store something, OR (b) you learn a ' +
     'stable preference, rule, or context that will improve future unrelated tasks. ' +
-    'Each call saves one fact — call multiple times if the user gives you multiple ' +
+    'Invoke `save_memory` once per fact — multiple invocations if the user gives multiple ' +
     "facts. Skip ephemeral details (today's weather, transient calculation results).",
   inputSchema: SaveMemoryInputSchema,
   riskLevel: 'write',

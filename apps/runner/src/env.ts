@@ -8,7 +8,10 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().min(1),
 
-  // LLM Provider
+  // LLM Provider — all optional since Brique 25.
+  // The seeder uses these on first boot to populate entity_llm_keys; the runner
+  // loop reads LLM config from DB at runtime (via agent.llmKeyId). Installs that
+  // have removed the `llm` section from config.json omit these env vars entirely.
   LLM_PROVIDER: z
     .enum([
       'anthropic',
@@ -20,8 +23,8 @@ const envSchema = z.object({
       'groq',
       'openrouter',
     ])
-    .default('anthropic'),
-  LLM_MODEL: z.string().default('claude-sonnet-4-6-20260217'),
+    .optional(),
+  LLM_MODEL: z.string().optional(),
   LLM_API_KEY: z.string().optional(),
   LLM_BASE_URL: z.string().optional(),
 

@@ -398,14 +398,32 @@ describe('UNIQUE constraints', () => {
     ).rejects.toThrow();
   });
 
-  it('entity_llm_keys: rejects duplicate (entity_id, provider)', async () => {
+  it('entity_llm_keys: allows multiple rows per (entity_id, provider) — Brique 24', async () => {
+    // Multi-LLM management (Brique 24) intentionally drops the old unique
+    // constraint so users can register e.g. one Anthropic key for prod and
+    // another for dev under the same entity.
     const provider = `test-provider-${Date.now()}`;
-    await db
+    const [first] = await db
       .insert(schema.entityLlmKeys)
-      .values({ entityId: seed.entityId, provider, apiKey: 'key1' });
-    await expect(
-      db.insert(schema.entityLlmKeys).values({ entityId: seed.entityId, provider, apiKey: 'key2' }),
-    ).rejects.toThrow();
+      .values({
+        entityId: seed.entityId,
+        provider,
+        apiKey: 'key1',
+        nickname: 'prod',
+      })
+      .returning();
+    const [second] = await db
+      .insert(schema.entityLlmKeys)
+      .values({
+        entityId: seed.entityId,
+        provider,
+        apiKey: 'key2',
+        nickname: 'dev',
+      })
+      .returning();
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(first?.id).not.toBe(second?.id);
   });
 
   it('agent_skill_assignments: rejects duplicate (agent_id, skill_id)', async () => {

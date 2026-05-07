@@ -64,7 +64,7 @@ describe('getConfiguredLlmProviders', () => {
 
 describe('prettyProviderName', () => {
   it('maps known slugs to friendly names', async () => {
-    const { prettyProviderName } = await import('../src/lib/llm-providers.ts');
+    const { prettyProviderName } = await import('../src/lib/provider-names.ts');
     expect(prettyProviderName('openai-compatible')).toBe('Local LLM');
     expect(prettyProviderName('anthropic')).toBe('Anthropic');
     expect(prettyProviderName('openai')).toBe('OpenAI');
@@ -76,7 +76,7 @@ describe('prettyProviderName', () => {
   });
 
   it('returns the slug unchanged for unknown providers', async () => {
-    const { prettyProviderName } = await import('../src/lib/llm-providers.ts');
+    const { prettyProviderName } = await import('../src/lib/provider-names.ts');
     expect(prettyProviderName('some-future-provider')).toBe('some-future-provider');
   });
 });

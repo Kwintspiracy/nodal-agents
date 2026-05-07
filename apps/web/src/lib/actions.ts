@@ -20,6 +20,7 @@ import {
   agentSkillAssignments,
   toolCalls,
   agentSchedules,
+  entityLlmKeys,
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
@@ -80,6 +81,7 @@ const CreateAgentSchema = z
     name: z.string().min(1).max(120),
     personality: z.string().min(1),
     model: z.string().min(1),
+    llmKeyId: z.string().uuid().optional(),
     role: z.enum(['worker', 'router', 'planner']).default('worker'),
     subAgentIds: z.array(z.string().uuid()).default([]),
   })
@@ -107,6 +109,7 @@ export type AgentRow = {
   slug: string;
   personality: string;
   model: string | null;
+  llmKeyId: string | null;
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
@@ -167,6 +170,7 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
         name: parsed.data.name,
         personality: parsed.data.personality,
         model: parsed.data.model,
+        llmKeyId: parsed.data.llmKeyId ?? null,
         role: dbRole,
         orchestratorMode,
       })
@@ -224,6 +228,7 @@ const UpdateAgentSchema = z.object({
   name: z.string().min(1).max(120),
   personality: z.string().min(1),
   model: z.string().min(1),
+  llmKeyId: z.string().uuid().nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().uuid()).default([]),
   // slug NOT here — it is a stable identifier. Excluded at schema level so
@@ -246,7 +251,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { id, name, personality, model, role, subAgentIds } = parsed.data;
+    const { id, name, personality, model, llmKeyId, role, subAgentIds } = parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
@@ -258,11 +263,20 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
 
     const { dbRole, orchestratorMode } = mapRoleToDb(role);
 
-    // Update core fields
-    await db
-      .update(agents)
-      .set({ name, personality, model, role: dbRole, orchestratorMode, updatedAt: new Date() })
-      .where(eq(agents.id, id));
+    // Update core fields. llmKeyId: undefined means "don't touch", null clears.
+    const patch: Record<string, unknown> = {
+      name,
+      personality,
+      model,
+      role: dbRole,
+      orchestratorMode,
+      updatedAt: new Date(),
+    };
+    if (llmKeyId !== undefined) {
+      patch['llmKeyId'] = llmKeyId;
+    }
+
+    await db.update(agents).set(patch).where(eq(agents.id, id));
 
     // Rewrite sub-agent assignments atomically: delete existing, insert new
     await db.delete(agentAssignments).where(eq(agentAssignments.orchestratorId, id));
@@ -1528,6 +1542,95 @@ export async function assignSkillAction(raw: unknown): Promise<ActionResult<void
   }
 }
 
+// ─── Skill update ─────────────────────────────────────────────────────────────
+
+const UpdateSkillSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).optional(),
+  content: z.string().min(1),
+  active: z.boolean().optional(),
+  // slug NOT here — it is a stable identifier. Excluded at schema level so
+  // even a raw payload with a slug field is silently stripped by safeParse.
+});
+
+export async function updateSkillAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = UpdateSkillSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { id, name, description, content, active } = parsed.data;
+    const db = getDb();
+
+    // Verify skill exists and belongs to this entity
+    const [existing] = await db
+      .select({ id: agentSkills.id })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Skill not found');
+
+    await db
+      .update(agentSkills)
+      .set({
+        name,
+        description: description ?? null,
+        content,
+        ...(active !== undefined ? { active } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(agentSkills.id, id));
+
+    revalidatePath('/skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateSkillAction]', err);
+    return fail('db_error', 'Failed to update skill');
+  }
+}
+
+export async function getSkillByIdAction(id: string): Promise<ActionResult<SkillRow>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid skill id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: agentSkills.id,
+        name: agentSkills.name,
+        slug: agentSkills.slug,
+        content: agentSkills.content,
+        description: agentSkills.description,
+        active: agentSkills.active,
+        requiredBuiltins: agentSkills.requiredBuiltins,
+        createdAt: agentSkills.createdAt,
+        updatedAt: agentSkills.updatedAt,
+      })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'Skill not found');
+
+    return ok({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      content: row.content,
+      description: row.description,
+      active: row.active ?? true,
+      requiredBuiltins: (row.requiredBuiltins as string[] | null) ?? [],
+      assignmentCount: 0,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  } catch (err) {
+    console.error('[getSkillByIdAction]', err);
+    return fail('db_error', 'Failed to load skill');
+  }
+}
+
 export async function unassignSkillAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
@@ -2171,5 +2274,305 @@ export async function updateAuthSettingsAction(
   } catch (err) {
     console.error('[updateAuthSettingsAction]', err);
     return fail('db_error', 'Failed to update auth settings');
+  }
+}
+
+// ─── LLM key actions (Brique 24) ──────────────────────────────────────────────
+//
+// Manages rows in entity_llm_keys. Each row is one (provider + apiKey + baseUrl
+// + nickname + defaultModel) tuple — agents reference a row via agents.llmKeyId
+// and pick their own free-text model on top.
+//
+// Security invariants (CRITICAL — enforced by tests):
+//   • listLlmKeysAction NEVER returns the apiKey field. Only `hasApiKey: boolean`.
+//   • testLlmKeyAction redacts the apiKey in any error message before return.
+//   • All actions verify entityId ownership via getSession().
+
+const PROVIDER_VALUES = [
+  'anthropic',
+  'openai',
+  'openai-compatible',
+  'ollama',
+  'openrouter',
+  'google',
+  'mistral',
+  'groq',
+] as const;
+
+export type LlmProvider = (typeof PROVIDER_VALUES)[number];
+
+export type LlmKeyUiRow = {
+  id: string;
+  provider: string;
+  baseUrl: string | null;
+  nickname: string | null;
+  defaultModel: string | null;
+  isActive: boolean;
+  /** True when an apiKey is stored. The actual key NEVER leaves the server. */
+  hasApiKey: boolean;
+};
+
+// baseUrl is optional, accepts empty string (transformed to null) or a valid URL.
+const optionalBaseUrl = z
+  .string()
+  .optional()
+  .transform((v) => (v && v.length > 0 ? v : null))
+  .pipe(z.string().url().nullable().or(z.null()));
+
+const CreateLlmKeySchema = z.object({
+  provider: z.enum(PROVIDER_VALUES),
+  baseUrl: optionalBaseUrl,
+  apiKey: z.string().optional(),
+  nickname: z.string().min(1).max(120),
+  defaultModel: z.string().min(1).max(200),
+  isActive: z.boolean().default(true),
+});
+
+const UpdateLlmKeySchema = z.object({
+  id: z.string().uuid(),
+  provider: z.enum(PROVIDER_VALUES),
+  baseUrl: optionalBaseUrl,
+  // apiKey absent → keep existing. Empty string also means "keep existing".
+  apiKey: z.string().optional(),
+  nickname: z.string().min(1).max(120),
+  defaultModel: z.string().min(1).max(200),
+  isActive: z.boolean(),
+});
+
+const TestLlmKeySchema = z.object({
+  provider: z.enum(PROVIDER_VALUES),
+  baseUrl: optionalBaseUrl,
+  apiKey: z.string().optional(),
+  model: z.string().optional(),
+});
+
+/** Strip the apiKey out of any string before returning it to the UI. */
+function redactKey(message: string, apiKey: string | undefined): string {
+  if (!apiKey || apiKey.length === 0) return message;
+  return message.replaceAll(apiKey, '[REDACTED]');
+}
+
+export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    // Explicitly select only the safe columns. apiKey is NEVER fetched.
+    // hasApiKey is computed via SQL so the raw key never reaches Node memory.
+    const rows = await db
+      .select({
+        id: entityLlmKeys.id,
+        provider: entityLlmKeys.provider,
+        baseUrl: entityLlmKeys.baseUrl,
+        nickname: entityLlmKeys.nickname,
+        defaultModel: entityLlmKeys.defaultModel,
+        isActive: entityLlmKeys.isActive,
+        hasApiKey: sql<boolean>`(${entityLlmKeys.apiKey} <> '')`,
+      })
+      .from(entityLlmKeys)
+      .where(eq(entityLlmKeys.entityId, session.entityId))
+      .orderBy(desc(entityLlmKeys.createdAt));
+
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        provider: r.provider,
+        baseUrl: r.baseUrl,
+        nickname: r.nickname,
+        defaultModel: r.defaultModel,
+        isActive: r.isActive,
+        hasApiKey: Boolean(r.hasApiKey),
+      })),
+    );
+  } catch (err) {
+    console.error('[listLlmKeysAction]', err);
+    return fail('db_error', 'Failed to load LLM providers');
+  }
+}
+
+export async function createLlmKeyAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = CreateLlmKeySchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const [row] = await db
+      .insert(entityLlmKeys)
+      .values({
+        entityId: session.entityId,
+        provider: parsed.data.provider,
+        apiKey: parsed.data.apiKey ?? '',
+        baseUrl: parsed.data.baseUrl,
+        nickname: parsed.data.nickname,
+        defaultModel: parsed.data.defaultModel,
+        isActive: parsed.data.isActive,
+      })
+      .returning({ id: entityLlmKeys.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+    revalidatePath('/settings');
+    return ok({ id: row.id });
+  } catch (err) {
+    console.error('[createLlmKeyAction]', err);
+    return fail('db_error', 'Failed to create LLM provider');
+  }
+}
+
+export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = UpdateLlmKeySchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { id, provider, baseUrl, apiKey, nickname, defaultModel, isActive } = parsed.data;
+    const db = getDb();
+
+    const [existing] = await db
+      .select({ id: entityLlmKeys.id })
+      .from(entityLlmKeys)
+      .where(and(eq(entityLlmKeys.id, id), eq(entityLlmKeys.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'LLM provider not found');
+
+    // Build patch: apiKey is included only if a non-empty value was provided.
+    // Empty string / undefined → keep existing key (so users can edit other
+    // fields without re-typing the secret).
+    const patch: Record<string, unknown> = {
+      provider,
+      baseUrl,
+      nickname,
+      defaultModel,
+      isActive,
+      updatedAt: new Date(),
+    };
+    if (apiKey && apiKey.length > 0) {
+      patch['apiKey'] = apiKey;
+    }
+
+    await db.update(entityLlmKeys).set(patch).where(eq(entityLlmKeys.id, id));
+    revalidatePath('/settings');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateLlmKeyAction]', err);
+    return fail('db_error', 'Failed to update LLM provider');
+  }
+}
+
+export async function deleteLlmKeyAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid LLM provider id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: entityLlmKeys.id })
+      .from(entityLlmKeys)
+      .where(and(eq(entityLlmKeys.id, id), eq(entityLlmKeys.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'LLM provider not found');
+    // FK on agents.llm_key_id is ON DELETE SET NULL — agents are preserved.
+    await db.delete(entityLlmKeys).where(eq(entityLlmKeys.id, id));
+    revalidatePath('/settings');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteLlmKeyAction]', err);
+    return fail('db_error', 'Failed to delete LLM provider');
+  }
+}
+
+/**
+ * Test connectivity to an LLM provider before saving.
+ * Hits the provider's `list models` (or equivalent) endpoint with the supplied
+ * apiKey. Errors are returned with the apiKey REDACTED so the form's inline
+ * error display can never leak the secret to the DOM.
+ */
+export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ message: string }>> {
+  let apiKey: string | undefined;
+  try {
+    await getSession();
+    const parsed = TestLlmKeySchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { provider, baseUrl } = parsed.data;
+    apiKey = parsed.data.apiKey;
+
+    // ── Build the test request per provider ────────────────────────────────────
+    let url: string;
+    const headers: Record<string, string> = { Accept: 'application/json' };
+
+    switch (provider) {
+      case 'anthropic':
+        url = 'https://api.anthropic.com/v1/models';
+        if (apiKey) headers['x-api-key'] = apiKey;
+        headers['anthropic-version'] = '2023-06-01';
+        break;
+      case 'openai':
+        url = 'https://api.openai.com/v1/models';
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        break;
+      case 'openrouter':
+        url = 'https://openrouter.ai/api/v1/models';
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        break;
+      case 'google':
+        // Google uses a query-string key; never put the key in the URL we
+        // log/redact-prep. Build it locally only for the fetch.
+        url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey ?? '')}`;
+        break;
+      case 'mistral':
+        url = 'https://api.mistral.ai/v1/models';
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        break;
+      case 'groq':
+        url = 'https://api.groq.com/openai/v1/models';
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        break;
+      case 'openai-compatible':
+        if (!baseUrl) return fail('validation_failed', 'baseUrl is required for openai-compatible');
+        url = `${baseUrl.replace(/\/$/, '')}/models`;
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        break;
+      case 'ollama':
+        if (!baseUrl) return fail('validation_failed', 'baseUrl is required for ollama');
+        url = `${baseUrl.replace(/\/$/, '')}/api/tags`;
+        break;
+      default: {
+        const _exhaustive: never = provider;
+        return fail('validation_failed', `Unknown provider: ${String(_exhaustive)}`);
+      }
+    }
+
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      const truncated = body.slice(0, 200);
+      return fail(
+        'connection_failed',
+        redactKey(`${provider} responded ${res.status}: ${truncated}`, apiKey),
+      );
+    }
+
+    // Parse a model count where possible. We don't fail on parse error — a 200
+    // response is enough proof of working credentials.
+    let modelCount: number | null = null;
+    try {
+      const data = (await res.json()) as Record<string, unknown>;
+      // anthropic / openai / mistral / groq / openrouter: { data: [...] }
+      // google: { models: [...] }
+      // ollama: { models: [...] }
+      // openai-compatible: { data: [...] } (mostly)
+      const arr = (data['data'] ?? data['models']) as unknown;
+      if (Array.isArray(arr)) modelCount = arr.length;
+    } catch {
+      // ignore
+    }
+
+    return ok({
+      message: modelCount !== null ? `Connected, ${modelCount} models available` : 'Connected',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    return fail('connection_failed', redactKey(msg, apiKey));
   }
 }

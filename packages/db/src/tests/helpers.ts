@@ -71,6 +71,19 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       UNIQUE (entity_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS entity_llm_keys (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      provider text NOT NULL,
+      api_key text NOT NULL DEFAULT '',
+      base_url text,
+      nickname text,
+      default_model text,
+      is_active boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS agents (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
@@ -78,6 +91,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       slug text NOT NULL UNIQUE,
       personality text NOT NULL,
       model text DEFAULT 'claude-sonnet-4-6-20260217',
+      llm_key_id uuid REFERENCES entity_llm_keys(id) ON DELETE SET NULL,
       active boolean DEFAULT true,
       is_default boolean DEFAULT false,
       role text DEFAULT 'agent' CHECK (role IN ('agent','orchestrator','system')),
@@ -309,19 +323,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       updated_at timestamptz DEFAULT now()
     );
 
-    CREATE TABLE IF NOT EXISTS entity_llm_keys (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-      provider text NOT NULL,
-      api_key text NOT NULL DEFAULT '',
-      base_url text,
-      nickname text,
-      is_active boolean NOT NULL DEFAULT true,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (entity_id, provider)
-    );
-
     CREATE TABLE IF NOT EXISTS agent_runs (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
@@ -477,7 +478,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
 
 /**
  * Seed a minimal set of rows needed for FK-dependent tests.
- * Returns { userId, entityId, agentId, jobId } for use in tests.
+ * Returns { userId, entityId, agentId, llmKeyId, jobId } for use in tests.
+ *
+ * Also seeds an entity_llm_keys row wired to the agent (llmKeyId) so that
+ * execute.ts's fail-loud guard (Brique 25) passes out of the box.
+ * Tests that specifically test the missing-llmKeyId path can clear the field:
+ *   await db.update(agents).set({ llmKeyId: null }).where(eq(agents.id, seed.agentId))
  */
 export async function seedMinimal(db: TestDb) {
   // user
@@ -498,7 +504,23 @@ export async function seedMinimal(db: TestDb) {
     .returning();
   if (!entity) throw new Error('Failed to seed entity');
 
-  // agent
+  // entity_llm_keys — seeded with a mock/test provider so execute.ts resolves
+  // the client from DB (Brique 25 fail-loud guard) in all runner tests.
+  const [llmKey] = await db
+    .insert(schema.entityLlmKeys)
+    .values({
+      entityId: entity.id,
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'http://localhost:11434',
+      nickname: 'Test LLM Key',
+      defaultModel: 'mock',
+      isActive: true,
+    })
+    .returning();
+  if (!llmKey) throw new Error('Failed to seed entity_llm_keys');
+
+  // agent — wired to the LLM key so execute.ts does not fail with agent_no_llm_configured
   const [agent] = await db
     .insert(schema.agents)
     .values({
@@ -506,6 +528,7 @@ export async function seedMinimal(db: TestDb) {
       name: 'Test Agent',
       slug: `test-agent-${Date.now()}`,
       personality: 'You are a test agent.',
+      llmKeyId: llmKey.id,
     })
     .returning();
   if (!agent) throw new Error('Failed to seed agent');
@@ -522,5 +545,11 @@ export async function seedMinimal(db: TestDb) {
     .returning();
   if (!job) throw new Error('Failed to seed job');
 
-  return { userId: user.id, entityId: entity.id, agentId: agent.id, jobId: job.id };
+  return {
+    userId: user.id,
+    entityId: entity.id,
+    agentId: agent.id,
+    llmKeyId: llmKey.id,
+    jobId: job.id,
+  };
 }
