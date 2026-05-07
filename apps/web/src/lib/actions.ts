@@ -2310,6 +2310,11 @@ export type LlmKeyUiRow = {
   isActive: boolean;
   /** True when an apiKey is stored. The actual key NEVER leaves the server. */
   hasApiKey: boolean;
+  /**
+   * Last 4 chars of the stored apiKey, for masked display in the edit form.
+   * Null when the apiKey is empty. The full key NEVER leaves the server.
+   */
+  apiKeyLast4: string | null;
 };
 
 // baseUrl is optional, accepts empty string (transformed to null) or a valid URL.
@@ -2344,6 +2349,9 @@ const TestLlmKeySchema = z.object({
   baseUrl: optionalBaseUrl,
   apiKey: z.string().optional(),
   model: z.string().optional(),
+  // When testing in edit mode without re-typing the key, pass the keyId and
+  // the server will fetch the saved key (ownership-checked) instead.
+  keyId: z.string().uuid().optional(),
 });
 
 /** Strip the apiKey out of any string before returning it to the UI. */
@@ -2367,6 +2375,10 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         defaultModel: entityLlmKeys.defaultModel,
         isActive: entityLlmKeys.isActive,
         hasApiKey: sql<boolean>`(${entityLlmKeys.apiKey} <> '')`,
+        // Last 4 chars only — the full key NEVER leaves the DB layer.
+        apiKeyLast4: sql<
+          string | null
+        >`CASE WHEN ${entityLlmKeys.apiKey} <> '' THEN RIGHT(${entityLlmKeys.apiKey}, 4) ELSE NULL END`,
       })
       .from(entityLlmKeys)
       .where(eq(entityLlmKeys.entityId, session.entityId))
@@ -2381,6 +2393,7 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         defaultModel: r.defaultModel,
         isActive: r.isActive,
         hasApiKey: Boolean(r.hasApiKey),
+        apiKeyLast4: r.apiKeyLast4 ?? null,
       })),
     );
   } catch (err) {
@@ -2489,13 +2502,38 @@ export async function deleteLlmKeyAction(id: string): Promise<ActionResult<void>
 export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ message: string }>> {
   let apiKey: string | undefined;
   try {
-    await getSession();
+    const session = await getSession();
     const parsed = TestLlmKeySchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const { provider, baseUrl } = parsed.data;
     apiKey = parsed.data.apiKey;
+
+    // If no apiKey was supplied in the form (edit mode, user didn't retype it)
+    // but a keyId was provided, load the saved key from DB — ownership-checked.
+    if ((!apiKey || apiKey.length === 0) && parsed.data.keyId) {
+      const db = getDb();
+      const [saved] = await db
+        .select({ apiKey: entityLlmKeys.apiKey })
+        .from(entityLlmKeys)
+        .where(
+          and(
+            eq(entityLlmKeys.id, parsed.data.keyId),
+            eq(entityLlmKeys.entityId, session.entityId),
+          ),
+        );
+      if (!saved) {
+        return fail('not_found', 'LLM provider not found');
+      }
+      apiKey = saved.apiKey || undefined;
+    }
+
+    // If a keyId was provided but the saved key turns out to be empty, fail
+    // loudly — the row exists but has no usable credential.
+    if (parsed.data.keyId && (!apiKey || apiKey.length === 0)) {
+      return fail('no_api_key_provided', 'API key is required to test');
+    }
 
     // ── Build the test request per provider ────────────────────────────────────
     let url: string;

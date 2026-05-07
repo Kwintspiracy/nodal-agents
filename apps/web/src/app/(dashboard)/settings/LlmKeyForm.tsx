@@ -80,9 +80,14 @@ export default function LlmKeyForm(props: Props) {
   const [isActive, setIsActive] = useState<boolean>(initial?.isActive ?? true);
   const [testResult, setTestResult] = useState<TestResult>({ state: 'idle' });
   const [isPending, startTransition] = useTransition();
+  // In edit mode, start in "masked" state if the key is already stored.
+  const [replacingApiKey, setReplacingApiKey] = useState<boolean>(false);
 
   // Edit mode + no new apiKey entered: test is optional (key unchanged).
   const apiKeyUntouched = isEdit && apiKey.length === 0;
+  // Whether the saved key is being displayed in masked form (not yet replacing).
+  const showMasked =
+    isEdit && initial?.apiKeyLast4 != null && !replacingApiKey && apiKey.length === 0;
 
   // Reset test result when relevant fields change — the previous test was
   // against different inputs.
@@ -104,11 +109,15 @@ export default function LlmKeyForm(props: Props) {
 
   async function handleTest() {
     setTestResult({ state: 'testing' });
+    // In edit mode with no new key typed (and a saved key exists), pass keyId
+    // so the server can look up the saved key without echoing it to the client.
+    const useKeyId = isEdit && apiKey.length === 0 && initial?.id;
     const r = await testLlmKeyAction({
       provider,
       baseUrl: baseUrl || undefined,
       apiKey: apiKey || undefined,
       model: defaultModel || undefined,
+      ...(useKeyId ? { keyId: initial.id } : {}),
     });
     if (r.ok) {
       setTestResult({ state: 'pass', message: r.data.message });
@@ -229,18 +238,52 @@ export default function LlmKeyForm(props: Props) {
         <label className="block text-xs text-neutral-500 mb-1" htmlFor="llm-api-key">
           API key
         </label>
-        <input
-          id="llm-api-key"
-          type="password"
-          autoComplete="new-password"
-          value={apiKey}
-          onChange={(e) => {
-            setApiKey(e.target.value);
-            markStale();
-          }}
-          placeholder={isEdit ? 'Leave blank to keep current' : ''}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
-        />
+        {showMasked ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 bg-neutral-800/60 border border-neutral-700/60 rounded-lg px-3 py-2 text-sm font-mono text-neutral-400 tracking-widest select-none">
+              {'••••••••'}
+              {initial.apiKeyLast4}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setReplacingApiKey(true);
+                markStale();
+              }}
+              className="shrink-0 px-3 py-2 text-xs font-medium border border-neutral-700 text-neutral-400 rounded-lg hover:border-neutral-600 hover:text-white transition-colors"
+            >
+              Replace API key
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <input
+              id="llm-api-key"
+              type="password"
+              autoComplete="new-password"
+              value={apiKey}
+              onChange={(e) => {
+                setApiKey(e.target.value);
+                markStale();
+              }}
+              placeholder={isEdit && !replacingApiKey ? 'Leave blank to keep current' : ''}
+              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+            />
+            {isEdit && replacingApiKey && (
+              <button
+                type="button"
+                onClick={() => {
+                  setReplacingApiKey(false);
+                  setApiKey('');
+                  markStale();
+                }}
+                className="shrink-0 px-3 py-2 text-xs font-medium text-neutral-500 hover:text-neutral-300 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div>

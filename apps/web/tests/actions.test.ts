@@ -2109,7 +2109,7 @@ describe('updateSkillAction — db path', () => {
 // Both are non-negotiable. Breaking either is a security regression.
 
 describe('listLlmKeysAction', () => {
-  it('returns rows WITHOUT an apiKey field (security invariant #1)', async () => {
+  it('returns rows WITHOUT an apiKey field and WITH apiKeyLast4 (security invariant #1)', async () => {
     currentDb = makeDb([
       {
         id: 'aaaaaaaa-0000-0000-0000-000000000010',
@@ -2119,6 +2119,7 @@ describe('listLlmKeysAction', () => {
         defaultModel: 'claude-haiku-4-5-20251001',
         isActive: true,
         hasApiKey: true,
+        apiKeyLast4: 'K8sQ',
       },
     ]) as typeof currentDb;
     const { listLlmKeysAction } = await import('../src/lib/actions.ts');
@@ -2131,6 +2132,31 @@ describe('listLlmKeysAction', () => {
     expect(Object.keys(row)).not.toContain('apiKey');
     expect(row.hasApiKey).toBe(true);
     expect(row.nickname).toBe('My Anthropic');
+    // apiKeyLast4 must be present for masked display in the edit form.
+    expect(row.apiKeyLast4).toBe('K8sQ');
+  });
+
+  it('returns apiKeyLast4 as null when apiKey is empty', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000010',
+        provider: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        nickname: 'Local Ollama',
+        defaultModel: 'llama3.3:70b',
+        isActive: true,
+        hasApiKey: false,
+        apiKeyLast4: null,
+      },
+    ]) as typeof currentDb;
+    const { listLlmKeysAction } = await import('../src/lib/actions.ts');
+    const r = await listLlmKeysAction();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const row = r.data[0]!;
+    expect(Object.keys(row)).not.toContain('apiKey');
+    expect(row.hasApiKey).toBe(false);
+    expect(row.apiKeyLast4).toBeNull();
   });
 
   it('returns empty array on no rows', async () => {
@@ -2434,5 +2460,64 @@ describe('testLlmKeyAction', () => {
     const r = await testLlmKeyAction({ provider: 'openai-compatible' });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('keyId provided + apiKey empty → uses saved key (correct Authorization header)', async () => {
+    const SAVED_KEY = 'sk-ant-saved-from-db';
+    // DB returns the saved row for this entity + keyId
+    currentDb = makeDb([{ apiKey: SAVED_KEY }]) as typeof currentDb;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+      json: () => Promise.resolve({ data: [{ id: 'claude-haiku-4-5' }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'anthropic',
+        keyId: 'aaaaaaaa-0000-0000-0000-000000000099',
+        // No apiKey — simulates edit mode without re-typing
+      });
+      expect(r.ok).toBe(true);
+      // The fetch must have used the saved key in the x-api-key header
+      const reqHeaders = (fetchMock.mock.calls[0]?.[1] as { headers: Record<string, string> })
+        .headers;
+      expect(reqHeaders['x-api-key']).toBe(SAVED_KEY);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keyId from a different entity → returns not_found', async () => {
+    // DB returns empty rows (ownership check fails — different entity)
+    currentDb = makeDb([]) as typeof currentDb;
+    const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await testLlmKeyAction({
+      provider: 'openai',
+      keyId: 'aaaaaaaa-0000-0000-0000-000000000088',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('both apiKey and keyId missing → proceeds without auth (no_api_key_provided or connection error)', async () => {
+    // Without a keyId, the server has no way to look up a saved key.
+    // The request proceeds with no auth header and the upstream responds with an error.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve('Unauthorized'),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({ provider: 'anthropic' });
+      // Must fail — no key, no keyId means no credentials
+      expect(r.ok).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
