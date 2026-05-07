@@ -2520,4 +2520,77 @@ describe('testLlmKeyAction', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('openrouter uses /auth/key (auth-required) not /models (public)', async () => {
+    // OpenRouter's /v1/models is a public endpoint that returns 200 even
+    // without a key — using it as the test endpoint produces false positives.
+    // /auth/key requires a valid Bearer token and 401s on bad keys.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+      json: () => Promise.resolve({ data: { label: 'main', usage: 0 } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'openrouter',
+        apiKey: 'sk-or-v1-test',
+      });
+      expect(r.ok).toBe(true);
+      const url = fetchMock.mock.calls[0]?.[0];
+      expect(url).toBe('https://openrouter.ai/api/v1/auth/key');
+      expect(url).not.toContain('/models');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('openrouter returns connection_failed when /auth/key responds 401', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve('{"error":"invalid_api_key"}'),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'openrouter',
+        apiKey: 'sk-or-v1-bogus',
+      });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.code).toBe('connection_failed');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('cloud provider honors user-provided baseUrl override (e.g., proxy)', async () => {
+    // Brique 24+ regression: testLlmKeyAction must use the user's baseUrl
+    // when set, not silently fall back to the canonical URL. Use case: an
+    // enterprise proxy in front of Anthropic, alternate region, or mock.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+      json: () => Promise.resolve({ data: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { testLlmKeyAction } = await import('../src/lib/actions.ts');
+      const r = await testLlmKeyAction({
+        provider: 'anthropic',
+        baseUrl: 'https://my-proxy.corp/anthropic-v1',
+        apiKey: 'sk-ant-test',
+      });
+      expect(r.ok).toBe(true);
+      const url = fetchMock.mock.calls[0]?.[0];
+      expect(url).toBe('https://my-proxy.corp/anthropic-v1/models');
+      expect(url).not.toContain('api.anthropic.com');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

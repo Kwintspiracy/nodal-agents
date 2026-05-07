@@ -12,17 +12,19 @@ import {
 import { prettyProviderName } from '@/lib/provider-names.ts';
 
 // Inline preset table — packages/llm is server-only, so we can't import its
-// PROVIDER_PRESETS map into a client component. The values mirror the cloud
-// providers' canonical base-URLs and the local-LLM defaults.
+// PROVIDER_PRESETS map into a client component. Canonical URLs shown as
+// placeholders so users have a known-good default to start from. Cloud
+// providers can leave the field blank (server falls back to canonical);
+// openai-compatible and ollama require a value.
 const BASE_URL_PRESETS: Record<LlmProvider, string> = {
-  anthropic: '',
-  openai: '',
+  anthropic: 'https://api.anthropic.com/v1',
+  openai: 'https://api.openai.com/v1',
   'openai-compatible': 'http://localhost:1234/v1',
   ollama: 'http://localhost:11434',
   openrouter: 'https://openrouter.ai/api/v1',
-  google: '',
-  mistral: '',
-  groq: '',
+  google: 'https://generativelanguage.googleapis.com/v1beta',
+  mistral: 'https://api.mistral.ai/v1',
+  groq: 'https://api.groq.com/openai/v1',
 };
 
 const DEFAULT_MODEL_PRESETS: Record<LlmProvider, string> = {
@@ -217,13 +219,18 @@ export default function LlmKeyForm(props: Props) {
       <div>
         <label className="block text-xs text-neutral-500 mb-1" htmlFor="llm-base-url">
           Base URL
-          {!baseUrlPlaceholder && (
-            <span className="ml-2 text-neutral-600">(optional for cloud providers)</span>
+          {provider === 'openai-compatible' || provider === 'ollama' ? (
+            <span className="ml-2 text-amber-400">(required)</span>
+          ) : (
+            <span className="ml-2 text-neutral-600">
+              (optional — defaults to provider&apos;s canonical)
+            </span>
           )}
         </label>
         <input
           id="llm-base-url"
           type="text"
+          required={provider === 'openai-compatible' || provider === 'ollama'}
           value={baseUrl}
           onChange={(e) => {
             setBaseUrl(e.target.value);

@@ -2536,49 +2536,60 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
     }
 
     // ── Build the test request per provider ────────────────────────────────────
-    let url: string;
-    const headers: Record<string, string> = { Accept: 'application/json' };
-
-    switch (provider) {
-      case 'anthropic':
-        url = 'https://api.anthropic.com/v1/models';
-        if (apiKey) headers['x-api-key'] = apiKey;
-        headers['anthropic-version'] = '2023-06-01';
-        break;
-      case 'openai':
-        url = 'https://api.openai.com/v1/models';
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        break;
-      case 'openrouter':
-        url = 'https://openrouter.ai/api/v1/models';
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        break;
-      case 'google':
-        // Google uses a query-string key; never put the key in the URL we
-        // log/redact-prep. Build it locally only for the fetch.
-        url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey ?? '')}`;
-        break;
-      case 'mistral':
-        url = 'https://api.mistral.ai/v1/models';
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        break;
-      case 'groq':
-        url = 'https://api.groq.com/openai/v1/models';
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        break;
-      case 'openai-compatible':
-        if (!baseUrl) return fail('validation_failed', 'baseUrl is required for openai-compatible');
-        url = `${baseUrl.replace(/\/$/, '')}/models`;
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-        break;
-      case 'ollama':
-        if (!baseUrl) return fail('validation_failed', 'baseUrl is required for ollama');
-        url = `${baseUrl.replace(/\/$/, '')}/api/tags`;
-        break;
-      default: {
-        const _exhaustive: never = provider;
-        return fail('validation_failed', `Unknown provider: ${String(_exhaustive)}`);
+    // Each provider has a canonical base URL; the user's baseUrl (if set)
+    // takes precedence so proxies / alternate regions / mocks can be tested.
+    // The validation path is always the auth-required endpoint for that
+    // provider — `/models` is public on OpenRouter so we hit `/auth/key`
+    // there instead, which 401s on a bad key.
+    const PROVIDER_TEST_CONFIG: Record<
+      typeof provider,
+      {
+        canonicalBase: string | null;
+        path: string;
+        auth: 'bearer' | 'x-api-key' | 'query' | 'none';
       }
+    > = {
+      anthropic: {
+        canonicalBase: 'https://api.anthropic.com/v1',
+        path: '/models',
+        auth: 'x-api-key',
+      },
+      openai: { canonicalBase: 'https://api.openai.com/v1', path: '/models', auth: 'bearer' },
+      openrouter: {
+        canonicalBase: 'https://openrouter.ai/api/v1',
+        path: '/auth/key',
+        auth: 'bearer',
+      },
+      google: {
+        canonicalBase: 'https://generativelanguage.googleapis.com/v1beta',
+        path: '/models',
+        auth: 'query',
+      },
+      mistral: { canonicalBase: 'https://api.mistral.ai/v1', path: '/models', auth: 'bearer' },
+      groq: { canonicalBase: 'https://api.groq.com/openai/v1', path: '/models', auth: 'bearer' },
+      'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
+      ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
+    };
+
+    const cfg = PROVIDER_TEST_CONFIG[provider];
+    // Resolve the effective base: user-provided wins, else canonical.
+    // openai-compatible and ollama require a user-provided baseUrl.
+    const effectiveBase = (baseUrl ?? '').replace(/\/$/, '') || cfg.canonicalBase;
+    if (!effectiveBase) {
+      return fail('validation_failed', `baseUrl is required for ${provider}`);
+    }
+
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    let url = `${effectiveBase}${cfg.path}`;
+
+    if (cfg.auth === 'bearer' && apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    if (cfg.auth === 'x-api-key' && apiKey) {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    }
+    if (cfg.auth === 'query') {
+      // Google uses ?key=... — built locally only for the fetch, never logged.
+      url = `${url}?key=${encodeURIComponent(apiKey ?? '')}`;
     }
 
     const res = await fetch(url, { method: 'GET', headers });
