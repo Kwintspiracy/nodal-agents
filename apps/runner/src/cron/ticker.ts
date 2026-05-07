@@ -6,7 +6,6 @@
 
 import { runCronTick } from './tick.ts';
 import type { RunnerDeps } from '../deps.ts';
-import type { RunnerEnv } from '../env.ts';
 
 // ─── TickerHandle ─────────────────────────────────────────────────────────────
 
@@ -29,7 +28,6 @@ export function startCronTicker(
   opts: {
     intervalMs?: number;
     onError?: (e: unknown) => void;
-    env?: Pick<RunnerEnv, 'TELEGRAM_BOT_TOKEN'>;
   } = {},
 ): TickerHandle {
   const intervalMs = opts.intervalMs ?? 120_000;
@@ -41,7 +39,7 @@ export function startCronTicker(
 
   const intervalId = setInterval(() => {
     // Fire and forget — errors are caught and logged, next tick will retry
-    runCronTick(deps, 5, opts.env).catch(onError);
+    runCronTick(deps, 5).catch(onError);
   }, intervalMs);
 
   return {

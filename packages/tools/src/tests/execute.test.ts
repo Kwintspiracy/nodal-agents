@@ -59,6 +59,7 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
     agentId: seed.agentId,
     entityId: seed.entityId,
     db: db as unknown as ToolContext['db'],
+    jobChatId: null,
     ...overrides,
   };
 }

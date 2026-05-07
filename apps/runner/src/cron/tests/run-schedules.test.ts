@@ -134,20 +134,6 @@ async function createSchedule(overrides: {
   return rows[0]!;
 }
 
-/** Seed a prior Telegram conversation row so the auto-resolver finds a chatId. */
-async function seedTelegramConversation(chatId: string) {
-  await db.insert(agentJobs).values({
-    entityId: seed.entityId,
-    agentId: seed.agentId,
-    channel: 'telegram',
-    chatId,
-    task: 'previous user message',
-    status: 'completed',
-    result: 'previous bot reply',
-    messages: [],
-  });
-}
-
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('runScheduleTick', () => {
@@ -274,83 +260,6 @@ describe('runScheduleTick', () => {
     // last_run set, last_status not 'failed'
     expect(after[0]?.lastRun).toBeInstanceOf(Date);
     expect(after[0]?.lastStatus).not.toBe('failed');
-  });
-
-  it('auto-resolves channel=telegram + chatId from the agent`s last Telegram conversation', async () => {
-    await seedTelegramConversation('987654321');
-    const sched = await createSchedule({
-      nextRun: null,
-      task: 'Auto-route to last telegram chat',
-    });
-
-    const deps = makeDeps(db, [{ text: 'Hi from cron.' }]);
-    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
-
-    const jobs = await db
-      .select({
-        channel: agentJobs.channel,
-        chatId: agentJobs.chatId,
-        task: agentJobs.task,
-      })
-      .from(agentJobs)
-      .where(eq(agentJobs.agentId, seed.agentId));
-
-    const fired = jobs.find((j) => j.task === 'Auto-route to last telegram chat');
-    expect(fired).toBeDefined();
-    expect(fired?.channel).toBe('telegram');
-    expect(fired?.chatId).toBe('987654321');
-
-    const after = await db
-      .select({ lastStatus: agentSchedules.lastStatus })
-      .from(agentSchedules)
-      .where(eq(agentSchedules.id, sched.id));
-    expect(after[0]?.lastStatus).toBe('success');
-  });
-
-  it('falls back to channel=cron when agent has no prior Telegram conversation', async () => {
-    // Create a fresh agent with no Telegram history
-    const freshAgent = (
-      await db
-        .insert(agents)
-        .values({
-          entityId: seed.entityId,
-          slug: 'cron-only-agent',
-          name: 'Cron Only',
-          role: 'agent',
-          systemAgent: true,
-          personality: 'A test worker with no telegram history.',
-        })
-        .returning()
-    )[0]!;
-
-    const rows = await db
-      .insert(agentSchedules)
-      .values({
-        entityId: seed.entityId,
-        agentId: freshAgent.id,
-        type: 'cron',
-        name: 'No telegram history',
-        cronExpr: '0 9 * * *',
-        task: 'Log-only task',
-        active: true,
-        nextRun: null,
-      })
-      .returning();
-    const sched = rows[0]!;
-
-    const deps = makeDeps(db, [{ text: 'log only' }]);
-    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
-
-    const jobs = await db
-      .select({ channel: agentJobs.channel, chatId: agentJobs.chatId, task: agentJobs.task })
-      .from(agentJobs)
-      .where(eq(agentJobs.agentId, freshAgent.id));
-
-    const fired = jobs.find((j) => j.task === 'Log-only task');
-    expect(fired).toBeDefined();
-    expect(fired?.channel).toBe('cron');
-    expect(fired?.chatId).toBeNull();
-    void sched;
   });
 
   it('marks failed when the fired job fails', async () => {

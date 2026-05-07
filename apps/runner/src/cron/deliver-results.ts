@@ -1,21 +1,16 @@
 // cron/deliver-results.ts — deliverCompletedRoots
 // For each root_job_id whose tasks are all terminal (done/failed/cancelled),
-// compile results, call delivery stub, mark root job completed, and stamp a
-// delivery_done flag so the same root is never delivered twice.
+// compile task results and mark the root job completed.
 //
-// Idempotency: we check delivered_at on root job (completedAt is set when
-// we deliver). A second tick finds the root job already completed and skips.
+// Idempotency: completedAt acts as the done flag — if it's already set,
+// the root is skipped. The conditional UPDATE prevents double-processing
+// under concurrent ticks.
 
 import { and, eq, isNotNull, isNull } from '@nodalai/db';
 import { agentJobs, agentTasks } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 import { checkRootJobComplete } from '@nodalai/orchestration';
 import type { JobId } from '@nodalai/orchestration';
-import { deliverResult } from '../job/delivery-stub.ts';
-
-export interface DeliveryEnv {
-  TELEGRAM_BOT_TOKEN?: string;
-}
 
 // ─── deliverCompletedRoots ────────────────────────────────────────────────────
 
@@ -23,16 +18,16 @@ export interface DeliveryEnv {
  * Bug from legacy (inject_delegation.wrong_status): task results were silently
  * lost because delivery was only triggered on the parent job completing, but
  * planner tasks run async AFTER the parent job completes. This function finds
- * all root jobs whose tasks have all finished and delivers the compiled result.
+ * all root jobs whose tasks have all finished and compiles + marks the result.
  *
- * Idempotency: each root job is delivered at most once. The root job's
- * `completedAt` column is used as the delivery-done flag — if it's already
+ * Idempotency: each root job is marked at most once. The root job's
+ * `completedAt` column is used as the done flag — if it's already
  * set, we skip. The update is conditional (`WHERE completed_at IS NULL`) to
- * prevent double-delivery under concurrent ticks.
+ * prevent double-processing under concurrent ticks.
  *
- * @returns count of root jobs delivered
+ * @returns count of root jobs completed
  */
-export async function deliverCompletedRoots(db: AnyDrizzleDb, env?: DeliveryEnv): Promise<number> {
+export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
   // Find distinct root_job_ids that have at least one task and haven't been delivered
   const rootJobCandidates = await db
     .selectDistinct({ rootJobId: agentTasks.rootJobId })
@@ -104,9 +99,6 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb, env?: DeliveryEnv)
       // Another concurrent tick won the race — skip delivery
       continue;
     }
-
-    // Deliver via @nodalai/delivery (dispatches to Telegram / email / log)
-    await deliverResult(rootJobId, { db, env: { TELEGRAM_BOT_TOKEN: env?.TELEGRAM_BOT_TOKEN } });
 
     delivered++;
   }

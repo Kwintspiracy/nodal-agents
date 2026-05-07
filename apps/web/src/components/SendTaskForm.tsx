@@ -10,7 +10,10 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
   const router = useRouter();
+
+  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -71,7 +74,8 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
             id="task-agent"
             name="agentId"
             required
-            defaultValue=""
+            value={selectedAgentId}
+            onChange={(e) => setSelectedAgentId(e.target.value)}
             className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
           >
             <option value="" disabled>
@@ -100,6 +104,18 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
           </select>
         </div>
       </div>
+
+      {selectedAgent?.telegramBotToken && selectedAgent?.lastSeenChatIdTelegram && (
+        <label className="flex items-center gap-2 text-sm text-neutral-300">
+          <input
+            type="checkbox"
+            name="sendViaTelegram"
+            value="true"
+            className="rounded border border-neutral-700 bg-neutral-800 accent-white"
+          />
+          Send result via Telegram (chat: {selectedAgent.lastSeenChatIdTelegram})
+        </label>
+      )}
 
       <div className="flex gap-2 pt-1">
         <button

@@ -85,6 +85,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       telegram_bot_token text,
       telegram_bot_username text,
       telegram_offset bigint,
+      last_seen_chat_id_telegram text,
       requires_approval text[] DEFAULT '{}',
       capabilities text[] DEFAULT '{}',
       task_context_template text,

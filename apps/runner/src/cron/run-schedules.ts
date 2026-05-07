@@ -8,39 +8,13 @@
 // Idempotent: two concurrent ticks can't fire the same schedule twice — the
 // conditional UPDATE acts as the lock.
 
-import { and, desc, eq, isNotNull, isNull, lte, or } from '@nodalai/db';
+import { and, eq, isNull, lte, or } from '@nodalai/db';
 import { agentSchedules, agentJobs } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { JobId } from '@nodalai/orchestration';
-
-/**
- * Resolve the most recent Telegram chat this agent has talked to. Cron-fired
- * jobs have no incoming chatId of their own, so we reuse the agent's most
- * recent Telegram conversation as the delivery target. If the agent has
- * never been DM'd, returns null and the job stays on channel='cron' (logs).
- */
-async function resolveLatestTelegramChat(
-  db: AnyDrizzleDb,
-  agentId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ chatId: agentJobs.chatId })
-    .from(agentJobs)
-    .where(
-      and(
-        eq(agentJobs.agentId, agentId),
-        eq(agentJobs.channel, 'telegram'),
-        isNotNull(agentJobs.chatId),
-      ),
-    )
-    .orderBy(desc(agentJobs.createdAt))
-    .limit(1);
-
-  return rows[0]?.chatId ?? null;
-}
 
 // ─── runScheduleTick ──────────────────────────────────────────────────────────
 
@@ -125,19 +99,17 @@ export async function runScheduleTick(
 
     if (claimed.length === 0) continue; // Concurrent tick won
 
-    // Auto-resolve delivery target: the agent's most recent Telegram chat.
-    // If the agent has been DM'd at least once, the cron result posts back
-    // to that conversation. If never, falls back to channel='cron' (logs).
-    const resolvedChatId = await resolveLatestTelegramChat(db, sched.agentId);
-    const channel: 'telegram' | 'cron' = resolvedChatId ? 'telegram' : 'cron';
-
+    // Cron-fired jobs always have channel='cron' and no chatId.
+    // The agent decides how to deliver its result (e.g. via telegram_send_message
+    // if it has a telegramBotToken configured). The platform does not infer a
+    // recipient from prior conversations — that was the band-aid, now removed.
     const [job] = await db
       .insert(agentJobs)
       .values({
         entityId: sched.entityId,
         agentId: sched.agentId,
-        channel,
-        chatId: resolvedChatId,
+        channel: 'cron',
+        chatId: null,
         task: sched.task,
         status: 'pending',
         messages: [{ role: 'user', content: sched.task }],

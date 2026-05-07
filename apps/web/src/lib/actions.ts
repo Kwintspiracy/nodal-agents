@@ -9,6 +9,7 @@ import {
   and,
   desc,
   inArray,
+  notInArray,
   sql,
   agents,
   agentAssignments,
@@ -29,6 +30,7 @@ import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { computeNextRun } from './cron.ts';
+import { formatPromptDeliverySuffix, type DeliveryChannel } from './delivery-suffix.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,6 +92,10 @@ const SendTaskSchema = z.object({
   prompt: z.string().min(1),
   agentId: z.string().uuid('Must select a valid agent'),
   priority: z.enum(['low', 'medium', 'high']).default('medium'),
+  sendViaTelegram: z
+    .union([z.literal('true'), z.literal('false'), z.boolean()])
+    .optional()
+    .transform((v) => v === true || v === 'true'),
 });
 
 // ─── Agent Actions ────────────────────────────────────────────────────────────
@@ -105,6 +111,8 @@ export type AgentRow = {
   isDefault: boolean | null;
   role: string | null;
   createdAt: Date | null;
+  telegramBotToken: string | null;
+  lastSeenChatIdTelegram: string | null;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -149,8 +157,7 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
     // role/orchestrator_mode mapping. The DB enum is { agent, orchestrator,
     // system } — we expose a friendlier UX-level enum (worker/router/planner)
     // and translate here.
-    const dbRole = role === 'worker' ? 'agent' : 'orchestrator';
-    const orchestratorMode = role === 'worker' ? null : role;
+    const { dbRole, orchestratorMode } = mapRoleToDb(role);
 
     const [row] = await db
       .insert(agents)
@@ -207,6 +214,120 @@ export async function deleteAgentAction(id: string): Promise<ActionResult<void>>
   } catch (err) {
     console.error('[deleteAgentAction]', err);
     return fail('db_error', 'Failed to delete agent');
+  }
+}
+
+// ─── Agent update ─────────────────────────────────────────────────────────────
+
+const UpdateAgentSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  personality: z.string().min(1),
+  model: z.string().min(1),
+  role: z.enum(['worker', 'router', 'planner']),
+  subAgentIds: z.array(z.string().uuid()).default([]),
+  // slug NOT here — it is a stable identifier. Excluded at schema level so
+  // even a raw payload with a slug field is silently stripped by safeParse.
+});
+
+// Shared role/orchestratorMode mapping used by both create and update.
+function mapRoleToDb(role: 'worker' | 'router' | 'planner'): {
+  dbRole: 'agent' | 'orchestrator';
+  orchestratorMode: 'router' | 'planner' | null;
+} {
+  if (role === 'worker') return { dbRole: 'agent', orchestratorMode: null };
+  return { dbRole: 'orchestrator', orchestratorMode: role };
+}
+
+export async function updateAgentAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = UpdateAgentSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { id, name, personality, model, role, subAgentIds } = parsed.data;
+    const db = getDb();
+
+    // Verify agent exists and belongs to this entity
+    const [existing] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Agent not found');
+
+    const { dbRole, orchestratorMode } = mapRoleToDb(role);
+
+    // Update core fields
+    await db
+      .update(agents)
+      .set({ name, personality, model, role: dbRole, orchestratorMode, updatedAt: new Date() })
+      .where(eq(agents.id, id));
+
+    // Rewrite sub-agent assignments atomically: delete existing, insert new
+    await db.delete(agentAssignments).where(eq(agentAssignments.orchestratorId, id));
+    if (role !== 'worker' && subAgentIds.length > 0) {
+      await db.insert(agentAssignments).values(
+        subAgentIds.map((subId) => ({
+          orchestratorId: id,
+          subAgentId: subId,
+          entityId: session.entityId,
+        })),
+      );
+    }
+
+    // Invalidate cached system_prompt for active (in-flight) jobs only.
+    // Completed/failed/cancelled jobs keep their historical prompt for audit.
+    await db
+      .update(agentJobs)
+      .set({ systemPrompt: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(agentJobs.agentId, id),
+          notInArray(agentJobs.status, ['completed', 'failed', 'cancelled']),
+        ),
+      );
+
+    revalidatePath('/agents');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateAgentAction]', err);
+    return fail('db_error', 'Failed to update agent');
+  }
+}
+
+export type AgentEditRow = AgentRow & {
+  orchestratorMode: string | null;
+  subAgentIds: string[];
+};
+
+export async function getAgentForEditAction(id: string): Promise<ActionResult<AgentEditRow>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'Agent not found');
+
+    const assignments = await db
+      .select({ subAgentId: agentAssignments.subAgentId })
+      .from(agentAssignments)
+      .where(eq(agentAssignments.orchestratorId, id));
+
+    const fullRow = row as AgentRow & { orchestratorMode: string | null };
+    return ok({
+      ...fullRow,
+      orchestratorMode: fullRow.orchestratorMode ?? null,
+      subAgentIds: assignments.map((a) => a.subAgentId),
+    });
+  } catch (err) {
+    console.error('[getAgentForEditAction]', err);
+    return fail('db_error', 'Failed to load agent');
   }
 }
 
@@ -286,6 +407,21 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
+    // Resolve delivery channels (prompt injection — channel stays 'api', chatId stays null)
+    const channels: DeliveryChannel[] = [];
+    if (parsed.data.sendViaTelegram) {
+      const [agentTg] = await db
+        .select({ chatId: agents.lastSeenChatIdTelegram })
+        .from(agents)
+        .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)))
+        .limit(1);
+      if (!agentTg?.chatId) {
+        return fail('no_telegram_recipient_known', 'DM the bot first to register a recipient.');
+      }
+      channels.push({ kind: 'telegram', identifier: agentTg.chatId });
+    }
+    const finalTask = parsed.data.prompt + formatPromptDeliverySuffix(channels);
+
     // Insert job
     const [job] = await db
       .insert(agentJobs)
@@ -294,7 +430,7 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
         agentId: agent.id,
         status: 'pending',
         channel: 'api',
-        task: parsed.data.prompt,
+        task: finalTask,
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');
@@ -456,6 +592,7 @@ export type TelegramConfigRow = {
   agentName: string;
   status: TelegramConfigStatus;
   botUsername: string | null;
+  lastSeenChatIdTelegram: string | null;
 };
 
 const ConfigureTelegramSchema = z.object({
@@ -484,6 +621,7 @@ export async function getAgentTelegramConfigAction(
         name: agents.name,
         botToken: agents.telegramBotToken,
         botUsername: agents.telegramBotUsername,
+        lastSeenChatIdTelegram: agents.lastSeenChatIdTelegram,
       })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
@@ -496,6 +634,7 @@ export async function getAgentTelegramConfigAction(
       agentName: row.name,
       status: row.botToken ? 'connected' : 'disconnected',
       botUsername: row.botUsername,
+      lastSeenChatIdTelegram: row.lastSeenChatIdTelegram,
     });
   } catch (err) {
     console.error('[getAgentTelegramConfigAction]', err);
@@ -580,6 +719,7 @@ export async function configureAgentTelegramAction(
       agentName: agent.name,
       status: 'connected',
       botUsername: botInfo.username,
+      lastSeenChatIdTelegram: null,
     });
   } catch (err) {
     console.error('[configureAgentTelegramAction]', err);

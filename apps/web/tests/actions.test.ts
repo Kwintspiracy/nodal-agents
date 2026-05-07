@@ -1629,3 +1629,356 @@ describe('updateAuthSettingsAction', () => {
     expect(patch.auth.googleClientSecret).toBe('new-secret');
   });
 });
+
+// ─── updateAgentAction ────────────────────────────────────────────────────────
+
+describe('updateAgentAction — validation', () => {
+  it('rejects non-uuid id', async () => {
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'not-a-uuid',
+      name: 'Test',
+      personality: 'Hi',
+      model: 'gpt-4',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty name', async () => {
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: '',
+      personality: 'Hi',
+      model: 'gpt-4',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects invalid role', async () => {
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'Test',
+      personality: 'Hi',
+      model: 'gpt-4',
+      role: 'super-agent',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('strips slug even if passed in raw payload (slug is not in schema)', async () => {
+    // This is a security invariant: slug must be immutable.
+    // We verify by confirming that a payload WITH a slug field still parses
+    // OK (no validation_failed from slug presence), and then the DB update
+    // path does NOT include slug in the set(...) call.
+    // Here we mock the DB to return not_found (empty) so the action aborts
+    // after schema validation — we just care that validation_failed is NOT
+    // the result code.
+    currentDb = makeDb([]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'Renamed',
+      personality: 'Hi',
+      model: 'gpt-4',
+      role: 'worker',
+      slug: 'injected-slug', // should be silently stripped by safeParse
+    });
+    // validation_failed would mean schema rejected the input — that would be
+    // wrong. We expect not_found (no agent in mock DB) or ok.
+    expect(r.ok === false && (r as { code: string }).code === 'validation_failed').toBe(false);
+  });
+});
+
+describe('updateAgentAction — db path', () => {
+  it('returns not_found when agent does not belong to entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb; // ownership select returns empty
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'Test',
+      personality: 'Hi',
+      model: 'gpt-4',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('happy path — UPDATE receives correct fields for worker role', async () => {
+    // The chain mock returns the same rows for every awaited query.
+    // One row with id is enough: satisfies the ownership select AND the
+    // update/delete/update chains (they don't inspect the row).
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000001' }]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000001',
+      name: 'New Name',
+      personality: 'Updated personality.',
+      model: 'claude-sonnet-4-6',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    // First update call is the agents table SET
+    const setCalls = updateSpy.mock.results
+      .map((res) => (res.value as { set?: ReturnType<typeof vi.fn> }).set)
+      .filter(Boolean);
+    const firstSet = setCalls[0];
+    expect(firstSet).toBeDefined();
+    const firstSetArg = (firstSet as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(firstSetArg?.['name']).toBe('New Name');
+    expect(firstSetArg?.['personality']).toBe('Updated personality.');
+    expect(firstSetArg?.['role']).toBe('agent');
+    expect(firstSetArg?.['orchestratorMode']).toBe(null);
+    // slug must NOT appear in the update payload
+    expect(firstSetArg?.['slug']).toBeUndefined();
+  });
+
+  it('maps router role to orchestrator + orchestratorMode=router', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000002' }]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000002',
+      name: 'Router Agent',
+      personality: 'I route.',
+      model: 'gpt-4',
+      role: 'router',
+      subAgentIds: [],
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setCalls = updateSpy.mock.results
+      .map((res) => (res.value as { set?: ReturnType<typeof vi.fn> }).set)
+      .filter(Boolean);
+    const firstSetArg = (setCalls[0] as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(firstSetArg?.['role']).toBe('orchestrator');
+    expect(firstSetArg?.['orchestratorMode']).toBe('router');
+  });
+
+  it('re-inserts sub-agent assignments for router with subAgentIds', async () => {
+    const subId = '22222222-2222-2222-2222-222222222222';
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000003' }]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000003',
+      name: 'Router',
+      personality: 'I route.',
+      model: 'gpt-4',
+      role: 'router',
+      subAgentIds: [subId],
+    });
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+
+    // DELETE must have been called (clear old assignments)
+    expect(deleteSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    // INSERT must have been called with the new sub-agent row
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    const assignmentValues = valuesCalls[0]?.[0] as Array<Record<string, unknown>> | undefined;
+    expect(Array.isArray(assignmentValues)).toBe(true);
+    expect(assignmentValues?.[0]?.['subAgentId']).toBe(subId);
+  });
+
+  it('system_prompt cache invalidation — UPDATE agentJobs with systemPrompt=null for active jobs', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000004' }]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000004',
+      name: 'Agent',
+      personality: 'New personality.',
+      model: 'gpt-4',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    // There should be at least 2 update calls: agents table + agentJobs table
+    expect(updateSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // The chain mock returns the SAME set fn across all .update() calls, so
+    // iterate ALL set call args (not just [0] per result) to find the agentJobs
+    // update — identified by the presence of `systemPrompt` in its set payload.
+    const sharedSet = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> })?.set;
+    expect(sharedSet).toBeDefined();
+    const allSetArgs = sharedSet!.mock.calls.map(
+      (args) => args[0] as Record<string, unknown> | undefined,
+    );
+    const jobsSetArg = allSetArgs.find((arg) => arg !== undefined && 'systemPrompt' in arg);
+
+    expect(jobsSetArg).toBeDefined();
+    expect(jobsSetArg?.['systemPrompt']).toBe(null);
+  });
+});
+
+// ─── sendTaskAction — Telegram delivery channel ────────────────────────────────
+// These tests need sequential db.select() calls to return different rows, so we
+// build a small helper that returns a different chain for each call to select().
+
+function chainOnce(rows: unknown[]): unknown {
+  const p = Promise.resolve(rows);
+  const c: Record<string, unknown> = {
+    then: (onFulfilled: (v: unknown) => unknown, onRejected: (e: unknown) => unknown) =>
+      p.then(onFulfilled, onRejected),
+    catch: (onRejected: (e: unknown) => unknown) => p.catch(onRejected),
+    finally: (onFinally: () => unknown) => p.finally(onFinally),
+  };
+  for (const m of [
+    'from',
+    'where',
+    'orderBy',
+    'limit',
+    'values',
+    'returning',
+    'set',
+    'onConflictDoNothing',
+    'leftJoin',
+    'innerJoin',
+    'rightJoin',
+    'fullJoin',
+    'groupBy',
+    'having',
+    'offset',
+  ]) {
+    c[m] = vi.fn().mockReturnValue(c);
+  }
+  return c;
+}
+
+/** Build a db where select() returns rows from `selectSequence` in order. */
+function makeDbSeq(selectSequence: unknown[][], insertRows: unknown[] = []) {
+  let callIndex = 0;
+  const insertChain = chainOnce(insertRows);
+  const db = {
+    select: vi.fn().mockImplementation(() => {
+      const rows = selectSequence[callIndex] ?? [];
+      callIndex += 1;
+      return chainOnce(rows);
+    }),
+    insert: vi.fn().mockReturnValue(insertChain),
+    delete: vi.fn().mockReturnValue(chainOnce([])),
+    update: vi.fn().mockReturnValue(chainOnce([])),
+  };
+  return db;
+}
+
+const AGENT_UUID = 'aaaaaaaa-1111-1111-1111-111111111111';
+
+describe('sendTaskAction — Telegram delivery channel', () => {
+  it('returns no_telegram_recipient_known when sendViaTelegram=true and lastSeenChatIdTelegram is null', async () => {
+    currentDb = makeDbSeq(
+      [
+        [{ id: AGENT_UUID, slug: 'test-agent' }], // ownership check
+        [{ chatId: null }], // lastSeenChatIdTelegram lookup
+      ],
+      [],
+    ) as typeof currentDb;
+
+    const { sendTaskAction } = await import('../src/lib/actions.ts');
+    const r = await sendTaskAction({
+      prompt: 'Do something',
+      agentId: AGENT_UUID,
+      sendViaTelegram: 'true',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('no_telegram_recipient_known');
+
+    // No insert should have happened
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('injects delivery suffix when sendViaTelegram=true and lastSeenChatIdTelegram is populated', async () => {
+    currentDb = makeDbSeq(
+      [
+        [{ id: AGENT_UUID, slug: 'test-agent' }], // ownership check
+        [{ chatId: '12345' }], // lastSeenChatIdTelegram lookup
+      ],
+      [{ id: 'jobid-1111-1111-1111-111111111111' }], // insert returning
+    ) as typeof currentDb;
+
+    const { sendTaskAction } = await import('../src/lib/actions.ts');
+    const r = await sendTaskAction({
+      prompt: 'Do something',
+      agentId: AGENT_UUID,
+      sendViaTelegram: 'true',
+    });
+    expect(r.ok).toBe(true);
+
+    // Assert on the values passed to insert().values()
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    const jobValues = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
+
+    expect(typeof jobValues?.['task']).toBe('string');
+    expect(jobValues?.['task'] as string).toContain('## Delivery channels');
+    expect(jobValues?.['task'] as string).toContain('Telegram (chat_id: 12345)');
+    expect(jobValues?.['chatId']).toBeUndefined(); // dashboard job: no chatId
+    expect(jobValues?.['channel']).toBe('api');
+  });
+
+  it('does NOT inject suffix when sendViaTelegram is absent (regression)', async () => {
+    currentDb = makeDbSeq(
+      [
+        [{ id: AGENT_UUID, slug: 'test-agent' }], // ownership check only (no TG lookup)
+      ],
+      [{ id: 'jobid-2222-2222-2222-222222222222' }],
+    ) as typeof currentDb;
+
+    const { sendTaskAction } = await import('../src/lib/actions.ts');
+    const r = await sendTaskAction({
+      prompt: 'Plain prompt',
+      agentId: AGENT_UUID,
+    });
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    const jobValues = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
+
+    expect(jobValues?.['task']).toBe('Plain prompt');
+    expect(jobValues?.['task'] as string).not.toContain('## Delivery channels');
+    expect(jobValues?.['chatId']).toBeUndefined();
+    expect(jobValues?.['channel']).toBe('api');
+  });
+
+  it('returns not_found when sendViaTelegram=true but agent belongs to a different entity', async () => {
+    // First select returns [] → agent not found under entity
+    currentDb = makeDbSeq(
+      [
+        [], // ownership check: empty → not found
+      ],
+      [],
+    ) as typeof currentDb;
+
+    const { sendTaskAction } = await import('../src/lib/actions.ts');
+    const r = await sendTaskAction({
+      prompt: 'Do something',
+      agentId: AGENT_UUID,
+      sendViaTelegram: 'true',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});

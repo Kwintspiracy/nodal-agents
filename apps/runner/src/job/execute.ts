@@ -21,6 +21,7 @@ import {
   computeToolChoice,
   executeTool,
   ALWAYS_ON_TOOLS,
+  createTelegramSendMessageTool,
 } from '@nodalai/tools';
 import type { ToolDefinition, ApprovalRule } from '@nodalai/tools';
 import {
@@ -43,38 +44,8 @@ import type { AgentId, JobId, EntityId, OrchestratorMode, Agent } from '@nodalai
 import type { z } from 'zod';
 import type { CoreMessage } from 'ai';
 import { failJob, completeJob, setJobStatus, saveCheckpoint } from './state.ts';
-import { deliverResult } from './delivery-stub.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-
-// ─── resolveRootChannel ──────────────────────────────────────────────────────
-// Walks up the parent_job_id chain to find the channel of the root job.
-// Why: a delegated child has channel='internal' (router) or 'task-board' (planner)
-// — those are runtime routing labels, NOT what the user sees. The user-facing
-// channel is the root job's. The system prompt's Delivery context block must
-// reflect the root, otherwise children think their reply goes "nowhere user-
-// facing" and produce text like "I have no tool for Telegram".
-//
-// Bounded by DEFAULT_LIMITS.maxDelegationDepth (3) — at worst 3 SELECTs.
-
-async function resolveRootChannel(
-  db: RunnerDeps['db'],
-  startJob: { channel: string; parentJobId: string | null },
-): Promise<string> {
-  let current = startJob;
-  for (let hop = 0; hop < 5; hop++) {
-    if (!current.parentJobId) return current.channel;
-    const rows = await db
-      .select({ channel: agentJobs.channel, parentJobId: agentJobs.parentJobId })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, current.parentJobId))
-      .limit(1);
-    if (!rows[0]) return current.channel;
-    current = rows[0];
-  }
-  // Defensive: if depth exceeds the cap, fall back to whatever we have
-  return current.channel;
-}
 
 // ─── JobStatus type (what we return) ─────────────────────────────────────────
 
@@ -214,18 +185,9 @@ export async function executeJob(
   const isOrchestrator = agent.role === 'orchestrator';
 
   // ── 6. Build system prompt ────────────────────────────────────────────────────
-  // Pass the ROOT job's channel as deliveryContext, not job.channel directly:
-  // for a delegated child, job.channel is 'internal' or 'task-board' (routing
-  // label), but the user sees the root's channel (telegram, slack, etc.). All
-  // agents in a delegation chain should see the same delivery context — the
-  // one that reflects how the user will receive the eventual reply.
   let systemPrompt = job.systemPrompt;
   if (!systemPrompt) {
-    const effectiveChannel = await resolveRootChannel(db, {
-      channel: job.channel,
-      parentJobId: job.parentJobId ?? null,
-    });
-    systemPrompt = await buildSystemPrompt(agent, db, { channel: effectiveChannel });
+    systemPrompt = await buildSystemPrompt(agent, db);
     await db
       .update(agentJobs)
       .set({ systemPrompt, updatedAt: new Date() })
@@ -244,14 +206,27 @@ export async function executeJob(
     .map((n) => registry.get(n))
     .filter((t): t is AnyToolDef => t !== undefined);
 
+  // Capability tools: computed from agent's configured integrations.
+  // These are instantiated per-job and merged directly into toolDefs/toolMap.
+  // CRITICAL: do NOT register into the shared registry — the registry is
+  // process-scoped and shared across all concurrent jobs. Mutating it here
+  // would leak the tool's availability to other agents that share the same
+  // RunnerDeps instance, breaking invariant #9 (whitelist explicit per agent).
+  // capabilityTools bypasses computeToolWhitelist's registry-based drift check
+  // because the definition itself is passed, not just its name.
+  const capabilityTools: AnyToolDef[] = [];
+  if (agentRow.telegramBotToken) {
+    capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
+  }
+
   try {
     if (isOrchestrator) {
       if (orchestratorMode === 'router') {
         const assignTools = (await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[];
         const returnResult = registry.get('return_result');
         toolDefs = returnResult
-          ? [...assignTools, ...memoryBuiltins, returnResult]
-          : [...assignTools, ...memoryBuiltins];
+          ? [...assignTools, ...memoryBuiltins, returnResult, ...capabilityTools]
+          : [...assignTools, ...memoryBuiltins, ...capabilityTools];
       } else {
         const [createTaskTool, listTasksTool] = generateTaskTools(agent.id, db);
         const returnResult = registry.get('return_result');
@@ -261,15 +236,17 @@ export async function executeJob(
               listTasksTool as unknown as AnyToolDef,
               ...memoryBuiltins,
               returnResult,
+              ...capabilityTools,
             ]
           : [
               createTaskTool as unknown as AnyToolDef,
               listTasksTool as unknown as AnyToolDef,
               ...memoryBuiltins,
+              ...capabilityTools,
             ];
       }
     } else {
-      // Worker: whitelist from skill assignments + always-on tools
+      // Worker: whitelist from skill assignments + always-on tools + capability tools
       const skillRows = await db
         .select({ skillId: agentSkillAssignments.skillId })
         .from(agentSkillAssignments)
@@ -294,6 +271,7 @@ export async function executeJob(
           alwaysOn: [...ALWAYS_ON_TOOLS],
         },
         registry,
+        capabilityTools,
       );
     }
   } catch (err) {
@@ -401,10 +379,6 @@ export async function executeJob(
         const textContent = response.text ?? '';
         if (textContent) {
           await completeJob(db, jobId as string, textContent, toolsUsed, runStats());
-          await deliverResult(jobId as string, {
-            db,
-            env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
-          });
           return { status: 'completed', result: textContent };
         }
         // No text, no tool calls — fail loud (invariant 4)
@@ -468,7 +442,13 @@ export async function executeJob(
             await executeTool(
               toolDef,
               call.input,
-              { jobId: jobId as string, agentId: agentRow.id, entityId: job.entityId ?? '', db },
+              {
+                jobId: jobId as string,
+                agentId: agentRow.id,
+                entityId: job.entityId ?? '',
+                db,
+                jobChatId: job.chatId ?? null,
+              },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },
             );
           } catch (err) {
@@ -576,7 +556,13 @@ export async function executeJob(
         const toolResult = await executeTool(
           toolDef,
           call.input,
-          { jobId: jobId as string, agentId: agentRow.id, entityId: job.entityId ?? '', db },
+          {
+            jobId: jobId as string,
+            agentId: agentRow.id,
+            entityId: job.entityId ?? '',
+            db,
+            jobChatId: job.chatId ?? null,
+          },
           {
             approvalRules: approvalRuleList,
             onApprovalRequired: async () => {},
@@ -619,6 +605,49 @@ export async function executeJob(
         });
         await setJobStatus(db, jobId as string, 'awaiting_approval');
         return { status: 'awaiting_approval' };
+      }
+
+      // j-pré. Detect tool errors in the same turn as return_result. If a
+      // sibling tool errored, do NOT finalize: inject the error into messages
+      // and re-loop so the LLM sees it next turn. Without this guard, a turn
+      // like [telegram_send_message (error), return_result] would silently
+      // finalize the job claiming success even though the side-effect failed
+      // — direct violation of invariant #4 (no silent fallbacks).
+      const turnHadSiblingToolError =
+        returnResultCall !== undefined &&
+        toolResultBlocks.some(
+          (block) =>
+            block.toolName !== 'return_result' &&
+            block.result !== null &&
+            typeof block.result === 'object' &&
+            'error' in (block.result as Record<string, unknown>),
+        );
+
+      if (returnResultCall && turnHadSiblingToolError) {
+        const erroredTools = toolResultBlocks
+          .filter(
+            (b) =>
+              b.toolName !== 'return_result' &&
+              b.result !== null &&
+              typeof b.result === 'object' &&
+              'error' in (b.result as Record<string, unknown>),
+          )
+          .map((b) => b.toolName);
+        trace('return_result_skipped_due_to_tool_error', { turn, erroredTools });
+
+        // Synthesize a tool-result for return_result so the message-structure
+        // invariant holds (every tool_use must have a matching tool_result).
+        // The LLM gets to see both the sibling errors AND a "deferred" marker
+        // for return_result, then chooses whether to retry the failed tool or
+        // call return_result again with status='blocked'.
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: returnResultCall.toolCallId,
+          toolName: 'return_result',
+          result: { error: 'deferred: sibling tool error must be addressed first' },
+        });
+        messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
+        continue;
       }
 
       // j-bis. return_result finalization — runs AFTER all sibling tools have
@@ -670,10 +699,6 @@ export async function executeJob(
 
         trace('completeJob_call', { turn, toolsUsed, stats: runStats() });
         await completeJob(db, jobId as string, finalResult, toolsUsed, runStats());
-        await deliverResult(jobId as string, {
-          db,
-          env: { TELEGRAM_BOT_TOKEN: _runnerEnv?.TELEGRAM_BOT_TOKEN },
-        });
         trace('exit_completed_via_return_result');
         return { status: 'completed', result: finalResult };
       }

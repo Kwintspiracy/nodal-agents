@@ -41,6 +41,19 @@ export default async function AgentTelegramPage({ params }: { params: Promise<{ 
 
       <TelegramConfigForm agentId={cfg.agentId} initialConfig={cfg} />
 
+      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-5 py-4 space-y-1">
+        <p className="text-xs font-medium text-neutral-500 uppercase tracking-wide">
+          Last connected chat
+        </p>
+        {cfg.lastSeenChatIdTelegram ? (
+          <p className="text-sm text-neutral-200 font-mono">{cfg.lastSeenChatIdTelegram}</p>
+        ) : (
+          <p className="text-sm text-neutral-500">
+            No chat seen yet — DM the bot from your Telegram account to register a recipient.
+          </p>
+        )}
+      </div>
+
       <details className="text-sm text-neutral-500">
         <summary className="cursor-pointer hover:text-neutral-300">How to get a bot token</summary>
         <ol className="mt-3 ml-5 list-decimal space-y-1.5">

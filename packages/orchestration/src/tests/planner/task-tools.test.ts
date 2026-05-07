@@ -86,7 +86,7 @@ describe('generateTaskTools', () => {
     it('inserts a real row into agent_tasks', async () => {
       const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
       const [createTask] = generateTaskTools(plannerId as AgentId, db);
-      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db };
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
       const result = await createTask!.execute(
         {
@@ -113,7 +113,7 @@ describe('generateTaskTools', () => {
     it('assigns to agent by slug (resolves to agent_id)', async () => {
       const { entityId, plannerId, workerSlug, workerId, jobId } = await seedContext(db);
       const [createTask] = generateTaskTools(plannerId as AgentId, db);
-      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db };
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
       const result = await createTask!.execute(
         { title: 'Slug test task', assigned_to: workerSlug },
@@ -131,7 +131,7 @@ describe('generateTaskTools', () => {
     it('sets rootJobId from context', async () => {
       const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
       const [createTask] = generateTaskTools(plannerId as AgentId, db);
-      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db };
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
       const result = await createTask!.execute(
         { title: 'Root job test', assigned_to: workerSlug },
@@ -149,7 +149,7 @@ describe('generateTaskTools', () => {
     it('stores depends_on array', async () => {
       const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
       const [createTask] = generateTaskTools(plannerId as AgentId, db);
-      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db };
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
       // Create first task
       const first = await createTask!.execute({ title: 'Task A', assigned_to: workerSlug }, ctx);
@@ -173,7 +173,7 @@ describe('generateTaskTools', () => {
     it('returns tasks created in this job', async () => {
       const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
       const [createTask, listTasks] = generateTaskTools(plannerId as AgentId, db);
-      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db };
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
       await createTask!.execute({ title: 'List Test Task 1', assigned_to: workerSlug }, ctx);
       await createTask!.execute({ title: 'List Test Task 2', assigned_to: workerSlug }, ctx);
@@ -188,7 +188,7 @@ describe('generateTaskTools', () => {
     it('resolves assigned agent_id to slug', async () => {
       const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
       const [createTask, listTasks] = generateTaskTools(plannerId as AgentId, db);
-      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db };
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
       await createTask!.execute({ title: 'Slug resolution test', assigned_to: workerSlug }, ctx);
 
@@ -200,7 +200,7 @@ describe('generateTaskTools', () => {
     it('filters by status when provided', async () => {
       const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
       const [createTask, listTasks] = generateTaskTools(plannerId as AgentId, db);
-      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db };
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
 
       await createTask!.execute({ title: 'Status Filter Task', assigned_to: workerSlug }, ctx);
 

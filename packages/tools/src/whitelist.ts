@@ -27,10 +27,18 @@ export interface WhitelistInput {
  * alwaysOn) is not present in the registry. This surfaces wiring bugs
  * (e.g. adapter not registered, typo in skill assignment) at startup
  * rather than silently exposing zero tools or falling back to defaults.
+ *
+ * @param input           Agent identity + configured tool names.
+ * @param registry        The tool registry to look up definitions from.
+ * @param capabilityTools Extra ToolDefinitions already registered for this
+ *                        agent based on its capabilities (e.g. telegram_send_message
+ *                        when telegramBotToken is set). Merged after configuredTools
+ *                        and alwaysOn; duplicates are deduplicated by name.
  */
 export function computeToolWhitelist(
   input: WhitelistInput,
   registry: ToolRegistry,
+  capabilityTools: ToolDefinition<z.ZodTypeAny, unknown>[] = [],
 ): ToolDefinition<z.ZodTypeAny, unknown>[] {
   const { agentId, configuredTools, alwaysOn = [] } = input;
 
@@ -44,9 +52,15 @@ export function computeToolWhitelist(
   }
 
   // Map names → definitions (order: configuredTools first, then alwaysOn additions)
-  return allNames.map((name) => {
+  const baseDefs = allNames.map((name) => {
     const def = registry.get(name);
     // We already verified all names exist above — this cast is safe
     return def as ToolDefinition<z.ZodTypeAny, unknown>;
   });
+
+  // Merge capability tools, deduplicating by name (capability tool wins if same name)
+  const baseNames = new Set(allNames);
+  const extraDefs = capabilityTools.filter((t) => !baseNames.has(t.name));
+
+  return [...baseDefs, ...extraDefs];
 }

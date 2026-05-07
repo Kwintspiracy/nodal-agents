@@ -127,10 +127,15 @@ describe('runTelegramPoller', () => {
     expect(jobs.map((j) => j.task).sort()).toEqual(['first', 'second']);
 
     const [agentRow] = await db
-      .select({ telegramOffset: agents.telegramOffset })
+      .select({
+        telegramOffset: agents.telegramOffset,
+        lastSeenChatIdTelegram: agents.lastSeenChatIdTelegram,
+      })
       .from(agents)
       .where(eq(agents.id, seed.agentId));
     expect(agentRow?.telegramOffset).toBe(102);
+    // lastSeenChatIdTelegram must be set to the chat.id from the fixture (555)
+    expect(agentRow?.lastSeenChatIdTelegram).toBe('555');
   });
 
   it('exits with reason="invalid_token" when Telegram rejects the token', async () => {

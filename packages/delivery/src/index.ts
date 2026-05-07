@@ -1,12 +1,5 @@
 // index.ts — public API for @nodalai/delivery
 
-export { deliverResult } from './deliver.ts';
-export type { DeliveryDeps, DeliveryOptions, DeliveryResult } from './deliver.ts';
-
-export { formatJobResult } from './format.ts';
-export type { FormatJobInput } from './format.ts';
-export type { FormatOpts } from './types.ts';
-
 export {
   sendTelegramMessage,
   getTelegramBotInfo,

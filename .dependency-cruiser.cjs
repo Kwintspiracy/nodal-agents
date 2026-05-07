@@ -67,6 +67,20 @@ module.exports = {
         path: '^packages/(?!tools|shared|adapters)',
       },
     },
+    {
+      name: 'no-runner-delivery-direct',
+      severity: 'error',
+      comment:
+        'runner and orchestration must not import delivery internals directly (deliver.ts, format.ts, delivery-stub). ' +
+        'Delivery is invoked via the tool layer or a dedicated service, never by pulling raw helpers into the runner.',
+      from: {
+        path: '^(apps/runner|packages/orchestration)/',
+        pathNot: '\\.(test|spec)\\.(ts|tsx|js|mjs)$',
+      },
+      to: {
+        path: '@nodalai/delivery/(deliver|format|delivery-stub)',
+      },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

@@ -81,7 +81,7 @@ export function createApp(
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
-  app.post('/api/cron', (c) => cronRoute(c, deps, runnerEnv));
+  app.post('/api/cron', (c) => cronRoute(c, deps));
 
   // ── 404 fallback ──────────────────────────────────────────────────────────────
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
   // Start the in-process cron ticker (default: every 2 min).
   // Disable with CRON_TICKER_ENABLED=false if using an external managed cron.
   const cronTickerEnabled = process.env['CRON_TICKER_ENABLED'] !== 'false';
-  const ticker = cronTickerEnabled ? startCronTicker(deps, { env: runnerEnv }) : null;
+  const ticker = cronTickerEnabled ? startCronTicker(deps) : null;
   if (cronTickerEnabled) {
     console.warn('[runner] cron ticker started (120s interval)');
   }

@@ -167,6 +167,7 @@ describe('generateAssignTools', () => {
       agentId: orch.id,
       entityId,
       db,
+      jobChatId: null,
     };
 
     await expect(tool.execute({ task: 'do work' }, ctx)).rejects.toThrow(DelegationPendingError);

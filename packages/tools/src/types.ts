@@ -20,6 +20,13 @@ export interface ToolContext {
   agentId: string;
   entityId: string;
   db: AnyDrizzleDb;
+  /**
+   * The chatId that originated this job (set by Telegram inbound handler).
+   * null for jobs started from the dashboard, cron, or API.
+   * Used by telegram_send_message as the default reply target when the caller
+   * does not explicitly provide a chatId argument.
+   */
+  jobChatId: string | null;
 }
 
 // ─── ToolDefinition ────────────────────────────────────────────────────────────

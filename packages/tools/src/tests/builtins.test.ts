@@ -28,6 +28,7 @@ function makeCtx(): ToolContext {
     agentId: seed.agentId,
     entityId: seed.entityId,
     db: db as unknown as ToolContext['db'],
+    jobChatId: null,
   };
 }
 
@@ -184,6 +185,7 @@ describe('query_memory', () => {
       agentId: '00000000-0000-0000-0000-000000000099', // synthetic, not seeded
       entityId: seed.entityId, // SAME entity
       db: db as unknown as ToolContext['db'],
+      jobChatId: null,
     };
     // First save under the seeded agent
     await saveMemoryTool.execute(

@@ -82,6 +82,12 @@ export default async function AgentsPage() {
                       >
                         Telegram
                       </Link>
+                      <Link
+                        href={`/agents/${agent.id}/edit`}
+                        className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-lg hover:border-neutral-700 hover:text-white transition-colors"
+                      >
+                        Edit
+                      </Link>
                       <DeleteAgentButton
                         id={agent.id}
                         name={agent.name}

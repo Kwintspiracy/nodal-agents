@@ -2,6 +2,9 @@
 
 import { DeliveryError } from '../errors.ts';
 
+/** Timeout for all outbound Telegram API calls (sendMessage, getMe, getUpdates). */
+const TELEGRAM_TIMEOUT_MS = 10_000;
+
 export interface TelegramSendOpts {
   chatId: string;
   text: string;
@@ -53,18 +56,32 @@ export async function sendTelegramMessage(opts: TelegramSendOpts): Promise<{ mes
 
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_TIMEOUT_MS);
+
   let response: Response;
   try {
     response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new DeliveryError(
+        'telegram_request_failed',
+        `telegram_timeout: Telegram API did not respond within ${TELEGRAM_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    // Redact the bot token from any network error message (H-1)
+    const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
     throw new DeliveryError(
       'telegram_request_failed',
-      `telegram_request_failed: network error: ${String(err)}`,
+      `telegram_request_failed: network error: ${safeMsg}`,
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const json = (await response.json()) as TelegramApiResponse<TelegramSendResult>;
@@ -98,8 +115,18 @@ async function callBotApi<T>(
   method: string,
   body?: unknown,
   signal?: AbortSignal,
+  timeoutMs: number = TELEGRAM_TIMEOUT_MS,
 ): Promise<T> {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
+
+  // Combine caller-provided signal with a local timeout signal so every call
+  // is bounded even if the caller passes no signal (e.g. getTelegramBotInfo).
+  // Long-poll callers (getTelegramUpdates) override timeoutMs with a value
+  // greater than the Telegram-side wait so we don't abort mid-poll.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // If the caller also passes a signal, abort our controller when it fires.
+  signal?.addEventListener('abort', () => controller.abort(), { once: true });
 
   let response: Response;
   try {
@@ -107,13 +134,23 @@ async function callBotApi<T>(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : '{}',
-      signal,
+      signal: controller.signal,
     });
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new DeliveryError(
+        'telegram_request_failed',
+        `telegram_timeout: Telegram API did not respond within ${timeoutMs / 1000}s`,
+      );
+    }
+    // Redact the bot token from any network error message (H-1)
+    const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
     throw new DeliveryError(
       'telegram_request_failed',
-      `telegram_request_failed: network error: ${String(err)}`,
+      `telegram_request_failed: network error: ${safeMsg}`,
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const json = (await response.json().catch(() => ({}))) as TelegramApiResponse<T>;
@@ -196,12 +233,22 @@ export async function getTelegramUpdates(opts: {
   /** Abort the long-poll request (e.g. on runner shutdown). */
   signal?: AbortSignal;
 }): Promise<TelegramUpdate[]> {
+  const longPollSeconds = opts.timeout ?? 25;
   const body: Record<string, unknown> = {
     offset: opts.offset,
-    timeout: opts.timeout ?? 25,
+    timeout: longPollSeconds,
     allowed_updates: ['message', 'callback_query'],
   };
   if (opts.limit !== undefined) body['limit'] = opts.limit;
-  const result = await callBotApi<TelegramUpdate[]>(opts.botToken, 'getUpdates', body, opts.signal);
+  // Local timeout = Telegram-side wait + 5s network buffer. Without this override,
+  // the default 10s timeout in callBotApi would abort every long-poll mid-flight.
+  const longPollTimeoutMs = longPollSeconds * 1000 + 5_000;
+  const result = await callBotApi<TelegramUpdate[]>(
+    opts.botToken,
+    'getUpdates',
+    body,
+    opts.signal,
+    longPollTimeoutMs,
+  );
   return result;
 }

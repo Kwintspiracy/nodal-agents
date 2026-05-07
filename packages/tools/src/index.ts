@@ -51,3 +51,6 @@ export {
   webSearchTool,
 } from './builtin/index';
 export type { AlwaysOnTool } from './builtin/index';
+
+// Communication tools (capability-driven — registered per-agent based on agent config)
+export { createTelegramSendMessageTool } from './communication';

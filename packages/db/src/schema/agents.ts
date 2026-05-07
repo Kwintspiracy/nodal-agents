@@ -32,6 +32,9 @@ export const agents = pgTable(
     // Telegram getUpdates `offset` cursor — long-poll mode persists the
     // next-update-id here so a runner restart resumes without replay.
     telegramOffset: bigint('telegram_offset', { mode: 'number' }),
+    // Last chat_id seen in an inbound DM — populated by the runner poller.
+    // Used to inject the delivery target into dashboard-originated jobs.
+    lastSeenChatIdTelegram: text('last_seen_chat_id_telegram'),
     requiresApproval: text('requires_approval')
       .array()
       .default(sql`'{}'::text[]`),

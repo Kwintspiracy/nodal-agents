@@ -6,15 +6,10 @@
 import type { Context } from 'hono';
 import { runCronTick } from '../cron/tick.ts';
 import type { RunnerDeps } from '../deps.ts';
-import type { RunnerEnv } from '../env.ts';
 
 // ─── cronRoute ────────────────────────────────────────────────────────────────
 
-export async function cronRoute(
-  c: Context,
-  deps: RunnerDeps,
-  runnerEnv?: Pick<RunnerEnv, 'TELEGRAM_BOT_TOKEN'>,
-): Promise<Response> {
-  const result = await runCronTick(deps, 5, runnerEnv);
+export async function cronRoute(c: Context, deps: RunnerDeps): Promise<Response> {
+  const result = await runCronTick(deps, 5);
   return c.json({ ok: true, ...result }, 200);
 }

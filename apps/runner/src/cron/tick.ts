@@ -13,7 +13,6 @@ import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
 import type { RunnerDeps } from '../deps.ts';
-import type { RunnerEnv } from '../env.ts';
 
 // ─── CronTickResult ───────────────────────────────────────────────────────────
 
@@ -41,17 +40,13 @@ export interface CronTickResult {
  * @param deps  RunnerDeps (db + llmClient + registry)
  * @param maxTasksPerTick  Max tasks to execute in Phase 3 (default 5)
  */
-export async function runCronTick(
-  deps: RunnerDeps,
-  maxTasksPerTick = 5,
-  env?: Pick<RunnerEnv, 'TELEGRAM_BOT_TOKEN'>,
-): Promise<CronTickResult> {
+export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promise<CronTickResult> {
   const orphanJobsReset = await resetOrphanedJobs(deps.db);
   const orphansReset = await resetOrphanedTasks(deps.db);
   const tasksUnblocked = await unblockReadyTasks(deps.db);
   const tasksExecuted = await executeReadyTasks(deps.db, deps, maxTasksPerTick);
   const schedulesFired = await runScheduleTick(deps.db, deps, maxTasksPerTick);
-  const rootsDelivered = await deliverCompletedRoots(deps.db, env);
+  const rootsDelivered = await deliverCompletedRoots(deps.db);
 
   return {
     orphanJobsReset,

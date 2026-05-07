@@ -449,6 +449,9 @@ importers:
       '@nodalai/db':
         specifier: workspace:*
         version: link:../db
+      '@nodalai/delivery':
+        specifier: workspace:*
+        version: link:../delivery
       '@nodalai/llm':
         specifier: workspace:*
         version: link:../llm

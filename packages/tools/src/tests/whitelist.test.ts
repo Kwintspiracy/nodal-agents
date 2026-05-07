@@ -148,4 +148,65 @@ describe('computeToolWhitelist', () => {
 
     expect(result[0]).toBe(registry.get('notion_search'));
   });
+
+  // ─── capabilityTools (third argument) ─────────────────────────────────────
+
+  it('capabilityTools: appends extra tool even when not in registry', () => {
+    const capTool = makeTool('telegram_send_message') as unknown as ToolDefinition<
+      z.ZodTypeAny,
+      unknown
+    >;
+    const result = computeToolWhitelist(
+      {
+        agentId: 'agent-cap',
+        configuredTools: ['notion_search'],
+      },
+      registry,
+      [capTool],
+    );
+
+    const names = result.map((t) => t.name);
+    expect(names).toContain('notion_search');
+    expect(names).toContain('telegram_send_message');
+  });
+
+  it('capabilityTools: no duplicates when capability tool name matches a configuredTool', () => {
+    // notion_search is in the registry; pass it again as a capability tool
+    const capVersion = makeTool('notion_search') as unknown as ToolDefinition<
+      z.ZodTypeAny,
+      unknown
+    >;
+    const result = computeToolWhitelist(
+      {
+        agentId: 'agent-dedup',
+        configuredTools: ['notion_search'],
+      },
+      registry,
+      [capVersion],
+    );
+
+    // Only one entry for notion_search in the result
+    const names = result.map((t) => t.name);
+    expect(names.filter((n) => n === 'notion_search')).toHaveLength(1);
+    // Registry version wins (capability is filtered out when name already in base)
+    expect(result.find((t) => t.name === 'notion_search')).toBe(registry.get('notion_search'));
+  });
+
+  it('capabilityTools: unregistered capability tool does NOT throw WhitelistDriftError', () => {
+    const capTool = makeTool('capability_only_tool') as unknown as ToolDefinition<
+      z.ZodTypeAny,
+      unknown
+    >;
+    // Should not throw — drift check only applies to configuredTools/alwaysOn names
+    expect(() =>
+      computeToolWhitelist(
+        {
+          agentId: 'agent-nodrift',
+          configuredTools: ['notion_search'],
+        },
+        registry,
+        [capTool],
+      ),
+    ).not.toThrow();
+  });
 });

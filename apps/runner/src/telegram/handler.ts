@@ -134,6 +134,13 @@ export async function handleTelegramUpdate(args: {
     throw new Error('telegram_job_insert_failed');
   }
 
+  // Atomically record the last-seen chat_id so the dashboard can offer
+  // "send result via Telegram" for this agent.
+  await tx
+    .update(agents)
+    .set({ lastSeenChatIdTelegram: String(chatId) })
+    .where(eq(agents.id, receivingAgentId));
+
   return { jobId: job.id };
 }
 

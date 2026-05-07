@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "last_seen_chat_id_telegram" text;

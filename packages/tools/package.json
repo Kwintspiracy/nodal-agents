@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@nodalai/db": "workspace:*",
+    "@nodalai/delivery": "workspace:*",
     "@nodalai/llm": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "ai": "^4.1.0",
