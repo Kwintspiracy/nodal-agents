@@ -141,6 +141,54 @@ describe('DB state helpers', () => {
     expect(rows[0]?.completedAt).toBeTruthy();
   });
 
+  it('completeJob persists messages JSONB when provided (Brique 28 regression)', async () => {
+    // Single-turn jobs that complete via return_result used to leave the
+    // messages array stuck at its initial [user]-only state. The runner had
+    // the assistant turn in memory but completeJob never wrote it. Result:
+    // the dashboard /jobs/[id] panel showed only the user prompt.
+    const fullMessages = [
+      { role: 'user', content: 'what is the cosmic microwave background?' },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'tc-rr',
+            toolName: 'return_result',
+            args: { status: 'success', summary: 'CMB is the relic radiation from the Big Bang.' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'tc-rr',
+            toolName: 'return_result',
+            result: { acknowledged: true },
+          },
+        ],
+      },
+    ];
+
+    await completeJob(
+      db as Parameters<typeof completeJob>[0],
+      seed.jobId,
+      'CMB is the relic radiation from the Big Bang.',
+      ['return_result'],
+      undefined,
+      fullMessages,
+    );
+
+    const rows = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+
+    expect(rows[0]?.messages).toEqual(fullMessages);
+  });
+
   it('failJob sets status to failed with error code', async () => {
     await failJob(db as Parameters<typeof failJob>[0], seed.jobId, 'chain_limit_exceeded');
 

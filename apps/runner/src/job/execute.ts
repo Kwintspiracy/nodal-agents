@@ -433,7 +433,7 @@ export async function executeJob(
         trace('no_tool_calls_branch', { turn, hasText: Boolean(response.text) });
         const textContent = response.text ?? '';
         if (textContent) {
-          await completeJob(db, jobId as string, textContent, toolsUsed, runStats());
+          await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
           return { status: 'completed', result: textContent };
         }
         // No text, no tool calls — fail loud (invariant 4)
@@ -753,7 +753,7 @@ export async function executeJob(
         }
 
         trace('completeJob_call', { turn, toolsUsed, stats: runStats() });
-        await completeJob(db, jobId as string, finalResult, toolsUsed, runStats());
+        await completeJob(db, jobId as string, finalResult, toolsUsed, runStats(), messages);
         trace('exit_completed_via_return_result');
         return { status: 'completed', result: finalResult };
       }

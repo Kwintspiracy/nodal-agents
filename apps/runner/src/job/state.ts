@@ -118,6 +118,12 @@ interface RunStats {
 /**
  * Mark a job as completed. Sets result, completedAt, and clears error.
  * Persists per-turn accumulated token counts and final turn when provided.
+ *
+ * The `messages` parameter persists the full conversation transcript so the
+ * dashboard /jobs/[id] panel can show the assistant's tool-call turns. Without
+ * it, single-turn jobs that complete via return_result leave the messages
+ * JSONB at its initial `[user]`-only state — the assistant's response never
+ * lands in DB even though it ran in memory.
  */
 export async function completeJob(
   db: AnyDrizzleDb,
@@ -125,6 +131,7 @@ export async function completeJob(
   result: string,
   toolsUsed: string[] = [],
   stats?: RunStats,
+  messages?: unknown[],
 ): Promise<void> {
   await db
     .update(agentJobs)
@@ -138,6 +145,7 @@ export async function completeJob(
       error: null,
       completedAt: new Date(),
       updatedAt: new Date(),
+      ...(messages !== undefined && { messages }),
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
