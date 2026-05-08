@@ -24,6 +24,7 @@ import {
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
+import { encrypt, decrypt, last4 } from '@nodalai/secrets';
 import type { AgentMemory } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
@@ -2369,8 +2370,9 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
   try {
     const session = await getSession();
     const db = getDb();
-    // Explicitly select only the safe columns. apiKey is NEVER fetched.
-    // hasApiKey is computed via SQL so the raw key never reaches Node memory.
+    // Explicitly select only the safe columns. The encrypted apiKey ciphertext
+    // is NEVER fetched. apiKeyLast4 is a plaintext column populated at write-time
+    // (Brique 26) — last4 of the ciphertext would be base64 garbage.
     const rows = await db
       .select({
         id: entityLlmKeys.id,
@@ -2380,10 +2382,7 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         defaultModel: entityLlmKeys.defaultModel,
         isActive: entityLlmKeys.isActive,
         hasApiKey: sql<boolean>`(${entityLlmKeys.apiKey} <> '')`,
-        // Last 4 chars only — the full key NEVER leaves the DB layer.
-        apiKeyLast4: sql<
-          string | null
-        >`CASE WHEN ${entityLlmKeys.apiKey} <> '' THEN RIGHT(${entityLlmKeys.apiKey}, 4) ELSE NULL END`,
+        apiKeyLast4: entityLlmKeys.apiKeyLast4,
       })
       .from(entityLlmKeys)
       .where(eq(entityLlmKeys.entityId, session.entityId))
@@ -2398,7 +2397,7 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         defaultModel: r.defaultModel,
         isActive: r.isActive,
         hasApiKey: Boolean(r.hasApiKey),
-        apiKeyLast4: r.apiKeyLast4 ?? null,
+        apiKeyLast4: r.apiKeyLast4 ? r.apiKeyLast4 : null,
       })),
     );
   } catch (err) {
@@ -2415,12 +2414,14 @@ export async function createLlmKeyAction(raw: unknown): Promise<ActionResult<{ i
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
+    const plaintextKey = parsed.data.apiKey ?? '';
     const [row] = await db
       .insert(entityLlmKeys)
       .values({
         entityId: session.entityId,
         provider: parsed.data.provider,
-        apiKey: parsed.data.apiKey ?? '',
+        apiKey: encrypt(plaintextKey),
+        apiKeyLast4: last4(plaintextKey),
         baseUrl: parsed.data.baseUrl,
         nickname: parsed.data.nickname,
         defaultModel: parsed.data.defaultModel,
@@ -2464,7 +2465,8 @@ export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<voi
       updatedAt: new Date(),
     };
     if (apiKey && apiKey.length > 0) {
-      patch['apiKey'] = apiKey;
+      patch['apiKey'] = encrypt(apiKey);
+      patch['apiKeyLast4'] = last4(apiKey);
     }
 
     await db.update(entityLlmKeys).set(patch).where(eq(entityLlmKeys.id, id));
@@ -2531,7 +2533,9 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
       if (!saved) {
         return fail('not_found', 'LLM provider not found');
       }
-      apiKey = saved.apiKey || undefined;
+      // Decrypt the at-rest ciphertext (Brique 26). Throws on tamper / wrong
+      // master key — caught by outer try/catch and surfaced as connection_failed.
+      apiKey = saved.apiKey ? decrypt(saved.apiKey) : undefined;
     }
 
     // If a keyId was provided but the saved key turns out to be empty, fail

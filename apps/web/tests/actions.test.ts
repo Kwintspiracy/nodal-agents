@@ -9,13 +9,27 @@
  * The mock for server.ts replaces getDb() with a factory that returns
  * a minimal Drizzle-compatible chainable object.
  */
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import {
+  _setMasterKeyForTests,
+  _resetMasterKeyCacheForTests,
+  decrypt,
+  isEncrypted,
+} from '@nodalai/secrets';
 
 beforeAll(() => {
   process.env['DATABASE_URL'] = 'postgres://placeholder:5432/placeholder';
   process.env['AUTH_MODE'] = 'local-trust';
   process.env['RUNNER_URL'] = 'http://localhost:3001';
   process.env['WORKER_SECRET'] = 'test-bearer-789';
+  // Inject a deterministic test master key so encrypt()/decrypt() in actions.ts
+  // never touches the real ~/.nodalai/secrets.key (Brique 26).
+  _setMasterKeyForTests(randomBytes(32));
+});
+
+afterAll(() => {
+  _resetMasterKeyCacheForTests();
 });
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -2219,7 +2233,7 @@ describe('createLlmKeyAction — validation', () => {
 });
 
 describe('createLlmKeyAction — db path', () => {
-  it('returns ok with id on successful insert', async () => {
+  it('returns ok with id on successful insert (apiKey encrypted at rest, last4 plaintext)', async () => {
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000011' }]) as typeof currentDb;
     const { createLlmKeyAction } = await import('../src/lib/actions.ts');
     const r = await createLlmKeyAction({
@@ -2231,15 +2245,21 @@ describe('createLlmKeyAction — db path', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.id).toBe('aaaaaaaa-0000-0000-0000-000000000011');
-    // The insert payload must include the apiKey (it's stored, not echoed).
     const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
     const valuesArg = (insertSpy.mock.results[0]?.value as { values: ReturnType<typeof vi.fn> })
       ?.values?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
-    expect(valuesArg?.['apiKey']).toBe('sk-ant-secret-1');
+    // Brique 26: apiKey is stored as ciphertext (not plaintext) and round-trips.
+    const stored = valuesArg?.['apiKey'] as string;
+    expect(typeof stored).toBe('string');
+    expect(stored).not.toBe('sk-ant-secret-1');
+    expect(isEncrypted(stored)).toBe(true);
+    expect(decrypt(stored)).toBe('sk-ant-secret-1');
+    // last4 is stored plaintext for masked display in the list.
+    expect(valuesArg?.['apiKeyLast4']).toBe('et-1');
     expect(valuesArg?.['provider']).toBe('anthropic');
   });
 
-  it('apiKey defaults to empty string when not provided', async () => {
+  it('apiKey defaults to empty string when not provided (no encryption applied)', async () => {
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000012' }]) as typeof currentDb;
     const { createLlmKeyAction } = await import('../src/lib/actions.ts');
     const r = await createLlmKeyAction({
@@ -2253,6 +2273,7 @@ describe('createLlmKeyAction — db path', () => {
     const valuesArg = (insertSpy.mock.results[0]?.value as { values: ReturnType<typeof vi.fn> })
       ?.values?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
     expect(valuesArg?.['apiKey']).toBe('');
+    expect(valuesArg?.['apiKeyLast4']).toBe('');
   });
 });
 
@@ -2285,26 +2306,7 @@ describe('updateLlmKeyAction', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('keeps existing apiKey when new apiKey is omitted', async () => {
-    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000020' }]) as typeof currentDb;
-    const { updateLlmKeyAction } = await import('../src/lib/actions.ts');
-    const r = await updateLlmKeyAction({
-      id: 'aaaaaaaa-0000-0000-0000-000000000020',
-      provider: 'anthropic',
-      nickname: 'Renamed',
-      defaultModel: 'claude-haiku-4-5',
-      isActive: true,
-      // apiKey absent → should NOT appear in the SET payload
-    });
-    expect(r.ok).toBe(true);
-    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
-    const setArg = (updateSpy.mock.results[0]?.value as { set: ReturnType<typeof vi.fn> })?.set
-      ?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
-    expect(setArg?.['apiKey']).toBeUndefined();
-    expect(setArg?.['nickname']).toBe('Renamed');
-  });
-
-  it('updates apiKey when a new value is provided', async () => {
+  it('updates apiKey when a new value is provided (encrypted ciphertext + last4)', async () => {
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000020' }]) as typeof currentDb;
     const { updateLlmKeyAction } = await import('../src/lib/actions.ts');
     const r = await updateLlmKeyAction({
@@ -2319,7 +2321,32 @@ describe('updateLlmKeyAction', () => {
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const setArg = (updateSpy.mock.results[0]?.value as { set: ReturnType<typeof vi.fn> })?.set
       ?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
-    expect(setArg?.['apiKey']).toBe('sk-ant-rotated');
+    // Brique 26: rotation stores ciphertext (not plaintext) and updates last4.
+    const stored = setArg?.['apiKey'] as string;
+    expect(typeof stored).toBe('string');
+    expect(stored).not.toBe('sk-ant-rotated');
+    expect(isEncrypted(stored)).toBe(true);
+    expect(decrypt(stored)).toBe('sk-ant-rotated');
+    expect(setArg?.['apiKeyLast4']).toBe('ated');
+  });
+
+  it('keeps existing apiKey AND apiKeyLast4 when new apiKey is omitted', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000020' }]) as typeof currentDb;
+    const { updateLlmKeyAction } = await import('../src/lib/actions.ts');
+    const r = await updateLlmKeyAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000020',
+      provider: 'anthropic',
+      nickname: 'Renamed',
+      defaultModel: 'claude-haiku-4-5',
+      isActive: true,
+    });
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setArg = (updateSpy.mock.results[0]?.value as { set: ReturnType<typeof vi.fn> })?.set
+      ?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+    // Brique 26: omitting apiKey must leave BOTH apiKey AND apiKeyLast4 untouched.
+    expect(setArg?.['apiKey']).toBeUndefined();
+    expect(setArg?.['apiKeyLast4']).toBeUndefined();
   });
 });
 
@@ -2465,10 +2492,11 @@ describe('testLlmKeyAction', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('keyId provided + apiKey empty → uses saved key (correct Authorization header)', async () => {
+  it('keyId provided + apiKey empty → decrypts saved key + uses correct Authorization header', async () => {
     const SAVED_KEY = 'sk-ant-saved-from-db';
-    // DB returns the saved row for this entity + keyId
-    currentDb = makeDb([{ apiKey: SAVED_KEY }]) as typeof currentDb;
+    // Brique 26: the column stores ciphertext; the action must decrypt it.
+    const { encrypt } = await import('@nodalai/secrets');
+    currentDb = makeDb([{ apiKey: encrypt(SAVED_KEY) }]) as typeof currentDb;
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,

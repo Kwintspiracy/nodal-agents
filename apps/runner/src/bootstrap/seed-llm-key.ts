@@ -15,6 +15,7 @@
 
 import { count, eq, isNull, and, entityLlmKeys, agents, entities } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
+import { encrypt, last4 } from '@nodalai/secrets';
 import type { RunnerEnv } from '../env.ts';
 
 export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promise<void> {
@@ -43,12 +44,14 @@ export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promi
 
   if ((keyCountRow?.n ?? 0) > 0) return; // already seeded
 
+  const plaintextKey = env.LLM_API_KEY ?? '';
   const [newKey] = await db
     .insert(entityLlmKeys)
     .values({
       entityId: targetEntityId,
       provider: env.LLM_PROVIDER,
-      apiKey: env.LLM_API_KEY ?? '',
+      apiKey: encrypt(plaintextKey),
+      apiKeyLast4: last4(plaintextKey),
       baseUrl: env.LLM_BASE_URL ?? null,
       nickname: 'Default (env)',
       defaultModel: env.LLM_MODEL,

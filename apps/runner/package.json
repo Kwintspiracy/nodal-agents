@@ -18,6 +18,7 @@
     "@nodalai/llm": "workspace:*",
     "@nodalai/memory": "workspace:*",
     "@nodalai/orchestration": "workspace:*",
+    "@nodalai/secrets": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
     "cron-parser": "^5.5.0",

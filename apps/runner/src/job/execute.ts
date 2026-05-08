@@ -47,6 +47,7 @@ import {
   DelegationDepthExceededError,
   DelegationPendingError,
 } from '@nodalai/orchestration';
+import { decrypt } from '@nodalai/secrets';
 import type {
   AgentId,
   JobId,
@@ -209,10 +210,13 @@ export async function executeJob(
     }
 
     try {
+      // Decrypt the at-rest ciphertext (Brique 26). Throws on tamper / wrong
+      // master key — caught below and surfaced as llm_key_invalid (invariant 4).
+      const plaintextKey = keyRow.apiKey ? decrypt(keyRow.apiKey) : '';
       llmClient = createLlmClient({
         provider: keyRow.provider as Parameters<typeof createLlmClient>[0]['provider'],
         model: agent.model,
-        apiKey: keyRow.apiKey || undefined,
+        apiKey: plaintextKey || undefined,
         baseURL: keyRow.baseUrl ?? undefined,
       });
       trace('llm_client_from_key', {

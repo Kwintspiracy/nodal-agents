@@ -76,6 +76,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
       provider text NOT NULL,
       api_key text NOT NULL DEFAULT '',
+      api_key_last4 text NOT NULL DEFAULT '',
       base_url text,
       nickname text,
       default_model text,
@@ -506,12 +507,15 @@ export async function seedMinimal(db: TestDb) {
 
   // entity_llm_keys — seeded with a mock/test provider so execute.ts resolves
   // the client from DB (Brique 25 fail-loud guard) in all runner tests.
+  // apiKey is intentionally empty: production code skips decryption when the
+  // ciphertext column is '' (Brique 26), and runner tests stub createLlmClient
+  // anyway so the value never matters at the network layer.
   const [llmKey] = await db
     .insert(schema.entityLlmKeys)
     .values({
       entityId: entity.id,
       provider: 'openai-compatible',
-      apiKey: 'test-key',
+      apiKey: '',
       baseUrl: 'http://localhost:11434',
       nickname: 'Test LLM Key',
       defaultModel: 'mock',

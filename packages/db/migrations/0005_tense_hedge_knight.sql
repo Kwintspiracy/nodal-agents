@@ -1,0 +1,1 @@
+ALTER TABLE "entity_llm_keys" ADD COLUMN "api_key_last4" text DEFAULT '' NOT NULL;

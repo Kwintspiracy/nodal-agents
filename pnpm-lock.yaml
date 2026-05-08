@@ -108,6 +108,9 @@ importers:
       '@nodalai/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
+      '@nodalai/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@nodalai/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -157,6 +160,9 @@ importers:
       '@nodalai/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
+      '@nodalai/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@nodalai/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -437,6 +443,8 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.2.17
         version: 0.2.17
+
+  packages/secrets: {}
 
   packages/shared:
     dependencies:

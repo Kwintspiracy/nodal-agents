@@ -5,13 +5,24 @@
 //   2. local-auth multi-user  → skips (>1 entities)
 //   3. local-trust            → unchanged behavior (seeds for the single entity)
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { spinUpTestDb } from '@nodalai/db/test-utils';
 import type { TestDb } from '@nodalai/db/test-utils';
 import { eq, count } from '@nodalai/db';
 import { entityLlmKeys, agents, entities, users } from '@nodalai/db';
+import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, decrypt } from '@nodalai/secrets';
 import { seedDefaultLlmKey } from '../../bootstrap/seed-llm-key.ts';
 import type { RunnerEnv } from '../../env.ts';
+
+// Inject a deterministic test master key so the seeder's encrypt() call doesn't
+// touch the real ~/.nodalai/secrets.key. Reset between runs.
+beforeAll(() => {
+  _setMasterKeyForTests(randomBytes(32));
+});
+afterAll(() => {
+  _resetMasterKeyCacheForTests();
+});
 
 function makeEnv(
   authMode: RunnerEnv['AUTH_MODE'],
@@ -153,6 +164,10 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
     expect(keyRow).toBeDefined();
     expect(keyRow?.provider).toBe('openai-compatible');
     expect(keyRow?.defaultModel).toBe('test-model');
+    // Brique 26: the seeder must store ciphertext, not plaintext, and round-trip.
+    expect(keyRow?.apiKey.startsWith('enc:v1:')).toBe(true);
+    expect(decrypt(keyRow!.apiKey)).toBe('test-key');
+    expect(keyRow?.apiKeyLast4).toBe('-key');
 
     // Agent wired
     const [agentRow] = await (db as TestDb)

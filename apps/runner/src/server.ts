@@ -14,6 +14,7 @@ import { cronRoute } from './routes/cron.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
+import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { AuthError } from '@nodalai/auth';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
@@ -102,6 +103,11 @@ export function createApp(
 async function main(): Promise<void> {
   const runnerEnv = parseEnv();
   const deps = await createRunnerDeps(runnerEnv);
+
+  // One-shot: encrypt any plaintext entity_llm_keys.api_key rows in place
+  // (Brique 26). Idempotent — already-encrypted rows are skipped. Must run
+  // BEFORE seedDefaultLlmKey so the seed inserts already-encrypted ciphertext.
+  await migrateLlmKeysToEncrypted(deps.db);
 
   // One-shot: if the local entity has no entity_llm_keys rows yet, seed one
   // from env so existing agents keep working post-Brique-24 (idempotent).

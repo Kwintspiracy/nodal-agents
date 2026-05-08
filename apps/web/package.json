@@ -19,6 +19,7 @@
     "@nodalai/llm": "workspace:*",
     "@nodalai/memory": "workspace:*",
     "@nodalai/orchestration": "workspace:*",
+    "@nodalai/secrets": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
