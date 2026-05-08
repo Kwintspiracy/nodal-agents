@@ -213,6 +213,66 @@ describe('runScheduleTick', () => {
     expect(after[0]?.lastRun).toBeInstanceOf(Date);
   });
 
+  it('propagates agent.lastSeenChatIdTelegram into the cron job chat_id (Telegram delivery default)', async () => {
+    // Cron has no per-schedule chat UI yet, so the runner copies the agent's
+    // last-seen Telegram chat into the job's chat_id at INSERT time. This puts
+    // the delivery intent in the data (job.chat_id != null = "deliver here on
+    // Telegram"), no runtime fallback required.
+    await db
+      .update(agents)
+      .set({ lastSeenChatIdTelegram: '7777' })
+      .where(eq(agents.id, seed.agentId));
+
+    const past = new Date(Date.now() - 60_000);
+    await createSchedule({ nextRun: past, task: 'cron with telegram default' });
+
+    const deps = makeDeps(db, [{ text: 'cron ran' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const cronJobs = await db
+      .select({ id: agentJobs.id, chatId: agentJobs.chatId, channel: agentJobs.channel })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+    const justFired = cronJobs.filter((j) => j.channel === 'cron' && j.chatId === '7777');
+    expect(justFired.length).toBeGreaterThanOrEqual(1);
+
+    // Cleanup so subsequent tests aren't affected.
+    await db
+      .update(agents)
+      .set({ lastSeenChatIdTelegram: null })
+      .where(eq(agents.id, seed.agentId));
+  });
+
+  it('leaves chat_id NULL when the agent has no last-seen Telegram chat', async () => {
+    // Agent has never been DM'd → lastSeenChatIdTelegram is null → cron jobs
+    // do NOT get a chat_id (no Telegram delivery, no error).
+    await db
+      .update(agents)
+      .set({ lastSeenChatIdTelegram: null })
+      .where(eq(agents.id, seed.agentId));
+
+    const past = new Date(Date.now() - 60_000);
+    await createSchedule({ nextRun: past, task: 'cron without telegram default' });
+
+    const deps = makeDeps(db, [{ text: 'cron ran' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const cronJobs = await db
+      .select({
+        id: agentJobs.id,
+        chatId: agentJobs.chatId,
+        channel: agentJobs.channel,
+        task: agentJobs.task,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+    const justFired = cronJobs.filter(
+      (j) => j.channel === 'cron' && j.task === 'cron without telegram default',
+    );
+    expect(justFired.length).toBeGreaterThanOrEqual(1);
+    expect(justFired[0]!.chatId).toBeNull();
+  });
+
   it('skips a paused schedule even if next_run is past', async () => {
     const past = new Date(Date.now() - 60_000);
     const sched = await createSchedule({ active: false, nextRun: past });

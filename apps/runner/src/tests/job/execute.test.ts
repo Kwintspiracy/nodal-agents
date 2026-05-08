@@ -803,39 +803,42 @@ describe('executeJob', () => {
     expect(sp).not.toContain('telegram_chat_id');
   });
 
-  // ─── chat_id fallback to agents.lastSeenChatIdTelegram ────────────────────────
-  // The Telegram chat_id falls back to the agent's last-seen chat when the job
-  // itself doesn't carry one (cron, dashboard without checkbox, etc.) so the
-  // agent can always reach the user on Telegram by default.
+  // ─── chat_id semantics: explicit, no runtime fallback ────────────────────────
+  // `agent_jobs.chat_id` is the single source of truth for Telegram-delivery
+  // intent. The runner does NOT override a NULL chat_id at execute time using
+  // agent.lastSeenChatIdTelegram — that would silently flip a deliberate "no
+  // Telegram" (e.g. dashboard checkbox unticked) into "yes Telegram".
+  // Job-creation sources (cron tick, sendTaskAction, telegram poller) are
+  // each responsible for populating chat_id when delivery is wanted.
 
-  it('chat_id fallback: cron job inherits agents.lastSeenChatIdTelegram into system_prompt', async () => {
-    // Set the agent's last-seen chat (simulates the inbound poller having
-    // populated it on a prior DM).
+  it('NULL chat_id stays NULL in Job context, even when the agent has a last-seen Telegram chat', async () => {
+    // Agent has been DM'd before — last-seen is populated.
     await db
       .update(agents)
       .set({ lastSeenChatIdTelegram: '99887766' })
       .where(eq(agents.id, seed.agentId));
 
-    const [cronJob] = await db
+    // But this job has chat_id=null (e.g. dashboard send with checkbox unticked).
+    const [optedOutJob] = await db
       .insert(agentJobs)
       .values({
         entityId: seed.entityId,
         agentId: seed.agentId,
-        channel: 'cron',
+        channel: 'api',
         chatId: null,
-        task: 'cron task',
+        task: 'dashboard task without telegram delivery',
         status: 'pending',
         messages: [],
         chainCount: 0,
       })
       .returning();
-    if (!cronJob) throw new Error('Failed to create cron fallback job');
+    if (!optedOutJob) throw new Error('Failed to create opted-out job');
 
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
           {
-            toolCallId: 'tc-rr-cron-fallback',
+            toolCallId: 'tc-rr-no-tg',
             toolName: 'return_result',
             args: { status: 'success', text: 'done' },
           },
@@ -843,72 +846,23 @@ describe('executeJob', () => {
       },
     ]);
 
-    const result = await executeJob(cronJob.id as JobId, makeDeps(llmClient), testEnv);
+    const result = await executeJob(optedOutJob.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('completed');
 
     const rows = await db
       .select({ systemPrompt: agentJobs.systemPrompt })
       .from(agentJobs)
-      .where(eq(agentJobs.id, cronJob.id));
+      .where(eq(agentJobs.id, optedOutJob.id));
 
     const sp = rows[0]?.systemPrompt ?? '';
-    expect(sp).toContain('- origin: cron');
-    expect(sp).toContain('- telegram_chat_id: 99887766');
-
-    // Cleanup so subsequent tests aren't affected.
-    await db
-      .update(agents)
-      .set({ lastSeenChatIdTelegram: null })
-      .where(eq(agents.id, seed.agentId));
-  });
-
-  it('chat_id explicit job.chatId wins over agents.lastSeenChatIdTelegram', async () => {
-    // Both are set, but job.chatId must win (e.g. inbound poller writes a DM
-    // from a different chat than the agent's last-seen).
-    await db
-      .update(agents)
-      .set({ lastSeenChatIdTelegram: '99887766' })
-      .where(eq(agents.id, seed.agentId));
-
-    const [tgJob] = await db
-      .insert(agentJobs)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        channel: 'telegram',
-        chatId: '11112222', // explicit per-job chat
-        task: 'inbound from a different chat',
-        status: 'pending',
-        messages: [],
-        chainCount: 0,
-      })
-      .returning();
-    if (!tgJob) throw new Error('Failed to create explicit-chat fallback job');
-
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-rr-explicit',
-            toolName: 'return_result',
-            args: { status: 'success', text: 'done' },
-          },
-        ],
-      },
-    ]);
-
-    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
-
-    const rows = await db
-      .select({ systemPrompt: agentJobs.systemPrompt })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, tgJob.id));
-
-    const sp = rows[0]?.systemPrompt ?? '';
-    expect(sp).toContain('- telegram_chat_id: 11112222');
+    expect(sp).toContain('- origin: api');
+    // Critical: telegram_chat_id MUST NOT appear, despite the agent having a
+    // last-seen chat. Otherwise the skill would instruct the LLM to deliver
+    // when the user explicitly opted out.
+    expect(sp).not.toContain('telegram_chat_id');
     expect(sp).not.toContain('99887766');
 
+    // Cleanup so subsequent tests aren't affected.
     await db
       .update(agents)
       .set({ lastSeenChatIdTelegram: null })

@@ -253,15 +253,15 @@ export async function executeJob(
   // ── 6. Build system prompt ────────────────────────────────────────────────────
   // Build jobContext from job columns — the runner exposes data, the agent
   // personality decides what to do with it (invariant #1: data-driven behavior).
-  // The Telegram chat_id falls back to the agent's last-seen chat (refreshed
-  // by the inbound poller on every DM). This means cron / dashboard / any
-  // outbound origin can still reach the user on Telegram by default, while an
-  // explicit per-job chat_id (set by the inbound poller or an outbound flow
-  // that targeted a specific chat) always wins.
-  const telegramChatId = job.chatId ?? agentRow.lastSeenChatIdTelegram ?? null;
+  // `agent_jobs.chat_id` carries the explicit Telegram-delivery intent: each
+  // job-creation source (poller, sendTaskAction, cron tick) is responsible for
+  // populating it when delivery is wanted. The runner does NOT fall back to
+  // the agent's last-seen chat at execute time — that would override the
+  // explicit "no Telegram" intent expressed by a NULL chat_id (e.g. dashboard
+  // checkbox unticked).
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
-    ...(telegramChatId ? { telegramChatId } : {}),
+    ...(job.chatId ? { telegramChatId: job.chatId } : {}),
   };
 
   let systemPrompt = job.systemPrompt;

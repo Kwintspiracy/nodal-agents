@@ -9,7 +9,7 @@
 // conditional UPDATE acts as the lock.
 
 import { and, eq, isNull, lte, or } from '@nodalai/db';
-import { agentSchedules, agentJobs } from '@nodalai/db';
+import { agentSchedules, agentJobs, agents } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob } from '../job/execute.ts';
@@ -37,8 +37,13 @@ export async function runScheduleTick(
       cronExpr: agentSchedules.cronExpr,
       task: agentSchedules.task,
       nextRun: agentSchedules.nextRun,
+      // The agent's last-seen Telegram chat is the default delivery target for
+      // cron-fired jobs (no per-schedule chat UI yet). Populated by the
+      // inbound poller on every DM; null until the user has DM'd the bot once.
+      agentLastSeenChatIdTelegram: agents.lastSeenChatIdTelegram,
     })
     .from(agentSchedules)
+    .leftJoin(agents, eq(agents.id, agentSchedules.agentId))
     .where(
       and(
         eq(agentSchedules.active, true),
@@ -99,17 +104,18 @@ export async function runScheduleTick(
 
     if (claimed.length === 0) continue; // Concurrent tick won
 
-    // Cron-fired jobs always have channel='cron' and no chatId.
-    // The agent decides how to deliver its result (e.g. via telegram_send_message
-    // if it has a telegramBotToken configured). The platform does not infer a
-    // recipient from prior conversations — that was the band-aid, now removed.
+    // Cron-fired jobs default their `chatId` to the agent's last-seen Telegram
+    // chat. This puts the delivery intent in the job row at INSERT time
+    // (matching the data-driven semantics: chat_id != null = "deliver to this
+    // chat on Telegram"). Until per-schedule UI ships, every cron fire on an
+    // agent with a Telegram bot will reach the user on Telegram by default.
     const [job] = await db
       .insert(agentJobs)
       .values({
         entityId: sched.entityId,
         agentId: sched.agentId,
         channel: 'cron',
-        chatId: null,
+        chatId: sched.agentLastSeenChatIdTelegram ?? null,
         task: sched.task,
         status: 'pending',
         messages: [{ role: 'user', content: sched.task }],
