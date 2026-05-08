@@ -1,7 +1,13 @@
 // system-prompt.ts — assemble the full system prompt for an agent
 // Concatenates: personality (raw, untouched) + team block + built-in capabilities
-// + skills metadata block + job context (when provided by the runner).
-// Invariant 2: no hardcoded user-facing strings injected into the prompt.
+// + skills block (full content, not just metadata) + job context (when provided
+// by the runner). Invariant 2: no hardcoded user-facing strings injected.
+//
+// Skills inject their `content` field directly — this is how a user-authored
+// skill ("when telegram_chat_id is in Job context, reply via
+// telegram_send_message + return_result in the same turn, format like X")
+// reaches the agent. Pre-Brique 32 only the skill name was injected, so the
+// skill content was silently dropped. End-to-end skill behavior never worked.
 
 import { eq } from '@nodalai/db';
 import { agentSkillAssignments, agentSkills } from '@nodalai/db';
@@ -72,19 +78,24 @@ export async function buildSystemPrompt(
   // 2. Build team block (data-driven from DB — empty string for workers)
   const teamBlock = await buildTeamBlock(agent.id, db);
 
-  // 3. Build skills metadata block (data-driven — list of skill names + slugs)
+  // 3. Build skills block — full content of each assigned skill, injected into
+  //    the system prompt so the agent ACTS on the skill's instructions, not just
+  //    sees a metadata label. (Pre-Brique 32 only `name + slug` were selected,
+  //    leaving the actual instructions silently dropped — skills were decorative.)
   const skillRows = await db
     .select({
       skillName: agentSkills.name,
-      skillSlug: agentSkills.slug,
+      skillContent: agentSkills.content,
     })
     .from(agentSkillAssignments)
     .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
     .where(eq(agentSkillAssignments.agentId, agent.id as string));
 
-  const skillsMetadataBlock =
+  const skillsBlock =
     skillRows.length > 0
-      ? `\n\n## Your available adapters\n\n${skillRows.map((r) => `- **${r.skillName}** (\`${r.skillSlug}\`)`).join('\n')}`
+      ? `\n\n## Skills\n\n${skillRows
+          .map((r) => `### ${r.skillName}\n\n${r.skillContent}`)
+          .join('\n\n')}`
       : '';
 
   // 4. Assemble: honour {{team}} placeholder or append
@@ -106,5 +117,5 @@ export async function buildSystemPrompt(
   //    decides how to use this data (e.g. send via Telegram if chat_id is set).
   const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
 
-  return personality + '\n\n' + builtinBlock + skillsMetadataBlock + jobContextBlock;
+  return personality + '\n\n' + builtinBlock + skillsBlock + jobContextBlock;
 }

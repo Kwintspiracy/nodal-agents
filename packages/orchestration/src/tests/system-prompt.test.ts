@@ -168,13 +168,15 @@ describe('buildSystemPrompt', () => {
       })
       .returning();
 
+    const skillContent =
+      'When asked to read or write a Google Sheet, use the gsheets_read or gsheets_write tool with the spreadsheet ID from the request.';
     const [skill] = await db
       .insert(agentSkills)
       .values({
         entityId,
         name: 'Google Sheets',
         slug: `google-sheets-sp-${Date.now()}`,
-        content: 'skill',
+        content: skillContent,
       })
       .returning();
 
@@ -187,8 +189,15 @@ describe('buildSystemPrompt', () => {
     const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
     const prompt = await buildSystemPrompt(agent, db);
 
-    expect(prompt).toContain('Your available adapters');
-    expect(prompt).toContain('Google Sheets');
+    // Brique 32: skills inject FULL content under a "## Skills" section, with
+    // each skill's instructions under a `### <name>` subheading. Pre-32 only
+    // the skill name was emitted in a bullet list — the actual content was
+    // silently dropped.
+    expect(prompt).toContain('## Skills');
+    expect(prompt).toContain('### Google Sheets');
+    expect(prompt).toContain(skillContent);
+    // The legacy "Your available adapters" header is gone.
+    expect(prompt).not.toContain('Your available adapters');
   });
 
   it('no team block for worker agent', async () => {
