@@ -1,14 +1,15 @@
 // builtins.test.ts — built-in tools behavior tests
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import { agentMemory, eq } from '@nodalai/db';
+import { agentMemory, agentJobs, eq } from '@nodalai/db';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
 import { returnResultTool } from '../builtin/return-result';
 import { saveMemoryTool } from '../builtin/save-memory';
 import { queryMemoryTool } from '../builtin/query-memory';
 import { webSearchTool } from '../builtin/web-search';
+import { dashboardPublishTool } from '../builtin/dashboard-publish';
 import { WebSearchNotConfiguredError } from '../errors';
 import type { ToolContext } from '../types';
 import type { TestDb } from '@nodalai/db/test-utils';
@@ -35,50 +36,33 @@ function makeCtx(): ToolContext {
 // ─── return_result ────────────────────────────────────────────────────────────
 
 describe('return_result', () => {
-  it('passes through input as output', async () => {
-    const result = await returnResultTool.execute(
-      { status: 'success', text: 'Task done — full answer goes here.' },
-      makeCtx(),
-    );
+  it('accepts { status: "success" } — status-only, no text required (Brique 33)', async () => {
+    const result = await returnResultTool.execute({ status: 'success' }, makeCtx());
     expect(result.status).toBe('success');
-    expect(result.text).toBe('Task done — full answer goes here.');
   });
 
-  it('works with status blocked', async () => {
-    const result = await returnResultTool.execute(
-      { status: 'blocked', text: 'Could not find the data after 2 attempts.' },
-      makeCtx(),
-    );
+  it('accepts { status: "blocked" } — status-only (Brique 33)', async () => {
+    const result = await returnResultTool.execute({ status: 'blocked' }, makeCtx());
     expect(result.status).toBe('blocked');
   });
 
   it('rejects invalid status', () => {
-    const parsed = returnResultTool.inputSchema.safeParse({
-      status: 'unknown_status',
-      text: 'hi',
-    });
+    const parsed = returnResultTool.inputSchema.safeParse({ status: 'unknown_status' });
     expect(parsed.success).toBe(false);
   });
 
-  it('rejects empty text', () => {
-    const parsed = returnResultTool.inputSchema.safeParse({ status: 'success', text: '' });
-    expect(parsed.success).toBe(false);
-  });
-
-  it('rejects unknown extra fields like the legacy `data` channel (Brique 29)', () => {
-    // The old schema had `data: unknown.optional()`. We dropped it because models
-    // were stuffing the real answer in `data` and a label in `summary`, so the
-    // user-facing result came from the wrong field. The schema is now strict —
-    // only `status` and `text` are accepted.
+  it('rejects unknown extra fields like the legacy `data` channel', () => {
+    // Zod default mode strips extra keys silently; verify the parsed result has
+    // no `data` or `text` field (both are legacy — Brique 29 dropped `data`,
+    // Brique 33 dropped `text`).
     const parsed = returnResultTool.inputSchema.safeParse({
       status: 'success',
-      text: 'real answer',
+      text: 'legacy text that should be silently dropped',
       data: 'should not be allowed',
     });
-    // Zod default mode is passthrough/strip. The schema doesn't .strict() so
-    // extra keys are dropped silently; verify the parsed result has no `data`.
     expect(parsed.success).toBe(true);
     if (parsed.success) {
+      expect((parsed.data as Record<string, unknown>)['text']).toBeUndefined();
       expect((parsed.data as Record<string, unknown>)['data']).toBeUndefined();
     }
   });
@@ -248,10 +232,71 @@ describe('web_search', () => {
   });
 });
 
+// ─── dashboard_publish ────────────────────────────────────────────────────────
+
+describe('dashboard_publish', () => {
+  it('updates agent_jobs.result in DB and returns { ok: true }', async () => {
+    // Use a real DB job row for the assertion
+    const result = await dashboardPublishTool.execute(
+      { text: 'Hello from dashboard_publish' },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+
+    // Verify the DB row was actually updated
+    const rows = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+
+    expect(rows[0]?.result).toBe('Hello from dashboard_publish');
+  });
+
+  it('updates agent_jobs.result when called with a mock db (unit test pattern)', async () => {
+    const updateMock = vi.fn().mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
+      }),
+    });
+    const mockDb = { update: updateMock } as unknown as ToolContext['db'];
+    const ctx: ToolContext = {
+      jobId: 'job-unit-123',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+      db: mockDb,
+      jobChatId: null,
+    };
+
+    const result = await dashboardPublishTool.execute({ text: 'unit test content' }, ctx);
+    expect(result.ok).toBe(true);
+    // update was called with agentJobs table
+    expect(updateMock).toHaveBeenCalledOnce();
+  });
+
+  it('schema rejects empty text', () => {
+    const parsed = dashboardPublishTool.inputSchema.safeParse({ text: '' });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('schema rejects text exceeding 50 000 chars', () => {
+    const parsed = dashboardPublishTool.inputSchema.safeParse({ text: 'x'.repeat(50_001) });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('schema accepts text at exactly 50 000 chars', () => {
+    const parsed = dashboardPublishTool.inputSchema.safeParse({ text: 'x'.repeat(50_000) });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('has riskLevel write', () => {
+    expect(dashboardPublishTool.riskLevel).toBe('write');
+  });
+});
+
 // ─── registerBuiltins ────────────────────────────────────────────────────────
 
 describe('registerBuiltins', () => {
-  it('registers all four built-ins into registry', () => {
+  it('registers all five built-ins into registry', () => {
     const reg = createToolRegistry();
     registerBuiltins(reg);
 
@@ -259,12 +304,14 @@ describe('registerBuiltins', () => {
     expect(reg.get('save_memory')).toBeDefined();
     expect(reg.get('query_memory')).toBeDefined();
     expect(reg.get('web_search')).toBeDefined();
+    expect(reg.get('dashboard_publish')).toBeDefined();
   });
 
   it('ALWAYS_ON_TOOLS contains the always-on built-ins', () => {
     expect(ALWAYS_ON_TOOLS).toContain('return_result');
     expect(ALWAYS_ON_TOOLS).toContain('save_memory');
     expect(ALWAYS_ON_TOOLS).toContain('query_memory');
+    expect(ALWAYS_ON_TOOLS).toContain('dashboard_publish');
     // web_search is NOT always-on (it's read and optional)
     expect(ALWAYS_ON_TOOLS).not.toContain('web_search');
   });

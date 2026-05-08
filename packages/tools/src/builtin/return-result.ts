@@ -1,17 +1,13 @@
 // Built-in: return_result
-// Agent reports its final result. Required for any agent — the exit door.
+// Pure state-machine signal: tells the runner the task is complete or blocked.
+// Content delivery is handled by dedicated delivery tools (dashboard_publish,
+// telegram_send_message, etc.) — NOT by return_result.
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
 
 export const ReturnResultInputSchema = z.object({
   status: z.enum(['success', 'blocked']),
-  text: z
-    .string()
-    .min(1)
-    .describe(
-      'The complete final answer the user should receive. Put the FULL response text here — not a summary, not a TL;DR, not a label. This is the only field that lands in the user-facing result. There is no separate "data" or "details" channel.',
-    ),
 });
 
 export type ReturnResultInput = z.infer<typeof ReturnResultInputSchema>;
@@ -19,11 +15,11 @@ export type ReturnResultInput = z.infer<typeof ReturnResultInputSchema>;
 export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, ReturnResultInput> = {
   name: 'return_result',
   description:
-    'Report the final result of your task. Use `return_result` when the task is complete or when ' +
-    'you are blocked and cannot proceed. The `text` field MUST contain the COMPLETE answer the user ' +
-    'will receive — not a summary, not a label, not a header. Whatever you write in `text` is what ' +
-    "the user sees. Use status='success' when the task succeeded, status='blocked' when data is not " +
-    'found or you cannot proceed after 2 attempts.',
+    'Signal that the task is complete (status="success") or blocked (status="blocked"). ' +
+    'This is a pure state-machine signal — it does NOT deliver content to the user. ' +
+    'To deliver content, use a delivery tool: `telegram_send_message`, `dashboard_publish`, etc. ' +
+    'The user-facing answer ALWAYS lives in delivery tool args, never in return_result. ' +
+    'Use status="blocked" if you cannot proceed after 2 attempts.',
   inputSchema: ReturnResultInputSchema,
   riskLevel: 'write',
   execute: async (input, _ctx) => {

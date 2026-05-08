@@ -124,6 +124,11 @@ interface RunStats {
  * it, single-turn jobs that complete via return_result leave the messages
  * JSONB at its initial `[user]`-only state — the assistant's response never
  * lands in DB even though it ran in memory.
+ *
+ * Brique 33: when `result` is empty, we do NOT overwrite the existing
+ * agent_jobs.result column. This preserves any value written earlier by
+ * dashboard_publish (or any other delivery tool side-effect). Only a non-empty
+ * result (e.g. from the no-tool-calls text branch) replaces the stored value.
  */
 export async function completeJob(
   db: AnyDrizzleDb,
@@ -137,7 +142,9 @@ export async function completeJob(
     .update(agentJobs)
     .set({
       status: 'completed',
-      result,
+      // Brique 33: preserve existing result (e.g. set by dashboard_publish
+      // earlier in this job) when no new text is provided.
+      ...(result.length > 0 ? { result } : {}),
       toolsUsed,
       // Clear stale error from any prior failed attempt — the docstring already
       // promised this; without it, a resumed/retried job ends up `completed` with

@@ -726,8 +726,11 @@ export async function executeJob(
       // invariant (every tool_use has a matching tool_result).
       if (returnResultCall) {
         trace('return_result_branch', { turn });
-        const input = returnResultCall.args as { status?: string; text?: string };
-        const finalResult = input.text ?? '';
+        // Brique 33: return_result is status-only. Content delivery happens via
+        // dashboard_publish, telegram_send_message, etc. — those tools already
+        // wrote to agent_jobs.result (or a delivery channel) via their side-effects.
+        // We pass empty finalResult; completeJob preserves existing result.
+        const finalResult = '';
         toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
         toolResultBlocks.push({

@@ -269,7 +269,7 @@ describe('executeJob', () => {
     if (!tgJob) throw new Error('Failed to create telegram test job');
 
     // LLM calls telegram_send_message (omitting chatId — falls back to job.chatId)
-    // then return_result to finish
+    // then return_result to finish (Brique 33: status-only, no text)
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -285,7 +285,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', text: 'Sent.' },
+            args: { status: 'success' },
           },
         ],
       },
@@ -336,6 +336,7 @@ describe('executeJob', () => {
 
     // Turn 1: [telegram_send_message (will throw telegram_no_recipient), return_result]
     // Turn 2: [return_result with status='blocked'] — after seeing the error
+    // Brique 33: return_result is status-only, no text
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -343,7 +344,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', text: 'sent' },
+            args: { status: 'success' },
           },
         ],
       },
@@ -352,7 +353,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr2',
             toolName: 'return_result',
-            args: { status: 'blocked', text: 'cannot send' },
+            args: { status: 'blocked' },
           },
         ],
       },
@@ -373,8 +374,8 @@ describe('executeJob', () => {
 
     // LLM was called twice (turn === 2, not 1)
     expect(rows[0]?.turn).toBe(2);
-    // The DB result must be the turn-2 summary, NOT the false turn-1 "sent"
-    expect(rows[0]?.result).toBe('cannot send');
+    // Brique 33: result is empty because no dashboard_publish was called.
+    // Guard still forced a second turn — that is the invariant being tested here.
     expect(rows[0]?.status).toBe('completed');
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
@@ -410,7 +411,7 @@ describe('executeJob', () => {
 
     // Turn 1: telegram_send_message only (no return_result) — mock throws once
     // Turn 2: telegram_send_message again — mock succeeds
-    // Turn 3: return_result — finalize
+    // Turn 3: return_result — finalize (Brique 33: status-only)
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -427,7 +428,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', text: 'sent on retry' },
+            args: { status: 'success' },
           },
         ],
       },
@@ -436,12 +437,8 @@ describe('executeJob', () => {
     const result = await executeJob(loopJob.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('completed');
 
-    const rows = await db
-      .select({ result: agentJobs.result })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, loopJob.id));
-
-    expect(rows[0]?.result).toBe('sent on retry');
+    // Brique 33: result is empty — no dashboard_publish was called. The Telegram
+    // delivery already happened via telegram_send_message, which is the correct path.
     // sendTelegramMessage called exactly twice: once errored (turn 1), once succeeded (turn 2)
     expect(sendTelegramMessageMock).toHaveBeenCalledTimes(2);
 
@@ -474,6 +471,8 @@ describe('executeJob', () => {
     sendTelegramMessageMock.mockResolvedValue({ messageId: 1 });
 
     // Single turn: [telegram_send_message (succeeds), return_result]
+    // Brique 33: return_result is status-only; result column stays empty
+    // because no dashboard_publish was called (delivery happened to Telegram).
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
@@ -481,7 +480,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success', text: 'done' },
+            args: { status: 'success' },
           },
         ],
       },
@@ -495,7 +494,8 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, happyJob.id));
 
-    expect(rows[0]?.result).toBe('done');
+    // Delivery went to Telegram, not dashboard → result column stays null/empty
+    expect(rows[0]?.result ?? '').toBe('');
     // LLM called only once — guard must NOT have triggered
     expect(rows[0]?.turn).toBe(1);
     // sendTelegramMessage called exactly once with correct args
@@ -544,16 +544,25 @@ describe('executeJob', () => {
     expect(rows[0]?.turn).toBe(2); // two LLM calls → turn 2
   });
 
-  it('completes when LLM calls return_result', async () => {
+  it('completes when LLM calls dashboard_publish + return_result (Brique 33)', async () => {
+    // Brique 33: return_result is status-only. The dashboard's `result` column
+    // is populated by dashboard_publish (a delivery tool with a side-effect that
+    // updates agent_jobs.result). When return_result fires alone with no prior
+    // delivery tool, agent_jobs.result stays empty.
     const job = await createTestJob(db, seed);
 
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
           {
+            toolCallId: 'tc-pub',
+            toolName: 'dashboard_publish',
+            args: { text: 'Task is done!' },
+          },
+          {
             toolCallId: 'tc-1',
             toolName: 'return_result',
-            args: { status: 'success', text: 'Task is done!' },
+            args: { status: 'success' },
           },
         ],
       },
@@ -561,9 +570,6 @@ describe('executeJob', () => {
 
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('completed');
-    if (result.status === 'completed') {
-      expect(result.result).toBe('Task is done!');
-    }
 
     const rows = await db
       .select({ status: agentJobs.status, result: agentJobs.result })
@@ -571,6 +577,8 @@ describe('executeJob', () => {
       .where(eq(agentJobs.id, job.id));
 
     expect(rows[0]?.status).toBe('completed');
+    // dashboard_publish's side-effect populated result; completeJob preserves it
+    // (finalResult is '' from return_result, so completeJob doesn't overwrite).
     expect(rows[0]?.result).toBe('Task is done!');
   });
 
