@@ -8,8 +8,8 @@ test.beforeAll(async () => {
 test.describe('login + dashboard navigation', () => {
   test('authenticated session lands on the dashboard without a login form', async ({ page }) => {
     await page.goto('/');
-    // Root page redirects → /stats (the Dashboard). The session cookie injected
-    // by global-setup lets the proxy pass us through without hitting /login.
+    // Root page redirects → /stats. The session cookie injected by
+    // global-setup lets the proxy pass us through without hitting /login.
     await page.waitForURL(/\/(agents|onboarding|stats)(\?|$)/, { timeout: 10_000 });
     // Must not have landed on /login — global-setup ensures authentication.
     expect(page.url()).not.toMatch(/\/login/);
@@ -19,9 +19,8 @@ test.describe('login + dashboard navigation', () => {
     await page.goto('/agents');
 
     // Labels as rendered by Sidebar.tsx NAV_ITEMS (source of truth).
-    // Note: /jobs is labelled "Sessions" in the sidebar (not "Jobs").
     for (const label of [
-      'Dashboard',
+      'Stats',
       'Agents',
       'Jobs',
       'Memories',

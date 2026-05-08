@@ -27,7 +27,7 @@ const NAV_ITEMS: NavGroup[] = [
   {
     section: null,
     items: [
-      { href: '/stats', label: 'Dashboard', icon: ChartPieSlice },
+      { href: '/stats', label: 'Stats', icon: ChartPieSlice },
       { href: '/agents', label: 'Agents', icon: UsersThree },
     ],
   },
@@ -131,11 +131,6 @@ export default function Sidebar() {
             </div>
           ))}
         </nav>
-
-        {/* Footer — migration note */}
-        <div className="px-4 py-3 border-t border-neutral-800/50">
-          <p className="text-[10px] text-neutral-700">NodalAI — Brique 16a scaffold</p>
-        </div>
       </aside>
     </>
   );
