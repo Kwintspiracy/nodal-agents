@@ -6,6 +6,7 @@ export * from './entities.ts';
 export * from './agents.ts';
 export * from './jobs.ts';
 export * from './tasks.ts';
+export * from './credentials.ts';
 export * from './connectors.ts';
 export * from './tool_calls.ts';
 export * from './approvals.ts';

@@ -10,6 +10,7 @@ export default defineConfig({
     './src/schema/agents.ts',
     './src/schema/jobs.ts',
     './src/schema/tasks.ts',
+    './src/schema/credentials.ts',
     './src/schema/connectors.ts',
     './src/schema/tool_calls.ts',
     './src/schema/approvals.ts',

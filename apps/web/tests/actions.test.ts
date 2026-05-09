@@ -990,53 +990,65 @@ describe('saveApiKeyConnectorAction', () => {
   });
 });
 
-describe('saveOauthConnectorAction', () => {
-  it('rejects missing clientId', async () => {
-    const { saveOauthConnectorAction } = await import('../src/lib/actions.ts');
-    const r = await saveOauthConnectorAction({
-      slug: 'gmail',
-      oauthClientSecret: 'x',
-      oauthRefreshToken: 'y',
-    });
+// saveOauthConnectorAction was removed in Brique 34 v3.
+// OAuth credentials are now created via /api/oauth/[provider]/start → callback
+// and then linked to connectors via assignCredentialAction.
+
+describe('assignCredentialAction — Brique 34 v3', () => {
+  it('rejects non-uuid connectorId', async () => {
+    const { assignCredentialAction } = await import('../src/lib/actions.ts');
+    const r = await assignCredentialAction('bad-id', 'aaaaaaaa-0000-0000-0000-000000000099');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('rejects api_key slug for the oauth path', async () => {
-    const { saveOauthConnectorAction } = await import('../src/lib/actions.ts');
-    const r = await saveOauthConnectorAction({
-      slug: 'notion',
-      oauthClientId: 'a',
-      oauthClientSecret: 'b',
-      oauthRefreshToken: 'c',
-    });
+  it('rejects non-uuid credentialId when provided', async () => {
+    const { assignCredentialAction } = await import('../src/lib/actions.ts');
+    const r = await assignCredentialAction('aaaaaaaa-0000-0000-0000-000000000090', 'bad-cred-id');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('updates existing row with oauth2 auth_type and rotated tokens', async () => {
-    // The chain mock returns the same rows for every awaited query, so
-    // when select() returns a row the action takes the UPDATE branch.
-    // We assert on the .set() payload instead of .insert().values().
-    const existingId = 'aaaaaaaa-0000-0000-0000-000000000072';
-    currentDb = makeDb([{ id: existingId }]) as typeof currentDb;
-    const { saveOauthConnectorAction } = await import('../src/lib/actions.ts');
-    const r = await saveOauthConnectorAction({
-      slug: 'gmail',
-      oauthClientId: 'cid',
-      oauthClientSecret: 'sec',
-      oauthRefreshToken: 'ref',
-    });
+  it('returns not_found when connector does not exist', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { assignCredentialAction } = await import('../src/lib/actions.ts');
+    const r = await assignCredentialAction(
+      'aaaaaaaa-0000-0000-0000-000000000091',
+      'aaaaaaaa-0000-0000-0000-000000000092',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('accepts null credentialId to unassign (unlink) a credential', async () => {
+    // Mock: connector exists (first select), credential check skipped (null), update succeeds.
+    const existingConnectorId = 'aaaaaaaa-0000-0000-0000-000000000093';
+    currentDb = makeDb([
+      { id: existingConnectorId, slug: 'google-drive', authType: 'oauth2' },
+    ]) as typeof currentDb;
+    const { assignCredentialAction } = await import('../src/lib/actions.ts');
+    const r = await assignCredentialAction(existingConnectorId, null);
     expect(r.ok).toBe(true);
-    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
-    const setSpy = updateSpy.mock.results.at(-1)!.value as { set: ReturnType<typeof vi.fn> };
-    const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
-    expect(setArg['authType']).toBe('oauth2');
-    expect(setArg['oauthClientId']).toBe('cid');
-    // Brique 34 (Agent B): oauth tokens must be encrypted at rest — assert enc:v1: prefix.
-    expect(setArg['oauthRefreshToken'] as string).toMatch(/^enc:v1:/);
-    expect(setArg['oauthClientSecret'] as string).toMatch(/^enc:v1:/);
   });
+});
+
+describe('saveApiKeyConnectorAction — new api_key providers (regression)', () => {
+  it.each(['apify', 'firecrawl', 'tavily', 'airtable'])(
+    'saves %s api_key with enc:v1: prefix',
+    async (slug) => {
+      const existingId = 'aaaaaaaa-0000-0000-0000-000000000080';
+      currentDb = makeDb([{ id: existingId }]) as typeof currentDb;
+      const { saveApiKeyConnectorAction } = await import('../src/lib/actions.ts');
+      const r = await saveApiKeyConnectorAction({ slug, apiKey: 'test-api-key-value' });
+      expect(r.ok).toBe(true);
+      // Assert the apiKey in the DB update payload is encrypted.
+      const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+      const setSpy = updateSpy.mock.results.at(-1)!.value as { set: ReturnType<typeof vi.fn> };
+      const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
+      expect(typeof setArg['apiKey']).toBe('string');
+      expect(setArg['apiKey'] as string).toMatch(/^enc:v1:/);
+    },
+  );
 });
 
 describe('deleteConnectorAction', () => {

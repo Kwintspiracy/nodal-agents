@@ -5,61 +5,87 @@ import { toast } from 'sonner';
 import {
   saveApiKeyConnectorAction,
   deleteConnectorAction,
-  refreshConnectorAction,
+  assignCredentialAction,
   type ConnectorListEntry,
 } from '@/lib/actions.ts';
+import { refreshCredentialAction } from '@/lib/credentials.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
+import type { CatalogEntry } from '@/lib/connector-catalog.ts';
 
-// Mirrors oauth-providers.ts — providers that do not support token refresh.
-// Keep in sync with `supportsRefresh: false` entries in oauth-providers.ts.
+/** Credential types that do not support access-token refresh (Notion). */
 const OAUTH_NO_REFRESH_SLUGS: ReadonlySet<string> = new Set(['notion-oauth']);
 
 /**
  * Renders a relative time string for an OAuth token expiry date.
- * E.g. "expires in 23 min", "expired 2 min ago", "expires in 2 h".
  */
 function formatTokenExpiry(date: Date | null): string {
   if (!date) return '';
   const diffMs = date.getTime() - Date.now();
   const diffSec = Math.round(diffMs / 1000);
-  const absSec = Math.abs(diffSec);
+  const abs = Math.abs(diffSec);
 
   let magnitude: string;
-  if (absSec < 60) {
-    magnitude = `${absSec}s`;
-  } else if (absSec < 3600) {
-    magnitude = `${Math.round(absSec / 60)} min`;
-  } else if (absSec < 86400) {
-    magnitude = `${Math.round(absSec / 3600)} h`;
+  if (abs < 60) {
+    magnitude = `${abs}s`;
+  } else if (abs < 3600) {
+    magnitude = `${Math.round(abs / 60)} min`;
+  } else if (abs < 86400) {
+    magnitude = `${Math.round(abs / 3600)} h`;
   } else {
-    magnitude = `${Math.round(absSec / 86400)} d`;
+    magnitude = `${Math.round(abs / 86400)} d`;
   }
 
   return diffSec >= 0 ? `expires in ${magnitude}` : `expired ${magnitude} ago`;
 }
 
-/** Returns true if the token expiry date is in the past. Module-scope so Date.now() is outside render. */
 function isExpiredDate(date: Date | null): boolean {
   if (!date) return false;
   return date.getTime() < Date.now();
 }
 
+export type CompatibleCredential = {
+  id: string;
+  name: string;
+  accountName: string | null;
+};
+
 interface Props {
   entry: ConnectorListEntry;
+  /** OAuth credentials compatible with this connector's credentialType. Empty for api_key connectors. */
+  compatibleCredentials: CompatibleCredential[];
+  catalogEntry: CatalogEntry;
 }
 
-export default function ConnectorForm({ entry }: Props) {
+export default function ConnectorForm({ entry, compatibleCredentials, catalogEntry }: Props) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [isRefreshing, startRefreshTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [reconnectOpen, setReconnectOpen] = useState(false);
-  // For the reconnect flow: show pre-filled client ID / secret inputs.
-  const [showReconnect, setShowReconnect] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [selectedCredentialId, setSelectedCredentialId] = useState<string>(
+    entry.connector?.credentialId ?? compatibleCredentials[0]?.id ?? '',
+  );
+
   const isApiKey = entry.authType === 'api_key';
   const isOAuth = entry.authType === 'oauth2';
   const isConnected = !!entry.connector?.active;
   const supportsRefresh = isOAuth && !OAUTH_NO_REFRESH_SLUGS.has(entry.catalogSlug);
+  const credentialType = catalogEntry.credentialType as CredentialWizardType | undefined;
+
+  // Currently-active credential metadata (from the connector row fields).
+  const connectedCredentialId = entry.connector?.credentialId ?? null;
+  const connectedCredentialName = entry.connector?.credentialName ?? null;
+  const connectedAccountName = entry.connector?.credentialAccountName ?? null;
+  const connectedExpiresAt = entry.connector?.credentialExpiresAt ?? null;
+  const connectedScopes = entry.connector?.credentialScopes ?? null;
+  const isTokenExpired = isExpiredDate(connectedExpiresAt);
+
+  const status = entry.connector
+    ? entry.connector.active
+      ? 'connected'
+      : 'inactive'
+    : 'disconnected';
 
   function handleApiKeySubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -92,11 +118,24 @@ export default function ConnectorForm({ entry }: Props) {
     });
   }
 
-  function performRefresh() {
+  function performAssign(credentialId: string) {
     if (!entry.connector) return;
-    const id = entry.connector.id;
+    const connectorId = entry.connector.id;
+    startTransition(async () => {
+      const r = await assignCredentialAction(connectorId, credentialId);
+      if (!r.ok) {
+        toast.error(r.message);
+      } else {
+        toast.success(`${entry.label} credential updated`);
+        setOpen(false);
+      }
+    });
+  }
+
+  function performRefresh() {
+    if (!connectedCredentialId) return;
     startRefreshTransition(async () => {
-      const r = await refreshConnectorAction(id);
+      const r = await refreshCredentialAction(connectedCredentialId);
       if (!r.ok) {
         toast.error(r.message ?? 'Refresh failed');
       } else {
@@ -105,21 +144,16 @@ export default function ConnectorForm({ entry }: Props) {
     });
   }
 
-  function handleReconnectConfirm() {
-    setReconnectOpen(false);
-    setShowReconnect(true);
+  function performDisconnect() {
+    setConfirmOpen(false);
+    if (!entry.connector) return;
+    const id = entry.connector.id;
+    startTransition(async () => {
+      const r = await deleteConnectorAction(id);
+      if (!r.ok) toast.error(r.message);
+      else toast.success(`${entry.label} disconnected`);
+    });
   }
-
-  const status = entry.connector
-    ? entry.connector.active
-      ? 'connected'
-      : 'inactive'
-    : 'disconnected';
-
-  const connector = entry.connector;
-  // Delegate Date.now() to a module-scope helper (isExpiredDate) so the
-  // react-hooks/purity rule doesn't flag an impure call inside render.
-  const isTokenExpired = isExpiredDate(connector?.oauthTokenExpiresAt ?? null);
 
   return (
     <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-4">
@@ -143,11 +177,12 @@ export default function ConnectorForm({ entry }: Props) {
           <p className="text-xs text-neutral-500 mt-1 font-mono">
             {entry.catalogSlug} · {entry.authType}
           </p>
-          {connector?.oauthAccountName && (
-            <p className="text-xs text-neutral-400 mt-1">{connector.oauthAccountName}</p>
+          {connectedAccountName && (
+            <p className="text-xs text-neutral-400 mt-1">{connectedAccountName}</p>
           )}
         </div>
 
+        {/* Action buttons */}
         <div className="flex gap-2 shrink-0 flex-wrap justify-end">
           {isConnected && isOAuth ? (
             <>
@@ -163,11 +198,20 @@ export default function ConnectorForm({ entry }: Props) {
               )}
               <button
                 type="button"
-                onClick={() => setReconnectOpen(true)}
+                onClick={() => setWizardOpen(true)}
                 disabled={isPending || isRefreshing}
                 className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
               >
                 Reconnect
+              </button>
+              {/* Switch credential dropdown */}
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                disabled={isPending || isRefreshing}
+                className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+              >
+                {open ? 'Cancel' : 'Switch credential'}
               </button>
               <button
                 type="button"
@@ -197,8 +241,30 @@ export default function ConnectorForm({ entry }: Props) {
                 Disconnect
               </button>
             </>
+          ) : isOAuth ? (
+            /* OAuth not connected */
+            compatibleCredentials.length === 0 ? (
+              <button
+                type="button"
+                onClick={() => setWizardOpen(true)}
+                className="px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
+              >
+                Connect with{' '}
+                {catalogEntry.credentialType
+                  ? (PROVIDER_LABEL[catalogEntry.credentialType] ?? entry.label)
+                  : entry.label}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
+              >
+                {open ? 'Cancel' : 'Connect'}
+              </button>
+            )
           ) : (
-            /* Not connected */
+            /* api_key not connected */
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
@@ -213,11 +279,16 @@ export default function ConnectorForm({ entry }: Props) {
       <p className="text-xs text-neutral-500">{entry.docsHint}</p>
 
       {/* Connected OAuth status panel */}
-      {isConnected && isOAuth && connector && (
+      {isConnected && isOAuth && connectedCredentialId && (
         <div className="pt-2 border-t border-neutral-800/60 space-y-2">
-          {connector.oauthScopes && (
+          {connectedCredentialName && (
+            <p className="text-xs text-neutral-400">
+              Credential: <span className="text-white font-medium">{connectedCredentialName}</span>
+            </p>
+          )}
+          {connectedScopes && (
             <div className="flex flex-wrap gap-1">
-              {connector.oauthScopes.split(/\s+/).map((scope) => (
+              {connectedScopes.split(/\s+/).map((scope) => (
                 <span
                   key={scope}
                   className="px-1.5 py-0.5 bg-neutral-800 text-neutral-400 rounded text-[10px] font-mono"
@@ -227,139 +298,68 @@ export default function ConnectorForm({ entry }: Props) {
               ))}
             </div>
           )}
-          {connector.oauthTokenExpiresAt && (
+          {connectedExpiresAt && (
             <p className={`text-xs ${isTokenExpired ? 'text-amber-400' : 'text-neutral-500'}`}>
-              {formatTokenExpiry(connector.oauthTokenExpiresAt)}
+              {formatTokenExpiry(connectedExpiresAt)}
             </p>
           )}
         </div>
       )}
 
-      {/* Reconnect: show OAuth form pre-filled */}
-      {showReconnect && isOAuth && (
-        <form
-          method="POST"
-          action={`/api/oauth/${entry.catalogSlug}/start`}
-          encType="application/x-www-form-urlencoded"
-          className="space-y-3 pt-2 border-t border-neutral-800/60"
-        >
-          <p className="text-xs text-neutral-500">
-            Re-enter credentials to start a new OAuth session.
-          </p>
-          <div>
-            <label className="block text-xs text-neutral-500 mb-1">
-              Display name <span className="text-neutral-700">(optional)</span>
-            </label>
-            <input
-              name="name"
-              defaultValue={connector?.name ?? ''}
-              placeholder={entry.label}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="reconnect-clientId" className="block text-xs text-neutral-500 mb-1">
-                Client ID
-              </label>
-              <input
-                id="reconnect-clientId"
-                name="clientId"
-                required
-                defaultValue={connector?.oauthClientId ?? ''}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none font-mono"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="reconnect-clientSecret"
-                className="block text-xs text-neutral-500 mb-1"
+      {/* OAuth — switch credential or connect with existing */}
+      {isOAuth && open && (
+        <div className="space-y-3 pt-2 border-t border-neutral-800/60">
+          {compatibleCredentials.length > 0 ? (
+            <>
+              <div>
+                <label className="block text-xs text-neutral-500 mb-1">Use credential</label>
+                <select
+                  value={selectedCredentialId}
+                  onChange={(e) => setSelectedCredentialId(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+                >
+                  {compatibleCredentials.map((cred) => (
+                    <option key={cred.id} value={cred.id}>
+                      {cred.name}
+                      {cred.accountName ? ` (${cred.accountName})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2 items-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => selectedCredentialId && performAssign(selectedCredentialId)}
+                  disabled={isPending || !selectedCredentialId}
+                  className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+                >
+                  {isPending ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWizardOpen(true)}
+                  className="px-3 py-1.5 text-xs text-neutral-500 hover:text-white underline"
+                >
+                  or create new
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-neutral-500">
+              No compatible credentials found.{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setWizardOpen(true);
+                }}
+                className="text-indigo-400 hover:text-indigo-300 underline"
               >
-                Client secret{' '}
-                {connector?.hasOauthClientSecret && (
-                  <span className="text-neutral-700">(leave blank to reuse stored)</span>
-                )}
-              </label>
-              <input
-                id="reconnect-clientSecret"
-                name="clientSecret"
-                type="password"
-                placeholder={connector?.hasOauthClientSecret ? '•••••••• (stored)' : ''}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
-              />
-            </div>
-          </div>
-          <div className="flex gap-2 pt-1">
-            <button
-              type="submit"
-              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
-            >
-              Continue with {entry.label}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowReconnect(false)}
-              className="px-4 py-2 text-sm font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-
-      {/* Disconnected OAuth: browser-redirect form to start OAuth flow */}
-      {!entry.connector && isOAuth && open && (
-        <form
-          method="POST"
-          action={`/api/oauth/${entry.catalogSlug}/start`}
-          encType="application/x-www-form-urlencoded"
-          className="space-y-3 pt-2 border-t border-neutral-800/60"
-        >
-          <div>
-            <label htmlFor="oauth-name" className="block text-xs text-neutral-500 mb-1">
-              Display name <span className="text-neutral-700">(optional)</span>
-            </label>
-            <input
-              id="oauth-name"
-              name="name"
-              placeholder={entry.label}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="oauth-clientId" className="block text-xs text-neutral-500 mb-1">
-                Client ID
-              </label>
-              <input
-                id="oauth-clientId"
-                name="clientId"
-                required
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none font-mono"
-              />
-            </div>
-            <div>
-              <label htmlFor="oauth-clientSecret" className="block text-xs text-neutral-500 mb-1">
-                Client secret
-              </label>
-              <input
-                id="oauth-clientSecret"
-                name="clientSecret"
-                type="password"
-                required
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
-              />
-            </div>
-          </div>
-          <div className="pt-1">
-            <button
-              type="submit"
-              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
-            >
-              Continue with {entry.label}
-            </button>
-          </div>
-        </form>
+                Create one
+              </button>
+            </p>
+          )}
+        </div>
       )}
 
       {/* api_key connect/edit form */}
@@ -411,20 +411,25 @@ export default function ConnectorForm({ entry }: Props) {
         title={`Disconnect ${entry.label}?`}
         message="Tools that depend on this connector will fail until you reconnect. Existing job history is preserved."
         confirmLabel="Disconnect"
-        onConfirm={performDelete}
+        onConfirm={isOAuth ? performDisconnect : performDelete}
         onCancel={() => setConfirmOpen(false)}
       />
 
-      {/* Reconnect confirmation */}
-      <ConfirmDialog
-        open={reconnectOpen}
-        title={`Reconnect ${entry.label}?`}
-        message="This will start a new OAuth session. Enter your credentials to continue."
-        confirmLabel="Continue"
-        destructive={false}
-        onConfirm={handleReconnectConfirm}
-        onCancel={() => setReconnectOpen(false)}
-      />
+      {/* Credential wizard modal */}
+      {wizardOpen && credentialType && (
+        <CredentialWizard
+          initialType={credentialType}
+          returnToConnectorSlug={entry.catalogSlug}
+          onClose={() => setWizardOpen(false)}
+        />
+      )}
     </div>
   );
 }
+
+/** Human-friendly label for each credential type, used in button text. */
+const PROVIDER_LABEL: Record<string, string> = {
+  'google-oauth': 'Google',
+  'notion-oauth': 'Notion',
+  'airtable-oauth': 'Airtable',
+};

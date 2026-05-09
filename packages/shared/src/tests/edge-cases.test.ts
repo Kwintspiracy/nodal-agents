@@ -9,6 +9,7 @@ import {
   AgentSchema,
   EntitySchema,
   EntityMemberSchema,
+  CredentialSchema,
   ConnectorSchema,
   ApprovalRequestSchema,
   WebhookTriggerSchema,
@@ -498,19 +499,46 @@ describe('Strict schemas reject unknown fields', () => {
       api_key: null,
       active: true,
       auth_type: 'api_key' as const,
-      oauth_client_id: null,
-      oauth_client_secret: null,
-      oauth_refresh_token: null,
-      oauth_access_token: null,
-      oauth_token_expires_at: null,
-      oauth_token_url: null,
-      oauth_scopes: null,
-      oauth_account_name: null,
+      credential_id: null,
       created_at: now,
       updated_at: now,
       mystery_field: 'should be rejected',
     };
     expect(() => ConnectorSchema.parse(base)).toThrow();
+  });
+});
+
+// ─── CredentialSchema invariants ───────────────────────────────────────────────
+
+describe('CredentialSchema: type must be a known value', () => {
+  it('rejects unknown credential type', () => {
+    expect(() =>
+      CredentialSchema.parse({
+        id: uuid,
+        owner_user_id: uuid2,
+        name: 'Test',
+        type: 'github-oauth',
+        payload: 'enc:v1:xyz',
+        created_at: null,
+        updated_at: null,
+      }),
+    ).toThrow();
+  });
+
+  it('accepts all known credential types', () => {
+    for (const type of ['google-oauth', 'notion-oauth', 'airtable-oauth'] as const) {
+      expect(() =>
+        CredentialSchema.parse({
+          id: uuid,
+          owner_user_id: uuid2,
+          name: 'Test',
+          type,
+          payload: 'enc:v1:xyz',
+          created_at: null,
+          updated_at: null,
+        }),
+      ).not.toThrow();
+    }
   });
 });
 

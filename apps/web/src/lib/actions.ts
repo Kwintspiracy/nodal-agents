@@ -15,6 +15,7 @@ import {
   agentAssignments,
   agentJobs,
   connectors,
+  credentials,
   approvalRequests,
   agentSkills,
   agentSkillAssignments,
@@ -25,15 +26,24 @@ import {
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodalai/secrets';
-import { refreshOauthAccessToken } from './oauth-tokens.ts';
 import { getLanAddresses } from './network.ts';
-import type { AgentMemory } from '@nodalai/shared';
+import type { AgentMemory, CredentialType } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
+import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
+import {
+  listCredentialsAction,
+  deleteCredentialAction,
+  renameCredentialAction,
+  refreshCredentialAction,
+  getDecryptedCredential,
+  persistCredentialFromOauthFlow,
+  refreshCredentialAccessToken,
+} from './credentials.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -934,13 +944,14 @@ export type ConnectorRow = {
   authType: string;
   active: boolean;
   hasApiKey: boolean;
-  hasOauthAccessToken: boolean;
-  hasOauthRefreshToken: boolean;
-  hasOauthClientSecret: boolean;
-  oauthAccountName: string | null;
-  oauthClientId: string | null;
-  oauthScopes: string | null;
-  oauthTokenExpiresAt: Date | null;
+  /** Populated for oauth2 connectors only; null for api_key connectors */
+  credentialId: string | null;
+  credentialName: string | null;
+  credentialType: CredentialType | null;
+  /** Extracted from decrypted payload — display only, not the full payload */
+  credentialAccountName: string | null;
+  credentialExpiresAt: Date | null;
+  credentialScopes: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -963,35 +974,84 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorList
       .from(connectors)
       .where(eq(connectors.entityId, session.entityId));
 
+    // Collect unique credential ids referenced by oauth connectors
+    const credentialIds = [
+      ...new Set(rows.map((r) => r.credentialId).filter((id): id is string => id !== null)),
+    ];
+
+    // Batch fetch credentials rows
+    const credRows =
+      credentialIds.length > 0
+        ? await db.select().from(credentials).where(inArray(credentials.id, credentialIds))
+        : [];
+
+    const credById = new Map<string, (typeof credRows)[number]>();
+    for (const c of credRows) credById.set(c.id, c);
+
+    // Decrypt display-only fields from credential payloads (never expose full payload)
+    type CredDisplayFields = {
+      accountName: string | null;
+      expiresAt: Date | null;
+      scopes: string | null;
+    };
+    const credDisplayById = new Map<string, CredDisplayFields>();
+    for (const cred of credRows) {
+      try {
+        const raw = cred.payload;
+        const json = raw.startsWith('enc:v1:') ? decrypt(raw) : raw;
+        const parsed = JSON.parse(json) as Record<string, unknown>;
+        credDisplayById.set(cred.id, {
+          accountName: typeof parsed['accountName'] === 'string' ? parsed['accountName'] : null,
+          expiresAt:
+            typeof parsed['expiresAt'] === 'string' && parsed['expiresAt']
+              ? new Date(parsed['expiresAt'])
+              : null,
+          scopes: typeof parsed['scopes'] === 'string' ? parsed['scopes'] : null,
+        });
+      } catch {
+        credDisplayById.set(cred.id, { accountName: null, expiresAt: null, scopes: null });
+      }
+    }
+
     const bySlug = new Map<string, (typeof rows)[number]>();
     for (const r of rows) bySlug.set(r.slug, r);
 
     const entries: ConnectorListEntry[] = CONNECTOR_CATALOG.map((c) => {
       const row = bySlug.get(c.slug);
+      if (!row) {
+        return {
+          catalogSlug: c.slug,
+          label: c.label,
+          authType: c.authType,
+          docsHint: c.docsHint,
+          connector: null,
+        };
+      }
+
+      const cred = row.credentialId ? credById.get(row.credentialId) : undefined;
+      const display = row.credentialId ? (credDisplayById.get(row.credentialId) ?? null) : null;
+
       return {
         catalogSlug: c.slug,
         label: c.label,
         authType: c.authType,
         docsHint: c.docsHint,
-        connector: row
-          ? {
-              id: row.id,
-              slug: row.slug,
-              name: row.name,
-              authType: row.authType,
-              active: row.active ?? true,
-              hasApiKey: !!row.apiKey,
-              hasOauthAccessToken: !!row.oauthAccessToken,
-              hasOauthRefreshToken: !!row.oauthRefreshToken,
-              hasOauthClientSecret: !!row.oauthClientSecret,
-              oauthAccountName: row.oauthAccountName,
-              oauthClientId: row.oauthClientId,
-              oauthScopes: row.oauthScopes,
-              oauthTokenExpiresAt: row.oauthTokenExpiresAt,
-              createdAt: row.createdAt,
-              updatedAt: row.updatedAt,
-            }
-          : null,
+        connector: {
+          id: row.id,
+          slug: row.slug,
+          name: row.name,
+          authType: row.authType,
+          active: row.active ?? true,
+          hasApiKey: !!row.apiKey,
+          credentialId: row.credentialId ?? null,
+          credentialName: cred?.name ?? null,
+          credentialType: cred ? (cred.type as CredentialType) : null,
+          credentialAccountName: display?.accountName ?? null,
+          credentialExpiresAt: display?.expiresAt ?? null,
+          credentialScopes: display?.scopes ?? null,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        },
       };
     });
 
@@ -1075,100 +1135,10 @@ export async function saveApiKeyConnectorAction(
   }
 }
 
-const SaveOauthConnectorSchema = z.object({
-  slug: z.string().min(1).max(80),
-  name: z.string().min(1).max(120).optional(),
-  oauthClientId: z.string().min(1, 'Client ID is required'),
-  oauthClientSecret: z.string().min(1, 'Client secret is required'),
-  oauthRefreshToken: z.string().min(1, 'Refresh token is required'),
-  oauthAccessToken: z.string().optional(),
-  oauthTokenUrl: z.string().url().optional(),
-  oauthScopes: z.string().optional(),
-  oauthAccountName: z.string().optional(),
-});
-
-export async function saveOauthConnectorAction(
-  raw: unknown,
-): Promise<ActionResult<{ id: string }>> {
-  try {
-    const session = await getSession();
-    const parsed = SaveOauthConnectorSchema.safeParse(raw);
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const catalog = CONNECTOR_CATALOG.find((c) => c.slug === parsed.data.slug);
-    if (!catalog) {
-      return fail('validation_failed', 'Unknown connector slug');
-    }
-    if (catalog.authType !== 'oauth2') {
-      return fail(
-        'validation_failed',
-        `Connector ${parsed.data.slug} uses ${catalog.authType}, not oauth2`,
-      );
-    }
-
-    const db = getDb();
-    const [existing] = await db
-      .select({ id: connectors.id })
-      .from(connectors)
-      .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, parsed.data.slug)));
-
-    const name = parsed.data.name ?? catalog.label;
-
-    // Encrypt sensitive fields idempotently (safe to call if already encrypted).
-    const encClientSecret = isEncrypted(parsed.data.oauthClientSecret)
-      ? parsed.data.oauthClientSecret
-      : encrypt(parsed.data.oauthClientSecret);
-    const encRefreshToken = isEncrypted(parsed.data.oauthRefreshToken)
-      ? parsed.data.oauthRefreshToken
-      : encrypt(parsed.data.oauthRefreshToken);
-    const rawAccessToken = parsed.data.oauthAccessToken ?? null;
-    const encAccessToken =
-      rawAccessToken === null
-        ? null
-        : isEncrypted(rawAccessToken)
-          ? rawAccessToken
-          : encrypt(rawAccessToken);
-
-    const fields = {
-      name,
-      authType: 'oauth2' as const,
-      active: true,
-      // clientId, tokenUrl, scopes, accountName stored plain (non-secret, shown in UI).
-      oauthClientId: parsed.data.oauthClientId,
-      oauthClientSecret: encClientSecret,
-      oauthRefreshToken: encRefreshToken,
-      oauthAccessToken: encAccessToken,
-      oauthTokenUrl: parsed.data.oauthTokenUrl ?? null,
-      oauthScopes: parsed.data.oauthScopes ?? null,
-      oauthAccountName: parsed.data.oauthAccountName ?? null,
-    };
-
-    if (existing) {
-      await db
-        .update(connectors)
-        .set({ ...fields, updatedAt: new Date() })
-        .where(eq(connectors.id, existing.id));
-      revalidatePath('/connectors');
-      return ok({ id: existing.id });
-    }
-
-    const [row] = await db
-      .insert(connectors)
-      .values({
-        entityId: session.entityId,
-        slug: parsed.data.slug,
-        ...fields,
-      })
-      .returning({ id: connectors.id });
-    if (!row) return fail('db_error', 'Insert returned no row');
-    revalidatePath('/connectors');
-    return ok({ id: row.id });
-  } catch (err) {
-    console.error('[saveOauthConnectorAction]', err);
-    return fail('db_error', 'Failed to save connector');
-  }
-}
+// saveOauthConnectorAction has been removed in Brique 34 v3.
+// OAuth credentials are now managed via the credentials-first model:
+// POST /api/oauth/[provider]/start → callback → persistCredentialFromOauthFlow
+// Use assignCredentialAction to link a credential to a connector.
 
 export async function deleteConnectorAction(id: string): Promise<ActionResult<void>> {
   try {
@@ -1191,48 +1161,179 @@ export async function deleteConnectorAction(id: string): Promise<ActionResult<vo
   }
 }
 
+// refreshConnectorAction has been removed in Brique 34 v3.
+// Use refreshCredentialAction(credentialId) instead (re-exported below).
+
 /**
- * Refresh the OAuth access token for a connector the current entity owns.
- * Wraps `refreshOauthAccessToken` with session-based ownership check.
- * Returns the new expiry timestamp (the raw access token is never surfaced to the UI).
+ * Assign (or unassign) a credential to a connector.
+ * Verifies:
+ *   - connector belongs to the current entity
+ *   - credential (if not null) belongs to the current user
+ *   - credential type matches the connector's catalog entry expected credentialType
  */
-export async function refreshConnectorAction(
-  id: string,
-): Promise<ActionResult<{ expiresAt: Date | null }>> {
+export async function assignCredentialAction(
+  connectorId: string,
+  credentialId: string | null,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().uuid().safeParse(connectorId).success) {
       return fail('validation_failed', 'Invalid connector id');
     }
-    const db = getDb();
-    // Entity ownership check: ensure this connector belongs to the current entity.
-    const [existing] = await db
-      .select({ id: connectors.id, authType: connectors.authType })
-      .from(connectors)
-      .where(and(eq(connectors.id, id), eq(connectors.entityId, session.entityId)));
-    if (!existing) return fail('not_found', 'Connector not found');
-    if (existing.authType !== 'oauth2') {
-      return fail('invalid_auth_type', 'Connector is not an OAuth2 connector');
+    if (credentialId !== null && !z.string().uuid().safeParse(credentialId).success) {
+      return fail('validation_failed', 'Invalid credential id');
     }
 
-    const { expiresAt } = await refreshOauthAccessToken(id);
-    return ok({ expiresAt });
+    const db = getDb();
+
+    // 1. Verify connector ownership
+    const [existingConnector] = await db
+      .select({ id: connectors.id, slug: connectors.slug, authType: connectors.authType })
+      .from(connectors)
+      .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
+    if (!existingConnector) return fail('not_found', 'Connector not found');
+    if (existingConnector.authType !== 'oauth2') {
+      return fail('invalid_auth_type', 'Only OAuth2 connectors support credential assignment');
+    }
+
+    if (credentialId !== null) {
+      // 2. Verify credential ownership
+      const [existingCred] = await db
+        .select({
+          id: credentials.id,
+          ownerUserId: credentials.ownerUserId,
+          type: credentials.type,
+        })
+        .from(credentials)
+        .where(eq(credentials.id, credentialId));
+      if (!existingCred) return fail('not_found', 'Credential not found');
+      if (existingCred.ownerUserId !== session.userId) return fail('forbidden', 'Access denied');
+
+      // 3. Verify type compatibility: connector's catalog entry must declare the same credentialType
+      const provider = getOAuthProvider(existingConnector.slug);
+      if (provider && provider.credentialType !== existingCred.type) {
+        return fail(
+          'type_mismatch',
+          `Credential type '${existingCred.type}' is not compatible with connector '${existingConnector.slug}' (expects '${provider.credentialType}')`,
+        );
+      }
+    }
+
+    // 4. Update FK
+    await db
+      .update(connectors)
+      .set({ credentialId, updatedAt: new Date() })
+      .where(eq(connectors.id, connectorId));
+
+    revalidatePath('/connectors');
+    return ok(undefined);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[refreshConnectorAction]', err);
-    // Surface domain-specific error codes for known failure modes.
-    if (message.includes('does not support token refresh')) {
-      return fail('oauth_no_refresh', 'This provider does not support token refresh');
-    }
-    if (message.includes('missing clientSecret')) {
-      return fail('missing_client_secret', 'Connector is missing client secret');
-    }
-    if (message.includes('missing refreshToken')) {
-      return fail('missing_refresh_token', 'Connector is missing refresh token');
-    }
-    return fail('refresh_failed', `Token refresh failed: ${message}`);
+    console.error('[assignCredentialAction]', err);
+    return fail('db_error', 'Failed to assign credential');
   }
 }
+
+/**
+ * Create-or-assign an OAuth credential to a connector (upsert-style).
+ *
+ * Called from the /connectors page auto-assignment block when the OAuth callback
+ * returns ?connectorSlug=X&credentialId=Y. Unlike `assignCredentialAction`, this
+ * will INSERT a new connector row if none exists yet for the slug.
+ *
+ * Security:
+ *   - credential ownership verified against session.userId
+ *   - credentialType verified against catalog entry
+ */
+export async function createOrAssignOAuthConnectorAction(
+  slug: string,
+  credentialId: string,
+): Promise<ActionResult<{ connectorId: string }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().min(1).max(80).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid connector slug');
+    }
+    if (!z.string().uuid().safeParse(credentialId).success) {
+      return fail('validation_failed', 'Invalid credential id');
+    }
+
+    const catalogEntry = CONNECTOR_CATALOG.find((c) => c.slug === slug);
+    if (!catalogEntry) return fail('validation_failed', 'Unknown connector slug');
+    if (catalogEntry.authType !== 'oauth2') {
+      return fail('invalid_auth_type', 'Only OAuth2 connectors support credential assignment');
+    }
+
+    const db = getDb();
+
+    // Verify credential ownership + type
+    const [existingCred] = await db
+      .select({ id: credentials.id, ownerUserId: credentials.ownerUserId, type: credentials.type })
+      .from(credentials)
+      .where(eq(credentials.id, credentialId));
+    if (!existingCred) return fail('not_found', 'Credential not found');
+    if (existingCred.ownerUserId !== session.userId) return fail('forbidden', 'Access denied');
+
+    // Verify type compatibility
+    if (catalogEntry.credentialType && catalogEntry.credentialType !== existingCred.type) {
+      return fail(
+        'type_mismatch',
+        `Credential type '${existingCred.type}' is not compatible with connector '${slug}' (expects '${catalogEntry.credentialType}')`,
+      );
+    }
+
+    // Check for existing connector row
+    const [existing] = await db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, slug)));
+
+    let connectorId: string;
+    if (existing) {
+      // Update existing row
+      await db
+        .update(connectors)
+        .set({ credentialId, active: true, updatedAt: new Date() })
+        .where(eq(connectors.id, existing.id));
+      connectorId = existing.id;
+    } else {
+      // Insert new connector row
+      const [row] = await db
+        .insert(connectors)
+        .values({
+          entityId: session.entityId,
+          slug,
+          name: catalogEntry.label,
+          authType: 'oauth2',
+          credentialId,
+          active: true,
+        })
+        .returning({ id: connectors.id });
+      if (!row) return fail('db_error', 'Insert returned no row');
+      connectorId = row.id;
+    }
+
+    revalidatePath('/connectors');
+    return ok({ connectorId });
+  } catch (err) {
+    console.error('[createOrAssignOAuthConnectorAction]', err);
+    return fail('db_error', 'Failed to assign credential');
+  }
+}
+
+// ─── Credential action re-exports ─────────────────────────────────────────────
+// UI components may import directly from @/lib/credentials.ts, but these
+// re-exports ensure backwards-compat for callers importing from actions.ts.
+
+export {
+  listCredentialsAction,
+  deleteCredentialAction,
+  renameCredentialAction,
+  refreshCredentialAction,
+  // Internal helpers — not for direct client use, exported for runner/adapter wiring
+  getDecryptedCredential,
+  persistCredentialFromOauthFlow,
+  refreshCredentialAccessToken,
+};
 
 // ─── Approval Actions ─────────────────────────────────────────────────────────
 

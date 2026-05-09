@@ -1,4 +1,5 @@
-// Connector — API key / OAuth token holder per entity per provider, matches connectors table
+// Connector — API key holder per entity per provider, matches connectors table.
+// OAuth tokens are now stored in the credentials table (referenced by credential_id).
 
 import { z } from 'zod';
 import { ConnectorAuthTypeSchema } from '../enums';
@@ -18,14 +19,8 @@ export const ConnectorSchema = z
     api_key: z.string().nullable(),
     active: z.boolean(),
     auth_type: ConnectorAuthTypeSchema,
-    oauth_client_id: z.string().nullable(),
-    oauth_client_secret: z.string().nullable(),
-    oauth_refresh_token: z.string().nullable(),
-    oauth_access_token: z.string().nullable(),
-    oauth_token_expires_at: z.string().datetime().nullable(),
-    oauth_token_url: z.string().nullable(),
-    oauth_scopes: z.string().nullable(),
-    oauth_account_name: z.string().nullable(),
+    // FK to credentials table — null for api_key connectors
+    credential_id: z.string().uuid().nullable(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
   })
@@ -35,19 +30,12 @@ export const ConnectorInsertSchema = ConnectorSchema.omit({
   id: true,
   created_at: true,
   updated_at: true,
-  oauth_account_name: true,
 }).extend({
   active: z.boolean().default(true),
   auth_type: ConnectorAuthTypeSchema.default('api_key'),
   base_url: z.string().nullable().optional(),
   api_key: z.string().nullable().optional(),
-  oauth_client_id: z.string().nullable().optional(),
-  oauth_client_secret: z.string().nullable().optional(),
-  oauth_refresh_token: z.string().nullable().optional(),
-  oauth_access_token: z.string().nullable().optional(),
-  oauth_token_expires_at: z.string().datetime().nullable().optional(),
-  oauth_token_url: z.string().nullable().optional(),
-  oauth_scopes: z.string().nullable().optional(),
+  credential_id: z.string().uuid().nullable().optional(),
 });
 
 export type Connector = z.infer<typeof ConnectorSchema>;

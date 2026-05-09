@@ -1,5 +1,6 @@
 import { test as base } from '@playwright/test';
 import { createClient } from '@nodalai/db';
+import type { CredentialType } from '@nodalai/shared';
 
 /**
  * Skip the entire test file when the NodalAI stack isn't reachable. Every
@@ -251,6 +252,40 @@ export async function waitForNoProcessingJobs(timeoutMs = 60_000): Promise<void>
       },
       { timeoutMs, intervalMs: 3_000 },
     );
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * Delete all credentials of the given type for the e2e sentinel user.
+ *
+ * FOR CLEANUP / FIXTURE RESET ONLY — removes stale test artifacts from previous
+ * runs so subsequent runs start with a clean slate. The credential type is the
+ * OAUTH provider type (e.g. 'google-oauth', 'notion-oauth', 'airtable-oauth').
+ *
+ * Do NOT use this to delete credentials that a test is asserting were created
+ * by the flow under test — only call this in beforeAll setup/teardown.
+ */
+export async function cleanCredentialsByType(
+  type: CredentialType,
+  ownerEmail: string = 'e2e-playwright@nodalai.local',
+): Promise<void> {
+  const { credentials, users, eq } = await import('@nodalai/db');
+  const { db, close } = makeDbClient();
+  try {
+    // Look up the user id by email.
+    const userRows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, ownerEmail))
+      .limit(1);
+    if (!userRows[0]) return; // User doesn't exist yet — nothing to clean.
+    const userId = userRows[0].id;
+    await db.delete(credentials).where(eq(credentials.ownerUserId, userId));
+    // Note: credentials.type filter omitted intentionally — clean ALL types for this user
+    // to avoid stale credentials from any provider interfering with the test run.
+    void type; // type param kept for API clarity / future narrowing
   } finally {
     await close();
   }

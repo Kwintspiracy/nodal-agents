@@ -1,8 +1,10 @@
-// connectors table — holds API keys and OAuth tokens per entity per provider
+// connectors table — holds API keys per entity per provider.
+// OAuth tokens are now stored in the credentials table (credential_id FK).
 
 import { pgTable, text, uuid, boolean, timestamp, index, check } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
+import { credentials } from './credentials.ts';
 
 export const connectors = pgTable(
   'connectors',
@@ -16,19 +18,16 @@ export const connectors = pgTable(
     apiKey: text('api_key'),
     active: boolean('active').default(true),
     authType: text('auth_type').notNull().default('api_key'),
-    oauthClientId: text('oauth_client_id'),
-    oauthClientSecret: text('oauth_client_secret'),
-    oauthRefreshToken: text('oauth_refresh_token'),
-    oauthAccessToken: text('oauth_access_token'),
-    oauthTokenExpiresAt: timestamp('oauth_token_expires_at', { withTimezone: true }),
-    oauthTokenUrl: text('oauth_token_url'),
-    oauthScopes: text('oauth_scopes'),
-    oauthAccountName: text('oauth_account_name'),
+    // FK to credentials table — set null when credential is deleted
+    credentialId: uuid('credential_id').references(() => credentials.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [
     index('idx_connectors_entity_id').on(table.entityId),
+    index('idx_connectors_credential_id').on(table.credentialId),
     check(
       'connectors_auth_type_check',
       sql`${table.authType} IN ('api_key','oauth2','bearer','basic','none')`,

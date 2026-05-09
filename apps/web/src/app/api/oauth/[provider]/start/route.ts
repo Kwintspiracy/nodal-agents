@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { encrypt } from '@nodalai/secrets';
 import { getAuthProvider, requireAuth } from '@/lib/server.ts';
-import { getOAuthProvider } from '@/lib/oauth-providers.ts';
+import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
 import {
   generatePkce,
   generateState,
@@ -22,6 +22,13 @@ const StartBodySchema = z.object({
   name: z
     .string()
     .max(120)
+    .optional()
+    .transform((v) => (v === '' || v === undefined ? undefined : v)),
+  // Optional URL to redirect to after the credential is created.
+  // The callback will append ?credentialId={id} to this URL.
+  returnTo: z
+    .string()
+    .max(500)
     .optional()
     .transform((v) => (v === '' || v === undefined ? undefined : v)),
 });
@@ -40,8 +47,11 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // 2. Resolve provider
-  const provider = getOAuthProvider(slug);
+  // 2. Resolve provider — slug can be either a catalog connector slug (e.g. 'google-drive')
+  // or a credentialType (e.g. 'google-oauth') when the wizard posts directly via type.
+  const provider =
+    getOAuthProvider(slug) ??
+    getProviderByCredentialType(slug as import('@nodalai/shared').CredentialType);
   if (!provider) {
     return NextResponse.json({ error: `Unknown OAuth provider: ${slug}` }, { status: 400 });
   }
@@ -61,7 +71,7 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { clientId, clientSecret, name } = parsed.data;
+  const { clientId, clientSecret, name, returnTo } = parsed.data;
 
   // 4. Encrypt clientSecret for storage in signed cookie
   const clientSecretEnc = encrypt(clientSecret);
@@ -82,7 +92,9 @@ export async function POST(
     codeVerifier,
     clientId,
     clientSecretEnc,
+    credentialType: provider.credentialType,
     ...(name !== undefined ? { name } : {}),
+    ...(returnTo !== undefined ? { returnTo } : {}),
     createdAt: Date.now(),
   };
   const cookieValue = signStatePayload(statePayload);

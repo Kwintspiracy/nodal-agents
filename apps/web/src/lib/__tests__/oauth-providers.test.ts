@@ -1,16 +1,20 @@
 // oauth-providers.test.ts — unit tests for the OAuth provider registry
-// Asserts: all 5 providers present, correct attributes per provider,
-// valid URLs, unknown slug returns null.
+// Asserts: all 6 providers present, correct attributes per provider,
+// valid URLs, unknown slug returns null, getProviderByCredentialType works.
 
 import { describe, it, expect } from 'vitest';
-import { OAUTH_PROVIDERS, getOAuthProvider } from '../oauth-providers.ts';
+import {
+  OAUTH_PROVIDERS,
+  getOAuthProvider,
+  getProviderByCredentialType,
+} from '../oauth-providers.ts';
 
 const GOOGLE_SLUGS = ['google-drive', 'gmail', 'google-sheets', 'google-docs'] as const;
-const ALL_SLUGS = [...GOOGLE_SLUGS, 'notion-oauth'] as const;
+const ALL_SLUGS = [...GOOGLE_SLUGS, 'notion-oauth', 'airtable-oauth'] as const;
 
 describe('OAUTH_PROVIDERS — registry completeness', () => {
-  it('contains exactly 5 providers', () => {
-    expect(Object.keys(OAUTH_PROVIDERS)).toHaveLength(5);
+  it('contains exactly 6 providers', () => {
+    expect(Object.keys(OAUTH_PROVIDERS)).toHaveLength(6);
   });
 
   it.each(ALL_SLUGS)('has an entry for %s', (slug) => {
@@ -77,6 +81,10 @@ describe('Google providers — shared attributes', () => {
       expect(extra['prompt']).toBe('consent');
     },
   );
+
+  it.each(GOOGLE_SLUGS)('%s credentialType is google-oauth', (slug) => {
+    expect(getOAuthProvider(slug)?.credentialType).toBe('google-oauth');
+  });
 });
 
 describe('Notion OAuth provider — attributes', () => {
@@ -98,6 +106,53 @@ describe('Notion OAuth provider — attributes', () => {
 
   it('has accountInfo null (Notion returns account info in token response)', () => {
     expect(getOAuthProvider('notion-oauth')?.accountInfo).toBeNull();
+  });
+
+  it('credentialType is notion-oauth', () => {
+    expect(getOAuthProvider('notion-oauth')?.credentialType).toBe('notion-oauth');
+  });
+});
+
+describe('Airtable OAuth provider — attributes', () => {
+  it('has pkce: pkce-s256', () => {
+    expect(getOAuthProvider('airtable-oauth')?.pkce).toBe('pkce-s256');
+  });
+
+  it('has tokenAuth: basic', () => {
+    expect(getOAuthProvider('airtable-oauth')?.tokenAuth).toBe('basic');
+  });
+
+  it('has tokenBodyType: form', () => {
+    expect(getOAuthProvider('airtable-oauth')?.tokenBodyType).toBe('form');
+  });
+
+  it('has supportsRefresh: true', () => {
+    expect(getOAuthProvider('airtable-oauth')?.supportsRefresh).toBe(true);
+  });
+
+  it('has accountInfo with whoami endpoint', () => {
+    const p = getOAuthProvider('airtable-oauth');
+    expect(p?.accountInfo).not.toBeNull();
+    expect(p?.accountInfo?.url).toBe('https://api.airtable.com/v0/meta/whoami');
+    expect(p?.accountInfo?.nameField).toBe('email');
+  });
+
+  it('authUrl points to airtable.com', () => {
+    expect(getOAuthProvider('airtable-oauth')?.authUrl).toContain('airtable.com');
+  });
+
+  it('tokenUrl points to airtable.com', () => {
+    expect(getOAuthProvider('airtable-oauth')?.tokenUrl).toContain('airtable.com');
+  });
+
+  it('credentialType is airtable-oauth', () => {
+    expect(getOAuthProvider('airtable-oauth')?.credentialType).toBe('airtable-oauth');
+  });
+
+  it('scopes include data.records:read and schema.bases:read', () => {
+    const scopes = getOAuthProvider('airtable-oauth')?.scopes ?? [];
+    expect(scopes).toContain('data.records:read');
+    expect(scopes).toContain('schema.bases:read');
   });
 });
 
@@ -129,5 +184,27 @@ describe('Provider slug self-consistency', () => {
     const label = getOAuthProvider(slug)?.label;
     expect(typeof label).toBe('string');
     expect(label!.length).toBeGreaterThan(0);
+  });
+});
+
+describe('getProviderByCredentialType', () => {
+  it('returns a provider for google-oauth credential type', () => {
+    const p = getProviderByCredentialType('google-oauth');
+    expect(p).not.toBeNull();
+    expect(p?.credentialType).toBe('google-oauth');
+  });
+
+  it('returns a provider for notion-oauth credential type', () => {
+    const p = getProviderByCredentialType('notion-oauth');
+    expect(p).not.toBeNull();
+    expect(p?.credentialType).toBe('notion-oauth');
+    expect(p?.slug).toBe('notion-oauth');
+  });
+
+  it('returns a provider for airtable-oauth credential type', () => {
+    const p = getProviderByCredentialType('airtable-oauth');
+    expect(p).not.toBeNull();
+    expect(p?.credentialType).toBe('airtable-oauth');
+    expect(p?.slug).toBe('airtable-oauth');
   });
 });

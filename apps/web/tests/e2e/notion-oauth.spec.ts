@@ -1,24 +1,34 @@
 /**
- * Playwright e2e — OAuth flow for Notion (OAuth / Public Integration).
+ * Playwright e2e — OAuth flow for Notion (OAuth / Public Integration) — Brique 34 v3.
  *
- * Similar to oauth-flow.spec.ts but for the Notion OAuth provider which:
- * - Does not use PKCE
- * - Uses Basic auth on the token endpoint
- * - Returns workspace info in the token response (no separate userinfo endpoint)
- * - Does not have a Refresh button (supportsRefresh: false)
+ * In v3, the flow uses the credential wizard modal:
+ *   1. Click "Connect with Notion" on the Notion (OAuth) card → wizard opens
+ *   2. Fill clientId + clientSecret in the wizard
+ *   3. Wizard POSTs to /api/oauth/notion-oauth/start
+ *   4. Intercept, capture state, abort redirect
+ *   5. Navigate to callback with mock code
+ *   6. Callback creates a credential row, redirects to
+ *      /connectors?connectorSlug=notion-oauth&credentialId=...
+ *   7. Server auto-assigns + redirects to /connectors?just_connected=notion-oauth
+ *   8. Card shows CONNECTED; no Refresh button (Notion supportsRefresh: false)
  *
  * Requires a running NodalAI stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import { requireLiveStack, cleanCredentialsByType } from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
+  // Clean up any credentials from previous runs so the card renders the wizard button.
+  await cleanCredentialsByType('notion-oauth');
 });
 
-test.describe('Notion OAuth flow', () => {
-  test('connect → callback → connected status (no Refresh button)', async ({ page, context }) => {
+test.describe('Notion OAuth flow (wizard-driven)', () => {
+  test('connect via wizard → callback → connected status (no Refresh button)', async ({
+    page,
+    context,
+  }) => {
     const NOTION_TOKEN_URL = 'https://api.notion.com/v1/oauth/token';
 
     // ── 1. Intercept Notion token endpoint ───────────────────────────────────
@@ -42,7 +52,6 @@ test.describe('Notion OAuth flow', () => {
     // ── 2. Navigate to /connectors ───────────────────────────────────────────
     await page.goto('/connectors');
 
-    // Find the Notion (OAuth) card using the rounded-xl container class.
     const notionCard = page
       .locator('.rounded-xl')
       .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) });
@@ -59,23 +68,26 @@ test.describe('Notion OAuth flow', () => {
         .last()
         .click();
       await page.waitForTimeout(1_000);
+      await page.reload();
+      await expect(notionCard).toBeVisible({ timeout: 10_000 });
     }
 
-    // ── 3. Open the connect form ──────────────────────────────────────────────
-    await notionCard.getByRole('button', { name: /^connect$/i }).click();
-    await expect(notionCard.locator('input[name="clientId"]')).toBeVisible({ timeout: 5_000 });
+    // ── 3. Click "Connect with Notion" to open the wizard modal ─────────────
+    const connectBtn = notionCard.getByRole('button', { name: /connect with notion/i });
+    await connectBtn.click();
 
-    // ── 4. Fill credentials ───────────────────────────────────────────────────
-    await notionCard.locator('input[name="clientId"]').fill('notion-test-client-id');
-    await notionCard.locator('input[name="clientSecret"]').fill('notion-test-client-secret');
+    const wizard = page.getByRole('dialog');
+    await expect(wizard).toBeVisible({ timeout: 5_000 });
 
-    // ── 5. Intercept the /start POST: forward to server, capture Location header,
-    //       then stop the browser from navigating to api.notion.com.
+    // ── 4. Fill wizard form ───────────────────────────────────────────────────
+    await wizard.locator('input[name="clientId"]').fill('notion-test-client-id');
+    await wizard.locator('input[name="clientSecret"]').fill('notion-test-client-secret');
+
+    // ── 5. Intercept /start POST ──────────────────────────────────────────────
     let capturedRedirectUri = '';
     let capturedState = '';
 
     await context.route('**/api/oauth/notion-oauth/start', async (route) => {
-      // Forward without following redirects to capture the Location header.
       const response = await route.fetch({ maxRedirects: 0 });
       const location = response.headers()['location'] ?? '';
 
@@ -97,7 +109,7 @@ test.describe('Notion OAuth flow', () => {
     });
 
     // ── 6. Submit ─────────────────────────────────────────────────────────────
-    await notionCard.getByRole('button', { name: /continue with notion \(oauth\)/i }).click();
+    await wizard.getByRole('button', { name: /continue with notion/i }).click();
     await page.waitForTimeout(2_000);
 
     // ── 7. Navigate to callback with mock code ────────────────────────────────
@@ -119,7 +131,7 @@ test.describe('Notion OAuth flow', () => {
         .first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    // ── 10. Refresh button must NOT be present for Notion OAuth ───────────────
+    // ── 10. Refresh button must NOT appear (Notion supportsRefresh: false) ────
     const refreshBtn = page
       .locator('.rounded-xl')
       .filter({ has: page.getByRole('heading', { name: 'Notion (OAuth)', level: 3 }) })

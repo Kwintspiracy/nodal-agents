@@ -83,6 +83,7 @@ function makePayload(overrides: Partial<StatePayload> = {}): StatePayload {
     codeVerifier: generatePkce().codeVerifier,
     clientId: 'test-client-id',
     clientSecretEnc: 'enc:v1:dummyIv:dummyTag:dummyCt',
+    credentialType: 'google-oauth',
     createdAt: Date.now(),
     ...overrides,
   };
@@ -176,5 +177,43 @@ describe('STATE_COOKIE_NAME constant', () => {
   it('is a non-empty string', () => {
     expect(typeof STATE_COOKIE_NAME).toBe('string');
     expect(STATE_COOKIE_NAME.length).toBeGreaterThan(0);
+  });
+});
+
+describe('StatePayload — credentialType + returnTo fields', () => {
+  it('credentialType is preserved in the roundtrip', () => {
+    const key = randomBytes(32);
+    _resetMasterKeyCacheForTests();
+    _setMasterKeyForTests(key);
+
+    const payload = makePayload({ credentialType: 'notion-oauth' });
+    const cookie = signStatePayload(payload);
+    const result = verifyStateCookie(cookie);
+
+    expect(result?.credentialType).toBe('notion-oauth');
+  });
+
+  it('returnTo is preserved in the roundtrip when set', () => {
+    const key = randomBytes(32);
+    _resetMasterKeyCacheForTests();
+    _setMasterKeyForTests(key);
+
+    const payload = makePayload({ returnTo: '/connectors?connectorSlug=google-drive' });
+    const cookie = signStatePayload(payload);
+    const result = verifyStateCookie(cookie);
+
+    expect(result?.returnTo).toBe('/connectors?connectorSlug=google-drive');
+  });
+
+  it('returnTo is absent (undefined) when not set', () => {
+    const key = randomBytes(32);
+    _resetMasterKeyCacheForTests();
+    _setMasterKeyForTests(key);
+
+    const payload = makePayload();
+    const cookie = signStatePayload(payload);
+    const result = verifyStateCookie(cookie);
+
+    expect(result?.returnTo).toBeUndefined();
   });
 });

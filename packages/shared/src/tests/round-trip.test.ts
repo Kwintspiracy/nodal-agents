@@ -8,6 +8,7 @@ import {
   AgentSchema,
   AgentJobSchema,
   AgentTaskSchema,
+  CredentialSchema,
   ConnectorSchema,
   ToolCallSchema,
   ApprovalRequestSchema,
@@ -179,8 +180,36 @@ describe('AgentTaskSchema round-trip', () => {
   });
 });
 
+describe('CredentialSchema round-trip', () => {
+  it('parses a google-oauth credential', () => {
+    const raw = {
+      id: uuid,
+      owner_user_id: uuid2,
+      name: 'Mon Google perso',
+      type: 'google-oauth' as const,
+      payload: 'enc:v1:abc123encrypted',
+      created_at: new Date('2026-04-26T10:00:00.000Z'),
+      updated_at: new Date('2026-04-26T10:00:00.000Z'),
+    };
+    expect(CredentialSchema.parse(raw)).toEqual(raw);
+  });
+
+  it('accepts null timestamps', () => {
+    const raw = {
+      id: uuid,
+      owner_user_id: uuid2,
+      name: 'Notion cred',
+      type: 'notion-oauth' as const,
+      payload: 'enc:v1:notionpayload',
+      created_at: null,
+      updated_at: null,
+    };
+    expect(() => CredentialSchema.parse(raw)).not.toThrow();
+  });
+});
+
 describe('ConnectorSchema round-trip', () => {
-  it('parses an OAuth2 connector', () => {
+  it('parses an OAuth2 connector with credential_id', () => {
     const raw = {
       id: uuid,
       entity_id: uuid2,
@@ -190,14 +219,24 @@ describe('ConnectorSchema round-trip', () => {
       api_key: null,
       active: true,
       auth_type: 'oauth2' as const,
-      oauth_client_id: 'client-id',
-      oauth_client_secret: null,
-      oauth_refresh_token: 'refresh-token',
-      oauth_access_token: 'access-token',
-      oauth_token_expires_at: now,
-      oauth_token_url: 'https://oauth2.googleapis.com/token',
-      oauth_scopes: 'https://www.googleapis.com/auth/drive',
-      oauth_account_name: 'user@example.com',
+      credential_id: uuid3,
+      created_at: now,
+      updated_at: now,
+    };
+    expect(ConnectorSchema.parse(raw)).toEqual(raw);
+  });
+
+  it('parses an api_key connector with null credential_id', () => {
+    const raw = {
+      id: uuid,
+      entity_id: uuid2,
+      name: 'Notion',
+      slug: 'notion',
+      base_url: null,
+      api_key: 'encrypted-key',
+      active: true,
+      auth_type: 'api_key' as const,
+      credential_id: null,
       created_at: now,
       updated_at: now,
     };

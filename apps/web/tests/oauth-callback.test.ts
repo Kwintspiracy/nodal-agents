@@ -1,32 +1,37 @@
 // @vitest-environment node
 // oauth-callback.test.ts — integration tests for GET /api/oauth/[provider]/callback
 //
+// Brique 34 v3: the callback now persists a CREDENTIAL ROW (not a connector row)
+// and redirects with ?credentialId={id} appended to the returnTo URL
+// (or /credentials?created={id} when returnTo is absent from the state cookie).
+//
 // Tests the route handler directly (imported as a function) to avoid spinning
 // up a real HTTP server. Uses pglite + seedMinimal for a real DB.
 //
-// Must run in 'node' environment (not jsdom) because pglite uses native
-// Node APIs (Blob.arrayBuffer, WASM) unavailable in jsdom.
-// Patterns mirrored from apps/web/tests/actions.test.ts.
+// Must run in 'node' environment (not jsdom) because pglite uses native Node APIs.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@nodalai/secrets';
+import {
+  _setMasterKeyForTests,
+  _resetMasterKeyCacheForTests,
+  encrypt,
+  isEncrypted,
+} from '@nodalai/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
 import type { TestDb } from '@nodalai/db/test-utils';
-import { connectors } from '@nodalai/db';
-import { eq, and } from '@nodalai/db';
+import { credentials } from '@nodalai/db';
+import { eq } from '@nodalai/db';
 
 // ─── Module-level mock setup ──────────────────────────────────────────────────
-// vi.mock calls are hoisted by Vitest to the top of the module.
-// We use a mutable holder populated in beforeAll.
 
 let _testDb: TestDb | null = null;
+let _testUserId = 'placeholder-user-id';
 let _testEntityId = 'placeholder-entity-id';
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
-// Mock @/lib/server.ts — the callback route imports getAuthProvider from here.
 vi.mock('@/lib/server.ts', () => ({
   getDb: () => {
     if (!_testDb) throw new Error('Test DB not initialized');
@@ -34,13 +39,13 @@ vi.mock('@/lib/server.ts', () => ({
   },
   getAuthProvider: () => ({
     getSession: async (_req: Request) => ({
-      userId: 'test-user-id',
+      userId: _testUserId,
       entityId: _testEntityId,
     }),
     handleAuthRequest: null,
   }),
   requireAuth: vi.fn().mockImplementation(async () => ({
-    userId: 'test-user-id',
+    userId: _testUserId,
     entityId: _testEntityId,
   })),
   requireAuthWithEntity: vi.fn(),
@@ -57,6 +62,7 @@ beforeAll(async () => {
   _testDb = db;
 
   const seed = await seedMinimal(db);
+  _testUserId = seed.userId;
   _testEntityId = seed.entityId;
 });
 
@@ -73,6 +79,9 @@ async function buildValidCookie(opts: {
   entityId: string;
   clientId?: string;
   clientSecret?: string;
+  credentialType?: string;
+  returnTo?: string;
+  name?: string;
 }): Promise<{ cookieValue: string; state: string; codeVerifier: string }> {
   const { generatePkce, generateState, signStatePayload } = await import('@/lib/oauth-state.ts');
   const { codeVerifier } = generatePkce();
@@ -86,6 +95,9 @@ async function buildValidCookie(opts: {
     codeVerifier,
     clientId: opts.clientId ?? 'test-client-id',
     clientSecretEnc: encrypt(clientSecret),
+    credentialType: opts.credentialType ?? 'google-oauth',
+    ...(opts.returnTo ? { returnTo: opts.returnTo } : {}),
+    ...(opts.name ? { name: opts.name } : {}),
     createdAt: Date.now(),
   };
   const cookieValue = signStatePayload(payload);
@@ -158,7 +170,7 @@ const SLUG = 'google-drive';
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('GET /api/oauth/[provider]/callback — happy path', () => {
-  it('redirects 302 to /connectors?connected=google-drive after successful exchange', async () => {
+  it('redirects 302 to /credentials?created={credentialId} when no returnTo', async () => {
     const { cookieValue, state } = await buildValidCookie({
       slug: SLUG,
       entityId: _testEntityId,
@@ -182,11 +194,48 @@ describe('GET /api/oauth/[provider]/callback — happy path', () => {
     vi.unstubAllGlobals();
 
     expect(response.status).toBe(302);
-    const location = response.headers.get('location');
-    expect(location).toBe(`${ORIGIN}/connectors?connected=${SLUG}`);
+    const location = response.headers.get('location') ?? '';
+    expect(location).toContain('/credentials?created=');
+
+    // Extract credentialId from redirect URL — must be a UUID.
+    const u = new URL(location);
+    const createdId = u.searchParams.get('created');
+    expect(createdId).toBeTruthy();
+    expect(createdId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
-  it('persists connector row with enc:v1: prefix on sensitive fields', async () => {
+  it('redirects to returnTo?credentialId=... when returnTo is set in state', async () => {
+    const { cookieValue, state } = await buildValidCookie({
+      slug: SLUG,
+      entityId: _testEntityId,
+      returnTo: '/connectors?connectorSlug=google-drive',
+    });
+    const req = buildCallbackRequest({
+      origin: ORIGIN,
+      slug: SLUG,
+      code: 'AUTH_CODE_RETURNTO',
+      state,
+      cookieValue,
+    });
+
+    const fetchMock = mockSuccessfulGoogleFetch({ email: 'returnto@example.com' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+    const response = await GET(req, {
+      params: Promise.resolve({ provider: SLUG }),
+    });
+
+    vi.unstubAllGlobals();
+
+    expect(response.status).toBe(302);
+    const location = response.headers.get('location') ?? '';
+    // Must preserve the existing ?connectorSlug= param AND append credentialId.
+    expect(location).toContain('connectorSlug=google-drive');
+    expect(location).toContain('credentialId=');
+  });
+
+  it('persists a credential row with enc:v1: payload prefix', async () => {
     const { cookieValue, state } = await buildValidCookie({
       slug: SLUG,
       entityId: _testEntityId,
@@ -207,25 +256,62 @@ describe('GET /api/oauth/[provider]/callback — happy path', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
-    await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+    const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
 
     vi.unstubAllGlobals();
 
-    // Raw DB select — assert ciphertext prefixes.
-    const rows = await _testDb!
-      .select()
-      .from(connectors)
-      .where(and(eq(connectors.entityId, _testEntityId), eq(connectors.slug, SLUG)));
+    // Extract the created credential id from the redirect.
+    const location = response.headers.get('location') ?? '';
+    const u = new URL(location);
+    const credentialId = u.searchParams.get('created');
+    expect(credentialId).toBeTruthy();
 
-    expect(rows.length).toBeGreaterThan(0);
+    // Raw DB select — assert ciphertext prefix on payload column.
+    const rows = await _testDb!.select().from(credentials).where(eq(credentials.id, credentialId!));
+
+    expect(rows).toHaveLength(1);
     const row = rows[0]!;
 
-    expect(row.oauthClientSecret).toMatch(/^enc:v1:/);
-    expect(row.oauthRefreshToken).toMatch(/^enc:v1:/);
-    expect(row.oauthAccessToken).toMatch(/^enc:v1:/);
+    // payload must be encrypted at rest.
+    expect(row.payload).toMatch(/^enc:v1:/);
+    expect(isEncrypted(row.payload)).toBe(true);
 
-    // Account name persisted in plaintext (from userinfo mock).
-    expect(row.oauthAccountName).toBe('encrypt@example.com');
+    // type set correctly.
+    expect(row.type).toBe('google-oauth');
+
+    // owner is our test user.
+    expect(row.ownerUserId).toBe(_testUserId);
+  });
+
+  it('uses name from state cookie if provided', async () => {
+    const { cookieValue, state } = await buildValidCookie({
+      slug: SLUG,
+      entityId: _testEntityId,
+      name: 'My Named Credential',
+    });
+    const req = buildCallbackRequest({
+      origin: ORIGIN,
+      slug: SLUG,
+      code: 'AUTH_CODE_NAMED',
+      state,
+      cookieValue,
+    });
+
+    const fetchMock = mockSuccessfulGoogleFetch({ email: 'named@example.com' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+    const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+
+    vi.unstubAllGlobals();
+
+    const location = response.headers.get('location') ?? '';
+    const u = new URL(location);
+    const credentialId = u.searchParams.get('created');
+    expect(credentialId).toBeTruthy();
+
+    const rows = await _testDb!.select().from(credentials).where(eq(credentials.id, credentialId!));
+    expect(rows[0]?.name).toBe('My Named Credential');
   });
 });
 

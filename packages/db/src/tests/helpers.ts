@@ -165,6 +165,16 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS credentials (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name text NOT NULL,
+      type text NOT NULL CHECK (type IN ('google-oauth','notion-oauth','airtable-oauth')),
+      payload text NOT NULL,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS connectors (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
@@ -174,14 +184,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       api_key text,
       active boolean DEFAULT true,
       auth_type text NOT NULL DEFAULT 'api_key' CHECK (auth_type IN ('api_key','oauth2','bearer','basic','none')),
-      oauth_client_id text,
-      oauth_client_secret text,
-      oauth_refresh_token text,
-      oauth_access_token text,
-      oauth_token_expires_at timestamptz,
-      oauth_token_url text,
-      oauth_scopes text,
-      oauth_account_name text,
+      credential_id uuid REFERENCES credentials(id) ON DELETE SET NULL,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );

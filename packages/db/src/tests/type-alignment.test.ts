@@ -16,6 +16,7 @@ import type {
   AgentJobRow,
   AgentTaskRow,
   AgentMemoryRow,
+  CredentialRow,
   ConnectorRow,
   ToolCallRow,
   ApprovalRequestRow,
@@ -199,6 +200,14 @@ type AgentMemoryKeysOk = HasKeys<
 const _agentMemoryKeysOk: AgentMemoryKeysOk = true;
 void _agentMemoryKeysOk;
 
+// ── credentials ───────────────────────────────────────────────────────────────
+type CredentialKeysOk = HasKeys<
+  CredentialRow,
+  ['id', 'ownerUserId', 'name', 'type', 'payload', 'createdAt', 'updatedAt']
+>;
+const _credentialKeysOk: CredentialKeysOk = true;
+void _credentialKeysOk;
+
 // ── connectors ────────────────────────────────────────────────────────────────
 type ConnectorKeysOk = HasKeys<
   ConnectorRow,
@@ -211,14 +220,7 @@ type ConnectorKeysOk = HasKeys<
     'apiKey',
     'active',
     'authType',
-    'oauthClientId',
-    'oauthClientSecret',
-    'oauthRefreshToken',
-    'oauthAccessToken',
-    'oauthTokenExpiresAt',
-    'oauthTokenUrl',
-    'oauthScopes',
-    'oauthAccountName',
+    'credentialId',
     'createdAt',
     'updatedAt',
   ]

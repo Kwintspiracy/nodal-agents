@@ -19,8 +19,19 @@ export type StatePayload = {
   clientId: string;
   /** Ciphertext of clientSecret from packages/secrets encrypt() */
   clientSecretEnc: string;
-  /** Optional display name for the connector row */
+  /** Optional display name for the new credential */
   name?: string;
+  /**
+   * The CredentialType resolved from the provider registry.
+   * Stored so the callback knows which credentials table type to insert.
+   */
+  credentialType: string;
+  /**
+   * Optional URL to redirect to after the OAuth flow completes.
+   * The callback appends ?credentialId={id} (or merges into existing query).
+   * When absent, defaults to /credentials?created={id}.
+   */
+  returnTo?: string;
   createdAt: number;
 };
 

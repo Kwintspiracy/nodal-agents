@@ -1,25 +1,30 @@
 /**
- * Playwright e2e — OAuth flow for Google Drive.
+ * Playwright e2e — OAuth flow for Google Drive (Brique 34 v3).
  *
- * Strategy: intercept the /api/oauth/google-drive/start POST at the network
- * layer, forward it to the real server, capture the Location header from the
- * 302 response (the auth provider URL), extract state + redirect_uri from
- * that URL, then abort the redirect so the browser stays on /connectors, and
- * finally navigate directly to the callback URL with a mock code.
+ * In v3, the flow is:
+ *   1. Click "Connect with Google" on the Google Drive card (opens wizard modal)
+ *   2. Wizard is pre-loaded with Google type; fill clientId + clientSecret + name
+ *   3. Wizard POSTs to /api/oauth/google-oauth/start → 302 → accounts.google.com
+ *   4. Intercept the start POST, capture Location header, abort redirect
+ *   5. Navigate to callback URL with mock code
+ *   6. Callback persists a credential row, redirects to /connectors?connectorSlug=google-drive&credentialId=...
+ *   7. Server auto-assigns credential to connector, redirects to /connectors?just_connected=google-drive
+ *   8. OAuthNotify fires toast; connector shows CONNECTED status
  *
- * This test requires the NodalAI stack to be running locally.
- * It will be skipped automatically if the stack is unreachable.
+ * Requires a running NodalAI stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack } from './helpers.ts';
+import { requireLiveStack, cleanCredentialsByType } from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
+  // Clean up any credentials from previous runs so the card renders the wizard button.
+  await cleanCredentialsByType('google-oauth');
 });
 
-test.describe('Google Drive OAuth flow', () => {
-  test('connect → callback → connected status and toast', async ({ page, context }) => {
+test.describe('Google Drive OAuth flow (wizard-driven)', () => {
+  test('connect via wizard → callback → connected status and toast', async ({ page, context }) => {
     const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
     const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
 
@@ -54,13 +59,13 @@ test.describe('Google Drive OAuth flow', () => {
     // ── 3. Navigate to /connectors ───────────────────────────────────────────
     await page.goto('/connectors');
 
-    // Find the Google Drive card. Each connector renders as a rounded-xl card.
+    // Find the Google Drive card.
     const driveCard = page
       .locator('.rounded-xl')
       .filter({ has: page.getByRole('heading', { name: 'Google Drive', level: 3 }) });
     await expect(driveCard).toBeVisible({ timeout: 10_000 });
 
-    // If the connector is already connected (from a previous test run), disconnect first.
+    // If already connected, disconnect first.
     if (await driveCard.getByRole('button', { name: /disconnect/i }).isVisible()) {
       await driveCard
         .getByRole('button', { name: /disconnect/i })
@@ -71,24 +76,32 @@ test.describe('Google Drive OAuth flow', () => {
         .last()
         .click();
       await page.waitForTimeout(1_000);
+      await page.reload();
+      await expect(driveCard).toBeVisible({ timeout: 10_000 });
     }
 
-    // ── 4. Click Connect to reveal the OAuth form ────────────────────────────
-    await driveCard.getByRole('button', { name: /^connect$/i }).click();
-    await expect(driveCard.locator('input[name="clientId"]')).toBeVisible({ timeout: 5_000 });
+    // ── 4. Click "Connect with Google" to open the wizard modal ─────────────
+    const connectBtn = driveCard.getByRole('button', { name: /connect with google/i });
+    await connectBtn.click();
 
-    // ── 5. Fill in client credentials ────────────────────────────────────────
-    await driveCard.locator('input[name="clientId"]').fill('test-client-id');
-    await driveCard.locator('input[name="clientSecret"]').fill('test-client-secret');
+    // Wizard should appear as a dialog.
+    const wizard = page.getByRole('dialog');
+    await expect(wizard).toBeVisible({ timeout: 5_000 });
 
-    // ── 6. Intercept the /start POST: forward to server, capture Location header,
-    //       then abort the browser navigation to accounts.google.com.
+    // ── 5. Fill wizard form (type is pre-selected as Google) ─────────────────
+    await wizard.locator('input[name="clientId"]').fill('test-google-client-id');
+    await wizard.locator('input[name="clientSecret"]').fill('test-google-client-secret');
+    // Optional display name
+    const nameInput = wizard.locator('input[name="name"]');
+    if (await nameInput.isVisible()) {
+      await nameInput.fill('My Google Drive (e2e)');
+    }
+
+    // ── 6. Intercept the /start POST — forward to server, capture Location header
     let capturedRedirectUri = '';
     let capturedState = '';
 
-    await context.route('**/api/oauth/google-drive/start', async (route) => {
-      // Forward the request to the real server without following redirects,
-      // so we can capture the Location header from the 302 response.
+    await context.route('**/api/oauth/google-oauth/start', async (route) => {
       const response = await route.fetch({ maxRedirects: 0 });
       const location = response.headers()['location'] ?? '';
 
@@ -97,8 +110,6 @@ test.describe('Google Drive OAuth flow', () => {
         capturedRedirectUri = url.searchParams.get('redirect_uri') ?? '';
         capturedState = url.searchParams.get('state') ?? '';
 
-        // Fulfill with a plain 200 so the browser doesn't follow the redirect.
-        // The cookie Set-Cookie header from the real response must be preserved.
         const setCookie = response.headers()['set-cookie'] ?? '';
         await route.fulfill({
           status: 200,
@@ -111,27 +122,26 @@ test.describe('Google Drive OAuth flow', () => {
       }
     });
 
-    // ── 7. Submit the form ────────────────────────────────────────────────────
-    const continueBtn = driveCard.getByRole('button', { name: /continue with google drive/i });
+    // ── 7. Submit the wizard form ────────────────────────────────────────────
+    const continueBtn = wizard.getByRole('button', { name: /continue with google/i });
     await continueBtn.click();
 
-    // Wait for the start route handler to run and populate the captured values.
     await page.waitForTimeout(2_000);
 
     // ── 8. Navigate to the callback URL with mock code ────────────────────────
     expect(capturedRedirectUri).toBeTruthy();
     expect(capturedState).toBeTruthy();
 
-    const callbackUrl = `${capturedRedirectUri}?code=mock-auth-code&state=${encodeURIComponent(capturedState)}`;
+    const callbackUrl = `${capturedRedirectUri}?code=mock-google-code&state=${encodeURIComponent(capturedState)}`;
     await page.goto(callbackUrl);
 
-    // ── 9. Should land back on /connectors?connected=google-drive ────────────
+    // ── 9. Should land back on /connectors (via auto-assignment redirect) ────
     await page.waitForURL(/\/connectors/, { timeout: 15_000 });
 
-    // ── 10. Assert toast: "Google Drive connected" ─────────────────────────
+    // ── 10. Assert toast or connected status ─────────────────────────────────
+    // Either a success toast appears, or the card shows "connected".
     await expect(page.getByText(/google drive/i).first()).toBeVisible({ timeout: 10_000 });
 
-    // ── 11. Assert connected status chip is visible ───────────────────────────
     await expect(
       page
         .locator('.rounded-xl')

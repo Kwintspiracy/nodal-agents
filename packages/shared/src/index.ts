@@ -7,6 +7,7 @@ export * from './entities/user';
 export * from './entities/agent';
 export * from './entities/job';
 export * from './entities/task';
+export * from './entities/credential';
 export * from './entities/connector';
 export * from './entities/tool-call';
 export * from './entities/approval';

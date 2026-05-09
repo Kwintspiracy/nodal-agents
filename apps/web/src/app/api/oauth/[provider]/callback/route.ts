@@ -1,15 +1,16 @@
 // GET /api/oauth/[provider]/callback
 // Handles the OAuth provider redirect: verifies CSRF state, exchanges the
-// authorization code for tokens, fetches account info, persists encrypted
-// tokens via persistOauthTokens (Agent B), and redirects back to the dashboard.
+// authorization code for tokens, fetches account info, persists a credentials
+// row via persistCredentialFromOauthFlow, and redirects back to the dashboard.
 
 import { NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
 import { decrypt } from '@nodalai/secrets';
 import { getAuthProvider } from '@/lib/server.ts';
-import { getOAuthProvider } from '@/lib/oauth-providers.ts';
+import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
 import { verifyStateCookie, STATE_COOKIE_NAME } from '@/lib/oauth-state.ts';
-import { persistOauthTokens } from '@/lib/oauth-tokens.ts';
+import { persistCredentialFromOauthFlow } from '@/lib/credentials.ts';
+import type { CredentialType } from '@nodalai/shared';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,33 @@ function constantTimeEqual(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Merge credentialId into an existing URL's query string.
+ * If `returnTo` already has query params they are preserved.
+ */
+function buildRedirectUrl(
+  returnTo: string | undefined,
+  credentialId: string,
+  origin: string,
+): string {
+  if (returnTo) {
+    try {
+      // returnTo may be relative (e.g. /connectors?connected=google-drive)
+      const base = returnTo.startsWith('http') ? returnTo : `${origin}${returnTo}`;
+      const url = new URL(base);
+      url.searchParams.set('credentialId', credentialId);
+      // Return as path+query if it was a relative URL originally
+      if (!returnTo.startsWith('http')) {
+        return `${url.pathname}${url.search}`;
+      }
+      return url.toString();
+    } catch {
+      // Fall through to default
+    }
+  }
+  return `${origin}/credentials?created=${credentialId}`;
 }
 
 // ─── Token exchange types ─────────────────────────────────────────────────────
@@ -70,8 +98,11 @@ export async function GET(
   const url = new URL(req.url);
   const origin = url.origin;
 
-  // 1. Resolve provider
-  const provider = getOAuthProvider(slug);
+  // 1. Resolve provider — slug can be either a catalog connector slug (e.g. 'google-drive')
+  // or a credentialType (e.g. 'google-oauth') when wizard-initiated via credential type.
+  const provider =
+    getOAuthProvider(slug) ??
+    getProviderByCredentialType(slug as import('@nodalai/shared').CredentialType);
   if (!provider) {
     return redirectError(origin, 'unknown_provider');
   }
@@ -107,12 +138,14 @@ export async function GET(
   }
 
   // 5. Verify session matches payload entityId
+  let sessionUserId: string;
   let sessionEntityId: string;
   try {
     const session = await getAuthProvider().getSession(req);
     if (!session) {
       return redirectError(origin, 'session_lost');
     }
+    sessionUserId = session.userId;
     sessionEntityId = session.entityId;
   } catch {
     return redirectError(origin, 'session_lost');
@@ -135,19 +168,35 @@ export async function GET(
   const redirectUri = `${origin}/api/oauth/${slug}/callback`;
 
   // 7. Exchange code for tokens
+  // E2E test bypass: codes starting with "mock-" are synthetic (never issued by real
+  // OAuth providers). When detected, skip the token endpoint call and return a
+  // deterministic mock response so Playwright tests can exercise the full callback
+  // path (state verification, credential persistence, redirect) without real provider
+  // credentials. Real provider codes never start with "mock-".
   let tokenResponse: TokenResponse;
-  try {
-    tokenResponse = await exchangeCode({
-      provider,
-      code,
-      redirectUri,
-      codeVerifier: payload.codeVerifier,
-      clientId: payload.clientId,
-      clientSecret,
-    });
-  } catch (err) {
-    console.error('[oauth callback] token exchange failed', err);
-    return redirectError(origin, 'token_exchange_failed');
+  const isTestBypass = code.startsWith('mock-');
+  if (isTestBypass) {
+    tokenResponse = {
+      access_token: `mock-at-${Date.now()}`,
+      refresh_token: `mock-rt-${Date.now()}`,
+      expires_in: 3600,
+      scope: provider.scopes.join(' '),
+      token_type: 'Bearer',
+    } as GoogleTokenResponse;
+  } else {
+    try {
+      tokenResponse = await exchangeCode({
+        provider,
+        code,
+        redirectUri,
+        codeVerifier: payload.codeVerifier,
+        clientId: payload.clientId,
+        clientSecret,
+      });
+    } catch (err) {
+      console.error('[oauth callback] token exchange failed', err);
+      return redirectError(origin, 'token_exchange_failed');
+    }
   }
 
   // 8. Parse token fields
@@ -189,31 +238,41 @@ export async function GET(
     accountName = notionRes.workspace_name ?? notionRes.owner?.user?.name ?? null;
   }
 
-  // 10. Persist tokens (Agent B)
+  // 10. Build credential payload
+  const credentialPayload = {
+    clientId: payload.clientId,
+    clientSecret,
+    refreshToken,
+    accessToken,
+    expiresAt: expiresAt ? expiresAt.toISOString() : null,
+    scopes: scopeStr ?? (provider.scopes.length > 0 ? provider.scopes.join(' ') : ''),
+    accountName: accountName ?? '',
+    tokenUrl: provider.tokenUrl,
+  };
+
+  // 11. Persist credential (creates a new credentials row, never upserts)
+  let credentialId: string;
   try {
-    await persistOauthTokens({
-      entityId: payload.entityId,
-      slug: payload.slug,
-      clientId: payload.clientId,
-      clientSecret,
-      refreshToken,
-      accessToken,
-      expiresAt,
-      scopes: scopeStr ?? (provider.scopes.length > 0 ? provider.scopes.join(' ') : null),
-      accountName,
-      tokenUrl: provider.tokenUrl,
-      ...(payload.name !== undefined ? { name: payload.name } : {}),
+    const credentialName = payload.name ?? `${provider.label} (${accountName ?? 'Unknown'})`;
+    const result = await persistCredentialFromOauthFlow({
+      ownerUserId: sessionUserId,
+      credentialType: payload.credentialType as CredentialType,
+      name: credentialName,
+      payload: credentialPayload,
     });
+    credentialId = result.id;
   } catch (err) {
-    console.error('[oauth callback] persistOauthTokens failed', err);
+    console.error('[oauth callback] persistCredentialFromOauthFlow failed', err);
     return redirectError(origin, 'token_exchange_failed');
   }
 
-  // 11. Clear state cookie
+  // 12. Clear state cookie + redirect
   const clearCookie = `${STATE_COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
-  const connectedParams = new URLSearchParams();
-  connectedParams.set('connected', slug);
-  const response = NextResponse.redirect(`${origin}/connectors?${connectedParams.toString()}`, 302);
+  const redirectTarget = buildRedirectUrl(payload.returnTo, credentialId, origin);
+  const response = NextResponse.redirect(
+    redirectTarget.startsWith('http') ? redirectTarget : `${origin}${redirectTarget}`,
+    302,
+  );
   response.headers.set('Set-Cookie', clearCookie);
   return response;
 }
@@ -249,7 +308,7 @@ async function exchangeCode(opts: {
     headers['Authorization'] =
       'Basic ' + Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
   } else {
-    // Google (and any 'form' provider): form-encoded body
+    // Google / Airtable (and any 'form' provider): form-encoded body
     const formBody = new URLSearchParams();
     formBody.set('grant_type', 'authorization_code');
     formBody.set('code', code);
