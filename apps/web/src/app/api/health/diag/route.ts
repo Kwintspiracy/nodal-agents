@@ -18,8 +18,9 @@ export async function GET(req: Request): Promise<Response> {
     .filter(Boolean);
   const url = new URL(req.url);
   return NextResponse.json({
-    host: url.host,
-    proto: url.protocol,
+    hostHeader: req.headers.get('host'),
+    parsedUrlHost: url.host,
+    parsedUrlProto: url.protocol,
     pathname: url.pathname,
     origin: req.headers.get('origin'),
     referer: req.headers.get('referer'),
