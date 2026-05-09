@@ -1,5 +1,6 @@
 // @nodalai/adapter-notion — integration test
-// Verifies: tool count, unique names, correct risk levels, schema validation
+// Verifies: tool count, unique names, correct risk levels, schema validation,
+//           and that both auth variants (apiKey / accessToken) produce identical tool sets.
 
 import { describe, it, expect } from 'vitest';
 import { createNotionTools } from '../index';
@@ -7,6 +8,8 @@ import { z } from 'zod';
 
 // Use a fake API key — tools are instantiated but never called here
 const FAKE_KEY = 'secret_integration_test_key';
+// Use a fake OAuth access token to mirror the notion-oauth catalog entry
+const FAKE_ACCESS_TOKEN = 'oauth_access_test_token';
 
 describe('createNotionTools integration', () => {
   const tools = createNotionTools({ apiKey: FAKE_KEY });
@@ -172,5 +175,44 @@ describe('createNotionTools integration', () => {
     // All 17 legacy capabilities should be covered
     expect(covered).toBe(legacyNames.length);
     expect(verbatimPresent.length).toBeGreaterThan(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auth variant parity — both apiKey and accessToken must produce the same set
+// ---------------------------------------------------------------------------
+
+describe('createNotionTools — auth variant parity (apiKey vs accessToken)', () => {
+  it('accessToken variant produces the same tool count as apiKey variant', () => {
+    const byApiKey = createNotionTools({ apiKey: FAKE_KEY });
+    const byAccessToken = createNotionTools({ accessToken: FAKE_ACCESS_TOKEN });
+    expect(byAccessToken).toHaveLength(byApiKey.length);
+  });
+
+  it('accessToken variant produces identical tool names as apiKey variant', () => {
+    const byApiKey = createNotionTools({ apiKey: FAKE_KEY });
+    const byAccessToken = createNotionTools({ accessToken: FAKE_ACCESS_TOKEN });
+    const apiKeyNames = byApiKey.map((t) => t.name).sort();
+    const tokenNames = byAccessToken.map((t) => t.name).sort();
+    expect(tokenNames).toEqual(apiKeyNames);
+  });
+
+  it('accessToken variant produces identical riskLevels as apiKey variant', () => {
+    const byApiKey = createNotionTools({ apiKey: FAKE_KEY });
+    const byAccessToken = createNotionTools({ accessToken: FAKE_ACCESS_TOKEN });
+    const apiKeyMap = Object.fromEntries(byApiKey.map((t) => [t.name, t.riskLevel]));
+    const tokenMap = Object.fromEntries(byAccessToken.map((t) => [t.name, t.riskLevel]));
+    expect(tokenMap).toEqual(apiKeyMap);
+  });
+
+  it('accessToken variant does not throw during tool instantiation', () => {
+    expect(() => createNotionTools({ accessToken: FAKE_ACCESS_TOKEN })).not.toThrow();
+  });
+
+  it('apiKey variant (backwards compat) still works after union change', () => {
+    // Regression: existing callers passing { apiKey } must continue to work
+    expect(() => createNotionTools({ apiKey: FAKE_KEY })).not.toThrow();
+    const tools = createNotionTools({ apiKey: FAKE_KEY });
+    expect(tools.length).toBeGreaterThan(0);
   });
 });

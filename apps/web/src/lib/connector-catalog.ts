@@ -20,6 +20,13 @@ export const CONNECTOR_CATALOG = [
       'Create a Notion integration at notion.so/my-integrations and copy its internal secret.',
   },
   {
+    slug: 'notion-oauth',
+    label: 'Notion (OAuth)',
+    authType: 'oauth2' as ConnectorAuthType,
+    docsHint:
+      'Public Integration via OAuth — create one at notion.so/my-integrations (Public type) and authorize from your dashboard.',
+  },
+  {
     slug: 'google-drive',
     label: 'Google Drive',
     authType: 'oauth2' as ConnectorAuthType,

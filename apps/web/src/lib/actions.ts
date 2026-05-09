@@ -24,7 +24,8 @@ import {
 } from '@nodalai/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
-import { encrypt, decrypt, last4 } from '@nodalai/secrets';
+import { encrypt, decrypt, isEncrypted, last4 } from '@nodalai/secrets';
+import { refreshOauthAccessToken } from './oauth-tokens.ts';
 import { getLanAddresses } from './network.ts';
 import type { AgentMemory } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
@@ -935,9 +936,11 @@ export type ConnectorRow = {
   hasApiKey: boolean;
   hasOauthAccessToken: boolean;
   hasOauthRefreshToken: boolean;
+  hasOauthClientSecret: boolean;
   oauthAccountName: string | null;
   oauthClientId: string | null;
   oauthScopes: string | null;
+  oauthTokenExpiresAt: Date | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -980,9 +983,11 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorList
               hasApiKey: !!row.apiKey,
               hasOauthAccessToken: !!row.oauthAccessToken,
               hasOauthRefreshToken: !!row.oauthRefreshToken,
+              hasOauthClientSecret: !!row.oauthClientSecret,
               oauthAccountName: row.oauthAccountName,
               oauthClientId: row.oauthClientId,
               oauthScopes: row.oauthScopes,
+              oauthTokenExpiresAt: row.oauthTokenExpiresAt,
               createdAt: row.createdAt,
               updatedAt: row.updatedAt,
             }
@@ -1030,13 +1035,17 @@ export async function saveApiKeyConnectorAction(
       .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, parsed.data.slug)));
 
     const name = parsed.data.name ?? catalog.label;
+    // Encrypt idempotently: if value is already encrypted (enc:v1: prefix), keep it.
+    const encApiKey = isEncrypted(parsed.data.apiKey)
+      ? parsed.data.apiKey
+      : encrypt(parsed.data.apiKey);
 
     if (existing) {
       await db
         .update(connectors)
         .set({
           name,
-          apiKey: parsed.data.apiKey,
+          apiKey: encApiKey,
           authType: 'api_key',
           active: true,
           updatedAt: new Date(),
@@ -1052,7 +1061,7 @@ export async function saveApiKeyConnectorAction(
         entityId: session.entityId,
         slug: parsed.data.slug,
         name,
-        apiKey: parsed.data.apiKey,
+        apiKey: encApiKey,
         authType: 'api_key',
         active: true,
       })
@@ -1105,14 +1114,31 @@ export async function saveOauthConnectorAction(
       .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, parsed.data.slug)));
 
     const name = parsed.data.name ?? catalog.label;
+
+    // Encrypt sensitive fields idempotently (safe to call if already encrypted).
+    const encClientSecret = isEncrypted(parsed.data.oauthClientSecret)
+      ? parsed.data.oauthClientSecret
+      : encrypt(parsed.data.oauthClientSecret);
+    const encRefreshToken = isEncrypted(parsed.data.oauthRefreshToken)
+      ? parsed.data.oauthRefreshToken
+      : encrypt(parsed.data.oauthRefreshToken);
+    const rawAccessToken = parsed.data.oauthAccessToken ?? null;
+    const encAccessToken =
+      rawAccessToken === null
+        ? null
+        : isEncrypted(rawAccessToken)
+          ? rawAccessToken
+          : encrypt(rawAccessToken);
+
     const fields = {
       name,
       authType: 'oauth2' as const,
       active: true,
+      // clientId, tokenUrl, scopes, accountName stored plain (non-secret, shown in UI).
       oauthClientId: parsed.data.oauthClientId,
-      oauthClientSecret: parsed.data.oauthClientSecret,
-      oauthRefreshToken: parsed.data.oauthRefreshToken,
-      oauthAccessToken: parsed.data.oauthAccessToken ?? null,
+      oauthClientSecret: encClientSecret,
+      oauthRefreshToken: encRefreshToken,
+      oauthAccessToken: encAccessToken,
       oauthTokenUrl: parsed.data.oauthTokenUrl ?? null,
       oauthScopes: parsed.data.oauthScopes ?? null,
       oauthAccountName: parsed.data.oauthAccountName ?? null,
@@ -1162,6 +1188,49 @@ export async function deleteConnectorAction(id: string): Promise<ActionResult<vo
   } catch (err) {
     console.error('[deleteConnectorAction]', err);
     return fail('db_error', 'Failed to delete connector');
+  }
+}
+
+/**
+ * Refresh the OAuth access token for a connector the current entity owns.
+ * Wraps `refreshOauthAccessToken` with session-based ownership check.
+ * Returns the new expiry timestamp (the raw access token is never surfaced to the UI).
+ */
+export async function refreshConnectorAction(
+  id: string,
+): Promise<ActionResult<{ expiresAt: Date | null }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid connector id');
+    }
+    const db = getDb();
+    // Entity ownership check: ensure this connector belongs to the current entity.
+    const [existing] = await db
+      .select({ id: connectors.id, authType: connectors.authType })
+      .from(connectors)
+      .where(and(eq(connectors.id, id), eq(connectors.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Connector not found');
+    if (existing.authType !== 'oauth2') {
+      return fail('invalid_auth_type', 'Connector is not an OAuth2 connector');
+    }
+
+    const { expiresAt } = await refreshOauthAccessToken(id);
+    return ok({ expiresAt });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[refreshConnectorAction]', err);
+    // Surface domain-specific error codes for known failure modes.
+    if (message.includes('does not support token refresh')) {
+      return fail('oauth_no_refresh', 'This provider does not support token refresh');
+    }
+    if (message.includes('missing clientSecret')) {
+      return fail('missing_client_secret', 'Connector is missing client secret');
+    }
+    if (message.includes('missing refreshToken')) {
+      return fail('missing_refresh_token', 'Connector is missing refresh token');
+    }
+    return fail('refresh_failed', `Token refresh failed: ${message}`);
   }
 }
 

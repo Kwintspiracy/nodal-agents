@@ -29,16 +29,43 @@ import {
 import { createListCommentsTool, createAddCommentTool } from './tools/comments';
 import { createListUsersTool, createGetUserTool } from './tools/users';
 
-export interface NotionAdapterOptions {
-  /**
-   * Notion integration API key (starts with "secret_").
-   * Validated at call-time by the Notion API — not pre-validated here.
-   */
-  apiKey: string;
+/**
+ * Auth options for the Notion adapter.
+ *
+ * Two canonical paths — both use the same `Authorization: Bearer <token>` wire
+ * format on the Notion API; the distinction is only in how you obtained the token:
+ *
+ *   - `{ apiKey }` — Internal Integration secret (starts with "secret_").
+ *     Create one at notion.so/my-integrations (Internal type).
+ *   - `{ accessToken }` — OAuth access token from a Public Integration flow.
+ *     Obtain via the `notion-oauth` catalog entry's browser-based roundtrip.
+ *
+ * Providing both simultaneously is a type error — choose one path.
+ */
+export type NotionAdapterOptions =
+  | { apiKey: string; accessToken?: never }
+  | { accessToken: string; apiKey?: never };
+
+/**
+ * Resolve the bearer token from either auth variant.
+ * Both `apiKey` (Internal Integration) and `accessToken` (OAuth) are sent
+ * as `Authorization: Bearer <token>` — the Notion API makes no wire distinction.
+ */
+function resolveBearer(opts: NotionAdapterOptions): string {
+  if ('apiKey' in opts && opts.apiKey) {
+    return opts.apiKey;
+  }
+  // accessToken branch — TypeScript narrows here, but we guard defensively
+  if (!opts.accessToken) {
+    throw new Error(
+      'NotionAdapterOptions: either apiKey or accessToken must be a non-empty string.',
+    );
+  }
+  return opts.accessToken;
 }
 
 /**
- * Create all 17 Notion tools using the provided API key.
+ * Create all 17 Notion tools using the provided API key or OAuth access token.
  * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
  *
  * Tool count: 17
@@ -58,7 +85,7 @@ export interface NotionAdapterOptions {
 export function createNotionTools(
   opts: NotionAdapterOptions,
 ): ToolDefinition<z.ZodTypeAny, unknown>[] {
-  const client = createNotionClient(opts.apiKey);
+  const client = createNotionClient(resolveBearer(opts));
 
   return [
     // Read tools (9)

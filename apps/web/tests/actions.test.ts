@@ -982,7 +982,9 @@ describe('saveApiKeyConnectorAction', () => {
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
     const setSpy = updateSpy.mock.results.at(-1)!.value as { set: ReturnType<typeof vi.fn> };
     const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
-    expect(setArg['apiKey']).toBe('secret_abc');
+    // Brique 34 (Agent B): apiKey must be encrypted at rest — assert enc:v1: prefix.
+    expect(typeof setArg['apiKey']).toBe('string');
+    expect(setArg['apiKey'] as string).toMatch(/^enc:v1:/);
     expect(setArg['authType']).toBe('api_key');
     expect(setArg['active']).toBe(true);
   });
@@ -1031,7 +1033,9 @@ describe('saveOauthConnectorAction', () => {
     const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
     expect(setArg['authType']).toBe('oauth2');
     expect(setArg['oauthClientId']).toBe('cid');
-    expect(setArg['oauthRefreshToken']).toBe('ref');
+    // Brique 34 (Agent B): oauth tokens must be encrypted at rest — assert enc:v1: prefix.
+    expect(setArg['oauthRefreshToken'] as string).toMatch(/^enc:v1:/);
+    expect(setArg['oauthClientSecret'] as string).toMatch(/^enc:v1:/);
   });
 });
 
