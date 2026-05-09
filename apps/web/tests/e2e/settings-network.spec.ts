@@ -28,11 +28,16 @@ test.beforeAll(async () => {
  * Strategy: find the h2 with text "Network", then walk up to its parent
  * section wrapper and use that as the scope for all child locators.
  */
-function networkSection(page: Parameters<typeof test>[1] extends never ? never : import('@playwright/test').Page): Locator {
+function networkSection(
+  page: Parameters<typeof test>[1] extends never ? never : import('@playwright/test').Page,
+): Locator {
   // The Network h2 lives inside a <div> whose next sibling is the form card.
   // We scope via the closest wrapping div that contains both the heading and the form.
   // page.tsx wraps them in: <div> <h2>Network</h2> <div card> <NetworkForm /> </div> <div card> App/Runner </div> </div>
-  return page.locator('div').filter({ has: page.getByRole('heading', { name: 'Network', level: 2 }) }).first();
+  return page
+    .locator('div')
+    .filter({ has: page.getByRole('heading', { name: 'Network', level: 2 }) })
+    .first();
 }
 
 test.describe('NetworkForm — /settings', () => {
@@ -43,16 +48,24 @@ test.describe('NetworkForm — /settings', () => {
     const section = networkSection(page);
 
     // Section heading
-    await expect(page.getByRole('heading', { name: 'Network', level: 2 })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Network', level: 2 })).toBeVisible({
+      timeout: 10_000,
+    });
 
     // "Local only" radio label
-    await expect(section.getByText('Local only (127.0.0.1)', { exact: false })).toBeVisible({ timeout: 5_000 });
+    await expect(section.getByText('Local only (127.0.0.1)', { exact: false })).toBeVisible({
+      timeout: 5_000,
+    });
 
     // "LAN" radio label
-    await expect(section.getByText('LAN (0.0.0.0)', { exact: false })).toBeVisible({ timeout: 5_000 });
+    await expect(section.getByText('LAN (0.0.0.0)', { exact: false })).toBeVisible({
+      timeout: 5_000,
+    });
 
     // Save button — scoped to network section to avoid matching SecurityForm's Save
-    await expect(section.getByRole('button', { name: /^save$/i }).first()).toBeVisible({ timeout: 5_000 });
+    await expect(section.getByRole('button', { name: /^save$/i }).first()).toBeVisible({
+      timeout: 5_000,
+    });
 
     // App URL and Runner URL read-only fields live below the form, still inside the Network wrapper
     await expect(section.getByText('App URL')).toBeVisible({ timeout: 5_000 });
@@ -130,9 +143,7 @@ test.describe('NetworkForm — /settings', () => {
 
     // Drift hint scoped to the Network section:
     // "New bind `<value>` requires `nodalai down && nodalai up` to take effect."
-    await expect(
-      section.getByText(/New bind .+ requires/i),
-    ).toBeVisible({ timeout: 5_000 });
+    await expect(section.getByText(/New bind .+ requires/i)).toBeVisible({ timeout: 5_000 });
   });
 
   // ── Test 4 — Save triggers server action, result verifiable via network ──
@@ -164,7 +175,10 @@ test.describe('NetworkForm — /settings', () => {
     );
 
     // Submit using the Save button scoped to the Network section
-    await section.getByRole('button', { name: /^save$/i }).first().click();
+    await section
+      .getByRole('button', { name: /^save$/i })
+      .first()
+      .click();
 
     const actionResponse = await actionResponsePromise;
     // The server action always returns HTTP 200 (even for application-level errors);
