@@ -10,6 +10,7 @@ import type { BetterAuthOptions } from 'better-auth';
 import { eq, users, sessions, accounts, verifications, entities, entityMembers } from '@nodalai/db';
 import type { AnyDrizzleDb } from '@nodalai/db';
 import type { AuthProvider, AuthSession } from '../types.ts';
+import { isPrivateOrigin } from '../lib/private-origin.ts';
 
 // ─── Factory options ──────────────────────────────────────────────────────────
 
@@ -122,6 +123,17 @@ export function createLocalAuthProvider(options: LocalAuthProviderOptions): Loca
   const authOptions: BetterAuthOptions = {
     baseURL,
     secret,
+    // CSRF: better-auth rejects auth requests whose Origin header doesn't match
+    // baseURL or trustedOrigins. In LAN mode the user accesses the dashboard
+    // via http://<lan-ip>:3000 from another device, so we additionally trust any
+    // Origin pointing at a loopback or RFC1918 private address. Public IPs are
+    // never trusted, so a malicious site cannot mount a CSRF.
+    trustedOrigins: (request) => {
+      const origins = [baseURL];
+      const origin = request?.headers.get('origin') ?? null;
+      if (origin && isPrivateOrigin(origin)) origins.push(origin);
+      return origins;
+    },
     database: drizzleAdapter(db, {
       provider: 'pg',
       // camelCase: Drizzle maps column names to JS field names (userId, expiresAt…)
