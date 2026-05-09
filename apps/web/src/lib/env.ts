@@ -17,6 +17,10 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
+  // BIND mirrors the runner's bind value (set by CLI via buildEnvForWeb).
+  // Used by /settings → Network to detect drift between configured and
+  // running bind values and prompt for a restart.
+  BIND: z.enum(['127.0.0.1', '0.0.0.0']).default('127.0.0.1'),
   // LLM provider configuration — set by CLI via buildEnvForWeb()
   LLM_PROVIDER: z.string().optional(),
   LLM_MODEL: z.string().optional(),
@@ -36,6 +40,7 @@ const raw = {
   GOOGLE_CLIENT_ID: process.env['GOOGLE_CLIENT_ID'],
   GOOGLE_CLIENT_SECRET: process.env['GOOGLE_CLIENT_SECRET'],
   NEXT_PUBLIC_APP_URL: process.env['NEXT_PUBLIC_APP_URL'],
+  BIND: process.env['BIND'],
   LLM_PROVIDER: process.env['LLM_PROVIDER'],
   LLM_MODEL: process.env['LLM_MODEL'],
   LLM_BASE_URL: process.env['LLM_BASE_URL'],

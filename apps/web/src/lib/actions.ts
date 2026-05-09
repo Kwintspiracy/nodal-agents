@@ -25,6 +25,7 @@ import {
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
 import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
 import { encrypt, decrypt, last4 } from '@nodalai/secrets';
+import { getLanAddresses } from './network.ts';
 import type { AgentMemory } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
@@ -2280,6 +2281,105 @@ export async function updateAuthSettingsAction(
   } catch (err) {
     console.error('[updateAuthSettingsAction]', err);
     return fail('db_error', 'Failed to update auth settings');
+  }
+}
+
+// ─── Network Settings (Brique 35) ─────────────────────────────────────────────
+//
+// Toggle between loopback (local-only) and LAN (0.0.0.0) bind from the
+// dashboard. Mirrors the SecurityForm pattern: read config + runtime, surface
+// drift, write through mergeNodalaiConfig. The user restarts the stack to
+// apply the new bind — we don't auto-restart from the UI.
+
+export type NetworkView = {
+  /** Bind value persisted in ~/.nodalai/config.json. */
+  configuredBind: 'loopback' | 'lan';
+  /** Bind value currently in effect for the running processes. */
+  runtimeBind: 'loopback' | 'lan';
+  /** IPv4 LAN addresses detected on this host (for the user to share). */
+  lanAddresses: string[];
+  /** Web port — used to render shareable URLs alongside lanAddresses. */
+  webPort: number;
+  /** Always populated by the CLI; we don't bootstrap a config from the web. */
+  configPathExists: boolean;
+};
+
+function readConfiguredBind(): {
+  configuredBind: 'loopback' | 'lan';
+  configPathExists: boolean;
+} {
+  const cfg = readNodalaiConfig();
+  if (!cfg) {
+    return { configuredBind: 'loopback', configPathExists: false };
+  }
+  const bind = cfg['bind'] as 'loopback' | 'lan' | undefined;
+  return {
+    configuredBind: bind === 'lan' ? 'lan' : 'loopback',
+    configPathExists: true,
+  };
+}
+
+export async function getNetworkSettingsAction(): Promise<ActionResult<NetworkView>> {
+  try {
+    await getSession();
+    const persisted = readConfiguredBind();
+    const runtimeBind: 'loopback' | 'lan' = env.BIND === '0.0.0.0' ? 'lan' : 'loopback';
+    return ok({
+      configuredBind: persisted.configuredBind,
+      runtimeBind,
+      lanAddresses: getLanAddresses(),
+      webPort: parseWebPort(env.NEXT_PUBLIC_APP_URL),
+      configPathExists: persisted.configPathExists,
+    });
+  } catch (err) {
+    console.error('[getNetworkSettingsAction]', err);
+    return fail('db_error', 'Failed to load network settings');
+  }
+}
+
+function parseWebPort(appUrl: string): number {
+  try {
+    const u = new URL(appUrl);
+    if (u.port) return Number(u.port);
+    return u.protocol === 'https:' ? 443 : 80;
+  } catch {
+    return 3000;
+  }
+}
+
+const UpdateNetworkSchema = z.object({
+  bind: z.enum(['loopback', 'lan']),
+});
+
+export async function updateNetworkSettingsAction(
+  raw: unknown,
+): Promise<ActionResult<{ requiresRestart: boolean }>> {
+  try {
+    await getSession();
+    const parsed = UpdateNetworkSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+
+    try {
+      mergeNodalaiConfig({ bind: parsed.data.bind });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg === 'cli_config_missing') {
+        return fail(
+          'cli_config_missing',
+          'Cannot find ~/.nodalai/config.json — run `nodalai init` first.',
+        );
+      }
+      throw err;
+    }
+
+    revalidatePath('/settings');
+    const runtimeBind: 'loopback' | 'lan' = env.BIND === '0.0.0.0' ? 'lan' : 'loopback';
+    return ok({ requiresRestart: parsed.data.bind !== runtimeBind });
+  } catch (err) {
+    console.error('[updateNetworkSettingsAction]', err);
+    return fail('db_error', 'Failed to update network settings');
   }
 }
 

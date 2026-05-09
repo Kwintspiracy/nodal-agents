@@ -1644,6 +1644,50 @@ describe('updateAuthSettingsAction', () => {
   });
 });
 
+describe('updateNetworkSettingsAction', () => {
+  it('rejects bad bind value', async () => {
+    const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateNetworkSettingsAction({ bind: 'bogus' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('writes bind=lan and reports requiresRestart=true when bind differs from runtime', async () => {
+    cliConfigMocks.merge.mockReset();
+    cliConfigMocks.merge.mockImplementation(() => undefined);
+    const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateNetworkSettingsAction({ bind: 'lan' });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.requiresRestart).toBe(true);
+    expect(cliConfigMocks.merge).toHaveBeenCalledTimes(1);
+    const patch = cliConfigMocks.merge.mock.calls[0]![0] as { bind: string };
+    expect(patch.bind).toBe('lan');
+  });
+
+  it('writes bind=loopback and reports requiresRestart=false when matching runtime', async () => {
+    cliConfigMocks.merge.mockReset();
+    cliConfigMocks.merge.mockImplementation(() => undefined);
+    const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateNetworkSettingsAction({ bind: 'loopback' });
+    expect(r.ok).toBe(true);
+    // Test env defaults BIND to 127.0.0.1 (loopback) — see env.ts schema.
+    if (r.ok) expect(r.data.requiresRestart).toBe(false);
+    const patch = cliConfigMocks.merge.mock.calls[0]![0] as { bind: string };
+    expect(patch.bind).toBe('loopback');
+  });
+
+  it('returns cli_config_missing when mergeNodalaiConfig signals the file is absent', async () => {
+    cliConfigMocks.merge.mockReset();
+    cliConfigMocks.merge.mockImplementation(() => {
+      throw new Error('cli_config_missing');
+    });
+    const { updateNetworkSettingsAction } = await import('../src/lib/actions.ts');
+    const r = await updateNetworkSettingsAction({ bind: 'lan' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('cli_config_missing');
+  });
+});
+
 // ─── updateAgentAction ────────────────────────────────────────────────────────
 
 describe('updateAgentAction — validation', () => {

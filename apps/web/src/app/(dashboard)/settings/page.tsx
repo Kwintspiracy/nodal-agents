@@ -1,13 +1,20 @@
-import { getSettingsAction, getSecuritySettingsAction, listLlmKeysAction } from '@/lib/actions.ts';
+import {
+  getSettingsAction,
+  getSecuritySettingsAction,
+  getNetworkSettingsAction,
+  listLlmKeysAction,
+} from '@/lib/actions.ts';
 import SecurityForm from './SecurityForm.tsx';
+import NetworkForm from './NetworkForm.tsx';
 import LlmKeysList from './LlmKeysList.tsx';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const [result, securityResult, llmKeysResult] = await Promise.all([
+  const [result, securityResult, networkResult, llmKeysResult] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
+    getNetworkSettingsAction(),
     listLlmKeysAction(),
   ]);
 
@@ -29,9 +36,9 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-neutral-500 mt-0.5">
-          LLM providers and security mode are editable here. Network, session, and worker secret are
-          seeded by <code className="font-mono text-neutral-400">nodalai init</code> and surfaced
-          read-only.
+          LLM providers, security mode, and network access are editable here. Session and worker
+          secret are seeded by <code className="font-mono text-neutral-400">nodalai init</code> and
+          surfaced read-only.
         </p>
       </div>
 
@@ -85,10 +92,20 @@ export default async function SettingsPage() {
         </div>
       )}
 
-      <Section title="Network">
-        <Field label="App URL" value={s.appUrl} mono />
-        <Field label="Runner URL" value={s.runnerUrl} mono />
-      </Section>
+      {networkResult.ok && (
+        <div>
+          <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+            Network
+          </h2>
+          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-5 py-5">
+            <NetworkForm initial={networkResult.data} />
+          </div>
+          <div className="mt-3 bg-neutral-900 border border-neutral-800/60 rounded-xl divide-y divide-neutral-800/60">
+            <Field label="App URL" value={s.appUrl} mono />
+            <Field label="Runner URL" value={s.runnerUrl} mono />
+          </div>
+        </div>
+      )}
 
       <Section title="Session">
         <Field label="User ID" value={s.user.userId} mono />

@@ -59,6 +59,7 @@ export function resolveAuthMode(config: Config): 'local-trust' | 'local-auth' {
  */
 export function buildEnvForWeb(config: Config, databaseUrl: string): Record<string, string> {
   const authMode = resolveAuthMode(config);
+  const bind = config.bind === 'loopback' ? '127.0.0.1' : '0.0.0.0';
 
   const env: Record<string, string> = {
     DATABASE_URL: databaseUrl,
@@ -68,6 +69,10 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     NEXT_PUBLIC_AUTH_MODE: authMode,
     NEXT_PUBLIC_APP_URL: `http://localhost:${config.ports.web}`,
     PORT: String(config.ports.web),
+    // BIND mirrors the runner's binding so /settings → Network can render the
+    // "restart required" banner when the configured value drifts from runtime.
+    // The web itself doesn't bind on this — Next.js listens on 0.0.0.0 anyway.
+    BIND: bind,
     NODE_ENV: 'production',
     // AUTH_SECRET is required by better-auth in local-auth mode; harmless in local-trust.
     AUTH_SECRET: config.workerSecret,
