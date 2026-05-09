@@ -1,7 +1,28 @@
 import type { NextConfig } from 'next';
 import type { Configuration } from 'webpack';
+import { networkInterfaces } from 'node:os';
+
+// Next 15.3+ blocks dev requests whose Origin doesn't match the dev server's
+// host. When BIND=0.0.0.0 the user reaches the dashboard via a LAN IP, so the
+// HMR WebSocket and dev-time RSC requests get rejected unless the IP is in
+// allowedDevOrigins. Without it, Next falls back to full page reloads — which
+// wipes React state mid-sign-in. Compute the list at config evaluation time
+// (the dev server reads it once on boot, so a DHCP IP change still requires a
+// restart, same as bind itself).
+function lanIPv4(): string[] {
+  const ifs = networkInterfaces();
+  const out: string[] = [];
+  for (const list of Object.values(ifs)) {
+    if (!list) continue;
+    for (const iface of list) {
+      if (iface.family === 'IPv4' && !iface.internal) out.push(iface.address);
+    }
+  }
+  return out;
+}
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [
     '@nodalai/db',
     '@nodalai/auth',
