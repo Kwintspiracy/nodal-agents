@@ -1229,7 +1229,8 @@ export async function assignCredentialAction(
     return ok(undefined);
   } catch (err) {
     console.error('[assignCredentialAction]', err);
-    return fail('db_error', 'Failed to assign credential');
+    const detail = err instanceof Error ? err.message : String(err);
+    return fail('db_error', `Failed to assign credential: ${detail}`);
   }
 }
 
@@ -1316,7 +1317,8 @@ export async function createOrAssignOAuthConnectorAction(
     return ok({ connectorId });
   } catch (err) {
     console.error('[createOrAssignOAuthConnectorAction]', err);
-    return fail('db_error', 'Failed to assign credential');
+    const detail = err instanceof Error ? err.message : String(err);
+    return fail('db_error', `Failed to assign credential: ${detail}`);
   }
 }
 
