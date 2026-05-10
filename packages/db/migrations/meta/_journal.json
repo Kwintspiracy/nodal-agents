@@ -50,6 +50,13 @@
       "when": 1778341607214,
       "tag": "0006_credentials_table",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778421836079,
+      "tag": "0007_free_speed",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 // connectors table — holds API keys per entity per provider.
 // OAuth tokens are now stored in the credentials table (credential_id FK).
 
-import { pgTable, text, uuid, boolean, timestamp, index, check } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, boolean, timestamp, index, check, unique } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { credentials } from './credentials.ts';
@@ -12,7 +12,7 @@ export const connectors = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
-    slug: text('slug').notNull().unique(),
+    slug: text('slug').notNull(),
     baseUrl: text('base_url'),
     // Encrypted with pgp_sym_encrypt in DB — raw value never returned in select
     apiKey: text('api_key'),
@@ -32,6 +32,7 @@ export const connectors = pgTable(
       'connectors_auth_type_check',
       sql`${table.authType} IN ('api_key','oauth2','bearer','basic','none')`,
     ),
+    unique('connectors_entity_slug_unique').on(table.entityId, table.slug),
   ],
 );
 

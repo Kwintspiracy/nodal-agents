@@ -386,16 +386,53 @@ describe('UNIQUE constraints', () => {
     ).rejects.toThrow();
   });
 
-  it('connectors: rejects duplicate slug', async () => {
-    const slug = `unique-conn-${Date.now()}`;
-    await db
+  it('connectors: allows same slug for different entities (composite unique)', async () => {
+    const slug = `shared-slug-${Date.now()}`;
+
+    // entity A — create a separate user + entity
+    const [userA] = await db
+      .insert(schema.users)
+      .values({ email: `entity-a-${Date.now()}@example.com` })
+      .returning();
+    const [entityA] = await db
+      .insert(schema.entities)
+      .values({ userId: userA!.id, name: 'Entity A', slug: `entity-a-${Date.now()}` })
+      .returning();
+
+    // entity B — another user + entity
+    const [userB] = await db
+      .insert(schema.users)
+      .values({ email: `entity-b-${Date.now()}@example.com` })
+      .returning();
+    const [entityB] = await db
+      .insert(schema.entities)
+      .values({ userId: userB!.id, name: 'Entity B', slug: `entity-b-${Date.now()}` })
+      .returning();
+
+    // Insert connector for entity A — must succeed
+    const [connA] = await db
       .insert(schema.connectors)
-      .values({ entityId: seed.entityId, name: 'C1', slug, authType: 'api_key' });
-    await expect(
-      db
+      .values({ entityId: entityA!.id, name: 'C-A', slug, authType: 'oauth2' })
+      .returning();
+    expect(connA).toBeDefined();
+
+    // Insert same slug for entity B — must also succeed (different entity)
+    const [connB] = await db
+      .insert(schema.connectors)
+      .values({ entityId: entityB!.id, name: 'C-B', slug, authType: 'oauth2' })
+      .returning();
+    expect(connB).toBeDefined();
+
+    // Insert same slug for entity A again — must fail with the composite constraint name
+    try {
+      await db
         .insert(schema.connectors)
-        .values({ entityId: seed.entityId, name: 'C2', slug, authType: 'api_key' }),
-    ).rejects.toThrow();
+        .values({ entityId: entityA!.id, name: 'C-A-dup', slug, authType: 'oauth2' });
+      expect.fail('Expected duplicate-key error but insert succeeded');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      expect(msg).toMatch(/connectors_entity_slug_unique/);
+    }
   });
 
   it('entity_llm_keys: allows multiple rows per (entity_id, provider) — Brique 24', async () => {

@@ -179,14 +179,15 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
       name text NOT NULL,
-      slug text NOT NULL UNIQUE,
+      slug text NOT NULL,
       base_url text,
       api_key text,
       active boolean DEFAULT true,
       auth_type text NOT NULL DEFAULT 'api_key' CHECK (auth_type IN ('api_key','oauth2','bearer','basic','none')),
       credential_id uuid REFERENCES credentials(id) ON DELETE SET NULL,
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now()
+      updated_at timestamptz DEFAULT now(),
+      CONSTRAINT connectors_entity_slug_unique UNIQUE (entity_id, slug)
     );
 
     CREATE TABLE IF NOT EXISTS tool_calls (
