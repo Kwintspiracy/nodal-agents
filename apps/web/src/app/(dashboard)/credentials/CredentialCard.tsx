@@ -131,8 +131,15 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
             <p className="text-xs text-neutral-400 mt-0.5">{credential.accountName}</p>
           )}
           {expiryText && (
-            <p className={`text-xs mt-0.5 ${expired ? 'text-amber-400' : 'text-neutral-500'}`}>
-              {expiryText}
+            <p
+              className={`text-xs mt-0.5 ${
+                // Amber alarm only when the token is expired AND the provider can NOT
+                // self-refresh (e.g. Notion). Refreshable providers auto-renew on use,
+                // so the "expired" badge would be misleading there.
+                expired && !supportsRefresh ? 'text-amber-400' : 'text-neutral-500'
+              }`}
+            >
+              {supportsRefresh && expired ? 'Auto-refreshes when used' : expiryText}
             </p>
           )}
         </div>
