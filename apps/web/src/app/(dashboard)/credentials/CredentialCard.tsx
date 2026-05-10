@@ -130,16 +130,16 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
           {credential.accountName && (
             <p className="text-xs text-neutral-400 mt-0.5">{credential.accountName}</p>
           )}
-          {expiryText && (
-            <p
-              className={`text-xs mt-0.5 ${
-                // Amber alarm only when the token is expired AND the provider can NOT
-                // self-refresh (e.g. Notion). Refreshable providers auto-renew on use,
-                // so the "expired" badge would be misleading there.
-                expired && !supportsRefresh ? 'text-amber-400' : 'text-neutral-500'
-              }`}
-            >
-              {supportsRefresh && expired ? 'Auto-refreshes when used' : expiryText}
+          {/* Refreshable providers (Google, Airtable) display a stable
+              "Auto-refreshes when used" — the runner refreshes the token
+              transparently on use, so a countdown UI adds nothing but anxiety.
+              Non-refreshable (Notion) keeps the real timer + amber alarm. */}
+          {supportsRefresh && (
+            <p className="text-xs text-neutral-500 mt-0.5">Auto-refreshes when used</p>
+          )}
+          {!supportsRefresh && expiryText && (
+            <p className={`text-xs mt-0.5 ${expired ? 'text-amber-400' : 'text-neutral-500'}`}>
+              {expiryText}
             </p>
           )}
         </div>

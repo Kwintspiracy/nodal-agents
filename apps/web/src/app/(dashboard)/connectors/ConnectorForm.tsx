@@ -306,18 +306,16 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
               ))}
             </div>
           )}
-          {connectedExpiresAt && (
-            <p
-              className={`text-xs ${
-                // Amber alarm only when the token is expired AND the provider can NOT
-                // self-refresh (e.g. Notion). Refreshable providers auto-renew on use,
-                // so showing an alarmist "expired" badge is misleading there.
-                isTokenExpired && !supportsRefresh ? 'text-amber-400' : 'text-neutral-500'
-              }`}
-            >
-              {supportsRefresh && isTokenExpired
-                ? 'Auto-refreshes when used'
-                : formatTokenExpiry(connectedExpiresAt)}
+          {/* Refreshable providers show a stable "Auto-refreshes when used" line
+              regardless of the underlying expiresAt — the runner refreshes
+              transparently on use, so a countdown timer is anxiety-inducing
+              without adding information. Non-refreshable providers (Notion)
+              keep the real timer + amber alarm when expired since "expired"
+              there means the user actually has to reconnect. */}
+          {supportsRefresh && <p className="text-xs text-neutral-500">Auto-refreshes when used</p>}
+          {!supportsRefresh && connectedExpiresAt && (
+            <p className={`text-xs ${isTokenExpired ? 'text-amber-400' : 'text-neutral-500'}`}>
+              {formatTokenExpiry(connectedExpiresAt)}
             </p>
           )}
         </div>
