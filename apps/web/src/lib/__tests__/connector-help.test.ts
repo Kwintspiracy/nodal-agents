@@ -78,6 +78,12 @@ describe('OAUTH_GUIDES', () => {
     const guide = OAUTH_GUIDES['airtable-oauth'];
     assertGuide(guide, 'airtable-oauth');
   });
+
+  it('airtable-oauth: warning mentions LAN-IP / localhost constraint', () => {
+    const guide = OAUTH_GUIDES['airtable-oauth'];
+    expect(guide.warning, 'airtable-oauth: warning required').toBeTruthy();
+    expect(guide.warning).toMatch(/localhost/i);
+  });
 });
 
 // ─── APIKEY_GUIDES ────────────────────────────────────────────────────────────

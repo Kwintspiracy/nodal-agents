@@ -11,6 +11,18 @@ export default function HelpSteps({ guide }: Props) {
     <div className="space-y-3">
       {guide.intro && <p className="text-xs text-neutral-500 italic">{guide.intro}</p>}
 
+      {guide.warning && (
+        <div
+          role="note"
+          className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+        >
+          <span aria-hidden="true" className="font-bold">
+            !
+          </span>
+          <span>{guide.warning}</span>
+        </div>
+      )}
+
       <ol className="space-y-2.5">
         {guide.steps.map((step) => (
           <li key={step.number} className="flex gap-2">
