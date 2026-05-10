@@ -173,6 +173,106 @@ describe('getDecryptedCredential', () => {
     const result = await getDecryptedCredential('00000000-0000-0000-0000-000000000000');
     expect(result).toBeNull();
   });
+
+  it('auto-refreshes the access token when expiry is past and provider supports refresh', async () => {
+    const { persistCredentialFromOauthFlow, getDecryptedCredential } =
+      await import('../credentials.ts');
+
+    // Persist a google credential whose access token expired 10 minutes ago.
+    const { id } = await persistCredentialFromOauthFlow({
+      ownerUserId: _testUserId,
+      credentialType: 'google-oauth',
+      name: 'Expired Auto-Refresh Test',
+      payload: {
+        ...SAMPLE_PAYLOAD,
+        accessToken: 'expired-token',
+        refreshToken: 'still-valid-refresh',
+        expiresAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ access_token: 'auto-refreshed-token', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const decrypted = await getDecryptedCredential(id);
+
+    vi.unstubAllGlobals();
+
+    // The returned payload should already carry the freshly-minted token.
+    expect(decrypted?.payload.accessToken).toBe('auto-refreshed-token');
+    // Fetch should have been called exactly once (the refresh).
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT auto-refresh when the access token is still valid (>60s remaining)', async () => {
+    const { persistCredentialFromOauthFlow, getDecryptedCredential } =
+      await import('../credentials.ts');
+
+    // Token valid for 1 hour.
+    const { id } = await persistCredentialFromOauthFlow({
+      ownerUserId: _testUserId,
+      credentialType: 'google-oauth',
+      name: 'Still-Valid No-Refresh Test',
+      payload: {
+        ...SAMPLE_PAYLOAD,
+        accessToken: 'still-fresh-token',
+        refreshToken: 'unused-refresh-token',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    });
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const decrypted = await getDecryptedCredential(id);
+
+    vi.unstubAllGlobals();
+
+    expect(decrypted?.payload.accessToken).toBe('still-fresh-token');
+    // No refresh attempted — fetch must not be called.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the stale payload (does not throw) when auto-refresh fails', async () => {
+    const { persistCredentialFromOauthFlow, getDecryptedCredential } =
+      await import('../credentials.ts');
+
+    const { id } = await persistCredentialFromOauthFlow({
+      ownerUserId: _testUserId,
+      credentialType: 'google-oauth',
+      name: 'Auto-Refresh Failure Test',
+      payload: {
+        ...SAMPLE_PAYLOAD,
+        accessToken: 'stale-token-stays',
+        refreshToken: 'broken-refresh-token',
+        expiresAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'invalid_grant' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const decrypted = await getDecryptedCredential(id);
+
+    vi.unstubAllGlobals();
+    consoleSpy.mockRestore();
+
+    // Caller still gets the credential (no throw, no null) — caller's API call
+    // will likely 401 and surface the re-auth need.
+    expect(decrypted).not.toBeNull();
+    expect(decrypted?.payload.accessToken).toBe('stale-token-stays');
+  });
 });
 
 // ─── listCredentialsAction — ownership filter ─────────────────────────────────

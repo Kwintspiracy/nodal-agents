@@ -73,7 +73,7 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
   const isApiKey = entry.authType === 'api_key';
   const isOAuth = entry.authType === 'oauth2';
   const isConnected = !!entry.connector?.active;
-  const supportsRefresh = isOAuth && !OAUTH_NO_REFRESH_SLUGS.has(entry.catalogSlug);
+  const supportsRefresh = isOAuth && !OAUTH_NO_REFRESH_SLUGS.has(catalogEntry.credentialType ?? '');
   const credentialType = catalogEntry.credentialType as CredentialWizardType | undefined;
 
   // Currently-active credential metadata (from the connector row fields).
@@ -307,8 +307,17 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
             </div>
           )}
           {connectedExpiresAt && (
-            <p className={`text-xs ${isTokenExpired ? 'text-amber-400' : 'text-neutral-500'}`}>
-              {formatTokenExpiry(connectedExpiresAt)}
+            <p
+              className={`text-xs ${
+                // Amber alarm only when the token is expired AND the provider can NOT
+                // self-refresh (e.g. Notion). Refreshable providers auto-renew on use,
+                // so showing an alarmist "expired" badge is misleading there.
+                isTokenExpired && !supportsRefresh ? 'text-amber-400' : 'text-neutral-500'
+              }`}
+            >
+              {supportsRefresh && isTokenExpired
+                ? 'Auto-refreshes when used'
+                : formatTokenExpiry(connectedExpiresAt)}
             </p>
           )}
         </div>

@@ -267,22 +267,62 @@ export type DecryptedCredential = {
 };
 
 /**
+ * Refresh threshold: trigger an auto-refresh when the access token expires
+ * within this window. 60 seconds covers normal API call latency without
+ * making refreshes too aggressive.
+ */
+const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60 * 1000;
+
+/**
  * Fetch and decrypt a credential row.
  * NO ownership check — callers are responsible for access control.
  * Intended for internal flows (refresh, runner adapter resolution).
+ *
+ * Auto-refresh: if the credential's access token is expired or expires
+ * within 60s AND the provider supports refresh AND a refresh token is
+ * stored, this call refreshes the token transparently before returning.
+ * On refresh failure, returns the stale payload (caller can still attempt
+ * the API call and fall back to a 401-driven flow if needed).
  */
 export async function getDecryptedCredential(id: string): Promise<DecryptedCredential | null> {
   const db = getDb();
   const [row] = await db.select().from(credentials).where(eq(credentials.id, id));
   if (!row) return null;
 
-  const payload = decryptPayload(row.payload);
+  let payload = decryptPayload(row.payload);
+  const credentialType = row.type as CredentialType;
+
+  // Auto-refresh path: if the token is past or near the expiry threshold AND
+  // the provider can refresh AND we have a refresh token, mint a new access
+  // token before handing the credential to the caller.
+  const expiresAt = payload.expiresAt ? new Date(payload.expiresAt) : null;
+  const isExpiringSoon =
+    expiresAt !== null && expiresAt.getTime() - Date.now() < ACCESS_TOKEN_REFRESH_BUFFER_MS;
+
+  if (isExpiringSoon) {
+    const provider = getProviderByCredentialType(credentialType);
+    if (provider?.supportsRefresh && payload.refreshToken) {
+      try {
+        await refreshCredentialAccessToken(id);
+        // Re-read the row to pick up the updated payload (encrypted).
+        const [refreshedRow] = await db.select().from(credentials).where(eq(credentials.id, id));
+        if (refreshedRow) {
+          payload = decryptPayload(refreshedRow.payload);
+        }
+      } catch (err) {
+        // Non-fatal: fall through with the stale payload. The caller's API
+        // call will likely 401, which is the correct signal to surface to
+        // the user (re-auth needed). Logging gives operators a trail.
+        console.error('[getDecryptedCredential] auto-refresh failed', err);
+      }
+    }
+  }
 
   return {
     id: row.id,
     ownerUserId: row.ownerUserId,
     name: row.name,
-    type: row.type as CredentialType,
+    type: credentialType,
     payload,
   };
 }
