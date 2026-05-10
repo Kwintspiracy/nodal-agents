@@ -6,12 +6,20 @@ import { toast } from 'sonner';
 
 interface Props {
   successLabel: string | null;
+  /**
+   * Errors are surfaced via a persistent banner rendered by the parent page,
+   * not via this component. We still mirror the error to the console once
+   * for DevTools traceability, but no toast and no URL strip — the user
+   * dismisses the banner explicitly.
+   */
   errorMessage: string | null;
 }
 
 /**
- * Fires Sonner toasts on mount when OAuth redirect lands with
- * ?connected= or ?oauth_error= search params, then strips params from the URL.
+ * Fires a Sonner toast on success and strips ?just_connected / ?connected from the URL.
+ * On error, OAuthNotify only logs to console — the persistent OAuthErrorBanner
+ * (rendered by page.tsx when ?oauth_error is present) handles user-visible
+ * error display, so the message survives navigation and refresh.
  */
 export default function OAuthNotify({ successLabel, errorMessage }: Props) {
   const router = useRouter();
@@ -24,18 +32,11 @@ export default function OAuthNotify({ successLabel, errorMessage }: Props) {
 
     if (successLabel) {
       toast.success(`${successLabel} connected`);
+      router.replace('/connectors');
     }
     if (errorMessage) {
-      // 15s duration so the user has time to read the diagnostic detail
-      // (provider error_description can be long). Also mirror to console
-      // so DevTools preserves it even after router.replace strips the URL.
-      toast.error(errorMessage, { duration: 15000 });
+      // Mirror to DevTools console for traceability; UI is handled by the banner.
       console.error('[OAuth] connection failed:', errorMessage);
-    }
-
-    // Strip ?connected / ?oauth_error from the URL so a refresh doesn't re-fire.
-    if (successLabel || errorMessage) {
-      router.replace('/connectors');
     }
   }, [successLabel, errorMessage, router]);
 

@@ -71,7 +71,8 @@ export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oa
       },
       {
         number: 6,
-        text: 'Under Authorized redirect URIs, paste the redirect URI shown below.',
+        text: 'Under Authorized redirect URIs, paste the redirect URI shown below the form. This step is mandatory — Google rejects the connection if it is missing or differs by even one character.',
+        hint: 'Most common cause of failure when trying to connect.',
       },
       {
         number: 7,
@@ -108,7 +109,8 @@ export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oa
       },
       {
         number: 4,
-        text: 'Under OAuth Domain & URIs, paste the redirect URI shown below.',
+        text: 'In the OAuth Domain & URIs section, paste the redirect URI shown below the form. This step is mandatory — Notion rejects the connection if it is missing or differs by even one character.',
+        hint: 'Most common cause of failure when trying to connect.',
       },
       {
         number: 5,
@@ -139,26 +141,32 @@ export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oa
       },
       {
         number: 2,
-        text: 'Give it a name (e.g. NodalAI) and paste the redirect URI shown below.',
+        text: 'Give it a name (e.g. NodalAI).',
       },
       {
         number: 3,
-        text: 'Under Scopes, check: data.records:read, data.records:write, schema.bases:read, schema.bases:write.',
+        text: 'In the Redirect URIs section, paste the redirect URI shown below the form. This step is mandatory — Airtable rejects the connection if it is missing or differs by even one character.',
+        hint: 'Most common cause of failure when trying to connect.',
       },
       {
         number: 4,
-        text: 'Click Register integration.',
+        text: 'In the Scopes section, check the four scopes: data.records:read, data.records:write, schema.bases:read, schema.bases:write — then save / update the integration so the scopes are persisted.',
+        hint: 'If the scopes are not saved, Airtable returns "invalid_scope" during the OAuth flow.',
       },
       {
         number: 5,
-        text: 'On the integration detail page, copy the Client ID and Client secret.',
+        text: 'Click Register integration (or Save changes if editing an existing one).',
       },
       {
         number: 6,
+        text: 'On the integration detail page, copy the Client ID and Client secret.',
+      },
+      {
+        number: 7,
         text: 'Paste them into the fields below.',
       },
     ],
-    format: 'Client ID is a short alphanumeric string. Secret is longer.',
+    format: 'Client ID is a UUID. Secret is longer.',
   },
 };
 

@@ -4,6 +4,7 @@ import { listCredentialsAction } from '@/lib/credentials.ts';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
 import ConnectorForm, { type CompatibleCredential } from './ConnectorForm.tsx';
 import OAuthNotify from './OAuthNotify.tsx';
+import OAuthErrorBanner from './OAuthErrorBanner.tsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,8 +112,13 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      {/* OAuth result notifications — client component fires toasts on mount */}
+      {/* OAuth success — fires a toast and strips the URL so refresh doesn't re-fire. */}
       <OAuthNotify successLabel={connectedLabel} errorMessage={errorMessage} />
+
+      {/* OAuth failure — persistent banner that stays until the user dismisses it. */}
+      {errorMessage && sp.oauth_error && (
+        <OAuthErrorBanner code={sp.oauth_error} message={errorMessage} />
+      )}
 
       <div className="flex items-start justify-between gap-3">
         <div>
