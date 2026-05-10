@@ -6,6 +6,7 @@ import {
   saveApiKeyConnectorAction,
   deleteConnectorAction,
   assignCredentialAction,
+  createOrAssignOAuthConnectorAction,
   type ConnectorListEntry,
 } from '@/lib/actions.ts';
 import { refreshCredentialAction } from '@/lib/credentials.ts';
@@ -121,16 +122,21 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
   }
 
   function performAssign(credentialId: string) {
-    if (!entry.connector) return;
-    const connectorId = entry.connector.id;
     startTransition(async () => {
-      const r = await assignCredentialAction(connectorId, credentialId);
+      // First-time connect (no connector row yet) → upsert to create the row.
+      // Existing connector → assignCredentialAction (cheaper, no INSERT path).
+      const r = entry.connector
+        ? await assignCredentialAction(entry.connector.id, credentialId)
+        : await createOrAssignOAuthConnectorAction(entry.catalogSlug, credentialId);
+
       if (!r.ok) {
         toast.error(r.message);
-      } else {
-        toast.success(`${entry.label} credential updated`);
-        setOpen(false);
+        return;
       }
+      toast.success(
+        entry.connector ? `${entry.label} credential updated` : `${entry.label} connected`,
+      );
+      setOpen(false);
     });
   }
 
