@@ -125,10 +125,14 @@ export async function GET(
     return redirectError(origin, 'invalid_state');
   }
 
-  // 3. Check for provider error (user denied)
+  // 3. Check for provider-side error. The OAuth spec defines several error codes
+  // returned via the `error` query param. We forward the provider's code as our
+  // own oauth_error code so the dashboard can show a specific message; the
+  // human-readable `error_description` is forwarded as `detail`.
   const errorParam = url.searchParams.get('error');
   if (errorParam) {
-    return redirectError(origin, 'user_denied', errorParam);
+    const errorDescription = url.searchParams.get('error_description') ?? undefined;
+    return redirectError(origin, errorParam, errorDescription);
   }
 
   // 4. Verify CSRF state (constant-time)

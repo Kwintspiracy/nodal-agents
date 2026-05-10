@@ -7,16 +7,32 @@ import OAuthNotify from './OAuthNotify.tsx';
 
 export const dynamic = 'force-dynamic';
 
-/** Maps ?oauth_error codes to user-friendly messages. */
+/** Maps ?oauth_error codes to user-friendly messages. Includes our internal codes plus
+ * the standard OAuth 2.0 error codes that providers may return via the `error` query param. */
 const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  // Internal codes
   invalid_state: 'OAuth session was invalid. Please try connecting again.',
   state_mismatch: 'Security check failed (state mismatch). Please try connecting again.',
   session_lost: 'Your session expired during OAuth. Please sign in and try again.',
-  user_denied: 'Access was denied by the provider. You can try again anytime.',
   token_exchange_failed:
     'Failed to exchange the authorisation code for a token. Check your Client Secret and try again.',
   unknown_provider: 'Unknown provider — the OAuth flow could not be started.',
   missing_code: 'No authorisation code was returned by the provider.',
+  // Standard OAuth 2.0 error codes (RFC 6749 §4.1.2.1) — forwarded from provider
+  access_denied: 'Access was denied by the provider. You can try again anytime.',
+  user_denied: 'Access was denied by the provider. You can try again anytime.', // legacy alias
+  invalid_request: 'The OAuth request was malformed. Try reconnecting.',
+  invalid_scope:
+    'Your OAuth integration is missing one or more scopes. Open the integration settings on the provider and grant the requested scopes, then try again.',
+  invalid_client:
+    'The Client ID or Client Secret is rejected by the provider. Recreate the credential with fresh values.',
+  unauthorized_client:
+    'Your OAuth integration is not authorised for this flow. Check the integration type (Public vs Internal) and redirect URI.',
+  unsupported_response_type:
+    'The provider rejected the response type. The integration is likely misconfigured.',
+  server_error: 'The provider returned a server error. Try again in a moment.',
+  temporarily_unavailable: 'The provider is temporarily unavailable. Try again shortly.',
+  // Fallback
   unknown: 'An unexpected error occurred during OAuth. Please try again.',
 };
 
@@ -31,6 +47,8 @@ interface PageProps {
     /** Legacy: slug that just connected via OAuth (used for toast label only). */
     connected?: string;
     oauth_error?: string;
+    /** Provider-supplied error_description, forwarded as `detail` from the callback. */
+    detail?: string;
   }>;
 }
 
@@ -57,10 +75,13 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
     ? (CONNECTOR_CATALOG.find((c) => c.slug === connectedSlug)?.label ?? connectedSlug)
     : null;
 
-  // Resolve error message for ?oauth_error={code}.
-  const errorMessage = sp.oauth_error
+  // Resolve error message for ?oauth_error={code}. If the provider supplied an
+  // `error_description` (forwarded as `detail`) we append it for diagnostic precision.
+  const baseError = sp.oauth_error
     ? (OAUTH_ERROR_MESSAGES[sp.oauth_error] ?? OAUTH_ERROR_MESSAGES['unknown'])
     : null;
+  const errorMessage =
+    baseError && sp.detail ? `${baseError} (Provider said: ${sp.detail})` : baseError;
 
   if (!result.ok) {
     return (

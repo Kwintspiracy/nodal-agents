@@ -391,4 +391,28 @@ describe('GET /api/oauth/[provider]/callback — error cases', () => {
     const location = response.headers.get('location') ?? '';
     expect(location).toContain('oauth_error=unknown_provider');
   });
+
+  it('forwards the provider OAuth error code and error_description as detail', async () => {
+    const { cookieValue, state } = await buildValidCookie({ slug: SLUG, entityId: _testEntityId });
+    const errorDescription =
+      'Your OAuth application requested the scope "data.records:read" which your application does not have access to.';
+    const url = new URL(`${ORIGIN}/api/oauth/${SLUG}/callback`);
+    url.searchParams.set('error', 'invalid_scope');
+    url.searchParams.set('error_description', errorDescription);
+    url.searchParams.set('state', state);
+    const req = new Request(url.toString(), {
+      method: 'GET',
+      headers: { cookie: `nodalai_oauth_state=${cookieValue}` },
+    });
+
+    const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+    const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+
+    expect(response.status).toBe(302);
+    const location = response.headers.get('location') ?? '';
+    expect(location).toContain('oauth_error=invalid_scope');
+    // Parse the redirect query so URLSearchParams handles +/encoding correctly.
+    const redirectUrl = new URL(location);
+    expect(redirectUrl.searchParams.get('detail')).toBe(errorDescription);
+  });
 });
