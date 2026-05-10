@@ -79,10 +79,13 @@ describe('OAUTH_GUIDES', () => {
     assertGuide(guide, 'airtable-oauth');
   });
 
-  it('airtable-oauth: warning mentions LAN-IP / localhost constraint', () => {
+  it('airtable-oauth: warning mentions LAN-IP / localhost constraint and is gated lan-ip-only', () => {
     const guide = OAUTH_GUIDES['airtable-oauth'];
     expect(guide.warning, 'airtable-oauth: warning required').toBeTruthy();
     expect(guide.warning).toMatch(/localhost/i);
+    expect(guide.warningWhen, 'airtable-oauth: warning must be gated lan-ip-only').toBe(
+      'lan-ip-only',
+    );
   });
 });
 

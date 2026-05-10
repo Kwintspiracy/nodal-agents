@@ -17,6 +17,8 @@ export type Guide = {
   title: string;
   intro?: string;
   warning?: string;
+  /** Restrict when the warning is shown. Omit to always show. */
+  warningWhen?: 'lan-ip-only';
   steps: GuideStep[];
   format?: string;
 };
@@ -127,7 +129,8 @@ export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oa
   'airtable-oauth': {
     title: 'Get your Airtable OAuth credentials',
     warning:
-      'Airtable only accepts localhost or an HTTPS redirect URI — raw LAN IPs (e.g. 192.168.x.x) are rejected. If you are accessing this dashboard via a LAN IP, open it at http://localhost:3000 just for this flow. The resulting credential will work from any host afterwards.',
+      'Airtable only accepts localhost or an HTTPS redirect URI — raw LAN IPs (e.g. 192.168.x.x) are rejected. Open the dashboard at http://localhost:3000 just for this flow. The resulting credential works from any host afterwards.',
+    warningWhen: 'lan-ip-only',
     steps: [
       {
         number: 1,

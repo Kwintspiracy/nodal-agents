@@ -1,17 +1,35 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { Guide } from '@/lib/connector-help.ts';
 
 interface Props {
   guide: Guide;
 }
 
+const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
 export default function HelpSteps({ guide }: Props) {
+  const [showWarning, setShowWarning] = useState(false);
+
+  useEffect(() => {
+    let next: boolean;
+    if (!guide.warning) {
+      next = false;
+    } else if (guide.warningWhen === 'lan-ip-only') {
+      next = !LOCALHOST_HOSTS.has(window.location.hostname);
+    } else {
+      next = true;
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowWarning(next);
+  }, [guide.warning, guide.warningWhen]);
+
   return (
     <div className="space-y-3">
       {guide.intro && <p className="text-xs text-neutral-500 italic">{guide.intro}</p>}
 
-      {guide.warning && (
+      {showWarning && guide.warning && (
         <div
           role="note"
           className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
