@@ -15,6 +15,9 @@ import type { CredentialType } from '@nodalai/shared';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function redirectError(origin: string, code: string, detail?: string): Response {
+  // Always log error redirects so the dev terminal surfaces the failure even
+  // when the toast on the dashboard disappears before the user can read it.
+  console.error(`[oauth callback] error ${code}${detail ? ` — ${detail}` : ''}`);
   const u = new URLSearchParams();
   u.set('oauth_error', code);
   if (detail) u.set('detail', detail);

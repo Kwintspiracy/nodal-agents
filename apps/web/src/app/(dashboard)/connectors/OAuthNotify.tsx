@@ -26,7 +26,11 @@ export default function OAuthNotify({ successLabel, errorMessage }: Props) {
       toast.success(`${successLabel} connected`);
     }
     if (errorMessage) {
-      toast.error(errorMessage);
+      // 15s duration so the user has time to read the diagnostic detail
+      // (provider error_description can be long). Also mirror to console
+      // so DevTools preserves it even after router.replace strips the URL.
+      toast.error(errorMessage, { duration: 15000 });
+      console.error('[OAuth] connection failed:', errorMessage);
     }
 
     // Strip ?connected / ?oauth_error from the URL so a refresh doesn't re-fire.
