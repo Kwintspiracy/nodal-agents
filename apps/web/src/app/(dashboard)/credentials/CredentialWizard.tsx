@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import HelpSteps from '@/components/HelpSteps.tsx';
+import { OAUTH_GUIDES } from '@/lib/connector-help.ts';
 
 export type CredentialWizardType = 'google-oauth' | 'notion-oauth' | 'airtable-oauth';
 
@@ -9,8 +11,6 @@ interface ProviderConfig {
   label: string;
   /** Path suffix appended to window.location.origin to build the redirect URI. */
   callbackPath: string;
-  /** Human instructions shown in step 2. */
-  instructions: { step: number; text: string; link?: { href: string; label: string } }[];
   clientIdLabel: string;
   clientSecretLabel: string;
   /** Display name placeholder shown in the form. */
@@ -24,20 +24,6 @@ const PROVIDER_CONFIGS: Record<CredentialWizardType, ProviderConfig> = {
     namePlaceholder: 'Mon Google perso',
     clientIdLabel: 'Client ID',
     clientSecretLabel: 'Client secret',
-    instructions: [
-      {
-        step: 1,
-        text: 'Go to Google Cloud Console',
-        link: { href: 'https://console.cloud.google.com/', label: 'console.cloud.google.com' },
-      },
-      { step: 2, text: 'Enable the APIs you need: Drive, Gmail, Sheets, Docs.' },
-      { step: 3, text: 'Configure the OAuth consent screen (External → add your test email).' },
-      {
-        step: 4,
-        text: 'Credentials → Create OAuth client ID → Web application.',
-      },
-      { step: 5, text: 'Add the Authorized redirect URI below, then copy Client ID + Secret.' },
-    ],
   },
   'notion-oauth': {
     label: 'Notion',
@@ -45,16 +31,6 @@ const PROVIDER_CONFIGS: Record<CredentialWizardType, ProviderConfig> = {
     namePlaceholder: 'Mon Notion',
     clientIdLabel: 'OAuth client ID',
     clientSecretLabel: 'OAuth client secret',
-    instructions: [
-      {
-        step: 1,
-        text: 'Go to notion.so/my-integrations',
-        link: { href: 'https://www.notion.so/my-integrations', label: 'notion.so/my-integrations' },
-      },
-      { step: 2, text: 'Click "+ New integration" and set type to Public.' },
-      { step: 3, text: 'Add the Authorized redirect URI below.' },
-      { step: 4, text: 'Copy the OAuth client ID and secret.' },
-    ],
   },
   'airtable-oauth': {
     label: 'Airtable',
@@ -62,16 +38,6 @@ const PROVIDER_CONFIGS: Record<CredentialWizardType, ProviderConfig> = {
     namePlaceholder: 'Mon Airtable',
     clientIdLabel: 'Client ID',
     clientSecretLabel: 'Client secret',
-    instructions: [
-      {
-        step: 1,
-        text: 'Go to airtable.com/create/oauth',
-        link: { href: 'https://airtable.com/create/oauth', label: 'airtable.com/create/oauth' },
-      },
-      { step: 2, text: 'Create a new OAuth integration.' },
-      { step: 3, text: 'Add the Authorized redirect URI below.' },
-      { step: 4, text: 'Copy the Client ID and Client secret.' },
-    ],
   },
 };
 
@@ -179,9 +145,9 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
       />
 
       {/* Panel */}
-      <div className="relative bg-neutral-900 border border-neutral-800/60 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800/60">
+      <div className="relative bg-neutral-900 border border-neutral-800/60 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+        {/* Header — sticky so close button is always visible */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800/60 shrink-0">
           <h2 id="wizard-title" className="text-base font-semibold text-white">
             {step === 'type'
               ? 'New credential'
@@ -201,7 +167,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
 
         {/* Step 1 — Type selection */}
         {step === 'type' && (
-          <div className="px-6 py-5 space-y-3">
+          <div className="overflow-y-auto px-6 py-5 space-y-3">
             <p className="text-sm text-neutral-400">
               Choose the OAuth provider to connect to NodalAI.
             </p>
@@ -239,7 +205,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
             method="POST"
             action={formAction}
             encType="application/x-www-form-urlencoded"
-            className="px-6 py-5 space-y-5"
+            className="overflow-y-auto px-6 py-5 space-y-5"
           >
             {/* Hidden returnTo field — propagated through OAuth state cookie */}
             <input type="hidden" name="returnTo" value={returnTo} />
@@ -249,31 +215,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
               <p className="text-xs text-neutral-500 font-semibold uppercase tracking-wider">
                 Setup instructions
               </p>
-              <ol className="space-y-1.5">
-                {config.instructions.map((inst) => (
-                  <li key={inst.step} className="flex gap-2 text-sm text-neutral-400">
-                    <span className="shrink-0 w-5 h-5 rounded-full bg-neutral-800 text-neutral-500 text-[10px] font-bold flex items-center justify-center mt-0.5">
-                      {inst.step}
-                    </span>
-                    <span>
-                      {inst.text}
-                      {inst.link && (
-                        <>
-                          {' '}
-                          <a
-                            href={inst.link.href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-indigo-400 hover:text-indigo-300 underline"
-                          >
-                            {inst.link.label}
-                          </a>
-                        </>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ol>
+              <HelpSteps guide={OAUTH_GUIDES[selectedType]} />
             </div>
 
             {/* Redirect URI copy box */}

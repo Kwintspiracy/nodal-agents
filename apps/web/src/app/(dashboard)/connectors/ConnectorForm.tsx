@@ -12,6 +12,8 @@ import { refreshCredentialAction } from '@/lib/credentials.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
 import type { CatalogEntry } from '@/lib/connector-catalog.ts';
+import HelpSteps from '@/components/HelpSteps.tsx';
+import { APIKEY_GUIDES } from '@/lib/connector-help.ts';
 
 /** Credential types that do not support access-token refresh (Notion). */
 const OAUTH_NO_REFRESH_SLUGS: ReadonlySet<string> = new Set(['notion-oauth']);
@@ -380,6 +382,16 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
               className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
             />
           </div>
+          {APIKEY_GUIDES[entry.catalogSlug as keyof typeof APIKEY_GUIDES] && (
+            <details className="group text-xs">
+              <summary className="cursor-pointer text-neutral-500 hover:text-neutral-300">
+                Where do I get this?
+              </summary>
+              <div className="mt-3 pl-1">
+                <HelpSteps guide={APIKEY_GUIDES[entry.catalogSlug as keyof typeof APIKEY_GUIDES]} />
+              </div>
+            </details>
+          )}
           <div>
             <label htmlFor="apikey-apiKey" className="block text-xs text-neutral-500 mb-1">
               API key
