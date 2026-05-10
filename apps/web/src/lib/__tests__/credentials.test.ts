@@ -379,6 +379,78 @@ describe('refreshCredentialAccessToken', () => {
     expect(decrypted?.payload.accessToken).toBe('brand-new-access-token');
   });
 
+  it('stores the rotated refresh_token when provider returns one (RFC 6749 §10.4)', async () => {
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken, getDecryptedCredential } =
+      await import('../credentials.ts');
+
+    // Simulate Airtable / GitHub-style refresh-token rotation: the provider
+    // returns a NEW refresh_token in the response and invalidates the previous one.
+    const { id } = await persistCredentialFromOauthFlow({
+      ownerUserId: _testUserId,
+      credentialType: 'airtable-oauth',
+      name: 'Rotation Test Cred',
+      payload: {
+        ...SAMPLE_PAYLOAD,
+        refreshToken: 'refresh-v1',
+        accessToken: 'access-v1',
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          access_token: 'access-v2',
+          refresh_token: 'refresh-v2-rotated',
+          expires_in: 3600,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await refreshCredentialAccessToken(id);
+
+    vi.unstubAllGlobals();
+
+    // The new refresh_token must be persisted, otherwise the next refresh call
+    // would fail with invalid_grant against rotation-enforcing providers.
+    const decrypted = await getDecryptedCredential(id);
+    expect(decrypted?.payload.refreshToken).toBe('refresh-v2-rotated');
+    expect(decrypted?.payload.accessToken).toBe('access-v2');
+  });
+
+  it('keeps the existing refresh_token when provider does NOT rotate it', async () => {
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken, getDecryptedCredential } =
+      await import('../credentials.ts');
+
+    const { id } = await persistCredentialFromOauthFlow({
+      ownerUserId: _testUserId,
+      credentialType: 'google-oauth',
+      name: 'No-Rotation Test Cred',
+      payload: {
+        ...SAMPLE_PAYLOAD,
+        refreshToken: 'sticky-refresh-token',
+      },
+    });
+
+    // Token endpoint response WITHOUT a refresh_token field — Google's default behaviour.
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ access_token: 'new-access-only', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await refreshCredentialAccessToken(id);
+
+    vi.unstubAllGlobals();
+
+    const decrypted = await getDecryptedCredential(id);
+    expect(decrypted?.payload.refreshToken).toBe('sticky-refresh-token');
+    expect(decrypted?.payload.accessToken).toBe('new-access-only');
+  });
+
   it('throws when credential does not support refresh (Notion)', async () => {
     const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
       await import('../credentials.ts');

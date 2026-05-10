@@ -469,11 +469,19 @@ export async function refreshCredentialAccessToken(credentialId: string): Promis
   const newExpiresAt =
     expiresInSeconds !== null ? new Date(Date.now() + expiresInSeconds * 1000) : null;
 
-  // Update the payload with new access token + expiry, re-encrypt
+  // RFC 6749 §6 + §10.4: many providers rotate the refresh_token on every refresh
+  // (Airtable, GitHub, certain Google flows). They issue a new refresh_token in the
+  // response and invalidate the previous one. If we don't store the new one, the
+  // next refresh fails with `invalid_grant: Invalid token`. If the provider does
+  // NOT rotate (no `refresh_token` in the response), keep the existing one.
+  const newRefreshToken = typeof json['refresh_token'] === 'string' ? json['refresh_token'] : null;
+
+  // Update the payload with new access token + expiry (+ rotated refresh if any), re-encrypt
   const updatedPayload: OauthPayload = {
     ...payload,
     accessToken: newAccessToken,
     expiresAt: newExpiresAt ? newExpiresAt.toISOString() : null,
+    refreshToken: newRefreshToken ?? payload.refreshToken,
   };
   const updatedEncrypted = encrypt(JSON.stringify(updatedPayload));
 
