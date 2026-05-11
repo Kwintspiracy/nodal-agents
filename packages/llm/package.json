@@ -20,6 +20,7 @@
     "@ai-sdk/mistral": "^1.1.5",
     "@ai-sdk/openai": "^1.1.4",
     "@ai-sdk/openai-compatible": "^0.1.4",
+    "@ai-sdk/provider": "^1.1.3",
     "@nodalai/shared": "workspace:*",
     "ai": "^4.1.0",
     "ollama-ai-provider": "^1.2.0",

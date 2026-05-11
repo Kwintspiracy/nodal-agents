@@ -1,0 +1,498 @@
+// tool-call-middleware.test.ts — native tool-call parsers + middleware behavior
+//
+// Covers: per-family parser extraction (DeepSeek V3, Kimi K2, Nodal JSON),
+// middleware end-to-end through generateText, APICallError recovery, dispatcher
+// matrix, fail-loud on streamText.
+
+import { describe, it, expect } from 'vitest';
+import { MockLanguageModelV1 } from 'ai/test';
+import { wrapLanguageModel, generateText, tool } from 'ai';
+import { APICallError } from '@ai-sdk/provider';
+import { z } from 'zod';
+
+import {
+  deepseekToolCallMiddleware,
+  nodalToolCallMiddleware,
+  __testing,
+} from '../providers/parsers';
+import { detectAgenticFamily } from '../providers/openrouter';
+
+const { deepseekNativeParser, kimiNativeParser, nodalNativeParser } = __testing;
+
+// ─── DeepSeek V3 parser ────────────────────────────────────────────────────────
+
+describe('deepseekNativeParser', () => {
+  it('extracts a single tool call from DeepSeek fullwidth markup', () => {
+    const text =
+      'Let me check.\n' +
+      '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n' +
+      '```json\n{"city": "Paris"}\n```\n' +
+      '<｜tool▁call▁end｜><｜tool▁calls▁end｜>';
+    const result = deepseekNativeParser(text);
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.toolName).toBe('get_weather');
+    expect(JSON.parse(result.toolCalls[0]!.args)).toEqual({ city: 'Paris' });
+    expect(result.toolCalls[0]?.toolCallType).toBe('function');
+    expect(result.toolCalls[0]?.toolCallId).toMatch(/^call_[a-f0-9]{16}$/);
+    expect(result.text).toBe('Let me check.');
+  });
+
+  it('extracts multiple tool calls in one response', () => {
+    const text =
+      '<｜tool▁calls▁begin｜>' +
+      '<｜tool▁call▁begin｜>function<｜tool▁sep｜>fn_a\n```json\n{}\n```\n<｜tool▁call▁end｜>' +
+      '<｜tool▁call▁begin｜>function<｜tool▁sep｜>fn_b\n```json\n{"x":1}\n```\n<｜tool▁call▁end｜>' +
+      '<｜tool▁calls▁end｜>';
+    const result = deepseekNativeParser(text);
+    expect(result.toolCalls).toHaveLength(2);
+    expect(result.toolCalls[0]?.toolName).toBe('fn_a');
+    expect(result.toolCalls[1]?.toolName).toBe('fn_b');
+    expect(JSON.parse(result.toolCalls[1]!.args)).toEqual({ x: 1 });
+  });
+
+  it('returns text unchanged when no DeepSeek start token present', () => {
+    const text = 'just a plain assistant reply';
+    const result = deepseekNativeParser(text);
+    expect(result.toolCalls).toHaveLength(0);
+    expect(result.text).toBe(text);
+  });
+
+  it('handles arbitrary whitespace around the JSON block', () => {
+    const text =
+      '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>multi   \n' +
+      '```json\n   {\n  "a": 1\n}   \n```   \n<｜tool▁call▁end｜><｜tool▁calls▁end｜>';
+    const result = deepseekNativeParser(text);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.toolName).toBe('multi');
+  });
+});
+
+// ─── Kimi K2 parser ────────────────────────────────────────────────────────────
+
+describe('kimiNativeParser', () => {
+  it('extracts a single tool call from Kimi pipe-bracket markup', () => {
+    const text =
+      '<|tool_calls_section_begin|>' +
+      '<|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{"city": "Lyon"}<|tool_call_end|>' +
+      '<|tool_calls_section_end|>';
+    const result = kimiNativeParser(text);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.toolName).toBe('get_weather');
+    expect(result.toolCalls[0]?.toolCallId).toBe('functions.get_weather:0');
+    expect(JSON.parse(result.toolCalls[0]!.args)).toEqual({ city: 'Lyon' });
+  });
+
+  it('also accepts the singular start-token variant', () => {
+    const text =
+      '<|tool_call_section_begin|>' +
+      '<|tool_call_begin|>ping:0<|tool_call_argument_begin|>{}<|tool_call_end|>' +
+      '<|tool_call_section_end|>';
+    const result = kimiNativeParser(text);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.toolName).toBe('ping');
+  });
+
+  it('extracts function name from id without namespace prefix', () => {
+    const text =
+      '<|tool_calls_section_begin|>' +
+      '<|tool_call_begin|>send_email:7<|tool_call_argument_begin|>{"to":"x"}<|tool_call_end|>' +
+      '<|tool_calls_section_end|>';
+    const result = kimiNativeParser(text);
+    expect(result.toolCalls[0]?.toolName).toBe('send_email');
+    expect(result.toolCalls[0]?.toolCallId).toBe('send_email:7');
+  });
+
+  it('returns text unchanged when no start token', () => {
+    const result = kimiNativeParser('plain text reply');
+    expect(result.toolCalls).toHaveLength(0);
+    expect(result.text).toBe('plain text reply');
+  });
+});
+
+// ─── Nodal / Qwen3 parser ────────────────────────────────────────────────────
+
+describe('nodalNativeParser', () => {
+  it('extracts a single Nodal-format tool call', () => {
+    const text =
+      'Looking up.\n<tool_call>{"name": "get_weather", "arguments": {"city": "Berlin"}}</tool_call>';
+    const result = nodalNativeParser(text);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.toolName).toBe('get_weather');
+    expect(JSON.parse(result.toolCalls[0]!.args)).toEqual({ city: 'Berlin' });
+    expect(result.text).toBe('Looking up.');
+  });
+
+  it('extracts multiple Nodal-format calls', () => {
+    const text =
+      '<tool_call>{"name":"a","arguments":{}}</tool_call>' +
+      '<tool_call>{"name":"b","arguments":{"x":1}}</tool_call>';
+    const result = nodalNativeParser(text);
+    expect(result.toolCalls).toHaveLength(2);
+  });
+
+  it('skips malformed JSON blocks without throwing', () => {
+    const text =
+      '<tool_call>{"name":"good","arguments":{}}</tool_call>' +
+      '<tool_call>not valid json</tool_call>' +
+      '<tool_call>{"name":"after","arguments":{}}</tool_call>';
+    const result = nodalNativeParser(text);
+    expect(result.toolCalls).toHaveLength(2);
+    expect(result.toolCalls.map((c) => c.toolName)).toEqual(['good', 'after']);
+  });
+
+  it('skips blocks missing the name field', () => {
+    const text = '<tool_call>{"arguments":{"x":1}}</tool_call>';
+    const result = nodalNativeParser(text);
+    expect(result.toolCalls).toHaveLength(0);
+  });
+
+  it('handles arguments as a JSON-stringified payload (lenient)', () => {
+    const text = '<tool_call>{"name":"do","arguments":"{\\"x\\":1}"}</tool_call>';
+    const result = nodalNativeParser(text);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.args).toBe('{"x":1}');
+  });
+
+  it('handles missing arguments by defaulting to {}', () => {
+    const text = '<tool_call>{"name":"ping"}</tool_call>';
+    const result = nodalNativeParser(text);
+    expect(result.toolCalls[0]?.args).toBe('{}');
+  });
+
+  it('returns text unchanged when no tool_call tags present', () => {
+    const result = nodalNativeParser('plain reply');
+    expect(result.toolCalls).toHaveLength(0);
+    expect(result.text).toBe('plain reply');
+  });
+});
+
+// ─── Middleware: end-to-end through generateText ──────────────────────────────
+
+describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
+  it('passes through cleanly when provider already extracted tool calls', async () => {
+    const mockModel = new MockLanguageModelV1({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => ({
+        rawCall: { rawPrompt: null, rawSettings: {} },
+        finishReason: 'tool-calls',
+        usage: { promptTokens: 5, completionTokens: 3 },
+        toolCalls: [
+          {
+            toolCallType: 'function',
+            toolCallId: 'call-existing',
+            toolName: 'get_weather',
+            args: JSON.stringify({ city: 'Paris' }),
+          },
+        ],
+      }),
+    });
+
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+
+    const result = await generateText({
+      model: wrapped,
+      prompt: 'weather?',
+      tools: {
+        get_weather: tool({
+          description: 'weather',
+          parameters: z.object({ city: z.string() }),
+          execute: async ({ city }) => `Weather in ${city}: sunny`,
+        }),
+      },
+      maxSteps: 2,
+    });
+
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolCalls).toHaveLength(1);
+    expect(firstStep?.toolCalls[0]?.toolName).toBe('get_weather');
+  });
+
+  it('extracts native markup from result.text when provider returned no toolCalls', async () => {
+    const mockModel = new MockLanguageModelV1({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => ({
+        rawCall: { rawPrompt: null, rawSettings: {} },
+        finishReason: 'stop',
+        usage: { promptTokens: 5, completionTokens: 3 },
+        text:
+          '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n' +
+          '```json\n{"city":"Marseille"}\n```\n' +
+          '<｜tool▁call▁end｜><｜tool▁calls▁end｜>',
+      }),
+    });
+
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+
+    const result = await generateText({
+      model: wrapped,
+      prompt: 'weather?',
+      tools: {
+        get_weather: tool({
+          description: 'weather',
+          parameters: z.object({ city: z.string() }),
+          execute: async ({ city }) => `Weather in ${city}: sunny`,
+        }),
+      },
+      maxSteps: 2,
+    });
+
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolCalls).toHaveLength(1);
+    expect(firstStep?.toolCalls[0]?.toolName).toBe('get_weather');
+  });
+
+  it('does NOT inject any system prompt (philosophy: no prompt modification)', async () => {
+    let observedPromptHadAddendum = false;
+    let observedToolsPresent = false;
+
+    const mockModel = new MockLanguageModelV1({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async (params) => {
+        observedToolsPresent =
+          params.mode.type === 'regular' && (params.mode.tools?.length ?? 0) > 0;
+        const sys = params.prompt[0];
+        if (sys && sys.role === 'system' && typeof sys.content === 'string') {
+          observedPromptHadAddendum =
+            sys.content.includes('Tool calling format') ||
+            sys.content.includes('<tool_call>') ||
+            sys.content.includes('<｜tool▁call▁begin｜>');
+        }
+        return {
+          rawCall: { rawPrompt: null, rawSettings: {} },
+          finishReason: 'stop',
+          usage: { promptTokens: 5, completionTokens: 3 },
+          text: '',
+        };
+      },
+    });
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: nodalToolCallMiddleware,
+    });
+    await generateText({
+      model: wrapped,
+      system: 'You are an assistant.',
+      prompt: 'hi',
+      tools: {
+        ping: tool({
+          description: 'ping',
+          parameters: z.object({}),
+          execute: async () => 'pong',
+        }),
+      },
+      maxSteps: 1,
+    });
+
+    expect(observedPromptHadAddendum).toBe(false);
+    expect(observedToolsPresent).toBe(true);
+  });
+
+  it('passes through clean text when no native markup', async () => {
+    const mockModel = new MockLanguageModelV1({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => ({
+        rawCall: { rawPrompt: null, rawSettings: {} },
+        finishReason: 'stop',
+        usage: { promptTokens: 5, completionTokens: 3 },
+        text: 'plain reply no markup',
+      }),
+    });
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+    const result = await generateText({
+      model: wrapped,
+      prompt: 'hi',
+      maxSteps: 1,
+    });
+    expect(result.text).toBe('plain reply no markup');
+    expect(result.toolCalls).toHaveLength(0);
+  });
+});
+
+// ─── Middleware: APICallError recovery ─────────────────────────────────────────
+
+describe('createNativeToolCallMiddleware error recovery', () => {
+  it('recovers from APICallError("Invalid JSON response") by parsing responseBody', async () => {
+    const recoveredBody = JSON.stringify({
+      id: 'resp-1',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content:
+              '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>do_thing\n' +
+              '```json\n{"arg":42}\n```\n' +
+              '<｜tool▁call▁end｜><｜tool▁calls▁end｜>',
+          },
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 20 },
+    });
+
+    const mockModel = new MockLanguageModelV1({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => {
+        throw new APICallError({
+          message: 'Invalid JSON response',
+          url: 'https://openrouter.ai/api/v1/chat/completions',
+          requestBodyValues: {},
+          responseBody: recoveredBody,
+          statusCode: 200,
+        });
+      },
+    });
+
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+
+    const result = await generateText({
+      model: wrapped,
+      prompt: 'do something',
+      tools: {
+        do_thing: tool({
+          description: 'do',
+          parameters: z.object({ arg: z.number() }),
+          execute: async ({ arg }) => `did ${arg}`,
+        }),
+      },
+      maxSteps: 2,
+    });
+
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolCalls).toHaveLength(1);
+    expect(firstStep?.toolCalls[0]?.toolName).toBe('do_thing');
+    // AI SDK level exposes args already parsed (object) — not a JSON string
+    expect(firstStep!.toolCalls[0]!.args).toEqual({ arg: 42 });
+  });
+
+  it('re-throws APICallError when responseBody has no native markup', async () => {
+    const mockModel = new MockLanguageModelV1({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => {
+        throw new APICallError({
+          message: 'Invalid JSON response',
+          url: 'https://openrouter.ai/api/v1/chat/completions',
+          requestBodyValues: {},
+          responseBody: JSON.stringify({
+            choices: [{ message: { content: 'just text, no tool markup' } }],
+          }),
+          statusCode: 200,
+        });
+      },
+    });
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+    await expect(generateText({ model: wrapped, prompt: 'x', maxSteps: 1 })).rejects.toThrow(
+      /Invalid JSON response/,
+    );
+  });
+
+  it('re-throws non-APICallError errors (no silent fallback)', async () => {
+    const mockModel = new MockLanguageModelV1({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => {
+        throw new Error('network timeout');
+      },
+    });
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+    await expect(generateText({ model: wrapped, prompt: 'x', maxSteps: 1 })).rejects.toThrow(
+      /network timeout/,
+    );
+  });
+
+  it('wrapStream throws UnsupportedFunctionalityError (no silent fallback)', async () => {
+    expect(deepseekToolCallMiddleware.wrapStream).toBeDefined();
+    await expect(
+      deepseekToolCallMiddleware.wrapStream!({
+        doStream: () => {
+          throw new Error('should not reach doStream');
+        },
+        doGenerate: () => {
+          throw new Error('should not reach doGenerate');
+        },
+        params: {} as unknown as Parameters<
+          NonNullable<typeof deepseekToolCallMiddleware.wrapStream>
+        >[0]['params'],
+        model: {} as unknown as Parameters<
+          NonNullable<typeof deepseekToolCallMiddleware.wrapStream>
+        >[0]['model'],
+      }),
+    ).rejects.toThrow(/text-based tool-call parsing/i);
+  });
+});
+
+// ─── OpenRouter dispatcher matrix ─────────────────────────────────────────────
+
+describe('detectAgenticFamily dispatch', () => {
+  it.each([
+    ['deepseek/deepseek-v4-pro', 'deepseek'],
+    ['deepseek/deepseek-v4-flash', 'deepseek'],
+    ['deepseek/deepseek-v3', 'deepseek'],
+    ['deepseek/deepseek-v3.1', 'deepseek'],
+    ['moonshotai/kimi-k2', 'kimi'],
+    ['moonshotai/kimi-k2.6', 'kimi'],
+    ['moonshotai/kimi-k2-thinking', 'kimi'],
+    ['qwen/qwen3-coder', 'nodal-format'],
+    ['zai/glm-4.5', 'nodal-format'],
+    ['zai/glm-4.7', 'nodal-format'],
+    ['anthropic/claude-sonnet-4', null],
+    ['openai/gpt-4o', null],
+    ['google/gemma-4-31b', null],
+    ['mistral/mistral-large', null],
+    ['deepseek/deepseek-r1', null], // R1 is reasoning, not agentic-OSS tool-call family
+    ['deepseek/deepseek-chat', null], // legacy chat, no native tool-call markup
+  ])('model %s → family=%s', (modelId, expected) => {
+    expect(detectAgenticFamily(modelId)).toBe(expected);
+  });
+});
+
+// ─── Cross-parser independence ─────────────────────────────────────────────────
+
+describe('parser independence', () => {
+  it('kimi parser ignores DeepSeek markup (no false positive)', () => {
+    const text =
+      '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>x\n```json\n{}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>';
+    const result = kimiNativeParser(text);
+    expect(result.toolCalls).toHaveLength(0);
+  });
+
+  it('deepseek parser ignores Kimi markup (no false positive)', () => {
+    const text =
+      '<|tool_calls_section_begin|><|tool_call_begin|>x:0<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>';
+    const result = deepseekNativeParser(text);
+    expect(result.toolCalls).toHaveLength(0);
+  });
+
+  it('nodal parser ignores DeepSeek and Kimi markup', () => {
+    const dsText =
+      '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>x\n```json\n{}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>';
+    const kimiText =
+      '<|tool_calls_section_begin|><|tool_call_begin|>x:0<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>';
+    expect(nodalNativeParser(dsText).toolCalls).toHaveLength(0);
+    expect(nodalNativeParser(kimiText).toolCalls).toHaveLength(0);
+  });
+});
