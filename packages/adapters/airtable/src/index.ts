@@ -3,8 +3,8 @@
 
 import type { ToolDefinition } from '@nodalai/tools';
 import type { z } from 'zod';
-import { createAirtableClient } from './client.js';
-import { makeAirtableListBasesTool, makeAirtableListTablesTool } from './tools/bases.js';
+import { createAirtableClient } from './client.ts';
+import { makeAirtableListBasesTool, makeAirtableListTablesTool } from './tools/bases.ts';
 import {
   makeAirtableListRecordsTool,
   makeAirtableGetRecordTool,
@@ -12,7 +12,7 @@ import {
   makeAirtableUpdateRecordTool,
   makeAirtableReplaceRecordTool,
   makeAirtableDeleteRecordTool,
-} from './tools/records.js';
+} from './tools/records.ts';
 
 /**
  * Auth options for the Airtable adapter.
@@ -63,8 +63,8 @@ export function createAirtableTools(
 }
 
 // Re-export error types for consumers
-export { AirtableApiError } from './errors.js';
-export type { AirtableErrorCode } from './errors.js';
+export { AirtableApiError } from './errors.ts';
+export type { AirtableErrorCode } from './errors.ts';
 
 // Re-export operation descriptors for UI and registry consumers
-export { AIRTABLE_OPERATIONS } from './operations.js';
+export { AIRTABLE_OPERATIONS } from './operations.ts';

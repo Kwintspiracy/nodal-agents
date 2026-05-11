@@ -2,7 +2,7 @@
 // Airtable REST API: https://api.airtable.com/v0
 // Auth: Authorization: Bearer <token> — same wire format for OAuth tokens and PATs.
 
-import { mapAirtableHttpError, wrapAirtableError, AirtableApiError } from './errors.js';
+import { mapAirtableHttpError, wrapAirtableError, AirtableApiError } from './errors.ts';
 
 const BASE_URL = 'https://api.airtable.com/v0';
 const META_URL = 'https://api.airtable.com';
