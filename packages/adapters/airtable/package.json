@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/runner-adapters",
+  "name": "@nodalai/adapter-airtable",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,12 +14,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nodalai/adapter-airtable": "workspace:*",
-    "@nodalai/adapter-google-docs": "workspace:*",
-    "@nodalai/adapter-google-drive": "workspace:*",
-    "@nodalai/adapter-google-sheets": "workspace:*",
-    "@nodalai/adapter-gmail": "workspace:*",
-    "@nodalai/adapter-notion": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
     "zod": "^3.24.1"

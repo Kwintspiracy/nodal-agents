@@ -2803,17 +2803,17 @@ describe('listAgentConnectorsAction — db path', () => {
     // on the fact that a connector row without a slug matching ADAPTER_REGISTRY
     // will be filtered out.
     const agentId = 'aaaaaaaa-0000-0000-0000-000000000005';
-    // Return a connector with a slug that has no adapter
+    // Return a connector with a slug that has no adapter (apify is catalog-only, no adapter package)
     currentDb = makeDb([
-      { id: agentId, slug: 'airtable-oauth', name: 'Airtable', credentialId: null, active: true },
+      { id: agentId, slug: 'apify', name: 'Apify', credentialId: null, active: true },
     ]) as typeof currentDb;
     const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listAgentConnectorsAction(agentId);
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // airtable-oauth has no ADAPTER_REGISTRY entry — filtered out
-      const airtableEntries = r.data.filter((c) => c.slug === 'airtable-oauth');
-      expect(airtableEntries).toHaveLength(0);
+      // apify has no ADAPTER_REGISTRY entry — filtered out
+      const apifyEntries = r.data.filter((c) => c.slug === 'apify');
+      expect(apifyEntries).toHaveLength(0);
     }
   });
 

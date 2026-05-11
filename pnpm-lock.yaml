@@ -234,6 +234,18 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.17)(jsdom@26.1.0)(lightningcss@1.32.0)
 
+  packages/adapters/airtable:
+    dependencies:
+      '@nodalai/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nodalai/tools':
+        specifier: workspace:*
+        version: link:../../tools
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
   packages/adapters/gmail:
     dependencies:
       '@nodalai/shared':
@@ -455,6 +467,9 @@ importers:
 
   packages/runner-adapters:
     dependencies:
+      '@nodalai/adapter-airtable':
+        specifier: workspace:*
+        version: link:../adapters/airtable
       '@nodalai/adapter-gmail':
         specifier: workspace:*
         version: link:../adapters/gmail

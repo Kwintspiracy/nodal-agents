@@ -7,6 +7,7 @@
 // in dedicated briques once their adapter packages ship.
 
 import { createNotionTools, NOTION_OPERATIONS } from '@nodalai/adapter-notion';
+import { createAirtableTools, AIRTABLE_OPERATIONS } from '@nodalai/adapter-airtable';
 import { createDriveTools, DRIVE_OPERATIONS } from '@nodalai/adapter-google-drive';
 import { createGmailTools, GMAIL_OPERATIONS } from '@nodalai/adapter-gmail';
 import { createSheetsTools, SHEETS_OPERATIONS } from '@nodalai/adapter-google-sheets';
@@ -59,5 +60,17 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
     toolFactory: (t) =>
       createNotionTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: NOTION_OPERATIONS,
+  },
+  // airtable-oauth: OAuth access token (browser roundtrip via airtable-oauth catalog entry).
+  // Both OAuth tokens and PATs use the same Bearer wire format — the adapter doesn't distinguish.
+  // Note: the 'airtable' (PAT) catalog slug is NOT registered here because the runner resolves
+  // tokens from credentials.payload.accessToken (OAuth row), but PAT connectors store their key
+  // in connectors.api_key with no credentials row. Wiring the api_key → adapter path is a
+  // separate brique. Only airtable-oauth is wired for v1.
+  'airtable-oauth': {
+    credentialType: 'airtable-oauth',
+    toolFactory: (t) =>
+      createAirtableTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: AIRTABLE_OPERATIONS,
   },
 };

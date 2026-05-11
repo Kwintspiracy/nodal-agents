@@ -1,6 +1,6 @@
 // registry.test.ts — contract test for ADAPTER_REGISTRY
 // Asserts:
-//  1. Registry contains exactly the 6 expected connector slugs.
+//  1. Registry contains exactly the 7 expected connector slugs.
 //  2. Each entry has a non-empty operations array.
 //  3. Each entry's credentialType is a valid CredentialType value.
 //  4. toolFactory is callable with a mock token and returns an array.
@@ -16,10 +16,11 @@ const EXPECTED_SLUGS = [
   'google-docs',
   'notion-oauth',
   'notion',
+  'airtable-oauth',
 ] as const;
 
 describe('ADAPTER_REGISTRY', () => {
-  it('contains exactly the 6 expected slugs', () => {
+  it('contains exactly the 7 expected slugs', () => {
     const actualSlugs = Object.keys(ADAPTER_REGISTRY).sort();
     expect(actualSlugs).toEqual([...EXPECTED_SLUGS].sort());
   });
