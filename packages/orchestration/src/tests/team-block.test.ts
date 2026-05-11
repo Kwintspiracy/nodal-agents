@@ -193,6 +193,69 @@ describe('buildTeamBlock', () => {
     expect(block).toContain('Special Analytics Tool');
   });
 
+  it('includes sub-agent connector tools so the orchestrator can route Airtable/Notion/etc requests', async () => {
+    // Regression for Brique 34bis follow-up: pre-fix, Conciergus (orchestrator)
+    // answered "I don't have Airtable access" directly when asked to list bases
+    // instead of delegating to Summarizus who had Airtable assigned. The team
+    // block must now expose each child's connector tool inventory so the
+    // orchestrator can route correctly.
+    const { entityId } = await seedContext(db);
+    const orch = await seedAgent(
+      db,
+      entityId,
+      `test-orch-conn-tools-${Date.now()}`,
+      'orchestrator',
+      'router',
+    );
+    const w = await seedAgent(db, entityId, `test-conn-worker-${Date.now()}`, 'agent');
+    await assignChild(db, orch.id, w.id, entityId);
+
+    // Seed a connector + credential + assignment for the worker (notion-oauth
+    // is in ADAPTER_REGISTRY so the team block should surface its tools).
+    const { connectors, credentials, agentConnectorAssignments } = await import('@nodalai/db');
+    const [cred] = await db
+      .insert(credentials)
+      .values({
+        ownerUserId: (await import('@nodalai/db')).users
+          ? // re-fetch user id via the seedContext output not available here — query via entityId
+            (
+              await db
+                .select({ id: (await import('@nodalai/db')).entities.userId })
+                .from((await import('@nodalai/db')).entities)
+                .where(eq((await import('@nodalai/db')).entities.id, entityId))
+            )[0]!.id
+          : '00000000-0000-0000-0000-000000000000',
+        name: 'Test Notion Cred',
+        type: 'notion-oauth',
+        payload: 'enc:v1:fake',
+      })
+      .returning();
+    const [conn] = await db
+      .insert(connectors)
+      .values({
+        entityId,
+        slug: 'notion-oauth',
+        name: 'Notion (OAuth)',
+        authType: 'oauth2',
+        active: true,
+        credentialId: cred!.id,
+      })
+      .returning();
+    await db.insert(agentConnectorAssignments).values({
+      agentId: w.id,
+      connectorId: conn!.id,
+      entityId,
+      enabledOperations: null, // all enabled
+    });
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+    // Block must surface the connector slug AND at least one notion tool name
+    // so the orchestrator's LLM knows the worker can do this work.
+    expect(block).toContain('Tools:');
+    expect(block).toContain('notion-oauth');
+    expect(block).toMatch(/notion_/); // at least one notion_* tool slug
+  });
+
   it('does not contain hardcoded agent slugs (invariant 1 spot-check)', async () => {
     const { entityId } = await seedContext(db);
     const orch = await seedAgent(

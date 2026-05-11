@@ -3,7 +3,15 @@
 // Every agent name, slug, skill, instruction comes from DB at runtime.
 
 import { eq, and } from '@nodalai/db';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
+import {
+  agents,
+  agentAssignments,
+  agentSkillAssignments,
+  agentSkills,
+  agentConnectorAssignments,
+  connectors as connectorsTable,
+} from '@nodalai/db';
+import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 
@@ -88,6 +96,50 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     }
   }
 
+  // Load connector tool inventories for all children — the orchestrator needs
+  // to know what each sub-agent CAN do (not just its skills) so it routes the
+  // user's request to the right one. Pre-this-change Conciergus answered
+  // "I don't have Airtable access" directly when asked to list bases instead
+  // of delegating to Summarizus (who had Airtable assigned).
+  const connectorRows = await Promise.all(
+    childIds.map((id) =>
+      db
+        .select({
+          agentId: agentConnectorAssignments.agentId,
+          slug: connectorsTable.slug,
+          enabledOperations: agentConnectorAssignments.enabledOperations,
+        })
+        .from(agentConnectorAssignments)
+        .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
+        .where(eq(agentConnectorAssignments.agentId, id as string)),
+    ),
+  );
+
+  // For each child: list of (slug, tool names enabled)
+  const connectorMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  for (const batch of connectorRows) {
+    for (const r of batch) {
+      const entry = ADAPTER_REGISTRY[r.slug];
+      if (!entry) continue; // catalog entry without adapter — invisible to orchestrator too
+      const allToolNames = entry.operations.map((o) => o.slug);
+      const toolNames =
+        r.enabledOperations === null
+          ? allToolNames
+          : allToolNames.filter((n) => r.enabledOperations!.includes(n));
+      if (toolNames.length === 0) continue;
+      const existing = connectorMap.get(r.agentId) ?? [];
+      existing.push({ slug: r.slug, toolNames });
+      connectorMap.set(r.agentId, existing);
+    }
+  }
+
+  function formatConnectorsTag(subAgentId: string): string {
+    const list = connectorMap.get(subAgentId);
+    if (!list || list.length === 0) return '';
+    const parts = list.map((c) => `${c.slug} (${c.toolNames.join(', ')})`);
+    return `\n  Tools: ${parts.join('; ')}`;
+  }
+
   // Build lines array (all data from DB — no hardcoded names)
   const lines: string[] = [];
 
@@ -101,10 +153,11 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
       const toolSlug = agentSlug.replace(/-/g, '_');
       const skills = skillMap.get(subAgentId) ?? [];
       const skillsTag = skills.length > 0 ? `\n  Skills: ${skills.join(', ')}` : '';
+      const connectorsTag = formatConnectorsTag(subAgentId);
       const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
       const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
       lines.push(
-        `- **${agentName}**${roleTag} — use \`assign_${toolSlug}\` to assign work${skillsTag}${instrTag}`,
+        `- **${agentName}**${roleTag} — use \`assign_${toolSlug}\` to assign work${skillsTag}${connectorsTag}${instrTag}`,
       );
     }
     // Flow control: without this the router-mode LLM keeps re-delegating after
@@ -123,10 +176,11 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
       const { subAgentId, agentName, agentSlug, agentRole, instructions } = row;
       const skills = skillMap.get(subAgentId) ?? [];
       const skillsTag = skills.length > 0 ? `\n  Skills: ${skills.join(', ')}` : '';
+      const connectorsTag = formatConnectorsTag(subAgentId);
       const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
       const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
       lines.push(
-        `- **${agentName}**${roleTag} (assigned_to: \`${agentSlug}\`)${skillsTag}${instrTag}`,
+        `- **${agentName}**${roleTag} (assigned_to: \`${agentSlug}\`)${skillsTag}${connectorsTag}${instrTag}`,
       );
     }
     // Flow control: planner tasks are executed asynchronously by the cron;

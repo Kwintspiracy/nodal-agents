@@ -451,6 +451,9 @@ importers:
       '@nodalai/llm':
         specifier: workspace:*
         version: link:../llm
+      '@nodalai/runner-adapters':
+        specifier: workspace:*
+        version: link:../runner-adapters
       '@nodalai/shared':
         specifier: workspace:*
         version: link:../shared
