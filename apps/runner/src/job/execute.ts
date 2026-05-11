@@ -80,6 +80,54 @@ export type ExecuteJobResult =
 
 type AnyToolDef = ToolDefinition<z.ZodTypeAny, unknown>;
 
+// ─── serialiseToolResults ────────────────────────────────────────────────────
+
+/**
+ * Fallback for the return_result branch when an agent finishes without
+ * calling a delivery tool (dashboard_publish, telegram_send_message, …).
+ * Walk the conversation, collect every successful tool-result, render them
+ * as a labelled JSON dump. The parent orchestrator's LLM can then read
+ * what the sub-agent actually saw and present it to the user.
+ *
+ * Skips the always-on bookkeeping tools (return_result, save_memory,
+ * query_memory) since their outputs are not part of the substantive
+ * answer the parent needs.
+ */
+function serialiseToolResults(messages: unknown[]): string {
+  const BOOKKEEPING_TOOLS = new Set(['return_result', 'save_memory', 'query_memory']);
+  const blocks: string[] = [];
+  for (const msg of messages) {
+    if (typeof msg !== 'object' || msg === null || (msg as { role?: unknown }).role !== 'tool') {
+      continue;
+    }
+    const content = (msg as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (
+        typeof part !== 'object' ||
+        part === null ||
+        (part as { type?: unknown }).type !== 'tool-result'
+      ) {
+        continue;
+      }
+      const toolName = (part as { toolName?: unknown }).toolName;
+      const isError = (part as { isError?: unknown }).isError === true;
+      if (typeof toolName !== 'string' || BOOKKEEPING_TOOLS.has(toolName) || isError) {
+        continue;
+      }
+      const result = (part as { result?: unknown }).result;
+      let body: string;
+      try {
+        body = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      } catch {
+        body = String(result);
+      }
+      blocks.push(`[${toolName}]\n${body}`);
+    }
+  }
+  return blocks.join('\n\n');
+}
+
 // ─── executeJob ───────────────────────────────────────────────────────────────
 
 /**
@@ -827,14 +875,31 @@ export async function executeJob(
         // telegram_send_message side-effects earlier in this turn. Without
         // this, ExecuteJobResult.result was always '' and resumeDelegated
         // injected an empty tool-result into the parent, leaving the parent
-        // orchestrator blind to what the sub-agent actually produced (and
-        // forcing it to hallucinate or re-delegate until chain limit).
+        // orchestrator blind to what the sub-agent actually produced.
         const [finalRow] = await db
           .select({ result: agentJobs.result })
           .from(agentJobs)
           .where(eq(agentJobs.id, jobId as string))
           .limit(1);
-        const propagatedResult = finalRow?.result ?? '';
+        let propagatedResult = finalRow?.result ?? '';
+
+        // Fallback: when the sub-agent called return_result but did NOT call
+        // any delivery tool (no dashboard_publish / telegram_send_message
+        // earlier in this turn), agent_jobs.result is empty. Returning '' to
+        // the parent leaves the orchestrator blind and triggers re-delegation
+        // until chain_limit_exceeded. In that case, serialise the tool-result
+        // outputs from the conversation as a textual dump — the parent's LLM
+        // can parse and present it. This makes the delegation flow robust
+        // even when the sub-agent forgets the dashboard_publish convention.
+        if (propagatedResult.length === 0) {
+          const toolResultDump = serialiseToolResults(messages);
+          if (toolResultDump.length > 0) {
+            propagatedResult = toolResultDump;
+            trace('return_result_fallback_to_tool_results_dump', {
+              dumpLen: toolResultDump.length,
+            });
+          }
+        }
 
         trace('exit_completed_via_return_result', {
           propagatedResultLen: propagatedResult.length,
