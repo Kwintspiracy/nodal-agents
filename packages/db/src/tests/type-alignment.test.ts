@@ -29,6 +29,7 @@ import type {
   WebhookTriggerRow,
   UserProfileRow,
   UserRow,
+  AgentConnectorAssignmentRow,
 } from '../schema/index.ts';
 
 import { describe, it, expect } from 'vitest';
@@ -99,13 +100,20 @@ type AgentKeysOk = HasKeys<
     'avatarUrl',
     'systemAgent',
     'maxTokensPerJob',
-    'enabledBuiltinTools',
     'createdAt',
     'updatedAt',
   ]
 >;
 const _agentKeysOk: AgentKeysOk = true;
 void _agentKeysOk;
+
+// ── agent_connector_assignments ───────────────────────────────────────────────
+type AgentConnectorAssignmentKeysOk = HasKeys<
+  AgentConnectorAssignmentRow,
+  ['id', 'agentId', 'connectorId', 'entityId', 'enabledOperations', 'createdAt', 'updatedAt']
+>;
+const _agentConnectorAssignmentKeysOk: AgentConnectorAssignmentKeysOk = true;
+void _agentConnectorAssignmentKeysOk;
 
 // ── agent_jobs ────────────────────────────────────────────────────────────────
 type AgentJobKeysOk = HasKeys<

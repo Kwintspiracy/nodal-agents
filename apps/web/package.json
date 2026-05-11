@@ -15,6 +15,7 @@
   "dependencies": {
     "@nodalai/auth": "workspace:*",
     "@nodalai/db": "workspace:*",
+    "@nodalai/runner-adapters": "workspace:*",
     "@nodalai/delivery": "workspace:*",
     "@nodalai/llm": "workspace:*",
     "@nodalai/memory": "workspace:*",

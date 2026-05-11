@@ -93,3 +93,6 @@ export function createSheetsTools(
 // Re-export error types for consumers
 export { SheetsAdapterError } from './errors';
 export type { SheetsErrorCode } from './errors';
+
+// Re-export operation descriptors for UI and registry consumers
+export { SHEETS_OPERATIONS } from './operations';

@@ -15,7 +15,11 @@ import {
   approvalRules,
   agentSkillAssignments,
   entityLlmKeys,
+  agentConnectorAssignments,
+  connectors as connectorsTable,
+  getDecryptedCredentialById,
 } from '@nodalai/db';
+import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
 import {
   QuotaExhaustedError,
   MessageStructureError,
@@ -342,6 +346,42 @@ export async function executeJob(
       const registeredConfigured = configuredToolNames.filter(
         (name) => registry.get(name) !== undefined,
       );
+
+      // ── Connector adapter tools ──────────────────────────────────────────────
+      // Fetch agent's connector assignments (with per-operation whitelist).
+      // Each assignment with a resolved credential instantiates the adapter's tools.
+      // null enabledOperations → all tools; array → whitelist on tool.name.
+      // Adapters without a registry entry (airtable, apify, etc.) are skipped silently.
+      const connectorAssignments = await db
+        .select({
+          connectorId: connectorsTable.id,
+          slug: connectorsTable.slug,
+          credentialId: connectorsTable.credentialId,
+          enabledOperations: agentConnectorAssignments.enabledOperations,
+        })
+        .from(agentConnectorAssignments)
+        .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
+        .where(eq(agentConnectorAssignments.agentId, agentRow.id));
+
+      for (const ca of connectorAssignments) {
+        const entry = ADAPTER_REGISTRY[ca.slug];
+        if (!entry) continue; // no adapter for this catalog slug — skip silently
+        if (!ca.credentialId) continue; // connector not yet connected — skip
+
+        const decrypted = await getDecryptedCredentialById(db, ca.credentialId);
+        if (!decrypted) continue;
+
+        const accessToken = decrypted.payload.accessToken;
+        if (!accessToken) continue;
+
+        const allTools = entry.toolFactory(accessToken);
+        const enabled = ca.enabledOperations;
+        const filtered =
+          enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));
+
+        capabilityTools.push(...filtered);
+      }
+      // ────────────────────────────────────────────────────────────────────────
 
       toolDefs = computeToolWhitelist(
         {

@@ -19,6 +19,7 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@nodalai/secrets": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "drizzle-orm": "^0.38.3",
     "postgres": "^3.4.5"

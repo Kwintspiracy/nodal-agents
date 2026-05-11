@@ -119,3 +119,6 @@ export function createNotionTools(
 // Re-export error types for consumers
 export { NotionAdapterError } from './errors';
 export type { NotionErrorCode } from './errors';
+
+// Re-export operation descriptors for UI and registry consumers
+export { NOTION_OPERATIONS } from './operations';

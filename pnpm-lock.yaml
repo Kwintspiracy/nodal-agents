@@ -108,6 +108,9 @@ importers:
       '@nodalai/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
+      '@nodalai/runner-adapters':
+        specifier: workspace:*
+        version: link:../../packages/runner-adapters
       '@nodalai/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
@@ -160,6 +163,9 @@ importers:
       '@nodalai/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
+      '@nodalai/runner-adapters':
+        specifier: workspace:*
+        version: link:../../packages/runner-adapters
       '@nodalai/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
@@ -337,6 +343,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@nodalai/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       '@nodalai/shared':
         specifier: workspace:*
         version: link:../shared
@@ -443,6 +452,33 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.2.17
         version: 0.2.17
+
+  packages/runner-adapters:
+    dependencies:
+      '@nodalai/adapter-gmail':
+        specifier: workspace:*
+        version: link:../adapters/gmail
+      '@nodalai/adapter-google-docs':
+        specifier: workspace:*
+        version: link:../adapters/google-docs
+      '@nodalai/adapter-google-drive':
+        specifier: workspace:*
+        version: link:../adapters/google-drive
+      '@nodalai/adapter-google-sheets':
+        specifier: workspace:*
+        version: link:../adapters/google-sheets
+      '@nodalai/adapter-notion':
+        specifier: workspace:*
+        version: link:../adapters/notion
+      '@nodalai/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@nodalai/tools':
+        specifier: workspace:*
+        version: link:../tools
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
 
   packages/secrets: {}
 

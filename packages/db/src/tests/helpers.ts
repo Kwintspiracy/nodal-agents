@@ -107,7 +107,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       avatar_url text,
       system_agent boolean DEFAULT false,
       max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
-      enabled_builtin_tools text[],
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );
@@ -188,6 +187,17 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
       CONSTRAINT connectors_entity_slug_unique UNIQUE (entity_id, slug)
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_connector_assignments (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      connector_id uuid NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      enabled_operations text[],
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      CONSTRAINT agent_connector_unique UNIQUE (agent_id, connector_id)
     );
 
     CREATE TABLE IF NOT EXISTS tool_calls (

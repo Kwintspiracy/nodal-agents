@@ -77,3 +77,6 @@ export function createDocsTools(opts: DocsAdapterOptions): ToolDefinition<z.ZodT
 // Re-export error types for consumers
 export { DocsAdapterError } from './errors';
 export type { DocsErrorCode } from './errors';
+
+// Re-export operation descriptors for UI and registry consumers
+export { DOCS_OPERATIONS } from './operations';

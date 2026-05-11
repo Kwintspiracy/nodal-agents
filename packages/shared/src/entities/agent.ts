@@ -29,7 +29,6 @@ export const AgentSchema = z
     system_agent: z.boolean(),
     // 0 = unlimited per DB comment
     max_tokens_per_job: z.number().int().min(0),
-    enabled_builtin_tools: z.array(z.string()).nullable(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
   })
@@ -53,7 +52,6 @@ export const AgentInsertSchema = AgentSchema.omit({
   task_context_template: z.string().nullable().optional(),
   avatar_url: z.string().nullable().optional(),
   max_tokens_per_job: z.number().int().min(0).max(500_000).default(0),
-  enabled_builtin_tools: z.array(z.string()).nullable().optional(),
 });
 
 export type Agent = z.infer<typeof AgentSchema>;

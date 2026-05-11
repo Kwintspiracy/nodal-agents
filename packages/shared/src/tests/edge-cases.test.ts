@@ -463,7 +463,6 @@ describe('AgentSchema: max_tokens_per_job must be non-negative', () => {
       avatar_url: null,
       system_agent: false,
       max_tokens_per_job: -1,
-      enabled_builtin_tools: null,
       created_at: now,
       updated_at: now,
     };

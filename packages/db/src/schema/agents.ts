@@ -47,7 +47,6 @@ export const agents = pgTable(
     avatarUrl: text('avatar_url'),
     systemAgent: boolean('system_agent').default(false),
     maxTokensPerJob: integer('max_tokens_per_job').default(0).notNull(),
-    enabledBuiltinTools: text('enabled_builtin_tools').array(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

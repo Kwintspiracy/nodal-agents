@@ -108,3 +108,6 @@ export function createGmailTools(
 // Re-export error types for consumers
 export { GmailAdapterError } from './errors';
 export type { GmailErrorCode } from './errors';
+
+// Re-export operation descriptors for UI and registry consumers
+export { GMAIL_OPERATIONS } from './operations';

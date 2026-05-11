@@ -57,6 +57,13 @@
       "when": 1778421836079,
       "tag": "0007_free_speed",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778459305708,
+      "tag": "0008_curious_thor_girl",
+      "breakpoints": true
     }
   ]
 }

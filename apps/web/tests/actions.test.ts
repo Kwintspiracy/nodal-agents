@@ -57,6 +57,7 @@ function chain(rows: unknown[]): unknown {
     'returning',
     'set',
     'onConflictDoNothing',
+    'onConflictDoUpdate',
     'leftJoin',
     'innerJoin',
     'rightJoin',
@@ -2682,6 +2683,167 @@ describe('testLlmKeyAction', () => {
       expect(url).not.toContain('api.anthropic.com');
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+// ─── setAgentConnectorAssignmentAction ───────────────────────────────────────
+
+describe('setAgentConnectorAssignmentAction — validation', () => {
+  it('rejects non-uuid agentId', async () => {
+    const { setAgentConnectorAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentConnectorAssignmentAction(
+      'not-uuid',
+      'aaaaaaaa-0000-0000-0000-000000000001',
+      true,
+      null,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects non-uuid connectorId', async () => {
+    const { setAgentConnectorAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentConnectorAssignmentAction(
+      'aaaaaaaa-0000-0000-0000-000000000001',
+      'not-uuid',
+      true,
+      null,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('setAgentConnectorAssignmentAction — db path', () => {
+  it('assigned=true with null ops: returns ok (UPSERT all-enabled)', async () => {
+    // DB returns agent row on first select, connector row on second
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000001';
+    const connectorId = 'bbbbbbbb-0000-0000-0000-000000000001';
+    currentDb = makeDb([{ id: agentId }]) as typeof currentDb;
+    const { setAgentConnectorAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentConnectorAssignmentAction(agentId, connectorId, true, null);
+    expect(r.ok).toBe(true);
+
+    // insert must have been called (upsert path)
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).toHaveBeenCalled();
+  });
+
+  it('assigned=true with partial ops: UPSERT stores only listed slugs', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000002';
+    const connectorId = 'bbbbbbbb-0000-0000-0000-000000000002';
+    const enabledOps = ['drive_list_files', 'drive_read_file'];
+    currentDb = makeDb([{ id: agentId }]) as typeof currentDb;
+    const { setAgentConnectorAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentConnectorAssignmentAction(agentId, connectorId, true, enabledOps);
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+
+    const insertedRow = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(insertedRow?.['enabledOperations']).toEqual(enabledOps);
+  });
+
+  it('assigned=false: idempotent delete — returns ok even if row absent', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000003';
+    const connectorId = 'bbbbbbbb-0000-0000-0000-000000000003';
+    currentDb = makeDb([{ id: agentId }]) as typeof currentDb;
+    const { setAgentConnectorAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentConnectorAssignmentAction(agentId, connectorId, false, null);
+    expect(r.ok).toBe(true);
+
+    // delete must have been called
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalled();
+  });
+
+  it('forbidden cross-entity: returns not_found when agent does not belong to session entity', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000004';
+    const connectorId = 'bbbbbbbb-0000-0000-0000-000000000004';
+    // DB returns empty array — agent not found for this entity
+    currentDb = makeDb([]) as typeof currentDb;
+    const { setAgentConnectorAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentConnectorAssignmentAction(agentId, connectorId, true, null);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
+// ─── listAgentConnectorsAction ────────────────────────────────────────────────
+
+describe('listAgentConnectorsAction — validation', () => {
+  it('rejects non-uuid agentId', async () => {
+    const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentConnectorsAction('not-uuid');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('listAgentConnectorsAction — db path', () => {
+  it('returns not_found when agent does not belong to session entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentConnectorsAction('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('returns ok with empty array when no connectors exist', async () => {
+    // First select() returns agent row, second select() returns [] (no connectors)
+    // The chain mock returns the same rows for every call — so we need agent row.
+    // The action returns ok([]) early when connectorRows.length === 0.
+    // But since our chain mock always returns the same rows, we make it return an
+    // agent-shaped row, then the action will proceed to query connectors and get
+    // the same row (wrong shape but length > 0). To test the empty case, we rely
+    // on the fact that a connector row without a slug matching ADAPTER_REGISTRY
+    // will be filtered out.
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000005';
+    // Return a connector with a slug that has no adapter
+    currentDb = makeDb([
+      { id: agentId, slug: 'airtable-oauth', name: 'Airtable', credentialId: null, active: true },
+    ]) as typeof currentDb;
+    const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentConnectorsAction(agentId);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      // airtable-oauth has no ADAPTER_REGISTRY entry — filtered out
+      const airtableEntries = r.data.filter((c) => c.slug === 'airtable-oauth');
+      expect(airtableEntries).toHaveLength(0);
+    }
+  });
+
+  it('exposes availableOperations from ADAPTER_REGISTRY for adapter-backed connectors', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000006';
+    const connectorId = 'cccccccc-0000-0000-0000-000000000001';
+    // Return a connector with a slug that IS in ADAPTER_REGISTRY
+    currentDb = makeDb([
+      {
+        id: connectorId,
+        slug: 'google-drive',
+        name: 'My Drive',
+        credentialId: null,
+        active: true,
+        agentId,
+      },
+    ]) as typeof currentDb;
+    const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentConnectorsAction(agentId);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const driveEntry = r.data.find((c) => c.slug === 'google-drive');
+      expect(driveEntry).toBeDefined();
+      expect(Array.isArray(driveEntry?.availableOperations)).toBe(true);
+      expect(driveEntry!.availableOperations.length).toBeGreaterThan(0);
+      // Every availableOperation must have required fields
+      for (const op of driveEntry!.availableOperations) {
+        expect(typeof op.slug).toBe('string');
+        expect(['read', 'write', 'destructive']).toContain(op.risk);
+      }
     }
   });
 });

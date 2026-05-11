@@ -19,6 +19,7 @@ import {
   approvalRequests,
   agentSkills,
   agentSkillAssignments,
+  agentConnectorAssignments,
   toolCalls,
   agentSchedules,
   entityLlmKeys,
@@ -27,7 +28,7 @@ import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/
 import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodalai/secrets';
 import { getLanAddresses } from './network.ts';
-import type { AgentMemory, CredentialType } from '@nodalai/shared';
+import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodalai/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodalai/auth';
 import { env } from './env.ts';
@@ -44,6 +45,7 @@ import {
   persistCredentialFromOauthFlow,
   refreshCredentialAccessToken,
 } from './credentials.ts';
+import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2904,5 +2906,185 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     return fail('connection_failed', redactKey(msg, apiKey));
+  }
+}
+
+// ─── Agent Connector Assignment Actions (Brique 34bis) ────────────────────────
+
+export type AgentConnectorRow = {
+  connectorId: string;
+  slug: string;
+  label: string;
+  credentialName: string | null;
+  assigned: boolean;
+  enabledOperations: string[] | null;
+  availableOperations: OperationDescriptor[];
+};
+
+/**
+ * Return all active connectors for this entity that have a known adapter,
+ * annotated with whether the given agent currently has them assigned and
+ * which operations are enabled.
+ */
+export async function listAgentConnectorsAction(
+  agentId: string,
+): Promise<ActionResult<AgentConnectorRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+
+    // Verify agent belongs to this entity
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Fetch all active connectors for this entity
+    const connectorRows = await db
+      .select({
+        id: connectors.id,
+        slug: connectors.slug,
+        name: connectors.name,
+        credentialId: connectors.credentialId,
+        active: connectors.active,
+      })
+      .from(connectors)
+      .where(and(eq(connectors.entityId, session.entityId), eq(connectors.active, true)));
+
+    if (connectorRows.length === 0) return ok([]);
+
+    // Batch fetch credential names for display
+    const credentialIds = [
+      ...new Set(
+        connectorRows.map((r) => r.credentialId).filter((id): id is string => id !== null),
+      ),
+    ];
+    const credNameById = new Map<string, string>();
+    if (credentialIds.length > 0) {
+      const credRows = await db
+        .select({ id: credentials.id, name: credentials.name })
+        .from(credentials)
+        .where(inArray(credentials.id, credentialIds));
+      for (const c of credRows) credNameById.set(c.id, c.name);
+    }
+
+    // Fetch existing assignments for this agent
+    const assignmentRows = await db
+      .select({
+        connectorId: agentConnectorAssignments.connectorId,
+        enabledOperations: agentConnectorAssignments.enabledOperations,
+      })
+      .from(agentConnectorAssignments)
+      .where(eq(agentConnectorAssignments.agentId, agentId));
+
+    const assignmentByConnectorId = new Map<string, { enabledOperations: string[] | null }>();
+    for (const a of assignmentRows) {
+      assignmentByConnectorId.set(a.connectorId, {
+        enabledOperations: (a.enabledOperations as string[] | null) ?? null,
+      });
+    }
+
+    // Filter to connectors that have an adapter entry — surfacing connectors
+    // without an adapter would create dead assignments.
+    const result: AgentConnectorRow[] = [];
+    for (const row of connectorRows) {
+      const adapterEntry = ADAPTER_REGISTRY[row.slug];
+      if (!adapterEntry) continue; // no adapter for this connector slug — skip
+
+      const assignment = assignmentByConnectorId.get(row.id);
+
+      result.push({
+        connectorId: row.id,
+        slug: row.slug,
+        label: row.name,
+        credentialName: row.credentialId ? (credNameById.get(row.credentialId) ?? null) : null,
+        assigned: assignment !== undefined,
+        enabledOperations: assignment?.enabledOperations ?? null,
+        availableOperations: adapterEntry.operations,
+      });
+    }
+
+    return ok(result);
+  } catch (err) {
+    console.error('[listAgentConnectorsAction]', err);
+    return fail('db_error', 'Failed to load agent connectors');
+  }
+}
+
+/**
+ * Assign or unassign a connector to an agent, with optional per-operation
+ * whitelist. Idempotent.
+ *
+ * assigned=false → DELETE the assignment row (no-op if absent).
+ * assigned=true  → UPSERT with enabledOperations (null = all enabled, array = whitelist).
+ */
+export async function setAgentConnectorAssignmentAction(
+  agentId: string,
+  connectorId: string,
+  assigned: boolean,
+  enabledOperations: string[] | null,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().uuid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    if (!z.string().uuid().safeParse(connectorId).success) {
+      return fail('validation_failed', 'Invalid connector id');
+    }
+    const db = getDb();
+
+    // Verify agent ownership
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Verify connector ownership (same entity)
+    const [connector] = await db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
+    if (!connector) return fail('not_found', 'Connector not found');
+
+    if (!assigned) {
+      // DELETE — idempotent (no error if row is absent)
+      await db
+        .delete(agentConnectorAssignments)
+        .where(
+          and(
+            eq(agentConnectorAssignments.agentId, agentId),
+            eq(agentConnectorAssignments.connectorId, connectorId),
+          ),
+        );
+    } else {
+      // UPSERT on the unique constraint (agent_id, connector_id)
+      await db
+        .insert(agentConnectorAssignments)
+        .values({
+          agentId,
+          connectorId,
+          entityId: session.entityId,
+          enabledOperations: enabledOperations ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [agentConnectorAssignments.agentId, agentConnectorAssignments.connectorId],
+          set: {
+            enabledOperations: enabledOperations ?? null,
+            updatedAt: new Date(),
+          },
+        });
+    }
+
+    revalidatePath('/agents');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentConnectorAssignmentAction]', err);
+    return fail('db_error', 'Failed to update connector assignment');
   }
 }

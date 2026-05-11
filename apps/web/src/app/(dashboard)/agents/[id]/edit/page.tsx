@@ -1,6 +1,11 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getAgentForEditAction, listAgentsAction, listLlmKeysAction } from '@/lib/actions.ts';
+import {
+  getAgentForEditAction,
+  listAgentsAction,
+  listLlmKeysAction,
+  listAgentConnectorsAction,
+} from '@/lib/actions.ts';
 import AgentForm from '@/components/AgentForm.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +31,10 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   // (an orchestrator cannot be its own sub-agent).
   const peers = peersResult.ok ? peersResult.data.filter((a) => a.id !== id) : [];
 
+  // Connectors: fetch after agent is confirmed to exist (agentResult.ok checked above).
+  const connectorsResult = await listAgentConnectorsAction(agent.id);
+  const connectors = connectorsResult.ok ? connectorsResult.data : [];
+
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
@@ -43,7 +52,13 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       </div>
 
       <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-6">
-        <AgentForm mode="edit" initial={agent} llmKeys={llmKeys} agents={peers} />
+        <AgentForm
+          mode="edit"
+          initial={agent}
+          llmKeys={llmKeys}
+          agents={peers}
+          connectors={connectors}
+        />
       </div>
     </div>
   );

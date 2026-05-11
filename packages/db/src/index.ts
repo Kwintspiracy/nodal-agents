@@ -7,6 +7,10 @@ export { withTransaction } from './transaction.ts';
 
 export * from './schema/index.ts';
 
+// ─── Query helpers ─────────────────────────────────────────────────────────────
+export { getDecryptedCredentialById, refreshAndPersistCredential } from './queries/credentials.ts';
+export type { DecryptedCredential, OauthPayload, Db } from './queries/credentials.ts';
+
 // Re-export commonly used Drizzle query helpers so that other packages
 // (e.g. packages/auth, packages/memory) can use them without importing
 // drizzle-orm directly. Only packages/db may import drizzle-orm (architecture rule).

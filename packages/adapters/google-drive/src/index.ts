@@ -66,3 +66,6 @@ export function createDriveTools(
 // Re-export error types for consumers
 export { DriveAdapterError } from './errors';
 export type { DriveErrorCode } from './errors';
+
+// Re-export operation descriptors for UI and registry consumers
+export { DRIVE_OPERATIONS } from './operations';
