@@ -5,7 +5,6 @@
 import { mapAirtableHttpError, wrapAirtableError, AirtableApiError } from './errors.ts';
 
 const BASE_URL = 'https://api.airtable.com/v0';
-const META_URL = 'https://api.airtable.com';
 
 export type AirtableClient = {
   get: (
@@ -88,9 +87,8 @@ export function createAirtableClient(accessToken: string): AirtableClient {
 
   return {
     get(path, params) {
-      // Meta paths (/meta/...) use META_URL, data paths use BASE_URL
-      const isMetaPath = path.startsWith('/meta/');
-      const fullUrl = buildUrl(isMetaPath ? META_URL : BASE_URL, path, params);
+      // All Airtable endpoints — including /meta/bases — live under /v0/.
+      const fullUrl = buildUrl(BASE_URL, path, params);
       return request('GET', fullUrl);
     },
     post(path, body) {

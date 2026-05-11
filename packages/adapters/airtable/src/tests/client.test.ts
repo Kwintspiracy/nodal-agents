@@ -198,7 +198,11 @@ describe('createAirtableClient — URL building', () => {
     vi.restoreAllMocks();
   });
 
-  it('uses META_URL (api.airtable.com) for /meta/ paths', async () => {
+  it('routes /meta/ paths under /v0/ (api.airtable.com/v0/meta/...)', async () => {
+    // Regression: all Airtable endpoints, including /meta/bases, live under /v0/.
+    // An earlier version of this adapter mistakenly split /meta/ paths off to
+    // https://api.airtable.com (no /v0/), which returned 404 when calling
+    // airtable_list_bases. The corrected wire path is api.airtable.com/v0/meta/...
     const capturedUrls: string[] = [];
 
     vi.stubGlobal(
@@ -212,7 +216,7 @@ describe('createAirtableClient — URL building', () => {
     const client = createAirtableClient(FAKE_TOKEN);
     await client.get('/meta/bases');
 
-    expect(capturedUrls[0]).toContain('api.airtable.com/meta/bases');
+    expect(capturedUrls[0]).toContain('api.airtable.com/v0/meta/bases');
   });
 
   it('uses BASE_URL (api.airtable.com/v0) for record paths', async () => {
