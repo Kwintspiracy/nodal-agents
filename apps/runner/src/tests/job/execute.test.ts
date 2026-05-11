@@ -580,6 +580,15 @@ describe('executeJob', () => {
     // dashboard_publish's side-effect populated result; completeJob preserves it
     // (finalResult is '' from return_result, so completeJob doesn't overwrite).
     expect(rows[0]?.result).toBe('Task is done!');
+
+    // Regression for the silent delegation-result loss bug: ExecuteJobResult.result
+    // must carry the dashboard_publish text (not '') so resumeDelegated can inject
+    // it into the parent's tool-result for assign_<sub>. Pre-fix, the runner
+    // returned result:'' here and the parent orchestrator hallucinated answers
+    // because it never saw what the sub-agent produced.
+    if (result.status === 'completed') {
+      expect(result.result).toBe('Task is done!');
+    }
   });
 
   it('fails with no_tool_calls_no_text when LLM returns empty response', async () => {

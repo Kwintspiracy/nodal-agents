@@ -821,8 +821,25 @@ export async function executeJob(
 
         trace('completeJob_call', { turn, toolsUsed, stats: runStats() });
         await completeJob(db, jobId as string, finalResult, toolsUsed, runStats(), messages);
-        trace('exit_completed_via_return_result');
-        return { status: 'completed', result: finalResult };
+
+        // Re-fetch agent_jobs.result so the caller (the parent in a router
+        // delegation flow) receives the text written by dashboard_publish /
+        // telegram_send_message side-effects earlier in this turn. Without
+        // this, ExecuteJobResult.result was always '' and resumeDelegated
+        // injected an empty tool-result into the parent, leaving the parent
+        // orchestrator blind to what the sub-agent actually produced (and
+        // forcing it to hallucinate or re-delegate until chain limit).
+        const [finalRow] = await db
+          .select({ result: agentJobs.result })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, jobId as string))
+          .limit(1);
+        const propagatedResult = finalRow?.result ?? '';
+
+        trace('exit_completed_via_return_result', {
+          propagatedResultLen: propagatedResult.length,
+        });
+        return { status: 'completed', result: propagatedResult };
       }
 
       // k. Append tool results and continue
