@@ -8,7 +8,7 @@
 //   - failed task → status set to blocked with error
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { MockLanguageModelV1 } from 'ai/test';
+import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
 import type { TestDb } from '@nodalai/db/test-utils';
@@ -55,27 +55,40 @@ function makeMockLlmClient(
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
-  const mockModel = new MockLanguageModelV1({
+  const mockModel = new MockLanguageModelV3({
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async () => {
       const response = responses[callIndex] ?? responses[responses.length - 1]!;
       callIndex++;
 
-      const toolCallsRaw = response.toolCalls?.map((tc) => ({
-        toolCallType: 'function' as const,
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        args: JSON.stringify(tc.args),
-      }));
+      const content: Array<
+        | { type: 'text'; text: string }
+        | { type: 'tool-call'; toolCallId: string; toolName: string; input: string }
+      > = [];
+      if (response.text) content.push({ type: 'text', text: response.text });
+      if (response.toolCalls) {
+        for (const tc of response.toolCalls) {
+          content.push({
+            type: 'tool-call',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: JSON.stringify(tc.args),
+          });
+        }
+      }
 
+      const isToolCalls = (response.toolCalls?.length ?? 0) > 0;
       return {
-        rawCall: { rawPrompt: null, rawSettings: {} },
-        finishReason: toolCallsRaw && toolCallsRaw.length > 0 ? 'tool-calls' : 'stop',
-        usage: { promptTokens: 10, completionTokens: 5 },
-        text: response.text ?? undefined,
-        toolCalls: toolCallsRaw ?? [],
-        content: response.text ? [{ type: 'text' as const, text: response.text }] : [],
+        content,
+        finishReason: isToolCalls
+          ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
+          : { unified: 'stop' as const, raw: 'stop' },
+        usage: {
+          inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+          outputTokens: { total: 5, text: 5, reasoning: undefined },
+        },
+        warnings: [],
       };
     },
   });
@@ -90,9 +103,9 @@ function makeMockLlmClient(
       streaming: false,
     },
     generateText: (args) =>
-      generateText({ ...args, model: mockModel }) as ReturnType<
-        RunnerDeps['llmClient']['generateText']
-      >,
+      generateText({ ...args, model: mockModel } as Parameters<
+        typeof generateText
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
     streamText: () => {
       throw new Error('streamText not supported in mock');
     },

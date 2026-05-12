@@ -18,7 +18,7 @@
     "@nodalai/delivery": "workspace:*",
     "@nodalai/llm": "workspace:*",
     "@nodalai/shared": "workspace:*",
-    "ai": "^4.1.0",
+    "ai": "^6.0.177",
     "zod": "^4.4.3"
   },
   "devDependencies": {

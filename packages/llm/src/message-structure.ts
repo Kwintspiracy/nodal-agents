@@ -1,7 +1,7 @@
 // @nodalai/llm — message structure validation
 // Ports the invariants from AgentOne/agent/resilience.py
 
-import type { CoreMessage } from 'ai';
+import type { ModelMessage } from 'ai';
 import { MessageStructureError } from './errors';
 
 /**
@@ -25,7 +25,7 @@ import { MessageStructureError } from './errors';
  * Throws MessageStructureError with a code and context object.
  * Never retried — caller must fix the orchestrator.
  */
-export function validateMessageStructure(messages: CoreMessage[]): void {
+export function validateMessageStructure(messages: ModelMessage[]): void {
   // Collect all seen toolCallIds to detect duplicates (invariant 2)
   const seenToolCallIds = new Set<string>();
 
@@ -74,8 +74,11 @@ export function validateMessageStructure(messages: CoreMessage[]): void {
         });
       }
 
-      // Build a set of result IDs from the tool message
-      const resultIds = new Set(next.content.map((r) => r.toolCallId));
+      // Build a set of result IDs from the tool message. AI SDK v6 widens
+      // tool-message content to include ToolApprovalResponse parts (no
+      // toolCallId/output) — we only care about tool-result parts here.
+      const toolResultParts = next.content.filter((r) => r.type === 'tool-result');
+      const resultIds = new Set(toolResultParts.map((r) => r.toolCallId));
 
       for (const part of toolCallParts) {
         if (!resultIds.has(part.toolCallId)) {
@@ -87,9 +90,11 @@ export function validateMessageStructure(messages: CoreMessage[]): void {
         }
       }
 
-      // Invariant 4: every tool result must have defined content
-      for (const resultPart of next.content) {
-        if (resultPart.result === undefined || resultPart.result === null) {
+      // Invariant 4: every tool result must have defined content. v6 stores
+      // the result in `output` (a discriminated union) rather than a free
+      // `result: unknown` field — undefined/null `output` means malformed.
+      for (const resultPart of toolResultParts) {
+        if (resultPart.output === undefined || resultPart.output === null) {
           throw new MessageStructureError('missing_tool_result_content', {
             toolCallId: resultPart.toolCallId,
             toolName: resultPart.toolName,

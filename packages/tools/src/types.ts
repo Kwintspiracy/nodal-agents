@@ -78,7 +78,7 @@ export interface ToolRegistry {
  */
 export interface AiSdkTool {
   description: string;
-  parameters: z.ZodTypeAny;
+  inputSchema: z.ZodTypeAny;
 }
 
 // ─── ExecuteOptions ────────────────────────────────────────────────────────────

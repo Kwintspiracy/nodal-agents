@@ -1,11 +1,12 @@
-// client.test.ts — createLlmClient factory tests using MockLanguageModelV1
+// client.test.ts — createLlmClient factory tests using MockLanguageModelV3
 
 import { describe, it, expect } from 'vitest';
-import { MockLanguageModelV1 } from 'ai/test';
+import { MockLanguageModelV3 } from 'ai/test';
 import { createLlmClient } from '../client';
 import { ProviderConfigError, MessageStructureError } from '../errors';
 import { CAPABILITY_MATRIX } from '../providers/registry';
 import type { ProviderName } from '../types';
+import { mockTextResult } from './_mock-helpers';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,17 +96,12 @@ describe('createLlmClient', () => {
   });
 });
 
-describe('createLlmClient — generateText with MockLanguageModelV1', () => {
+describe('createLlmClient — generateText with MockLanguageModelV3', () => {
   it('runs generateText with a mock model and returns text', async () => {
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-model',
-      doGenerate: async () => ({
-        rawCall: { rawPrompt: null, rawSettings: {} },
-        finishReason: 'stop',
-        usage: { promptTokens: 10, completionTokens: 5 },
-        text: 'Hello from mock',
-      }),
+      doGenerate: async () => mockTextResult('Hello from mock'),
     });
 
     // Use the AI SDK generateText directly with the mock model
@@ -125,12 +121,12 @@ describe('createLlmClient — generateText with MockLanguageModelV1', () => {
       apiKey: 'test-key',
     });
 
-    // Message with unresolved tool call at end
+    // Message with unresolved tool call at end (missing tool result follow-up)
     const badMessages = [
       { role: 'user' as const, content: 'hello' },
       {
         role: 'assistant' as const,
-        content: [{ type: 'tool-call' as const, toolCallId: 'tc1', toolName: 'foo', args: {} }],
+        content: [{ type: 'tool-call' as const, toolCallId: 'tc1', toolName: 'foo', input: {} }],
       },
       // Missing tool result — unresolved tail
     ];

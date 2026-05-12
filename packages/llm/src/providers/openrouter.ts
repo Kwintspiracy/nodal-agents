@@ -10,7 +10,7 @@
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { wrapLanguageModel } from 'ai';
-import type { LanguageModel, LanguageModelV1Middleware } from 'ai';
+import type { LanguageModel, LanguageModelMiddleware } from 'ai';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_PRESETS } from './registry';
 import { ProviderConfigError } from '../errors';
@@ -46,7 +46,7 @@ export function detectAgenticFamily(modelId: string): ModelFamily {
   return null;
 }
 
-function middlewareForFamily(family: ModelFamily): LanguageModelV1Middleware | null {
+function middlewareForFamily(family: ModelFamily): LanguageModelMiddleware | null {
   switch (family) {
     case 'deepseek':
       return deepseekToolCallMiddleware;

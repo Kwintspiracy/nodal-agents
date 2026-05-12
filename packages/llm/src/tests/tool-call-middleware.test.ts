@@ -5,8 +5,8 @@
 // matrix, fail-loud on streamText.
 
 import { describe, it, expect } from 'vitest';
-import { MockLanguageModelV1 } from 'ai/test';
-import { wrapLanguageModel, generateText, tool } from 'ai';
+import { MockLanguageModelV3 } from 'ai/test';
+import { wrapLanguageModel, generateText, tool, stepCountIs } from 'ai';
 import { APICallError } from '@ai-sdk/provider';
 import { z } from 'zod';
 
@@ -16,6 +16,7 @@ import {
   __testing,
 } from '../providers/parsers';
 import { detectAgenticFamily } from '../providers/openrouter';
+import { mockTextResult, mockToolCallResult } from './_mock-helpers';
 
 const { deepseekNativeParser, kimiNativeParser, nodalNativeParser } = __testing;
 
@@ -32,8 +33,8 @@ describe('deepseekNativeParser', () => {
 
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]?.toolName).toBe('get_weather');
-    expect(JSON.parse(result.toolCalls[0]!.args)).toEqual({ city: 'Paris' });
-    expect(result.toolCalls[0]?.toolCallType).toBe('function');
+    expect(JSON.parse(result.toolCalls[0]!.input)).toEqual({ city: 'Paris' });
+    expect(result.toolCalls[0]?.type).toBe('tool-call');
     expect(result.toolCalls[0]?.toolCallId).toMatch(/^call_[a-f0-9]{16}$/);
     expect(result.text).toBe('Let me check.');
   });
@@ -48,7 +49,7 @@ describe('deepseekNativeParser', () => {
     expect(result.toolCalls).toHaveLength(2);
     expect(result.toolCalls[0]?.toolName).toBe('fn_a');
     expect(result.toolCalls[1]?.toolName).toBe('fn_b');
-    expect(JSON.parse(result.toolCalls[1]!.args)).toEqual({ x: 1 });
+    expect(JSON.parse(result.toolCalls[1]!.input)).toEqual({ x: 1 });
   });
 
   it('returns text unchanged when no DeepSeek start token present', () => {
@@ -80,7 +81,7 @@ describe('kimiNativeParser', () => {
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]?.toolName).toBe('get_weather');
     expect(result.toolCalls[0]?.toolCallId).toBe('functions.get_weather:0');
-    expect(JSON.parse(result.toolCalls[0]!.args)).toEqual({ city: 'Lyon' });
+    expect(JSON.parse(result.toolCalls[0]!.input)).toEqual({ city: 'Lyon' });
   });
 
   it('also accepts the singular start-token variant', () => {
@@ -119,7 +120,7 @@ describe('nodalNativeParser', () => {
     const result = nodalNativeParser(text);
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]?.toolName).toBe('get_weather');
-    expect(JSON.parse(result.toolCalls[0]!.args)).toEqual({ city: 'Berlin' });
+    expect(JSON.parse(result.toolCalls[0]!.input)).toEqual({ city: 'Berlin' });
     expect(result.text).toBe('Looking up.');
   });
 
@@ -151,13 +152,13 @@ describe('nodalNativeParser', () => {
     const text = '<tool_call>{"name":"do","arguments":"{\\"x\\":1}"}</tool_call>';
     const result = nodalNativeParser(text);
     expect(result.toolCalls).toHaveLength(1);
-    expect(result.toolCalls[0]?.args).toBe('{"x":1}');
+    expect(result.toolCalls[0]?.input).toBe('{"x":1}');
   });
 
   it('handles missing arguments by defaulting to {}', () => {
     const text = '<tool_call>{"name":"ping"}</tool_call>';
     const result = nodalNativeParser(text);
-    expect(result.toolCalls[0]?.args).toBe('{}');
+    expect(result.toolCalls[0]?.input).toBe('{}');
   });
 
   it('returns text unchanged when no tool_call tags present', () => {
@@ -171,22 +172,17 @@ describe('nodalNativeParser', () => {
 
 describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
   it('passes through cleanly when provider already extracted tool calls', async () => {
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-deepseek',
-      doGenerate: async () => ({
-        rawCall: { rawPrompt: null, rawSettings: {} },
-        finishReason: 'tool-calls',
-        usage: { promptTokens: 5, completionTokens: 3 },
-        toolCalls: [
+      doGenerate: async () =>
+        mockToolCallResult([
           {
-            toolCallType: 'function',
             toolCallId: 'call-existing',
             toolName: 'get_weather',
-            args: JSON.stringify({ city: 'Paris' }),
+            input: JSON.stringify({ city: 'Paris' }),
           },
-        ],
-      }),
+        ]),
     });
 
     const wrapped = wrapLanguageModel({
@@ -200,11 +196,11 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
       tools: {
         get_weather: tool({
           description: 'weather',
-          parameters: z.object({ city: z.string() }),
+          inputSchema: z.object({ city: z.string() }),
           execute: async ({ city }) => `Weather in ${city}: sunny`,
         }),
       },
-      maxSteps: 2,
+      stopWhen: stepCountIs(2),
     });
 
     const firstStep = result.steps[0];
@@ -213,18 +209,15 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
   });
 
   it('extracts native markup from result.text when provider returned no toolCalls', async () => {
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-deepseek',
-      doGenerate: async () => ({
-        rawCall: { rawPrompt: null, rawSettings: {} },
-        finishReason: 'stop',
-        usage: { promptTokens: 5, completionTokens: 3 },
-        text:
+      doGenerate: async () =>
+        mockTextResult(
           '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n' +
-          '```json\n{"city":"Marseille"}\n```\n' +
-          '<｜tool▁call▁end｜><｜tool▁calls▁end｜>',
-      }),
+            '```json\n{"city":"Marseille"}\n```\n' +
+            '<｜tool▁call▁end｜><｜tool▁calls▁end｜>',
+        ),
     });
 
     const wrapped = wrapLanguageModel({
@@ -238,11 +231,11 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
       tools: {
         get_weather: tool({
           description: 'weather',
-          parameters: z.object({ city: z.string() }),
+          inputSchema: z.object({ city: z.string() }),
           execute: async ({ city }) => `Weather in ${city}: sunny`,
         }),
       },
-      maxSteps: 2,
+      stopWhen: stepCountIs(2),
     });
 
     const firstStep = result.steps[0];
@@ -254,12 +247,12 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
     let observedPromptHadAddendum = false;
     let observedToolsPresent = false;
 
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-deepseek',
       doGenerate: async (params) => {
-        observedToolsPresent =
-          params.mode.type === 'regular' && (params.mode.tools?.length ?? 0) > 0;
+        // V3CallOptions: tools is at the top level (no more params.mode.type/tools)
+        observedToolsPresent = (params.tools?.length ?? 0) > 0;
         const sys = params.prompt[0];
         if (sys && sys.role === 'system' && typeof sys.content === 'string') {
           observedPromptHadAddendum =
@@ -267,12 +260,7 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
             sys.content.includes('<tool_call>') ||
             sys.content.includes('<｜tool▁call▁begin｜>');
         }
-        return {
-          rawCall: { rawPrompt: null, rawSettings: {} },
-          finishReason: 'stop',
-          usage: { promptTokens: 5, completionTokens: 3 },
-          text: '',
-        };
+        return mockTextResult('');
       },
     });
     const wrapped = wrapLanguageModel({
@@ -286,11 +274,11 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
       tools: {
         ping: tool({
           description: 'ping',
-          parameters: z.object({}),
+          inputSchema: z.object({}),
           execute: async () => 'pong',
         }),
       },
-      maxSteps: 1,
+      stopWhen: stepCountIs(1),
     });
 
     expect(observedPromptHadAddendum).toBe(false);
@@ -298,15 +286,10 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
   });
 
   it('passes through clean text when no native markup', async () => {
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-deepseek',
-      doGenerate: async () => ({
-        rawCall: { rawPrompt: null, rawSettings: {} },
-        finishReason: 'stop',
-        usage: { promptTokens: 5, completionTokens: 3 },
-        text: 'plain reply no markup',
-      }),
+      doGenerate: async () => mockTextResult('plain reply no markup'),
     });
     const wrapped = wrapLanguageModel({
       model: mockModel,
@@ -315,7 +298,7 @@ describe('createNativeToolCallMiddleware end-to-end (mock LLM)', () => {
     const result = await generateText({
       model: wrapped,
       prompt: 'hi',
-      maxSteps: 1,
+      stopWhen: stepCountIs(1),
     });
     expect(result.text).toBe('plain reply no markup');
     expect(result.toolCalls).toHaveLength(0);
@@ -343,7 +326,7 @@ describe('createNativeToolCallMiddleware error recovery', () => {
       usage: { prompt_tokens: 100, completion_tokens: 20 },
     });
 
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-deepseek',
       doGenerate: async () => {
@@ -368,22 +351,22 @@ describe('createNativeToolCallMiddleware error recovery', () => {
       tools: {
         do_thing: tool({
           description: 'do',
-          parameters: z.object({ arg: z.number() }),
+          inputSchema: z.object({ arg: z.number() }),
           execute: async ({ arg }) => `did ${arg}`,
         }),
       },
-      maxSteps: 2,
+      stopWhen: stepCountIs(2),
     });
 
     const firstStep = result.steps[0];
     expect(firstStep?.toolCalls).toHaveLength(1);
     expect(firstStep?.toolCalls[0]?.toolName).toBe('do_thing');
     // AI SDK level exposes args already parsed (object) — not a JSON string
-    expect(firstStep!.toolCalls[0]!.args).toEqual({ arg: 42 });
+    expect(firstStep!.toolCalls[0]!.input).toEqual({ arg: 42 });
   });
 
   it('re-throws APICallError when responseBody has no native markup', async () => {
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-deepseek',
       doGenerate: async () => {
@@ -402,13 +385,13 @@ describe('createNativeToolCallMiddleware error recovery', () => {
       model: mockModel,
       middleware: deepseekToolCallMiddleware,
     });
-    await expect(generateText({ model: wrapped, prompt: 'x', maxSteps: 1 })).rejects.toThrow(
-      /Invalid JSON response/,
-    );
+    await expect(
+      generateText({ model: wrapped, prompt: 'x', stopWhen: stepCountIs(1) }),
+    ).rejects.toThrow(/Invalid JSON response/);
   });
 
   it('re-throws non-APICallError errors (no silent fallback)', async () => {
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-deepseek',
       doGenerate: async () => {
@@ -419,9 +402,9 @@ describe('createNativeToolCallMiddleware error recovery', () => {
       model: mockModel,
       middleware: deepseekToolCallMiddleware,
     });
-    await expect(generateText({ model: wrapped, prompt: 'x', maxSteps: 1 })).rejects.toThrow(
-      /network timeout/,
-    );
+    await expect(
+      generateText({ model: wrapped, prompt: 'x', stopWhen: stepCountIs(1) }),
+    ).rejects.toThrow(/network timeout/);
   });
 
   it('wrapStream throws UnsupportedFunctionalityError (no silent fallback)', async () => {

@@ -9,7 +9,7 @@
 // adapt at the parse step. See `tool-call-middleware.ts` for the wrapper.
 
 import { randomUUID } from 'node:crypto';
-import type { LanguageModelV1FunctionToolCall } from '@ai-sdk/provider';
+import type { LanguageModelV3ToolCall } from '@ai-sdk/provider';
 import { createNativeToolCallMiddleware, type NativeToolCallParser } from './tool-call-middleware';
 
 function generateToolCallId(): string {
@@ -38,7 +38,7 @@ const DEEPSEEK_PATTERN =
 export const deepseekNativeParser: NativeToolCallParser = (text) => {
   if (!text.includes(DEEPSEEK_START_TOKEN)) return { text, toolCalls: [] };
 
-  const toolCalls: LanguageModelV1FunctionToolCall[] = [];
+  const toolCalls: LanguageModelV3ToolCall[] = [];
   DEEPSEEK_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = DEEPSEEK_PATTERN.exec(text)) !== null) {
@@ -46,10 +46,10 @@ export const deepseekNativeParser: NativeToolCallParser = (text) => {
     const args = match[3]?.trim();
     if (!name) continue;
     toolCalls.push({
-      toolCallType: 'function',
+      type: 'tool-call',
       toolCallId: generateToolCallId(),
       toolName: name,
-      args: args && args.length > 0 ? args : '{}',
+      input: args && args.length > 0 ? args : '{}',
     });
   }
 
@@ -87,7 +87,7 @@ export const kimiNativeParser: NativeToolCallParser = (text) => {
     return { text, toolCalls: [] };
   }
 
-  const toolCalls: LanguageModelV1FunctionToolCall[] = [];
+  const toolCalls: LanguageModelV3ToolCall[] = [];
   KIMI_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = KIMI_PATTERN.exec(text)) !== null) {
@@ -99,10 +99,10 @@ export const kimiNativeParser: NativeToolCallParser = (text) => {
     const name = beforeColon.split('.').pop() ?? '';
     if (name.length === 0) continue;
     toolCalls.push({
-      toolCallType: 'function',
+      type: 'tool-call',
       toolCallId: fullId,
       toolName: name,
-      args: args && args.length > 0 ? args : '{}',
+      input: args && args.length > 0 ? args : '{}',
     });
   }
 
@@ -131,7 +131,7 @@ const NODAL_PATTERN = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
 export const nodalNativeParser: NativeToolCallParser = (text) => {
   if (!text.includes('<tool_call>')) return { text, toolCalls: [] };
 
-  const toolCalls: LanguageModelV1FunctionToolCall[] = [];
+  const toolCalls: LanguageModelV3ToolCall[] = [];
   NODAL_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = NODAL_PATTERN.exec(text)) !== null) {
@@ -154,10 +154,10 @@ export const nodalNativeParser: NativeToolCallParser = (text) => {
           : JSON.stringify(parsed.arguments);
 
     toolCalls.push({
-      toolCallType: 'function',
+      type: 'tool-call',
       toolCallId: generateToolCallId(),
       toolName: parsed.name,
-      args: argsString,
+      input: argsString,
     });
   }
 

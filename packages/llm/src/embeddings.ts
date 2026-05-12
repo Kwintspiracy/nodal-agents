@@ -1,7 +1,7 @@
 // @nodalai/llm — embedding client
 
 import { embed } from 'ai';
-import { createOllama } from 'ollama-ai-provider';
+import { createOllama } from 'ollama-ai-provider-v2';
 import { createOpenAI } from '@ai-sdk/openai';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────

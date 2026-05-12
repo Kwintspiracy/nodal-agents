@@ -55,7 +55,7 @@ export function createToolRegistry(): ToolRegistry {
       for (const tool of source) {
         result[tool.name] = {
           description: tool.description,
-          parameters: tool.inputSchema,
+          inputSchema: tool.inputSchema,
         };
       }
       return result;

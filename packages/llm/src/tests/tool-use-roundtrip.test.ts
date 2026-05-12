@@ -1,28 +1,24 @@
 // tool-use-roundtrip.test.ts — mock provider returns tool calls, client surfaces them
 
 import { describe, it, expect } from 'vitest';
-import { MockLanguageModelV1 } from 'ai/test';
-import { generateText, tool } from 'ai';
+import { MockLanguageModelV3 } from 'ai/test';
+import { generateText, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
+import { mockTextResult, mockToolCallResult } from './_mock-helpers';
 
-describe('tool-use round-trip with MockLanguageModelV1', () => {
+describe('tool-use round-trip with MockLanguageModelV3', () => {
   it('mock model returns tool calls and generateText surfaces them', async () => {
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-model',
-      doGenerate: async () => ({
-        rawCall: { rawPrompt: null, rawSettings: {} },
-        finishReason: 'tool-calls',
-        usage: { promptTokens: 10, completionTokens: 5 },
-        toolCalls: [
+      doGenerate: async () =>
+        mockToolCallResult([
           {
-            toolCallType: 'function',
             toolCallId: 'call-1',
             toolName: 'get_weather',
-            args: JSON.stringify({ city: 'Paris' }),
+            input: JSON.stringify({ city: 'Paris' }),
           },
-        ],
-      }),
+        ]),
     });
 
     const result = await generateText({
@@ -31,11 +27,11 @@ describe('tool-use round-trip with MockLanguageModelV1', () => {
       tools: {
         get_weather: tool({
           description: 'Get weather for a city',
-          parameters: z.object({ city: z.string() }),
+          inputSchema: z.object({ city: z.string() }),
           execute: async ({ city }) => `Weather in ${city}: sunny`,
         }),
       },
-      maxSteps: 2,
+      stopWhen: stepCountIs(2),
     });
 
     // The tool was called — result should contain it
@@ -45,34 +41,21 @@ describe('tool-use round-trip with MockLanguageModelV1', () => {
   it('mock model returns text after tool use', async () => {
     let callCount = 0;
 
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-model',
       doGenerate: async () => {
         callCount++;
         if (callCount === 1) {
-          // First call: return a tool call
-          return {
-            rawCall: { rawPrompt: null, rawSettings: {} },
-            finishReason: 'tool-calls',
-            usage: { promptTokens: 10, completionTokens: 5 },
-            toolCalls: [
-              {
-                toolCallType: 'function',
-                toolCallId: 'call-1',
-                toolName: 'get_weather',
-                args: JSON.stringify({ city: 'Lyon' }),
-              },
-            ],
-          };
+          return mockToolCallResult([
+            {
+              toolCallId: 'call-1',
+              toolName: 'get_weather',
+              input: JSON.stringify({ city: 'Lyon' }),
+            },
+          ]);
         }
-        // Second call: return final text
-        return {
-          rawCall: { rawPrompt: null, rawSettings: {} },
-          finishReason: 'stop',
-          usage: { promptTokens: 20, completionTokens: 10 },
-          text: 'Lyon is sunny today.',
-        };
+        return mockTextResult('Lyon is sunny today.', { input: 20, output: 10 });
       },
     });
 
@@ -82,11 +65,11 @@ describe('tool-use round-trip with MockLanguageModelV1', () => {
       tools: {
         get_weather: tool({
           description: 'Get weather for a city',
-          parameters: z.object({ city: z.string() }),
+          inputSchema: z.object({ city: z.string() }),
           execute: async ({ city }) => `Weather in ${city}: sunny`,
         }),
       },
-      maxSteps: 3,
+      stopWhen: stepCountIs(3),
     });
 
     expect(result.text).toBe('Lyon is sunny today.');
@@ -97,34 +80,21 @@ describe('tool-use round-trip with MockLanguageModelV1', () => {
     const capturedArgs: Record<string, unknown>[] = [];
     let callCount = 0;
 
-    const mockModel = new MockLanguageModelV1({
+    const mockModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock-model',
       doGenerate: async () => {
         callCount++;
         if (callCount === 1) {
-          // First call: return a single tool call
-          return {
-            rawCall: { rawPrompt: null, rawSettings: {} },
-            finishReason: 'tool-calls' as const,
-            usage: { promptTokens: 10, completionTokens: 5 },
-            toolCalls: [
-              {
-                toolCallType: 'function' as const,
-                toolCallId: 'call-args-test',
-                toolName: 'store_data',
-                args: JSON.stringify({ key: 'name', value: 'Alice' }),
-              },
-            ],
-          };
+          return mockToolCallResult([
+            {
+              toolCallId: 'call-args-test',
+              toolName: 'store_data',
+              input: JSON.stringify({ key: 'name', value: 'Alice' }),
+            },
+          ]);
         }
-        // Second call: return final text (tool result was injected)
-        return {
-          rawCall: { rawPrompt: null, rawSettings: {} },
-          finishReason: 'stop' as const,
-          usage: { promptTokens: 20, completionTokens: 5 },
-          text: 'Stored successfully.',
-        };
+        return mockTextResult('Stored successfully.', { input: 20, output: 5 });
       },
     });
 
@@ -134,14 +104,14 @@ describe('tool-use round-trip with MockLanguageModelV1', () => {
       tools: {
         store_data: tool({
           description: 'Store a key-value pair',
-          parameters: z.object({ key: z.string(), value: z.string() }),
+          inputSchema: z.object({ key: z.string(), value: z.string() }),
           execute: async (args) => {
             capturedArgs.push(args);
             return 'stored';
           },
         }),
       },
-      maxSteps: 2,
+      stopWhen: stepCountIs(2),
     });
 
     expect(capturedArgs).toHaveLength(1);

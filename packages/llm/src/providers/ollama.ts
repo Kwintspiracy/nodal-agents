@@ -1,6 +1,6 @@
 // @nodalai/llm — Ollama provider
 
-import { createOllama } from 'ollama-ai-provider';
+import { createOllama } from 'ollama-ai-provider-v2';
 import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_PRESETS } from './registry';

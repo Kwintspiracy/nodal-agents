@@ -1,7 +1,7 @@
 // @nodalai/llm — client factory
 
 import { generateText, streamText, generateObject } from 'ai';
-import type { CoreMessage, LanguageModel } from 'ai';
+import type { ModelMessage, LanguageModel } from 'ai';
 
 import type { ProviderConfig, NodalLlmClient, ProviderCapabilities } from './types';
 import { ProviderConfigError } from './errors';
@@ -50,17 +50,17 @@ function buildModel(config: ProviderConfig): LanguageModel {
 
 /**
  * Extract messages from the args object if present, and validate structure.
- * Validation only runs when CoreMessage[] messages are provided.
+ * Validation only runs when ModelMessage[] messages are provided.
  * Omit<Message, 'id'>[] (useChat format) is passed through without validation —
  * those are legacy messages and not produced by our orchestrators.
  */
 function validateIfMessages(args: { messages?: unknown }): void {
   const messages = args.messages;
   if (!Array.isArray(messages) || messages.length === 0) return;
-  // Only validate if the first message looks like a CoreMessage (has role + content)
+  // Only validate if the first message looks like a ModelMessage (has role + content)
   const first = messages[0] as Record<string, unknown> | undefined;
   if (first && typeof first['role'] === 'string' && 'content' in first) {
-    validateMessageStructure(messages as CoreMessage[]);
+    validateMessageStructure(messages as ModelMessage[]);
   }
 }
 
@@ -87,13 +87,16 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
 
   const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
-    return withRetry(() => generateText({ ...args, model }), retryOpts);
+    return withRetry(
+      () => generateText({ ...args, model } as Parameters<typeof generateText>[0]),
+      retryOpts,
+    );
   };
 
   const clientStreamText: NodalLlmClient['streamText'] = (args) => {
     validateIfMessages(args as { messages?: unknown });
     // streamText returns a StreamTextResult synchronously (not a Promise)
-    return streamText({ ...args, model });
+    return streamText({ ...args, model } as Parameters<typeof streamText>[0]);
   };
 
   const clientGenerateObject: NodalLlmClient['generateObject'] = async (args) => {

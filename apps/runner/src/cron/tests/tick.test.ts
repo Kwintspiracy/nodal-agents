@@ -3,7 +3,7 @@
 // Verifies each phase ran and the composed result is correct.
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { MockLanguageModelV1 } from 'ai/test';
+import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
 import type { TestDb } from '@nodalai/db/test-utils';
@@ -43,16 +43,17 @@ vi.mock('@nodalai/llm', async (importOriginal) => {
 // ─── Mock LLM helpers ─────────────────────────────────────────────────────────
 
 function makeMockLlmClient(textResponse = 'Task complete.'): RunnerDeps['llmClient'] {
-  const mockModel = new MockLanguageModelV1({
+  const mockModel = new MockLanguageModelV3({
     provider: 'mock',
     modelId: 'mock',
     doGenerate: async () => ({
-      rawCall: { rawPrompt: null, rawSettings: {} },
-      finishReason: 'stop' as const,
-      usage: { promptTokens: 10, completionTokens: 5 },
-      text: textResponse,
-      toolCalls: [],
       content: [{ type: 'text' as const, text: textResponse }],
+      finishReason: { unified: 'stop' as const, raw: 'stop' },
+      usage: {
+        inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: 5, text: 5, reasoning: undefined },
+      },
+      warnings: [],
     }),
   });
 
@@ -66,9 +67,9 @@ function makeMockLlmClient(textResponse = 'Task complete.'): RunnerDeps['llmClie
       streaming: false,
     },
     generateText: (args) =>
-      generateText({ ...args, model: mockModel }) as ReturnType<
-        RunnerDeps['llmClient']['generateText']
-      >,
+      generateText({ ...args, model: mockModel } as Parameters<
+        typeof generateText
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
     streamText: () => {
       throw new Error('not supported');
     },

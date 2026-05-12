@@ -61,7 +61,7 @@ import type {
   JobContext,
 } from '@nodalai/orchestration';
 import type { z } from 'zod';
-import type { CoreMessage } from 'ai';
+import type { ModelMessage } from 'ai';
 import { failJob, completeJob, setJobStatus, saveCheckpoint } from './state.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -437,7 +437,9 @@ export async function executeJob(
   const toolMap = new Map<string, AnyToolDef>(toolDefs.map((t) => [t.name, t]));
 
   // ── 11. Restore conversation ──────────────────────────────────────────────────
-  let messages: CoreMessage[] = Array.isArray(job.messages) ? (job.messages as CoreMessage[]) : [];
+  let messages: ModelMessage[] = Array.isArray(job.messages)
+    ? (job.messages as ModelMessage[])
+    : [];
 
   if (messages.length === 0) {
     messages = [{ role: 'user', content: job.task }];
@@ -456,9 +458,9 @@ export async function executeJob(
       const toolChoice = computeToolChoice({ isOrchestrator, turn, hasAdapterTools });
 
       // c. Convert tools to AI SDK format
-      const aiSdkTools: Record<string, { description: string; parameters: z.ZodTypeAny }> = {};
+      const aiSdkTools: Record<string, { description: string; inputSchema: z.ZodTypeAny }> = {};
       for (const [name, toolDef] of toolMap) {
-        aiSdkTools[name] = { description: toolDef.description, parameters: toolDef.inputSchema };
+        aiSdkTools[name] = { description: toolDef.description, inputSchema: toolDef.inputSchema };
       }
 
       // d. Call LLM
@@ -474,9 +476,14 @@ export async function executeJob(
       // either field — coerce to 0 so we never persist NaN. Local providers
       // (LM Studio, Ollama) sometimes omit usage entirely; that just means
       // those turns won't add to the total, not that the call failed.
+      // AI SDK v6 renamed usage fields: promptTokens → inputTokens,
+      // completionTokens → outputTokens. Both can be `undefined` when the
+      // provider doesn't report usage (local providers like LM Studio /
+      // Ollama sometimes omit it) — Number(undefined) is NaN, hence the
+      // isFinite guard below.
       const usage = response.usage;
-      const promptT = Number(usage?.promptTokens ?? 0);
-      const completionT = Number(usage?.completionTokens ?? 0);
+      const promptT = Number(usage?.inputTokens ?? 0);
+      const completionT = Number(usage?.outputTokens ?? 0);
       inputTokens += Number.isFinite(promptT) ? promptT : 0;
       outputTokens += Number.isFinite(completionT) ? completionT : 0;
 
@@ -489,7 +496,7 @@ export async function executeJob(
       });
 
       // e. Append assistant message (use text or build from tool calls)
-      const assistantMsg: CoreMessage = {
+      const assistantMsg: ModelMessage = {
         role: 'assistant',
         content:
           rawToolCalls.length > 0
@@ -497,7 +504,7 @@ export async function executeJob(
                 type: 'tool-call' as const,
                 toolCallId: tc.toolCallId,
                 toolName: tc.toolName,
-                args: tc.args as Record<string, unknown>,
+                input: tc.input as Record<string, unknown>,
               }))
             : response.text || '',
       };
@@ -526,7 +533,7 @@ export async function executeJob(
         type: 'tool_use' as const,
         id: tc.toolCallId,
         name: tc.toolName,
-        input: tc.args as Record<string, unknown>,
+        input: tc.input as Record<string, unknown>,
       }));
 
       const {
@@ -550,13 +557,21 @@ export async function executeJob(
         ? [...othersWithoutReturn, keptAssign]
         : othersWithoutReturn;
 
-      // i. Process tool calls
+      // i. Process tool calls. AI SDK v6 ToolResultPart shape:
+      //   { type: 'tool-result', toolCallId, toolName, output: ToolResultOutput }
+      // where ToolResultOutput is a discriminated union — we use 'text' for
+      // plain string outputs and 'json' for structured ones.
+      type ToolResultOutput = { type: 'text'; value: string } | { type: 'json'; value: unknown };
       const toolResultBlocks: Array<{
         type: 'tool-result';
         toolCallId: string;
         toolName: string;
-        result: unknown;
+        output: ToolResultOutput;
       }> = [];
+      const toResultOutput = (raw: unknown): ToolResultOutput =>
+        typeof raw === 'string'
+          ? { type: 'text', value: raw }
+          : { type: 'json', value: raw ?? null };
 
       let awaitingApproval = false;
 
@@ -629,7 +644,10 @@ export async function executeJob(
                 type: 'tool_result' as const,
                 tool_use_id: b.toolCallId,
                 toolName: b.toolName,
-                content: typeof b.result === 'string' ? b.result : JSON.stringify(b.result ?? null),
+                content:
+                  b.output.type === 'text'
+                    ? b.output.value
+                    : JSON.stringify(b.output.value ?? null),
               }));
 
               const delegation = await handleDelegation(
@@ -710,7 +728,7 @@ export async function executeJob(
             type: 'tool-result',
             toolCallId: call.id,
             toolName: call.name,
-            result: awaitingMarker,
+            output: toResultOutput(awaitingMarker),
           });
           awaitingApproval = true;
           break;
@@ -720,15 +738,16 @@ export async function executeJob(
           type: 'tool-result',
           toolCallId: call.id,
           toolName: call.name,
-          result:
+          output: toResultOutput(
             toolResult.outcome === 'success' ? toolResult.output : { error: toolResult.error },
+          ),
         });
       }
 
       // j. Suspension states
       if (awaitingApproval) {
         if (toolResultBlocks.length > 0) {
-          messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
+          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
         }
         await saveCheckpoint(db, jobId as string, {
           messages,
@@ -748,26 +767,21 @@ export async function executeJob(
       // like [telegram_send_message (error), return_result] would silently
       // finalize the job claiming success even though the side-effect failed
       // — direct violation of invariant #4 (no silent fallbacks).
+      // A "sibling tool error" is one whose tool_result output is a JSON
+      // object containing an `error` field (the shape we wrap failures in
+      // — see toResultOutput callers in section i above).
+      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean =>
+        block.toolName !== 'return_result' &&
+        block.output.type === 'json' &&
+        block.output.value !== null &&
+        typeof block.output.value === 'object' &&
+        'error' in (block.output.value as Record<string, unknown>);
+
       const turnHadSiblingToolError =
-        returnResultCall !== undefined &&
-        toolResultBlocks.some(
-          (block) =>
-            block.toolName !== 'return_result' &&
-            block.result !== null &&
-            typeof block.result === 'object' &&
-            'error' in (block.result as Record<string, unknown>),
-        );
+        returnResultCall !== undefined && toolResultBlocks.some(isToolErrorBlock);
 
       if (returnResultCall && turnHadSiblingToolError) {
-        const erroredTools = toolResultBlocks
-          .filter(
-            (b) =>
-              b.toolName !== 'return_result' &&
-              b.result !== null &&
-              typeof b.result === 'object' &&
-              'error' in (b.result as Record<string, unknown>),
-          )
-          .map((b) => b.toolName);
+        const erroredTools = toolResultBlocks.filter(isToolErrorBlock).map((b) => b.toolName);
         trace('return_result_skipped_due_to_tool_error', { turn, erroredTools });
 
         // Synthesize a tool-result for return_result so the message-structure
@@ -779,9 +793,9 @@ export async function executeJob(
           type: 'tool-result',
           toolCallId: returnResultCall.toolCallId,
           toolName: 'return_result',
-          result: { error: 'deferred: sibling tool error must be addressed first' },
+          output: toResultOutput({ error: 'deferred: sibling tool error must be addressed first' }),
         });
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
+        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
         continue;
       }
 
@@ -803,9 +817,9 @@ export async function executeJob(
           type: 'tool-result',
           toolCallId: returnResultCall.toolCallId,
           toolName: 'return_result',
-          result: { acknowledged: true },
+          output: toResultOutput({ acknowledged: true }),
         });
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
+        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
 
         // If this run created tasks on the board, the workflow continues
         // asynchronously: the cron's executeReadyTasks runs each task and
@@ -860,7 +874,7 @@ export async function executeJob(
 
       // k. Append tool results and continue
       if (toolResultBlocks.length > 0) {
-        messages = [...messages, { role: 'tool', content: toolResultBlocks } as CoreMessage];
+        messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
       }
     }
   } catch (err) {

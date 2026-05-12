@@ -10,12 +10,11 @@ export function buildAnthropicModel(config: ProviderConfig): LanguageModel {
     ...(config.baseURL ? { baseURL: config.baseURL } : {}),
   });
 
-  // cacheControl is enabled by default in @ai-sdk/anthropic >= 1.x
-  // (it just allows marking content for caching, opt-in per message part)
-  // We still pass it explicitly for clarity and to respect cachingEnabled flag.
-  const cachingEnabled = config.cachingEnabled !== false;
-
-  return provider(config.model, {
-    cacheControl: cachingEnabled,
-  });
+  // AI SDK v6 controls prompt caching per-message via providerOptions, not at
+  // model construction time. The model factory itself takes only the model id.
+  // Callers wanting caching pass `providerOptions: { anthropic: { cacheControl
+  // : { type: 'ephemeral' } } }` on the relevant message part. The cachingEnabled
+  // field on ProviderConfig is now informational (read by NodalLlmClient
+  // .capabilities) — no behavioural effect at construction time.
+  return provider(config.model);
 }

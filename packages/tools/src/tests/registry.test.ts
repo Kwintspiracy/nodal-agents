@@ -117,8 +117,8 @@ describe('createToolRegistry', () => {
       expect(Object.keys(sdk)).toHaveLength(2);
       expect(sdk['tool_x']).toBeDefined();
       expect(sdk['tool_x']?.description).toBe('Tool tool_x');
-      // parameters is the Zod schema — check it validates correctly
-      const parsed = sdk['tool_x']?.parameters.safeParse({ value: 'hi' });
+      // inputSchema is the Zod schema — check it validates correctly
+      const parsed = sdk['tool_x']?.inputSchema.safeParse({ value: 'hi' });
       expect(parsed?.success).toBe(true);
     });
 
