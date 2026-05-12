@@ -86,9 +86,9 @@ const CreateAgentSchema = z
     name: z.string().min(1).max(120),
     personality: z.string().min(1),
     model: z.string().min(1),
-    llmKeyId: z.string().uuid().optional(),
+    llmKeyId: z.string().guid().optional(),
     role: z.enum(['worker', 'router', 'planner']).default('worker'),
-    subAgentIds: z.array(z.string().uuid()).default([]),
+    subAgentIds: z.array(z.string().guid()).default([]),
   })
   .refine((d) => d.role !== 'worker' || d.subAgentIds.length === 0, {
     message: 'Sub-agents only apply when role is router or planner',
@@ -97,7 +97,7 @@ const CreateAgentSchema = z
 
 const SendTaskSchema = z.object({
   prompt: z.string().min(1),
-  agentId: z.string().uuid('Must select a valid agent'),
+  agentId: z.string().guid('Must select a valid agent'),
   priority: z.enum(['low', 'medium', 'high']).default('medium'),
   sendViaTelegram: z
     .union([z.literal('true'), z.literal('false'), z.boolean()])
@@ -207,7 +207,7 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
 export async function deleteAgentAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid agent id');
     }
     const db = getDb();
@@ -229,13 +229,13 @@ export async function deleteAgentAction(id: string): Promise<ActionResult<void>>
 // ─── Agent update ─────────────────────────────────────────────────────────────
 
 const UpdateAgentSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
   name: z.string().min(1).max(120),
   personality: z.string().min(1),
   model: z.string().min(1),
-  llmKeyId: z.string().uuid().nullable().optional(),
+  llmKeyId: z.string().guid().nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
-  subAgentIds: z.array(z.string().uuid()).default([]),
+  subAgentIds: z.array(z.string().guid()).default([]),
   // slug NOT here — it is a stable identifier. Excluded at schema level so
   // even a raw payload with a slug field is silently stripped by safeParse.
 });
@@ -323,7 +323,7 @@ export type AgentEditRow = AgentRow & {
 export async function getAgentForEditAction(id: string): Promise<ActionResult<AgentEditRow>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid agent id');
     }
     const db = getDb();
@@ -524,7 +524,7 @@ export async function listJobsAction(
 export async function getJobDetailAction(id: string): Promise<ActionResult<JobDetailRow>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid job id');
     }
     const db = getDb();
@@ -577,7 +577,7 @@ export async function getJobStatusAction(
 ): Promise<ActionResult<{ status: string; result: string | null; error: string | null }>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid job id');
     }
     const db = getDb();
@@ -621,7 +621,7 @@ export type TelegramConfigRow = {
 };
 
 const ConfigureTelegramSchema = z.object({
-  agentId: z.string().uuid(),
+  agentId: z.string().guid(),
   botToken: z
     .string()
     .min(20, 'Token looks too short')
@@ -634,7 +634,7 @@ export async function getAgentTelegramConfigAction(
 ): Promise<ActionResult<TelegramConfigRow>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(agentId).success) {
+    if (!z.string().guid().safeParse(agentId).success) {
       return fail('validation_failed', 'Invalid agent id');
     }
 
@@ -755,7 +755,7 @@ export async function configureAgentTelegramAction(
 export async function disconnectAgentTelegramAction(agentId: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(agentId).success) {
+    if (!z.string().guid().safeParse(agentId).success) {
       return fail('validation_failed', 'Invalid agent id');
     }
     const db = getDb();
@@ -792,7 +792,7 @@ const MEMORY_CATEGORIES = ['preference', 'context', 'outcome', 'learned_rule'] a
 type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
 const ListMemoriesSchema = z.object({
-  agentId: z.string().uuid().optional(),
+  agentId: z.string().guid().optional(),
   category: z.enum(MEMORY_CATEGORIES).optional(),
   tag: z.string().min(1).max(80).optional(),
   archived: z.boolean().default(false),
@@ -874,7 +874,7 @@ export async function listMemoriesAction(
 export async function archiveMemoryAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid memory id');
     }
     const db = getDb();
@@ -893,7 +893,7 @@ export async function archiveMemoryAction(id: string): Promise<ActionResult<void
 export async function unarchiveMemoryAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid memory id');
     }
     const db = getDb();
@@ -912,7 +912,7 @@ export async function unarchiveMemoryAction(id: string): Promise<ActionResult<vo
 export async function deleteMemoryAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid memory id');
     }
     const db = getDb();
@@ -1136,7 +1136,7 @@ export async function saveApiKeyConnectorAction(
 export async function deleteConnectorAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid connector id');
     }
     const db = getDb();
@@ -1170,10 +1170,10 @@ export async function assignCredentialAction(
 ): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(connectorId).success) {
+    if (!z.string().guid().safeParse(connectorId).success) {
       return fail('validation_failed', 'Invalid connector id');
     }
-    if (credentialId !== null && !z.string().uuid().safeParse(credentialId).success) {
+    if (credentialId !== null && !z.string().guid().safeParse(credentialId).success) {
       return fail('validation_failed', 'Invalid credential id');
     }
 
@@ -1247,7 +1247,7 @@ export async function createOrAssignOAuthConnectorAction(
     if (!z.string().min(1).max(80).safeParse(slug).success) {
       return fail('validation_failed', 'Invalid connector slug');
     }
-    if (!z.string().uuid().safeParse(credentialId).success) {
+    if (!z.string().guid().safeParse(credentialId).success) {
       return fail('validation_failed', 'Invalid credential id');
     }
 
@@ -1391,7 +1391,7 @@ export async function listApprovalsAction(
 }
 
 const ResolveApprovalSchema = z.object({
-  approvalRequestId: z.string().uuid(),
+  approvalRequestId: z.string().guid(),
   decision: z.enum(['approve', 'reject']),
   notes: z.string().max(5000).optional(),
 });
@@ -1577,7 +1577,7 @@ export async function createSkillAction(raw: unknown): Promise<ActionResult<{ id
 export async function deleteSkillAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid skill id');
     }
     const db = getDb();
@@ -1598,8 +1598,8 @@ export async function deleteSkillAction(id: string): Promise<ActionResult<void>>
 }
 
 const SkillAssignmentSchema = z.object({
-  skillId: z.string().uuid(),
-  agentId: z.string().uuid(),
+  skillId: z.string().guid(),
+  agentId: z.string().guid(),
 });
 
 export type SkillAssignmentRow = {
@@ -1618,7 +1618,7 @@ export async function listSkillAssignmentsAction(
 ): Promise<ActionResult<SkillAssignmentRow[]>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(skillId).success) {
+    if (!z.string().guid().safeParse(skillId).success) {
       return fail('validation_failed', 'Invalid skill id');
     }
     const db = getDb();
@@ -1710,7 +1710,7 @@ export async function assignSkillAction(raw: unknown): Promise<ActionResult<void
 // ─── Skill update ─────────────────────────────────────────────────────────────
 
 const UpdateSkillSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
   name: z.string().min(1).max(120),
   description: z.string().max(500).optional(),
   content: z.string().min(1),
@@ -1758,7 +1758,7 @@ export async function updateSkillAction(raw: unknown): Promise<ActionResult<void
 export async function getSkillByIdAction(id: string): Promise<ActionResult<SkillRow>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid skill id');
     }
     const db = getDb();
@@ -1840,9 +1840,9 @@ export type ToolCallLogRow = {
 };
 
 const ListToolCallsSchema = z.object({
-  agentId: z.string().uuid().optional(),
+  agentId: z.string().guid().optional(),
   toolName: z.string().min(1).max(120).optional(),
-  jobId: z.string().uuid().optional(),
+  jobId: z.string().guid().optional(),
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(200).default(50),
 });
@@ -2161,7 +2161,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
 }
 
 const CreateScheduleSchema = z.object({
-  agentId: z.string().uuid('Pick an agent'),
+  agentId: z.string().guid('Pick an agent'),
   name: z.string().min(1).max(120),
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
@@ -2212,8 +2212,8 @@ export async function createScheduleAction(raw: unknown): Promise<ActionResult<{
 }
 
 const UpdateScheduleSchema = z.object({
-  id: z.string().uuid(),
-  agentId: z.string().uuid('Pick an agent'),
+  id: z.string().guid(),
+  agentId: z.string().guid('Pick an agent'),
   name: z.string().min(1).max(120),
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
@@ -2272,7 +2272,7 @@ export async function updateScheduleAction(raw: unknown): Promise<ActionResult<v
 export async function toggleScheduleAction(id: string): Promise<ActionResult<{ active: boolean }>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid schedule id');
     }
     const db = getDb();
@@ -2298,7 +2298,7 @@ export async function toggleScheduleAction(id: string): Promise<ActionResult<{ a
 export async function deleteScheduleAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid schedule id');
     }
     const db = getDb();
@@ -2598,7 +2598,7 @@ const CreateLlmKeySchema = z.object({
 });
 
 const UpdateLlmKeySchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
   provider: z.enum(PROVIDER_VALUES),
   baseUrl: optionalBaseUrl,
   // apiKey absent → keep existing. Empty string also means "keep existing".
@@ -2615,7 +2615,7 @@ const TestLlmKeySchema = z.object({
   model: z.string().optional(),
   // When testing in edit mode without re-typing the key, pass the keyId and
   // the server will fetch the saved key (ownership-checked) instead.
-  keyId: z.string().uuid().optional(),
+  keyId: z.string().guid().optional(),
 });
 
 /** Strip the apiKey out of any string before returning it to the UI. */
@@ -2739,7 +2739,7 @@ export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<voi
 export async function deleteLlmKeyAction(id: string): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid LLM provider id');
     }
     const db = getDb();
@@ -2915,7 +2915,7 @@ export async function listAgentConnectorsAction(
 ): Promise<ActionResult<AgentConnectorRow[]>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(agentId).success) {
+    if (!z.string().guid().safeParse(agentId).success) {
       return fail('validation_failed', 'Invalid agent id');
     }
     const db = getDb();
@@ -3014,10 +3014,10 @@ export async function setAgentConnectorAssignmentAction(
 ): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(agentId).success) {
+    if (!z.string().guid().safeParse(agentId).success) {
       return fail('validation_failed', 'Invalid agent id');
     }
-    if (!z.string().uuid().safeParse(connectorId).success) {
+    if (!z.string().guid().safeParse(connectorId).success) {
       return fail('validation_failed', 'Invalid connector id');
     }
     const db = getDb();

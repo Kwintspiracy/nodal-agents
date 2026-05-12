@@ -10,24 +10,24 @@ const TaskTitleSchema = z.string().min(1).max(200);
 
 export const AgentTaskSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid(),
-    orchestrator_id: z.string().uuid(),
+    id: z.string().guid(),
+    entity_id: z.string().guid(),
+    orchestrator_id: z.string().guid(),
     title: TaskTitleSchema,
     description: TaskDescriptionSchema,
     status: TaskStatusSchema,
     priority: TaskPrioritySchema,
-    job_id: z.string().uuid().nullable(),
+    job_id: z.string().guid().nullable(),
     result: z.string().nullable(),
-    created_by_agent_id: z.string().uuid().nullable(),
-    assigned_agent_id: z.string().uuid().nullable(),
+    created_by_agent_id: z.string().guid().nullable(),
+    assigned_agent_id: z.string().guid().nullable(),
     input_tokens: z.number().int().min(0),
     output_tokens: z.number().int().min(0),
     cost_usd: z.number().min(0),
     // Array of task UUIDs this task depends on — all must be 'done' before this runs
-    depends_on: z.array(z.string().uuid()),
+    depends_on: z.array(z.string().guid()),
     context: z.record(z.string(), z.unknown()),
-    root_job_id: z.string().uuid().nullable(),
+    root_job_id: z.string().guid().nullable(),
     locked_at: z.string().datetime().nullable(),
     locked_by: z.string().nullable(),
     created_at: z.string().datetime(),
@@ -55,9 +55,9 @@ export const AgentTaskInsertSchema = AgentTaskSchema.omit({
   status: TaskStatusSchema.default('todo'),
   priority: TaskPrioritySchema.default('medium'),
   description: TaskDescriptionSchema.optional(),
-  depends_on: z.array(z.string().uuid()).default([]),
+  depends_on: z.array(z.string().guid()).default([]),
   context: z.record(z.string(), z.unknown()).default({}),
-  root_job_id: z.string().uuid().nullable().optional(),
+  root_job_id: z.string().guid().nullable().optional(),
 });
 
 export type AgentTask = z.infer<typeof AgentTaskSchema>;

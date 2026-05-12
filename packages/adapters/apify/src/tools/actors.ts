@@ -14,7 +14,7 @@ const RunActorInput = z.object({
       'The actor ID or name in the format "owner/actor-name" (e.g. "apify/web-scraper") or just the actor ID.',
     ),
   input: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .optional()
     .describe(
       'Input object to pass to the actor. Structure depends on the actor. Omit to use actor defaults.',

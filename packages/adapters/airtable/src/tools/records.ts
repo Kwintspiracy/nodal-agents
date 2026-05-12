@@ -158,7 +158,7 @@ const CreateRecordsInput = z.object({
     .describe('The Airtable base ID (e.g. appXXXXXXXX). Use airtable_list_bases to find it.'),
   tableIdOrName: z.string().describe('The table ID or name within the base.'),
   records: z
-    .array(z.object({ fields: z.record(z.unknown()) }))
+    .array(z.object({ fields: z.record(z.string(), z.unknown()) }))
     .min(1)
     .max(10)
     .describe(
@@ -220,7 +220,7 @@ const UpdateRecordInput = z.object({
   tableIdOrName: z.string().describe('The table ID or name within the base.'),
   recordId: z.string().describe('The record ID (recXXXXXXXX) to update.'),
   fields: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .describe(
       'Fields to update as key-value pairs. Only specified fields are changed (PATCH semantics). Example: {"Status": "Done", "Score": 95}',
     ),
@@ -276,7 +276,7 @@ const ReplaceRecordInput = z.object({
   tableIdOrName: z.string().describe('The table ID or name within the base.'),
   recordId: z.string().describe('The record ID (recXXXXXXXX) to replace.'),
   fields: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .describe(
       'Complete field set to write. Fields NOT included will be cleared (PUT semantics). Use airtable_update_record for partial updates.',
     ),

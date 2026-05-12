@@ -14,9 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tavily/core": "^0.7.0",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
-    "zod": "^3.24.1"
+    "@tavily/core": "^0.7.0",
+    "zod": "^4.4.3"
   }
 }

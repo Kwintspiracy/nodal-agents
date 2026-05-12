@@ -15,7 +15,7 @@ import { triggerWorker } from './agent.ts';
 // ─── Request schema ───────────────────────────────────────────────────────────
 
 export const ApproveRequestSchema = z.object({
-  approvalRequestId: z.string().uuid(),
+  approvalRequestId: z.string().guid(),
   decision: z.enum(['approve', 'reject']),
   notes: z.string().optional(),
 });

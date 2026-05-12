@@ -5,8 +5,8 @@ import { AgentRoleSchema, OrchestratorModeSchema } from '../enums';
 
 export const AgentSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
     name: z.string().min(1).max(120),
     slug: z
       .string()

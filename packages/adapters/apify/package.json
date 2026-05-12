@@ -14,9 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "apify-client": "^2.23.0",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
-    "zod": "^3.24.1"
+    "apify-client": "^2.23.0",
+    "zod": "^4.4.3"
   }
 }

@@ -19,7 +19,7 @@ export const AgentRequestSchema = z.object({
     .enum(['telegram', 'api', 'whatsapp', 'internal', 'cron', 'task-board', 'slack', 'discord'])
     .default('api'),
   chatId: z.string().optional().nullable(),
-  parentJobId: z.string().uuid().optional().nullable(),
+  parentJobId: z.string().guid().optional().nullable(),
   triggerImmediately: z.boolean().default(true),
 });
 

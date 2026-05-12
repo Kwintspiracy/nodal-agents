@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 export const UserProfileSchema = z
   .object({
-    user_id: z.string().uuid(),
+    user_id: z.string().guid(),
     display_name: z.string().max(120).nullable(),
     avatar_url: z.string().max(500).nullable(),
     timezone: z.string().max(80),

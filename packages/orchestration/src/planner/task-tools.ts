@@ -23,7 +23,10 @@ const createTaskSchema = z.object({
     .describe(
       'Array of task IDs that must complete before this task starts. Use list_tasks to get IDs.',
     ),
-  context: z.record(z.unknown()).optional().describe('Additional context key/value pairs.'),
+  context: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe('Additional context key/value pairs.'),
 });
 
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;

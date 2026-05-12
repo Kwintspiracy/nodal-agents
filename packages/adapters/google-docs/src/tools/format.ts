@@ -233,7 +233,7 @@ const BatchUpdateInput = z.object({
     .string()
     .describe('The Google Doc ID (from the URL: docs.google.com/document/d/{ID}/edit).'),
   requests: z
-    .array(z.record(z.unknown()))
+    .array(z.record(z.string(), z.unknown()))
     .min(1)
     .describe(
       'Array of Google Docs API Request objects. ' +

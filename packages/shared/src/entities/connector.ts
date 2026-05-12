@@ -6,8 +6,8 @@ import { ConnectorAuthTypeSchema } from '../enums';
 
 export const ConnectorSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
     name: z.string().min(1).max(120),
     slug: z
       .string()
@@ -20,7 +20,7 @@ export const ConnectorSchema = z
     active: z.boolean(),
     auth_type: ConnectorAuthTypeSchema,
     // FK to credentials table — null for api_key connectors
-    credential_id: z.string().uuid().nullable(),
+    credential_id: z.string().guid().nullable(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
   })
@@ -35,7 +35,7 @@ export const ConnectorInsertSchema = ConnectorSchema.omit({
   auth_type: ConnectorAuthTypeSchema.default('api_key'),
   base_url: z.string().nullable().optional(),
   api_key: z.string().nullable().optional(),
-  credential_id: z.string().uuid().nullable().optional(),
+  credential_id: z.string().guid().nullable().optional(),
 });
 
 export type Connector = z.infer<typeof ConnectorSchema>;

@@ -7,8 +7,8 @@ import { EntityIndustrySchema } from '../enums';
 
 export const EntitySchema = z
   .object({
-    id: z.string().uuid(),
-    user_id: z.string().uuid(),
+    id: z.string().guid(),
+    user_id: z.string().guid(),
     name: z.string().min(1).max(120),
     slug: z
       .string()
@@ -19,7 +19,7 @@ export const EntitySchema = z
     icon: z.string().max(4),
     industry: EntityIndustrySchema.nullable(),
     goal: z.string().max(1000).nullable(),
-    mcp_token: z.string().uuid().nullable(),
+    mcp_token: z.string().guid().nullable(),
     created_at: z.string().datetime(),
     updated_at: z.string().datetime(),
   })
@@ -46,9 +46,9 @@ import { EntityMemberRoleSchema } from '../enums';
 
 export const EntityMemberSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid(),
-    user_id: z.string().uuid(),
+    id: z.string().guid(),
+    entity_id: z.string().guid(),
+    user_id: z.string().guid(),
     role: EntityMemberRoleSchema,
     created_at: z.string().datetime(),
   })

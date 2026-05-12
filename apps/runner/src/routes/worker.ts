@@ -12,7 +12,7 @@ import type { JobId } from '@nodalai/orchestration';
 // ─── Request schema ───────────────────────────────────────────────────────────
 
 export const WorkerRequestSchema = z.object({
-  jobId: z.string().uuid(),
+  jobId: z.string().guid(),
 });
 
 // ─── workerRoute ──────────────────────────────────────────────────────────────

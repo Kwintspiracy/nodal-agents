@@ -2,53 +2,53 @@
 
 import { z } from 'zod';
 
-export const EntityIdSchema = z.string().uuid().brand<'EntityId'>();
+export const EntityIdSchema = z.string().guid().brand<'EntityId'>();
 export type EntityId = z.infer<typeof EntityIdSchema>;
 
-export const UserIdSchema = z.string().uuid().brand<'UserId'>();
+export const UserIdSchema = z.string().guid().brand<'UserId'>();
 export type UserId = z.infer<typeof UserIdSchema>;
 
-export const AgentIdSchema = z.string().uuid().brand<'AgentId'>();
+export const AgentIdSchema = z.string().guid().brand<'AgentId'>();
 export type AgentId = z.infer<typeof AgentIdSchema>;
 
-export const JobIdSchema = z.string().uuid().brand<'JobId'>();
+export const JobIdSchema = z.string().guid().brand<'JobId'>();
 export type JobId = z.infer<typeof JobIdSchema>;
 
-export const TaskIdSchema = z.string().uuid().brand<'TaskId'>();
+export const TaskIdSchema = z.string().guid().brand<'TaskId'>();
 export type TaskId = z.infer<typeof TaskIdSchema>;
 
-export const ConnectorIdSchema = z.string().uuid().brand<'ConnectorId'>();
+export const ConnectorIdSchema = z.string().guid().brand<'ConnectorId'>();
 export type ConnectorId = z.infer<typeof ConnectorIdSchema>;
 
-export const SkillIdSchema = z.string().uuid().brand<'SkillId'>();
+export const SkillIdSchema = z.string().guid().brand<'SkillId'>();
 export type SkillId = z.infer<typeof SkillIdSchema>;
 
-export const ToolCallIdSchema = z.string().uuid().brand<'ToolCallId'>();
+export const ToolCallIdSchema = z.string().guid().brand<'ToolCallId'>();
 export type ToolCallId = z.infer<typeof ToolCallIdSchema>;
 
-export const ApprovalRequestIdSchema = z.string().uuid().brand<'ApprovalRequestId'>();
+export const ApprovalRequestIdSchema = z.string().guid().brand<'ApprovalRequestId'>();
 export type ApprovalRequestId = z.infer<typeof ApprovalRequestIdSchema>;
 
-export const ApprovalRuleIdSchema = z.string().uuid().brand<'ApprovalRuleId'>();
+export const ApprovalRuleIdSchema = z.string().guid().brand<'ApprovalRuleId'>();
 export type ApprovalRuleId = z.infer<typeof ApprovalRuleIdSchema>;
 
-export const MemoryIdSchema = z.string().uuid().brand<'MemoryId'>();
+export const MemoryIdSchema = z.string().guid().brand<'MemoryId'>();
 export type MemoryId = z.infer<typeof MemoryIdSchema>;
 
-export const WebhookTriggerIdSchema = z.string().uuid().brand<'WebhookTriggerId'>();
+export const WebhookTriggerIdSchema = z.string().guid().brand<'WebhookTriggerId'>();
 export type WebhookTriggerId = z.infer<typeof WebhookTriggerIdSchema>;
 
-export const ScheduleIdSchema = z.string().uuid().brand<'ScheduleId'>();
+export const ScheduleIdSchema = z.string().guid().brand<'ScheduleId'>();
 export type ScheduleId = z.infer<typeof ScheduleIdSchema>;
 
-export const McpServerIdSchema = z.string().uuid().brand<'McpServerId'>();
+export const McpServerIdSchema = z.string().guid().brand<'McpServerId'>();
 export type McpServerId = z.infer<typeof McpServerIdSchema>;
 
-export const PluginIdSchema = z.string().uuid().brand<'PluginId'>();
+export const PluginIdSchema = z.string().guid().brand<'PluginId'>();
 export type PluginId = z.infer<typeof PluginIdSchema>;
 
-export const LlmKeyIdSchema = z.string().uuid().brand<'LlmKeyId'>();
+export const LlmKeyIdSchema = z.string().guid().brand<'LlmKeyId'>();
 export type LlmKeyId = z.infer<typeof LlmKeyIdSchema>;
 
-export const AgentRunIdSchema = z.string().uuid().brand<'AgentRunId'>();
+export const AgentRunIdSchema = z.string().guid().brand<'AgentRunId'>();
 export type AgentRunId = z.infer<typeof AgentRunIdSchema>;

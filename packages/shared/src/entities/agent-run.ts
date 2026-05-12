@@ -5,9 +5,9 @@ import { RunKeySourceSchema } from '../enums';
 
 export const AgentRunSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    agent_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    agent_id: z.string().guid().nullable(),
     task: z.string().min(1),
     result: z.string().nullable(),
     success: z.boolean(),

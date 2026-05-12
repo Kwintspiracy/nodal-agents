@@ -4,8 +4,8 @@ import { z } from 'zod';
 
 export const EntityLlmKeySchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid(),
+    id: z.string().guid(),
+    entity_id: z.string().guid(),
     provider: z.string().min(1),
     // api_key stored encrypted in DB; empty string = not yet set
     api_key: z.string(),

@@ -37,8 +37,8 @@ export type SkillRequiredConfig = z.infer<typeof SkillRequiredConfigSchema>;
 
 export const AgentSkillSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
     name: z.string().min(1).max(120),
     slug: z
       .string()
@@ -79,10 +79,10 @@ export type AgentSkillInsert = z.infer<typeof AgentSkillInsertSchema>;
 
 export const AgentSkillAssignmentSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid(),
-    agent_id: z.string().uuid(),
-    skill_id: z.string().uuid(),
+    id: z.string().guid(),
+    entity_id: z.string().guid(),
+    agent_id: z.string().guid(),
+    skill_id: z.string().guid(),
     approval_overrides: z.record(z.string(), z.boolean()),
     use_custom_instructions: z.boolean(),
     // NULL = all operations enabled; [] = none enabled

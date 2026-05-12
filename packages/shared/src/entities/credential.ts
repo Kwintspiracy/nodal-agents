@@ -7,8 +7,8 @@ export const CREDENTIAL_TYPES = ['google-oauth', 'notion-oauth', 'airtable-oauth
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 export const CredentialSchema = z.object({
-  id: z.string().uuid(),
-  owner_user_id: z.string().uuid(),
+  id: z.string().guid(),
+  owner_user_id: z.string().guid(),
   name: z.string().min(1),
   type: z.enum(CREDENTIAL_TYPES),
   payload: z.string(), // encrypted blob; never decoded at this layer

@@ -168,7 +168,7 @@ export async function deleteCredentialAction(
 ): Promise<ActionResult<{ disconnected: number }>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid credential id');
     }
     const db = getDb();
@@ -208,7 +208,7 @@ export async function renameCredentialAction(
 ): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid credential id');
     }
     const trimmed = name.trim();
@@ -247,7 +247,7 @@ export async function refreshCredentialAction(
 ): Promise<ActionResult<{ expiresAt: Date | null }>> {
   try {
     const session = await getSession();
-    if (!z.string().uuid().safeParse(id).success) {
+    if (!z.string().guid().safeParse(id).success) {
       return fail('validation_failed', 'Invalid credential id');
     }
     const db = getDb();

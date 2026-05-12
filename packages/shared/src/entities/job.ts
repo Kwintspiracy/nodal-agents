@@ -13,9 +13,9 @@ const DelegationDepthSchema = z.number().int().min(0);
 
 export const AgentJobSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    agent_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    agent_id: z.string().guid().nullable(),
     status: JobStatusSchema,
     channel: JobChannelSchema,
     task: z.string().min(1),
@@ -29,7 +29,7 @@ export const AgentJobSchema = z
     error: z.string().nullable(),
     chain_count: ChainCountSchema,
     request_id: z.string().nullable(),
-    parent_job_id: z.string().uuid().nullable(),
+    parent_job_id: z.string().guid().nullable(),
     parent_request_id: z.string().nullable(),
     total_duration_ms: z.number().int().min(0),
     input_tokens: z.number().int().min(0),
@@ -65,7 +65,7 @@ export const AgentJobInsertSchema = AgentJobSchema.omit({
   chat_id: z.string().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   request_id: z.string().nullable().optional(),
-  parent_job_id: z.string().uuid().nullable().optional(),
+  parent_job_id: z.string().guid().nullable().optional(),
 });
 
 export type AgentJob = z.infer<typeof AgentJobSchema>;

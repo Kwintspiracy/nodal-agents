@@ -16,7 +16,7 @@ import { paginateAll } from '../helpers/pagination';
 const QueryDatabaseInput = z.object({
   database_id: z.string().describe('Notion database ID (UUID).'),
   filter: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .optional()
     .describe(
       'Optional Notion filter object. Example: {"property": "Status", "select": {"equals": "Applied"}}',
@@ -176,7 +176,7 @@ export function createGetDatabaseTool(
 const CreateDatabaseEntryInput = z.object({
   database_id: z.string().describe('Notion database ID to add a row to.'),
   properties: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .describe(
       'Row properties as key-value pairs. Example: {"Name": "Acme Corp", "Status": "Applied", "Score": 95}',
     ),
@@ -256,7 +256,7 @@ const UpdateDatabaseEntryInput = z.object({
       'Optional: database ID to fetch schema for type coercion. If omitted, types are inferred from values.',
     ),
   properties: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .describe('Properties to update as key-value pairs. Example: {"Status": "Done", "Score": 100}'),
 });
 
@@ -346,7 +346,7 @@ const CreateDatabaseInput = z.object({
   parent_page_id: z.string().describe('Page ID that will contain the new database.'),
   title: z.string().describe('Database title.'),
   columns: z
-    .record(ColumnTypeSchema)
+    .record(z.string(), ColumnTypeSchema)
     .describe(
       'Column definitions as {name: type}. One must be "title". Example: {"Name": "title", "Status": "select", "URL": "url", "Score": "number"}',
     ),
@@ -413,7 +413,7 @@ const UpdateDatabaseInput = z.object({
   database_id: z.string().describe('Database ID to update.'),
   title: z.string().optional().describe('Optional new title for the database.'),
   new_columns: z
-    .record(ColumnTypeSchema)
+    .record(z.string(), ColumnTypeSchema)
     .optional()
     .describe(
       'New columns to add as {name: type}. Same types as notion_create_database. Cannot modify existing column types (Notion API limitation).',

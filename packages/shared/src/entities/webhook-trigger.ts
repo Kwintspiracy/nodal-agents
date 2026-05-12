@@ -4,9 +4,9 @@ import { z } from 'zod';
 
 export const WebhookTriggerSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    agent_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    agent_id: z.string().guid().nullable(),
     name: z.string().min(1).max(120),
     slug: z
       .string()

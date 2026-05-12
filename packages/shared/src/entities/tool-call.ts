@@ -4,9 +4,9 @@ import { z } from 'zod';
 
 export const ToolCallSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    job_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    job_id: z.string().guid().nullable(),
     tool_name: z.string().min(1),
     tool_input: z.record(z.string(), z.unknown()).nullable(),
     tool_output: z.string().nullable(),

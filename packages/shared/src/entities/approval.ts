@@ -8,10 +8,10 @@ import { ApprovalStatusSchema, ApprovalRuleActionSchema } from '../enums';
 
 export const ApprovalRequestSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    job_id: z.string().uuid(),
-    agent_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    job_id: z.string().guid(),
+    agent_id: z.string().guid().nullable(),
     tool_name: z.string().min(1),
     tool_input: z.record(z.string(), z.unknown()),
     status: ApprovalStatusSchema,
@@ -42,9 +42,9 @@ export type ApprovalRequestInsert = z.infer<typeof ApprovalRequestInsertSchema>;
 
 export const ApprovalRuleSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    agent_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    agent_id: z.string().guid().nullable(),
     tool_name: z.string().min(1),
     action: ApprovalRuleActionSchema,
     condition_json: z.record(z.string(), z.unknown()),
@@ -58,7 +58,7 @@ export const ApprovalRuleInsertSchema = ApprovalRuleSchema.omit({
   created_at: true,
   updated_at: true,
 }).extend({
-  agent_id: z.string().uuid().nullable().optional(),
+  agent_id: z.string().guid().nullable().optional(),
   condition_json: z.record(z.string(), z.unknown()).default({}),
 });
 

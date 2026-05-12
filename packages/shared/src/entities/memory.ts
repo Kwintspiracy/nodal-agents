@@ -10,9 +10,9 @@ const ImportanceSchema = z.number().int().min(1).max(5);
 
 export const AgentMemorySchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    agent_id: z.string().uuid().nullable(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    agent_id: z.string().guid().nullable(),
     fact: z.string().min(1),
     category: MemoryCategorySchema,
     importance: ImportanceSchema,
@@ -42,7 +42,7 @@ export const AgentMemoryInsertSchema = AgentMemorySchema.omit({
   valid_from: true,
   valid_to: true,
 }).extend({
-  agent_id: z.string().uuid().nullable().optional(),
+  agent_id: z.string().guid().nullable().optional(),
   category: MemoryCategorySchema.default('context'),
   importance: ImportanceSchema.default(3),
   source: MemorySourceSchema.default('manual'),

@@ -5,9 +5,9 @@ import { ScheduleTypeSchema, ScheduleLastStatusSchema } from '../enums';
 
 export const AgentScheduleSchema = z
   .object({
-    id: z.string().uuid(),
-    entity_id: z.string().uuid().nullable(),
-    agent_id: z.string().uuid(),
+    id: z.string().guid(),
+    entity_id: z.string().guid().nullable(),
+    agent_id: z.string().guid(),
     type: ScheduleTypeSchema,
     name: z.string().min(1).max(120),
     cron_expr: z.string().min(1),

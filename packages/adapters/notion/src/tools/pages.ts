@@ -235,7 +235,7 @@ export function createCreatePageTool(
 const UpdatePageInput = z.object({
   page_id: z.string().describe('Page ID to update.'),
   properties: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .describe(
       'Properties to update as key-value pairs. Example: {"Status": "Done", "Priority": "High", "Score": 95}',
     ),
