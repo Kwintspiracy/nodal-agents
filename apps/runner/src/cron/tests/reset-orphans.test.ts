@@ -281,4 +281,80 @@ describe('resetOrphanedJobs', () => {
     // ≥ 2 because earlier tests in this file may have left stale rows.
     expect(count).toBeGreaterThanOrEqual(2);
   });
+
+  // Regression for live bug observed on job 58e38faa (2026-05-13):
+  // a parent in awaiting_delegation whose Summarizer sub-job took 7.5 min
+  // for a deep research got nuked by the cron at the 5-min mark, killing
+  // the resume path. The fix: skip the reset when the sub-job is still
+  // alive, bump updated_at instead to push back the staleness check.
+  it('does NOT reset awaiting_delegation parent when its sub-job is still running', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    // 1. Sub-job is processing (still alive, no terminal status)
+    const subJob = await createJob({ status: 'processing', updatedAt: new Date() });
+    // 2. Parent is stale awaiting_delegation, pending_delegation references the sub
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'orchestrator waiting for long sub-job',
+        status: 'awaiting_delegation',
+        updatedAt: staleDate,
+        pendingDelegation: {
+          toolUseId: 'tu_test',
+          toolName: 'assign_summarizer',
+          subJobId: subJob.id,
+        },
+      })
+      .returning();
+    if (!parent) throw new Error('Failed to seed parent');
+
+    await resetOrphanedJobs(db, 5);
+
+    const [parentAfter] = await db
+      .select({ status: agentJobs.status, updatedAt: agentJobs.updatedAt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+
+    // Parent should NOT have been marked failed — its sub is still alive.
+    expect(parentAfter?.status).toBe('awaiting_delegation');
+    // And updated_at should have been bumped past the cutoff so next tick re-evaluates.
+    expect(parentAfter?.updatedAt?.getTime() ?? 0).toBeGreaterThan(staleDate.getTime());
+  });
+
+  it('DOES reset awaiting_delegation parent when sub-job already completed (truly orphaned resume)', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    // Sub-job completed but the resume path never fired (e.g. runner crashed
+    // after the child completed). Parent must be reset — otherwise it sits
+    // forever in awaiting_delegation.
+    const subJob = await createJob({ status: 'completed', updatedAt: staleDate });
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'orchestrator with completed-but-unresumed sub',
+        status: 'awaiting_delegation',
+        updatedAt: staleDate,
+        pendingDelegation: {
+          toolUseId: 'tu_test_orphan',
+          toolName: 'assign_summarizer',
+          subJobId: subJob.id,
+        },
+      })
+      .returning();
+    if (!parent) throw new Error('Failed to seed parent');
+
+    await resetOrphanedJobs(db, 5);
+
+    const [parentAfter] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+
+    expect(parentAfter?.status).toBe('failed');
+    expect(parentAfter?.error).toBe('orphan_job_reset');
+  });
 });

@@ -118,25 +118,84 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
  * Both `processing → failed` and `awaiting_delegation → failed` are valid
  * transitions (see job/state.ts VALID_TRANSITIONS).
  *
- * @returns count of jobs reset
+ * IMPORTANT: a parent in `awaiting_delegation` whose sub-job is still alive
+ * (not in a terminal state) is NOT orphaned — it's legitimately waiting.
+ * Caught live on job `58e38faa` whose Summarizer sub-job took 7.5 min for
+ * a deep research. Without this guard the parent gets nuked at the 5-min
+ * mark even though everything is working fine. For those rows we bump
+ * `updated_at` so the staleness timer restarts (next tick re-evaluates).
+ *
+ * @returns count of jobs actually reset (not bumped)
  */
 export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Promise<number> {
   const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000);
 
-  const updated = await db
-    .update(agentJobs)
-    .set({
-      status: 'failed',
-      error: 'orphan_job_reset',
-      updatedAt: new Date(),
+  // 1. Find candidate stale jobs (current criteria — same as before).
+  const candidates = await db
+    .select({
+      id: agentJobs.id,
+      status: agentJobs.status,
+      pendingDelegation: agentJobs.pendingDelegation,
     })
+    .from(agentJobs)
     .where(
       and(
         inArray(agentJobs.status, ['processing', 'awaiting_delegation']),
         lt(agentJobs.updatedAt, cutoff),
       ),
-    )
-    .returning({ id: agentJobs.id });
+    );
 
-  return updated.length;
+  // Sub-job statuses that mean "still alive, parent is legitimately waiting".
+  // Anything else (completed/failed/cancelled or missing row) means the parent
+  // is truly orphaned — its child won't ever resume it.
+  const ACTIVE_SUBJOB_STATUSES = [
+    'pending',
+    'processing',
+    'awaiting_delegation',
+    'awaiting_approval',
+    'awaiting_tasks',
+  ];
+
+  const toReset: string[] = [];
+  const toBump: string[] = [];
+
+  for (const c of candidates) {
+    if (c.status === 'awaiting_delegation') {
+      const pending = c.pendingDelegation as { subJobId?: string } | null;
+      const subId = pending?.subJobId;
+      if (subId) {
+        const [sub] = await db
+          .select({ status: agentJobs.status })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, subId))
+          .limit(1);
+        if (sub && ACTIVE_SUBJOB_STATUSES.includes(sub.status ?? '')) {
+          // Sub still running — parent waits legitimately. Skip the reset
+          // AND bump updated_at so the next cron tick doesn't immediately
+          // re-evaluate this row (avoids burning a select per tick on every
+          // long-running delegation).
+          toBump.push(c.id);
+          continue;
+        }
+      }
+    }
+    toReset.push(c.id);
+  }
+
+  if (toBump.length > 0) {
+    await db.update(agentJobs).set({ updatedAt: new Date() }).where(inArray(agentJobs.id, toBump));
+  }
+
+  if (toReset.length > 0) {
+    await db
+      .update(agentJobs)
+      .set({
+        status: 'failed',
+        error: 'orphan_job_reset',
+        updatedAt: new Date(),
+      })
+      .where(inArray(agentJobs.id, toReset));
+  }
+
+  return toReset.length;
 }
