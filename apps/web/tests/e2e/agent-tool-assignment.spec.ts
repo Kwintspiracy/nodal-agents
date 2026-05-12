@@ -61,9 +61,11 @@ async function resolveE2eUserContext(): Promise<{ userId: string; entityId: stri
 
 /** Insert a fake Google Drive connector + credential; return their IDs.
  *
- * Cleans up any existing google-drive connector for the entity first
- * (the unique constraint is per entity+slug). This is fixture reset, not
- * assertion-target data — we're setting up the precondition for the UI test.
+ * Cleans up any existing google-drive connector AND any stub credentials this
+ * spec may have left behind in prior runs (e.g. Playwright was killed before
+ * `afterAll` ran). Previously we only deleted the connector — the credential
+ * row stayed orphaned, which surfaced as a "Cannot decrypt" banner on
+ * /credentials for the user the next time they opened the page.
  */
 async function insertTestConnector(
   userId: string,
@@ -73,18 +75,30 @@ async function insertTestConnector(
     await import('@nodalai/db');
   const { db, close } = makeDbClient();
   try {
-    // Remove any prior google-drive connector for this entity (entity+slug unique constraint)
+    // Remove any prior google-drive connector for this entity. Capture the
+    // FK to the credential so we can drop it too (ON DELETE SET NULL otherwise
+    // leaves the credentials row dangling).
     const existing = await db
-      .select({ id: connectors.id })
+      .select({ id: connectors.id, credentialId: connectors.credentialId })
       .from(connectors)
       .where(and(eq(connectors.entityId, entityId), eq(connectors.slug, 'google-drive')));
     for (const row of existing) {
-      // Delete assignments first, then the connector (FK cascades, but be explicit)
       await db
         .delete(agentConnectorAssignments)
         .where(eq(agentConnectorAssignments.connectorId, row.id));
       await db.delete(connectors).where(eq(connectors.id, row.id));
+      if (row.credentialId) {
+        await db.delete(credentials).where(eq(credentials.id, row.credentialId));
+      }
     }
+    // Belt + suspenders: nuke any leftover credential rows from earlier spec
+    // versions that didn't drop the credential on cleanup. Scoped by
+    // (ownerUserId + name) so we never touch the user's real credentials.
+    await db
+      .delete(credentials)
+      .where(
+        and(eq(credentials.ownerUserId, userId), eq(credentials.name, 'E2E Test Drive Credential')),
+      );
 
     // Insert a stub credential (payload is fake — no real decryption needed for UI test)
     const [credRow] = await db

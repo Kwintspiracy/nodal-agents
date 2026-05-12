@@ -2,9 +2,13 @@
 // Used by both the runner (to instantiate tools per job) and the web UI
 // (to display the operations grid in AgentForm before an access token is resolved).
 //
-// Only adapters with a concrete implementation are listed here.
-// Catalog-only connectors (airtable, apify, firecrawl, tavily) are added
-// in dedicated briques once their adapter packages ship.
+// `credentialType` tells the runner where to find the bearer token for the
+// connector at job-execution time:
+//   - one of CredentialType (e.g. 'google-oauth', 'notion-oauth', 'airtable-oauth')
+//     → token comes from credentials.payload.accessToken via the credentialId FK
+//   - 'api_key' → token is the decrypted connectors.api_key column (no
+//     credentials row); used by Personal Access Tokens and API keys
+//     (firecrawl, apify, tavily, airtable PAT, notion internal integration).
 
 import { createNotionTools, NOTION_OPERATIONS } from '@nodalai/adapter-notion';
 import { createAirtableTools, AIRTABLE_OPERATIONS } from '@nodalai/adapter-airtable';
@@ -12,12 +16,17 @@ import { createDriveTools, DRIVE_OPERATIONS } from '@nodalai/adapter-google-driv
 import { createGmailTools, GMAIL_OPERATIONS } from '@nodalai/adapter-gmail';
 import { createSheetsTools, SHEETS_OPERATIONS } from '@nodalai/adapter-google-sheets';
 import { createDocsTools, DOCS_OPERATIONS } from '@nodalai/adapter-google-docs';
+import { createFirecrawlTools, FIRECRAWL_OPERATIONS } from '@nodalai/adapter-firecrawl';
+import { createApifyTools, APIFY_OPERATIONS } from '@nodalai/adapter-apify';
+import { createTavilyTools, TAVILY_OPERATIONS } from '@nodalai/adapter-tavily';
 import type { z } from 'zod';
 import type { ToolDefinition } from '@nodalai/tools';
 import type { CredentialType, OperationDescriptor } from '@nodalai/shared';
 
+export type AdapterCredentialSource = CredentialType | 'api_key';
+
 export type AdapterEntry = {
-  credentialType: CredentialType;
+  credentialType: AdapterCredentialSource;
   toolFactory: (accessToken: string) => ToolDefinition<z.ZodTypeAny, unknown>[];
   operations: OperationDescriptor[];
 };
@@ -54,23 +63,45 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
       createNotionTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: NOTION_OPERATIONS,
   },
-  // notion: Internal Integration api_key — wire format identical on the Notion API
+  // notion: Internal Integration api_key — wire format identical on the Notion API.
+  // Token is the decrypted connectors.api_key (no credentials row).
   notion: {
-    credentialType: 'notion-oauth',
+    credentialType: 'api_key',
     toolFactory: (t) =>
       createNotionTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: NOTION_OPERATIONS,
   },
-  // airtable-oauth: OAuth access token (browser roundtrip via airtable-oauth catalog entry).
-  // Both OAuth tokens and PATs use the same Bearer wire format — the adapter doesn't distinguish.
-  // Note: the 'airtable' (PAT) catalog slug is NOT registered here because the runner resolves
-  // tokens from credentials.payload.accessToken (OAuth row), but PAT connectors store their key
-  // in connectors.api_key with no credentials row. Wiring the api_key → adapter path is a
-  // separate brique. Only airtable-oauth is wired for v1.
+  // airtable-oauth: OAuth access token via credentials.payload.accessToken.
   'airtable-oauth': {
     credentialType: 'airtable-oauth',
     toolFactory: (t) =>
       createAirtableTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: AIRTABLE_OPERATIONS,
+  },
+  // airtable: Personal Access Token via connectors.api_key. Same Bearer wire
+  // format as the OAuth path — the adapter doesn't distinguish.
+  airtable: {
+    credentialType: 'api_key',
+    toolFactory: (t) =>
+      createAirtableTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: AIRTABLE_OPERATIONS,
+  },
+  firecrawl: {
+    credentialType: 'api_key',
+    toolFactory: (t) =>
+      createFirecrawlTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: FIRECRAWL_OPERATIONS,
+  },
+  apify: {
+    credentialType: 'api_key',
+    toolFactory: (t) =>
+      createApifyTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: APIFY_OPERATIONS,
+  },
+  tavily: {
+    credentialType: 'api_key',
+    toolFactory: (t) =>
+      createTavilyTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: TAVILY_OPERATIONS,
   },
 };

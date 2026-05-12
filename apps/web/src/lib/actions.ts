@@ -36,15 +36,6 @@ import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
-import {
-  listCredentialsAction,
-  deleteCredentialAction,
-  renameCredentialAction,
-  refreshCredentialAction,
-  getDecryptedCredential,
-  persistCredentialFromOauthFlow,
-  refreshCredentialAccessToken,
-} from './credentials.ts';
 import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1324,20 +1315,13 @@ export async function createOrAssignOAuthConnectorAction(
   }
 }
 
-// ─── Credential action re-exports ─────────────────────────────────────────────
-// UI components may import directly from @/lib/credentials.ts, but these
-// re-exports ensure backwards-compat for callers importing from actions.ts.
-
-export {
-  listCredentialsAction,
-  deleteCredentialAction,
-  renameCredentialAction,
-  refreshCredentialAction,
-  // Internal helpers — not for direct client use, exported for runner/adapter wiring
-  getDecryptedCredential,
-  persistCredentialFromOauthFlow,
-  refreshCredentialAccessToken,
-};
+// Credential actions live in `./credentials.ts` and must be imported directly
+// from there (no re-export here). Re-exporting a `'use server'` function from
+// another `'use server'` file makes Next.js 16 + Turbopack register the same
+// function under TWO action IDs — one per source file. When a page passes the
+// re-exported action as a prop, Turbopack may embed the wrong ID in the RSC
+// stream while the page's manifest registers the original ID, producing
+// "Server action was not found on the server" at click time.
 
 // ─── Approval Actions ─────────────────────────────────────────────────────────
 

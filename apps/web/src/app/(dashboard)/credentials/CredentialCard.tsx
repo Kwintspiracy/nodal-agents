@@ -54,6 +54,8 @@ export type CredentialEntry = {
   expiresAt: Date | null;
   scopes: string | null;
   inUseBy: { connectorSlug: string; connectorId: string }[];
+  /** Non-null when the at-rest payload could not be decrypted. */
+  decryptError: string | null;
 };
 
 interface Props {
@@ -130,18 +132,24 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
           {credential.accountName && (
             <p className="text-xs text-neutral-400 mt-0.5">{credential.accountName}</p>
           )}
-          {/* Refreshable providers (Google, Airtable) display a stable
-              "Auto-refreshes when used" — the runner refreshes the token
-              transparently on use, so a countdown UI adds nothing but anxiety.
-              Non-refreshable (Notion) keeps the real timer + amber alarm. */}
-          {supportsRefresh && (
+          {/* Status line.
+              - Refreshable providers (Google, Airtable): stable "Auto-refreshes
+                when used" copy. The runner refreshes the access token
+                transparently on use, so an "expired" alarm here is misleading
+                — the access_token can be past expiry while the refresh_token
+                is still valid, which is the steady state for any credential
+                used less than once an hour. Real refresh failures surface
+                via the runner's path (the agent's job fails with a clear
+                error), or via the explicit Refresh button on this card.
+              - Non-refreshable providers (Notion): real timer + amber on
+                expiry because the user actually has to reconnect manually. */}
+          {supportsRefresh ? (
             <p className="text-xs text-neutral-500 mt-0.5">Auto-refreshes when used</p>
-          )}
-          {!supportsRefresh && expiryText && (
+          ) : expiryText ? (
             <p className={`text-xs mt-0.5 ${expired ? 'text-amber-400' : 'text-neutral-500'}`}>
               {expiryText}
             </p>
-          )}
+          ) : null}
         </div>
 
         {/* Actions */}
@@ -174,6 +182,16 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
           </button>
         </div>
       </div>
+
+      {/* Decrypt error banner — payload ciphertext can't be read
+          (master key rotated or row corrupted). Credential is unusable
+          regardless of provider state. */}
+      {credential.decryptError && (
+        <div className="px-3 py-2 rounded border border-red-900/50 bg-red-950/30 text-xs text-red-300">
+          <span className="font-semibold">Cannot decrypt this credential.</span> The encrypted
+          payload could not be read (master key changed or row corrupted). Delete and recreate it.
+        </div>
+      )}
 
       {/* Scopes */}
       {credential.scopes && (

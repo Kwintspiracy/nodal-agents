@@ -2803,17 +2803,21 @@ describe('listAgentConnectorsAction — db path', () => {
     // on the fact that a connector row without a slug matching ADAPTER_REGISTRY
     // will be filtered out.
     const agentId = 'aaaaaaaa-0000-0000-0000-000000000005';
-    // Return a connector with a slug that has no adapter (apify is catalog-only, no adapter package)
+    // Use a synthetic slug that no adapter package will ever claim — the
+    // intent of this test is to prove the "no adapter for this slug → drop
+    // it" branch, not to pin a specific catalog entry. (Brique 34quinquies
+    // shipped concrete adapters for every real catalog slug.)
+    const fakeSlug = 'unregistered-test-slug';
     currentDb = makeDb([
-      { id: agentId, slug: 'apify', name: 'Apify', credentialId: null, active: true },
+      { id: agentId, slug: fakeSlug, name: 'Fake', credentialId: null, active: true },
     ]) as typeof currentDb;
     const { listAgentConnectorsAction } = await import('../src/lib/actions.ts');
     const r = await listAgentConnectorsAction(agentId);
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // apify has no ADAPTER_REGISTRY entry — filtered out
-      const apifyEntries = r.data.filter((c) => c.slug === 'apify');
-      expect(apifyEntries).toHaveLength(0);
+      // unregistered slug has no ADAPTER_REGISTRY entry — filtered out
+      const entries = r.data.filter((c) => c.slug === fakeSlug);
+      expect(entries).toHaveLength(0);
     }
   });
 

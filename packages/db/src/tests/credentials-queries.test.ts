@@ -16,7 +16,11 @@ import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@n
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { credentials } from '../schema/index.ts';
-import { getDecryptedCredentialById, refreshAndPersistCredential } from '../queries/credentials.ts';
+import {
+  getDecryptedCredentialById,
+  decryptCredentialForDisplay,
+  refreshAndPersistCredential,
+} from '../queries/credentials.ts';
 
 // ─── Deterministic test key ───────────────────────────────────────────────────
 const TEST_KEY = randomBytes(32);
@@ -186,6 +190,31 @@ describe('getDecryptedCredentialById', () => {
     expect(result!.payload.accessToken).toBe('stale-access-token');
 
     fetchMock.mockRestore();
+  });
+});
+
+describe('decryptCredentialForDisplay', () => {
+  it('returns null for unknown id', async () => {
+    const result = await decryptCredentialForDisplay(db, '00000000-0000-0000-0000-000000000000');
+    expect(result).toBeNull();
+  });
+
+  it('does NOT trigger a refresh even when token is expiring soon', async () => {
+    // Token expires in 30 seconds — would trip the auto-refresh in
+    // getDecryptedCredentialById, but the display-only helper must skip it.
+    const soonExpiry = new Date(Date.now() + 30 * 1000).toISOString();
+    const row = await insertCredential(db, userId, {
+      expiresAt: soonExpiry,
+      accessToken: 'still-stale-on-display',
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const result = await decryptCredentialForDisplay(db, row.id);
+
+    expect(result).not.toBeNull();
+    expect(result!.payload.accessToken).toBe('still-stale-on-display');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });
 

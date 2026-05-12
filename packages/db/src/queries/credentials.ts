@@ -46,13 +46,41 @@ const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60 * 1000;
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Fetch + decrypt a credential by id.
+ * Decrypt a credential row WITHOUT touching the network.
+ *
+ * Use this for read-only paths (UI list, display) that must not trigger an
+ * OAuth refresh roundtrip — refresh is for the use-time path only. Returns
+ * `null` when the row doesn't exist; bubbles up decrypt errors (master-key
+ * mismatch / tampered ciphertext) to the caller so it can decide whether to
+ * surface them.
+ */
+export async function decryptCredentialForDisplay(
+  db: Db,
+  credentialId: string,
+): Promise<DecryptedCredential | null> {
+  const [row] = await db.select().from(credentials).where(eq(credentials.id, credentialId));
+  if (!row) return null;
+  return {
+    id: row.id,
+    ownerUserId: row.ownerUserId,
+    name: row.name,
+    type: row.type as CredentialType,
+    payload: decryptPayload(row.payload),
+  };
+}
+
+/**
+ * Fetch + decrypt a credential by id, refreshing the access token if it's
+ * past or near the 60s expiry threshold.
+ *
  * NO ownership check — caller is responsible for access control
  * (the runner trusts the credential_id from agent_connector_assignments).
  *
- * Auto-refresh: if expiresAt is past or within 60s AND the provider supports
- * refresh AND a refresh_token is stored, refreshes transparently before returning.
- * On refresh failure, returns the stale payload (caller's API call will surface 401).
+ * On refresh failure (provider revoked integration, expired refresh_token,
+ * network blip, etc.) the function falls back to the stale payload — the
+ * caller's API call will likely 401, which is the signal to surface "user
+ * must reconnect". We log at `warn` level — these are expected user-facing
+ * events, not developer bugs.
  */
 export async function getDecryptedCredentialById(
   db: Db,
@@ -85,10 +113,10 @@ export async function getDecryptedCredentialById(
           payload = decryptPayload(refreshedRow.payload);
         }
       } catch (err) {
-        // Non-fatal: fall through with the stale payload. The caller's API
-        // call will likely 401, which is the correct signal to surface to
-        // the user (re-auth needed). Logging gives operators a trail.
-        console.error('[getDecryptedCredentialById] auto-refresh failed', err);
+        // Non-fatal: fall through with the stale payload. The caller's next
+        // API call will 401 and the user will reconnect via /connectors.
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[getDecryptedCredentialById] auto-refresh failed: ${message}`);
       }
     }
   }

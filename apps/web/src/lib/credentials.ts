@@ -15,7 +15,11 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { eq } from '@nodalai/db';
 import { credentials, connectors } from '@nodalai/db';
-import { getDecryptedCredentialById, refreshAndPersistCredential } from '@nodalai/db';
+import {
+  getDecryptedCredentialById,
+  decryptCredentialForDisplay,
+  refreshAndPersistCredential,
+} from '@nodalai/db';
 import { encrypt, isEncrypted } from '@nodalai/secrets';
 import { z } from 'zod';
 import type {
@@ -73,6 +77,13 @@ export type CredentialListItem = {
   inUseBy: { connectorSlug: string; connectorId: string }[];
   createdAt: Date | null;
   updatedAt: Date | null;
+  /**
+   * Surfaces a decryption-level problem to the UI. The list path doesn't
+   * trigger a token refresh, so this only catches "ciphertext unreadable"
+   * (e.g. master key rotated, payload tampered). Refresh-level failures
+   * surface only when the runner tries to use the credential.
+   */
+  decryptError: string | null;
 };
 
 /**
@@ -95,20 +106,23 @@ export async function listCredentialsAction(
 
     const items: CredentialListItem[] = await Promise.all(
       filtered.map(async (row) => {
-        // Decrypt to read display-only fields, then discard.
+        // Decrypt to read display-only fields. The list path is read-only —
+        // it must NOT trigger an OAuth refresh roundtrip (that would hit the
+        // provider every time a user opens /credentials, masking real state).
+        // Refresh happens at use-time via getDecryptedCredentialById in the runner.
         let accountName: string | null = null;
         let expiresAt: Date | null = null;
         let scopes: string | null = null;
+        let decryptError: string | null = null;
         try {
-          // Use getDecryptedCredentialById to avoid duplicating decrypt logic
-          const decrypted = await getDecryptedCredentialById(db, row.id);
+          const decrypted = await decryptCredentialForDisplay(db, row.id);
           if (decrypted) {
             accountName = decrypted.payload.accountName ?? null;
             expiresAt = decrypted.payload.expiresAt ? new Date(decrypted.payload.expiresAt) : null;
             scopes = decrypted.payload.scopes ?? null;
           }
-        } catch {
-          // Non-fatal — display as unknown
+        } catch (err) {
+          decryptError = err instanceof Error ? err.message : 'decrypt_failed';
         }
 
         // Connectors using this credential
@@ -132,6 +146,7 @@ export async function listCredentialsAction(
           inUseBy,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
+          decryptError,
         };
       }),
     );

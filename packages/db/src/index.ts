@@ -8,7 +8,11 @@ export { withTransaction } from './transaction.ts';
 export * from './schema/index.ts';
 
 // ─── Query helpers ─────────────────────────────────────────────────────────────
-export { getDecryptedCredentialById, refreshAndPersistCredential } from './queries/credentials.ts';
+export {
+  getDecryptedCredentialById,
+  decryptCredentialForDisplay,
+  refreshAndPersistCredential,
+} from './queries/credentials.ts';
 export type { DecryptedCredential, OauthPayload, Db } from './queries/credentials.ts';
 
 // Re-export commonly used Drizzle query helpers so that other packages

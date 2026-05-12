@@ -15,11 +15,14 @@
   },
   "dependencies": {
     "@nodalai/adapter-airtable": "workspace:*",
+    "@nodalai/adapter-apify": "workspace:*",
+    "@nodalai/adapter-firecrawl": "workspace:*",
     "@nodalai/adapter-google-docs": "workspace:*",
     "@nodalai/adapter-google-drive": "workspace:*",
     "@nodalai/adapter-google-sheets": "workspace:*",
     "@nodalai/adapter-gmail": "workspace:*",
     "@nodalai/adapter-notion": "workspace:*",
+    "@nodalai/adapter-tavily": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
     "zod": "^3.24.1"

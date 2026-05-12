@@ -349,14 +349,18 @@ export async function executeJob(
 
       // ── Connector adapter tools ──────────────────────────────────────────────
       // Fetch agent's connector assignments (with per-operation whitelist).
-      // Each assignment with a resolved credential instantiates the adapter's tools.
+      // Each assignment instantiates its adapter's tools using a bearer token
+      // resolved from either:
+      //   - connectors.credentialId → credentials.payload.accessToken (OAuth)
+      //   - connectors.api_key      → decrypted api_key column (PAT / api_key)
       // null enabledOperations → all tools; array → whitelist on tool.name.
-      // Adapters without a registry entry (airtable, apify, etc.) are skipped silently.
+      // Adapters without a registry entry are skipped silently.
       const connectorAssignments = await db
         .select({
           connectorId: connectorsTable.id,
           slug: connectorsTable.slug,
           credentialId: connectorsTable.credentialId,
+          apiKey: connectorsTable.apiKey,
           enabledOperations: agentConnectorAssignments.enabledOperations,
         })
         .from(agentConnectorAssignments)
@@ -366,12 +370,24 @@ export async function executeJob(
       for (const ca of connectorAssignments) {
         const entry = ADAPTER_REGISTRY[ca.slug];
         if (!entry) continue; // no adapter for this catalog slug — skip silently
-        if (!ca.credentialId) continue; // connector not yet connected — skip
 
-        const decrypted = await getDecryptedCredentialById(db, ca.credentialId);
-        if (!decrypted) continue;
+        let accessToken: string | null = null;
+        if (entry.credentialType === 'api_key') {
+          // PAT / api_key path: decrypt connectors.api_key directly.
+          if (!ca.apiKey) continue;
+          try {
+            accessToken = decrypt(ca.apiKey);
+          } catch {
+            continue; // tampered / wrong master key — skip this connector silently
+          }
+        } else {
+          // OAuth path: token lives in credentials.payload.accessToken.
+          if (!ca.credentialId) continue;
+          const decrypted = await getDecryptedCredentialById(db, ca.credentialId);
+          if (!decrypted) continue;
+          accessToken = decrypted.payload.accessToken;
+        }
 
-        const accessToken = decrypted.payload.accessToken;
         if (!accessToken) continue;
 
         const allTools = entry.toolFactory(accessToken);

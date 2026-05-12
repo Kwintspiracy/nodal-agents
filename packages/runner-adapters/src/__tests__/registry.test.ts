@@ -1,8 +1,8 @@
 // registry.test.ts — contract test for ADAPTER_REGISTRY
 // Asserts:
-//  1. Registry contains exactly the 7 expected connector slugs.
+//  1. Registry contains exactly the expected connector slugs.
 //  2. Each entry has a non-empty operations array.
-//  3. Each entry's credentialType is a valid CredentialType value.
+//  3. Each entry's credentialType is either a valid CredentialType or 'api_key'.
 //  4. toolFactory is callable with a mock token and returns an array.
 
 import { describe, it, expect } from 'vitest';
@@ -17,10 +17,16 @@ const EXPECTED_SLUGS = [
   'notion-oauth',
   'notion',
   'airtable-oauth',
+  'airtable',
+  'firecrawl',
+  'apify',
+  'tavily',
 ] as const;
 
+const VALID_CREDENTIAL_SOURCES = [...CREDENTIAL_TYPES, 'api_key'] as const;
+
 describe('ADAPTER_REGISTRY', () => {
-  it('contains exactly the 7 expected slugs', () => {
+  it('contains exactly the expected slugs', () => {
     const actualSlugs = Object.keys(ADAPTER_REGISTRY).sort();
     expect(actualSlugs).toEqual([...EXPECTED_SLUGS].sort());
   });
@@ -32,9 +38,9 @@ describe('ADAPTER_REGISTRY', () => {
     expect(entry!.operations.length).toBeGreaterThan(0);
   });
 
-  it.each(EXPECTED_SLUGS)('entry "%s": credentialType is a valid CredentialType', (slug) => {
+  it.each(EXPECTED_SLUGS)('entry "%s": credentialType is a CredentialType or "api_key"', (slug) => {
     const entry = ADAPTER_REGISTRY[slug];
-    expect(CREDENTIAL_TYPES).toContain(entry!.credentialType);
+    expect(VALID_CREDENTIAL_SOURCES).toContain(entry!.credentialType);
   });
 
   it.each(EXPECTED_SLUGS)(
