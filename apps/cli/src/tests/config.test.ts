@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { ConfigSchema, type Config } from '../lib/config.ts';
+import { ConfigSchema, readConfig, writeConfig, type Config } from '../lib/config.ts';
 
 // ── Sample valid config ───────────────────────────────────────────────────────
 
@@ -147,5 +147,62 @@ describe('config file I/O', () => {
     expect(result.ports.web).toBe(3000);
     expect(result.ports.runner).toBe(3001);
     expect(result.ports.postgres).toBe(25432);
+  });
+});
+
+// ── serverActionsKey auto-migration ───────────────────────────────────────────
+
+describe('readConfig — serverActionsKey auto-mint', () => {
+  let tmpDir: string;
+  let configFile: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'nodalai-config-test-'));
+    configFile = join(tmpDir, 'config.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('mints a fresh serverActionsKey when absent from config and persists it', () => {
+    // Write a config WITHOUT serverActionsKey (simulates pre-existing install).
+    writeFileSync(configFile, JSON.stringify(VALID_CONFIG, null, 2), 'utf-8');
+
+    const result = readConfig(configFile);
+    expect(result).not.toBeNull();
+    // Auto-mint must produce a 44-char base64 string (= 32 raw bytes).
+    expect(result!.serverActionsKey).toBeDefined();
+    expect(result!.serverActionsKey!).toHaveLength(44);
+    // Round-trip: base64 → 32 bytes.
+    expect(Buffer.from(result!.serverActionsKey!, 'base64')).toHaveLength(32);
+
+    // The mint MUST be persisted so the next dev-server restart sees the same key.
+    const onDisk = JSON.parse(readFileSync(configFile, 'utf-8')) as Record<string, unknown>;
+    expect(onDisk['serverActionsKey']).toBe(result!.serverActionsKey);
+  });
+
+  it('preserves an existing serverActionsKey across reads (stable across restarts)', () => {
+    const stableKey = Buffer.alloc(32, 0x42).toString('base64'); // deterministic 44-char base64
+    const cfgWithKey: Config = { ...VALID_CONFIG, serverActionsKey: stableKey };
+    writeFileSync(configFile, JSON.stringify(cfgWithKey, null, 2), 'utf-8');
+
+    const first = readConfig(configFile);
+    const second = readConfig(configFile);
+
+    expect(first?.serverActionsKey).toBe(stableKey);
+    expect(second?.serverActionsKey).toBe(stableKey);
+    // No rewrite needed when key already present — file mtime stays unchanged
+    // would be a stronger assertion, but mtimes are flaky cross-OS. The
+    // round-trip equality above is the load-bearing assertion.
+  });
+
+  it('writeConfig + readConfig round-trips serverActionsKey', () => {
+    const key = Buffer.alloc(32, 0x99).toString('base64');
+    const cfg: Config = { ...VALID_CONFIG, serverActionsKey: key };
+    writeConfig(cfg, configFile);
+
+    const parsed = readConfig(configFile);
+    expect(parsed?.serverActionsKey).toBe(key);
   });
 });

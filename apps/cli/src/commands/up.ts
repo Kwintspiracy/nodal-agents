@@ -5,7 +5,7 @@ import ora from 'ora';
 import open from 'open';
 import { readConfig, writeConfig } from '../lib/config.ts';
 import { runInit } from './init.ts';
-import { startEmbeddedPostgres, runMigrations } from '../lib/postgres.ts';
+import { startEmbeddedPostgres, runMigrations, stopOrphanPostgres } from '../lib/postgres.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
 import { buildEnvForRunner, buildEnvForWeb, buildDatabaseUrl } from '../lib/env.ts';
 import { isPortBindable, findFreePort } from '../lib/ports.ts';
@@ -15,16 +15,16 @@ import {
   waitForHealth,
   writePids,
   clearPids,
+  killProcessTree,
   type SpawnResult,
 } from '../lib/processes.ts';
 import { createClient } from '@nodalai/db';
 
-function killSilent(child: SpawnResult): void {
-  try {
-    child.kill('SIGTERM');
-  } catch {
-    /* already dead */
-  }
+async function killSilent(child: SpawnResult): Promise<void> {
+  // Kill the whole process tree — see killProcessTree for the Windows
+  // rationale (cmd.exe wrapper would otherwise leave node.exe orphaned and
+  // the listener port held).
+  await killProcessTree(child);
 }
 
 /**
@@ -101,15 +101,35 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     console.log(chalk.yellow('Cleaning up before starting…'));
 
     const { execa } = await import('execa');
+    // Postgres needs SPECIAL handling: hard-killing it (taskkill /F) on
+    // Windows leaks the shared-memory section, and the next `pg_ctl start`
+    // dies with FATAL "pre-existing shared memory block is still in use".
+    // Try `pg_ctl stop -m fast` first — that's a graceful shutdown that
+    // releases the SHM cleanly. Fallback to taskkill only if pg_ctl fails.
+    const pgOrphan = orphans.find((o) => o.name === 'postgres');
+    if (pgOrphan) {
+      const stopped = await stopOrphanPostgres();
+      if (!stopped) {
+        try {
+          if (process.platform === 'win32') {
+            await execa('taskkill', ['/T', '/F', '/PID', String(pgOrphan.pid)], { reject: false });
+          } else {
+            process.kill(pgOrphan.pid, 'SIGKILL');
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+
     for (const o of orphans) {
+      if (o.name === 'postgres') continue; // already handled above
       try {
         if (process.platform === 'win32') {
-          // /T = kill the whole process tree (Postgres spawns workers; the
-          // parent dying without /T leaves them holding the port).
-          await execa('taskkill', ['/T', '/PID', String(o.pid), '/F'], { reject: false });
+          // /T = kill the whole process tree (the parent dying without /T
+          // leaves children holding the port).
+          await execa('taskkill', ['/T', '/F', '/PID', String(o.pid)], { reject: false });
         } else {
-          // SIGKILL the leader; on Unix-likes Postgres workers usually die
-          // when the postmaster does. If not we'd need to lookup PG children.
           process.kill(o.pid, 'SIGKILL');
         }
       } catch {
@@ -132,12 +152,17 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     }
 
     if (stillHeld.length > 0) {
+      // Windows can leave a "ghost socket" bound to a dead pid — the process
+      // is reaped but the TCP/IP driver hasn't released the port. Don't bail
+      // here; the port-rotation guard below (section 1.6) will detect that
+      // the port is unbindable and rotate to a free neighbour. The user gets
+      // a working stack on a new port instead of a copy-paste taskkill chore.
       const list = stillHeld.map((o) => `${o.name}:${o.port}=${o.pid}`).join(', ');
-      throw new Error(
-        `Could not free ports after killing orphans: ${list}. Try again or restart your machine.`,
-      );
+      console.log(chalk.yellow(`Some ports still held (likely Windows ghost sockets): ${list}.`));
+      console.log(chalk.gray('Will rotate to free neighbours below.\n'));
+    } else {
+      console.log(chalk.green('Orphans cleaned up.\n'));
     }
-    console.log(chalk.green('Orphans cleaned up.\n'));
   }
 
   // ── 1.6 Port-reservation guard (Windows Hyper-V/WinNAT excluded ranges) ──
@@ -232,15 +257,27 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 7. Wait for health ────────────────────────────────────────────────────
 
   const healthSpinner = ora('Waiting for services to be healthy…').start();
-  // `next dev` first-compile can blow past 30s on a cold cache.
-  const webHealthMs = opts.dev ? 90_000 : 30_000;
+  // `next dev` first-compile with Turbopack 16 + the workspace's module graph
+  // can take 2+ minutes from a cold cache. The .next/ cache shortens subsequent
+  // boots dramatically; the timeout below is the cold-start budget.
+  const webHealthMs = opts.dev ? 180_000 : 30_000;
+  // Runner via tsx also pays a cold-start cost — the module graph grew with
+  // the recent adapter additions (firecrawl/apify/tavily) so 30s was too
+  // tight on slow disks. 60s is the new cold budget.
+  const runnerHealthMs = 60_000;
   try {
-    await Promise.all([waitForHealth(runnerUrl, 30_000), waitForHealth(webUrl, webHealthMs)]);
+    await Promise.all([
+      waitForHealth(runnerUrl, runnerHealthMs),
+      waitForHealth(webUrl, webHealthMs),
+    ]);
     healthSpinner.succeed(chalk.green('All services healthy'));
   } catch (err) {
     healthSpinner.fail('Health check timed out');
-    killSilent(runnerProcess);
-    killSilent(webProcess);
+    // IMPORTANT: tree-kill BOTH children (and await) so no orphan node.exe
+    // survives to hold the port. Skipping this is what causes the next
+    // `nodalai up` to fail at health check: the new runner can't bind on
+    // :3001 because the old one is still alive behind a dead cmd.exe parent.
+    await Promise.allSettled([killSilent(runnerProcess), killSilent(webProcess)]);
     await pg.stop();
     clearPids();
     throw err;
@@ -264,8 +301,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     console.log('\n' + chalk.yellow('  Stopping NodalAI…'));
-    killSilent(runnerProcess);
-    killSilent(webProcess);
+    await Promise.allSettled([killSilent(runnerProcess), killSilent(webProcess)]);
     await pg.stop();
     clearPids();
     console.log(chalk.green('  Stopped. Goodbye!'));

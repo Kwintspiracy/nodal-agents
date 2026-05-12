@@ -80,6 +80,12 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     // the POST /api/worker call. Without this the runner returns 403 and the
     // job stays pending forever (cron only scans task-board, not API jobs).
     WORKER_SECRET: config.workerSecret,
+    // NEXT_SERVER_ACTIONS_ENCRYPTION_KEY — stabilises server action IDs across
+    // dev server restarts. Without this Next.js auto-mints a new key on each
+    // boot, invalidating action references in already-loaded pages
+    // ("Server action was not found on the server" on next click).
+    // readConfig() guarantees this is set (auto-mints on first read).
+    NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: config.serverActionsKey ?? '',
   };
 
   // llm section is optional (Brique 25): set LLM_* env vars for the web's

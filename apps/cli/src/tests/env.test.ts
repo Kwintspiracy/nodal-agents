@@ -128,6 +128,20 @@ describe('buildEnvForWeb', () => {
     expect(env['GOOGLE_CLIENT_ID']).toBe('cid.apps.googleusercontent.com');
     expect(env['GOOGLE_CLIENT_SECRET']).toBe('gocspx-abc');
   });
+
+  it('injects NEXT_SERVER_ACTIONS_ENCRYPTION_KEY when serverActionsKey is set', () => {
+    const key = Buffer.alloc(32, 0xab).toString('base64');
+    const cfg: Config = { ...BASE_CONFIG, serverActionsKey: key };
+    const env = buildEnvForWeb(cfg, DB_URL);
+    expect(env['NEXT_SERVER_ACTIONS_ENCRYPTION_KEY']).toBe(key);
+  });
+
+  it('falls back to empty string when serverActionsKey is absent (defensive)', () => {
+    // readConfig auto-mints, so production never sees this. Defensive default
+    // for any caller that bypasses readConfig.
+    const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
+    expect(env['NEXT_SERVER_ACTIONS_ENCRYPTION_KEY']).toBe('');
+  });
 });
 
 // ── resolveAuthMode ──────────────────────────────────────────────────────────

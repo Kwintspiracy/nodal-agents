@@ -1,7 +1,7 @@
 // down.ts — stop all background NodalAI processes (runner, web, postgres)
 
 import chalk from 'chalk';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readPids, clearPids } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
@@ -23,67 +23,58 @@ function killPid(pid: number, label: string): boolean {
 }
 
 /**
- * Read the Postgres PID from pg-data/postmaster.pid (if present).
- * Postgres writes the PID on its first line of that file.
+ * Stop the embedded Postgres gracefully via `pg.stop()` (which invokes
+ * `pg_ctl stop -m fast`). A clean shutdown releases the Win32 shared-memory
+ * section properly; a hard SIGTERM/SIGKILL on the postmaster pid leaves
+ * orphaned kernel objects and the next `up` then fails with "pre-existing
+ * shared memory block is still in use" until the machine reboots.
+ *
+ * Returns true if a stop was attempted (postmaster.pid existed), false if
+ * Postgres wasn't running per its lockfile.
  */
-function readPostgresPid(): number | null {
+async function stopPostgresGracefully(): Promise<boolean> {
   const pidFile = join(PG_DATA_DIR, 'postmaster.pid');
-  if (!existsSync(pidFile)) return null;
-  try {
-    const firstLine = readFileSync(pidFile, 'utf-8').split(/\r?\n/)[0];
-    const pid = Number.parseInt(firstLine ?? '', 10);
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
+  if (!existsSync(pidFile)) return false;
 
-/**
- * Wait briefly for a process to exit. Returns true if process is gone.
- */
-async function waitForExit(pid: number, timeoutMs = 5_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      // Signal 0 just checks existence — throws ESRCH if process is gone
-      process.kill(pid, 0);
-    } catch {
-      return true;
-    }
-    await new Promise((r) => setTimeout(r, 200));
+  try {
+    const EmbeddedPostgres = (await import('embedded-postgres')).default;
+    // Re-create the handle pointing at the existing data dir. The constructor
+    // doesn't connect or start; .stop() reads postmaster.pid and signals the
+    // postmaster the same way pg_ctl does.
+    const pg = new EmbeddedPostgres({
+      databaseDir: PG_DATA_DIR,
+      user: 'nodalai',
+      password: 'nodalai',
+      // port is required by the type but only used for connection-time
+      // operations, not for stop().
+      port: 25432,
+      persistent: true,
+      onError: () => {},
+      onLog: () => {},
+    });
+    await pg.stop();
+    console.log(chalk.green('  Stopped postgres (graceful)'));
+    return true;
+  } catch (err) {
+    console.log(chalk.red(`  Failed to stop postgres gracefully: ${String(err)}`));
+    return false;
   }
-  return false;
 }
 
 /**
  * Stop runner, web, and embedded Postgres. Runner+web PIDs are read from
- * ~/.nodalai/pids/processes.json; the Postgres PID is read from
- * pg-data/postmaster.pid (Postgres writes it there itself).
+ * ~/.nodalai/pids/processes.json; Postgres is stopped via `pg_ctl stop`
+ * (NEVER via raw kill — see stopPostgresGracefully for the rationale).
  */
 export async function runDown(): Promise<void> {
   const pids = readPids();
-  const pgPid = readPostgresPid();
 
   let stopped = 0;
 
   if (pids?.runner) stopped += killPid(pids.runner, 'runner') ? 1 : 0;
   if (pids?.web) stopped += killPid(pids.web, 'web') ? 1 : 0;
 
-  if (pgPid !== null) {
-    if (killPid(pgPid, 'postgres')) {
-      stopped++;
-      // Wait for it to release file locks (matters for `reset` which rm's pg-data)
-      const exited = await waitForExit(pgPid);
-      if (!exited) {
-        console.log(chalk.yellow('  Postgres still running after 5s — sending SIGKILL'));
-        try {
-          process.kill(pgPid, 'SIGKILL');
-        } catch {
-          /* already gone */
-        }
-      }
-    }
-  }
+  if (await stopPostgresGracefully()) stopped++;
 
   clearPids();
 

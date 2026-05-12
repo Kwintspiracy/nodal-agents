@@ -9,6 +9,48 @@ import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
 export type SpawnResult = ResultPromise;
 
 /**
+ * Kill a spawned child process and ALL of its descendants.
+ *
+ * Why this exists: on Windows, spawning .CMD files goes through cmd.exe →
+ * node.exe → app. A bare `child.kill('SIGTERM')` only terminates cmd.exe;
+ * node.exe (the actual server) survives, keeps the listener port held, and
+ * the next `nodalai up` fails because :3001 is taken by an orphan.
+ *
+ * Uses `taskkill /T /F` on Windows to wipe the whole process tree by PID.
+ * On Unix-likes the existing SIGTERM-then-SIGKILL escalation works because
+ * we don't have the cmd.exe wrapper layer.
+ */
+export async function killProcessTree(child: ResultPromise): Promise<void> {
+  const pid = child.pid;
+  if (!pid) return;
+
+  if (process.platform === 'win32') {
+    try {
+      // /T = kill children too. /F = force. We don't care if it failed (the
+      // process may already be gone); the next call site already handles
+      // unreachable services.
+      await execa('taskkill', ['/T', '/F', '/PID', String(pid)], { reject: false });
+    } catch {
+      /* best-effort */
+    }
+    return;
+  }
+
+  try {
+    child.kill('SIGTERM');
+    // Give it ~1.5s to flush, then escalate.
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already dead */
+    }
+  } catch {
+    /* already dead */
+  }
+}
+
+/**
  * Resolve the path to apps/{appName} relative to this CLI source/dist file.
  *
  * This file lives at `apps/cli/src/lib/processes.ts` (dev via tsx) or

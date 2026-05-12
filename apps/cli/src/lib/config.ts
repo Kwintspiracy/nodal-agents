@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { homedir } from 'os';
 import { join } from 'path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { randomBytes } from 'crypto';
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,17 @@ export const ConfigSchema = z.object({
     postgres: z.number().int().min(1024).max(65535).default(25432),
   }),
   workerSecret: z.string().min(32),
+  /**
+   * Base64-encoded 32-byte AES key fed to Next.js as
+   * NEXT_SERVER_ACTIONS_ENCRYPTION_KEY. Persisted in config.json so server
+   * action IDs stay valid across dev server restarts — without this, pages
+   * loaded before a restart hit "Server action was not found on the server"
+   * the next time the user clicks a server-action button.
+   *
+   * Optional in the schema for back-compat with pre-existing config.json
+   * files; `readConfig` auto-mints + persists when absent.
+   */
+  serverActionsKey: z.string().length(44).optional(),
   bind: z.enum(['loopback', 'lan']).default('loopback'),
   bearerToken: z.string().optional(),
   /**
@@ -79,19 +91,31 @@ export function ensureConfigDir(): void {
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
-export function readConfig(): Config | null {
-  if (!existsSync(CONFIG_FILE)) return null;
+export function readConfig(configFile: string = CONFIG_FILE): Config | null {
+  if (!existsSync(configFile)) return null;
+  let parsed: Config;
   try {
-    const raw = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8')) as unknown;
-    return ConfigSchema.parse(raw);
+    const raw = JSON.parse(readFileSync(configFile, 'utf-8')) as unknown;
+    parsed = ConfigSchema.parse(raw);
   } catch {
     return null;
   }
+
+  // Auto-migrate: ensure serverActionsKey exists for pre-existing configs.
+  // Without this, Next.js server actions break across dev restarts.
+  if (!parsed.serverActionsKey) {
+    parsed = { ...parsed, serverActionsKey: randomBytes(32).toString('base64') };
+    writeConfig(parsed, configFile);
+  }
+
+  return parsed;
 }
 
 // ─── Write ────────────────────────────────────────────────────────────────────
 
-export function writeConfig(config: Config): void {
-  ensureConfigDir();
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+export function writeConfig(config: Config, configFile: string = CONFIG_FILE): void {
+  // When writing to the default location, ensure the .nodalai dir tree exists.
+  // For custom test paths the caller is responsible for prepping the dir.
+  if (configFile === CONFIG_FILE) ensureConfigDir();
+  writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf-8');
 }
