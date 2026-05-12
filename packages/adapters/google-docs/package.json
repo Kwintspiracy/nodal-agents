@@ -16,7 +16,7 @@
   "dependencies": {
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
-    "googleapis": "^144.0.0",
+    "googleapis": "^171.4.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

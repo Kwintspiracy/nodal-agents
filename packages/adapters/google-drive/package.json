@@ -17,9 +17,9 @@
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
     "exceljs": "^4.4.0",
-    "googleapis": "^144.0.0",
+    "googleapis": "^171.4.0",
     "mammoth": "^1.9.0",
-    "pdf-parse": "^1.1.1",
+    "pdf-parse": "^2.4.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
