@@ -48,6 +48,27 @@ Use this tool to deliver a reply, notification, or result via Telegram.
   original request (the job's origin chat).
 - **text**: the message body. Plain text or HTML (Telegram HTML parse mode).
 
+**Same-response multi-call (CRITICAL for cost & latency)**:
+When you need to send multiple messages (long replies split across the
+4096-char Telegram limit), emit MULTIPLE \`telegram_send_message\` tool calls
+IN THE SAME response.content array, alongside \`return_result\` at the end.
+The runtime executes parallel tool calls correctly. Splitting calls across
+consecutive responses wastes ~7× input tokens and adds latency for no benefit.
+
+Correct (1 LLM round-trip):
+  response.content = [
+    { tool-call: telegram_send_message, input: { text: part1 } },
+    { tool-call: telegram_send_message, input: { text: part2 } },
+    { tool-call: telegram_send_message, input: { text: part3 } },
+    { tool-call: return_result, input: { status: 'success' } }
+  ]
+
+Wrong (4 LLM round-trips for the same outcome):
+  response 1: [{ telegram_send_message: part1 }]
+  response 2: [{ telegram_send_message: part2 }]
+  response 3: [{ telegram_send_message: part3 }]
+  response 4: [{ return_result: ... }]
+
 Fail conditions:
 - If no chatId is provided and the current job has no origin chat, the tool throws
   \`telegram_no_recipient\`. This is intentional — do not guess a chat ID.

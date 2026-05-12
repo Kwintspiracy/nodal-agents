@@ -27,7 +27,11 @@ export const dashboardPublishTool: ToolDefinition<
   description:
     "Publish the agent's answer to the dashboard. The text appears as the result in /jobs/<this-job> and as " +
     'the row preview on /jobs. Use this when the dashboard is the (or one of the) intended destination(s) for ' +
-    'the user-facing output. For other surfaces, use the corresponding tool (telegram_send_message, etc.).',
+    'the user-facing output. For other surfaces, use the corresponding tool (telegram_send_message, etc.).' +
+    '\n\n**Same-response with return_result (CRITICAL for cost & latency)**: ' +
+    'Always emit dashboard_publish IN THE SAME response.content array as return_result. ' +
+    'Splitting them across consecutive responses re-prompts the LLM unnecessarily and adds latency. ' +
+    'Correct: response.content = [{tool-call: dashboard_publish, ...}, {tool-call: return_result, ...}].',
   inputSchema: DashboardPublishInputSchema,
   riskLevel: 'write',
   execute: async (input, ctx) => {
