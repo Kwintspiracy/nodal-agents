@@ -13,17 +13,17 @@
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "@nodalai/auth": "workspace:*",
-    "@nodalai/runner-adapters": "workspace:*",
     "@nodalai/db": "workspace:*",
     "@nodalai/delivery": "workspace:*",
     "@nodalai/llm": "workspace:*",
     "@nodalai/memory": "workspace:*",
     "@nodalai/orchestration": "workspace:*",
+    "@nodalai/runner-adapters": "workspace:*",
     "@nodalai/secrets": "workspace:*",
     "@nodalai/shared": "workspace:*",
     "@nodalai/tools": "workspace:*",
     "cron-parser": "^5.5.0",
-    "hono": "^4.6.18",
+    "hono": "^4.12.18",
     "zod": "^3.24.1"
   },
   "devDependencies": {
