@@ -568,10 +568,19 @@ export async function executeJob(
         toolName: string;
         output: ToolResultOutput;
       }> = [];
-      const toResultOutput = (raw: unknown): ToolResultOutput =>
-        typeof raw === 'string'
-          ? { type: 'text', value: raw }
-          : { type: 'json', value: raw ?? null };
+      // Coerce a tool's raw return value to a JSON-safe representation. Tools
+      // can return Date objects, undefined fields, etc. — none of which match
+      // AI SDK v6's JSONValue Zod schema (it expects only null/bool/number/
+      // string/array/object). `JSON.parse(JSON.stringify(...))` does the
+      // canonical coercion: Date → ISO string, undefined fields dropped,
+      // anything not serializable surfaces as an explicit JSON.stringify
+      // error which we'd rather see loudly than silently mangle. Caught live
+      // post-v6 bump: query_memory returned rows with `created_at: Date`
+      // which made the Zod ModelMessage[] validation reject the next prompt.
+      const toResultOutput = (raw: unknown): ToolResultOutput => {
+        if (typeof raw === 'string') return { type: 'text', value: raw };
+        return { type: 'json', value: JSON.parse(JSON.stringify(raw ?? null)) };
+      };
 
       let awaitingApproval = false;
 
