@@ -430,8 +430,13 @@ describe('UNIQUE constraints', () => {
         .values({ entityId: entityA!.id, name: 'C-A-dup', slug, authType: 'oauth2' });
       expect.fail('Expected duplicate-key error but insert succeeded');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      expect(msg).toMatch(/connectors_entity_slug_unique/);
+      // Drizzle 0.45 wraps the original pg error in `cause` (the top-level
+      // message is just the failing SQL). Check both layers so we don't
+      // depend on which one carries the constraint detail.
+      const topMsg = err instanceof Error ? err.message : String(err);
+      const cause = err instanceof Error ? err.cause : null;
+      const causeMsg = cause instanceof Error ? cause.message : String(cause ?? '');
+      expect(`${topMsg}\n${causeMsg}`).toMatch(/connectors_entity_slug_unique/);
     }
   });
 
