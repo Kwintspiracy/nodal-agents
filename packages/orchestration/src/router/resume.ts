@@ -102,22 +102,24 @@ export async function resumeDelegated(
     );
   }
 
-  // 4. Build a tool-role message in AI SDK v4 CoreMessage format.
-  // Shape: { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName, result }, …] }
-  // (camelCase + hyphenated 'tool-result' — distinct from the legacy Anthropic
-  // {role:'user', content:[{type:'tool_result', tool_use_id, content}]} shape.)
+  // 4. Build a tool-role message in AI SDK v6 ModelMessage format.
+  // Shape: { role: 'tool', content: [{ type: 'tool-result', toolCallId, toolName,
+  //          output: ToolResultOutput }, …] }
+  // ToolResultOutput is a discriminated union — we use 'text' for normal child
+  // results (string) and 'error-text' for the deferred-sibling markers (which
+  // carry is_error=true so the LLM treats them as failures, not normal results).
+  type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
   const toolResultParts: Array<{
     type: 'tool-result';
     toolCallId: string;
     toolName: string;
-    result: unknown;
-    isError?: boolean;
+    output: ToolResultOutput;
   }> = [
     {
       type: 'tool-result',
       toolCallId: toolUseId,
       toolName,
-      result: childResult,
+      output: { type: 'text', value: childResult },
     },
   ];
 
@@ -135,8 +137,9 @@ export async function resumeDelegated(
       type: 'tool-result',
       toolCallId: sr.tool_use_id,
       toolName: sr.toolName,
-      result: sr.content,
-      ...(sr.is_error ? { isError: true } : {}),
+      output: sr.is_error
+        ? { type: 'error-text', value: sr.content }
+        : { type: 'text', value: sr.content },
     });
   }
 

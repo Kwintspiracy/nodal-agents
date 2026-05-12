@@ -124,7 +124,7 @@ describe('resumeDelegated', () => {
     expect(updatedParent?.status).toBe('pending');
 
     // The last message should be a tool-role message with tool-result parts
-    // (AI SDK v4 CoreMessage format).
+    // (AI SDK v6 ModelMessage format — output is a discriminated union now).
     const msgs = updatedParent?.messages as Array<{
       role: string;
       content: unknown;
@@ -136,7 +136,7 @@ describe('resumeDelegated', () => {
       type: string;
       toolCallId?: string;
       toolName?: string;
-      result?: unknown;
+      output?: { type: string; value: unknown };
     }>;
     expect(Array.isArray(content)).toBe(true);
 
@@ -144,7 +144,7 @@ describe('resumeDelegated', () => {
     expect(toolResult).toBeDefined();
     expect(toolResult?.toolCallId).toBe(toolUseId);
     expect(toolResult?.toolName).toBe('assign_test_agent');
-    expect(toolResult?.result).toBe(childResult);
+    expect(toolResult?.output).toEqual({ type: 'text', value: childResult });
   });
 
   it('sets parent status back to pending', async () => {
