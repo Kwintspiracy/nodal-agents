@@ -1947,6 +1947,27 @@ export async function listToolCallsAction(
   }
 }
 
+/**
+ * Distinct tool_name values for the current entity, sorted alphabetically.
+ * Brique 36 — feeds the /logs Tool Name filter <select> so the user doesn't
+ * have to know the exact slug.
+ */
+export async function listToolNamesAction(): Promise<ActionResult<string[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .selectDistinct({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.entityId, session.entityId))
+      .orderBy(toolCalls.toolName);
+    return ok(rows.map((r) => r.toolName));
+  } catch (err) {
+    console.error('[listToolNamesAction]', err);
+    return fail('db_error', 'Failed to load tool names');
+  }
+}
+
 // ─── Stats Actions ────────────────────────────────────────────────────────────
 
 export type EntityStats = {

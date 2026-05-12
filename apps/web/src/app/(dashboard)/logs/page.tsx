@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { listAgentsAction, listToolCallsAction } from '@/lib/actions.ts';
+import { listAgentsAction, listToolCallsAction, listToolNamesAction } from '@/lib/actions.ts';
 import LogFilters from './LogFilters.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -30,16 +30,20 @@ export default async function LogsPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const page = Math.max(1, Number.parseInt(sp.page ?? '1', 10) || 1);
 
-  const agentsResult = await listAgentsAction();
-  const result = await listToolCallsAction({
-    agentId: sp.agent || undefined,
-    toolName: sp.tool || undefined,
-    jobId: sp.job || undefined,
-    page,
-    pageSize: PAGE_SIZE,
-  });
+  const [agentsResult, toolNamesResult, result] = await Promise.all([
+    listAgentsAction(),
+    listToolNamesAction(),
+    listToolCallsAction({
+      agentId: sp.agent || undefined,
+      toolName: sp.tool || undefined,
+      jobId: sp.job || undefined,
+      page,
+      pageSize: PAGE_SIZE,
+    }),
+  ]);
 
   const agents = agentsResult.ok ? agentsResult.data : [];
+  const toolNames = toolNamesResult.ok ? toolNamesResult.data : [];
 
   if (!result.ok) {
     return (
@@ -75,7 +79,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
         </p>
       </div>
 
-      <LogFilters agents={agents} />
+      <LogFilters agents={agents} toolNames={toolNames} />
 
       {result.data.items.length === 0 ? (
         <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">

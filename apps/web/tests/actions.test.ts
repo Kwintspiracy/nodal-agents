@@ -75,6 +75,7 @@ function makeDb(rows: unknown[] = []) {
   const c = chain(rows);
   return {
     select: vi.fn().mockReturnValue(c),
+    selectDistinct: vi.fn().mockReturnValue(c),
     insert: vi.fn().mockReturnValue(c),
     delete: vi.fn().mockReturnValue(c),
     update: vi.fn().mockReturnValue(c),
@@ -1331,6 +1332,34 @@ describe('unassignSkillAction', () => {
 });
 
 // ─── Tool Call Logs ───────────────────────────────────────────────────────────
+
+describe('listToolNamesAction', () => {
+  it('returns distinct tool names sorted by the underlying selectDistinct query (Brique 36)', async () => {
+    // Drizzle's `selectDistinct().orderBy()` already returns the distinct
+    // tool_name list sorted alphabetically. We assert the action surfaces
+    // exactly that — no extra transformation that would re-introduce dups
+    // or change ordering.
+    currentDb = makeDb([
+      { toolName: 'apify_run_actor' },
+      { toolName: 'firecrawl_search' },
+      { toolName: 'tavily_search' },
+    ]) as typeof currentDb;
+    const { listToolNamesAction } = await import('../src/lib/actions.ts');
+    const r = await listToolNamesAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data).toEqual(['apify_run_actor', 'firecrawl_search', 'tavily_search']);
+    }
+  });
+
+  it('returns empty array when no tool calls have been logged yet', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listToolNamesAction } = await import('../src/lib/actions.ts');
+    const r = await listToolNamesAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual([]);
+  });
+});
 
 describe('listToolCallsAction', () => {
   it('rejects invalid agentId', async () => {

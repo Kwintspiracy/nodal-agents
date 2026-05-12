@@ -6,9 +6,10 @@ import type { AgentRow } from '@/lib/actions.ts';
 
 interface Props {
   agents: AgentRow[];
+  toolNames: string[];
 }
 
-export default function LogFilters({ agents }: Props) {
+export default function LogFilters({ agents, toolNames }: Props) {
   const router = useRouter();
   const search = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -53,17 +54,19 @@ export default function LogFilters({ agents }: Props) {
         <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-1">
           Tool name
         </label>
-        <input
-          type="text"
-          defaultValue={toolName}
-          onBlur={(e) => update({ tool: e.target.value.trim() || null })}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          }}
-          placeholder="e.g. notion_search"
+        <select
+          value={toolName}
+          onChange={(e) => update({ tool: e.target.value || null })}
           disabled={isPending}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
-        />
+          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none font-mono"
+        >
+          <option value="">All tools</option>
+          {toolNames.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
       </div>
     </div>
   );
