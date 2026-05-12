@@ -345,7 +345,7 @@ export default function AgentForm(props: Props) {
   // the first active key.
   const activeKeys = useMemo(() => props.llmKeys.filter((k) => k.isActive), [props.llmKeys]);
   const initialLlmKeyId: string =
-    (isEdit ? (props.initial.llmKeyId ?? null) : null) ?? activeKeys[0]?.id ?? '';
+    (isEdit ? props.initial.llmKeyId : null) ?? activeKeys[0]?.id ?? '';
   const [llmKeyId, setLlmKeyId] = useState<string>(initialLlmKeyId);
   const [model, setModel] = useState<string>(isEdit ? (props.initial.model ?? '') : '');
 
