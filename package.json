@@ -16,17 +16,23 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "@types/node": "^22.10.5",
+    "@types/node": "^25.7.0",
     "dependency-cruiser": "^16.8.0",
     "eslint": "^9.18.0",
     "prettier": "^3.4.2",
     "turbo": "^2.9.12",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.3",
-    "vitest": "^2.1.8"
+    "vite": "^8.0.12",
+    "vitest": "^4.1.6"
   },
   "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=20"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "^8.0.12"
+    }
   }
 }

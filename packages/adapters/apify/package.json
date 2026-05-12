@@ -18,5 +18,8 @@
     "@nodalai/tools": "workspace:*",
     "apify-client": "^2.23.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0"
   }
 }

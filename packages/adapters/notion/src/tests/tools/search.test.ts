@@ -79,7 +79,7 @@ describe('notion_search', () => {
 
   beforeEach(() => {
     searchFn = vi.fn();
-    client = makeClient({ search: searchFn });
+    client = makeClient({ search: searchFn as unknown as Client['search'] });
   });
 
   it('returns results with id, title, url, object', async () => {

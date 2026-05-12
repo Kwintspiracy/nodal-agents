@@ -13,15 +13,14 @@ import { FirecrawlApiError } from '../../errors.ts';
 import type { ToolContext } from '@nodalai/tools';
 
 vi.mock('@mendable/firecrawl-js', () => {
-  return {
-    FirecrawlClient: vi.fn().mockImplementation(() => ({
-      scrape: vi.fn(),
-      map: vi.fn(),
-      search: vi.fn(),
-      startCrawl: vi.fn(),
-      getCrawlStatus: vi.fn(),
-    })),
-  };
+  class FirecrawlClient {
+    scrape = vi.fn();
+    map = vi.fn();
+    search = vi.fn();
+    startCrawl = vi.fn();
+    getCrawlStatus = vi.fn();
+  }
+  return { FirecrawlClient };
 });
 
 // Minimal ToolContext stub — adapters don't use ctx, but the type requires it

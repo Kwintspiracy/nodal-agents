@@ -43,6 +43,6 @@
     "eslint-config-next": "16.2.1",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4.3.0",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.6"
   }
 }
