@@ -144,6 +144,11 @@ const packPkg = {
     exceljs: '^4.4.0',
     'pdf-parse': '^2.4.5',
     mammoth: '^1.9.0',
+    // pdfjs-dist (transitive of pdf-parse) tries to require @napi-rs/canvas
+    // optionally for canvas-based PDF rendering. Without it, SSR pages
+    // that import the adapter tree crash with `ReferenceError: DOMMatrix
+    // is not defined`. Declared at top level so npm install hoists it.
+    '@napi-rs/canvas': '^0.1.80',
     // ── Web deps (Next.js standalone server requires these at runtime)
     next: '^16.2.6',
     react: '19.2.4',
