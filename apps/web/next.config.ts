@@ -29,6 +29,24 @@ const nextConfig: NextConfig = {
   // and the standalone output mirrors the absolute disk layout — breaks
   // when the install lives somewhere other than the dev machine.
   outputFileTracingRoot: resolve(process.cwd(), '..', '..'),
+  // Packages with native bindings or runtime-resolved deps must NOT be
+  // bundled by Next's webpack pass. Webpack inlines them as
+  // `require("<absolute-build-path>")` which fails on any other machine.
+  // Keeping them external means the runtime uses standard node_modules
+  // lookup, which works wherever the package was npm-installed.
+  serverExternalPackages: [
+    'pdf-parse',
+    'pdfjs-dist',
+    '@napi-rs/canvas',
+    'mammoth',
+    'exceljs',
+    'embedded-postgres',
+    'googleapis',
+    '@notionhq/client',
+    '@mendable/firecrawl-js',
+    '@tavily/core',
+    'apify-client',
+  ],
   allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [
     '@nodal-agents/db',
@@ -53,7 +71,7 @@ const nextConfig: NextConfig = {
     },
     optimizePackageImports: ['@phosphor-icons/react'],
   },
-  webpack(config: Configuration) {
+  webpack(config: Configuration, { isServer }: { isServer: boolean }) {
     // Safety net: workspace package source no longer uses `.js` extensions in
     // relative imports (Turbopack-compatible), but if a future contributor
     // reintroduces a `.js` import, this alias keeps webpack resolving correctly.
@@ -65,6 +83,39 @@ const nextConfig: NextConfig = {
       '.js': ['.ts', '.tsx', '.js', '.jsx'],
       '.jsx': ['.tsx', '.jsx'],
     };
+
+    // Native + runtime-resolved deps that Webpack mustn't try to bundle.
+    // `serverExternalPackages` covers TOP-LEVEL imports but transitive deps
+    // (e.g. `pdfjs-dist` reached via `pdf-parse`) still get inlined as
+    // `require("<absolute-build-path>")`, which crashes any consumer
+    // machine. Forcing them external at the Webpack level keeps the
+    // bundled chunk emitting plain `require('pdfjs-dist')` strings that
+    // Node resolves via the installed node_modules at runtime.
+    if (isServer) {
+      const runtimeExternals = [
+        'pdf-parse',
+        'pdfjs-dist',
+        '@napi-rs/canvas',
+        'mammoth',
+        'exceljs',
+        'embedded-postgres',
+        'googleapis',
+        '@notionhq/client',
+        '@mendable/firecrawl-js',
+        '@tavily/core',
+        'apify-client',
+      ];
+      const existing = config.externals ?? [];
+      config.externals = Array.isArray(existing) ? existing : [existing];
+      config.externals.push(({ request }, callback) => {
+        if (request && runtimeExternals.some((pkg) => request === pkg || request.startsWith(pkg + '/'))) {
+          // CommonJS require — Node resolves these at runtime via node_modules.
+          return callback(null, `commonjs ${request}`);
+        }
+        callback();
+      });
+    }
+
     return config;
   },
 };
