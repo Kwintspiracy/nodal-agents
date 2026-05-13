@@ -17,7 +17,11 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@nodal-agents/secrets';
+import {
+  _setMasterKeyForTests,
+  _resetMasterKeyCacheForTests,
+  encrypt,
+} from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import {

@@ -91,7 +91,9 @@ export default function AuthLoginForm() {
         <div className="mb-8 text-center">
           <div className="inline-flex items-center gap-1.5 mb-6">
             <span className="text-emerald-500 font-mono text-sm">$</span>
-            <span className="text-sm font-mono font-bold text-white tracking-tight">nodal-agents</span>
+            <span className="text-sm font-mono font-bold text-white tracking-tight">
+              nodal-agents
+            </span>
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Welcome</h1>
           <p className="text-sm text-neutral-500 mt-1">Sign in or create an account to continue</p>

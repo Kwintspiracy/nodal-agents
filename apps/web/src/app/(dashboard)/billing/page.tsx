@@ -11,9 +11,10 @@ export default function BillingPage() {
       <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-5 space-y-3">
         <h2 className="text-base font-semibold text-white">You run Nodal-Agents yourself</h2>
         <p className="text-sm text-neutral-400 leading-relaxed">
-          This dashboard talks to your local Postgres and your local runner. Nodal-Agents doesn&apos;t
-          charge you anything — your only cost is whatever your LLM provider bills (zero on local
-          Ollama / LM Studio / llama.cpp; pay-as-you-go on remote APIs like Anthropic or OpenAI).
+          This dashboard talks to your local Postgres and your local runner. Nodal-Agents
+          doesn&apos;t charge you anything — your only cost is whatever your LLM provider bills
+          (zero on local Ollama / LM Studio / llama.cpp; pay-as-you-go on remote APIs like Anthropic
+          or OpenAI).
         </p>
         <p className="text-sm text-neutral-400 leading-relaxed">
           Per-agent token usage is on the{' '}

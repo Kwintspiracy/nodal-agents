@@ -12,7 +12,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@nodal-agents/secrets';
+import {
+  _setMasterKeyForTests,
+  _resetMasterKeyCacheForTests,
+  encrypt,
+} from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { credentials } from '../schema/index.ts';

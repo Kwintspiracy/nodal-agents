@@ -7,7 +7,15 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import type { BetterAuthOptions } from 'better-auth';
-import { eq, users, sessions, accounts, verifications, entities, entityMembers } from '@nodal-agents/db';
+import {
+  eq,
+  users,
+  sessions,
+  accounts,
+  verifications,
+  entities,
+  entityMembers,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AuthProvider, AuthSession } from '../types.ts';
 import { isPrivateOrigin } from '../lib/private-origin.ts';

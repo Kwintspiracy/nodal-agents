@@ -13,7 +13,9 @@ export default function LocalTrustBanner() {
         <div className="mb-8 text-center">
           <div className="inline-flex items-center gap-1.5 mb-6">
             <span className="text-emerald-500 font-mono text-sm">$</span>
-            <span className="text-sm font-mono font-bold text-white tracking-tight">nodal-agents</span>
+            <span className="text-sm font-mono font-bold text-white tracking-tight">
+              nodal-agents
+            </span>
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Local mode active</h1>
           <p className="text-sm text-neutral-500 mt-1">
@@ -22,9 +24,9 @@ export default function LocalTrustBanner() {
         </div>
         <div className="rounded-2xl border border-neutral-800/50 bg-neutral-900/50 p-6 space-y-4 text-center">
           <p className="text-xs text-neutral-400">
-            You are running Nodal-Agents in <code className="text-emerald-400">local-trust</code> mode.
-            Pick <code className="text-emerald-400">LAN</code> at <code>nodal-agents init</code> to
-            enable email + password authentication.
+            You are running Nodal-Agents in <code className="text-emerald-400">local-trust</code>{' '}
+            mode. Pick <code className="text-emerald-400">LAN</code> at{' '}
+            <code>nodal-agents init</code> to enable email + password authentication.
           </p>
           <button
             type="button"

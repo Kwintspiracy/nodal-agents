@@ -87,7 +87,12 @@ describe('architecture invariants', () => {
     const files = await collectSourceFiles(srcDir);
     const source = await readAll(files);
 
-    const forbidden = ['@nodal-agents/db', '@nodal-agents/llm', '@nodal-agents/auth', '@nodal-agents/memory'];
+    const forbidden = [
+      '@nodal-agents/db',
+      '@nodal-agents/llm',
+      '@nodal-agents/auth',
+      '@nodal-agents/memory',
+    ];
     const found: string[] = [];
 
     for (const pkg of forbidden) {

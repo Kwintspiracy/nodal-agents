@@ -13,7 +13,11 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, isEncrypted } from '@nodal-agents/secrets';
+import {
+  _setMasterKeyForTests,
+  _resetMasterKeyCacheForTests,
+  isEncrypted,
+} from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { credentials } from '@nodal-agents/db';

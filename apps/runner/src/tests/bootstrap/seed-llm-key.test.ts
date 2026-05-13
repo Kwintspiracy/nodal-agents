@@ -11,7 +11,11 @@ import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, count } from '@nodal-agents/db';
 import { entityLlmKeys, agents, entities, users } from '@nodal-agents/db';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, decrypt } from '@nodal-agents/secrets';
+import {
+  _setMasterKeyForTests,
+  _resetMasterKeyCacheForTests,
+  decrypt,
+} from '@nodal-agents/secrets';
 import { seedDefaultLlmKey } from '../../bootstrap/seed-llm-key.ts';
 import type { RunnerEnv } from '../../env.ts';
 

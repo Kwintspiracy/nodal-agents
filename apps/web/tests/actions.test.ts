@@ -108,7 +108,8 @@ const memoryMocks = {
 };
 
 vi.mock('@nodal-agents/memory', async () => {
-  const actual = await vi.importActual<typeof import('@nodal-agents/memory')>('@nodal-agents/memory');
+  const actual =
+    await vi.importActual<typeof import('@nodal-agents/memory')>('@nodal-agents/memory');
   return {
     ...actual,
     listMemories: (...args: unknown[]) => memoryMocks.listMemories(...args),

@@ -37,8 +37,8 @@ export default async function SettingsPage() {
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-neutral-500 mt-0.5">
           LLM providers, security mode, and network access are editable here. Session and worker
-          secret are seeded by <code className="font-mono text-neutral-400">nodal-agents init</code> and
-          surfaced read-only.
+          secret are seeded by <code className="font-mono text-neutral-400">nodal-agents init</code>{' '}
+          and surfaced read-only.
         </p>
       </div>
 

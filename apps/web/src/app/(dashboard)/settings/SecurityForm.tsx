@@ -160,8 +160,9 @@ export default function SecurityForm({ initial }: Props) {
 
       {restartHint && (
         <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2 text-xs text-emerald-300">
-          Saved. Restart with <code className="font-mono">nodal-agents down && nodal-agents up</code> to
-          activate the new auth mode.
+          Saved. Restart with{' '}
+          <code className="font-mono">nodal-agents down && nodal-agents up</code> to activate the
+          new auth mode.
         </div>
       )}
       <ConfirmDialog

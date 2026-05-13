@@ -25,7 +25,12 @@ import {
   entityLlmKeys,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
-import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodal-agents/memory';
+import {
+  listMemories,
+  deleteMemory,
+  updateMemory,
+  MemoryNotFoundError,
+} from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import { getLanAddresses } from './network.ts';
 import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
