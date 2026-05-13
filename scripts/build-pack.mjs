@@ -13,7 +13,15 @@
 //   - Containerised: COPY pack/ → /app in the Docker runtime stage
 
 import { execSync } from 'node:child_process';
-import { rmSync, mkdirSync, cpSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import {
+  rmSync,
+  mkdirSync,
+  cpSync,
+  writeFileSync,
+  existsSync,
+  statSync,
+  readdirSync,
+} from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
@@ -33,8 +41,17 @@ function sizeMB(p) {
 }
 
 // ─── 1. Clean target ────────────────────────────────────────────────────────
-rmSync(packDir, { recursive: true, force: true });
-mkdirSync(packDir, { recursive: true });
+// On Windows, antivirus / indexer / cloud sync sometimes hold a handle on
+// pack/ that makes a full rmdir fail with EBUSY. Walking the children and
+// removing each works because the children's handles release faster than
+// the parent dir's.
+if (existsSync(packDir)) {
+  for (const child of readdirSync(packDir)) {
+    rmSync(resolve(packDir, child), { recursive: true, force: true });
+  }
+} else {
+  mkdirSync(packDir, { recursive: true });
+}
 
 // ─── 2. Build everything ────────────────────────────────────────────────────
 run('pnpm --filter @nodal-agents/runner build');

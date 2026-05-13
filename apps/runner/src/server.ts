@@ -121,7 +121,10 @@ async function main(): Promise<void> {
   // Start the in-process cron ticker (default: every 2 min).
   // Disable with CRON_TICKER_ENABLED=false if using an external managed cron.
   const cronTickerEnabled = process.env['CRON_TICKER_ENABLED'] !== 'false';
-  const ticker = cronTickerEnabled ? startCronTicker(deps) : null;
+  // Pass runnerEnv to the ticker so it can re-attempt seedDefaultLlmKey on
+  // each tick — covers the local-auth case where the first user signs up
+  // AFTER the runner boot-time seed has already run and skipped on 0 entities.
+  const ticker = cronTickerEnabled ? startCronTicker(deps, { runnerEnv }) : null;
   if (cronTickerEnabled) {
     console.warn('[runner] cron ticker started (120s interval)');
   }

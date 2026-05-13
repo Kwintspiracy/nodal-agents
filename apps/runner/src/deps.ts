@@ -84,10 +84,17 @@ export async function createRunnerDeps(runnerEnv: RunnerEnv): Promise<RunnerDeps
     }
     authProvider = new BearerTokenProvider({ token: runnerEnv.BEARER_TOKEN });
   } else {
-    // local-trust (default) — single user/entity, no auth required
+    // local-trust + local-auth both fall through to LocalTrustProvider on the
+    // runner side — the web is what enforces the better-auth session in
+    // local-auth mode, and the runner only checks a shared worker secret.
     authProvider = new LocalTrustProvider();
-    // Idempotently seed the default local user/entity
-    await seedLocalUser(db as Parameters<typeof seedLocalUser>[0]);
+    // Only seed the LOCAL_USER/LOCAL_ENTITY pair in local-trust mode. In
+    // local-auth the user creates their own entity at signup; pre-creating
+    // the local pair would attach the env-derived LLM key to a phantom
+    // entity the signed-up user never sees.
+    if (runnerEnv.AUTH_MODE === 'local-trust') {
+      await seedLocalUser(db as Parameters<typeof seedLocalUser>[0]);
+    }
   }
 
   return {

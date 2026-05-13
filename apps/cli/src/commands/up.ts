@@ -7,7 +7,12 @@ import { readConfig, writeConfig } from '../lib/config.ts';
 import { runInit } from './init.ts';
 import { startEmbeddedPostgres, runMigrations, stopOrphanPostgres } from '../lib/postgres.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
-import { buildEnvForRunner, buildEnvForWeb, buildDatabaseUrl } from '../lib/env.ts';
+import {
+  buildEnvForRunner,
+  buildEnvForWeb,
+  buildDatabaseUrl,
+  resolveAuthMode,
+} from '../lib/env.ts';
 import { isPortBindable, findFreePort } from '../lib/ports.ts';
 import {
   spawnRunner,
@@ -220,18 +225,27 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     throw err;
   }
 
-  // ── 4. Seed default user + entity + agent ─────────────────────────────────
+  // ── 4. Seed default user + entity + agent (local-trust only) ─────────────
+  // The LOCAL_USER / LOCAL_ENTITY pair is the single identity used in
+  // local-trust mode (no auth). In local-auth or bearer-token modes the
+  // user creates their own entity at signup; seeding the local pair here
+  // would leave the env-derived LLM key attached to a phantom entity the
+  // signed-up user never sees — which is exactly the "no LLM configured"
+  // bug we fixed in v0.1.3+.
 
-  const seedSpinner = ora('Seeding default user and agent…').start();
-  try {
-    const { db, close } = createClient(databaseUrl, { max: 5 });
-    await seedDefaultUserEntityAgent(db, config.llm?.model ?? null);
-    await close();
-    seedSpinner.succeed(chalk.green('Seed complete'));
-  } catch (err) {
-    seedSpinner.fail('Seed failed');
-    await pg.stop();
-    throw err;
+  const authMode = resolveAuthMode(config);
+  if (authMode === 'local-trust') {
+    const seedSpinner = ora('Seeding default user and agent…').start();
+    try {
+      const { db, close } = createClient(databaseUrl, { max: 5 });
+      await seedDefaultUserEntityAgent(db, config.llm?.model ?? null);
+      await close();
+      seedSpinner.succeed(chalk.green('Seed complete'));
+    } catch (err) {
+      seedSpinner.fail('Seed failed');
+      await pg.stop();
+      throw err;
+    }
   }
 
   // ── 5. Spawn runner ───────────────────────────────────────────────────────

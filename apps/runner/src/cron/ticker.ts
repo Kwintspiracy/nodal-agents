@@ -5,7 +5,9 @@
 // own managed cron hitting POST /api/cron instead.
 
 import { runCronTick } from './tick.ts';
+import { seedDefaultLlmKey } from '../bootstrap/seed-llm-key.ts';
 import type { RunnerDeps } from '../deps.ts';
+import type { RunnerEnv } from '../env.ts';
 
 // ─── TickerHandle ─────────────────────────────────────────────────────────────
 
@@ -28,6 +30,16 @@ export function startCronTicker(
   opts: {
     intervalMs?: number;
     onError?: (e: unknown) => void;
+    /**
+     * RunnerEnv lets the tick attempt a lazy `seedDefaultLlmKey` retry on
+     * each interval. Needed in local-auth mode where the entity isn't
+     * created until the first user signs up — which usually happens
+     * AFTER the runner boots, so the boot-time seed call sees 0
+     * entities and skips. The tick re-checks every interval and seeds
+     * once the user appears. Idempotent: subsequent ticks return
+     * immediately when the key is already in place.
+     */
+    runnerEnv?: RunnerEnv;
   } = {},
 ): TickerHandle {
   const intervalMs = opts.intervalMs ?? 120_000;
@@ -40,6 +52,11 @@ export function startCronTicker(
   const intervalId = setInterval(() => {
     // Fire and forget — errors are caught and logged, next tick will retry
     runCronTick(deps, 5).catch(onError);
+    if (opts.runnerEnv) {
+      seedDefaultLlmKey(deps.db, opts.runnerEnv).catch((e) => {
+        console.warn('[cron] lazy LLM seed retry failed (will retry next interval):', e);
+      });
+    }
   }, intervalMs);
 
   return {
