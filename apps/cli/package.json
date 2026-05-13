@@ -10,7 +10,7 @@
     "lint": "eslint src",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsup src/index.ts --format esm --out-dir dist --no-splitting --no-shims",
+    "build": "tsup",
     "dev": "tsx src/index.ts"
   },
   "dependencies": {

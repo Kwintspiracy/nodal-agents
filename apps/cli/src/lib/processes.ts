@@ -51,15 +51,25 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
 }
 
 /**
- * Resolve the path to apps/{appName} relative to this CLI source/dist file.
+ * The CLI runs in two layouts:
  *
- * This file lives at `apps/cli/src/lib/processes.ts` (dev via tsx) or
- * `apps/cli/dist/index.js` (built). In both cases the repo root is reached
- * by going up from the file's directory through `cli`, then `apps`.
+ *   1. **Bundled pack** (npm install -g): all artifacts are siblings under
+ *      a single dir. `cli.js` + `runner.js` + `web/` + `migrations/` live
+ *      next to each other. `BUNDLED_ROOT` resolves to that dir.
  *
- * Layout (dev):  Nodal-Agents / apps / cli / src / lib / processes.ts   → 4 levels up from dirname
- * Layout (dist): Nodal-Agents / apps / cli / dist / index.js             → 3 levels up from dirname
+ *   2. **Monorepo dev** (tsx): this file lives at `apps/cli/src/lib/processes.ts`
+ *      (or `apps/cli/dist/index.js` after a local tsup build). Walk up to
+ *      find `pnpm-workspace.yaml` and the apps live as siblings under it.
+ *
+ * `BUNDLED_ROOT` is the truthy signal — when `<here>/runner.js` exists, we're
+ * in the bundled pack and use sibling paths. Otherwise we fall back to the
+ * monorepo walk.
  */
+const BUNDLED_ROOT: string | null = (() => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return existsSync(join(here, 'runner.js')) ? here : null;
+})();
+
 function resolveAppDir(appName: string): string {
   const here = fileURLToPath(import.meta.url);
   const fileDir = dirname(here);
@@ -81,34 +91,48 @@ function resolveAppDir(appName: string): string {
 }
 
 /**
- * Spawn the runner (apps/runner) as a child process.
+ * Spawn the runner as a child process.
  *
- * Uses tsx to run the TypeScript source directly — no separate build step
- * required. tsx is in apps/runner's devDeps. On Windows we resolve the
- * .CMD wrapper explicitly because Node's spawn doesn't auto-add the .CMD
- * extension (and execa's preferLocal proved unreliable in our test).
+ * - Bundled mode: `node <pack>/runner.js` (single-file esbuild bundle).
+ * - Dev mode: `tsx apps/runner/src/server.ts` from the monorepo. tsx is in
+ *   apps/runner's devDeps. On Windows we resolve the .CMD wrapper
+ *   explicitly because Node's spawn doesn't auto-add the .CMD extension.
  */
 export function spawnRunner(env: Record<string, string>): ResultPromise {
-  const runnerDir = resolveAppDir('apps/runner');
   const logFile = join(LOG_DIR, 'runner.log');
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
-  const tsxBin = resolveLocalBin(runnerDir, 'tsx');
+  let bin: string;
+  let args: string[];
+  let cwd: string;
 
-  // Sync log a startup marker so even instant-crashes leave a trace
+  if (BUNDLED_ROOT) {
+    bin = process.execPath; // current node binary
+    args = [join(BUNDLED_ROOT, 'runner.js')];
+    cwd = BUNDLED_ROOT;
+  } else {
+    const runnerDir = resolveAppDir('apps/runner');
+    bin = resolveLocalBin(runnerDir, 'tsx');
+    args = ['src/server.ts'];
+    cwd = runnerDir;
+  }
+
   outStream.write(
     `\n--- spawnRunner ${new Date().toISOString()} ---\n` +
-      `cwd: ${runnerDir}\n` +
-      `bin: ${tsxBin}\n` +
+      `mode: ${BUNDLED_ROOT ? 'bundled' : 'dev'}\n` +
+      `cwd: ${cwd}\n` +
+      `bin: ${bin}\n` +
       `env keys: ${Object.keys(env).join(',')}\n\n`,
   );
 
-  const child = execa(tsxBin, ['src/server.ts'], {
-    cwd: runnerDir,
+  const child = execa(bin, args, {
+    cwd,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
     reject: false,
-    shell: process.platform === 'win32',
+    // Only need a shell wrapper to invoke the .CMD tsx launcher on Windows.
+    // process.execPath is the literal node binary, no shell needed.
+    shell: !BUNDLED_ROOT && process.platform === 'win32',
   });
 
   child.stdout?.pipe(outStream);
@@ -130,37 +154,57 @@ export interface SpawnWebOptions {
 }
 
 /**
- * Spawn the web (apps/web — Next.js) as a child process.
+ * Spawn the web (Next.js) as a child process.
+ *
+ * - Bundled mode: `node <pack>/web/server.js` — the Next standalone server.
+ *   `--dev` is ignored because the standalone build is prod-only (no HMR
+ *   available without the source tree).
+ * - Dev mode: `next dev` or `next start` from apps/web/.
  */
 export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}): ResultPromise {
-  const webDir = resolveAppDir('apps/web');
   const logFile = join(LOG_DIR, 'web.log');
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
-  const nextBin = resolveLocalBin(webDir, 'next');
-  // `next dev` runs Turbopack (Next 16 default). It handles workspace
-  // .js → .ts resolution natively for transpiled packages, so the webpack()
-  // hook in next.config.ts (used only by `next build --webpack`) is a no-op
-  // in dev mode. Forcing --webpack in dev triggers a regression in Next 16
-  // where next-flight-css-loader no longer chains PostCSS, which breaks
-  // tailwind imports. Keeping Turbopack for dev and webpack for prod build
-  // is the canonical Next 16 setup.
-  const subcommand = opts.dev ? 'dev' : 'start';
+  let bin: string;
+  let args: string[];
+  let cwd: string;
+  let modeLabel: string;
+
+  if (BUNDLED_ROOT) {
+    bin = process.execPath;
+    args = [join(BUNDLED_ROOT, 'web', 'server.js')];
+    cwd = join(BUNDLED_ROOT, 'web');
+    modeLabel = 'bundled-standalone';
+  } else {
+    const webDir = resolveAppDir('apps/web');
+    bin = resolveLocalBin(webDir, 'next');
+    // `next dev` runs Turbopack (Next 16 default). It handles workspace
+    // .js → .ts resolution natively for transpiled packages, so the webpack()
+    // hook in next.config.ts (used only by `next build --webpack`) is a no-op
+    // in dev mode. Forcing --webpack in dev triggers a regression in Next 16
+    // where next-flight-css-loader no longer chains PostCSS, which breaks
+    // tailwind imports. Keeping Turbopack for dev and webpack for prod build
+    // is the canonical Next 16 setup.
+    const subcommand = opts.dev ? 'dev' : 'start';
+    args = [subcommand];
+    cwd = webDir;
+    modeLabel = subcommand;
+  }
 
   outStream.write(
     `\n--- spawnWeb ${new Date().toISOString()} ---\n` +
-      `cwd: ${webDir}\n` +
-      `bin: ${nextBin}\n` +
-      `mode: ${subcommand}\n` +
+      `cwd: ${cwd}\n` +
+      `bin: ${bin}\n` +
+      `mode: ${modeLabel}\n` +
       `env keys: ${Object.keys(env).join(',')}\n\n`,
   );
 
-  const child = execa(nextBin, [subcommand], {
-    cwd: webDir,
+  const child = execa(bin, args, {
+    cwd,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
     reject: false,
-    shell: process.platform === 'win32',
+    shell: !BUNDLED_ROOT && process.platform === 'win32',
   });
 
   child.stdout?.pipe(outStream);

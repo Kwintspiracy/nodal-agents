@@ -7,6 +7,7 @@
     "lint": "eslint src",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "build": "node build.mjs",
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts"
   },
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.17",
     "ai": "^6.0.177",
+    "esbuild": "^0.27.7",
     "tsx": "^4.19.2",
     "vitest": "^4.1.6"
   }

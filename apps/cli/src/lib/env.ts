@@ -86,6 +86,12 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     // ("Server action was not found on the server" on next click).
     // readConfig() guarantees this is set (auto-mints on first read).
     NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: config.serverActionsKey ?? '',
+    // The Next.js standalone server reads HOSTNAME for its listener bind
+    // (defaults to '0.0.0.0' when unset). Docker sets HOSTNAME to the
+    // container ID, which Next interprets as the hostname to bind on —
+    // resolving via /etc/hosts to 127.0.0.1 only, breaking port forwarding
+    // and the `localhost:3000` healthcheck. Pin to the loopback/lan choice.
+    HOSTNAME: bind,
   };
 
   // llm section is optional (Brique 25): set LLM_* env vars for the web's

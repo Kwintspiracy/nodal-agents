@@ -260,7 +260,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // `next dev` first-compile with Turbopack 16 + the workspace's module graph
   // can take 2+ minutes from a cold cache. The .next/ cache shortens subsequent
   // boots dramatically; the timeout below is the cold-start budget.
-  const webHealthMs = opts.dev ? 180_000 : 30_000;
+  // `next start` against a prebuilt .next/ is fast, but on the FIRST request
+  // after boot Next still compiles route handlers lazily — /api/health can
+  // take 5-15s to respond before the server is fully warm. 60s leaves head
+  // room without making the spinner feel stuck.
+  const webHealthMs = opts.dev ? 180_000 : 60_000;
   // Runner via tsx also pays a cold-start cost — the module graph grew with
   // the recent adapter additions (firecrawl/apify/tavily) so 30s was too
   // tight on slow disks. 60s is the new cold budget.

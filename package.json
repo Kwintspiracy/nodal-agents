@@ -12,7 +12,8 @@
     "typecheck": "turbo typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages"
+    "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages",
+    "pack:build": "node scripts/build-pack.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

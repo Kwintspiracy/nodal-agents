@@ -6,7 +6,14 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 
 export interface RunMigrationsOptions {
@@ -30,7 +37,16 @@ export async function runMigrations(
   const sql = postgres(connectionString, { max: 1 });
   const db = drizzle(sql);
 
-  const sourceFolder = join(dirname(fileURLToPath(import.meta.url)), '../migrations');
+  // Two layouts to support:
+  //   - Monorepo dev: this file lives at packages/db/src/migrate.ts, so
+  //     migrations are one level up at packages/db/migrations/.
+  //   - Bundled pack: this code is inlined into runner.js / cli.js at the
+  //     pack root, and migrations are copied to pack/migrations/ as a sibling.
+  // Probe sibling first (cheaper, more common in shipped artifacts), then
+  // fall back to the dev layout.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const sibling = join(here, 'migrations');
+  const sourceFolder = existsSync(sibling) ? sibling : join(here, '../migrations');
   const migrationsFolder = opts.patchVectorAsText
     ? patchMigrationsForNoVector(sourceFolder)
     : sourceFolder;
