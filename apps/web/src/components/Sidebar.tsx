@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -59,7 +59,7 @@ const NAV_ITEMS: NavGroup[] = [
   },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ userMenu }: { userMenu?: ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -133,6 +133,13 @@ export default function Sidebar() {
             </div>
           ))}
         </nav>
+
+        {/* User menu slot — bottom of the sidebar */}
+        {userMenu && (
+          <div className="border-t border-neutral-800/50 p-3" data-testid="user-menu">
+            {userMenu}
+          </div>
+        )}
       </aside>
     </>
   );

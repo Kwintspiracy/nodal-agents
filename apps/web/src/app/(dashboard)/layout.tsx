@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { Toaster } from 'sonner';
 import { AuthError, NoEntityError } from '@nodalai/auth';
 import Sidebar from '@/components/Sidebar';
+import UserMenu from '@/components/UserMenu.tsx';
 import { requireUserWithEntity } from '@/lib/server.ts';
 
 // Gate every dashboard route. The proxy only checks cookie *presence*,
@@ -22,7 +23,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <>
-      <Sidebar />
+      <Sidebar userMenu={<UserMenu />} />
       <main className="flex-1 w-full lg:ml-56 pt-[72px] lg:pt-4 p-3 sm:p-5 lg:p-8 min-w-0">
         {children}
       </main>
