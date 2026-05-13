@@ -1,7 +1,7 @@
-// @nodalai/adapter-airtable — bases and tables tools
+// @nodal-agents/adapter-airtable — bases and tables tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { AirtableClient } from '../client.ts';
 import { wrapAirtableError } from '../errors.ts';
 

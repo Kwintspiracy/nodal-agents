@@ -3,7 +3,7 @@
 
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { randomBytes, createHash } from 'node:crypto';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodalai/secrets';
+import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodal-agents/secrets';
 import {
   generatePkce,
   generateState,

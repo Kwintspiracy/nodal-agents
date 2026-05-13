@@ -11,7 +11,7 @@ export const entityLlmKeys = pgTable(
       .notNull()
       .references(() => entities.id, { onDelete: 'cascade' }),
     provider: text('provider').notNull(),
-    // Encrypted at rest via @nodalai/secrets (AES-256-GCM). Format:
+    // Encrypted at rest via @nodal-agents/secrets (AES-256-GCM). Format:
     //   - '' for absent key (no encryption applied)
     //   - 'enc:v1:{iv}:{tag}:{ct}' for present key (base64 segments)
     apiKey: text('api_key').notNull().default(''),

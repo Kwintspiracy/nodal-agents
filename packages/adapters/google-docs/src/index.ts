@@ -1,7 +1,7 @@
-// @nodalai/adapter-google-docs — public API
+// @nodal-agents/adapter-google-docs — public API
 // Single factory: createDocsTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createDocsClient } from './client';
 

@@ -8,18 +8,18 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { agentJobs, agents } from '@nodalai/db';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import { createEmbeddingClient } from '@nodalai/llm';
-import { LocalTrustProvider } from '@nodalai/auth';
-import { DeliveryError } from '@nodalai/delivery';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agentJobs, agents } from '@nodal-agents/db';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createEmbeddingClient } from '@nodal-agents/llm';
+import { LocalTrustProvider } from '@nodal-agents/auth';
+import { DeliveryError } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import { executeJob } from '../../job/execute.ts';
-import type { JobId } from '@nodalai/orchestration';
+import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── Module-level mock registry ───────────────────────────────────────────────
 // execute.ts calls createLlmClient() directly (Brique 25: no env fallback).
@@ -36,9 +36,9 @@ const { sendTelegramMessageMock, getActiveLlmClient, setActiveLlmClient } = vi.h
   };
 });
 
-vi.mock('@nodalai/delivery', async (importOriginal) => {
+vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('@nodalai/delivery')>();
+  const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return {
     ...actual,
     sendTelegramMessage: sendTelegramMessageMock,
@@ -47,9 +47,9 @@ vi.mock('@nodalai/delivery', async (importOriginal) => {
 
 // Intercept createLlmClient called by execute.ts so it returns the per-test mock.
 // createEmbeddingClient and all other exports are passed through unchanged.
-vi.mock('@nodalai/llm', async (importOriginal) => {
+vi.mock('@nodal-agents/llm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('@nodalai/llm')>();
+  const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
   return {
     ...actual,
     createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
@@ -188,7 +188,7 @@ function makeDeps(llmClient: RunnerDeps['llmClient']): RunnerDeps {
   const registry = createToolRegistry();
   registerBuiltins(registry);
 
-  // Register the mock client so the vi.mock('@nodalai/llm') intercept returns it
+  // Register the mock client so the vi.mock('@nodal-agents/llm') intercept returns it
   // when execute.ts calls createLlmClient() for this test (Brique 25).
   setActiveLlmClient(llmClient);
 

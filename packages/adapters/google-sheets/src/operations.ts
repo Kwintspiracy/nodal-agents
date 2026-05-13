@@ -10,7 +10,7 @@
 //                 sheets_set_basic_filter, sheets_clear_basic_filter, sheets_sort_range
 //   destructive — sheets_delete_sheet
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const SHEETS_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (5) ────────────────────────────────────────────────────────────────

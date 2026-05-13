@@ -3,10 +3,10 @@
 //   2: no hardcoded user-facing strings (error codes only)
 //   3: no agent-specific band-aids (fail loud on all errors)
 //   4: no silent fallbacks
-//   8: anti-loop guards (ChainCounters from @nodalai/orchestration)
+//   8: anti-loop guards (ChainCounters from @nodal-agents/orchestration)
 //   9: tool whitelist explicit per agent (computeToolWhitelist)
 
-import { eq, and } from '@nodalai/db';
+import { eq, and } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -18,23 +18,23 @@ import {
   agentConnectorAssignments,
   connectors as connectorsTable,
   getDecryptedCredentialById,
-} from '@nodalai/db';
-import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
+} from '@nodal-agents/db';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
   QuotaExhaustedError,
   MessageStructureError,
   validateMessageStructure,
   createLlmClient,
-} from '@nodalai/llm';
-import type { NodalLlmClient } from '@nodalai/llm';
+} from '@nodal-agents/llm';
+import type { NodalLlmClient } from '@nodal-agents/llm';
 import {
   computeToolWhitelist,
   computeToolChoice,
   executeTool,
   ALWAYS_ON_TOOLS,
   createTelegramSendMessageTool,
-} from '@nodalai/tools';
-import type { ToolDefinition, ApprovalRule } from '@nodalai/tools';
+} from '@nodal-agents/tools';
+import type { ToolDefinition, ApprovalRule } from '@nodal-agents/tools';
 import {
   ChainCounters,
   DEFAULT_LIMITS,
@@ -50,8 +50,8 @@ import {
   ToolCallLimitExceededError,
   DelegationDepthExceededError,
   DelegationPendingError,
-} from '@nodalai/orchestration';
-import { decrypt } from '@nodalai/secrets';
+} from '@nodal-agents/orchestration';
+import { decrypt } from '@nodal-agents/secrets';
 import type {
   AgentId,
   JobId,
@@ -59,7 +59,7 @@ import type {
   OrchestratorMode,
   Agent,
   JobContext,
-} from '@nodalai/orchestration';
+} from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import { failJob, completeJob, setJobStatus, saveCheckpoint } from './state.ts';

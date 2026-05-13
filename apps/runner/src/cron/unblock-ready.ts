@@ -3,9 +3,9 @@
 // For each such task, inject dep results into context.deps and leave status as 'todo'
 // (the executeReadyTasks phase will claim them next).
 
-import { and, eq, inArray, isNotNull } from '@nodalai/db';
-import { agentTasks } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
+import { and, eq, inArray, isNotNull } from '@nodal-agents/db';
+import { agentTasks } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 // ─── unblockReadyTasks ────────────────────────────────────────────────────────
 

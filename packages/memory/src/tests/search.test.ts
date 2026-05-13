@@ -1,8 +1,8 @@
 // search.test.ts — similarity + keyword + hybrid + empty + skill-filter regression
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { EmbeddingClient } from '@nodalai/llm';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { EmbeddingClient } from '@nodal-agents/llm';
 import { createMemory } from '../crud';
 import { searchMemories } from '../search';
 

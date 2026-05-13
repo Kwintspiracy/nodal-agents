@@ -2,13 +2,13 @@
 // Asserts on real DB rows.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { eq } from '@nodalai/db';
-import { spinUpTestDb } from '@nodalai/db/test-utils';
-import { agents, agentJobs } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import { agents, agentJobs } from '@nodal-agents/db';
 import { handleDelegation } from '../../router/delegate';
 import { OrchestrationError } from '../../errors';
 import type { AgentId, JobId, AgentJob, EntityId } from '../../types';
-import type { TestDb } from '@nodalai/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 
 let db: TestDb;
 
@@ -21,11 +21,11 @@ beforeAll(async () => {
 
 async function seedContext(db: TestDb) {
   const [user] = await db
-    .insert((await import('@nodalai/db')).users)
+    .insert((await import('@nodal-agents/db')).users)
     .values({ email: `test-d-${Date.now()}@ex.com` })
     .returning();
   const [entity] = await db
-    .insert((await import('@nodalai/db')).entities)
+    .insert((await import('@nodal-agents/db')).entities)
     .values({ userId: user!.id, name: 'T', slug: `e-d-${Date.now()}` })
     .returning();
 

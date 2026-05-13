@@ -3,12 +3,12 @@
 // Idempotency is enforced by a conditional UPDATE (status='todo') so two
 // concurrent ticks can never claim the same task twice.
 
-import { and, asc, desc, eq, inArray, isNotNull } from '@nodalai/db';
-import { agentJobs, agentTasks } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
+import { and, asc, desc, eq, inArray, isNotNull } from '@nodal-agents/db';
+import { agentJobs, agentTasks } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { executeJob } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
-import type { JobId } from '@nodalai/orchestration';
+import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── Priority ordering ────────────────────────────────────────────────────────
 

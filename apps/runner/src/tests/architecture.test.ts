@@ -122,10 +122,10 @@ describe('invariant 3: no agent-specific catches in source', () => {
 // ─── Architecture: no direct pg/postgres/drizzle-orm imports ─────────────────
 
 describe('architecture: runner does not import db drivers directly', () => {
-  it('source files do not import postgres directly (only via @nodalai/db)', () => {
+  it('source files do not import postgres directly (only via @nodal-agents/db)', () => {
     const violations = sourceFiles.filter((f) => {
       const content = readFileSync(f, 'utf-8');
-      // Allow imports of @nodalai/db — ban direct 'postgres', 'drizzle-orm'
+      // Allow imports of @nodal-agents/db — ban direct 'postgres', 'drizzle-orm'
       return (
         content.includes("from 'postgres'") ||
         content.includes('from "postgres"') ||

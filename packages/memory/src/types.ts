@@ -1,6 +1,6 @@
-// @nodalai/memory — shared types for higher-level memory operations
+// @nodal-agents/memory — shared types for higher-level memory operations
 
-import type { MemoryCategory } from '@nodalai/shared';
+import type { MemoryCategory } from '@nodal-agents/shared';
 
 // ─── Search ────────────────────────────────────────────────────────────────────
 

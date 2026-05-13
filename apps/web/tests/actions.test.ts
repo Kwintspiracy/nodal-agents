@@ -16,7 +16,7 @@ import {
   _resetMasterKeyCacheForTests,
   decrypt,
   isEncrypted,
-} from '@nodalai/secrets';
+} from '@nodal-agents/secrets';
 
 beforeAll(() => {
   process.env['DATABASE_URL'] = 'postgres://placeholder:5432/placeholder';
@@ -86,7 +86,7 @@ function makeDb(rows: unknown[] = []) {
 let currentDb = makeDb([]);
 
 vi.mock('../src/lib/server.ts', async () => {
-  const { LocalTrustProvider } = await import('@nodalai/auth');
+  const { LocalTrustProvider } = await import('@nodal-agents/auth');
   const provider = new LocalTrustProvider();
   return {
     getDb: vi.fn(() => currentDb),
@@ -98,7 +98,7 @@ vi.mock('../src/lib/server.ts', async () => {
   };
 });
 
-// ─── Mock @nodalai/memory ─────────────────────────────────────────────────────
+// ─── Mock @nodal-agents/memory ─────────────────────────────────────────────────────
 // The memory package's chained queries don't fit our simple chainable mock
 // (count + items in two distinct selects); we stub the public API directly.
 const memoryMocks = {
@@ -107,8 +107,8 @@ const memoryMocks = {
   updateMemory: vi.fn(),
 };
 
-vi.mock('@nodalai/memory', async () => {
-  const actual = await vi.importActual<typeof import('@nodalai/memory')>('@nodalai/memory');
+vi.mock('@nodal-agents/memory', async () => {
+  const actual = await vi.importActual<typeof import('@nodal-agents/memory')>('@nodal-agents/memory');
   return {
     ...actual,
     listMemories: (...args: unknown[]) => memoryMocks.listMemories(...args),
@@ -837,7 +837,7 @@ describe('archiveMemoryAction', () => {
   });
 
   it('translates MemoryNotFoundError into not_found', async () => {
-    const { MemoryNotFoundError } = await import('@nodalai/memory');
+    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
     memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
     const { archiveMemoryAction } = await import('../src/lib/actions.ts');
     const r = await archiveMemoryAction('aaaaaaaa-0000-0000-0000-000000000050');
@@ -882,7 +882,7 @@ describe('deleteMemoryAction', () => {
   });
 
   it('translates MemoryNotFoundError into not_found', async () => {
-    const { MemoryNotFoundError } = await import('@nodalai/memory');
+    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
     memoryMocks.deleteMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
     const { deleteMemoryAction } = await import('../src/lib/actions.ts');
     const r = await deleteMemoryAction('aaaaaaaa-0000-0000-0000-000000000060');
@@ -2585,7 +2585,7 @@ describe('testLlmKeyAction', () => {
   it('keyId provided + apiKey empty → decrypts saved key + uses correct Authorization header', async () => {
     const SAVED_KEY = 'sk-ant-saved-from-db';
     // Brique 26: the column stores ciphertext; the action must decrypt it.
-    const { encrypt } = await import('@nodalai/secrets');
+    const { encrypt } = await import('@nodal-agents/secrets');
     currentDb = makeDb([{ apiKey: encrypt(SAVED_KEY) }]) as typeof currentDb;
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

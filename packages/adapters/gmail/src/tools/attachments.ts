@@ -1,8 +1,8 @@
-// @nodalai/adapter-gmail — attachment tools
+// @nodal-agents/adapter-gmail — attachment tools
 // get attachment data by message_id + attachment_id
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError, GmailAdapterError } from '../errors';
 

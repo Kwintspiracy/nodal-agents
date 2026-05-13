@@ -1,13 +1,13 @@
 // planner/task-tools.test.ts — create_task and list_tasks DB tests
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { eq } from '@nodalai/db';
-import { spinUpTestDb } from '@nodalai/db/test-utils';
-import { agents, agentTasks, agentJobs } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import { agents, agentTasks, agentJobs } from '@nodal-agents/db';
 import { generateTaskTools } from '../../planner/task-tools';
 import type { AgentId } from '../../types';
-import type { TestDb } from '@nodalai/db/test-utils';
-import type { ToolContext } from '@nodalai/tools';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import type { ToolContext } from '@nodal-agents/tools';
 
 let db: TestDb;
 
@@ -20,11 +20,11 @@ beforeAll(async () => {
 
 async function seedContext(db: TestDb) {
   const [user] = await db
-    .insert((await import('@nodalai/db')).users)
+    .insert((await import('@nodal-agents/db')).users)
     .values({ email: `test-pt-${Date.now()}@ex.com` })
     .returning();
   const [entity] = await db
-    .insert((await import('@nodalai/db')).entities)
+    .insert((await import('@nodal-agents/db')).entities)
     .values({ userId: user!.id, name: 'T', slug: `e-pt-${Date.now()}` })
     .returning();
 

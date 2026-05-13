@@ -1,8 +1,8 @@
-// @nodalai/adapter-gmail — label tools
+// @nodal-agents/adapter-gmail — label tools
 // list, get, create, update, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 
@@ -131,7 +131,7 @@ export function createCreateLabelTool(
   return {
     name: 'gmail_create_label',
     description:
-      "Create a new Gmail user label. Use '/' in the name to nest labels, e.g. 'Projects/NodalAI'.",
+      "Create a new Gmail user label. Use '/' in the name to nest labels, e.g. 'Projects/Nodal-Agents'.",
     inputSchema: CreateLabelInput,
     riskLevel: 'write',
     async execute(input) {

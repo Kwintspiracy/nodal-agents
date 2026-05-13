@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — create-folder, move, rename, copy tests
+// @nodal-agents/adapter-google-drive — create-folder, move, rename, copy tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { drive_v3 } from 'googleapis';

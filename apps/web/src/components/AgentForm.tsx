@@ -19,7 +19,7 @@ import {
   isModelCompatibleWithProvider,
   type ProviderSlug,
 } from '@/lib/model-provider-detect.ts';
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 type AgentRole = 'worker' | 'router' | 'planner';
 

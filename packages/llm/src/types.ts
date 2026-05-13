@@ -1,4 +1,4 @@
-// @nodalai/llm — core types
+// @nodal-agents/llm — core types
 
 import type { generateText, streamText, generateObject } from 'ai';
 

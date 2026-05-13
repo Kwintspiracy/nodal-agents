@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — batch-update helper tests
+// @nodal-agents/adapter-google-sheets — batch-update helper tests
 
 import { describe, it, expect } from 'vitest';
 import {

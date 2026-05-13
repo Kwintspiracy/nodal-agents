@@ -2,7 +2,7 @@ import 'server-only';
 
 import { headers } from 'next/headers';
 import { ShieldCheck, User } from '@phosphor-icons/react/dist/ssr';
-import { users, eq } from '@nodalai/db';
+import { users, eq } from '@nodal-agents/db';
 import { getDb, requireUserWithEntity } from '@/lib/server.ts';
 import { env } from '@/lib/env.ts';
 import SignOutButton from './SignOutButton.tsx';

@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — Notion SDK client factory
+// @nodal-agents/adapter-notion — Notion SDK client factory
 
 import { Client } from '@notionhq/client';
 

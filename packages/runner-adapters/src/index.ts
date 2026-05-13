@@ -1,4 +1,4 @@
-// @nodalai/runner-adapters — public API
+// @nodal-agents/runner-adapters — public API
 // Shared adapter registry usable by both the runner and the web UI.
 
 export { ADAPTER_REGISTRY } from './registry';

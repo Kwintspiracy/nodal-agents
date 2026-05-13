@@ -1,8 +1,8 @@
 // planner/completion.ts — check if all tasks for a root_job_id are done
 // Used by the cron/delivery layer to know when to compile and deliver results.
 
-import { eq, and } from '@nodalai/db';
-import { agentTasks } from '@nodalai/db';
+import { eq, and } from '@nodal-agents/db';
+import { agentTasks } from '@nodal-agents/db';
 import type { JobId, AnyDrizzleDb } from '../types';
 
 // ─── checkRootJobComplete ─────────────────────────────────────────────────────

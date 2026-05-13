@@ -15,7 +15,7 @@ import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
-import { AuthError } from '@nodalai/auth';
+import { AuthError } from '@nodal-agents/auth';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
 

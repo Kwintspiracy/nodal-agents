@@ -23,20 +23,20 @@ import {
   toolCalls,
   agentSchedules,
   entityLlmKeys,
-} from '@nodalai/db';
-import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodalai/delivery';
-import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodalai/memory';
-import { encrypt, decrypt, isEncrypted, last4 } from '@nodalai/secrets';
+} from '@nodal-agents/db';
+import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
+import { listMemories, deleteMemory, updateMemory, MemoryNotFoundError } from '@nodal-agents/memory';
+import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import { getLanAddresses } from './network.ts';
-import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodalai/shared';
+import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
 import { getDb, getAuthProvider } from './server.ts';
-import { requireAuth } from '@nodalai/auth';
+import { requireAuth } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
-import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2344,7 +2344,7 @@ export type SecurityView = {
   runtimeMode: 'local-trust' | 'local-auth' | 'bearer-token';
   /**
    * Mode persisted in ~/.nodalai/config.json. Differs from runtimeMode after
-   * a settings save until the user restarts `nodalai up`.
+   * a settings save until the user restarts `nodal-agents up`.
    */
   configuredMode: 'local-trust' | 'local-auth';
   /** True when Google OAuth client id/secret are present in config. */
@@ -2420,7 +2420,7 @@ export async function updateAuthSettingsAction(
     if (!existing) {
       return fail(
         'cli_config_missing',
-        'Cannot find ~/.nodalai/config.json — run `nodalai init` first.',
+        'Cannot find ~/.nodalai/config.json — run `nodal-agents init` first.',
       );
     }
 
@@ -2547,7 +2547,7 @@ export async function updateNetworkSettingsAction(
       if (msg === 'cli_config_missing') {
         return fail(
           'cli_config_missing',
-          'Cannot find ~/.nodalai/config.json — run `nodalai init` first.',
+          'Cannot find ~/.nodalai/config.json — run `nodal-agents init` first.',
         );
       }
       throw err;

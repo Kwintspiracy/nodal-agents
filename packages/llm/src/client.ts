@@ -1,4 +1,4 @@
-// @nodalai/llm — client factory
+// @nodal-agents/llm — client factory
 
 import { generateText, streamText, generateObject } from 'ai';
 import type { ModelMessage, LanguageModel } from 'ai';

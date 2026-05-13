@@ -1,9 +1,9 @@
-// @nodalai/adapter-tavily — operation descriptors.
+// @nodal-agents/adapter-tavily — operation descriptors.
 // Each slug MUST match the tool name produced by createTavilyTools() exactly.
 // Risk classification:
 //   read — all Tavily operations (search, extract, crawl are read-only)
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const TAVILY_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (3) ────────────────────────────────────────────────────────────────

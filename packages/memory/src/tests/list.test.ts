@@ -1,7 +1,7 @@
 // list.test.ts — pagination edge cases + filter combinators
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { createMemory } from '../crud';
 import { listMemories } from '../list';
 import { MemoryError } from '../errors';
@@ -199,8 +199,8 @@ describe('listMemories — filter combinators', () => {
     });
 
     // Archive it directly
-    const { agentMemory } = await import('@nodalai/db');
-    const { eq } = await import('@nodalai/db');
+    const { agentMemory } = await import('@nodal-agents/db');
+    const { eq } = await import('@nodal-agents/db');
     await db.update(agentMemory).set({ archived: true }).where(eq(agentMemory.id, created.id));
 
     const result = await listMemories(db, {
@@ -219,7 +219,7 @@ async function createIsolatedEntity(
   dbInstance: typeof db,
   userId: string,
 ): Promise<{ entityId: string }> {
-  const { entities } = await import('@nodalai/db');
+  const { entities } = await import('@nodal-agents/db');
   const [entity] = await dbInstance
     .insert(entities)
     .values({

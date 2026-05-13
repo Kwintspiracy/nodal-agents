@@ -1,4 +1,4 @@
-// @nodalai/adapter-firecrawl — typed error codes, no user-facing strings
+// @nodal-agents/adapter-firecrawl — typed error codes, no user-facing strings
 
 export type FirecrawlErrorCode =
   | 'firecrawl_unauthorized'

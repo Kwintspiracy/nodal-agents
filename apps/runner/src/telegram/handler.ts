@@ -11,9 +11,9 @@
 //   - reply to a previous bot msg  → continuation
 // Anything else in a group is ignored to avoid the bot replying to every line.
 
-import { eq, and } from '@nodalai/db';
-import { agentJobs, agents } from '@nodalai/db';
-import type { TelegramUpdate } from '@nodalai/delivery';
+import { eq, and } from '@nodal-agents/db';
+import { agentJobs, agents } from '@nodal-agents/db';
+import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';

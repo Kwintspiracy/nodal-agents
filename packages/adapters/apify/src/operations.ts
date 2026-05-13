@@ -1,10 +1,10 @@
-// @nodalai/adapter-apify — operation descriptors.
+// @nodal-agents/adapter-apify — operation descriptors.
 // Each slug MUST match the tool name produced by createApifyTools() exactly.
 // Risk classification:
 //   read  — apify_get_run, apify_list_datasets, apify_get_dataset_items
 //   write — apify_run_actor (spawns a remote run and consumes user credits)
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const APIFY_OPERATIONS: OperationDescriptor[] = [
   // ─── Write (1) ───────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
-// @nodalai/adapter-google-drive — public API
+// @nodal-agents/adapter-google-drive — public API
 // Single factory: createDriveTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createDriveClient } from './client';
 import { createListFilesTool } from './tools/list-files';

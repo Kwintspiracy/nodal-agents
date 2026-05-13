@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — PPTX extractor tests
+// @nodal-agents/adapter-google-drive — PPTX extractor tests
 
 import { describe, it, expect } from 'vitest';
 import { extractPptxText } from '../../extractors/pptx';

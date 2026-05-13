@@ -9,7 +9,7 @@
  * lazily on first request so build-time page-data collection does not throw.
  */
 
-import { toNextJsHandler } from '@nodalai/auth';
+import { toNextJsHandler } from '@nodal-agents/auth';
 import { getBetterAuth } from '@/lib/server.ts';
 
 // Lazily resolved on first request — prevents build-time initialization when

@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — filter and sort tool tests
+// @nodal-agents/adapter-google-sheets — filter and sort tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { sheets_v4 } from 'googleapis';

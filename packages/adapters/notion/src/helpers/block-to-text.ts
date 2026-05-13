@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — convert Notion block objects to readable text
+// @nodal-agents/adapter-notion — convert Notion block objects to readable text
 
 import type { BlockObjectResponse } from '@notionhq/client/build/src/api-endpoints.js';
 

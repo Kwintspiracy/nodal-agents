@@ -5,10 +5,10 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Playwright config for NodalAI web e2e.
+ * Playwright config for Nodal-Agents web e2e.
  *
- * Tests assume a local NodalAI stack is already running (web + runner + DB).
- * Bring it up with `nodalai up --dev` or `nodalai up` before `pnpm e2e`.
+ * Tests assume a local Nodal-Agents stack is already running (web + runner + DB).
+ * Bring it up with `nodal-agents up --dev` or `nodal-agents up` before `pnpm e2e`.
  *
  * Auth: global-setup creates/logs-in the sentinel user `e2e-playwright@nodalai.local`
  * and saves the session cookie to tests/e2e/.auth/user.json. Every project loads

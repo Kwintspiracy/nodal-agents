@@ -1,8 +1,8 @@
-// @nodalai/adapter-google-sheets — filter and sort tools
+// @nodal-agents/adapter-google-sheets — filter and sort tools
 // set_basic_filter, clear_basic_filter, sort_range
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError } from '../errors';
 import {

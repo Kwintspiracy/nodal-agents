@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/adapter-firecrawl",
+  "name": "@nodal-agents/adapter-firecrawl",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@mendable/firecrawl-js": "^4.22.0",
-    "@nodalai/shared": "workspace:*",
-    "@nodalai/tools": "workspace:*",
+    "@nodal-agents/shared": "workspace:*",
+    "@nodal-agents/tools": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

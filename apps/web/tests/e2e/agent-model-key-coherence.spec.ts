@@ -23,7 +23,7 @@ import { requireLiveStack, makeDbClient } from './helpers.ts';
 const E2E_EMAIL = 'e2e-playwright@nodalai.local';
 
 async function resolveE2eContext(): Promise<{ entityId: string }> {
-  const { users, entities, eq } = await import('@nodalai/db');
+  const { users, entities, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     const [userRow] = await db
@@ -45,8 +45,8 @@ async function resolveE2eContext(): Promise<{ entityId: string }> {
 }
 
 async function insertLlmKey(entityId: string, provider: string, nickname: string): Promise<string> {
-  const { entityLlmKeys, eq, and } = await import('@nodalai/db');
-  const { encrypt, last4 } = await import('@nodalai/secrets');
+  const { entityLlmKeys, eq, and } = await import('@nodal-agents/db');
+  const { encrypt, last4 } = await import('@nodal-agents/secrets');
   const { db, close } = makeDbClient();
   try {
     // Clean up any prior e2e key for this entity+provider+nickname so reruns
@@ -75,7 +75,7 @@ async function insertLlmKey(entityId: string, provider: string, nickname: string
 }
 
 async function deleteLlmKey(id: string): Promise<void> {
-  const { entityLlmKeys, eq } = await import('@nodalai/db');
+  const { entityLlmKeys, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     await db.delete(entityLlmKeys).where(eq(entityLlmKeys.id, id));
@@ -85,7 +85,7 @@ async function deleteLlmKey(id: string): Promise<void> {
 }
 
 async function firstAgentId(entityId: string): Promise<string> {
-  const { agents, eq, and } = await import('@nodalai/db');
+  const { agents, eq, and } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     const [row] = await db

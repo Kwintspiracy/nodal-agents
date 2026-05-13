@@ -1,4 +1,4 @@
-// init.ts — interactive wizard to configure NodalAI
+// init.ts — interactive wizard to configure Nodal-Agents
 
 import chalk from 'chalk';
 import prompts from 'prompts';
@@ -32,7 +32,7 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
   }
 
   console.log('');
-  console.log(chalk.bold('NodalAI — Setup Wizard'));
+  console.log(chalk.bold('Nodal-Agents — Setup Wizard'));
   console.log(chalk.gray('Configure your local AI agent platform.\n'));
 
   // ── Step 1: Pick LLM provider ─────────────────────────────────────────────
@@ -170,7 +170,7 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
     console.log('');
     console.log(
       chalk.yellow(
-        `  Warning: ${baseURL} is not reachable right now.\n  Config saved anyway — start your LLM server before running \`nodalai up\`.`,
+        `  Warning: ${baseURL} is not reachable right now.\n  Config saved anyway — start your LLM server before running \`nodal-agents up\`.`,
       ),
     );
   }
@@ -187,7 +187,7 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
   }
 
   console.log('');
-  console.log(chalk.gray('  Run `nodalai up` to start NodalAI.'));
+  console.log(chalk.gray('  Run `nodal-agents up` to start Nodal-Agents.'));
   console.log('');
 
   return config;

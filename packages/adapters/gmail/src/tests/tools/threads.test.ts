@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — thread tool tests
+// @nodal-agents/adapter-gmail — thread tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { gmail_v1 } from 'googleapis';

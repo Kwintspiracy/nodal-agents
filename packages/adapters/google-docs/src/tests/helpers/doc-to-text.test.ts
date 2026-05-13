@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — doc-to-text helper tests
+// @nodal-agents/adapter-google-docs — doc-to-text helper tests
 
 import { describe, it, expect } from 'vitest';
 import type { docs_v1 } from 'googleapis';

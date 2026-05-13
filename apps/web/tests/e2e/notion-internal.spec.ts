@@ -4,7 +4,7 @@
  * Asserts that the original Notion api_key flow still works after Brique 34
  * added notion-oauth. Both connector types must coexist independently.
  *
- * Requires a running NodalAI stack. Skipped automatically if unreachable.
+ * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';

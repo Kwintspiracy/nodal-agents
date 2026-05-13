@@ -1,4 +1,4 @@
-// @nodalai/adapter-airtable — client factory and auth header tests
+// @nodal-agents/adapter-airtable — client factory and auth header tests
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createAirtableClient } from '../client.ts';

@@ -1,4 +1,4 @@
-// @nodalai/adapter-tavily — typed error codes, no user-facing strings
+// @nodal-agents/adapter-tavily — typed error codes, no user-facing strings
 
 export type TavilyErrorCode =
   | 'tavily_unauthorized'

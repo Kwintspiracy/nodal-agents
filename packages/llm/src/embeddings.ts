@@ -1,4 +1,4 @@
-// @nodalai/llm — embedding client
+// @nodal-agents/llm — embedding client
 
 import { embed } from 'ai';
 import { createOllama } from 'ollama-ai-provider-v2';

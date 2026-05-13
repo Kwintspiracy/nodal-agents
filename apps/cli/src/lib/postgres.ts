@@ -217,7 +217,7 @@ export async function startEmbeddedPostgres(
 
 /**
  * Run Drizzle migrations against the given database URL.
- * Delegates to @nodalai/db/migrate to respect the architecture rule:
+ * Delegates to @nodal-agents/db/migrate to respect the architecture rule:
  * only packages/db may import drizzle-orm or postgres directly.
  *
  * @param patchVectorAsText when true, rewrite `vector(N)` columns to `text`
@@ -227,6 +227,6 @@ export async function runMigrations(
   databaseUrl: string,
   opts: { patchVectorAsText?: boolean } = {},
 ): Promise<void> {
-  const { runMigrations: migrate } = await import('@nodalai/db/migrate');
+  const { runMigrations: migrate } = await import('@nodal-agents/db/migrate');
   await migrate(databaseUrl, opts);
 }

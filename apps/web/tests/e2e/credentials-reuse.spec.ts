@@ -7,7 +7,7 @@
  *   3. Connect Gmail using the SAME credential (dropdown select → Save, no re-OAuth)
  *   4. Both connectors show CONNECTED with the same credential
  *
- * Requires a running NodalAI stack. Skipped automatically if unreachable.
+ * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';

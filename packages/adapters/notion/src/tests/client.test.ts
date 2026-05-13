@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — client factory tests
+// @nodal-agents/adapter-notion — client factory tests
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createNotionClient } from '../client';

@@ -1,8 +1,8 @@
-// @nodalai/memory — access tracking (bump last_accessed_at + access_count)
+// @nodal-agents/memory — access tracking (bump last_accessed_at + access_count)
 
-import { eq, and, sql } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { agentMemory } from '@nodalai/db';
+import { eq, and, sql } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { agentMemory } from '@nodal-agents/db';
 
 /**
  * Bump last_accessed_at to now() and increment access_count by 1.

@@ -1,12 +1,12 @@
 // system-prompt.test.ts — buildSystemPrompt tests
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb } from '@nodalai/db/test-utils';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
 import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
-import type { TestDb } from '@nodalai/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 
 let db: TestDb;
 
@@ -19,11 +19,11 @@ beforeAll(async () => {
 
 async function seedContext(db: TestDb) {
   const [user] = await db
-    .insert((await import('@nodalai/db')).users)
+    .insert((await import('@nodal-agents/db')).users)
     .values({ email: `test-sp-${Date.now()}@ex.com` })
     .returning();
   const [entity] = await db
-    .insert((await import('@nodalai/db')).entities)
+    .insert((await import('@nodal-agents/db')).entities)
     .values({ userId: user!.id, name: 'T', slug: `e-sp-${Date.now()}` })
     .returning();
   return { userId: user!.id, entityId: entity!.id };

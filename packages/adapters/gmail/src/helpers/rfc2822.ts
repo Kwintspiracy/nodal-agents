@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — RFC 2822 message builder (base64url encoded)
+// @nodal-agents/adapter-gmail — RFC 2822 message builder (base64url encoded)
 //
 // Builds raw RFC 2822 email messages suitable for Gmail API's `raw` field.
 // Handles:

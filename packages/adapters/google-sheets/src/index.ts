@@ -1,7 +1,7 @@
-// @nodalai/adapter-google-sheets — public API
+// @nodal-agents/adapter-google-sheets — public API
 // Single factory: createSheetsTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createSheetsClient } from './client';
 

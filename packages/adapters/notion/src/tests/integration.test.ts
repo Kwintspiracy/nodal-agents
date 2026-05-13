@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — integration test
+// @nodal-agents/adapter-notion — integration test
 // Verifies: tool count, unique names, correct risk levels, schema validation,
 //           and that both auth variants (apiKey / accessToken) produce identical tool sets.
 

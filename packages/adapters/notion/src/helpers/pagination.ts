@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — pagination helper for Notion's cursor-based API
+// @nodal-agents/adapter-notion — pagination helper for Notion's cursor-based API
 
 import type { Client } from '@notionhq/client';
 import type { BlockObjectResponse } from '@notionhq/client/build/src/api-endpoints.js';

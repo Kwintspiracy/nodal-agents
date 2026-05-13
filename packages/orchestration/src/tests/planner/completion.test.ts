@@ -1,11 +1,11 @@
 // planner/completion.test.ts — checkRootJobComplete DB tests
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb } from '@nodalai/db/test-utils';
-import { agents, agentTasks, agentJobs } from '@nodalai/db';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import { agents, agentTasks, agentJobs } from '@nodal-agents/db';
 import { checkRootJobComplete } from '../../planner/completion';
 import type { JobId } from '../../types';
-import type { TestDb } from '@nodalai/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 
 let db: TestDb;
 
@@ -18,11 +18,11 @@ beforeAll(async () => {
 
 async function seedContext(db: TestDb) {
   const [user] = await db
-    .insert((await import('@nodalai/db')).users)
+    .insert((await import('@nodal-agents/db')).users)
     .values({ email: `test-cmp-${Date.now()}@ex.com` })
     .returning();
   const [entity] = await db
-    .insert((await import('@nodalai/db')).entities)
+    .insert((await import('@nodal-agents/db')).entities)
     .values({ userId: user!.id, name: 'T', slug: `e-cmp-${Date.now()}` })
     .returning();
   const [agent] = await db

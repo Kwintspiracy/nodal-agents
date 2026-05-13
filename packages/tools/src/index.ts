@@ -1,4 +1,4 @@
-// @nodalai/tools — public API
+// @nodal-agents/tools — public API
 
 // Types
 export type {
@@ -13,7 +13,7 @@ export type {
   ToolExecutionResult,
 } from './types';
 
-// RiskLevel (re-exported from @nodalai/shared via types.ts) + runtime constant
+// RiskLevel (re-exported from @nodal-agents/shared via types.ts) + runtime constant
 export type { RiskLevel } from './types';
 export { RISK_LEVELS } from './types';
 

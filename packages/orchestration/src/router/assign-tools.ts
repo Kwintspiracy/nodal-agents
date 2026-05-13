@@ -2,8 +2,8 @@
 // Reads children from agent_assignments table. Never hardcodes agent slugs.
 
 import { z } from 'zod';
-import { eq, and } from '@nodalai/db';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
+import { eq, and } from '@nodal-agents/db';
+import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
 import { DelegationPendingError } from '../errors';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, ChildAgent } from '../types';
 

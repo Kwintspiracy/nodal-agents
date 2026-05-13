@@ -2,10 +2,10 @@
 // These are dynamically generated per agent. Never hardcoded agent names.
 
 import { z } from 'zod';
-import { eq, and, inArray } from '@nodalai/db';
-import { agentTasks, agents } from '@nodalai/db';
+import { eq, and, inArray } from '@nodal-agents/db';
+import { agentTasks, agents } from '@nodal-agents/db';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId } from '../types';
-import type { ToolContext } from '@nodalai/tools';
+import type { ToolContext } from '@nodal-agents/tools';
 
 // ─── create_task schema ───────────────────────────────────────────────────────
 

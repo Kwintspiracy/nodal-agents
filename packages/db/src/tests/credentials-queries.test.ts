@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@nodalai/secrets';
+import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
 import { credentials } from '../schema/index.ts';
@@ -135,7 +135,7 @@ describe('getDecryptedCredentialById', () => {
     const [updated] = await db.select().from(credentials).where(eq(credentials.id, row.id));
     // We can't compare raw ciphertext equality (non-deterministic), but decrypting
     // the updated row must yield the new access token.
-    const { decrypt } = await import('@nodalai/secrets');
+    const { decrypt } = await import('@nodal-agents/secrets');
     const updatedPayload = JSON.parse(decrypt(updated!.payload)) as Record<string, unknown>;
     expect(updatedPayload['accessToken']).toBe('refreshed-access-token');
 
@@ -163,7 +163,7 @@ describe('getDecryptedCredentialById', () => {
     await getDecryptedCredentialById(db, row.id);
 
     const [updated] = await db.select().from(credentials).where(eq(credentials.id, row.id));
-    const { decrypt } = await import('@nodalai/secrets');
+    const { decrypt } = await import('@nodal-agents/secrets');
     const updatedPayload = JSON.parse(decrypt(updated!.payload)) as Record<string, unknown>;
     expect(updatedPayload['refreshToken']).toBe('new-rotated-refresh');
 

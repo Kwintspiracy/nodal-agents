@@ -1,7 +1,7 @@
-// @nodalai/adapter-google-drive — drive_read_file tool
+// @nodal-agents/adapter-google-drive — drive_read_file tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError, DriveAdapterError } from '../errors';
 import { extractFileText, FILE_SIZE_CAP_BYTES } from '../extractors/index';

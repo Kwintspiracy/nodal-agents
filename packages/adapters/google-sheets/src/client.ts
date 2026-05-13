@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — googleapis Sheets v4 client factory
+// @nodal-agents/adapter-google-sheets — googleapis Sheets v4 client factory
 
 import { google } from 'googleapis';
 import type { sheets_v4 } from 'googleapis';

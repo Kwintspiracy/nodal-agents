@@ -2,13 +2,13 @@
 // Asserts that approving/rejecting an approval request sets the right DB state.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { approvalRequests, agentJobs } from '@nodalai/db';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import { createLlmClient, createEmbeddingClient } from '@nodalai/llm';
-import { LocalTrustProvider } from '@nodalai/auth';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { approvalRequests, agentJobs } from '@nodal-agents/db';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
+import { LocalTrustProvider } from '@nodal-agents/auth';
 import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';

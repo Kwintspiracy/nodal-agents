@@ -1,7 +1,7 @@
 // stats.test.ts — accurate counts, category breakdown, tag counts
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { createMemory } from '../crud';
 import { getMemoryStats } from '../stats';
 
@@ -16,7 +16,7 @@ beforeAll(async () => {
   seed = await seedMinimal(db);
 
   // Create isolated entity for deterministic stats
-  const { entities } = await import('@nodalai/db');
+  const { entities } = await import('@nodal-agents/db');
   const [entity] = await db
     .insert(entities)
     .values({
@@ -104,7 +104,7 @@ describe('getMemoryStats', () => {
 
   it('all categories present in countByCategory (even zeros)', async () => {
     // Create entity with only one category
-    const { entities } = await import('@nodalai/db');
+    const { entities } = await import('@nodal-agents/db');
     const [entity] = await db
       .insert(entities)
       .values({
@@ -187,7 +187,7 @@ describe('getMemoryStats', () => {
   });
 
   it('returns totalCount 0 and empty arrays for entity with no memories', async () => {
-    const { entities } = await import('@nodalai/db');
+    const { entities } = await import('@nodal-agents/db');
     const [entity] = await db
       .insert(entities)
       .values({

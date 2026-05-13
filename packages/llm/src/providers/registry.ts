@@ -1,4 +1,4 @@
-// @nodalai/llm — provider registry: presets + capability matrix
+// @nodal-agents/llm — provider registry: presets + capability matrix
 
 import type { ProviderName, ProviderCapabilities } from '../types';
 

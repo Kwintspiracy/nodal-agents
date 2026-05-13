@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — helper: convert document body to plain text
+// @nodal-agents/adapter-google-docs — helper: convert document body to plain text
 
 import type { docs_v1 } from 'googleapis';
 

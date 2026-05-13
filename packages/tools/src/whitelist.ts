@@ -1,4 +1,4 @@
-// @nodalai/tools — per-agent tool whitelist computation
+// @nodal-agents/tools — per-agent tool whitelist computation
 // Invariant 9: every agent's tool list is explicit. No undeclared defaults.
 
 import type { z } from 'zod';

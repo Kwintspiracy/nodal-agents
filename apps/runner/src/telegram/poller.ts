@@ -9,9 +9,9 @@
 // the bot from the dashboard, which respawns a fresh poller.
 // On other errors: exponential backoff (1s → 30s) then retry.
 
-import { eq } from '@nodalai/db';
-import { agents } from '@nodalai/db';
-import { getTelegramUpdates, DeliveryError, type TelegramUpdate } from '@nodalai/delivery';
+import { eq } from '@nodal-agents/db';
+import { agents } from '@nodal-agents/db';
+import { getTelegramUpdates, DeliveryError, type TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { handleTelegramUpdate, triggerJobWorker } from './handler.ts';

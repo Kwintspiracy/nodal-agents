@@ -1,5 +1,5 @@
 /**
- * dependency-cruiser config — enforces NodalAI architecture rules.
+ * dependency-cruiser config — enforces Nodal-Agents architecture rules.
  * See README.md for the full rationale.
  */
 module.exports = {
@@ -78,7 +78,7 @@ module.exports = {
         pathNot: '\\.(test|spec)\\.(ts|tsx|js|mjs)$',
       },
       to: {
-        path: '@nodalai/delivery/(deliver|format|delivery-stub)',
+        path: '@nodal-agents/delivery/(deliver|format|delivery-stub)',
       },
     },
   ],

@@ -1,4 +1,4 @@
-// @nodalai/adapter-airtable — thin fetch wrapper + auth + error mapping
+// @nodal-agents/adapter-airtable — thin fetch wrapper + auth + error mapping
 // Airtable REST API: https://api.airtable.com/v0
 // Auth: Authorization: Bearer <token> — same wire format for OAuth tokens and PATs.
 

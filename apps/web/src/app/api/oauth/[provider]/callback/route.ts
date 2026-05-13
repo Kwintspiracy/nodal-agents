@@ -5,12 +5,12 @@
 
 import { NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
-import { decrypt } from '@nodalai/secrets';
+import { decrypt } from '@nodal-agents/secrets';
 import { getAuthProvider } from '@/lib/server.ts';
 import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
 import { verifyStateCookie, STATE_COOKIE_NAME } from '@/lib/oauth-state.ts';
 import { persistCredentialFromOauthFlow } from '@/lib/credentials.ts';
-import type { CredentialType } from '@nodalai/shared';
+import type { CredentialType } from '@nodal-agents/shared';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ export async function GET(
   // or a credentialType (e.g. 'google-oauth') when wizard-initiated via credential type.
   const provider =
     getOAuthProvider(slug) ??
-    getProviderByCredentialType(slug as import('@nodalai/shared').CredentialType);
+    getProviderByCredentialType(slug as import('@nodal-agents/shared').CredentialType);
   if (!provider) {
     return redirectError(origin, 'unknown_provider');
   }

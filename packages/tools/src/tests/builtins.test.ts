@@ -1,8 +1,8 @@
 // builtins.test.ts — built-in tools behavior tests
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import { agentMemory, agentJobs, eq } from '@nodalai/db';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { agentMemory, agentJobs, eq } from '@nodal-agents/db';
 import { createToolRegistry } from '../registry';
 import { registerBuiltins, ALWAYS_ON_TOOLS } from '../builtin/index';
 import { returnResultTool } from '../builtin/return-result';
@@ -12,7 +12,7 @@ import { webSearchTool } from '../builtin/web-search';
 import { dashboardPublishTool } from '../builtin/dashboard-publish';
 import { WebSearchNotConfiguredError } from '../errors';
 import type { ToolContext } from '../types';
-import type { TestDb } from '@nodalai/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };

@@ -2,13 +2,13 @@
 // Asserts on the real DB row, not just call counts (invariant 5).
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { agentJobs, agents } from '@nodalai/db';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import { createLlmClient, createEmbeddingClient } from '@nodalai/llm';
-import { LocalTrustProvider, seedLocalUser, LOCAL_ENTITY_ID } from '@nodalai/auth';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agentJobs, agents } from '@nodal-agents/db';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
+import { LocalTrustProvider, seedLocalUser, LOCAL_ENTITY_ID } from '@nodal-agents/auth';
 import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';

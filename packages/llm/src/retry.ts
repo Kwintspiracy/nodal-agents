@@ -1,4 +1,4 @@
-// @nodalai/llm — retry with exponential backoff + jitter
+// @nodal-agents/llm — retry with exponential backoff + jitter
 // Ports retry_with_backoff from AgentOne/agent/resilience.py
 
 import { QuotaExhaustedError, MessageStructureError, RetryExhaustedError } from './errors';

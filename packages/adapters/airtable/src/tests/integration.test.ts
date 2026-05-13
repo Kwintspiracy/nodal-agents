@@ -1,4 +1,4 @@
-// @nodalai/adapter-airtable — integration test
+// @nodal-agents/adapter-airtable — integration test
 // Verifies: tool count, unique names, correct risk levels, schema validation.
 
 import { describe, it, expect } from 'vitest';

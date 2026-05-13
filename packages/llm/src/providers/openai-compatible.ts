@@ -1,4 +1,4 @@
-// @nodalai/llm — OpenAI-compatible provider (LM Studio, Jan.ai, llama.cpp, vLLM, custom)
+// @nodal-agents/llm — OpenAI-compatible provider (LM Studio, Jan.ai, llama.cpp, vLLM, custom)
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModel } from 'ai';

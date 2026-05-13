@@ -10,9 +10,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { z } from 'zod';
 import { createTelegramSendMessageTool } from '../telegram-send-message';
 import type { ToolContext } from '../../types';
-import { DeliveryError } from '@nodalai/delivery';
+import { DeliveryError } from '@nodal-agents/delivery';
 
-// ─── Mock @nodalai/delivery ───────────────────────────────────────────────────
+// ─── Mock @nodal-agents/delivery ───────────────────────────────────────────────────
 // vi.mock is hoisted to the top of the file by Vitest; the factory must not
 // reference variables declared later. Use vi.hoisted to create the mock fn
 // in the hoisted scope so both the factory and the test body can access it.
@@ -21,16 +21,16 @@ const { sendTelegramMessageMock } = vi.hoisted(() => ({
   sendTelegramMessageMock: vi.fn(),
 }));
 
-vi.mock('@nodalai/delivery', async (importOriginal) => {
+vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('@nodalai/delivery')>();
+  const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return {
     ...actual,
     sendTelegramMessage: sendTelegramMessageMock,
   };
 });
 
-// ─── Mock @nodalai/db ─────────────────────────────────────────────────────────
+// ─── Mock @nodal-agents/db ─────────────────────────────────────────────────────────
 
 // We build a minimal fake DB that returns agent rows on demand
 function makeDb(telegramBotToken: string | null | undefined) {
@@ -47,7 +47,7 @@ function makeDb(telegramBotToken: string | null | undefined) {
 }
 
 // We also need the agents table import (a Drizzle table object) — mock it
-vi.mock('@nodalai/db', () => {
+vi.mock('@nodal-agents/db', () => {
   const agents = {
     telegramBotToken: 'telegram_bot_token',
     id: 'id',

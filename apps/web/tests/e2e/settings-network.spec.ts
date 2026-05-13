@@ -142,7 +142,7 @@ test.describe('NetworkForm — /settings', () => {
     }
 
     // Drift hint scoped to the Network section:
-    // "New bind `<value>` requires `nodalai down && nodalai up` to take effect."
+    // "New bind `<value>` requires `nodal-agents down && nodal-agents up` to take effect."
     await expect(section.getByText(/New bind .+ requires/i)).toBeVisible({ timeout: 5_000 });
   });
 

@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/auth",
+  "name": "@nodal-agents/auth",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,8 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nodalai/db": "workspace:*",
-    "@nodalai/shared": "workspace:*",
+    "@nodal-agents/db": "workspace:*",
+    "@nodal-agents/shared": "workspace:*",
     "better-auth": "^1.6.10",
     "drizzle-orm": "^0.45.2"
   },

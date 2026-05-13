@@ -2,12 +2,12 @@
 // Verifies data-driven team block: content reflects DB state, not hardcoded slugs.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { eq } from '@nodalai/db';
-import { spinUpTestDb } from '@nodalai/db/test-utils';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
 import { buildTeamBlock } from '../team-block';
 import type { AgentId } from '../types';
-import type { TestDb } from '@nodalai/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 
 let db: TestDb;
 
@@ -20,11 +20,11 @@ beforeAll(async () => {
 
 async function seedContext(db: TestDb) {
   const [user] = await db
-    .insert((await import('@nodalai/db')).users)
+    .insert((await import('@nodal-agents/db')).users)
     .values({ email: `test-tb-${Date.now()}@ex.com` })
     .returning();
   const [entity] = await db
-    .insert((await import('@nodalai/db')).entities)
+    .insert((await import('@nodal-agents/db')).entities)
     .values({ userId: user!.id, name: 'T', slug: `e-tb-${Date.now()}` })
     .returning();
   return { userId: user!.id, entityId: entity!.id };
@@ -212,17 +212,17 @@ describe('buildTeamBlock', () => {
 
     // Seed a connector + credential + assignment for the worker (notion-oauth
     // is in ADAPTER_REGISTRY so the team block should surface its tools).
-    const { connectors, credentials, agentConnectorAssignments } = await import('@nodalai/db');
+    const { connectors, credentials, agentConnectorAssignments } = await import('@nodal-agents/db');
     const [cred] = await db
       .insert(credentials)
       .values({
-        ownerUserId: (await import('@nodalai/db')).users
+        ownerUserId: (await import('@nodal-agents/db')).users
           ? // re-fetch user id via the seedContext output not available here — query via entityId
             (
               await db
-                .select({ id: (await import('@nodalai/db')).entities.userId })
-                .from((await import('@nodalai/db')).entities)
-                .where(eq((await import('@nodalai/db')).entities.id, entityId))
+                .select({ id: (await import('@nodal-agents/db')).entities.userId })
+                .from((await import('@nodal-agents/db')).entities)
+                .where(eq((await import('@nodal-agents/db')).entities.id, entityId))
             )[0]!.id
           : '00000000-0000-0000-0000-000000000000',
         name: 'Test Notion Cred',

@@ -1,8 +1,8 @@
 // router/resume.ts — inject child result into parent and resume
 // Called when a child job completes (by cron or worker completing a child job).
 
-import { eq } from '@nodalai/db';
-import { agentJobs } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { agentJobs } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
 

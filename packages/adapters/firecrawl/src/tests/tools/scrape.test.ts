@@ -1,4 +1,4 @@
-// @nodalai/adapter-firecrawl — scrape, map, search tool tests
+// @nodal-agents/adapter-firecrawl — scrape, map, search tool tests
 // Mocks: @mendable/firecrawl-js FirecrawlClient methods are stubbed.
 // Assertions are on real returned content / arguments passed to the SDK.
 
@@ -10,7 +10,7 @@ import {
   makeFirecrawlSearchTool,
 } from '../../tools/scrape.ts';
 import { FirecrawlApiError } from '../../errors.ts';
-import type { ToolContext } from '@nodalai/tools';
+import type { ToolContext } from '@nodal-agents/tools';
 
 vi.mock('@mendable/firecrawl-js', () => {
   class FirecrawlClient {

@@ -1,8 +1,8 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq } from '@nodalai/db';
-import { agentJobs, agents } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 import type {
   AgentId,

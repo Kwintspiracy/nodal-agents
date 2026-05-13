@@ -1,4 +1,4 @@
-// Re-export all tables and types from @nodalai/db/schema
+// Re-export all tables and types from @nodal-agents/db/schema
 
 export * from './enums.ts';
 export * from './users.ts';

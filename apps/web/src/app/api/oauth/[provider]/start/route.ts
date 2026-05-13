@@ -5,7 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { encrypt } from '@nodalai/secrets';
+import { encrypt } from '@nodal-agents/secrets';
 import { getAuthProvider, requireAuth } from '@/lib/server.ts';
 import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
 import {
@@ -51,7 +51,7 @@ export async function POST(
   // or a credentialType (e.g. 'google-oauth') when the wizard posts directly via type.
   const provider =
     getOAuthProvider(slug) ??
-    getProviderByCredentialType(slug as import('@nodalai/shared').CredentialType);
+    getProviderByCredentialType(slug as import('@nodal-agents/shared').CredentialType);
   if (!provider) {
     return NextResponse.json({ error: `Unknown OAuth provider: ${slug}` }, { status: 400 });
   }

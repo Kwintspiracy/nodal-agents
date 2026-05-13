@@ -1,4 +1,4 @@
-// @nodalai/llm — OpenRouter provider (OpenAI-compatible, different baseURL)
+// @nodal-agents/llm — OpenRouter provider (OpenAI-compatible, different baseURL)
 //
 // For agentic OSS model families (DeepSeek V3/V4, Kimi K2, Qwen3-Coder, GLM-4)
 // we wrap the language model with a model-family-specific native tool-call

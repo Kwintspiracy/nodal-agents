@@ -1,7 +1,7 @@
-// @nodalai/tools — execution wrapper with approval gate and audit trail
+// @nodal-agents/tools — execution wrapper with approval gate and audit trail
 
-import { approvalRequests, toolCalls } from '@nodalai/db';
-import { MessageStructureError, QuotaExhaustedError } from '@nodalai/llm';
+import { approvalRequests, toolCalls } from '@nodal-agents/db';
+import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import type { z } from 'zod';
 import type {
   ToolDefinition,
@@ -140,8 +140,8 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     // as a control-flow primitive: the runner catches it to suspend the parent
     // job and create the child. Swallowing it would convert the signal into a
     // tool error and leave the assistant message with an unresolved tool_call.
-    // Detected by name (not instanceof) because @nodalai/tools must not depend
-    // on @nodalai/orchestration (which depends on us — would be a cycle).
+    // Detected by name (not instanceof) because @nodal-agents/tools must not depend
+    // on @nodal-agents/orchestration (which depends on us — would be a cycle).
     if (err instanceof Error && err.name === 'DelegationPendingError') {
       throw err;
     }

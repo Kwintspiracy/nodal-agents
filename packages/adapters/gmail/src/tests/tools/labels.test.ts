@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — label tool tests
+// @nodal-agents/adapter-gmail — label tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { gmail_v1 } from 'googleapis';
@@ -137,14 +137,14 @@ describe('gmail_create_label', () => {
 
   it('creates a label and returns id and name', async () => {
     (gmail.users.labels.create as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: { id: 'Label_456', name: 'Projects/NodalAI' },
+      data: { id: 'Label_456', name: 'Projects/Nodal-Agents' },
     });
 
     const tool = createCreateLabelTool(gmail);
-    const result = await tool.execute({ name: 'Projects/NodalAI' }, {} as never);
+    const result = await tool.execute({ name: 'Projects/Nodal-Agents' }, {} as never);
 
     expect(result.id).toBe('Label_456');
-    expect(result.name).toBe('Projects/NodalAI');
+    expect(result.name).toBe('Projects/Nodal-Agents');
   });
 
   it('uses labelShow and show as defaults', async () => {

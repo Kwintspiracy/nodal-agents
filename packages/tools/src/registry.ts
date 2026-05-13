@@ -1,4 +1,4 @@
-// @nodalai/tools — ToolRegistry implementation
+// @nodal-agents/tools — ToolRegistry implementation
 
 import type { z } from 'zod';
 import { RISK_LEVELS } from './types';

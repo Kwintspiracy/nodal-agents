@@ -4,7 +4,7 @@
 // parallel to how telegram_send_message works for the Telegram surface.
 
 import { z } from 'zod';
-import { agentJobs, eq } from '@nodalai/db';
+import { agentJobs, eq } from '@nodal-agents/db';
 import type { ToolDefinition } from '../types';
 
 export const DashboardPublishInputSchema = z.object({

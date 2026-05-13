@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — pagination helper for Drive's pageToken API
+// @nodal-agents/adapter-google-drive — pagination helper for Drive's pageToken API
 
 /**
  * Paginate a Drive list endpoint by following `nextPageToken`.

@@ -11,7 +11,7 @@
  *   7. Server auto-assigns credential to connector, redirects to /connectors?just_connected=google-drive
  *   8. OAuthNotify fires toast; connector shows CONNECTED status
  *
- * Requires a running NodalAI stack. Skipped automatically if unreachable.
+ * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';

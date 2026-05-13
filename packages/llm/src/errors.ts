@@ -1,4 +1,4 @@
-// @nodalai/llm — error classes
+// @nodal-agents/llm — error classes
 
 // ─── QuotaExhaustedError ───────────────────────────────────────────────────────
 

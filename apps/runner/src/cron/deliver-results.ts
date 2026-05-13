@@ -6,11 +6,11 @@
 // the root is skipped. The conditional UPDATE prevents double-processing
 // under concurrent ticks.
 
-import { and, eq, isNotNull, isNull } from '@nodalai/db';
-import { agentJobs, agentTasks } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { checkRootJobComplete } from '@nodalai/orchestration';
-import type { JobId } from '@nodalai/orchestration';
+import { and, eq, isNotNull, isNull } from '@nodal-agents/db';
+import { agentJobs, agentTasks } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { checkRootJobComplete } from '@nodal-agents/orchestration';
+import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── deliverCompletedRoots ────────────────────────────────────────────────────
 

@@ -13,11 +13,11 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, isEncrypted } from '@nodalai/secrets';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { credentials } from '@nodalai/db';
-import { eq } from '@nodalai/db';
+import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, isEncrypted } from '@nodal-agents/secrets';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { credentials } from '@nodal-agents/db';
+import { eq } from '@nodal-agents/db';
 
 // ─── Module-level mock setup ──────────────────────────────────────────────────
 
@@ -43,8 +43,8 @@ vi.mock('@/lib/server.ts', () => ({
   requireUserWithEntity: vi.fn(),
 }));
 
-// Mock requireAuth from @nodalai/auth so server actions resolve to our test user.
-vi.mock('@nodalai/auth', () => ({
+// Mock requireAuth from @nodal-agents/auth so server actions resolve to our test user.
+vi.mock('@nodal-agents/auth', () => ({
   requireAuth: vi.fn().mockImplementation(async () => ({
     userId: _testUserId,
     entityId: _testEntityId,

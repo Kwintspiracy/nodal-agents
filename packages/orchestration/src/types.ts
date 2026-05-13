@@ -1,8 +1,8 @@
-// @nodalai/orchestration — core types
+// @nodal-agents/orchestration — core types
 // No hardcoded agent slugs, names, or metadata. All data-driven from DB.
 
-import type { AnyDrizzleDb } from '@nodalai/db';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { ToolDefinition } from '@nodal-agents/tools';
 
 // ─── Branded IDs ──────────────────────────────────────────────────────────────
 

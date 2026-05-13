@@ -1,4 +1,4 @@
-// @nodalai/adapter-apify — thin wrapper around the official apify-client SDK
+// @nodal-agents/adapter-apify — thin wrapper around the official apify-client SDK
 // Uses ApifyClient from 'apify-client' — no hand-rolled HTTP.
 
 import { ApifyClient } from 'apify-client';

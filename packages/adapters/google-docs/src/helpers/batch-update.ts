@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — batchUpdate request body builders
+// @nodal-agents/adapter-google-docs — batchUpdate request body builders
 // Google Docs batchUpdate uses an array of Request objects, each with exactly
 // one key corresponding to the operation type.
 

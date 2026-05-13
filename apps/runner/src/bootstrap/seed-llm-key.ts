@@ -13,9 +13,9 @@
 //     local-trust and single-user local-auth installs like Quentin's)
 //   - >1 entities → skip (future multi-user installs, avoid wrong-entity seeding)
 
-import { count, eq, isNull, and, entityLlmKeys, agents, entities } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { encrypt, last4 } from '@nodalai/secrets';
+import { count, eq, isNull, and, entityLlmKeys, agents, entities } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { encrypt, last4 } from '@nodal-agents/secrets';
 import type { RunnerEnv } from '../env.ts';
 
 export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promise<void> {

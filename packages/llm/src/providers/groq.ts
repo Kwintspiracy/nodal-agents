@@ -1,4 +1,4 @@
-// @nodalai/llm — Groq provider
+// @nodal-agents/llm — Groq provider
 
 import { createGroq } from '@ai-sdk/groq';
 import type { LanguageModel } from 'ai';

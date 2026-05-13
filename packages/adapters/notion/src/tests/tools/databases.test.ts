@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — database tools tests
+// @nodal-agents/adapter-notion — database tools tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Client } from '@notionhq/client';

@@ -1,4 +1,4 @@
-// @nodalai/adapter-airtable — typed error codes, no user-facing strings
+// @nodal-agents/adapter-airtable — typed error codes, no user-facing strings
 
 export type AirtableErrorCode =
   | 'airtable_unauthorized'

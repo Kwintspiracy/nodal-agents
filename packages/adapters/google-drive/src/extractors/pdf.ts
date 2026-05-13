@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — PDF extractor using pdf-parse
+// @nodal-agents/adapter-google-drive — PDF extractor using pdf-parse
 
 import { PDFParse } from 'pdf-parse';
 

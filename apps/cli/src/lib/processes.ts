@@ -14,7 +14,7 @@ export type SpawnResult = ResultPromise;
  * Why this exists: on Windows, spawning .CMD files goes through cmd.exe →
  * node.exe → app. A bare `child.kill('SIGTERM')` only terminates cmd.exe;
  * node.exe (the actual server) survives, keeps the listener port held, and
- * the next `nodalai up` fails because :3001 is taken by an orphan.
+ * the next `nodal-agents up` fails because :3001 is taken by an orphan.
  *
  * Uses `taskkill /T /F` on Windows to wipe the whole process tree by PID.
  * On Unix-likes the existing SIGTERM-then-SIGKILL escalation works because
@@ -57,8 +57,8 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
  * `apps/cli/dist/index.js` (built). In both cases the repo root is reached
  * by going up from the file's directory through `cli`, then `apps`.
  *
- * Layout (dev):  NodalAI / apps / cli / src / lib / processes.ts   → 4 levels up from dirname
- * Layout (dist): NodalAI / apps / cli / dist / index.js             → 3 levels up from dirname
+ * Layout (dev):  Nodal-Agents / apps / cli / src / lib / processes.ts   → 4 levels up from dirname
+ * Layout (dist): Nodal-Agents / apps / cli / dist / index.js             → 3 levels up from dirname
  */
 function resolveAppDir(appName: string): string {
   const here = fileURLToPath(import.meta.url);

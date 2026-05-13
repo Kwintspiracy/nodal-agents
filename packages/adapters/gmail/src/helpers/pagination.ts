@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — pagination helper for Gmail's pageToken API
+// @nodal-agents/adapter-gmail — pagination helper for Gmail's pageToken API
 
 /**
  * Paginate a Gmail list endpoint by following `nextPageToken`.

@@ -1,4 +1,4 @@
-// @nodalai/llm — Mistral provider
+// @nodal-agents/llm — Mistral provider
 
 import { createMistral } from '@ai-sdk/mistral';
 import type { LanguageModel } from 'ai';

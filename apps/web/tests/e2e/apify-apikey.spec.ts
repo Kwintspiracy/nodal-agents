@@ -5,7 +5,7 @@
  * This test confirms the new catalog entry renders correctly and the
  * api_key connect flow works end-to-end.
  *
- * Requires a running NodalAI stack. Skipped automatically if unreachable.
+ * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';

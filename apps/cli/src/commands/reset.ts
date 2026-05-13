@@ -12,7 +12,7 @@ export async function runReset(options: { yes?: boolean } = {}): Promise<void> {
       type: 'confirm',
       name: 'confirm',
       message: chalk.red(
-        `This will delete ALL NodalAI data at ${CONFIG_DIR} (config, database, logs). Are you sure?`,
+        `This will delete ALL Nodal-Agents data at ${CONFIG_DIR} (config, database, logs). Are you sure?`,
       ),
       initial: false,
     });
@@ -37,5 +37,5 @@ export async function runReset(options: { yes?: boolean } = {}): Promise<void> {
 
   console.log('');
   console.log(chalk.green('  Reset complete.'));
-  console.log(chalk.gray('  Run `nodalai init` to configure from scratch.'));
+  console.log(chalk.gray('  Run `nodal-agents init` to configure from scratch.'));
 }

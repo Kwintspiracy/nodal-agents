@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/delivery",
+  "name": "@nodal-agents/delivery",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,8 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nodalai/db": "workspace:*",
-    "@nodalai/shared": "workspace:*",
+    "@nodal-agents/db": "workspace:*",
+    "@nodal-agents/shared": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

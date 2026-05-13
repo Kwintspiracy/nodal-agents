@@ -1,4 +1,4 @@
-// @nodalai/adapter-firecrawl — crawl tool tests
+// @nodal-agents/adapter-firecrawl — crawl tool tests
 // Mocks: @mendable/firecrawl-js FirecrawlClient methods are stubbed.
 // Assertions are on real returned content / arguments passed to the SDK.
 
@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createFirecrawlClient } from '../../client.ts';
 import { makeFirecrawlCrawlStartTool, makeFirecrawlCrawlStatusTool } from '../../tools/crawl.ts';
 import { FirecrawlApiError } from '../../errors.ts';
-import type { ToolContext } from '@nodalai/tools';
+import type { ToolContext } from '@nodal-agents/tools';
 
 vi.mock('@mendable/firecrawl-js', () => {
   // Vitest 4 stopped accepting `vi.fn().mockImplementation(() => ({...}))` as

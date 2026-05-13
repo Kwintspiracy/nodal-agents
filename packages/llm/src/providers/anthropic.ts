@@ -1,4 +1,4 @@
-// @nodalai/llm — Anthropic provider
+// @nodal-agents/llm — Anthropic provider
 
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { LanguageModel } from 'ai';

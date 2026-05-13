@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — RFC 2822 round-trip tests
+// @nodal-agents/adapter-gmail — RFC 2822 round-trip tests
 
 import { describe, it, expect } from 'vitest';
 import { buildRfc2822Message, decodeRfc2822Message, parseRawHeaders } from '../../helpers/rfc2822';

@@ -1,5 +1,5 @@
 // dev-flag.test.ts — regression for commander option propagation.
-// Without enablePositionalOptions on the program, `nodalai up --dev`
+// Without enablePositionalOptions on the program, `nodal-agents up --dev`
 // silently runs `up` with opts={} because the program-level --dev flag
 // (registered for the default `nodalai --dev` shortcut) greedily consumes
 // the flag. The bug burned 3 days of unknowingly running stale prod builds.
@@ -31,14 +31,14 @@ function buildCli(): {
 }
 
 describe('CLI commander option propagation', () => {
-  it('`nodalai up --dev` reaches the up action with opts.dev=true', async () => {
+  it('`nodal-agents up --dev` reaches the up action with opts.dev=true', async () => {
     const { program, capture } = buildCli();
     await program.parseAsync(['node', 'cli.js', 'up', '--dev']);
     expect(capture.up).toEqual({ dev: true });
     expect(capture.default).toBeNull();
   });
 
-  it('`nodalai up` (no flag) reaches the up action with opts={}', async () => {
+  it('`nodal-agents up` (no flag) reaches the up action with opts={}', async () => {
     const { program, capture } = buildCli();
     await program.parseAsync(['node', 'cli.js', 'up']);
     expect(capture.up).toEqual({});

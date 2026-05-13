@@ -2,8 +2,8 @@
 // Write a durable fact to agent_memory table.
 
 import { z } from 'zod';
-import { agentMemory } from '@nodalai/db';
-import { MEMORY_CATEGORIES } from '@nodalai/shared';
+import { agentMemory } from '@nodal-agents/db';
+import { MEMORY_CATEGORIES } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../types';
 
 export const SaveMemoryInputSchema = z.object({

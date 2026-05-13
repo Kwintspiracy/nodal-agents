@@ -1,5 +1,5 @@
 // users + user_profiles tables
-// NOTE: In NodalAI we own our own users table (no Supabase auth.users).
+// NOTE: In Nodal-Agents we own our own users table (no Supabase auth.users).
 // Foreign keys that legacy schema pointed at auth.users now point at users.id.
 //
 // name / emailVerified / image columns are added here for better-auth

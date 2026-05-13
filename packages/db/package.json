@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/db",
+  "name": "@nodal-agents/db",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -19,8 +19,8 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@nodalai/secrets": "workspace:*",
-    "@nodalai/shared": "workspace:*",
+    "@nodal-agents/secrets": "workspace:*",
+    "@nodal-agents/shared": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.5"
   },

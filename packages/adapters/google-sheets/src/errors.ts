@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — typed error codes, no user-facing strings
+// @nodal-agents/adapter-google-sheets — typed error codes, no user-facing strings
 
 export type SheetsErrorCode =
   | 'sheets_unauthorized'

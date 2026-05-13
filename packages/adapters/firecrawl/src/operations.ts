@@ -1,10 +1,10 @@
-// @nodalai/adapter-firecrawl — operation descriptors.
+// @nodal-agents/adapter-firecrawl — operation descriptors.
 // Each slug MUST match the tool name produced by createFirecrawlTools() exactly.
 // Risk classification:
 //   read — all Firecrawl operations are read-only (scrape, crawl, map, search)
 //   No write or destructive operations exist in the Firecrawl API.
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const FIRECRAWL_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (5) ────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
-// @nodalai/adapter-firecrawl — public API
+// @nodal-agents/adapter-firecrawl — public API
 // Single factory: createFirecrawlTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createFirecrawlClient } from './client.ts';
 import {

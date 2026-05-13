@@ -93,7 +93,7 @@ export default function NetworkForm({ initial }: Props) {
       {!initial.configPathExists && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 text-xs text-amber-300">
           ~/.nodalai/config.json wasn&apos;t found. Save here will fail until you&apos;ve run{' '}
-          <code className="font-mono">nodalai init</code> at least once.
+          <code className="font-mono">nodal-agents init</code> at least once.
         </div>
       )}
 
@@ -108,14 +108,14 @@ export default function NetworkForm({ initial }: Props) {
         {driftFromRuntime && (
           <span className="text-xs text-amber-400">
             New bind <code className="font-mono">{bind}</code> requires{' '}
-            <code className="font-mono">nodalai down && nodalai up</code> to take effect.
+            <code className="font-mono">nodal-agents down && nodal-agents up</code> to take effect.
           </span>
         )}
       </div>
 
       {restartHint && (
         <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2 text-xs text-emerald-300">
-          Saved. Restart with <code className="font-mono">nodalai down && nodalai up</code> to
+          Saved. Restart with <code className="font-mono">nodal-agents down && nodal-agents up</code> to
           activate the new network mode.
         </div>
       )}

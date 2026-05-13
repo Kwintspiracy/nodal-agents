@@ -1,8 +1,8 @@
-// @nodalai/adapter-gmail — message tools
+// @nodal-agents/adapter-gmail — message tools
 // send, list, get, reply, modify-labels, forward, trash, untrash, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError, GmailAdapterError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';

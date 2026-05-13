@@ -1,8 +1,8 @@
-// @nodalai/adapter-google-docs — formatting tools
+// @nodal-agents/adapter-google-docs — formatting tools
 // docs_format_text, docs_apply_named_style, docs_batch_update
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import { buildUpdateTextStyleRequest, buildApplyNamedStyleRequest } from '../helpers/batch-update';

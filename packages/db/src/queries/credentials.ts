@@ -4,14 +4,14 @@
 
 import { eq } from 'drizzle-orm';
 import { credentials } from '../schema/credentials.ts';
-import { encrypt, decrypt, isEncrypted } from '@nodalai/secrets';
-import { getProviderByCredentialType } from '@nodalai/shared';
+import { encrypt, decrypt, isEncrypted } from '@nodal-agents/secrets';
+import { getProviderByCredentialType } from '@nodal-agents/shared';
 import type {
   CredentialType,
   GoogleOauthPayload,
   NotionOauthPayload,
   AirtableOauthPayload,
-} from '@nodalai/shared';
+} from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────

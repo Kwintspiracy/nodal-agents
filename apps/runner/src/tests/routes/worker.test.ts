@@ -2,12 +2,12 @@
 // message structure validated, awaiting_approval does NOT bump chain_count
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 import { createApp } from '../../server.ts';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import { createLlmClient, createEmbeddingClient } from '@nodalai/llm';
-import { LocalTrustProvider } from '@nodalai/auth';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
+import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 

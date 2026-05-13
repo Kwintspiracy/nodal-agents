@@ -14,7 +14,7 @@ export const webhookTriggers = pgTable(
     slug: text('slug').notNull().unique(),
     taskTemplate: text('task_template').notNull(),
     active: boolean('active').default(true),
-    // default: random 32-char hex (generated in app layer for NodalAI)
+    // default: random 32-char hex (generated in app layer for Nodal-Agents)
     secret: text('secret'),
     lastTriggeredAt: timestamp('last_triggered_at', { withTimezone: true }),
     triggerCount: integer('trigger_count').default(0),

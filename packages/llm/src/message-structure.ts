@@ -1,4 +1,4 @@
-// @nodalai/llm — message structure validation
+// @nodal-agents/llm — message structure validation
 // Ports the invariants from AgentOne/agent/resilience.py
 
 import type { ModelMessage } from 'ai';

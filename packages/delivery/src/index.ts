@@ -1,4 +1,4 @@
-// index.ts — public API for @nodalai/delivery
+// index.ts — public API for @nodal-agents/delivery
 
 export {
   sendTelegramMessage,

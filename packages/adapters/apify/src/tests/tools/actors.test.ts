@@ -1,4 +1,4 @@
-// @nodalai/adapter-apify — actors tools unit tests
+// @nodal-agents/adapter-apify — actors tools unit tests
 // Mocks the apify-client SDK module surface. Asserts on real returned content
 // and arguments passed to the SDK — not just call counts.
 
@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ApifyApiError } from '../../errors.ts';
 import { makeApifyRunActorTool, makeApifyGetRunTool } from '../../tools/actors.ts';
 import type { ApifyClient } from '../../client.ts';
-import type { ToolContext } from '@nodalai/tools';
+import type { ToolContext } from '@nodal-agents/tools';
 
 // Minimal ToolContext stub — adapter tools do not use ctx fields
 const ctx = {} as ToolContext;
