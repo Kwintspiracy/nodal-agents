@@ -1,4 +1,4 @@
-# NodalAI — instructions for Claude Code
+# Nodal-Agents — instructions for Claude Code
 
 This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual-stack).
 

@@ -4,7 +4,7 @@
  * Airtable uses PKCE S256 + Basic auth on the token endpoint.
  * Flow mirrors Google Drive but uses the airtable-oauth-specific paths.
  *
- * Requires a running NodalAI stack. Skipped automatically if unreachable.
+ * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';

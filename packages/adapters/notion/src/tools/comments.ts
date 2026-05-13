@@ -1,7 +1,7 @@
-// @nodalai/adapter-notion — comment tools
+// @nodal-agents/adapter-notion — comment tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 import { chunkRichText } from '../helpers/property-coerce';

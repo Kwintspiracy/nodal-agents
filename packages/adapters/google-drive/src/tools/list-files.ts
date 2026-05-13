@@ -1,7 +1,7 @@
-// @nodalai/adapter-google-drive — drive_list_files tool
+// @nodal-agents/adapter-google-drive — drive_list_files tool
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { drive_v3 } from 'googleapis';
 import { mapDriveError } from '../errors';
 import { paginateDrive } from '../helpers/pagination';

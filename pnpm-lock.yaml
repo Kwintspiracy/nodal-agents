@@ -44,13 +44,13 @@ importers:
 
   apps/cli:
     dependencies:
-      '@nodalai/auth':
+      '@nodal-agents/auth':
         specifier: workspace:*
         version: link:../../packages/auth
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       chalk:
@@ -96,34 +96,34 @@ importers:
       '@hono/node-server':
         specifier: ^2.0.2
         version: 2.0.2(hono@4.12.18)
-      '@nodalai/auth':
+      '@nodal-agents/auth':
         specifier: workspace:*
         version: link:../../packages/auth
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@nodalai/delivery':
+      '@nodal-agents/delivery':
         specifier: workspace:*
         version: link:../../packages/delivery
-      '@nodalai/llm':
+      '@nodal-agents/llm':
         specifier: workspace:*
         version: link:../../packages/llm
-      '@nodalai/memory':
+      '@nodal-agents/memory':
         specifier: workspace:*
         version: link:../../packages/memory
-      '@nodalai/orchestration':
+      '@nodal-agents/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
-      '@nodalai/runner-adapters':
+      '@nodal-agents/runner-adapters':
         specifier: workspace:*
         version: link:../../packages/runner-adapters
-      '@nodalai/secrets':
+      '@nodal-agents/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../packages/tools
       cron-parser:
@@ -151,34 +151,34 @@ importers:
 
   apps/web:
     dependencies:
-      '@nodalai/auth':
+      '@nodal-agents/auth':
         specifier: workspace:*
         version: link:../../packages/auth
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@nodalai/delivery':
+      '@nodal-agents/delivery':
         specifier: workspace:*
         version: link:../../packages/delivery
-      '@nodalai/llm':
+      '@nodal-agents/llm':
         specifier: workspace:*
         version: link:../../packages/llm
-      '@nodalai/memory':
+      '@nodal-agents/memory':
         specifier: workspace:*
         version: link:../../packages/memory
-      '@nodalai/orchestration':
+      '@nodal-agents/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
-      '@nodalai/runner-adapters':
+      '@nodal-agents/runner-adapters':
         specifier: workspace:*
         version: link:../../packages/runner-adapters
-      '@nodalai/secrets':
+      '@nodal-agents/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../packages/tools
       '@phosphor-icons/react':
@@ -242,10 +242,10 @@ importers:
 
   packages/adapters/airtable:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       zod:
@@ -258,10 +258,10 @@ importers:
 
   packages/adapters/apify:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       apify-client:
@@ -280,10 +280,10 @@ importers:
       '@mendable/firecrawl-js':
         specifier: ^4.22.0
         version: 4.22.2
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       zod:
@@ -296,10 +296,10 @@ importers:
 
   packages/adapters/gmail:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       googleapis:
@@ -315,10 +315,10 @@ importers:
 
   packages/adapters/google-docs:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       googleapis:
@@ -334,10 +334,10 @@ importers:
 
   packages/adapters/google-drive:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       exceljs:
@@ -365,10 +365,10 @@ importers:
 
   packages/adapters/google-sheets:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       googleapis:
@@ -384,10 +384,10 @@ importers:
 
   packages/adapters/notion:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       '@notionhq/client':
@@ -403,10 +403,10 @@ importers:
 
   packages/adapters/tavily:
     dependencies:
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../../tools
       '@tavily/core':
@@ -422,10 +422,10 @@ importers:
 
   packages/auth:
     dependencies:
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
       better-auth:
@@ -444,10 +444,10 @@ importers:
 
   packages/db:
     dependencies:
-      '@nodalai/secrets':
+      '@nodal-agents/secrets':
         specifier: workspace:*
         version: link:../secrets
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
       drizzle-orm:
@@ -469,10 +469,10 @@ importers:
 
   packages/delivery:
     dependencies:
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
       zod:
@@ -509,7 +509,7 @@ importers:
       '@ai-sdk/provider':
         specifier: ^3.0.10
         version: 3.0.10
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
       ai:
@@ -528,13 +528,13 @@ importers:
 
   packages/memory:
     dependencies:
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
-      '@nodalai/llm':
+      '@nodal-agents/llm':
         specifier: workspace:*
         version: link:../llm
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
       zod:
@@ -550,19 +550,19 @@ importers:
 
   packages/orchestration:
     dependencies:
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
-      '@nodalai/llm':
+      '@nodal-agents/llm':
         specifier: workspace:*
         version: link:../llm
-      '@nodalai/runner-adapters':
+      '@nodal-agents/runner-adapters':
         specifier: workspace:*
         version: link:../runner-adapters
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../tools
       zod:
@@ -578,37 +578,37 @@ importers:
 
   packages/runner-adapters:
     dependencies:
-      '@nodalai/adapter-airtable':
+      '@nodal-agents/adapter-airtable':
         specifier: workspace:*
         version: link:../adapters/airtable
-      '@nodalai/adapter-apify':
+      '@nodal-agents/adapter-apify':
         specifier: workspace:*
         version: link:../adapters/apify
-      '@nodalai/adapter-firecrawl':
+      '@nodal-agents/adapter-firecrawl':
         specifier: workspace:*
         version: link:../adapters/firecrawl
-      '@nodalai/adapter-gmail':
+      '@nodal-agents/adapter-gmail':
         specifier: workspace:*
         version: link:../adapters/gmail
-      '@nodalai/adapter-google-docs':
+      '@nodal-agents/adapter-google-docs':
         specifier: workspace:*
         version: link:../adapters/google-docs
-      '@nodalai/adapter-google-drive':
+      '@nodal-agents/adapter-google-drive':
         specifier: workspace:*
         version: link:../adapters/google-drive
-      '@nodalai/adapter-google-sheets':
+      '@nodal-agents/adapter-google-sheets':
         specifier: workspace:*
         version: link:../adapters/google-sheets
-      '@nodalai/adapter-notion':
+      '@nodal-agents/adapter-notion':
         specifier: workspace:*
         version: link:../adapters/notion
-      '@nodalai/adapter-tavily':
+      '@nodal-agents/adapter-tavily':
         specifier: workspace:*
         version: link:../adapters/tavily
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
-      '@nodalai/tools':
+      '@nodal-agents/tools':
         specifier: workspace:*
         version: link:../tools
       zod:
@@ -633,16 +633,16 @@ importers:
 
   packages/tools:
     dependencies:
-      '@nodalai/db':
+      '@nodal-agents/db':
         specifier: workspace:*
         version: link:../db
-      '@nodalai/delivery':
+      '@nodal-agents/delivery':
         specifier: workspace:*
         version: link:../delivery
-      '@nodalai/llm':
+      '@nodal-agents/llm':
         specifier: workspace:*
         version: link:../llm
-      '@nodalai/shared':
+      '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
       ai:

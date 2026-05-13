@@ -1,7 +1,7 @@
-// @nodalai/adapter-notion — public API
+// @nodal-agents/adapter-notion — public API
 // Single factory: createNotionTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createNotionClient } from './client';
 import { createSearchTool } from './tools/search';

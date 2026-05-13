@@ -1,4 +1,4 @@
-// @nodalai/memory — error types
+// @nodal-agents/memory — error types
 
 export type MemoryErrorCode =
   | 'MEMORY_NOT_FOUND'

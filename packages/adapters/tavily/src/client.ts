@@ -1,4 +1,4 @@
-// @nodalai/adapter-tavily — thin wrapper around @tavily/core
+// @nodal-agents/adapter-tavily — thin wrapper around @tavily/core
 // Uses the official SDK exclusively — no hand-rolled HTTP.
 
 import { tavily } from '@tavily/core';

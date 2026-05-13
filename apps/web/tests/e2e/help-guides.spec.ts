@@ -5,7 +5,7 @@
  * Scenario B: Apify connector "Where do I get this?" expander reveals the
  *             console.apify.com link.
  *
- * Requires a running NodalAI stack. Skipped automatically if unreachable.
+ * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';

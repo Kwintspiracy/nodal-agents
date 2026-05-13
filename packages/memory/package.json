@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/memory",
+  "name": "@nodal-agents/memory",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,9 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nodalai/db": "workspace:*",
-    "@nodalai/llm": "workspace:*",
-    "@nodalai/shared": "workspace:*",
+    "@nodal-agents/db": "workspace:*",
+    "@nodal-agents/llm": "workspace:*",
+    "@nodal-agents/shared": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -11,8 +11,8 @@
 // runner process, ~30s reaction time is fine for dashboard config changes.
 // We can swap in pg_notify later if it matters.
 
-import { isNotNull, eq, and } from '@nodalai/db';
-import { agents } from '@nodalai/db';
+import { isNotNull, eq, and } from '@nodal-agents/db';
+import { agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { runTelegramPoller, type PollerExit } from './poller.ts';

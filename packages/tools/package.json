@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/tools",
+  "name": "@nodal-agents/tools",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,10 +14,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nodalai/db": "workspace:*",
-    "@nodalai/delivery": "workspace:*",
-    "@nodalai/llm": "workspace:*",
-    "@nodalai/shared": "workspace:*",
+    "@nodal-agents/db": "workspace:*",
+    "@nodal-agents/delivery": "workspace:*",
+    "@nodal-agents/llm": "workspace:*",
+    "@nodal-agents/shared": "workspace:*",
     "ai": "^6.0.177",
     "zod": "^4.4.3"
   },

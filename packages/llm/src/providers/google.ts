@@ -1,4 +1,4 @@
-// @nodalai/llm — Google Generative AI provider
+// @nodal-agents/llm — Google Generative AI provider
 
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import type { LanguageModel } from 'ai';

@@ -141,7 +141,7 @@ export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oa
       },
       {
         number: 2,
-        text: 'Give it a name (e.g. NodalAI).',
+        text: 'Give it a name (e.g. Nodal-Agents).',
       },
       {
         number: 3,

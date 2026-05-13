@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — typed error codes, no user-facing strings
+// @nodal-agents/adapter-notion — typed error codes, no user-facing strings
 
 import { APIResponseError } from '@notionhq/client';
 

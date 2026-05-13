@@ -39,7 +39,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
     }
   } catch (err) {
     throw new Error(
-      `NodalAI stack not reachable at ${baseURL} — bring it up with \`nodalai up --dev\` first.\nCause: ${(err as Error).message}`,
+      `Nodal-Agents stack not reachable at ${baseURL} — bring it up with \`nodal-agents up --dev\` first.\nCause: ${(err as Error).message}`,
     );
   }
 

@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — parse-payload tests
+// @nodal-agents/adapter-gmail — parse-payload tests
 
 import { describe, it, expect } from 'vitest';
 import type { gmail_v1 } from 'googleapis';

@@ -1,9 +1,9 @@
-// @nodalai/adapter-google-sheets — value tools
+// @nodal-agents/adapter-google-sheets — value tools
 // read_range, read_all, batch_read_ranges, write_range, append_row,
 // clear_range, batch_update_values, find_rows
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError, SheetsAdapterError } from '../errors';
 import { coerceGrid } from '../helpers/value-coerce';

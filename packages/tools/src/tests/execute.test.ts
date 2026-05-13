@@ -3,10 +3,10 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { z } from 'zod';
-import { eq } from '@nodalai/db';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import { approvalRequests, toolCalls } from '@nodalai/db';
-import { MessageStructureError, QuotaExhaustedError } from '@nodalai/llm';
+import { eq } from '@nodal-agents/db';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { approvalRequests, toolCalls } from '@nodal-agents/db';
+import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
 import { executeTool } from '../execute';
 import type {
   ToolDefinition,
@@ -15,7 +15,7 @@ import type {
   ApprovalGateRequest,
   ApprovalRule,
 } from '../types';
-import type { TestDb } from '@nodalai/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -170,7 +170,7 @@ describe('executeTool', () => {
   });
 
   it('re-throws DelegationPendingError — assign_* tools rely on it as a control signal', async () => {
-    // Constructed inline to avoid a circular dep on @nodalai/orchestration.
+    // Constructed inline to avoid a circular dep on @nodal-agents/orchestration.
     // The runner detects this error by `name`, not instanceof, for the same reason.
     class DelegationPendingError extends Error {
       readonly code = 'delegation_pending' as const;

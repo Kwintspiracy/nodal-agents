@@ -1,11 +1,11 @@
-// @nodalai/adapter-airtable — operation descriptors.
+// @nodal-agents/adapter-airtable — operation descriptors.
 // Each slug MUST match the tool name produced by createAirtableTools() exactly.
 // Risk classification:
 //   read        — airtable_list_*, airtable_get_*
 //   write       — airtable_create_*, airtable_update_*, airtable_replace_*
 //   destructive — airtable_delete_*
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const AIRTABLE_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (4) ────────────────────────────────────────────────────────────────

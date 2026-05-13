@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — XLSX extractor using exceljs
+// @nodal-agents/adapter-google-drive — XLSX extractor using exceljs
 
 import ExcelJS from 'exceljs';
 

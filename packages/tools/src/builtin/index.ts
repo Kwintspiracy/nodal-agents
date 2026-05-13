@@ -42,7 +42,7 @@ export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
 /**
  * Documentation for the always-on built-in tools.
  * Source of truth for the "Built-in capabilities" block injected into every
- * agent's system prompt by buildSystemPrompt() in @nodalai/orchestration.
+ * agent's system prompt by buildSystemPrompt() in @nodal-agents/orchestration.
  *
  * Order matches ALWAYS_ON_TOOLS. Adding a new always-on tool requires updating
  * BOTH this array and ALWAYS_ON_TOOLS — keep them in sync. The `{name, description}`

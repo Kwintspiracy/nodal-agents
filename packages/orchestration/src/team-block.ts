@@ -2,7 +2,7 @@
 // Invariant 1: ZERO hardcoded agent slugs/names/metadata in this file.
 // Every agent name, slug, skill, instruction comes from DB at runtime.
 
-import { eq, and } from '@nodalai/db';
+import { eq, and } from '@nodal-agents/db';
 import {
   agents,
   agentAssignments,
@@ -10,8 +10,8 @@ import {
   agentSkills,
   agentConnectorAssignments,
   connectors as connectorsTable,
-} from '@nodalai/db';
-import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
+} from '@nodal-agents/db';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 

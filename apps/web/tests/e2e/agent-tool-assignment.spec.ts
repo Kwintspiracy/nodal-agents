@@ -15,7 +15,7 @@
  * The test does NOT hardcode agent or entity IDs; instead it derives them from
  * the DB based on the e2e sentinel user email.
  *
- * Requires a running NodalAI stack (port 3000). Skipped automatically if not reachable.
+ * Requires a running Nodal-Agents stack (port 3000). Skipped automatically if not reachable.
  */
 
 import { test, expect } from '@playwright/test';
@@ -33,7 +33,7 @@ const E2E_EMAIL = 'e2e-playwright@nodalai.local';
  * Returns { userId, entityId } for the sentinel e2e user.
  */
 async function resolveE2eUserContext(): Promise<{ userId: string; entityId: string }> {
-  const { users, entities, eq } = await import('@nodalai/db');
+  const { users, entities, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     const userRows = await db
@@ -72,7 +72,7 @@ async function insertTestConnector(
   entityId: string,
 ): Promise<{ connectorId: string; credentialId: string }> {
   const { credentials, connectors, agentConnectorAssignments, eq, and } =
-    await import('@nodalai/db');
+    await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     // Remove any prior google-drive connector for this entity. Capture the
@@ -134,7 +134,7 @@ async function insertTestConnector(
 
 /** Delete the test connector (and its credential). Assignments cascade via FK. */
 async function deleteTestConnector(connectorId: string): Promise<void> {
-  const { connectors, credentials, eq } = await import('@nodalai/db');
+  const { connectors, credentials, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     // Fetch credentialId before deleting
@@ -155,7 +155,7 @@ async function deleteTestConnector(connectorId: string): Promise<void> {
 
 /** Find the first active agent for the given entity. */
 async function findAgentId(entityId: string): Promise<string> {
-  const { agents, eq, and } = await import('@nodalai/db');
+  const { agents, eq, and } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     const rows = await db
@@ -176,7 +176,7 @@ async function pollAssignment(
   connectorId: string,
   opts: { expect: 'present' | 'absent'; timeoutMs?: number },
 ): Promise<void> {
-  const { agentConnectorAssignments, eq, and } = await import('@nodalai/db');
+  const { agentConnectorAssignments, eq, and } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     await pollDb(
@@ -327,7 +327,7 @@ test.describe('Agent edit page — Tools & Connectors section', () => {
     await page.waitForTimeout(800);
 
     // DB row should have enabledOperations=null (all enabled)
-    const { agentConnectorAssignments, eq, and } = await import('@nodalai/db');
+    const { agentConnectorAssignments, eq, and } = await import('@nodal-agents/db');
     const { db, close } = makeDbClient();
     try {
       const rows = await db

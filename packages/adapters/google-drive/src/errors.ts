@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — typed error codes, no user-facing strings
+// @nodal-agents/adapter-google-drive — typed error codes, no user-facing strings
 
 export type DriveErrorCode =
   | 'drive_unauthorized'

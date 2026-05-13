@@ -14,7 +14,7 @@ import {
   _resetMasterKeyCacheForTests,
 } from '../index.ts';
 
-describe('@nodalai/secrets', () => {
+describe('@nodal-agents/secrets', () => {
   // Use a fresh temp dir + key per test so we never touch ~/.nodalai/secrets.key.
   let tmp: string;
   let keyPath: string;

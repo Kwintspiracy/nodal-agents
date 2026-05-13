@@ -7,7 +7,7 @@
 //                 drive_rename_file, drive_copy_file, drive_share_file
 //   destructive — drive_delete_file
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const DRIVE_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (5) ────────────────────────────────────────────────────────────────

@@ -10,17 +10,17 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { agentJobs, agentTasks, agents } from '@nodalai/db';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import { createEmbeddingClient } from '@nodalai/llm';
-import { LocalTrustProvider } from '@nodalai/auth';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agentJobs, agentTasks, agents } from '@nodal-agents/db';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createEmbeddingClient } from '@nodal-agents/llm';
+import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
 import { executeReadyTasks } from '../execute-ready.ts';
 
-// Brique 25: execute.ts calls createLlmClient() from @nodalai/llm directly.
+// Brique 25: execute.ts calls createLlmClient() from @nodal-agents/llm directly.
 // Intercept so tests continue using the per-call mock client.
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   let _active: RunnerDeps['llmClient'] | null = null;
@@ -32,9 +32,9 @@ const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   };
 });
 
-vi.mock('@nodalai/llm', async (importOriginal) => {
+vi.mock('@nodal-agents/llm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('@nodalai/llm')>();
+  const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
   return {
     ...actual,
     createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
@@ -119,7 +119,7 @@ function makeDeps(db: TestDb, llmResponses: Parameters<typeof makeMockLlmClient>
   const registry = createToolRegistry();
   registerBuiltins(registry);
   const client = makeMockLlmClient(llmResponses);
-  // Register so the vi.mock('@nodalai/llm') intercept returns this client
+  // Register so the vi.mock('@nodal-agents/llm') intercept returns this client
   // when execute.ts calls createLlmClient() (Brique 25).
   setActiveLlmClient(client);
 

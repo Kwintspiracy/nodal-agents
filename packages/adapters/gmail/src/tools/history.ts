@@ -1,8 +1,8 @@
-// @nodalai/adapter-gmail — history tools
+// @nodal-agents/adapter-gmail — history tools
 // gmail_list_history — incremental sync using historyId
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 

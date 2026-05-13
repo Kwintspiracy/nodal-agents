@@ -8,7 +8,7 @@
 //                 docs_batch_update
 //   destructive — docs_delete_content_range
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const DOCS_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (2) ────────────────────────────────────────────────────────────────

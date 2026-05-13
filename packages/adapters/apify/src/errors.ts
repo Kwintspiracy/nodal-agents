@@ -1,4 +1,4 @@
-// @nodalai/adapter-apify — typed error codes, no user-facing strings
+// @nodal-agents/adapter-apify — typed error codes, no user-facing strings
 
 export type ApifyErrorCode =
   | 'apify_unauthorized'

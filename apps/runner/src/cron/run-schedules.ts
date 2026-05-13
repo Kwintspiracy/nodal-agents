@@ -8,13 +8,13 @@
 // Idempotent: two concurrent ticks can't fire the same schedule twice — the
 // conditional UPDATE acts as the lock.
 
-import { and, eq, isNull, lte, or } from '@nodalai/db';
-import { agentSchedules, agentJobs, agents } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
+import { and, eq, isNull, lte, or } from '@nodal-agents/db';
+import { agentSchedules, agentJobs, agents } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
-import type { JobId } from '@nodalai/orchestration';
+import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── runScheduleTick ──────────────────────────────────────────────────────────
 

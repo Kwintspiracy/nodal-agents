@@ -1,7 +1,7 @@
-// @nodalai/adapter-airtable — public API
+// @nodal-agents/adapter-airtable — public API
 // Single factory: createAirtableTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createAirtableClient } from './client.ts';
 import { makeAirtableListBasesTool, makeAirtableListTablesTool } from './tools/bases.ts';

@@ -1,8 +1,8 @@
 // planner/dependencies.ts — dependency validation for task board tasks
 // Validates that depends_on references exist and contain no cycles.
 
-import { eq, inArray } from '@nodalai/db';
-import { agentTasks } from '@nodalai/db';
+import { eq, inArray } from '@nodal-agents/db';
+import { agentTasks } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 import type { TaskId, AnyDrizzleDb } from '../types';
 

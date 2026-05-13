@@ -1,4 +1,4 @@
-// @nodalai/llm — public API
+// @nodal-agents/llm — public API
 
 // Types
 export type { ProviderName, ProviderCapabilities, ProviderConfig, NodalLlmClient } from './types';

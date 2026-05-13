@@ -1,7 +1,7 @@
-// @nodalai/adapter-tavily — search, extract, and crawl tools
+// @nodal-agents/adapter-tavily — search, extract, and crawl tools
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from '@nodalai/tools';
+import type { ToolDefinition, ToolContext } from '@nodal-agents/tools';
 import type { TavilyClient } from '../client.ts';
 import { wrapTavilyError } from '../errors.ts';
 

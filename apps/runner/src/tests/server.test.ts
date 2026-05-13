@@ -2,12 +2,12 @@
 // Minimal smoke test to verify server starts and responds.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import { createLlmClient } from '@nodalai/llm';
-import { LocalTrustProvider } from '@nodalai/auth';
-import { createEmbeddingClient } from '@nodalai/llm';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createLlmClient } from '@nodal-agents/llm';
+import { LocalTrustProvider } from '@nodal-agents/auth';
+import { createEmbeddingClient } from '@nodal-agents/llm';
 import { createApp } from '../server.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';

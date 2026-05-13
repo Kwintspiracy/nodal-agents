@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — DOCX extractor tests
+// @nodal-agents/adapter-google-drive — DOCX extractor tests
 
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';

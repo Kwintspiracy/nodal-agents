@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — googleapis Drive v3 client factory
+// @nodal-agents/adapter-google-drive — googleapis Drive v3 client factory
 
 import { google } from 'googleapis';
 import type { drive_v3 } from 'googleapis';

@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — drive_list_files tests
+// @nodal-agents/adapter-google-drive — drive_list_files tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { drive_v3 } from 'googleapis';

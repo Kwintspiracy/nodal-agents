@@ -1,8 +1,8 @@
-// @nodalai/adapter-google-sheets — formatting tools
+// @nodal-agents/adapter-google-sheets — formatting tools
 // format_range, resize_columns, freeze_panes
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError, SheetsAdapterError } from '../errors';
 import {

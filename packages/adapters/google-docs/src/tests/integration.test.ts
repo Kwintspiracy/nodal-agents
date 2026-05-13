@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — integration test
+// @nodal-agents/adapter-google-docs — integration test
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';

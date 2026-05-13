@@ -10,18 +10,18 @@
 //     credentials row); used by Personal Access Tokens and API keys
 //     (firecrawl, apify, tavily, airtable PAT, notion internal integration).
 
-import { createNotionTools, NOTION_OPERATIONS } from '@nodalai/adapter-notion';
-import { createAirtableTools, AIRTABLE_OPERATIONS } from '@nodalai/adapter-airtable';
-import { createDriveTools, DRIVE_OPERATIONS } from '@nodalai/adapter-google-drive';
-import { createGmailTools, GMAIL_OPERATIONS } from '@nodalai/adapter-gmail';
-import { createSheetsTools, SHEETS_OPERATIONS } from '@nodalai/adapter-google-sheets';
-import { createDocsTools, DOCS_OPERATIONS } from '@nodalai/adapter-google-docs';
-import { createFirecrawlTools, FIRECRAWL_OPERATIONS } from '@nodalai/adapter-firecrawl';
-import { createApifyTools, APIFY_OPERATIONS } from '@nodalai/adapter-apify';
-import { createTavilyTools, TAVILY_OPERATIONS } from '@nodalai/adapter-tavily';
+import { createNotionTools, NOTION_OPERATIONS } from '@nodal-agents/adapter-notion';
+import { createAirtableTools, AIRTABLE_OPERATIONS } from '@nodal-agents/adapter-airtable';
+import { createDriveTools, DRIVE_OPERATIONS } from '@nodal-agents/adapter-google-drive';
+import { createGmailTools, GMAIL_OPERATIONS } from '@nodal-agents/adapter-gmail';
+import { createSheetsTools, SHEETS_OPERATIONS } from '@nodal-agents/adapter-google-sheets';
+import { createDocsTools, DOCS_OPERATIONS } from '@nodal-agents/adapter-google-docs';
+import { createFirecrawlTools, FIRECRAWL_OPERATIONS } from '@nodal-agents/adapter-firecrawl';
+import { createApifyTools, APIFY_OPERATIONS } from '@nodal-agents/adapter-apify';
+import { createTavilyTools, TAVILY_OPERATIONS } from '@nodal-agents/adapter-tavily';
 import type { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
-import type { CredentialType, OperationDescriptor } from '@nodalai/shared';
+import type { ToolDefinition } from '@nodal-agents/tools';
+import type { CredentialType, OperationDescriptor } from '@nodal-agents/shared';
 
 export type AdapterCredentialSource = CredentialType | 'api_key';
 

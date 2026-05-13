@@ -24,14 +24,14 @@ function lanIPv4(): string[] {
 const nextConfig: NextConfig = {
   allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [
-    '@nodalai/db',
-    '@nodalai/auth',
-    '@nodalai/delivery',
-    '@nodalai/llm',
-    '@nodalai/memory',
-    '@nodalai/orchestration',
-    '@nodalai/shared',
-    '@nodalai/tools',
+    '@nodal-agents/db',
+    '@nodal-agents/auth',
+    '@nodal-agents/delivery',
+    '@nodal-agents/llm',
+    '@nodal-agents/memory',
+    '@nodal-agents/orchestration',
+    '@nodal-agents/shared',
+    '@nodal-agents/tools',
   ],
   // Empty turbopack config silences the "webpack config exists, no turbopack
   // config" warning. Workspace packages use extension-less relative imports

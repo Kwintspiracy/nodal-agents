@@ -1,4 +1,4 @@
-// @nodalai/db — public API
+// @nodal-agents/db — public API
 
 export { createClient } from './client.ts';
 export type { DbClient, CreateClientOptions, AnyDrizzleDb } from './client.ts';

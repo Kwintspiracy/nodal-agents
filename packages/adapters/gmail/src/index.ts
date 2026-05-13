@@ -1,7 +1,7 @@
-// @nodalai/adapter-gmail — public API
+// @nodal-agents/adapter-gmail — public API
 // Single factory: createGmailTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createGmailClient } from './client';
 

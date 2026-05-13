@@ -24,7 +24,7 @@ const E2E_EMAIL = 'e2e-playwright@nodalai.local';
  * Returns null if the user doesn't exist yet (global-setup hasn't run).
  */
 async function getE2eEntityId(): Promise<string | null> {
-  const { users, entities, eq } = await import('@nodalai/db');
+  const { users, entities, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     const userRows = await db
@@ -211,7 +211,7 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
     // This can be in any entity — but we need the e2e user's entity to contain
     // such an agent to be able to select it in the form.
     // If not present, skip with a clear message.
-    const { agents, eq } = await import('@nodalai/db');
+    const { agents, eq } = await import('@nodal-agents/db');
     const e2eEntityId = await getE2eEntityId();
 
     if (!e2eEntityId) {
@@ -291,7 +291,7 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
     expect(jobId, 'Should have a job ID in the URL').toBeTruthy();
 
     // Assert DB row: chatId = expectedChatId, task = promptText (no suffix), channel = 'api'
-    const { agentJobs } = await import('@nodalai/db');
+    const { agentJobs } = await import('@nodal-agents/db');
     const { db: dbCheck, close: closeCheck } = makeDbClient();
     try {
       const jobRows = await dbCheck
@@ -329,7 +329,7 @@ test.describe('Test D — Skill edit flow', () => {
     page,
   }) => {
     // Create a skill in the e2e entity so we can edit it
-    const { agentSkills } = await import('@nodalai/db');
+    const { agentSkills } = await import('@nodal-agents/db');
     const e2eEntityId = await getE2eEntityId();
 
     if (!e2eEntityId) {
@@ -402,7 +402,7 @@ test.describe('Test E — Skill delete with ConfirmDialog (invariant #10)', () =
     page,
   }) => {
     // Create a temporary skill in the e2e entity to delete
-    const { agentSkills } = await import('@nodalai/db');
+    const { agentSkills } = await import('@nodal-agents/db');
     const e2eEntityId = await getE2eEntityId();
 
     if (!e2eEntityId) {

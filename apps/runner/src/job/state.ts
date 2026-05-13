@@ -1,9 +1,9 @@
 // job/state.ts — JobState machine: transitions and typed state values
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
-import { eq } from '@nodalai/db';
-import { agentJobs } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { agentJobs } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
-// @nodalai/adapter-apify — actor run tools
+// @nodal-agents/adapter-apify — actor run tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { ApifyClient } from '../client.ts';
 import { wrapApifyError } from '../errors.ts';
 

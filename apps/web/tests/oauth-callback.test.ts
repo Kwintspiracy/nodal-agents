@@ -17,11 +17,11 @@ import {
   _resetMasterKeyCacheForTests,
   encrypt,
   isEncrypted,
-} from '@nodalai/secrets';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { credentials } from '@nodalai/db';
-import { eq } from '@nodalai/db';
+} from '@nodal-agents/secrets';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { credentials } from '@nodal-agents/db';
+import { eq } from '@nodal-agents/db';
 
 // ─── Module-level mock setup ──────────────────────────────────────────────────
 

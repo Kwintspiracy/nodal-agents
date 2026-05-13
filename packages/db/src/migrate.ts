@@ -1,5 +1,5 @@
 // migrate.ts — run Drizzle migrations against a connection string
-// Only @nodalai/db may import drizzle-orm directly (architecture rule).
+// Only @nodal-agents/db may import drizzle-orm directly (architecture rule).
 
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -13,7 +13,7 @@ export interface RunMigrationsOptions {
   /**
    * If true, rewrite `vector(N)` column types to `text` before applying the
    * migrations. Used when pgvector extension isn't available — semantic
-   * memory search falls back to keyword mode (handled in @nodalai/memory).
+   * memory search falls back to keyword mode (handled in @nodal-agents/memory).
    * Default: false.
    */
   patchVectorAsText?: boolean;
@@ -21,7 +21,7 @@ export interface RunMigrationsOptions {
 
 /**
  * Apply all pending Drizzle migrations to the given database.
- * Uses the migration files bundled with @nodalai/db at packages/db/migrations/.
+ * Uses the migration files bundled with @nodal-agents/db at packages/db/migrations/.
  */
 export async function runMigrations(
   connectionString: string,

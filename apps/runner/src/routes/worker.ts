@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { executeJob } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import type { JobId } from '@nodalai/orchestration';
+import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── Request schema ───────────────────────────────────────────────────────────
 

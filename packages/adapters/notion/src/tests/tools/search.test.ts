@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — notion_search tool tests
+// @nodal-agents/adapter-notion — notion_search tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Client } from '@notionhq/client';

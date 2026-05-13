@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — lifecycle tool tests
+// @nodal-agents/adapter-google-docs — lifecycle tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { docs_v1 } from 'googleapis';

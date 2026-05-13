@@ -6,16 +6,16 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { spinUpTestDb } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { entityLlmKeys, entities, users } from '@nodalai/db';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { entityLlmKeys, entities, users } from '@nodal-agents/db';
 import {
   _setMasterKeyForTests,
   _resetMasterKeyCacheForTests,
   decrypt,
   isEncrypted,
-} from '@nodalai/secrets';
+} from '@nodal-agents/secrets';
 import { migrateLlmKeysToEncrypted } from '../../bootstrap/migrate-llm-keys.ts';
 
 beforeAll(() => {
@@ -138,7 +138,7 @@ describe('migrateLlmKeysToEncrypted (Brique 26)', () => {
     const { db } = await spinUpTestDb();
     const entityId = await makeEntity(db);
 
-    const { encrypt } = await import('@nodalai/secrets');
+    const { encrypt } = await import('@nodal-agents/secrets');
 
     const [legacy] = await db
       .insert(entityLlmKeys)

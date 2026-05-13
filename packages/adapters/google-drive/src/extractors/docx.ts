@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — DOCX extractor using mammoth
+// @nodal-agents/adapter-google-drive — DOCX extractor using mammoth
 
 import mammoth from 'mammoth';
 

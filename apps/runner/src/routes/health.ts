@@ -3,7 +3,7 @@
 
 import type { Context } from 'hono';
 import type { RunnerDeps } from '../deps.ts';
-import { sql } from '@nodalai/db';
+import { sql } from '@nodal-agents/db';
 
 // ─── healthRoute ──────────────────────────────────────────────────────────────
 

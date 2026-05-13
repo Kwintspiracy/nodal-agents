@@ -1,4 +1,4 @@
-// down.ts — stop all background NodalAI processes (runner, web, postgres)
+// down.ts — stop all background Nodal-Agents processes (runner, web, postgres)
 
 import chalk from 'chalk';
 import { existsSync } from 'node:fs';
@@ -79,9 +79,9 @@ export async function runDown(): Promise<void> {
   clearPids();
 
   if (stopped === 0) {
-    console.log(chalk.yellow('No running NodalAI processes found.'));
+    console.log(chalk.yellow('No running Nodal-Agents processes found.'));
     return;
   }
 
-  console.log(chalk.green('\n  NodalAI stopped.'));
+  console.log(chalk.green('\n  Nodal-Agents stopped.'));
 }

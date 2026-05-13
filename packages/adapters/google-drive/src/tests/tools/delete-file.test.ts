@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — drive_delete_file tests
+// @nodal-agents/adapter-google-drive — drive_delete_file tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { drive_v3 } from 'googleapis';

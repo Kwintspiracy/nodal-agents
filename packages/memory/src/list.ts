@@ -1,9 +1,9 @@
-// @nodalai/memory — listMemories() with pagination + filter combinators
+// @nodal-agents/memory — listMemories() with pagination + filter combinators
 
-import { eq, and, sql, desc } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { agentMemory } from '@nodalai/db';
-import type { AgentMemory } from '@nodalai/shared';
+import { eq, and, sql, desc } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { agentMemory } from '@nodal-agents/db';
+import type { AgentMemory } from '@nodal-agents/shared';
 import { MemoryError } from './errors';
 import type { ListOptions, PagedResult } from './types';
 import { rowToMemory } from './crud';

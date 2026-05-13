@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — typed error codes, no user-facing strings
+// @nodal-agents/adapter-google-docs — typed error codes, no user-facing strings
 
 export type DocsErrorCode =
   | 'docs_unauthorized'

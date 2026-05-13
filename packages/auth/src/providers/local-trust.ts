@@ -2,8 +2,8 @@
 // Zero auth check: any request that reaches the server is treated as the
 // single local user. Default mode for a local install.
 
-import { eq, and } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
+import { eq, and } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { AuthProvider, AuthSession } from '../types.ts';
 
 // Re-exported constants so callers can reference the fixed local UUIDs.
@@ -27,13 +27,13 @@ export class LocalTrustProvider implements AuthProvider {
 
 /**
  * Idempotent: inserts the local user + entity + entity_member if not present.
- * Accepts any Drizzle db instance built over the @nodalai/db schema
+ * Accepts any Drizzle db instance built over the @nodal-agents/db schema
  * (both postgres-js and pglite instances work).
  */
 export async function seedLocalUser(
   db: AnyDrizzleDb,
 ): Promise<{ userId: string; entityId: string }> {
-  const { users, entities, entityMembers } = await import('@nodalai/db/schema');
+  const { users, entities, entityMembers } = await import('@nodal-agents/db/schema');
 
   // User — keyed by fixed UUID so ON CONFLICT DO NOTHING is safe
   await db

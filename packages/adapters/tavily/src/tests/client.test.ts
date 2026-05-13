@@ -1,4 +1,4 @@
-// @nodalai/adapter-tavily — client factory tests
+// @nodal-agents/adapter-tavily — client factory tests
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createTavilyClient } from '../client.ts';

@@ -1,4 +1,4 @@
-// @nodalai/adapter-tavily — public API
+// @nodal-agents/adapter-tavily — public API
 // Single factory: createTavilyTools(opts) → ToolDefinition[]
 //
 // Tools exposed (3 total — all read-level):
@@ -10,7 +10,7 @@
 // All three tools (search, extract, crawl) are natively supported by the SDK.
 // No hand-rolled HTTP anywhere in this adapter.
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createTavilyClient } from './client.ts';
 import {

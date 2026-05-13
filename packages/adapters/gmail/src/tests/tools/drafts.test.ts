@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — draft tool tests
+// @nodal-agents/adapter-gmail — draft tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { gmail_v1 } from 'googleapis';

@@ -1,4 +1,4 @@
-// @nodalai/memory — pure in-memory filter helpers
+// @nodal-agents/memory — pure in-memory filter helpers
 
 /**
  * Filter memories by skill tags intersection.

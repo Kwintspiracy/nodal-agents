@@ -1,10 +1,10 @@
-// @nodalai/memory — CRUD operations on agent_memory
+// @nodal-agents/memory — CRUD operations on agent_memory
 
-import { eq, and } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { agentMemory } from '@nodalai/db';
-import type { AgentMemory, AgentMemoryInsert } from '@nodalai/shared';
-import { AgentMemoryInsertSchema } from '@nodalai/shared';
+import { eq, and } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { agentMemory } from '@nodal-agents/db';
+import type { AgentMemory, AgentMemoryInsert } from '@nodal-agents/shared';
+import { AgentMemoryInsertSchema } from '@nodal-agents/shared';
 import { MemoryNotFoundError } from './errors';
 
 // ─── Get ───────────────────────────────────────────────────────────────────────

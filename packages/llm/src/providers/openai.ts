@@ -1,4 +1,4 @@
-// @nodalai/llm — OpenAI provider
+// @nodal-agents/llm — OpenAI provider
 
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModel } from 'ai';

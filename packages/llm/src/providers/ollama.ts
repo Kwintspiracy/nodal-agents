@@ -1,4 +1,4 @@
-// @nodalai/llm — Ollama provider
+// @nodal-agents/llm — Ollama provider
 
 import { createOllama } from 'ollama-ai-provider-v2';
 import type { LanguageModel } from 'ai';

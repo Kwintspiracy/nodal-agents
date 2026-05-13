@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 /**
  * Path to the CLI's config file. Web and CLI co-exist on the same host;
- * both edit this file (CLI on `nodalai init`, web on Settings → Security).
+ * both edit this file (CLI on `nodal-agents init`, web on Settings → Security).
  *
  * Override with `NODALAI_CONFIG_PATH` for tests / non-default home.
  */

@@ -102,7 +102,7 @@ export function createNativeToolCallMiddleware(
 
     // Streaming with text-based tool-call parsing requires buffering the full
     // response before regex extraction can run, which defeats streaming. Fail
-    // loud rather than silently degrade. The NodalAI runner uses generateText
+    // loud rather than silently degrade. The Nodal-Agents runner uses generateText
     // for jobs, so no caller hits this today; future callers see a clear error.
     wrapStream: async () => {
       throw new UnsupportedFunctionalityError({

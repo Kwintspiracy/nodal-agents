@@ -1,7 +1,7 @@
-// @nodalai/adapter-firecrawl — scrape, map, and search tools
+// @nodal-agents/adapter-firecrawl — scrape, map, and search tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { FirecrawlClient } from '../client.ts';
 import { wrapFirecrawlError } from '../errors.ts';
 

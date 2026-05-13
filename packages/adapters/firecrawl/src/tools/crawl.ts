@@ -1,4 +1,4 @@
-// @nodalai/adapter-firecrawl — crawl tools
+// @nodal-agents/adapter-firecrawl — crawl tools
 //
 // Design choice: firecrawl_crawl_start + firecrawl_crawl_status (two tools)
 // rather than a single blocking firecrawl_crawl.
@@ -11,7 +11,7 @@
 // poll status in a subsequent turn — matching the SDK's natural shape.
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { FirecrawlClient } from '../client.ts';
 import { wrapFirecrawlError } from '../errors.ts';
 

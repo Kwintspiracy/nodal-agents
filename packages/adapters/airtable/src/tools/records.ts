@@ -1,7 +1,7 @@
-// @nodalai/adapter-airtable — record CRUD tools
+// @nodal-agents/adapter-airtable — record CRUD tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { AirtableClient } from '../client.ts';
 import { wrapAirtableError } from '../errors.ts';
 

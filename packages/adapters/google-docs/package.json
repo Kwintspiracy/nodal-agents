@@ -1,5 +1,5 @@
 {
-  "name": "@nodalai/adapter-google-docs",
+  "name": "@nodal-agents/adapter-google-docs",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,8 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nodalai/shared": "workspace:*",
-    "@nodalai/tools": "workspace:*",
+    "@nodal-agents/shared": "workspace:*",
+    "@nodal-agents/tools": "workspace:*",
     "googleapis": "^171.4.0",
     "zod": "^4.4.3"
   },

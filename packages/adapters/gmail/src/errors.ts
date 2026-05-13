@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — typed error codes, no user-facing strings
+// @nodal-agents/adapter-gmail — typed error codes, no user-facing strings
 
 export type GmailErrorCode =
   | 'gmail_unauthorized'

@@ -3,7 +3,7 @@
 // Entity-scoped, not agent-scoped: agents within the same entity share knowledge.
 
 import { z } from 'zod';
-import { agentMemory, eq, and } from '@nodalai/db';
+import { agentMemory, eq, and } from '@nodal-agents/db';
 import type { ToolDefinition } from '../types';
 
 export const QueryMemoryInputSchema = z.object({

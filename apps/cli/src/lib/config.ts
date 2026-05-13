@@ -15,7 +15,7 @@ export const ConfigSchema = z.object({
    * section from config.json don't fail validation. The runner reads LLM config
    * from entity_llm_keys at runtime; the `llm` section is only used by the
    * seeder on first boot and by the web's model dropdown.
-   * New installs created via `nodalai init` still write this section.
+   * New installs created via `nodal-agents init` still write this section.
    */
   llm: z
     .object({

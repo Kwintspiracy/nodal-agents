@@ -5,8 +5,8 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { eq, and } from '@nodalai/db';
-import { agentJobs, agents } from '@nodalai/db';
+import { eq, and } from '@nodal-agents/db';
+import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 

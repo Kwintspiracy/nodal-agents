@@ -1,4 +1,4 @@
-// @nodalai/orchestration — typed error classes
+// @nodal-agents/orchestration — typed error classes
 // All errors carry typed codes, no user-facing copy.
 
 // ─── DelegationPendingError ───────────────────────────────────────────────────

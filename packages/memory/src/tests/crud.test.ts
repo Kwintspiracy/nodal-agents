@@ -1,7 +1,7 @@
 // crud.test.ts — createMemory, getMemory, updateMemory, deleteMemory
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { createMemory, getMemory, updateMemory, deleteMemory } from '../crud';
 import { MemoryNotFoundError } from '../errors';
 

@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — A1 notation range parser
+// @nodal-agents/adapter-google-sheets — A1 notation range parser
 
 import { SheetsAdapterError } from '../errors';
 

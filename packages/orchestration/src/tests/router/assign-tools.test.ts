@@ -2,12 +2,12 @@
 // Uses pglite. Assertions on real DB rows, not mock call counts.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb } from '@nodalai/db/test-utils';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodalai/db';
+import { spinUpTestDb } from '@nodal-agents/db/test-utils';
+import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
 import { generateAssignTools } from '../../router/assign-tools';
 import { DelegationPendingError } from '../../errors';
 import type { AgentId } from '../../types';
-import type { TestDb } from '@nodalai/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 
 let db: TestDb;
 
@@ -15,11 +15,11 @@ let db: TestDb;
 
 async function seedEntity(db: TestDb) {
   const [user] = await db
-    .insert((await import('@nodalai/db')).users)
+    .insert((await import('@nodal-agents/db')).users)
     .values({ email: `test-at-${Date.now()}@example.com` })
     .returning();
   const [entity] = await db
-    .insert((await import('@nodalai/db')).entities)
+    .insert((await import('@nodal-agents/db')).entities)
     .values({ userId: user!.id, name: 'Test', slug: `e-${Date.now()}` })
     .returning();
   return { userId: user!.id, entityId: entity!.id };

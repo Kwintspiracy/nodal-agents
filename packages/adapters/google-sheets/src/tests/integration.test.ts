@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — integration test
+// @nodal-agents/adapter-google-sheets — integration test
 // Verifies: tool count, unique names, correct risk levels, schema validation
 
 import { describe, it, expect } from 'vitest';

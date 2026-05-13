@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — PPTX extractor
+// @nodal-agents/adapter-google-drive — PPTX extractor
 // No clean Node.js PPTX text extraction library exists that is well-maintained
 // and handles the full OOXML spec reliably. We return a typed error so the caller
 // can surface a clear, actionable message rather than crashing or returning garbage.

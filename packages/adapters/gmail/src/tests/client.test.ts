@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — client factory tests
+// @nodal-agents/adapter-gmail — client factory tests
 
 import { describe, it, expect } from 'vitest';
 import { createGmailClient } from '../client';

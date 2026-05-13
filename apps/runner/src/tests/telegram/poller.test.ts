@@ -2,10 +2,10 @@
 // invalid token exits, transient errors back off and retry, abort signal stops cleanly.
 
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { agents, agentJobs } from '@nodalai/db';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agents, agentJobs } from '@nodal-agents/db';
 import { runTelegramPoller } from '../../telegram/poller.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';

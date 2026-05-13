@@ -1,4 +1,4 @@
-// @nodalai/adapter-firecrawl — client factory tests
+// @nodal-agents/adapter-firecrawl — client factory tests
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createFirecrawlClient } from '../client.ts';

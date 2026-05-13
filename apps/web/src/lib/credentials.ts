@@ -5,7 +5,7 @@
 // the decrypted payload. Internal helpers (getDecryptedCredential, persist*,
 // refresh*) are server-only and return plaintext in memory.
 //
-// Decryption + token-refresh logic lives in @nodalai/db (packages/db/src/queries/credentials.ts)
+// Decryption + token-refresh logic lives in @nodal-agents/db (packages/db/src/queries/credentials.ts)
 // so the runner can also import it without pulling in Next.js. This file adds:
 // - Ownership checks via getSession()
 // - revalidatePath() calls for Next.js cache invalidation
@@ -13,23 +13,23 @@
 
 import 'server-only';
 import { revalidatePath } from 'next/cache';
-import { eq } from '@nodalai/db';
-import { credentials, connectors } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { credentials, connectors } from '@nodal-agents/db';
 import {
   getDecryptedCredentialById,
   decryptCredentialForDisplay,
   refreshAndPersistCredential,
-} from '@nodalai/db';
-import { encrypt, isEncrypted } from '@nodalai/secrets';
+} from '@nodal-agents/db';
+import { encrypt, isEncrypted } from '@nodal-agents/secrets';
 import { z } from 'zod';
 import type {
   CredentialType,
   GoogleOauthPayload,
   NotionOauthPayload,
   AirtableOauthPayload,
-} from '@nodalai/shared';
+} from '@nodal-agents/shared';
 import { getDb, getAuthProvider } from './server.ts';
-import { requireAuth } from '@nodalai/auth';
+import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ function fail(code: string, message: string): ActionResult<never> {
 }
 
 // Re-export DecryptedCredential so existing consumers don't need to change imports.
-export type { DecryptedCredential } from '@nodalai/db';
+export type { DecryptedCredential } from '@nodal-agents/db';
 
 // ─── Auth helper ──────────────────────────────────────────────────────────────
 
@@ -281,7 +281,7 @@ export async function refreshCredentialAction(
 /**
  * Fetch and decrypt a credential row.
  * NO ownership check — callers are responsible for access control.
- * Thin wrapper over getDecryptedCredentialById (from @nodalai/db) that uses
+ * Thin wrapper over getDecryptedCredentialById (from @nodal-agents/db) that uses
  * the web app's singleton DB instance.
  *
  * Auto-refresh: transparent (handled by getDecryptedCredentialById).
@@ -291,7 +291,7 @@ export async function getDecryptedCredential(id: string) {
 }
 
 /**
- * Thin wrapper over refreshAndPersistCredential (from @nodalai/db) that uses
+ * Thin wrapper over refreshAndPersistCredential (from @nodal-agents/db) that uses
  * the web app's singleton DB instance.
  * Kept for backwards compatibility with existing web app consumers (OAuth callback, tests).
  */

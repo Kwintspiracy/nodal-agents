@@ -5,10 +5,10 @@
 // active count + DB scan logic is exercised end-to-end against pglite.
 
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { agents } from '@nodalai/db';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agents } from '@nodal-agents/db';
 import { startTelegramManager } from '../../telegram/manager.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';

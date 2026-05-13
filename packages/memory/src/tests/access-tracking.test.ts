@@ -1,7 +1,7 @@
 // access-tracking.test.ts — touchMemory bumps access_count + last_accessed_at
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { createMemory, getMemory } from '../crud';
 import { touchMemory, touchMemories } from '../access-tracking';
 

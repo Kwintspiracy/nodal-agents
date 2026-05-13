@@ -1,11 +1,11 @@
-// @nodalai/tools — core types
-// RiskLevel is imported from @nodalai/shared (single source of truth)
+// @nodal-agents/tools — core types
+// RiskLevel is imported from @nodal-agents/shared (single source of truth)
 
 import type { z } from 'zod';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import type { OperationRiskLevel } from '@nodalai/shared';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { OperationRiskLevel } from '@nodal-agents/shared';
 
-// RiskLevel is OperationRiskLevel — single source of truth from @nodalai/shared
+// RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
 
 // ─── ToolContext ───────────────────────────────────────────────────────────────

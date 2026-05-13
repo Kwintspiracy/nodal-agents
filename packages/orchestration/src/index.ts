@@ -1,4 +1,4 @@
-// @nodalai/orchestration — public API
+// @nodal-agents/orchestration — public API
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type {

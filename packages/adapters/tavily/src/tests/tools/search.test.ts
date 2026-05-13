@@ -1,4 +1,4 @@
-// @nodalai/adapter-tavily — tools/search unit tests
+// @nodal-agents/adapter-tavily — tools/search unit tests
 // Asserts on real returned content and arguments passed to the SDK.
 // Never just call counts.
 
@@ -10,7 +10,7 @@ import {
 } from '../../tools/search.ts';
 import { TavilyApiError } from '../../errors.ts';
 import type { TavilyClient } from '../../client.ts';
-import type { ToolContext } from '@nodalai/tools';
+import type { ToolContext } from '@nodal-agents/tools';
 
 // ── Shared mock client factory ────────────────────────────────────────────────
 

@@ -1,8 +1,8 @@
-// @nodalai/adapter-google-docs — text content tools
+// @nodal-agents/adapter-google-docs — text content tools
 // docs_insert_text, docs_append_text, docs_replace_text, docs_delete_content_range
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import {

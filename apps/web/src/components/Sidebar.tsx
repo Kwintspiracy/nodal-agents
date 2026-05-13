@@ -75,7 +75,7 @@ export default function Sidebar({ userMenu }: { userMenu?: ReactNode }) {
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-4 bg-neutral-950 border-b border-neutral-800/50">
         <div className="flex items-center gap-1.5">
           <span className="text-emerald-500 font-mono text-sm">$</span>
-          <span className="text-sm font-mono font-bold text-white tracking-tight">nodalai</span>
+          <span className="text-sm font-mono font-bold text-white tracking-tight">nodal-agents</span>
         </div>
         <button
           type="button"
@@ -100,7 +100,7 @@ export default function Sidebar({ userMenu }: { userMenu?: ReactNode }) {
         {/* Logo */}
         <div className="flex items-center gap-1.5 px-5 py-5 border-b border-neutral-800/50">
           <span className="text-emerald-500 font-mono text-sm">$</span>
-          <span className="text-sm font-mono font-bold text-white tracking-tight">nodalai</span>
+          <span className="text-sm font-mono font-bold text-white tracking-tight">nodal-agents</span>
         </div>
 
         {/* Nav */}

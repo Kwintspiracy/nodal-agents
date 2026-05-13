@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — cell value normalization
+// @nodal-agents/adapter-google-sheets — cell value normalization
 
 /**
  * Normalize a raw cell value from the Sheets API.

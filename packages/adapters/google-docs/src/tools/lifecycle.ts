@@ -1,8 +1,8 @@
-// @nodalai/adapter-google-docs — lifecycle tools
+// @nodal-agents/adapter-google-docs — lifecycle tools
 // docs_create, docs_get, docs_get_text
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import { docBodyToText } from '../helpers/doc-to-text';

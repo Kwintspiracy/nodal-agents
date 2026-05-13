@@ -1,8 +1,8 @@
-// @nodalai/adapter-google-docs — structure tools
+// @nodal-agents/adapter-google-docs — structure tools
 // docs_insert_paragraph, docs_insert_page_break, docs_insert_table, docs_insert_image
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { docs_v1 } from 'googleapis';
 import { mapDocsError, DocsAdapterError } from '../errors';
 import {

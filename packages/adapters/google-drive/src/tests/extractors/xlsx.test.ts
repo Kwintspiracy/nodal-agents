@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — XLSX extractor tests
+// @nodal-agents/adapter-google-drive — XLSX extractor tests
 
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';

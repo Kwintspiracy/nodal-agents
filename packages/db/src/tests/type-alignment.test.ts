@@ -1,7 +1,7 @@
 // Type alignment test — compile-time only (no runtime assertions needed beyond import).
 //
 // Drizzle's $inferSelect uses camelCase field names (userId, mcpToken) because
-// that's how the table columns are defined. @nodalai/shared uses snake_case.
+// that's how the table columns are defined. @nodal-agents/shared uses snake_case.
 //
 // What we verify:
 // 1. Every DB table row type has the expected camelCase field names from Drizzle

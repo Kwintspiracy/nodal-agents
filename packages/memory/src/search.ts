@@ -1,10 +1,10 @@
-// @nodalai/memory — searchMemories() — hybrid embedding + keyword search
+// @nodal-agents/memory — searchMemories() — hybrid embedding + keyword search
 
-import { eq, and, sql, desc, ilike, or } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { agentMemory } from '@nodalai/db';
-import type { AgentMemory } from '@nodalai/shared';
-import type { EmbeddingClient } from '@nodalai/llm';
+import { eq, and, sql, desc, ilike, or } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { agentMemory } from '@nodal-agents/db';
+import type { AgentMemory } from '@nodal-agents/shared';
+import type { EmbeddingClient } from '@nodal-agents/llm';
 import type { SearchOptions } from './types';
 import { rowToMemory } from './crud';
 import type { MemoryRow } from './crud';

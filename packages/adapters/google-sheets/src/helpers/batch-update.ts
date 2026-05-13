@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — batchUpdate request body builders
+// @nodal-agents/adapter-google-sheets — batchUpdate request body builders
 
 import type { sheets_v4 } from 'googleapis';
 

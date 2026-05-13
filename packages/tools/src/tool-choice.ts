@@ -1,4 +1,4 @@
-// @nodalai/tools — tool_choice discipline
+// @nodal-agents/tools — tool_choice discipline
 // Encodes the pitfall from CLAUDE.md:
 //   "tool_choice forced 'required' on turn 1 for orchestrators and agents
 //    with adapter tools. Without this, GPT models may produce text-only

@@ -1,7 +1,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Toaster } from 'sonner';
-import { AuthError, NoEntityError } from '@nodalai/auth';
+import { AuthError, NoEntityError } from '@nodal-agents/auth';
 import Sidebar from '@/components/Sidebar';
 import UserMenu from '@/components/UserMenu.tsx';
 import { requireUserWithEntity } from '@/lib/server.ts';

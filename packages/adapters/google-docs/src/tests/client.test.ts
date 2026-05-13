@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — client factory tests
+// @nodal-agents/adapter-google-docs — client factory tests
 
 import { describe, it, expect } from 'vitest';
 import { createDocsClient } from '../client';

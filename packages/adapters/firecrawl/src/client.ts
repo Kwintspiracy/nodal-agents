@@ -1,4 +1,4 @@
-// @nodalai/adapter-firecrawl — thin wrapper around @mendable/firecrawl-js
+// @nodal-agents/adapter-firecrawl — thin wrapper around @mendable/firecrawl-js
 // Auth: API key passed to FirecrawlClient constructor as `apiKey`.
 // Uses the official SDK (v2 client) — no hand-rolled HTTP.
 

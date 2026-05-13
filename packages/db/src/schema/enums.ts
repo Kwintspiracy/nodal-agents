@@ -1,6 +1,6 @@
 // DB-level enum helpers — these are NOT pgEnum() because the legacy schema
 // uses TEXT + CHECK constraints (not ENUM types). We expose them as typed
-// string literals that match @nodalai/shared enums exactly.
+// string literals that match @nodal-agents/shared enums exactly.
 //
 // For columns that use these values we rely on Drizzle's .check() and
 // $type<>() pattern — see individual table files.
@@ -27,4 +27,4 @@ export {
   PLUGIN_TYPES,
   PLUGIN_HOOKS,
   MCP_TRANSPORTS,
-} from '@nodalai/shared';
+} from '@nodal-agents/shared';

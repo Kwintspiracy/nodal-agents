@@ -194,7 +194,7 @@ export async function getTelegramBotInfo(botToken: string): Promise<TelegramBotI
 
 // ─── Long-polling helpers ─────────────────────────────────────────────────────
 //
-// NodalAI runs locally — no public URL — so we receive Telegram updates by
+// Nodal-Agents runs locally — no public URL — so we receive Telegram updates by
 // long-polling getUpdates rather than by webhook. The runner spawns one poll
 // loop per configured agent.
 

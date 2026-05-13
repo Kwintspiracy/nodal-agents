@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createClient } from '@nodalai/db';
+import { createClient } from '@nodal-agents/db';
 import {
   LocalTrustProvider,
   LocalAuthProvider,
@@ -9,7 +9,7 @@ import {
   requireAuthWithEntity,
   type AuthProvider,
   type AuthSession,
-} from '@nodalai/auth';
+} from '@nodal-agents/auth';
 import { env } from './env.ts';
 
 // Re-export helpers so callers only need to import from this module.

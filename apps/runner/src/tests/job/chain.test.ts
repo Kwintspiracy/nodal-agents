@@ -30,7 +30,7 @@ describe('checkChainLimit', () => {
     }
   });
 
-  it('MAX_CHAINS is 5 (matching @nodalai/orchestration DEFAULT_LIMITS)', () => {
+  it('MAX_CHAINS is 5 (matching @nodal-agents/orchestration DEFAULT_LIMITS)', () => {
     expect(MAX_CHAINS).toBe(5);
   });
 });

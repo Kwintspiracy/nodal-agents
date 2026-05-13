@@ -1,9 +1,9 @@
 {
-  "name": "nodalai",
+  "name": "nodal-agents-monorepo",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "All-Node monorepo for the NodalAI agent platform.",
+  "description": "All-Node monorepo for the Nodal-Agents platform.",
   "scripts": {
     "build": "turbo build",
     "dev": "turbo dev",

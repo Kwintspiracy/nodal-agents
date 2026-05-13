@@ -2,11 +2,11 @@
 // filters group chat noise, and routes /ask <slug> to the right agent.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { agentJobs, agents } from '@nodalai/db';
-import type { TelegramUpdate } from '@nodalai/delivery';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agentJobs, agents } from '@nodal-agents/db';
+import type { TelegramUpdate } from '@nodal-agents/delivery';
 import { handleTelegramUpdate } from '../../telegram/handler.ts';
 
 let db: TestDb;
@@ -212,11 +212,11 @@ describe('handleTelegramUpdate — /ask command', () => {
   it('refuses /ask <slug> when the slug belongs to a different entity', async () => {
     // Seed a user/entity/agent in a separate entity
     const [otherUser] = await db
-      .insert((await import('@nodalai/db')).users)
+      .insert((await import('@nodal-agents/db')).users)
       .values({ email: `ext-${Date.now()}@example.com` })
       .returning();
     const [otherEntity] = await db
-      .insert((await import('@nodalai/db')).entities)
+      .insert((await import('@nodal-agents/db')).entities)
       .values({
         userId: otherUser!.id,
         name: 'Other Entity',

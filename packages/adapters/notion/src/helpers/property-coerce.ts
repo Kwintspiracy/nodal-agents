@@ -1,4 +1,4 @@
-// @nodalai/adapter-notion — Notion property value coercion helpers
+// @nodal-agents/adapter-notion — Notion property value coercion helpers
 
 // ── Chunk rich_text ───────────────────────────────────────────────────────────
 

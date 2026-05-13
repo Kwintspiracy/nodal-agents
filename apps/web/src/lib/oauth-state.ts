@@ -3,7 +3,7 @@
 // HMAC key: the master key loaded from packages/secrets (any-length input is valid for HMAC-SHA256).
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { loadOrCreateMasterKey } from '@nodalai/secrets';
+import { loadOrCreateMasterKey } from '@nodal-agents/secrets';
 
 export const STATE_COOKIE_NAME = 'nodalai_oauth_state';
 export const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes

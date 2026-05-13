@@ -1,9 +1,9 @@
 import { test as base } from '@playwright/test';
-import { createClient } from '@nodalai/db';
-import type { CredentialType } from '@nodalai/shared';
+import { createClient } from '@nodal-agents/db';
+import type { CredentialType } from '@nodal-agents/shared';
 
 /**
- * Skip the entire test file when the NodalAI stack isn't reachable. Every
+ * Skip the entire test file when the Nodal-Agents stack isn't reachable. Every
  * e2e file calls `requireLiveStack(test)` in a beforeAll so a missing
  * server fails fast and obvious rather than minutes of nav timeouts.
  */
@@ -14,10 +14,10 @@ export async function requireLiveStack(): Promise<void> {
       signal: AbortSignal.timeout(2_000),
     });
     if (!res.ok) {
-      base.skip(true, `NodalAI /api/health returned ${res.status}`);
+      base.skip(true, `Nodal-Agents /api/health returned ${res.status}`);
     }
   } catch (err) {
-    base.skip(true, `NodalAI not reachable at ${baseURL}: ${(err as Error).message}`);
+    base.skip(true, `Nodal-Agents not reachable at ${baseURL}: ${(err as Error).message}`);
   }
 }
 
@@ -61,7 +61,7 @@ export async function pollDb<T>(
  * Returns the full job row.
  */
 export async function waitForJob(jobId: string, timeoutMs = 120_000) {
-  const { agentJobs, eq, or } = await import('@nodalai/db');
+  const { agentJobs, eq, or } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     return await pollDb(
@@ -89,7 +89,7 @@ export async function waitForMemories(
   opts: { minCount?: number; timeoutMs?: number; afterMs?: number } = {},
 ): Promise<Array<{ id: string; fact: string; source: string | null; agentId: string | null }>> {
   const { minCount = 1, timeoutMs = 120_000, afterMs = Date.now() - 5_000 } = opts;
-  const { agentMemory, eq, and, ilike } = await import('@nodalai/db');
+  const { agentMemory, eq, and, ilike } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     return await pollDb(
@@ -129,7 +129,7 @@ export async function getToolCallsForJob(
   jobId: string,
   toolName: string,
 ): Promise<Array<{ id: string; toolName: string; toolInput: unknown; toolOutput: string | null }>> {
-  const { toolCalls, eq, and } = await import('@nodalai/db');
+  const { toolCalls, eq, and } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     return await db
@@ -152,7 +152,7 @@ export async function getToolCallsForJob(
 export async function getAllToolCallsForJob(
   jobId: string,
 ): Promise<Array<{ id: string; toolName: string; toolInput: unknown }>> {
-  const { toolCalls, eq } = await import('@nodalai/db');
+  const { toolCalls, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     return await db
@@ -168,7 +168,7 @@ export async function getAllToolCallsForJob(
  * Get child jobs (jobs where parentJobId = the given id).
  */
 export async function getChildJobs(parentJobId: string) {
-  const { agentJobs, eq } = await import('@nodalai/db');
+  const { agentJobs, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     return await db
@@ -193,7 +193,7 @@ export async function cleanEntityMemories(
   entityId: string,
   opts: { source?: string } = {},
 ): Promise<void> {
-  const { agentMemory, eq, and } = await import('@nodalai/db');
+  const { agentMemory, eq, and } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     if (opts.source) {
@@ -239,7 +239,7 @@ export async function requireLmStudio(timeoutMs = 10_000): Promise<void> {
  * runner/LM Studio with concurrent requests.
  */
 export async function waitForNoProcessingJobs(timeoutMs = 60_000): Promise<void> {
-  const { agentJobs, eq } = await import('@nodalai/db');
+  const { agentJobs, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     await pollDb(
@@ -271,7 +271,7 @@ export async function cleanCredentialsByType(
   type: CredentialType,
   ownerEmail: string = 'e2e-playwright@nodalai.local',
 ): Promise<void> {
-  const { credentials, users, eq } = await import('@nodalai/db');
+  const { credentials, users, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     // Look up the user id by email.
@@ -305,7 +305,7 @@ export async function insertMemory(
   fact: string,
   opts: { source?: string; category?: string; agentId?: string } = {},
 ): Promise<string> {
-  const { agentMemory } = await import('@nodalai/db');
+  const { agentMemory } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     const [row] = await db
@@ -337,7 +337,7 @@ export async function insertJob(opts: {
   task: string;
   channel: 'telegram' | 'api' | 'task-board' | 'internal' | 'cron';
 }): Promise<string> {
-  const { agentJobs } = await import('@nodalai/db');
+  const { agentJobs } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     const [row] = await db
@@ -386,7 +386,7 @@ export async function ensurePlannerAgent(opts: {
   subAgentId: string;
   slug: string;
 }): Promise<{ plannerId: string }> {
-  const { agents, agentAssignments, eq } = await import('@nodalai/db');
+  const { agents, agentAssignments, eq } = await import('@nodal-agents/db');
   const { db, close } = makeDbClient();
   try {
     // Stronger personality: gemma-4-31b doesn't reliably infer save_memory from

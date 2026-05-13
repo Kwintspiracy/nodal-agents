@@ -1,8 +1,8 @@
-// @nodalai/adapter-google-sheets — structure tools
+// @nodal-agents/adapter-google-sheets — structure tools
 // get_metadata, create_spreadsheet, add_sheet, delete_sheet, duplicate_sheet, rename_sheet
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError, SheetsAdapterError } from '../errors';
 import {

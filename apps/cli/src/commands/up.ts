@@ -18,7 +18,7 @@ import {
   killProcessTree,
   type SpawnResult,
 } from '../lib/processes.ts';
-import { createClient } from '@nodalai/db';
+import { createClient } from '@nodal-agents/db';
 
 async function killSilent(child: SpawnResult): Promise<void> {
   // Kill the whole process tree — see killProcessTree for the Windows
@@ -74,7 +74,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // Catch orphans from a previous crashed run BEFORE spawning anything.
   // Common cause on Windows: terminal was closed without Ctrl+C, leaving
   // web/runner alive. Without this, EADDRINUSE crashes web mid-startup,
-  // triggers shutdown, and leaves the user staring at "Stopping NodalAI…".
+  // triggers shutdown, and leaves the user staring at "Stopping Nodal-Agents…".
 
   // Sweep orphans automatically. If we detect any of our configured ports
   // are held, kill those PIDs and continue. The user shouldn't have to
@@ -251,7 +251,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const webPid = webProcess.pid ?? 0;
   webSpinner.succeed(chalk.green(`Web started (pid ${webPid})`));
 
-  // Save PIDs for `nodalai down`
+  // Save PIDs for `nodal-agents down`
   writePids({ runner: runnerPid, web: webPid });
 
   // ── 7. Wait for health ────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     healthSpinner.fail('Health check timed out');
     // IMPORTANT: tree-kill BOTH children (and await) so no orphan node.exe
     // survives to hold the port. Skipping this is what causes the next
-    // `nodalai up` to fail at health check: the new runner can't bind on
+    // `nodal-agents up` to fail at health check: the new runner can't bind on
     // :3001 because the old one is still alive behind a dead cmd.exe parent.
     await Promise.allSettled([killSilent(runnerProcess), killSilent(webProcess)]);
     await pg.stop();
@@ -290,7 +290,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 9. Ready message ──────────────────────────────────────────────────────
 
   console.log('');
-  console.log(chalk.bold.green(`  NodalAI ready at ${webUrl}`));
+  console.log(chalk.bold.green(`  Nodal-Agents ready at ${webUrl}`));
   if (config.bind === 'lan') {
     console.log(chalk.cyan(`  LAN mode — sign up at ${webUrl}/login`));
   }
@@ -300,7 +300,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 10. Graceful shutdown on SIGINT ───────────────────────────────────────
 
   const shutdown = async (): Promise<void> => {
-    console.log('\n' + chalk.yellow('  Stopping NodalAI…'));
+    console.log('\n' + chalk.yellow('  Stopping Nodal-Agents…'));
     await Promise.allSettled([killSilent(runnerProcess), killSilent(webProcess)]);
     await pg.stop();
     clearPids();

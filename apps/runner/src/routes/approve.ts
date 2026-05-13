@@ -6,8 +6,8 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { eq } from '@nodalai/db';
-import { approvalRequests, agentJobs } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from './agent.ts';

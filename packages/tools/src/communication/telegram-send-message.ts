@@ -5,9 +5,9 @@
 // Credentials are fetched from the DB at execution time (never in closure).
 
 import { z } from 'zod';
-import { eq } from '@nodalai/db';
-import { agents } from '@nodalai/db';
-import { sendTelegramMessage } from '@nodalai/delivery';
+import { eq } from '@nodal-agents/db';
+import { agents } from '@nodal-agents/db';
+import { sendTelegramMessage } from '@nodal-agents/delivery';
 import type { ToolDefinition, ToolContext } from '../types';
 
 // ─── Input / Output ───────────────────────────────────────────────────────────

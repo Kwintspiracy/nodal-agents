@@ -1,14 +1,14 @@
 // deps.ts — createRunnerDeps: wires DB, LLM, embeddings, tool registry, auth
 // This is the composition root for the runner. All packages assembled here.
 
-import { createClient } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { createLlmClient, createEmbeddingClient } from '@nodalai/llm';
-import type { NodalLlmClient, EmbeddingClient } from '@nodalai/llm';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import type { ToolRegistry } from '@nodalai/tools';
-import { LocalTrustProvider, BearerTokenProvider, seedLocalUser } from '@nodalai/auth';
-import type { AuthProvider } from '@nodalai/auth';
+import { createClient } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
+import type { NodalLlmClient, EmbeddingClient } from '@nodal-agents/llm';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import type { ToolRegistry } from '@nodal-agents/tools';
+import { LocalTrustProvider, BearerTokenProvider, seedLocalUser } from '@nodal-agents/auth';
+import type { AuthProvider } from '@nodal-agents/auth';
 import type { RunnerEnv } from './env.ts';
 
 // ─── RunnerDeps ───────────────────────────────────────────────────────────────

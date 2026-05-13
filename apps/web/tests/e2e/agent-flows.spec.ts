@@ -215,7 +215,7 @@ test.describe('Scenario C — Planner save_memory', () => {
     );
 
     // Assert: agent_tasks row created (planner uses create_task)
-    const { agentTasks, eq } = await import('@nodalai/db');
+    const { agentTasks, eq } = await import('@nodal-agents/db');
     const { db, close } = makeDbClient();
     try {
       const tasks = await db

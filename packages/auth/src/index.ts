@@ -1,4 +1,4 @@
-// @nodalai/auth — pluggable AuthProvider abstraction.
+// @nodal-agents/auth — pluggable AuthProvider abstraction.
 // Three implementations: local-trust (default), local-auth (better-auth),
 // bearer-token (LAN mode).
 
@@ -6,8 +6,8 @@ export type { AuthSession, AuthProvider } from './types.ts';
 export { AuthError, NoEntityError } from './types.ts';
 export type { AuthErrorCode, NoEntityErrorCode } from './types.ts';
 
-// AnyDrizzleDb is owned by @nodalai/db; re-export for convenience.
-export type { AnyDrizzleDb } from '@nodalai/db';
+// AnyDrizzleDb is owned by @nodal-agents/db; re-export for convenience.
+export type { AnyDrizzleDb } from '@nodal-agents/db';
 
 export {
   LocalTrustProvider,

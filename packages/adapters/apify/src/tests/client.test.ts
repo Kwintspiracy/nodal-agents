@@ -1,4 +1,4 @@
-// @nodalai/adapter-apify — client factory tests
+// @nodal-agents/adapter-apify — client factory tests
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createApifyClient } from '../client.ts';

@@ -1,8 +1,8 @@
-// @nodalai/adapter-gmail — draft tools
+// @nodal-agents/adapter-gmail — draft tools
 // list, create, update, send, delete
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';

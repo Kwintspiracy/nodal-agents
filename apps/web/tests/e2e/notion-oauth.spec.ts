@@ -12,7 +12,7 @@
  *   7. Server auto-assigns + redirects to /connectors?just_connected=notion-oauth
  *   8. Card shows CONNECTED; no Refresh button (Notion supportsRefresh: false)
  *
- * Requires a running NodalAI stack. Skipped automatically if unreachable.
+ * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
 
 import { test, expect } from '@playwright/test';

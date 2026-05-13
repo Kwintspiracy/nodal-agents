@@ -7,7 +7,7 @@ import {
 } from '../providers/local-trust.ts';
 import { spinUpAuthTestDb, fakeRequest, schema } from './helpers.ts';
 import type { AuthTestDb } from './helpers.ts';
-import { eq } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
 
 let db: AuthTestDb;
 

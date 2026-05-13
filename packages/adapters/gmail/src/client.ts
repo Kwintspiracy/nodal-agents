@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — googleapis Gmail v1 client factory
+// @nodal-agents/adapter-gmail — googleapis Gmail v1 client factory
 
 import { google } from 'googleapis';
 import type { gmail_v1 } from 'googleapis';

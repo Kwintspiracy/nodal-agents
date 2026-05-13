@@ -5,7 +5,7 @@
 //   write       — notion_create_*, notion_update_*, notion_append_*, notion_add_*
 //   destructive — notion_archive_*, notion_delete_*
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const NOTION_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (9) ────────────────────────────────────────────────────────────────

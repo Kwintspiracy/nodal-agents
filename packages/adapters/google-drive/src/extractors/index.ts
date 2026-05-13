@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — file text extractor dispatcher
+// @nodal-agents/adapter-google-drive — file text extractor dispatcher
 
 import { DriveAdapterError } from '../errors';
 import { extractDocxText } from './docx';

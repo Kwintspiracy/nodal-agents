@@ -1,10 +1,10 @@
-// @nodalai/memory — stats aggregation
+// @nodal-agents/memory — stats aggregation
 
-import { eq, and, sql, desc, avg, max } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { agentMemory } from '@nodalai/db';
-import type { MemoryCategory } from '@nodalai/shared';
-import { MEMORY_CATEGORIES } from '@nodalai/shared';
+import { eq, and, sql, desc, avg, max } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { agentMemory } from '@nodal-agents/db';
+import type { MemoryCategory } from '@nodal-agents/shared';
+import { MEMORY_CATEGORIES } from '@nodal-agents/shared';
 import type { MemoryStats } from './types';
 
 export async function getMemoryStats(

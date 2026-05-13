@@ -3,8 +3,8 @@
 
 import type { AuthProvider, AuthSession } from './types.ts';
 import { AuthError, NoEntityError } from './types.ts';
-import { eq } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
+import { eq } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 /**
  * Resolves the session from the request, throwing AuthError if unauthenticated.
@@ -26,7 +26,7 @@ export async function requireAuthWithEntity(
 ): Promise<AuthSession> {
   const session = await requireAuth(req, provider);
 
-  const { entityMembers } = await import('@nodalai/db/schema');
+  const { entityMembers } = await import('@nodal-agents/db/schema');
 
   const rows = await db
     .select({ entityId: entityMembers.entityId })

@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — client factory tests
+// @nodal-agents/adapter-google-sheets — client factory tests
 
 import { describe, it, expect } from 'vitest';
 import { createSheetsClient } from '../client';

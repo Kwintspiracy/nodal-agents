@@ -11,7 +11,7 @@
 // because sending email is irreversible (outbound = permanent side-effect).
 // gmail_trash_* and gmail_modify_* are `write` (reversible).
 
-import type { OperationDescriptor } from '@nodalai/shared';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 export const GMAIL_OPERATIONS: OperationDescriptor[] = [
   // ─── Read (9) ────────────────────────────────────────────────────────────────

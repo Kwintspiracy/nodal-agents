@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — range parser tests
+// @nodal-agents/adapter-google-sheets — range parser tests
 
 import { describe, it, expect } from 'vitest';
 import { parseRange, buildRange } from '../../helpers/range-parse';

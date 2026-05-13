@@ -169,7 +169,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
         {step === 'type' && (
           <div className="overflow-y-auto px-6 py-5 space-y-3">
             <p className="text-sm text-neutral-400">
-              Choose the OAuth provider to connect to NodalAI.
+              Choose the OAuth provider to connect to Nodal-Agents.
             </p>
             <div className="space-y-2">
               {TYPE_OPTIONS.map((opt) => (

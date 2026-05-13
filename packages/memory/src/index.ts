@@ -1,4 +1,4 @@
-// @nodalai/memory — public API
+// @nodal-agents/memory — public API
 
 // Types
 export type {

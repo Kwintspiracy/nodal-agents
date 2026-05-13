@@ -1,4 +1,4 @@
-// @nodalai/tools — error classes
+// @nodal-agents/tools — error classes
 // All errors carry typed codes — no user-facing strings
 
 // ─── InvalidInputError ────────────────────────────────────────────────────────

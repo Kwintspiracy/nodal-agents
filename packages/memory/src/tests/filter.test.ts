@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { applySkillFilter, filterByTags } from '../filter';
-import type { AgentMemory } from '@nodalai/shared';
+import type { AgentMemory } from '@nodal-agents/shared';
 
 // ─── Test fixtures ─────────────────────────────────────────────────────────────
 

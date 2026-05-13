@@ -15,7 +15,7 @@ export interface ConfiguredLlmProvider {
 
 /**
  * Return the list of LLM providers available to the user.
- * For MVT this is the single provider configured at `nodalai init` (read from
+ * For MVT this is the single provider configured at `nodal-agents init` (read from
  * env vars LLM_PROVIDER / LLM_MODEL / LLM_BASE_URL passed by the CLI).
  *
  * Post-MVT: this will read the user's saved provider configs from the DB

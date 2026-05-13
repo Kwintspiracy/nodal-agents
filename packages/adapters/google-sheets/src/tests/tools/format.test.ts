@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — format tool tests
+// @nodal-agents/adapter-google-sheets — format tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { sheets_v4 } from 'googleapis';

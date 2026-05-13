@@ -1,6 +1,6 @@
 # Adding a new OAuth provider
 
-How to wire a new OAuth 2.0 provider (Slack, GitHub, Discord, Linear, …) into NodalAI's credentials system. The plumbing is data-driven — there is no per-provider runtime code, only registry entries, a UI guide, and a DB constraint update. Counting realistically, ~20 minutes per provider for the standard OAuth 2.0 case.
+How to wire a new OAuth 2.0 provider (Slack, GitHub, Discord, Linear, …) into Nodal-Agents's credentials system. The plumbing is data-driven — there is no per-provider runtime code, only registry entries, a UI guide, and a DB constraint update. Counting realistically, ~20 minutes per provider for the standard OAuth 2.0 case.
 
 This doc is the source of truth for the procedure. Read it end to end the first time. The 5-file checklist is below; the rest of the doc is the rationale and edge cases.
 
@@ -128,13 +128,13 @@ check('credentials_type_check',
 Edit `packages/db/src/schema/credentials.ts` to extend the IN list, then run drizzle-kit:
 
 ```powershell
-$env:DATABASE_URL='postgresql://nodalai:nodalai@localhost:25433/nodalai'; pnpm --filter @nodalai/db db:generate
+$env:DATABASE_URL='postgresql://nodalai:nodalai@localhost:25433/nodalai'; pnpm --filter @nodal-agents/db db:generate
 ```
 
 Inspect the generated SQL — it should DROP and re-ADD the check constraint with the new IN list. Apply:
 
 ```powershell
-$env:DATABASE_URL='postgresql://nodalai:nodalai@localhost:25433/nodalai'; pnpm --filter @nodalai/db db:migrate
+$env:DATABASE_URL='postgresql://nodalai:nodalai@localhost:25433/nodalai'; pnpm --filter @nodal-agents/db db:migrate
 ```
 
 Update `packages/db/src/tests/helpers.ts` to mirror the new check in the test DB DDL.
@@ -215,4 +215,4 @@ If all 10 work, ship it.
 
 - **OAuth 1.0a** providers (legacy Twitter v1, Trello, Tumblr): different flow signature. The current registry assumes OAuth 2.0. To support 1.0a you'd need a parallel code path — not impossible but treat as its own brique.
 - **Device authorization flow** (used by Apple TV style apps with no browser): also out of scope today.
-- **Single sign-on (SAML / OIDC ID tokens)** for dashboard sign-in: NodalAI uses better-auth for that, separate from connector OAuth.
+- **Single sign-on (SAML / OIDC ID tokens)** for dashboard sign-in: Nodal-Agents uses better-auth for that, separate from connector OAuth.

@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-drive — plain text extractor
+// @nodal-agents/adapter-google-drive — plain text extractor
 
 /**
  * Decode a Buffer as UTF-8 text. Used for text/*, JSON, CSV, and unknown

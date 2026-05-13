@@ -7,10 +7,10 @@
 //   - second call is idempotent (only updates if status='todo')
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
-import { eq } from '@nodalai/db';
-import { agentTasks } from '@nodalai/db';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agentTasks } from '@nodal-agents/db';
 import { unblockReadyTasks } from '../unblock-ready.ts';
 
 let db: TestDb;

@@ -7,9 +7,9 @@
 // Runs on every runner boot — already-encrypted rows are skipped, so re-running
 // is a no-op. The first run after deploying Brique 26 picks up legacy rows.
 
-import { eq, entityLlmKeys } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
-import { encrypt, isEncrypted, last4, loadOrCreateMasterKey } from '@nodalai/secrets';
+import { eq, entityLlmKeys } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { encrypt, isEncrypted, last4, loadOrCreateMasterKey } from '@nodal-agents/secrets';
 
 export async function migrateLlmKeysToEncrypted(db: AnyDrizzleDb): Promise<void> {
   // Eagerly load (or create) the master key so any failure surfaces here,

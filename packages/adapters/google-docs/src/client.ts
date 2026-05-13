@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — googleapis Docs v1 client factory
+// @nodal-agents/adapter-google-docs — googleapis Docs v1 client factory
 
 import { google } from 'googleapis';
 import type { docs_v1 } from 'googleapis';

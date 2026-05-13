@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { ADAPTER_REGISTRY } from '../registry.ts';
-import { CREDENTIAL_TYPES } from '@nodalai/shared';
+import { CREDENTIAL_TYPES } from '@nodal-agents/shared';
 
 const EXPECTED_SLUGS = [
   'google-drive',

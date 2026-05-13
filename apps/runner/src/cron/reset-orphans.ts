@@ -6,9 +6,9 @@
 //   - resetOrphanedJobs:  jobs in `processing` / `awaiting_delegation` with
 //                         no recent activity → marked `failed`
 
-import { and, eq, inArray, isNull, lt, or } from '@nodalai/db';
-import { agentJobs, agentTasks } from '@nodalai/db';
-import type { AnyDrizzleDb } from '@nodalai/db';
+import { and, eq, inArray, isNull, lt, or } from '@nodal-agents/db';
+import { agentJobs, agentTasks } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 // ─── resetOrphanedTasks ───────────────────────────────────────────────────────
 

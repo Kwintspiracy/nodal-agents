@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-sheets — architecture invariant tests
+// @nodal-agents/adapter-google-sheets — architecture invariant tests
 // Invariant 1: No agent slugs (ender, pavel, boris, etc.) hardcoded in src/
 // Invariant 6: No per-user values (UUIDs, spreadsheet URLs, hardcoded IDs) in src/
 // Invariant 7: Official SDK only (googleapis)
@@ -81,11 +81,11 @@ describe('architecture invariants', () => {
     expect(source).not.toContain('Google Sheets connector is not authenticated');
   });
 
-  it('no direct imports from @nodalai/db, @nodalai/llm, @nodalai/auth, @nodalai/memory', async () => {
+  it('no direct imports from @nodal-agents/db, @nodal-agents/llm, @nodal-agents/auth, @nodal-agents/memory', async () => {
     const files = await collectSourceFiles(srcDir);
     const source = await readAll(files);
 
-    const forbidden = ['@nodalai/db', '@nodalai/llm', '@nodalai/auth', '@nodalai/memory'];
+    const forbidden = ['@nodal-agents/db', '@nodal-agents/llm', '@nodal-agents/auth', '@nodal-agents/memory'];
     const found: string[] = [];
 
     for (const pkg of forbidden) {

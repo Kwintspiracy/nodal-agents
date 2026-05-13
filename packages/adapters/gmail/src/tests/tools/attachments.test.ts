@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — attachment tool tests
+// @nodal-agents/adapter-gmail — attachment tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { gmail_v1 } from 'googleapis';

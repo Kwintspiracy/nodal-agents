@@ -1,4 +1,4 @@
-// @nodalai/adapter-google-docs — structure tool tests
+// @nodal-agents/adapter-google-docs — structure tool tests
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { docs_v1 } from 'googleapis';

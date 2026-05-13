@@ -9,9 +9,9 @@
 // reaches the agent. Pre-Brique 32 only the skill name was injected, so the
 // skill content was silently dropped. End-to-end skill behavior never worked.
 
-import { eq } from '@nodalai/db';
-import { agentSkillAssignments, agentSkills } from '@nodalai/db';
-import { ALWAYS_ON_TOOL_DOCS } from '@nodalai/tools';
+import { eq } from '@nodal-agents/db';
+import { agentSkillAssignments, agentSkills } from '@nodal-agents/db';
+import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
 import { buildTeamBlock } from './team-block';
 import type { Agent, AnyDrizzleDb } from './types';
 

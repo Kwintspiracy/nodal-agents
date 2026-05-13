@@ -1,7 +1,7 @@
-// @nodalai/adapter-notion — page tools
+// @nodal-agents/adapter-notion — page tools
 
 import { z } from 'zod';
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { Client } from '@notionhq/client';
 import { mapNotionError } from '../errors';
 import {

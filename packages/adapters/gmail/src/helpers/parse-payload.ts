@@ -1,4 +1,4 @@
-// @nodalai/adapter-gmail — MIME payload parser
+// @nodal-agents/adapter-gmail — MIME payload parser
 //
 // Extracts human-readable text from Gmail message payloads.
 // Strategy:

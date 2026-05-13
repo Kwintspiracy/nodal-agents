@@ -1,7 +1,7 @@
-// @nodalai/adapter-apify — public API
+// @nodal-agents/adapter-apify — public API
 // Single factory: createApifyTools(opts) → ToolDefinition[]
 
-import type { ToolDefinition } from '@nodalai/tools';
+import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createApifyClient } from './client.ts';
 import { makeApifyRunActorTool, makeApifyGetRunTool } from './tools/actors.ts';

@@ -17,9 +17,9 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { randomBytes } from 'node:crypto';
-import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@nodalai/secrets';
-import { spinUpTestDb, seedMinimal } from '@nodalai/db/test-utils';
-import type { TestDb } from '@nodalai/db/test-utils';
+import { _setMasterKeyForTests, _resetMasterKeyCacheForTests, encrypt } from '@nodal-agents/secrets';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
 import {
   eq,
   agentJobs,
@@ -28,15 +28,15 @@ import {
   credentials,
   agentConnectorAssignments,
   toolCalls,
-} from '@nodalai/db';
-import { createToolRegistry, registerBuiltins } from '@nodalai/tools';
-import { createEmbeddingClient } from '@nodalai/llm';
-import { LocalTrustProvider } from '@nodalai/auth';
-import { ADAPTER_REGISTRY } from '@nodalai/runner-adapters';
+} from '@nodal-agents/db';
+import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createEmbeddingClient } from '@nodal-agents/llm';
+import { LocalTrustProvider } from '@nodal-agents/auth';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
-import type { JobId } from '@nodalai/orchestration';
+import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── Module-level mock registry ───────────────────────────────────────────────
 const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
@@ -49,15 +49,15 @@ const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   };
 });
 
-vi.mock('@nodalai/delivery', async (importOriginal) => {
+vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('@nodalai/delivery')>();
+  const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return { ...actual, sendTelegramMessage: vi.fn().mockResolvedValue({ messageId: 999 }) };
 });
 
-vi.mock('@nodalai/llm', async (importOriginal) => {
+vi.mock('@nodal-agents/llm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('@nodalai/llm')>();
+  const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
   return {
     ...actual,
     createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
