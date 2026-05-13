@@ -16,7 +16,10 @@ export default defineConfig({
     // Default 5000ms is too tight: the first test in actions.test.ts triggers
     // full module init (server-only mock, env parse, vi.mock chains) and times
     // out under turbo concurrent load on slower runners (CI Ubuntu, 2 vCPU).
-    testTimeout: 15000,
+    // 15s was set initially; bumped to 30s after CI run #25803978814 still
+    // timed out on `rejects slug with uppercase letters` under GHA load.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     typecheck: {
       tsconfig: './tsconfig.test.json',
     },
