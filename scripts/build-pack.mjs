@@ -145,10 +145,16 @@ const packPkg = {
     'pdf-parse': '^2.4.5',
     mammoth: '^1.9.0',
     // ── Web deps (Next.js standalone server requires these at runtime)
-    next: '16.2.1',
+    next: '^16.2.6',
     react: '19.2.4',
     'react-dom': '19.2.4',
     'server-only': '^0.0.1',
+    // Known leftover: Next 16.2.6 exact-pins `postcss: "8.4.31"`
+    // (GHSA-qx2v-qp2m-jg93). `npm audit` flags 2 moderates because
+    // npm can't override Next's exact pin from a downstream
+    // dependency declaration. **Not a runtime risk** — we ship a
+    // pre-built .next/ and postcss is build-only. Drops to clean
+    // when Next 16.3 stable releases (currently canary).
   },
 };
 
