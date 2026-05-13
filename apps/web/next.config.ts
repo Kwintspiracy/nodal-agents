@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 import type { Configuration } from 'webpack';
 import { networkInterfaces } from 'node:os';
+import { resolve } from 'node:path';
 
 // Next 15.3+ blocks dev requests whose Origin doesn't match the dev server's
 // host. When BIND=0.0.0.0 the user reaches the dashboard via a LAN IP, so the
@@ -22,6 +23,12 @@ function lanIPv4(): string[] {
 }
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
+  // Next.js loads this config from apps/web/. The monorepo root is two
+  // levels up. Without this, file-tracing roots at the filesystem drive
+  // and the standalone output mirrors the absolute disk layout — breaks
+  // when the install lives somewhere other than the dev machine.
+  outputFileTracingRoot: resolve(process.cwd(), '..', '..'),
   allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [
     '@nodal-agents/db',

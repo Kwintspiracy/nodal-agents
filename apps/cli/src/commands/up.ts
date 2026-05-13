@@ -284,8 +284,15 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   }
 
   // ── 8. Open browser ───────────────────────────────────────────────────────
-
-  await open(webUrl);
+  // NODALAI_NO_BROWSER=1 disables this — Docker entrypoint sets it because
+  // the container has no desktop and `open` would either hang or crash.
+  if (!process.env['NODALAI_NO_BROWSER']) {
+    try {
+      await open(webUrl);
+    } catch {
+      /* best-effort — headless environments without xdg-open shouldn't crash up */
+    }
+  }
 
   // ── 9. Ready message ──────────────────────────────────────────────────────
 

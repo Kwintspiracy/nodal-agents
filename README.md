@@ -1,30 +1,57 @@
-# NodalAI
+# Nodal-Agents
 
-Local-first agent platform. Self-host with `npx nodalai`.
+Local-first AI agent platform. Self-host on Mac, PC, Linux, VPS, or NAS in 3 commands.
 
-> **Migration en cours.** Ce repo remplace le legacy KwintAgents (Python+Next dual stack) par un monorepo all-Node. Plan de migration vivant : `~/.claude/plans/nodalai-migration-plan.md`.
+## Install in 30 seconds (Docker)
 
-## Quickstart (developer setup)
+Works on any host with Docker — Mac, PC, Linux, VPS, Synology / Unraid / TrueNAS NAS, Raspberry Pi.
+
+```bash
+curl -O https://raw.githubusercontent.com/Kwintspiracy/nodal-agents/main/docker-compose.yml
+docker compose up -d
+```
+
+Open <http://localhost:3000> — Nodal-Agents is running. Configure your LLM provider from **Settings → LLM keys** in the dashboard.
+
+Data (config, postgres, logs) lives in the `nodal-data` Docker volume. To wipe everything: `docker compose down -v`.
+
+The image is published to `ghcr.io/kwintspiracy/nodal-agents:latest` (multi-arch: amd64 + arm64). To pin a version, replace `latest` with a release tag (e.g. `v0.1.0`).
+
+### Build the image locally
+
+If you'd rather build from source instead of pulling the published image:
+
+```bash
+git clone https://github.com/Kwintspiracy/nodal-agents.git
+cd nodal-agents
+docker compose build
+docker compose up -d
+```
+
+(Comment the `image:` line and uncomment `build: .` in `docker-compose.yml`.)
+
+## Developer setup (monorepo)
 
 ```bash
 pnpm install
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm --filter nodal-agents dev   # CLI in tsx watch mode
 ```
 
 ## Monorepo structure
 
 - `apps/web` — Next.js dashboard (UI)
 - `apps/runner` — Agent runtime (HTTP API, job execution, cron ticker)
-- `apps/cli` — `npx nodalai` install + ops command
+- `apps/cli` — `nodal-agents` install + ops command
 - `packages/db` — Drizzle schema + migrations + client (only place that imports postgres)
 - `packages/shared` — Zod types and constants shared across web + runner
 - `packages/llm` — Vercel AI SDK wrapper, multi-provider abstraction
 - `packages/tools` — Tool registration + execution + approval gates
 - `packages/memory` — Agent memory CRUD + embeddings
 - `packages/orchestration` — Router + Planner patterns (delegation, task board)
-- `packages/adapters/*` — Connectors: notion, drive, gmail, sheets, etc.
+- `packages/runner-adapters` — Connectors: notion, drive, gmail, sheets, etc.
 - `packages/delivery` — Telegram, email, future Slack/Discord
 - `packages/auth` — Pluggable auth provider (local-trust default, better-auth opt-in, bearer-token for LAN)
 
@@ -33,26 +60,20 @@ pnpm test
 - `apps/*` may import `packages/*`, never the reverse
 - `apps/web` and `apps/runner` cannot import each other (DB or HTTP only)
 - Only `packages/db` may import postgres clients (`pg`, `postgres`, `drizzle-orm`)
-- `packages/adapters/*` may only import from `packages/tools` and `packages/shared`
+- `packages/runner-adapters/*` may only import from `packages/tools` and `packages/shared`
 - No circular dependencies
 
 Run `pnpm deps:check` locally before pushing.
 
-## Local install (end users)
-
-> Not yet shipped — see migration plan.
-
-When ready, `npx nodalai` will spin up the full platform locally with embedded Postgres and your local LLM (Ollama, LM Studio, llama.cpp, vLLM, custom OpenAI-compatible endpoint, or remote provider).
-
 ## Stack
 
-- **Runtime:** Node 20+, TypeScript strict
+- **Runtime:** Node 22+, TypeScript strict
 - **Monorepo:** pnpm workspaces + Turborepo
-- **DB:** embedded-postgres (local) / Neon or Render (cloud), Drizzle ORM, pgvector
+- **DB:** embedded-postgres (local + Docker), Drizzle ORM, pgvector
 - **Validation:** Zod
 - **HTTP server:** Hono (runner)
 - **LLM:** Vercel AI SDK
-- **Auth:** none (local default) / better-auth (opt-in) / bearer token (LAN)
+- **Auth:** local-trust (single-user loopback) / local-auth (better-auth, multi-user LAN) / bearer-token
 - **Tests:** Vitest (unit), Playwright (e2e), dependency-cruiser (architecture)
 
 ## License

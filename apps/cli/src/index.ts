@@ -39,10 +39,14 @@ program
   .command('init')
   .description('Interactive wizard — configure LLM, ports, and bind mode')
   .option('--force', 'Overwrite existing config without confirmation')
-  .action(async (opts: { force?: boolean }) => {
+  .option(
+    '--non-interactive',
+    'Write a default config without prompting (used by container entrypoints)',
+  )
+  .action(async (opts: { force?: boolean; nonInteractive?: boolean }) => {
     const { runInit } = await import('./commands/init.ts');
     try {
-      await runInit({ force: opts.force });
+      await runInit({ force: opts.force, nonInteractive: opts.nonInteractive });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);

@@ -14,11 +14,18 @@ function generateSecret(bytes = 32): string {
 /**
  * Run the interactive init wizard.
  * If a config already exists and force=false, asks whether to overwrite.
+ *
+ * `nonInteractive` writes a sensible default (lan bind, local-auth, no LLM
+ * preset) and returns — used by Docker entrypoint where there's no TTY.
+ * The user finishes LLM config from the dashboard.
  */
-export async function runInit(options: { force?: boolean } = {}): Promise<Config> {
+export async function runInit(
+  options: { force?: boolean; nonInteractive?: boolean } = {},
+): Promise<Config> {
   const existing = readConfig();
 
   if (existing && !options.force) {
+    if (options.nonInteractive) return existing;
     const { overwrite } = await prompts({
       type: 'confirm',
       name: 'overwrite',
@@ -29,6 +36,19 @@ export async function runInit(options: { force?: boolean } = {}): Promise<Config
       console.log(chalk.gray('Init cancelled — keeping existing config.'));
       return existing;
     }
+  }
+
+  if (options.nonInteractive) {
+    const config: Config = {
+      ports: { web: 3000, runner: 3001, postgres: 25432 },
+      workerSecret: generateSecret(32),
+      serverActionsKey: randomBytes(32).toString('base64'),
+      bind: 'lan',
+      auth: { mode: 'local-auth' },
+    };
+    writeConfig(config);
+    console.log(chalk.green('  Default config written for container boot.'));
+    return config;
   }
 
   console.log('');

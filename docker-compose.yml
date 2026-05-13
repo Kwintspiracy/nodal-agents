@@ -1,0 +1,35 @@
+# Nodal-Agents — single-file install for any host with Docker.
+#
+# Usage:
+#   docker compose up -d
+#   open http://localhost:3000
+#
+# Data (config, postgres, logs) lives in the `nodal-data` named volume.
+# To wipe everything: `docker compose down -v`.
+
+services:
+  nodal-agents:
+    image: ghcr.io/kwintspiracy/nodal-agents:latest
+    # Building locally? Comment the image line above and uncomment:
+    # build: .
+    container_name: nodal-agents
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    volumes:
+      - nodal-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+
+volumes:
+  nodal-data:
