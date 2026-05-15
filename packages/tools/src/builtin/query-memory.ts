@@ -1,12 +1,22 @@
 // Built-in: query_memory
-// Read entity-scoped memories with optional skill filter.
+// Read entity-scoped memories. With `query` set, runs a ranked keyword search;
+// without it, lists the most relevant memories by the chosen sort.
 // Entity-scoped, not agent-scoped: agents within the same entity share knowledge.
 
 import { z } from 'zod';
-import { agentMemory, eq, and } from '@nodal-agents/db';
+import { agentMemory, eq, and, desc } from '@nodal-agents/db';
+import { keywordSearchMemories } from '@nodal-agents/memory';
 import type { ToolDefinition } from '../types';
 
 export const QueryMemoryInputSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Optional free-text search. When set, memories are ranked by keyword match. ' +
+        'Omit to list recent/important memories instead.',
+    ),
   skill_tags: z
     .array(z.string().max(60))
     .optional()
@@ -14,14 +24,11 @@ export const QueryMemoryInputSchema = z.object({
       'Optional skill slugs to filter memories by. Returns all non-archived memories ' +
         'for this entity if omitted.',
     ),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(200)
+  sort: z
+    .enum(['importance', 'recent'])
     .optional()
-    .default(50)
-    .describe('Max rows to return. Default 50.'),
+    .describe("Result ordering: 'importance' (default) or 'recent'."),
+  limit: z.number().int().min(1).max(200).optional().describe('Max rows to return. Default 50.'),
 });
 
 export type QueryMemoryInput = z.infer<typeof QueryMemoryInputSchema>;
@@ -40,11 +47,34 @@ export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, Memo
   description:
     'Read persistent memories shared across all agents in your entity. Use before starting a ' +
     'task to recall relevant context, user preferences, and learned rules — including memories ' +
-    'saved by other agents in this same workspace. Filter by skill_tags for narrower lookups.',
+    'saved by other agents in this same workspace. Pass `query` to search by keywords, or ' +
+    'filter by skill_tags for narrower lookups.',
   inputSchema: QueryMemoryInputSchema,
-  riskLevel: 'write', // write because it updates last_accessed_at — consistent with legacy
+  riskLevel: 'write', // write because it updates last_accessed_at on matched rows
   execute: async (input, ctx) => {
-    // Entity-scoped read: any agent in the same entity sees the same memories.
+    const sort = input.sort ?? 'importance';
+    const limit = input.limit ?? 50;
+
+    // ── Ranked keyword search path ────────────────────────────────────────────
+    if (input.query) {
+      const memories = await keywordSearchMemories(ctx.db, {
+        query: input.query,
+        entityId: ctx.entityId,
+        skillTags: input.skill_tags,
+        limit,
+        sort,
+      });
+      return memories.map((m) => ({
+        id: m.id,
+        fact: m.fact,
+        category: m.category,
+        importance: m.importance,
+        skill_tags: m.skill_tags,
+        created_at: m.created_at ? new Date(m.created_at) : null,
+      }));
+    }
+
+    // ── List path — entity-scoped, no free-text query ─────────────────────────
     // Memories ARE still tagged with the agentId that wrote them (audit trail
     // via save_memory) but reads are entity-wide so knowledge follows the user
     // across agents.
@@ -61,7 +91,8 @@ export const queryMemoryTool: ToolDefinition<typeof QueryMemoryInputSchema, Memo
       })
       .from(agentMemory)
       .where(and(...conditions))
-      .limit(input.limit ?? 50);
+      .orderBy(sort === 'recent' ? desc(agentMemory.createdAt) : desc(agentMemory.importance))
+      .limit(limit);
 
     // Filter by skill_tags in-process (array overlap — pglite doesn't support
     // the @> operator natively without custom SQL; keep it simple for now).

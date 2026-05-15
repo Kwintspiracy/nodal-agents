@@ -607,6 +607,7 @@ export async function executeJob(
                 entityId: job.entityId ?? '',
                 db,
                 jobChatId: job.chatId ?? null,
+                embeddingClient: deps.embeddingClient,
               },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },
             );
@@ -724,6 +725,7 @@ export async function executeJob(
             entityId: job.entityId ?? '',
             db,
             jobChatId: job.chatId ?? null,
+            embeddingClient: deps.embeddingClient,
           },
           {
             approvalRules: approvalRuleList,

@@ -645,6 +645,9 @@ importers:
       '@nodal-agents/llm':
         specifier: workspace:*
         version: link:../llm
+      '@nodal-agents/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared

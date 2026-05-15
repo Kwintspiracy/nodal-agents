@@ -17,6 +17,7 @@
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/delivery": "workspace:*",
     "@nodal-agents/llm": "workspace:*",
+    "@nodal-agents/memory": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "ai": "^6.0.177",
     "zod": "^4.4.3"

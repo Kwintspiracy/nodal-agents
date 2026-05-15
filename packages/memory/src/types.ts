@@ -26,6 +26,24 @@ export interface SearchOptions {
   similarityThreshold?: number;
 }
 
+export type KeywordSort = 'importance' | 'recent';
+
+/**
+ * Options for keywordSearchMemories — the embedding-free keyword search exposed
+ * to the query_memory tool. Same scoping semantics as SearchOptions.
+ */
+export interface KeywordSearchOptions {
+  query: string;
+  entityId: string;
+  agentId?: string;
+  skillTags?: string[];
+  category?: MemoryCategory;
+  /** Default: 10 */
+  limit?: number;
+  /** Default: 'importance' */
+  sort?: KeywordSort;
+}
+
 // ─── List / Pagination ─────────────────────────────────────────────────────────
 
 export type MemorySortField = 'recent' | 'importance' | 'last_accessed';

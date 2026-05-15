@@ -3,6 +3,8 @@
 // Types
 export type {
   SearchOptions,
+  KeywordSearchOptions,
+  KeywordSort,
   ListOptions,
   PagedResult,
   MemoryStats,
@@ -10,18 +12,31 @@ export type {
 } from './types';
 
 // Errors
-export { MemoryError, MemoryNotFoundError } from './errors';
+export {
+  MemoryError,
+  MemoryNotFoundError,
+  MemorySanitationError,
+  MemoryDuplicateError,
+} from './errors';
 export type { MemoryErrorCode } from './errors';
 
 // CRUD
 export { getMemory, createMemory, updateMemory, deleteMemory, rowToMemory } from './crud';
 export type { MemoryRow } from './crud';
 
+// Sanitation + hashing (pure)
+export { sanitizeMemoryContent, MAX_FACT_LENGTH } from './sanitize';
+export { computeFactHash, normalizeFact } from './hash';
+
 // List
 export { listMemories } from './list';
 
 // Search
-export { searchMemories } from './search';
+export { searchMemories, keywordSearchMemories } from './search';
+
+// Embedding backfill (one-shot, idempotent)
+export { backfillEmbeddings } from './backfill';
+export type { BackfillResult } from './backfill';
 
 // Filter (pure functions)
 export { applySkillFilter, filterByTags } from './filter';

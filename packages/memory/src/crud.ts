@@ -5,7 +5,10 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { agentMemory } from '@nodal-agents/db';
 import type { AgentMemory, AgentMemoryInsert } from '@nodal-agents/shared';
 import { AgentMemoryInsertSchema } from '@nodal-agents/shared';
-import { MemoryNotFoundError } from './errors';
+import type { EmbeddingClient } from '@nodal-agents/llm';
+import { MemoryNotFoundError, MemoryDuplicateError } from './errors';
+import { sanitizeMemoryContent } from './sanitize';
+import { computeFactHash } from './hash';
 
 // ─── Get ───────────────────────────────────────────────────────────────────────
 
@@ -32,8 +35,47 @@ export async function getMemory(
 export async function createMemory(
   db: AnyDrizzleDb,
   input: AgentMemoryInsert,
+  embeddingClient?: EmbeddingClient,
 ): Promise<AgentMemory> {
   const parsed = AgentMemoryInsertSchema.parse(input);
+
+  // Reject injection / exfiltration payloads before they reach the store —
+  // memory is shared entity-wide and (Sprint 2) injected into the system prompt.
+  sanitizeMemoryContent(parsed.fact);
+
+  // Deduplicate: an identical normalized fact already known for this entity
+  // (and not archived) is rejected. fact_hash + idx_agent_memory_fact_hash
+  // already exist in the schema. The check is entity-scoped; the hash column
+  // is always populated so future writes can rely on it.
+  const factHash = computeFactHash(parsed.fact);
+  if (parsed.entity_id) {
+    const existing = await db
+      .select({ id: agentMemory.id })
+      .from(agentMemory)
+      .where(
+        and(
+          eq(agentMemory.entityId, parsed.entity_id),
+          eq(agentMemory.factHash, factHash),
+          eq(agentMemory.archived, false),
+        ),
+      )
+      .limit(1);
+    if (existing[0]) {
+      throw new MemoryDuplicateError(existing[0].id);
+    }
+  }
+
+  // Generate the semantic embedding when an embedding client is supplied.
+  // Failure degrades gracefully to no embedding — keyword search still works,
+  // and a later backfill can fill the gap. The runner always passes a client.
+  let embedding: number[] | null = null;
+  if (embeddingClient) {
+    try {
+      embedding = await embeddingClient.embed(parsed.fact);
+    } catch {
+      embedding = null;
+    }
+  }
 
   const rows = await db
     .insert(agentMemory)
@@ -46,6 +88,8 @@ export async function createMemory(
       source: parsed.source,
       skillTags: parsed.skill_tags,
       memoryLayer: parsed.memory_layer ?? null,
+      factHash,
+      embedding,
     })
     .returning();
 

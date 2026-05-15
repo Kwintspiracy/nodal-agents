@@ -4,7 +4,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { EmbeddingClient } from '@nodal-agents/llm';
 import { createMemory } from '../crud';
-import { searchMemories } from '../search';
+import { searchMemories, keywordSearchMemories } from '../search';
 
 let db: Awaited<ReturnType<typeof spinUpTestDb>>['db'];
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -248,23 +248,114 @@ describe('searchMemories — vector search', () => {
     expect(Array.isArray(results)).toBe(true);
   });
 
-  it('vector search returns results when embeddings stored', async () => {
-    // This test uses pglite's vector extension
-    // We need to store memories WITH embeddings to test vector similarity
+  it('falls back to keyword when the query embeds but no rows have embeddings', async () => {
+    // The beforeAll memories were created WITHOUT an embedding client, so every
+    // row's embedding is NULL. A real-embedding client makes vectorSearch run,
+    // find zero vector hits, and (with the fallback) defer to keyword search.
+    const vectorClient = makeVectorClient(1536);
+
+    const results = await searchMemories(db, vectorClient, {
+      query: 'notion',
+      entityId: seed.entityId,
+    });
+
+    expect(results.some((m) => m.fact.toLowerCase().includes('notion'))).toBe(true);
+  });
+
+  it('vector search finds a memory whose stored embedding matches the query', async () => {
     const vectorClient = makeVectorClient(1536);
     const { db: vDb } = await spinUpTestDb();
     const vSeed = await seedMinimal(vDb);
 
-    // We can't insert embeddings through createMemory (no embedding param in insert).
-    // Instead test that vector search with null embedding → falls back to keyword.
-    // Full vector search with real pgvector requires raw SQL inserts.
+    const fact = 'The deployment uses embedded Postgres on port 25435.';
+    const created = await createMemory(
+      vDb,
+      {
+        entity_id: vSeed.entityId,
+        fact,
+        category: 'context',
+        importance: 3,
+        source: 'agent',
+        skill_tags: [],
+      },
+      vectorClient,
+    );
+
+    // Querying with the exact fact text → identical embedding → distance 0,
+    // well within the similarity threshold.
     const results = await searchMemories(vDb, vectorClient, {
-      query: 'test fact',
+      query: fact,
       entityId: vSeed.entityId,
     });
 
-    // Without any data, returns empty
-    expect(Array.isArray(results)).toBe(true);
-    expect(results.length).toBe(0);
+    expect(results.some((m) => m.id === created.id)).toBe(true);
+  });
+});
+
+// ─── keywordSearchMemories (embedding-free, for query_memory tool) ─────────────
+
+describe('keywordSearchMemories', () => {
+  it('returns memories matching the query keywords', async () => {
+    const results = await keywordSearchMemories(db, {
+      query: 'user',
+      entityId: seed.entityId,
+    });
+
+    expect(results.length).toBe(2); // facts 1 and 4 contain "user"
+    expect(results.every((m) => m.fact.toLowerCase().includes('user'))).toBe(true);
+  });
+
+  it('ranks by importance under the default sort', async () => {
+    const results = await keywordSearchMemories(db, {
+      query: 'user',
+      entityId: seed.entityId,
+    });
+
+    // "User works at Acme Corp..." (5) before "User prefers concise..." (4)
+    expect(results[0]?.importance).toBe(5);
+    expect(results[1]?.importance).toBe(4);
+  });
+
+  it('orders by recency under sort: recent', async () => {
+    const results = await keywordSearchMemories(db, {
+      query: 'user',
+      entityId: seed.entityId,
+      sort: 'recent',
+    });
+
+    const times = results.map((m) => new Date(m.updated_at).getTime());
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+
+  it('respects the limit option', async () => {
+    const results = await keywordSearchMemories(db, {
+      query: 'user',
+      entityId: seed.entityId,
+      limit: 1,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.importance).toBe(5);
+  });
+
+  it('bumps access tracking on returned rows', async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+
+    const m = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'Keyword search access tracking probe.',
+      category: 'context',
+      importance: 3,
+      source: 'agent',
+      skill_tags: [],
+    });
+    expect(m.access_count).toBe(0);
+
+    await keywordSearchMemories(freshDb, { query: 'probe', entityId: freshSeed.entityId });
+
+    const { getMemory } = await import('../crud');
+    const fetched = await getMemory(freshDb, m.id, freshSeed.entityId);
+    expect(fetched.access_count).toBe(1);
   });
 });

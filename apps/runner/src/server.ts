@@ -15,6 +15,7 @@ import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
+import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { AuthError } from '@nodal-agents/auth';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
@@ -112,6 +113,11 @@ async function main(): Promise<void> {
   // One-shot: if the local entity has no entity_llm_keys rows yet, seed one
   // from env so existing agents keep working post-Brique-24 (idempotent).
   await seedDefaultLlmKey(deps.db, runnerEnv);
+
+  // One-shot: generate embeddings for memory rows written before Sprint 1's
+  // inline embedding generation existed (idempotent — zero-row pass once caught
+  // up). Search still finds un-backfilled rows via the keyword fallback.
+  await backfillMemoryEmbeddings(deps.db, deps.embeddingClient);
 
   const app = createApp(deps, runnerEnv);
 

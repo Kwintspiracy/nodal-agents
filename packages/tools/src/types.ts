@@ -3,6 +3,7 @@
 
 import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { EmbeddingClient } from '@nodal-agents/llm';
 import type { OperationRiskLevel } from '@nodal-agents/shared';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
@@ -27,6 +28,13 @@ export interface ToolContext {
    * does not explicitly provide a chatId argument.
    */
   jobChatId: string | null;
+  /**
+   * Embedding client for tools that persist or search semantic memory
+   * (save_memory generates an embedding at write time). Optional: the runner
+   * always provides it, but lightweight test contexts may omit it — memory
+   * writes then simply store no embedding and search falls back to keyword.
+   */
+  embeddingClient?: EmbeddingClient;
 }
 
 // ─── ToolDefinition ────────────────────────────────────────────────────────────

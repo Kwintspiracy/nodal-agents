@@ -86,7 +86,8 @@ describe('save_memory', () => {
       makeCtx(),
     );
 
-    expect(result.id).toBeTruthy();
+    expect(result.saved).toBe(true);
+    if (!result.saved) throw new Error('expected saved: true');
 
     // Verify the actual DB row
     const rows = await db.select().from(agentMemory).where(eq(agentMemory.id, result.id));
@@ -99,6 +100,8 @@ describe('save_memory', () => {
     expect(row.skillTags).toContain('notion');
     expect(row.agentId).toBe(seed.agentId);
     expect(row.entityId).toBe(seed.entityId);
+    // fact_hash is populated by the canonical createMemory() path
+    expect(row.factHash).toBeTruthy();
   });
 
   it('defaults importance to 3 when not provided', async () => {
@@ -106,6 +109,9 @@ describe('save_memory', () => {
       { fact: 'Some context fact', category: 'context', importance: 3 },
       makeCtx(),
     );
+
+    expect(result.saved).toBe(true);
+    if (!result.saved) throw new Error('expected saved: true');
 
     const rows = await db.select().from(agentMemory).where(eq(agentMemory.id, result.id));
 

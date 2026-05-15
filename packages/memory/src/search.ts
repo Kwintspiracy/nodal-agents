@@ -5,7 +5,7 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { agentMemory } from '@nodal-agents/db';
 import type { AgentMemory } from '@nodal-agents/shared';
 import type { EmbeddingClient } from '@nodal-agents/llm';
-import type { SearchOptions } from './types';
+import type { SearchOptions, KeywordSearchOptions, KeywordSort } from './types';
 import { rowToMemory } from './crud';
 import type { MemoryRow } from './crud';
 import { touchMemories } from './access-tracking';
@@ -45,6 +45,19 @@ export async function searchMemories(
       limit,
       similarityThreshold,
     });
+    // Vector search can return nothing when no rows have embeddings yet (a
+    // fresh install, or rows written before embeddings were generated) or when
+    // nothing clears the similarity threshold. Fall back to keyword so a usable
+    // query never comes back empty just because the vector index is sparse.
+    if (results.length === 0) {
+      results = await keywordSearch(db, query, {
+        entityId,
+        agentId,
+        skillTags,
+        category,
+        limit,
+      });
+    }
   } else {
     results = await keywordSearch(db, query, {
       entityId,
@@ -113,10 +126,18 @@ async function vectorSearch(
 
 // ─── Keyword (ILIKE) search ────────────────────────────────────────────────────
 
+/** Resolve the orderBy clause for a keyword sort mode. */
+function keywordOrderBy(sort: KeywordSort) {
+  return sort === 'recent'
+    ? [desc(agentMemory.updatedAt), desc(agentMemory.importance)]
+    : [desc(agentMemory.importance), desc(agentMemory.updatedAt)];
+}
+
 async function keywordSearch(
   db: AnyDrizzleDb,
   query: string,
   filters: Omit<SearchFilters, 'similarityThreshold'>,
+  sort: KeywordSort = 'importance',
 ): Promise<MemoryRow[]> {
   const { entityId, agentId, skillTags, category, limit } = filters;
 
@@ -128,6 +149,7 @@ async function keywordSearch(
     .slice(0, 8);
 
   const conditions = buildWhereConditions({ entityId, agentId, skillTags, category });
+  const orderBy = keywordOrderBy(sort);
 
   // If we have usable keywords, build OR ilike conditions on fact
   if (words.length > 0) {
@@ -137,21 +159,52 @@ async function keywordSearch(
       .select()
       .from(agentMemory)
       .where(and(...conditions, or(...ilikeConditions)))
-      .orderBy(desc(agentMemory.importance), desc(agentMemory.updatedAt))
+      .orderBy(...orderBy)
       .limit(limit) as unknown as Promise<MemoryRow[]>);
 
     return rows;
   }
 
-  // Fallback: no usable keywords — return top memories by importance
+  // Fallback: no usable keywords — return top memories by the chosen sort
   const rows = await (db
     .select()
     .from(agentMemory)
     .where(and(...conditions))
-    .orderBy(desc(agentMemory.importance), desc(agentMemory.updatedAt))
+    .orderBy(...orderBy)
     .limit(limit) as unknown as Promise<MemoryRow[]>);
 
   return rows;
+}
+
+/**
+ * Keyword (ILIKE) memory search exposed to the query_memory tool. Same ranking
+ * as the keyword fallback of searchMemories, but callable without an embedding
+ * client. Bumps access tracking on the returned rows.
+ */
+export async function keywordSearchMemories(
+  db: AnyDrizzleDb,
+  opts: KeywordSearchOptions,
+): Promise<AgentMemory[]> {
+  const { query, entityId, agentId, skillTags, category, limit = 10, sort = 'importance' } = opts;
+
+  const rows = await keywordSearch(
+    db,
+    query,
+    { entityId, agentId, skillTags, category, limit },
+    sort,
+  );
+
+  const memories = rows.map((r) => rowToMemory(r));
+
+  if (memories.length > 0) {
+    await touchMemories(
+      db,
+      memories.map((m) => m.id),
+      entityId,
+    );
+  }
+
+  return memories;
 }
 
 // ─── Shared condition builder ──────────────────────────────────────────────────
