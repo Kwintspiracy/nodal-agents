@@ -64,6 +64,13 @@
       "when": 1778459305708,
       "tag": "0008_curious_thor_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778860776473,
+      "tag": "0009_agent_memory_token_budget",
+      "breakpoints": true
     }
   ]
 }

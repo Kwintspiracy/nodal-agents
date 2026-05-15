@@ -34,6 +34,7 @@ function makeAgent(
   entityId: string,
   personality: string,
   role: 'agent' | 'orchestrator' = 'agent',
+  memoryTokenBudget = 0,
 ): Agent {
   return {
     id: id as AgentId,
@@ -45,6 +46,7 @@ function makeAgent(
     model: 'claude-sonnet-4-6-20260217',
     active: true,
     orchestratorMode: null,
+    memoryTokenBudget,
   };
 }
 
@@ -284,5 +286,156 @@ describe('buildSystemPrompt', () => {
     const prompt = await buildSystemPrompt(agent, db);
 
     expect(prompt).not.toContain('## Job context');
+  });
+});
+
+// ─── Sprint 2 — Persistent memory auto-injection ──────────────────────────────
+
+describe('buildSystemPrompt — persistent memory auto-injection', () => {
+  it('does NOT include ## Persistent memory when budget is 0', async () => {
+    const { entityId } = await seedContext(db);
+    const { agentMemory } = await import('@nodal-agents/db');
+    await db.insert(agentMemory).values({
+      entityId,
+      fact: 'fact-not-injected',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+    });
+    const [row] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP Mem Off Agent',
+        slug: `test-sp-memoff-${Date.now()}`,
+        personality: 'You are silent on memory.',
+        role: 'agent',
+      })
+      .returning();
+    const agent = makeAgent(row!.id, entityId, row!.personality, 'agent', 0);
+    const prompt = await buildSystemPrompt(agent, db);
+    expect(prompt).not.toContain('## Persistent memory');
+  });
+
+  it('injects ## Persistent memory block when budget > 0 and memories exist', async () => {
+    const { entityId } = await seedContext(db);
+    const { agentMemory } = await import('@nodal-agents/db');
+    await db.insert(agentMemory).values([
+      {
+        entityId,
+        fact: 'user prefers TypeScript strict mode',
+        category: 'preference',
+        importance: 5,
+        source: 'agent',
+      },
+      {
+        entityId,
+        fact: 'project uses pnpm workspaces',
+        category: 'context',
+        importance: 4,
+        source: 'agent',
+      },
+    ]);
+    const [row] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP Mem On Agent',
+        slug: `test-sp-memon-${Date.now()}`,
+        personality: 'You answer briefly.',
+        role: 'agent',
+      })
+      .returning();
+    const agent = makeAgent(row!.id, entityId, row!.personality, 'agent', 1500);
+    const prompt = await buildSystemPrompt(agent, db);
+    expect(prompt).toContain('## Persistent memory');
+    expect(prompt).toContain('user prefers TypeScript strict mode');
+    expect(prompt).toContain('project uses pnpm workspaces');
+    // Higher-importance fact appears first
+    const idxA = prompt.indexOf('user prefers TypeScript strict mode');
+    const idxB = prompt.indexOf('project uses pnpm workspaces');
+    expect(idxA).toBeLessThan(idxB);
+  });
+
+  it('respects the budget — high-cost memories are skipped when they overflow', async () => {
+    const { entityId } = await seedContext(db);
+    const { agentMemory } = await import('@nodal-agents/db');
+    // 1000-char fact is too big for a 100-char budget; the small one fits.
+    await db.insert(agentMemory).values([
+      {
+        entityId,
+        fact: 'X'.repeat(1000),
+        category: 'context',
+        importance: 5,
+        source: 'agent',
+      },
+      {
+        entityId,
+        fact: 'tiny',
+        category: 'context',
+        importance: 4,
+        source: 'agent',
+      },
+    ]);
+    const [row] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP Mem Budget Agent',
+        slug: `test-sp-membudget-${Date.now()}`,
+        personality: 'You answer briefly.',
+        role: 'agent',
+      })
+      .returning();
+    const agent = makeAgent(row!.id, entityId, row!.personality, 'agent', 100);
+    const prompt = await buildSystemPrompt(agent, db);
+    expect(prompt).toContain('## Persistent memory');
+    expect(prompt).toContain('tiny');
+    expect(prompt).not.toContain('XXXXXXXX'); // big fact skipped
+  });
+
+  it('skips archived and expired memories', async () => {
+    const { entityId } = await seedContext(db);
+    const { agentMemory } = await import('@nodal-agents/db');
+    await db.insert(agentMemory).values([
+      {
+        entityId,
+        fact: 'archived-secret-never-shown',
+        category: 'context',
+        importance: 5,
+        source: 'agent',
+        archived: true,
+      },
+      {
+        entityId,
+        fact: 'expired-secret-never-shown',
+        category: 'context',
+        importance: 5,
+        source: 'agent',
+        validTo: new Date(Date.now() - 24 * 60 * 60 * 1000), // yesterday
+      },
+      {
+        entityId,
+        fact: 'live-fact-always-shown',
+        category: 'context',
+        importance: 3,
+        source: 'agent',
+      },
+    ]);
+    const [row] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP Mem Live Agent',
+        slug: `test-sp-memlive-${Date.now()}`,
+        personality: 'P',
+        role: 'agent',
+      })
+      .returning();
+    const agent = makeAgent(row!.id, entityId, row!.personality, 'agent', 1500);
+    const prompt = await buildSystemPrompt(agent, db);
+    expect(prompt).toContain('live-fact-always-shown');
+    expect(prompt).not.toContain('archived-secret-never-shown');
+    expect(prompt).not.toContain('expired-secret-never-shown');
   });
 });

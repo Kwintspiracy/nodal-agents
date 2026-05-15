@@ -16,6 +16,7 @@
   "dependencies": {
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/llm": "workspace:*",
+    "@nodal-agents/memory": "workspace:*",
     "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/tools": "workspace:*",

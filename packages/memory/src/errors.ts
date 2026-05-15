@@ -3,6 +3,7 @@
 export type MemoryErrorCode =
   | 'MEMORY_NOT_FOUND'
   | 'INVALID_ENTITY'
+  | 'INVALID_INPUT'
   | 'INVALID_PAGE'
   | 'INVALID_PAGE_SIZE'
   | 'DB_ERROR'

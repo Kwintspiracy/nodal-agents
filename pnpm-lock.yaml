@@ -559,6 +559,9 @@ importers:
       '@nodal-agents/llm':
         specifier: workspace:*
         version: link:../llm
+      '@nodal-agents/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@nodal-agents/runner-adapters':
         specifier: workspace:*
         version: link:../runner-adapters

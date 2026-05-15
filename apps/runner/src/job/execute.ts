@@ -207,6 +207,7 @@ export async function executeJob(
     model: agentRow.model ?? 'claude-sonnet-4-6-20260217',
     active: agentRow.active ?? true,
     orchestratorMode: (agentRow.orchestratorMode ?? null) as 'router' | 'planner' | null,
+    memoryTokenBudget: agentRow.memoryTokenBudget,
   };
 
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────

@@ -11,6 +11,8 @@
 
 import { eq } from '@nodal-agents/db';
 import { agentSkillAssignments, agentSkills } from '@nodal-agents/db';
+import { selectMemoriesForInjection } from '@nodal-agents/memory';
+import type { AgentMemory } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
 import { buildTeamBlock } from './team-block';
 import type { Agent, AnyDrizzleDb } from './types';
@@ -36,6 +38,37 @@ function buildJobContextBlock(ctx: JobContext): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
   return `\n\n## Job context\n${lines.join('\n')}`;
+}
+
+// ─── buildPersistentMemoryBlock ───────────────────────────────────────────────
+
+/**
+ * Render the auto-injected memory block (Sprint 2 — auto-injection).
+ *
+ * Goal: surface durable facts to the LLM without the agent having to call
+ * `query_memory` every turn — the agent often forgets, and even when it
+ * remembers, that's one round-trip of latency and tokens. With injection,
+ * relevant memories live in the system prompt for the whole job.
+ *
+ * The block deliberately tells the LLM not to re-query for facts it already
+ * sees here — saves tokens and avoids the dashboard becoming a wall of
+ * redundant query_memory calls.
+ *
+ * Char overhead per entry MUST match `RENDER_OVERHEAD_PER_ENTRY` in
+ * `packages/memory/src/inject.ts` (currently 20). Keep them in sync.
+ */
+function buildPersistentMemoryBlock(memories: ReadonlyArray<AgentMemory>): string {
+  if (memories.length === 0) return '';
+  const lines = memories
+    .map((m) => `- (${m.category}, ${m.importance}★) ${m.fact}`)
+    .join('\n');
+  return (
+    `\n\n## Persistent memory\n\n` +
+    `Durable facts loaded from your long-term memory. Treat as authoritative ` +
+    `for the entity. DO NOT call \`query_memory\` to look up facts already listed ` +
+    `here — only call it for facts that look missing.\n\n` +
+    `${lines}`
+  );
 }
 
 // ─── buildBuiltinCapabilitiesBlock ────────────────────────────────────────────
@@ -112,10 +145,26 @@ export async function buildSystemPrompt(
   //    not just optional tools buried in the SDK's tool list.
   const builtinBlock = buildBuiltinCapabilitiesBlock();
 
-  // 6. Job context block — runtime data provided by the runner per-job.
+  // 6. Persistent memory block — Sprint 2 auto-injection. Top-N durable facts
+  //    for the entity, sorted by importance × recency, fit under the agent's
+  //    memoryTokenBudget. Skipped when entityId is null (system agents) or
+  //    when the budget yields zero rows. Frozen snapshot — the block is built
+  //    once per job assembly; mid-job writes via save_memory land on disk but
+  //    do NOT mutate the in-flight system prompt (prefix-cache preservation,
+  //    Hermes pattern). Next job picks them up.
+  const memoryRows =
+    agent.entityId !== null
+      ? await selectMemoriesForInjection(db, {
+          entityId: agent.entityId as string,
+          maxChars: agent.memoryTokenBudget,
+        })
+      : [];
+  const memoryBlock = buildPersistentMemoryBlock(memoryRows);
+
+  // 7. Job context block — runtime data provided by the runner per-job.
   //    Only appended when jobContext is provided. The agent's personality
   //    decides how to use this data (e.g. send via Telegram if chat_id is set).
   const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
 
-  return personality + '\n\n' + builtinBlock + skillsBlock + jobContextBlock;
+  return personality + '\n\n' + builtinBlock + memoryBlock + skillsBlock + jobContextBlock;
 }

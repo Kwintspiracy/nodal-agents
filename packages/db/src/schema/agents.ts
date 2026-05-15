@@ -47,6 +47,10 @@ export const agents = pgTable(
     avatarUrl: text('avatar_url'),
     systemAgent: boolean('system_agent').default(false),
     maxTokensPerJob: integer('max_tokens_per_job').default(0).notNull(),
+    // Cap on characters of agent_memory injected into the system prompt per job
+    // (Memory Sprint 2). Pure char budget — token estimation done at call site
+    // (length/4). 1500 chars ≈ ~375 tokens, similar to Hermes' 2200+1375 split.
+    memoryTokenBudget: integer('memory_token_budget').default(1500).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

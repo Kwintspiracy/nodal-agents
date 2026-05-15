@@ -41,6 +41,12 @@ export type { BackfillResult } from './backfill';
 // Filter (pure functions)
 export { applySkillFilter, filterByTags } from './filter';
 
+// System-prompt injection (Sprint 2 — auto-injection)
+export { selectMemoriesUnderBudget, selectMemoriesForInjection } from './inject';
+
+// Find-by-substring (Sprint 2 — feedback-loop tools dispatch on result count)
+export { findMemoriesByFactSubstring } from './find';
+
 // Stats
 export { getMemoryStats } from './stats';
 

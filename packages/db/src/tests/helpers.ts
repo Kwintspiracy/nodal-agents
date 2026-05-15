@@ -107,6 +107,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       avatar_url text,
       system_agent boolean DEFAULT false,
       max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
+      memory_token_budget integer NOT NULL DEFAULT 1500,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );

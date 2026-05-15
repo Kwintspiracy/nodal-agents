@@ -32,6 +32,8 @@ export interface Agent {
   model: string;
   active: boolean;
   orchestratorMode: 'router' | 'planner' | null;
+  /** Char budget for memory auto-injection into the system prompt (Sprint 2). */
+  memoryTokenBudget: number;
 }
 
 // ─── AgentJob shape (minimal) ─────────────────────────────────────────────────

@@ -5,12 +5,16 @@ import type { ToolRegistry } from '../types';
 import { returnResultTool } from './return-result';
 import { saveMemoryTool } from './save-memory';
 import { queryMemoryTool } from './query-memory';
+import { markMemoryHelpfulTool } from './mark-memory-helpful';
+import { markMemoryOutdatedTool } from './mark-memory-outdated';
 import { webSearchTool } from './web-search';
 import { dashboardPublishTool } from './dashboard-publish';
 
 export { returnResultTool } from './return-result';
 export { saveMemoryTool } from './save-memory';
 export { queryMemoryTool } from './query-memory';
+export { markMemoryHelpfulTool } from './mark-memory-helpful';
+export { markMemoryOutdatedTool } from './mark-memory-outdated';
 export { webSearchTool } from './web-search';
 export { dashboardPublishTool, DashboardPublishInputSchema } from './dashboard-publish';
 export type { DashboardPublishInput } from './dashboard-publish';
@@ -23,6 +27,8 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(returnResultTool);
   registry.register(saveMemoryTool);
   registry.register(queryMemoryTool);
+  registry.register(markMemoryHelpfulTool);
+  registry.register(markMemoryOutdatedTool);
   registry.register(webSearchTool);
   registry.register(dashboardPublishTool);
 }
@@ -35,6 +41,8 @@ export const ALWAYS_ON_TOOLS = [
   'return_result',
   'save_memory',
   'query_memory',
+  'mark_memory_helpful',
+  'mark_memory_outdated',
   'dashboard_publish',
 ] as const;
 export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
@@ -53,5 +61,7 @@ export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: str
   { name: returnResultTool.name, description: returnResultTool.description },
   { name: saveMemoryTool.name, description: saveMemoryTool.description },
   { name: queryMemoryTool.name, description: queryMemoryTool.description },
+  { name: markMemoryHelpfulTool.name, description: markMemoryHelpfulTool.description },
+  { name: markMemoryOutdatedTool.name, description: markMemoryOutdatedTool.description },
   { name: dashboardPublishTool.name, description: dashboardPublishTool.description },
 ];
