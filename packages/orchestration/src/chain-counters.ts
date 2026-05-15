@@ -1,5 +1,5 @@
 // chain-counters.ts — per-job execution limit enforcement
-// Invariant 8: max 5 chains, max 50 tool calls/turn, max 3 delegation depth.
+// Invariant 8: max 5 chains, max 50 tool calls/turn, max 3 delegation depth, max 50 turns.
 // Approval semantics: chain_count does NOT bump when resuming from awaiting_approval.
 
 import {
@@ -16,6 +16,7 @@ export const DEFAULT_LIMITS: ChainLimits = {
   maxChains: 5,
   maxToolCallsPerTurn: 50,
   maxDelegationDepth: 3,
+  maxTurns: 50, // matches Hermes Agent's per-subagent iteration budget; cumulative cap across resumes
 };
 
 // ─── ChainCounters ────────────────────────────────────────────────────────────

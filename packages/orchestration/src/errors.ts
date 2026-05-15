@@ -68,6 +68,7 @@ export type OrchestrationErrorCode =
   | 'chain_limit_exceeded'
   | 'tool_call_limit_exceeded'
   | 'delegation_depth_exceeded'
+  | 'turn_limit_exceeded'
   | 'parent_not_found'
   | 'parent_wrong_status'
   | 'missing_tool_use_id'
