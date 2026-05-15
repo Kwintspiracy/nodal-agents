@@ -825,6 +825,239 @@ describe('executeJob', () => {
     expect(sp).not.toContain('telegram_chat_id');
   });
 
+  // ─── Turn cap (invariant 8) ───────────────────────────────────────────────────
+
+  it('turn cap: job that loops forever fails with turn_limit_exceeded after DEFAULT_LIMITS.maxTurns turns', async () => {
+    // Import DEFAULT_LIMITS to drive the assertion — the test must not hardcode 50.
+    const { DEFAULT_LIMITS } = await import('@nodal-agents/orchestration');
+
+    const job = await createTestJob(db, seed);
+
+    // LLM always returns save_memory (always-on, whitelisted) — never return_result.
+    // We need 51 distinct entries (one per turn) with unique toolCallIds so the
+    // message-structure validator doesn't reject duplicate_tool_use_id before the
+    // turn cap fires. The last response is reused for turns beyond the array length
+    // — so we generate DEFAULT_LIMITS.maxTurns + 1 entries, all unique.
+    const loopingLlmClient = makeMockLlmClient(
+      Array.from({ length: DEFAULT_LIMITS.maxTurns + 1 }, (_, i) => ({
+        toolCalls: [
+          {
+            toolCallId: `tc-loop-${i}`,
+            toolName: 'save_memory',
+            args: { fact: `loop ${i}`, category: 'context' },
+          },
+        ],
+      })),
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(loopingLlmClient), testEnv);
+
+    // Return value assertion
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('turn_limit_exceeded');
+    }
+
+    // Real DB row assertion — failJob must have persisted the error code
+    const rows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(rows[0]?.status).toBe('failed');
+    expect(rows[0]?.error).toBe('turn_limit_exceeded');
+    // The cap check fires AFTER `turn += 1`, so when `turn > maxTurns` (51 > 50), the
+    // persisted turn value is 51. The LLM was called exactly maxTurns (50) times.
+    expect(rows[0]?.turn).toBe(DEFAULT_LIMITS.maxTurns + 1);
+  });
+
+  // ─── Tool-result truncation ───────────────────────────────────────────────────
+
+  it('tool-result truncation: oversized string tool result is truncated before entering messages', async () => {
+    const { z } = await import('zod');
+    const { createEmbeddingClient } = await import('@nodal-agents/llm');
+    const { LocalTrustProvider } = await import('@nodal-agents/auth');
+    const { createToolRegistry: makeReg, registerBuiltins: regBuiltins } =
+      await import('@nodal-agents/tools');
+
+    const job = await createTestJob(db, seed);
+
+    // Build a custom registry where save_memory (an always-on, whitelisted tool)
+    // is overridden to return a very large string. This tests the truncation path
+    // without FK issues — save_memory is in ALWAYS_ON_TOOLS so it's guaranteed
+    // to be in the whitelist regardless of skill assignments.
+    const customRegistry = makeReg();
+    regBuiltins(customRegistry);
+
+    const LARGE_OUTPUT = 'x'.repeat(200_000);
+    // Override save_memory to return a large string for this test
+    customRegistry.register({
+      name: 'save_memory',
+      description: 'save_memory override for truncation test',
+      inputSchema: z.object({ fact: z.string(), category: z.string().optional() }),
+      riskLevel: 'read' as const,
+      execute: async () => LARGE_OUTPUT,
+    });
+
+    // LLM: turn 1 calls save_memory (returns 200K chars), turn 2 calls return_result
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-mem',
+            toolName: 'save_memory',
+            args: { fact: 'test fact', category: 'context' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    setActiveLlmClient(llmClient);
+    const customDeps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+      registry: customRegistry,
+      authProvider: new LocalTrustProvider(),
+      close: async () => {},
+    };
+
+    const result = await executeJob(job.id as JobId, customDeps, testEnv);
+    expect(result.status).toBe('completed');
+
+    // Real effect: messages persisted via completeJob must contain truncated tool result
+    const rows = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    type OutputBlock = {
+      type: string;
+      toolName: string;
+      output: { type: string; value: unknown };
+    };
+    type MsgRow = { role: string; content: unknown };
+    const msgs = rows[0]?.messages as MsgRow[] | undefined;
+    expect(msgs).toBeDefined();
+
+    // Find the tool-result message (role: 'tool')
+    const toolMsg = msgs?.find((m) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+
+    const blocks = toolMsg?.content as OutputBlock[] | undefined;
+    const memBlock = blocks?.find((b) => b.toolName === 'save_memory');
+    expect(memBlock).toBeDefined();
+
+    const val = memBlock?.output.value;
+    expect(typeof val).toBe('string');
+    // Must be truncated: well under the original 200K, <= 50_000 + ~120 marker overhead
+    expect((val as string).length).toBeLessThanOrEqual(50_000 + 120);
+    expect((val as string).length).not.toBe(200_000);
+    // Must carry the explicit truncation marker so the model knows content was cut
+    expect(val as string).toContain('[... truncated:');
+  });
+
+  it('tool-result truncation: oversized OBJECT tool result switches to text variant and is truncated', async () => {
+    // Production case: firecrawl_scrape returns an OBJECT ({ url, markdown, ... }),
+    // so truncation hits the JSON branch of toResultOutput — serialize, length
+    // check, then switch to the 'text' variant (truncated JSON would not parse).
+    const { z } = await import('zod');
+    const { createEmbeddingClient } = await import('@nodal-agents/llm');
+    const { LocalTrustProvider } = await import('@nodal-agents/auth');
+    const { createToolRegistry: makeReg, registerBuiltins: regBuiltins } =
+      await import('@nodal-agents/tools');
+
+    const job = await createTestJob(db, seed);
+
+    // Override save_memory (always-on, whitelisted) to return a large OBJECT.
+    const customRegistry = makeReg();
+    regBuiltins(customRegistry);
+
+    const LARGE_MARKDOWN = 'x'.repeat(200_000);
+    customRegistry.register({
+      name: 'save_memory',
+      description: 'save_memory override returning a large object for truncation test',
+      inputSchema: z.object({ fact: z.string(), category: z.string().optional() }),
+      riskLevel: 'read' as const,
+      execute: async () => ({ url: 'http://example.com', markdown: LARGE_MARKDOWN }),
+    });
+
+    // LLM: turn 1 calls save_memory (returns big object), turn 2 calls return_result
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-mem-obj',
+            toolName: 'save_memory',
+            args: { fact: 'test fact', category: 'context' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-obj', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    setActiveLlmClient(llmClient);
+    const customDeps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+      registry: customRegistry,
+      authProvider: new LocalTrustProvider(),
+      close: async () => {},
+    };
+
+    const result = await executeJob(job.id as JobId, customDeps, testEnv);
+    expect(result.status).toBe('completed');
+
+    // Real effect: messages persisted via completeJob must contain truncated tool result
+    const rows = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    type OutputBlock = {
+      type: string;
+      toolName: string;
+      output: { type: string; value: unknown };
+    };
+    type MsgRow = { role: string; content: unknown };
+    const msgs = rows[0]?.messages as MsgRow[] | undefined;
+    expect(msgs).toBeDefined();
+
+    const toolMsg = msgs?.find((m) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+
+    const blocks = toolMsg?.content as OutputBlock[] | undefined;
+    const memBlock = blocks?.find((b) => b.toolName === 'save_memory');
+    expect(memBlock).toBeDefined();
+
+    // Oversized structured result must switch to the 'text' variant — a truncated
+    // JSON string would not parse, so the discriminated union flips to 'text'.
+    expect(memBlock?.output.type).toBe('text');
+
+    const val = memBlock?.output.value;
+    expect(typeof val).toBe('string');
+    // The original serialized object is well over 200K chars; truncated result
+    // must be <= 50_000 + ~120 marker overhead and far under the original.
+    const originalSerializedLen = JSON.stringify({
+      url: 'http://example.com',
+      markdown: LARGE_MARKDOWN,
+    }).length;
+    expect((val as string).length).toBeLessThanOrEqual(50_000 + 120);
+    expect((val as string).length).not.toBe(originalSerializedLen);
+    // Must carry the explicit truncation marker so the model knows content was cut
+    expect(val as string).toContain('[... truncated:');
+  });
+
   // ─── chat_id semantics: explicit, no runtime fallback ────────────────────────
   // `agent_jobs.chat_id` is the single source of truth for Telegram-delivery
   // intent. The runner does NOT override a NULL chat_id at execute time using

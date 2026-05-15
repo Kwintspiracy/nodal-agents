@@ -66,6 +66,24 @@ import { failJob, completeJob, setJobStatus, saveCheckpoint } from './state.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 
+// Per-result char budget for tool outputs entering the conversation. A single
+// tool (e.g. firecrawl_scrape returning a full web page) can otherwise inject
+// 100K+ tokens into `messages`, which every subsequent turn re-sends to the
+// LLM — the cost multiplier behind runaway jobs. We truncate to a fixed budget
+// with an explicit marker so the model knows content was cut and can re-scrape
+// a narrower target. Tunable; 50K chars ≈ ~13K tokens.
+const MAX_TOOL_RESULT_CHARS = 50_000;
+
+/** Truncate an oversized tool-result string with an explicit, model-readable marker. */
+function truncateForContext(value: string): string {
+  if (value.length <= MAX_TOOL_RESULT_CHARS) return value;
+  const dropped = value.length - MAX_TOOL_RESULT_CHARS;
+  return (
+    value.slice(0, MAX_TOOL_RESULT_CHARS) +
+    `\n\n[... truncated: ${dropped} chars dropped (total ${value.length}) ...]`
+  );
+}
+
 // ─── JobStatus type (what we return) ─────────────────────────────────────────
 
 export type ExecuteJobResult =
@@ -451,6 +469,16 @@ export async function executeJob(
       turn += 1;
       counters.resetTurnToolCalls();
 
+      // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
+      // seeded from job.turn), so a job that loops — or resumes — without ever
+      // calling return_result fails loud here instead of burning tokens until
+      // the LLM provider's credit balance runs out. Matches Hermes Agent's
+      // per-run iteration budget.
+      if (turn > DEFAULT_LIMITS.maxTurns) {
+        await failJob(db, jobId as string, 'turn_limit_exceeded', runStats());
+        return { status: 'failed', error: 'turn_limit_exceeded' };
+      }
+
       // a. Validate message structure
       validateMessageStructure(messages);
 
@@ -578,8 +606,14 @@ export async function executeJob(
       // post-v6 bump: query_memory returned rows with `created_at: Date`
       // which made the Zod ModelMessage[] validation reject the next prompt.
       const toResultOutput = (raw: unknown): ToolResultOutput => {
-        if (typeof raw === 'string') return { type: 'text', value: raw };
-        return { type: 'json', value: JSON.parse(JSON.stringify(raw ?? null)) };
+        if (typeof raw === 'string') return { type: 'text', value: truncateForContext(raw) };
+        const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
+        const serialized = JSON.stringify(json);
+        if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
+        // Oversized structured result — return a truncated text rendering. A
+        // truncated JSON string would not parse, so we switch to the 'text'
+        // variant of the discriminated union to keep the message well-formed.
+        return { type: 'text', value: truncateForContext(serialized) };
       };
 
       let awaitingApproval = false;

@@ -111,6 +111,7 @@ export interface ChainLimits {
   maxChains: number;
   maxToolCallsPerTurn: number;
   maxDelegationDepth: number;
+  maxTurns: number;
 }
 
 // ─── ChildAgent (read from DB) ────────────────────────────────────────────────

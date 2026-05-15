@@ -11,10 +11,11 @@ import {
 
 describe('ChainCounters', () => {
   describe('DEFAULT_LIMITS', () => {
-    it('has maxChains=5, maxToolCallsPerTurn=50, maxDelegationDepth=3', () => {
+    it('has maxChains=5, maxToolCallsPerTurn=50, maxDelegationDepth=3, maxTurns=50', () => {
       expect(DEFAULT_LIMITS.maxChains).toBe(5);
       expect(DEFAULT_LIMITS.maxToolCallsPerTurn).toBe(50);
       expect(DEFAULT_LIMITS.maxDelegationDepth).toBe(3);
+      expect(DEFAULT_LIMITS.maxTurns).toBe(50);
     });
   });
 
@@ -44,7 +45,12 @@ describe('ChainCounters', () => {
     });
 
     it('error carries current and limit', () => {
-      const c = new ChainCounters({ maxChains: 2, maxToolCallsPerTurn: 50, maxDelegationDepth: 3 });
+      const c = new ChainCounters({
+        maxChains: 2,
+        maxToolCallsPerTurn: 50,
+        maxDelegationDepth: 3,
+        maxTurns: 50,
+      });
       c.bumpChain(); // 1
       try {
         c.bumpChain(); // 2 >= 2 → throws
@@ -74,7 +80,12 @@ describe('ChainCounters', () => {
     });
 
     it('can be called many times without ever throwing', () => {
-      const c = new ChainCounters({ maxChains: 1, maxToolCallsPerTurn: 50, maxDelegationDepth: 3 });
+      const c = new ChainCounters({
+        maxChains: 1,
+        maxToolCallsPerTurn: 50,
+        maxDelegationDepth: 3,
+        maxTurns: 50,
+      });
       // Even with very tight limit, approval-resume never throws
       for (let i = 0; i < 100; i++) {
         expect(() => c.bumpChainOnApprovalResume()).not.toThrow();
@@ -82,7 +93,12 @@ describe('ChainCounters', () => {
     });
 
     it('approval-resume does not count toward chain limit', () => {
-      const c = new ChainCounters({ maxChains: 3, maxToolCallsPerTurn: 50, maxDelegationDepth: 3 });
+      const c = new ChainCounters({
+        maxChains: 3,
+        maxToolCallsPerTurn: 50,
+        maxDelegationDepth: 3,
+        maxTurns: 50,
+      });
 
       // Simulate: chain 1 → awaiting_approval → resume (no bump) → chain 2
       c.bumpChain(); // chain 1
@@ -103,7 +119,12 @@ describe('ChainCounters', () => {
     });
 
     it('throws ToolCallLimitExceededError when exceeding maxToolCallsPerTurn', () => {
-      const c = new ChainCounters({ maxChains: 5, maxToolCallsPerTurn: 3, maxDelegationDepth: 3 });
+      const c = new ChainCounters({
+        maxChains: 5,
+        maxToolCallsPerTurn: 3,
+        maxDelegationDepth: 3,
+        maxTurns: 50,
+      });
       c.bumpToolCall(); // 1
       c.bumpToolCall(); // 2
       c.bumpToolCall(); // 3
@@ -112,7 +133,12 @@ describe('ChainCounters', () => {
     });
 
     it('error carries current and limit', () => {
-      const c = new ChainCounters({ maxChains: 5, maxToolCallsPerTurn: 2, maxDelegationDepth: 3 });
+      const c = new ChainCounters({
+        maxChains: 5,
+        maxToolCallsPerTurn: 2,
+        maxDelegationDepth: 3,
+        maxTurns: 50,
+      });
       c.bumpToolCall();
       c.bumpToolCall();
       try {
@@ -128,7 +154,12 @@ describe('ChainCounters', () => {
     });
 
     it('resets on resetTurnToolCalls()', () => {
-      const c = new ChainCounters({ maxChains: 5, maxToolCallsPerTurn: 2, maxDelegationDepth: 3 });
+      const c = new ChainCounters({
+        maxChains: 5,
+        maxToolCallsPerTurn: 2,
+        maxDelegationDepth: 3,
+        maxTurns: 50,
+      });
       c.bumpToolCall();
       c.bumpToolCall();
       c.resetTurnToolCalls();
@@ -154,7 +185,12 @@ describe('ChainCounters', () => {
     });
 
     it('throws DelegationDepthExceededError at maxDelegationDepth', () => {
-      const c = new ChainCounters({ maxChains: 5, maxToolCallsPerTurn: 50, maxDelegationDepth: 3 });
+      const c = new ChainCounters({
+        maxChains: 5,
+        maxToolCallsPerTurn: 50,
+        maxDelegationDepth: 3,
+        maxTurns: 50,
+      });
       c.bumpDelegationDepth(); // 1
       c.bumpDelegationDepth(); // 2
       c.bumpDelegationDepth(); // 3
@@ -163,7 +199,12 @@ describe('ChainCounters', () => {
     });
 
     it('error carries current and limit', () => {
-      const c = new ChainCounters({ maxChains: 5, maxToolCallsPerTurn: 50, maxDelegationDepth: 2 });
+      const c = new ChainCounters({
+        maxChains: 5,
+        maxToolCallsPerTurn: 50,
+        maxDelegationDepth: 2,
+        maxTurns: 50,
+      });
       c.bumpDelegationDepth();
       c.bumpDelegationDepth();
       try {
