@@ -45,6 +45,28 @@ export class MessageStructureError extends Error {
   }
 }
 
+// ─── LLMTimeoutError ──────────────────────────────────────────────────────────
+
+/**
+ * Raised when a LLM call exceeds its timeout window. Retryable — the next
+ * attempt gets a fresh timeout, so transient provider hangs (e.g. OpenRouter
+ * spike) recover automatically. Without this, a stuck fetch hangs the job for
+ * 5 minutes until `resetOrphanedJobs` cron tick gives up (caught live 2026-05-15
+ * job `2461d25b-83ca-4874-a43c-955e88807e07`).
+ */
+export class LLMTimeoutError extends Error {
+  readonly code = 'llm_timeout' as const;
+
+  constructor(
+    public readonly provider: string,
+    public readonly model: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`LLM call timed out after ${timeoutMs}ms: ${provider}/${model}`);
+    this.name = 'LLMTimeoutError';
+  }
+}
+
 // ─── RetryExhaustedError ───────────────────────────────────────────────────────
 
 /**

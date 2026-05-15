@@ -4,10 +4,46 @@ import { generateText, streamText, generateObject } from 'ai';
 import type { ModelMessage, LanguageModel } from 'ai';
 
 import type { ProviderConfig, NodalLlmClient, ProviderCapabilities } from './types';
-import { ProviderConfigError } from './errors';
+import { ProviderConfigError, LLMTimeoutError } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { withRetry } from './retry';
+
+// ─── Timeout config ───────────────────────────────────────────────────────────
+
+/**
+ * Per-call timeout for non-streaming LLM ops. 90s covers slow reasoning models
+ * (o-series, sonnet-thinking) while preventing the 5-min hang reported live on
+ * 2026-05-15 (OpenRouter spike). Override via env `LLM_TIMEOUT_MS` for
+ * exceptionally long-running providers.
+ */
+const DEFAULT_LLM_TIMEOUT_MS = 90_000;
+const LLM_TIMEOUT_MS = (() => {
+  const raw = process.env['LLM_TIMEOUT_MS'];
+  if (!raw) return DEFAULT_LLM_TIMEOUT_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_LLM_TIMEOUT_MS;
+})();
+
+export async function withTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  provider: string,
+  model: string,
+): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fn(ctrl.signal);
+  } catch (err) {
+    if (ctrl.signal.aborted) {
+      throw new LLMTimeoutError(provider, model, ms);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 import { buildAnthropicModel } from './providers/anthropic';
 import { buildOpenAIModel } from './providers/openai';
@@ -88,21 +124,46 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
   const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
     return withRetry(
-      () => generateText({ ...args, model } as Parameters<typeof generateText>[0]),
+      () =>
+        withTimeout(
+          (signal) =>
+            generateText({
+              ...args,
+              model,
+              abortSignal: signal,
+            } as Parameters<typeof generateText>[0]),
+          LLM_TIMEOUT_MS,
+          config.provider,
+          config.model,
+        ),
       retryOpts,
     );
   };
 
   const clientStreamText: NodalLlmClient['streamText'] = (args) => {
     validateIfMessages(args as { messages?: unknown });
-    // streamText returns a StreamTextResult synchronously (not a Promise)
+    // streamText returns a StreamTextResult synchronously (not a Promise).
+    // Streaming semantics differ from generateText (timeout would have to be
+    // per-chunk, not total) — left untouched here. Add when a streaming user
+    // surfaces a hang in the wild.
     return streamText({ ...args, model } as Parameters<typeof streamText>[0]);
   };
 
   const clientGenerateObject: NodalLlmClient['generateObject'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
     return withRetry(
-      () => generateObject({ ...args, model } as Parameters<typeof generateObject>[0]),
+      () =>
+        withTimeout(
+          (signal) =>
+            generateObject({
+              ...args,
+              model,
+              abortSignal: signal,
+            } as Parameters<typeof generateObject>[0]),
+          LLM_TIMEOUT_MS,
+          config.provider,
+          config.model,
+        ),
       retryOpts,
     );
   };

@@ -1,7 +1,12 @@
 // @nodal-agents/llm — retry with exponential backoff + jitter
 // Ports retry_with_backoff from AgentOne/agent/resilience.py
 
-import { QuotaExhaustedError, MessageStructureError, RetryExhaustedError } from './errors';
+import {
+  QuotaExhaustedError,
+  MessageStructureError,
+  RetryExhaustedError,
+  LLMTimeoutError,
+} from './errors';
 
 const RETRYABLE_HTTP_STATUSES = new Set([429, 500, 502, 503]);
 
@@ -40,6 +45,8 @@ function getStatusCode(err: unknown): number | null {
 }
 
 function isRetryableError(err: unknown): boolean {
+  // Per-attempt timeout — next attempt gets a fresh window, transient hangs recover.
+  if (err instanceof LLMTimeoutError) return true;
   const status = getStatusCode(err);
   if (status !== null) {
     return RETRYABLE_HTTP_STATUSES.has(status);

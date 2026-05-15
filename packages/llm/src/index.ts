@@ -10,6 +10,7 @@ export {
   MessageStructureError,
   RetryExhaustedError,
   ProviderConfigError,
+  LLMTimeoutError,
 } from './errors';
 export type { MessageStructureErrorCode } from './errors';
 
