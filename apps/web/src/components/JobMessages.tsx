@@ -13,7 +13,7 @@ function roleLabel(role: unknown): string {
   return String(role ?? 'unknown');
 }
 
-interface RenderedBlock {
+export interface RenderedBlock {
   kind: 'text' | 'tool-call' | 'tool-result';
   text?: string;
   toolName?: string;
@@ -30,7 +30,7 @@ function pretty(value: unknown): string {
   }
 }
 
-function blocksFromContent(content: unknown): RenderedBlock[] {
+export function blocksFromContent(content: unknown): RenderedBlock[] {
   if (typeof content === 'string') return [{ kind: 'text', text: content }];
   if (!Array.isArray(content)) return [{ kind: 'text', text: pretty(content) }];
 
@@ -59,12 +59,18 @@ function blocksFromContent(content: unknown): RenderedBlock[] {
 
     // Anthropic legacy: { type: 'tool_result', tool_use_id, content }
     // AI SDK v4:        { type: 'tool-result', toolCallId, toolName, result }
+    // AI SDK v6:        { type: 'tool-result', toolCallId, toolName, output: { type, value } }
     if (type === 'tool_result' || type === 'tool-result') {
+      const v6Output = b['output'];
+      const v6Payload =
+        v6Output && typeof v6Output === 'object' && 'value' in v6Output
+          ? (v6Output as { value: unknown }).value
+          : undefined;
       return {
         kind: 'tool-result',
         toolName: typeof b['toolName'] === 'string' ? b['toolName'] : undefined,
         toolCallId: String(b['tool_use_id'] ?? b['toolCallId'] ?? ''),
-        payload: b['content'] ?? b['result'] ?? null,
+        payload: b['content'] ?? b['result'] ?? v6Payload ?? null,
       };
     }
 
