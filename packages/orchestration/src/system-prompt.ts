@@ -166,5 +166,13 @@ export async function buildSystemPrompt(
   //    decides how to use this data (e.g. send via Telegram if chat_id is set).
   const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
 
-  return personality + '\n\n' + builtinBlock + memoryBlock + skillsBlock + jobContextBlock;
+  // Order is deliberate: STATIC parts first (personality, team, builtins,
+  // skills) for prefix-cache stability, then VOLATILE per-job parts last
+  // (memory snapshot, job context) for stronger LLM attention on the most
+  // recent instructions. Putting the memory block AFTER skills also keeps
+  // delivery conventions (telegram_responder etc.) closer to the user
+  // message — regression caught live on 2026-05-16 job `14cdc360`, where
+  // the agent answered in plain text instead of calling telegram_send_message
+  // when memory sat between builtins and skills.
+  return personality + '\n\n' + builtinBlock + skillsBlock + memoryBlock + jobContextBlock;
 }
