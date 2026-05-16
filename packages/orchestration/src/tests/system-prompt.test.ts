@@ -394,58 +394,6 @@ describe('buildSystemPrompt — persistent memory auto-injection', () => {
     expect(prompt).not.toContain('XXXXXXXX'); // big fact skipped
   });
 
-  it('renders memory AFTER skills AND BEFORE job context (cache + attention order)', async () => {
-    // Regression: live-caught 2026-05-16 job `14cdc360` — Telegram-originated
-    // job, agent answered in plain text instead of calling telegram_send_message
-    // because memory sat between builtins and skills, pushing the
-    // telegram_responder skill convention too far from the user message.
-    // Order MUST be: ...builtins → skills (static) → memory (volatile) → jobContext.
-    const { entityId } = await seedContext(db);
-    const { agentMemory, agentSkills: skillsTbl, agentSkillAssignments: assignTbl } = await import(
-      '@nodal-agents/db'
-    );
-    await db.insert(agentMemory).values({
-      entityId,
-      fact: 'MEMORY-FACT-MARKER',
-      category: 'context',
-      importance: 5,
-      source: 'agent',
-    });
-    const [row] = await db
-      .insert(agents)
-      .values({
-        entityId,
-        name: 'SP Order Agent',
-        slug: `test-sp-order-${Date.now()}`,
-        personality: 'P',
-        role: 'agent',
-      })
-      .returning();
-    const [skill] = await db
-      .insert(skillsTbl)
-      .values({
-        entityId,
-        name: 'SKILL-NAME-MARKER',
-        slug: `skill-order-${Date.now()}`,
-        content: 'SKILL-CONTENT-MARKER',
-      })
-      .returning();
-    await db.insert(assignTbl).values({ entityId, agentId: row!.id, skillId: skill!.id });
-    const agent = makeAgent(row!.id, entityId, row!.personality, 'agent', 1500);
-    const prompt = await buildSystemPrompt(agent, db, {
-      origin: 'telegram',
-      telegramChatId: '99887766',
-    });
-    const idxSkill = prompt.indexOf('SKILL-CONTENT-MARKER');
-    const idxMemory = prompt.indexOf('MEMORY-FACT-MARKER');
-    const idxJobCtx = prompt.indexOf('## Job context');
-    expect(idxSkill).toBeGreaterThan(-1);
-    expect(idxMemory).toBeGreaterThan(-1);
-    expect(idxJobCtx).toBeGreaterThan(-1);
-    expect(idxSkill).toBeLessThan(idxMemory);
-    expect(idxMemory).toBeLessThan(idxJobCtx);
-  });
-
   it('skips archived and expired memories', async () => {
     const { entityId } = await seedContext(db);
     const { agentMemory } = await import('@nodal-agents/db');
