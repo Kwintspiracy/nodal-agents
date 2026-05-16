@@ -35,6 +35,15 @@ export interface ToolContext {
    * writes then simply store no embedding and search falls back to keyword.
    */
   embeddingClient?: EmbeddingClient;
+  /**
+   * Absolute filesystem path the file_* tools are scoped to for this agent.
+   * Resolved from `agents.workspace_root_path` at job start by the runner.
+   * `null` (the column default) means the agent has no workspace configured;
+   * every file_* tool call fails loud with `workspace_not_configured`.
+   * Per-agent so a single entity can run multiple agents over distinct scopes
+   * (e.g. an Obsidian-vault agent vs a code-repo agent).
+   */
+  workspaceRootPath?: string | null;
 }
 
 // ─── ToolDefinition ────────────────────────────────────────────────────────────

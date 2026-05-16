@@ -9,6 +9,13 @@ import { markMemoryHelpfulTool } from './mark-memory-helpful';
 import { markMemoryOutdatedTool } from './mark-memory-outdated';
 import { webSearchTool } from './web-search';
 import { dashboardPublishTool } from './dashboard-publish';
+import {
+  fileReadTool,
+  fileWriteTool,
+  fileEditTool,
+  fileListTool,
+  fileSearchTool,
+} from './file-ops';
 
 export { returnResultTool } from './return-result';
 export { saveMemoryTool } from './save-memory';
@@ -18,6 +25,14 @@ export { markMemoryOutdatedTool } from './mark-memory-outdated';
 export { webSearchTool } from './web-search';
 export { dashboardPublishTool, DashboardPublishInputSchema } from './dashboard-publish';
 export type { DashboardPublishInput } from './dashboard-publish';
+export {
+  fileReadTool,
+  fileWriteTool,
+  fileEditTool,
+  fileListTool,
+  fileSearchTool,
+  WorkspaceError,
+} from './file-ops';
 
 /**
  * Register all built-in tools into the given registry.
@@ -31,6 +46,11 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(markMemoryOutdatedTool);
   registry.register(webSearchTool);
   registry.register(dashboardPublishTool);
+  registry.register(fileReadTool);
+  registry.register(fileWriteTool);
+  registry.register(fileEditTool);
+  registry.register(fileListTool);
+  registry.register(fileSearchTool);
 }
 
 /**
@@ -44,6 +64,11 @@ export const ALWAYS_ON_TOOLS = [
   'mark_memory_helpful',
   'mark_memory_outdated',
   'dashboard_publish',
+  'file_read',
+  'file_write',
+  'file_edit',
+  'file_list',
+  'file_search',
 ] as const;
 export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
 
@@ -64,4 +89,9 @@ export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: str
   { name: markMemoryHelpfulTool.name, description: markMemoryHelpfulTool.description },
   { name: markMemoryOutdatedTool.name, description: markMemoryOutdatedTool.description },
   { name: dashboardPublishTool.name, description: dashboardPublishTool.description },
+  { name: fileReadTool.name, description: fileReadTool.description },
+  { name: fileWriteTool.name, description: fileWriteTool.description },
+  { name: fileEditTool.name, description: fileEditTool.description },
+  { name: fileListTool.name, description: fileListTool.description },
+  { name: fileSearchTool.name, description: fileSearchTool.description },
 ];

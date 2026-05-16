@@ -643,6 +643,7 @@ export async function executeJob(
                 db,
                 jobChatId: job.chatId ?? null,
                 embeddingClient: deps.embeddingClient,
+                workspaceRootPath: agentRow.workspaceRootPath ?? null,
               },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },
             );
@@ -761,6 +762,7 @@ export async function executeJob(
             db,
             jobChatId: job.chatId ?? null,
             embeddingClient: deps.embeddingClient,
+            workspaceRootPath: agentRow.workspaceRootPath ?? null,
           },
           {
             approvalRules: approvalRuleList,

@@ -51,6 +51,12 @@ export const agents = pgTable(
     // (Memory Sprint 2). Pure char budget — token estimation done at call site
     // (length/4). 1500 chars ≈ ~375 tokens, similar to Hermes' 2200+1375 split.
     memoryTokenBudget: integer('memory_token_budget').default(1500).notNull(),
+    // Absolute filesystem path the agent's file_* tools are scoped to. NULL =
+    // file tools fail loud (`workspace_not_configured`). Per-agent so each
+    // agent in an entity can have its own scope (e.g. one agent on Obsidian
+    // vault, another on a code repo). Resolution at tool-call time runs
+    // through realpath + boundary check (see file-ops/workspace.ts).
+    workspaceRootPath: text('workspace_root_path'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

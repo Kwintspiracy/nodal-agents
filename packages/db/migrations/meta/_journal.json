@@ -71,6 +71,13 @@
       "when": 1778860776473,
       "tag": "0009_agent_memory_token_budget",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778940762250,
+      "tag": "0010_agent_workspace_root",
+      "breakpoints": true
     }
   ]
 }

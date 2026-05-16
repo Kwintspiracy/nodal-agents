@@ -94,6 +94,14 @@ const CreateAgentSchema = z
     llmKeyId: z.string().guid().optional(),
     role: z.enum(['worker', 'router', 'planner']).default('worker'),
     subAgentIds: z.array(z.string().guid()).default([]),
+    // Optional absolute filesystem path the agent's file_* tools are scoped
+    // to. Empty string is normalized to null at the action layer so the
+    // form's controlled input can stay a plain string.
+    workspaceRootPath: z
+      .string()
+      .max(1024)
+      .optional()
+      .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
   })
   .refine((d) => d.role !== 'worker' || d.subAgentIds.length === 0, {
     message: 'Sub-agents only apply when role is router or planner',
@@ -126,6 +134,7 @@ export type AgentRow = {
   createdAt: Date | null;
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
+  workspaceRootPath: string | null;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -183,6 +192,7 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
         llmKeyId: parsed.data.llmKeyId ?? null,
         role: dbRole,
         orchestratorMode,
+        workspaceRootPath: parsed.data.workspaceRootPath,
       })
       .returning({ id: agents.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -241,6 +251,11 @@ const UpdateAgentSchema = z.object({
   llmKeyId: z.string().guid().nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
+  workspaceRootPath: z
+    .string()
+    .max(1024)
+    .optional()
+    .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
   // slug NOT here — it is a stable identifier. Excluded at schema level so
   // even a raw payload with a slug field is silently stripped by safeParse.
 });
@@ -261,7 +276,8 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { id, name, personality, model, llmKeyId, role, subAgentIds } = parsed.data;
+    const { id, name, personality, model, llmKeyId, role, subAgentIds, workspaceRootPath } =
+      parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
@@ -280,6 +296,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       model,
       role: dbRole,
       orchestratorMode,
+      workspaceRootPath,
       updatedAt: new Date(),
     };
     if (llmKeyId !== undefined) {
