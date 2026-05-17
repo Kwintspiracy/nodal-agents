@@ -19,6 +19,7 @@ import {
   kimiToolCallMiddleware,
   nodalToolCallMiddleware,
 } from './parsers';
+import { createTolerantFetch } from './tolerant-fetch';
 
 type ModelFamily = 'deepseek' | 'kimi' | 'nodal-format' | null;
 
@@ -70,6 +71,9 @@ export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
     name: 'openrouter',
     baseURL,
     apiKey: config.apiKey,
+    // Normalise non-spec responses (e.g. DeepSeek V4 returning function.arguments
+    // as an object instead of a JSON string) before AI SDK's Zod schema sees them.
+    fetch: createTolerantFetch(),
   });
 
   const base = provider(config.model);
