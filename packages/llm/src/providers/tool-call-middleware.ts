@@ -125,6 +125,40 @@ function recoverFromResponseBody(
     return null; // Body isn't even JSON — can't recover.
   }
 
+  // Path 1: provider returned standard OpenAI-format tool_calls in the response
+  // alongside fields the AI-SDK strict Zod schema rejects (DeepSeek's
+  // `reasoning_content`, `reasoning_details`, `prompt_tokens_details` shapes).
+  // The body parses; the schema rejects; AI SDK throws "Invalid JSON response";
+  // we land here. Pull the standard tool_calls out of the raw JSON and rebuild
+  // a clean LanguageModelV3 result — no parser regex needed.
+  //
+  // Reference: Hermes Agent's `chat_completions.py` uses Pydantic's model_extra
+  // to capture these provider extras without failing the deserialization; we
+  // mimic that tolerance here, at the recovery layer (we can't relax the
+  // upstream schema without forking @ai-sdk/openai-compatible).
+  const openaiToolCalls = extractOpenAIToolCalls(parsedBody);
+  if (openaiToolCalls.length > 0) {
+    const text = extractAssistantContent(parsedBody) ?? '';
+    const newContent: LanguageModelV3Content[] = [];
+    if (text.length > 0) newContent.push({ type: 'text', text });
+    newContent.push(...openaiToolCalls);
+    return {
+      content: newContent,
+      finishReason: { unified: 'tool-calls', raw: 'tool-calls' },
+      usage: extractUsage(parsedBody),
+      warnings: [
+        {
+          type: 'other',
+          message:
+            'Recovered standard OpenAI tool_calls from response body after provider returned non-strict JSON (likely DeepSeek reasoning_content extras)',
+        },
+      ],
+    };
+  }
+
+  // Path 2: native markup in the text content (Kimi pipe-bracket, Qwen/GLM
+  // <tool_call> tag, legacy DeepSeek fullwidth markup). Parse it with the
+  // model-family-specific regex.
   const content = extractAssistantContent(parsedBody);
   if (!content) return null;
 
@@ -148,6 +182,55 @@ function recoverFromResponseBody(
     ],
   };
   return result;
+}
+
+/**
+ * Extract standard OpenAI-format tool_calls from a parsed chat-completions
+ * response body. Each entry has the shape
+ *   { id, type: "function", function: { name, arguments } }
+ * where `arguments` is a JSON string. We pass `arguments` through unchanged
+ * to LanguageModelV3ToolCall.input (which accepts a string).
+ *
+ * Returns [] when there are no tool_calls or the shape is unexpected.
+ */
+function extractOpenAIToolCalls(body: unknown): LanguageModelV3ToolCall[] {
+  if (typeof body !== 'object' || body === null) return [];
+  const b = body as Record<string, unknown>;
+  const choices = b['choices'];
+  if (!Array.isArray(choices) || choices.length === 0) return [];
+  const first = choices[0];
+  if (typeof first !== 'object' || first === null) return [];
+  const message = (first as Record<string, unknown>)['message'];
+  if (typeof message !== 'object' || message === null) return [];
+  const rawCalls = (message as Record<string, unknown>)['tool_calls'];
+  if (!Array.isArray(rawCalls)) return [];
+
+  const out: LanguageModelV3ToolCall[] = [];
+  for (const c of rawCalls) {
+    if (typeof c !== 'object' || c === null) continue;
+    const call = c as Record<string, unknown>;
+    const fn = call['function'];
+    if (typeof fn !== 'object' || fn === null) continue;
+    const fnObj = fn as Record<string, unknown>;
+    const name = fnObj['name'];
+    if (typeof name !== 'string' || name.length === 0) continue;
+
+    // `arguments` is a JSON string per OpenAI spec, but some providers send an
+    // already-parsed object — normalize to string either way.
+    const rawArgs = fnObj['arguments'];
+    let input: string;
+    if (typeof rawArgs === 'string') {
+      input = rawArgs.length > 0 ? rawArgs : '{}';
+    } else if (rawArgs !== undefined && rawArgs !== null) {
+      input = JSON.stringify(rawArgs);
+    } else {
+      input = '{}';
+    }
+
+    const id = typeof call['id'] === 'string' ? (call['id'] as string) : `call_${out.length}`;
+    out.push({ type: 'tool-call', toolCallId: id, toolName: name, input });
+  }
+  return out;
 }
 
 function extractAssistantContent(body: unknown): string | null {

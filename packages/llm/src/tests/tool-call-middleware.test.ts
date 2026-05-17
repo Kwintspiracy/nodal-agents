@@ -365,6 +365,177 @@ describe('createNativeToolCallMiddleware error recovery', () => {
     expect(firstStep!.toolCalls[0]!.input).toEqual({ arg: 42 });
   });
 
+  it('recovers from APICallError when body has standard OpenAI tool_calls + DeepSeek reasoning_content extras', async () => {
+    // Live failure pattern (job 57ff323d, 2026-05-17): DeepSeek V4 Pro emits
+    // tool_calls in OpenAI standard format alongside reasoning_content. AI SDK
+    // openai-compatible Zod schema rejects the extras → "Invalid JSON response".
+    // The recovery path must extract the standard tool_calls and ignore extras.
+    const recoveredBody = JSON.stringify({
+      id: 'resp-ds',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: '', // empty — actual answer is in tool_calls
+            // DeepSeek-specific extra that breaks AI SDK strict schema
+            reasoning_content: 'Let me think about this. I should call do_thing.',
+            tool_calls: [
+              {
+                id: 'chatcmpl-tool-abc123',
+                type: 'function',
+                function: { name: 'do_thing', arguments: '{"arg":7}' },
+              },
+            ],
+          },
+        },
+      ],
+      usage: { prompt_tokens: 50, completion_tokens: 12 },
+    });
+
+    const mockModel = new MockLanguageModelV3({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => {
+        throw new APICallError({
+          message: 'Invalid JSON response',
+          url: 'https://openrouter.ai/api/v1/chat/completions',
+          requestBodyValues: {},
+          responseBody: recoveredBody,
+          statusCode: 200,
+        });
+      },
+    });
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+
+    const result = await generateText({
+      model: wrapped,
+      prompt: 'do something',
+      tools: {
+        do_thing: tool({
+          description: 'do',
+          inputSchema: z.object({ arg: z.number() }),
+          execute: async ({ arg }) => `did ${arg}`,
+        }),
+      },
+      stopWhen: stepCountIs(2),
+    });
+
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolCalls).toHaveLength(1);
+    expect(firstStep?.toolCalls[0]?.toolName).toBe('do_thing');
+    expect(firstStep!.toolCalls[0]!.input).toEqual({ arg: 7 });
+    // Preserves the original OpenAI tool_call id (used by Telegram-style providers
+    // that echo it back in tool_result messages)
+    expect(firstStep!.toolCalls[0]!.toolCallId).toBe('chatcmpl-tool-abc123');
+  });
+
+  it('recovers OpenAI tool_calls even when arguments is an already-parsed object', async () => {
+    // Some providers return parsed JSON in arguments instead of a string.
+    const recoveredBody = JSON.stringify({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'tc-1',
+                type: 'function',
+                function: { name: 'do_thing', arguments: { arg: 99 } },
+              },
+            ],
+          },
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+    const mockModel = new MockLanguageModelV3({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => {
+        throw new APICallError({
+          message: 'Invalid JSON response',
+          url: 'https://openrouter.ai/api/v1/chat/completions',
+          requestBodyValues: {},
+          responseBody: recoveredBody,
+          statusCode: 200,
+        });
+      },
+    });
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+
+    const result = await generateText({
+      model: wrapped,
+      prompt: 'x',
+      tools: {
+        do_thing: tool({
+          description: 'd',
+          inputSchema: z.object({ arg: z.number() }),
+          execute: async ({ arg }) => `${arg}`,
+        }),
+      },
+      stopWhen: stepCountIs(2),
+    });
+    expect(result.steps[0]?.toolCalls[0]?.input).toEqual({ arg: 99 });
+  });
+
+  it('falls back to native markup parser when no OpenAI tool_calls present in body', async () => {
+    // When the body carries DeepSeek native markup in `content` (and no
+    // OpenAI tool_calls), the existing parser path must still kick in.
+    const recoveredBody = JSON.stringify({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content:
+              '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>do_thing\n' +
+              '```json\n{"arg":1}\n```\n' +
+              '<｜tool▁call▁end｜><｜tool▁calls▁end｜>',
+          },
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+    const mockModel = new MockLanguageModelV3({
+      provider: 'mock',
+      modelId: 'mock-deepseek',
+      doGenerate: async () => {
+        throw new APICallError({
+          message: 'Invalid JSON response',
+          url: 'https://openrouter.ai/api/v1/chat/completions',
+          requestBodyValues: {},
+          responseBody: recoveredBody,
+          statusCode: 200,
+        });
+      },
+    });
+    const wrapped = wrapLanguageModel({
+      model: mockModel,
+      middleware: deepseekToolCallMiddleware,
+    });
+    const result = await generateText({
+      model: wrapped,
+      prompt: 'x',
+      tools: {
+        do_thing: tool({
+          description: 'd',
+          inputSchema: z.object({ arg: z.number() }),
+          execute: async ({ arg }) => `${arg}`,
+        }),
+      },
+      stopWhen: stepCountIs(2),
+    });
+    expect(result.steps[0]?.toolCalls).toHaveLength(1);
+    expect(result.steps[0]?.toolCalls[0]?.input).toEqual({ arg: 1 });
+  });
+
   it('re-throws APICallError when responseBody has no native markup', async () => {
     const mockModel = new MockLanguageModelV3({
       provider: 'mock',
