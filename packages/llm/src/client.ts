@@ -9,13 +9,30 @@ import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { withRetry } from './retry';
 
+import { buildAnthropicModel } from './providers/anthropic';
+import { buildOpenAIModel } from './providers/openai';
+import { buildOllamaModel } from './providers/ollama';
+import { buildOpenAICompatibleModel } from './providers/openai-compatible';
+import { buildGoogleModel } from './providers/google';
+import { buildMistralModel } from './providers/mistral';
+import { buildGroqModel } from './providers/groq';
+import { buildOpenRouterModel } from './providers/openrouter';
+
 // ─── Timeout config ───────────────────────────────────────────────────────────
 
 /**
  * Per-call timeout for non-streaming LLM ops. 90s covers slow reasoning models
- * (o-series, sonnet-thinking) while preventing the 5-min hang reported live on
- * 2026-05-15 (OpenRouter spike). Override via env `LLM_TIMEOUT_MS` for
- * exceptionally long-running providers.
+ * (o-series, sonnet-thinking) while preventing the multi-minute hangs reported
+ * live on 2026-05-15 (OpenRouter spike) and 2026-05-18 (DeepSeek V4 Pro 213s).
+ * Override via env `LLM_TIMEOUT_MS` for exceptionally long-running providers.
+ *
+ * Implementation note: we pass this as AI SDK v6's native `timeout` parameter
+ * (uses `AbortSignal.timeout()` internally) rather than building our own
+ * AbortController. A previous custom-wrapper version (commit `2bb36ec`) did not
+ * fire in practice because AI SDK's internal retry (`maxRetries: 2` default)
+ * absorbed the aborted attempts as transient errors and retried 3 times per
+ * outer attempt — total wall time 213s × 4 retries ≈ 850s before bubbling up.
+ * Pairing native timeout with `maxRetries: 0` makes the budget deterministic.
  */
 const DEFAULT_LLM_TIMEOUT_MS = 90_000;
 const LLM_TIMEOUT_MS = (() => {
@@ -25,34 +42,35 @@ const LLM_TIMEOUT_MS = (() => {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_LLM_TIMEOUT_MS;
 })();
 
-export async function withTimeout<T>(
-  fn: (signal: AbortSignal) => Promise<T>,
-  ms: number,
-  provider: string,
-  model: string,
-): Promise<T> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fn(ctrl.signal);
-  } catch (err) {
-    if (ctrl.signal.aborted) {
-      throw new LLMTimeoutError(provider, model, ms);
+/**
+ * Recognise the abort error AI SDK throws when `AbortSignal.timeout()` fires.
+ * The spec'd name is `TimeoutError`; older runtimes report `AbortError`; AI SDK
+ * may wrap either in its own error class. We match by name on the error or any
+ * `cause` chain entry, which catches both bare DOMExceptions and AI SDK
+ * `RetryError` / `AISDKError` wrappers.
+ */
+export function isAbortOrTimeoutError(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 5 && cur; i++) {
+    if (cur instanceof Error) {
+      const name = cur.name;
+      if (name === 'TimeoutError' || name === 'AbortError') return true;
+      const msg = cur.message ?? '';
+      if (/aborted|timed?\s*out|timeout/i.test(msg) && !/quota|rate/i.test(msg)) {
+        // Conservative: only treat generic abort/timeout text as timeout when
+        // it doesn't look like a rate-limit response that mentioned a timeout
+        // value in the message.
+        return true;
+      }
+      const inner = (cur as { cause?: unknown }).cause;
+      if (inner === cur) return false;
+      cur = inner;
+    } else {
+      return false;
     }
-    throw err;
-  } finally {
-    clearTimeout(timer);
   }
+  return false;
 }
-
-import { buildAnthropicModel } from './providers/anthropic';
-import { buildOpenAIModel } from './providers/openai';
-import { buildOllamaModel } from './providers/ollama';
-import { buildOpenAICompatibleModel } from './providers/openai-compatible';
-import { buildGoogleModel } from './providers/google';
-import { buildMistralModel } from './providers/mistral';
-import { buildGroqModel } from './providers/groq';
-import { buildOpenRouterModel } from './providers/openrouter';
 
 // ─── Model builder dispatch ────────────────────────────────────────────────────
 
@@ -106,7 +124,8 @@ function validateIfMessages(args: { messages?: unknown }): void {
  * Creates a NodalLlmClient bound to a specific provider+model.
  * All calls go through:
  * 1. Message structure validation (throws MessageStructureError on violations)
- * 2. withRetry() wrapping (exponential backoff, quota detection)
+ * 2. AI SDK native `timeout` + `maxRetries: 0` (our `withRetry` owns retries)
+ * 3. withRetry() wrapping (exponential backoff, quota detection, LLMTimeoutError retryable)
  */
 export function createLlmClient(config: ProviderConfig): NodalLlmClient {
   if (!config.provider) {
@@ -121,20 +140,33 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
 
   const retryOpts = { provider: config.provider, model: config.model };
 
+  const callWithTimeout = async <T>(fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (isAbortOrTimeoutError(err)) {
+        throw new LLMTimeoutError(config.provider, config.model, LLM_TIMEOUT_MS);
+      }
+      throw err;
+    }
+  };
+
   const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
     return withRetry(
       () =>
-        withTimeout(
-          (signal) =>
-            generateText({
-              ...args,
-              model,
-              abortSignal: signal,
-            } as Parameters<typeof generateText>[0]),
-          LLM_TIMEOUT_MS,
-          config.provider,
-          config.model,
+        callWithTimeout(() =>
+          generateText({
+            ...args,
+            model,
+            // AI SDK native timeout via AbortSignal.timeout(). Survives middleware
+            // wrapping unlike a passed-in abortSignal which their internal retry
+            // can swallow.
+            timeout: LLM_TIMEOUT_MS,
+            // Disable AI SDK internal retry — we own retries via withRetry to
+            // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
+            maxRetries: 0,
+          } as Parameters<typeof generateText>[0]),
         ),
       retryOpts,
     );
@@ -153,16 +185,13 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
     validateIfMessages(args as { messages?: unknown });
     return withRetry(
       () =>
-        withTimeout(
-          (signal) =>
-            generateObject({
-              ...args,
-              model,
-              abortSignal: signal,
-            } as Parameters<typeof generateObject>[0]),
-          LLM_TIMEOUT_MS,
-          config.provider,
-          config.model,
+        callWithTimeout(() =>
+          generateObject({
+            ...args,
+            model,
+            timeout: LLM_TIMEOUT_MS,
+            maxRetries: 0,
+          } as Parameters<typeof generateObject>[0]),
         ),
       retryOpts,
     );
