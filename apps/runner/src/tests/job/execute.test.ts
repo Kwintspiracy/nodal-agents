@@ -616,6 +616,78 @@ describe('executeJob', () => {
     }
   });
 
+  // ─── Transcript checkpoint (regression for the 9-turns-lost bug) ───────────
+  // Job 8b66b21d (2026-05-17) ran 9 successful turns of CMB research then
+  // crashed on the 10th LLM call. Because the catch path's failJob doesn't
+  // touch `messages` and saveCheckpoint only fired on delegation/approval,
+  // the entire 9-turn transcript was lost — DB stored just the user task.
+  // Fix: saveCheckpoint at the end of every loop iteration (execute.ts:927+).
+
+  it('persists per-turn checkpoint so a later crash preserves prior turns in DB', async () => {
+    const job = await createTestJob(db, seed);
+
+    // Two clean turns (save_memory) then a turn-3 LLM response that has
+    // neither tool calls nor text → no_tool_calls_no_text failure path.
+    // After failure, DB must reflect what was done in turns 1 & 2.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-mem-a',
+            toolName: 'save_memory',
+            args: { fact: 'turn-1 fact', category: 'context', importance: 3 },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-mem-b',
+            toolName: 'save_memory',
+            args: { fact: 'turn-2 fact', category: 'context', importance: 3 },
+          },
+        ],
+      },
+      // Turn 3: empty response → runner fails with no_tool_calls_no_text
+      { text: '', toolCalls: [] },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('no_tool_calls_no_text');
+    }
+
+    const rows = await db
+      .select({
+        messages: agentJobs.messages,
+        toolsUsed: agentJobs.toolsUsed,
+        turn: agentJobs.turn,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    // PRE-FIX behaviour: messages.length === 1 (only user task), toolsUsed=[],
+    // even though turn=3. POST-FIX: messages reflects both completed turns
+    // (user + asst1 + tool1 + asst2 + tool2 = 5 entries) and toolsUsed
+    // includes save_memory.
+    const persistedMessages = (rows[0]?.messages ?? []) as unknown[];
+    expect(persistedMessages.length).toBe(5);
+    expect(rows[0]?.toolsUsed).toContain('save_memory');
+    expect(rows[0]?.turn).toBe(3);
+
+    // Spot-check shape: messages[1] is the turn-1 assistant tool_call,
+    // messages[2] is the turn-1 tool_result with the save_memory id.
+    const m1 = persistedMessages[1] as { role: string; content: unknown };
+    expect(m1.role).toBe('assistant');
+    const m2 = persistedMessages[2] as { role: string; content: unknown };
+    expect(m2.role).toBe('tool');
+    const ids = Array.isArray(m2.content)
+      ? (m2.content as Array<{ toolCallId?: string }>).map((b) => b.toolCallId)
+      : [];
+    expect(ids).toContain('tc-mem-a');
+  });
+
   it('anti-loop: 51 tool_use blocks → tool_call_limit_exceeded', async () => {
     const job = await createTestJob(db, seed);
 

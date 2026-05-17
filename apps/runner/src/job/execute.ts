@@ -924,6 +924,22 @@ export async function executeJob(
       if (toolResultBlocks.length > 0) {
         messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
       }
+
+      // l. Persist the turn we just finished BEFORE the next LLM call. Without
+      // this, a worker agent that runs many non-delegating turns (firecrawl +
+      // save_memory + file_write + …) and then crashes on the next LLM call
+      // loses ALL its progress — the outer catch's failJob doesn't touch
+      // `messages`, so the dashboard shows only the user task and tools_used
+      // stays empty. Live regression: job 8b66b21d (2026-05-17) lost 9 turns
+      // of CMB research when turn-10 hit Retry exhausted.
+      await saveCheckpoint(db, jobId as string, {
+        messages,
+        turn,
+        chainCount: job.chainCount ?? 0,
+        toolsUsed,
+        inputTokens,
+        outputTokens,
+      });
     }
   } catch (err) {
     trace('catch', {
