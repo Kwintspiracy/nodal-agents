@@ -718,8 +718,24 @@ export async function executeJob(
 
               if (childOutcome.status === 'failed') {
                 const childErr = childOutcome.error || 'unknown';
-                await failJob(db, jobId as string, `child_failed:${childErr}`, runStats());
-                return { status: 'failed', error: `child_failed:${childErr}` };
+                // Surface the failure as a tool_result so the parent's LLM can
+                // react (notify the user via telegram_send_message, try another
+                // sub-agent, return_result{status:'blocked'}, etc.) instead of
+                // dying silently. Anti-loop: resumeDelegated bumps chainCount;
+                // a parent that keeps delegating on every failure will hit
+                // chain_limit_exceeded (max 5 chains, invariant #8).
+                //
+                // Live regression — job `56a3a1b5` (2026-05-17): Conciergus
+                // delegated to Summarizus, child failed at turn 5, parent died
+                // immediately with `child_failed:Retry exhausted` and the user
+                // got NOTHING back on Telegram after 8 minutes of work.
+                await resumeDelegated(
+                  jobId as JobId,
+                  delegation.childJobId,
+                  { error: childErr },
+                  db,
+                );
+                return executeJob(jobId, deps, _runnerEnv);
               }
 
               if (childOutcome.status !== 'completed') {

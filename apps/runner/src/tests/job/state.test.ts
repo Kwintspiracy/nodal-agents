@@ -189,16 +189,28 @@ describe('DB state helpers', () => {
     expect(rows[0]?.messages).toEqual(fullMessages);
   });
 
-  it('failJob sets status to failed with error code', async () => {
+  it('failJob sets status to failed with error code AND completedAt', async () => {
+    const before = Date.now();
     await failJob(db as Parameters<typeof failJob>[0], seed.jobId, 'chain_limit_exceeded');
+    const after = Date.now();
 
     const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        completedAt: agentJobs.completedAt,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.id, seed.jobId));
 
     expect(rows[0]?.status).toBe('failed');
     expect(rows[0]?.error).toBe('chain_limit_exceeded');
+    // completedAt must be set so dashboards/cron filtering by
+    // `completed_at IS NULL` correctly excludes terminated jobs.
+    expect(rows[0]?.completedAt).not.toBeNull();
+    const completedAtMs = rows[0]?.completedAt?.getTime() ?? 0;
+    expect(completedAtMs).toBeGreaterThanOrEqual(before);
+    expect(completedAtMs).toBeLessThanOrEqual(after);
   });
 
   it('saveCheckpoint persists messages, turn, chainCount', async () => {

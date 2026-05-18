@@ -71,20 +71,38 @@ export class LLMTimeoutError extends Error {
 
 /**
  * Raised when withRetry() exhausts all attempts.
- * Wraps the last underlying error for inspection.
+ *
+ * The message includes a summary of the last underlying error so it survives
+ * downstream layers that only persist `error.message` (notably our
+ * `agent_jobs.error` column populated by `failJob`). Without this, every live
+ * retry-exhausted failure stored the same opaque "Retry exhausted after N
+ * attempts" with zero clue whether the underlying cause was an abort/timeout,
+ * a 5xx, a fetch failure, or something else — and we wasted three patch cycles
+ * speculating instead of measuring.
  */
 export class RetryExhaustedError extends Error {
   readonly code = 'retry_exhausted' as const;
   readonly underlyingCause: unknown;
 
   constructor(attempts: number, underlyingCause: unknown) {
-    super(`Retry exhausted after ${attempts} attempts`);
+    super(
+      `Retry exhausted after ${attempts} attempts; last: ${formatCauseSummary(underlyingCause)}`,
+    );
     this.name = 'RetryExhaustedError';
     this.underlyingCause = underlyingCause;
     if (underlyingCause instanceof Error) {
       this.stack = `${this.stack}\nCaused by: ${underlyingCause.stack}`;
     }
   }
+}
+
+function formatCauseSummary(cause: unknown): string {
+  if (cause instanceof Error) {
+    const name = cause.name || 'Error';
+    const msg = (cause.message || '').slice(0, 160);
+    return `${name}: ${msg}`;
+  }
+  return String(cause).slice(0, 160);
 }
 
 // ─── ProviderConfigError ───────────────────────────────────────────────────────

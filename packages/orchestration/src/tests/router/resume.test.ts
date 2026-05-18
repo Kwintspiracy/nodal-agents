@@ -222,6 +222,59 @@ describe('resumeDelegated', () => {
     expect(sideResult?.toolName).toBe('assign_other_agent');
   });
 
+  it('injects an error-text tool_result when child failed (DelegationOutcome={error})', async () => {
+    // Regression for live job `56a3a1b5` (2026-05-17): Conciergus delegated
+    // to Summarizus, child failed at turn 5 with "Retry exhausted", the parent
+    // died silently with `child_failed:...` and the user got NO Telegram
+    // message back after 8 minutes of work.
+    //
+    // The fix: pass `{error}` to resumeDelegated so the parent's LLM receives
+    // an `error-text` tool_result and can react (notify the user via
+    // telegram_send_message, try another sub-agent, return_result blocked).
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_fail_001';
+    const childJob = await seedChildJob(db, entityId, orchId);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'Retry exhausted after 4 attempts; last: TimeoutError: signal timed out' },
+      db,
+    );
+
+    const [updatedParent] = await db
+      .select({
+        messages: agentJobs.messages,
+        status: agentJobs.status,
+        chainCount: agentJobs.chainCount,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+
+    // Parent is back in flight and the anti-loop counter advanced.
+    expect(updatedParent?.status).toBe('pending');
+    expect(updatedParent?.chainCount).toBeGreaterThanOrEqual(1);
+
+    // The injected tool_result must carry `error-text` (AI SDK v6 discriminated
+    // union) so the LLM treats the result as a tool failure and reasons over it.
+    const msgs = updatedParent?.messages as Array<{
+      role: string;
+      content: Array<{
+        type: string;
+        toolCallId?: string;
+        toolName?: string;
+        output?: { type: string; value: string };
+      }>;
+    }>;
+    const last = msgs[msgs.length - 1];
+    expect(last?.role).toBe('tool');
+    const tr = last?.content.find((c) => c.type === 'tool-result' && c.toolCallId === toolUseId);
+    expect(tr?.output?.type).toBe('error-text');
+    expect(tr?.output?.value).toContain('Delegation failed');
+    expect(tr?.output?.value).toContain('Retry exhausted');
+  });
+
   it('throws OrchestrationError if parent not found', async () => {
     await expect(
       resumeDelegated(

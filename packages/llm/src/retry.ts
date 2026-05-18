@@ -88,11 +88,15 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
   const model = options.model ?? 'unknown';
 
   let lastErr: unknown;
+  const start = Date.now();
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const attemptStart = Date.now();
     try {
       return await fn();
     } catch (err) {
+      const attemptMs = Date.now() - attemptStart;
+
       // Non-retryable by class — fail immediately
       if (err instanceof MessageStructureError) throw err;
       if (err instanceof QuotaExhaustedError) throw err;
@@ -102,6 +106,18 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
       if (status === 429) {
         isQuotaError(err, provider, model);
       }
+
+      // Log the attempt outcome so live failures carry diagnosable info.
+      // Without this, RetryExhaustedError stored only "Retry exhausted after N
+      // attempts" and we burnt 3 patch cycles speculating on the cause.
+      logAttempt({
+        attempt: attempt + 1,
+        of: maxRetries + 1,
+        provider,
+        model,
+        ms: attemptMs,
+        err,
+      });
 
       // Non-retryable HTTP error
       if (!isRetryableError(err)) throw err;
@@ -116,7 +132,46 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
     }
   }
 
+  const totalMs = Date.now() - start;
+  console.warn(
+    `[llm-retry-exhausted] provider=${provider} model=${model} attempts=${maxRetries + 1} total_ms=${totalMs}`,
+  );
   throw new RetryExhaustedError(maxRetries + 1, lastErr);
+}
+
+function logAttempt({
+  attempt,
+  of,
+  provider,
+  model,
+  ms,
+  err,
+}: {
+  attempt: number;
+  of: number;
+  provider: string;
+  model: string;
+  ms: number;
+  err: unknown;
+}): void {
+  const errName = err instanceof Error ? err.name : 'unknown';
+  const errMsg = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
+  const causeName = cause instanceof Error ? cause.name : undefined;
+  const causeMsg = cause instanceof Error ? cause.message.slice(0, 160) : undefined;
+  const statusCode = getStatusCode(err);
+  const parts = [
+    `provider=${provider}`,
+    `model=${model}`,
+    `attempt=${attempt}/${of}`,
+    `ms=${ms}`,
+    `err=${errName}`,
+    `msg=${JSON.stringify(errMsg)}`,
+  ];
+  if (statusCode !== null) parts.push(`status=${statusCode}`);
+  if (causeName) parts.push(`causeName=${causeName}`);
+  if (causeMsg) parts.push(`causeMsg=${JSON.stringify(causeMsg)}`);
+  console.warn(`[llm-attempt-failed] ${parts.join(' ')}`);
 }
 
 function sleep(ms: number): Promise<void> {

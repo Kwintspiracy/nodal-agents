@@ -6,6 +6,16 @@ import { agentJobs } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
 
+/**
+ * What the child handed back. `string` = the child's text result on success.
+ * `{ error: string }` = the child failed (executor returned `{status:'failed'}`)
+ * — we inject an `error-text` tool_result so the parent's LLM treats it as a
+ * tool failure and can react (notify the user, try a different sub-agent,
+ * `return_result{status:'blocked'}`). Without this branch the parent died
+ * silently alongside the child and the user got no Telegram message back.
+ */
+export type DelegationOutcome = string | { error: string };
+
 // ─── resumeDelegated ──────────────────────────────────────────────────────────
 
 /**
@@ -18,20 +28,20 @@ import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types'
  * Steps:
  * 1. Load parent job — verify status is 'awaiting_delegation'
  * 2. Read pending_delegation.toolUseId
- * 3. Append tool_result block to parent.messages
+ * 3. Append tool_result block to parent.messages (text on success, error-text on failure)
  * 4. Include sideToolResults from pending_delegation (message-integrity invariant)
  * 5. Set parent.status = 'pending', clear pending_delegation
  *
  * @param parentJobId  The ID of the waiting parent job
  * @param childJobId   The ID of the completed child job (for logging/audit)
- * @param childResult  The text result produced by the child
+ * @param childOutcome The child's text result, OR `{error}` if the child failed
  * @param db           Drizzle DB handle
  * @returns            Updated parent job row
  */
 export async function resumeDelegated(
   parentJobId: JobId,
   _childJobId: JobId,
-  childResult: string,
+  childOutcome: DelegationOutcome,
   db: AnyDrizzleDb,
 ): Promise<AgentJob> {
   // 1. Load parent
@@ -109,6 +119,11 @@ export async function resumeDelegated(
   // results (string) and 'error-text' for the deferred-sibling markers (which
   // carry is_error=true so the LLM treats them as failures, not normal results).
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
+  const primaryOutput: ToolResultOutput =
+    typeof childOutcome === 'string'
+      ? { type: 'text', value: childOutcome }
+      : { type: 'error-text', value: `Delegation failed: ${childOutcome.error}` };
+
   const toolResultParts: Array<{
     type: 'tool-result';
     toolCallId: string;
@@ -119,7 +134,7 @@ export async function resumeDelegated(
       type: 'tool-result',
       toolCallId: toolUseId,
       toolName,
-      output: { type: 'text', value: childResult },
+      output: primaryOutput,
     },
   ];
 

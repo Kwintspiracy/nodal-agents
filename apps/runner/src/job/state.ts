@@ -166,6 +166,12 @@ export async function completeJob(
 /**
  * Mark a job as failed. Stores the error code/message.
  * Persists tokens + turn + duration when provided so partial run state isn't lost.
+ *
+ * Sets `completedAt` so the row matches the terminal-state semantics of
+ * completed jobs: dashboards / filters / cron `resetOrphanedJobs` all use
+ * `completed_at IS NULL` to mean "still in flight". Without this set on
+ * failure, failed jobs leaked into "in-flight" queries and never appeared in
+ * "recent" / "delivered" listings.
  */
 export async function failJob(
   db: AnyDrizzleDb,
@@ -173,12 +179,14 @@ export async function failJob(
   errorCode: string,
   stats?: RunStats,
 ): Promise<void> {
+  const now = new Date();
   await db
     .update(agentJobs)
     .set({
       status: 'failed',
       error: errorCode,
-      updatedAt: new Date(),
+      completedAt: now,
+      updatedAt: now,
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
