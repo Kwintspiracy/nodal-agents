@@ -43,7 +43,7 @@ export { handleDelegation } from './router/delegate';
 
 // ─── Router: resume ───────────────────────────────────────────────────────────
 export { resumeDelegated } from './router/resume';
-export type { DelegationOutcome } from './router/resume';
+export type { DelegationOutcome, ToolKind, ToolKindLookup } from './router/resume';
 
 // ─── Router: only-one-per-turn ────────────────────────────────────────────────
 export { filterToolCallsForDelegation, buildDeferredToolResults } from './router/only-one-per-turn';

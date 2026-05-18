@@ -6,6 +6,7 @@ import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs } from '@nodal-agents/db';
 import { resumeDelegated } from '../../router/resume';
+import type { ToolKind } from '../../router/resume';
 import { OrchestrationError } from '../../errors';
 import type { JobId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -229,6 +230,10 @@ describe('resumeDelegated', () => {
     expect(sideResult?.toolName).toBe('assign_other_agent');
   });
 
+  // Test helper: build a ToolKindLookup from a simple map. Mirrors what the
+  // runner does in production — `(name) => deps.toolRegistry.get(name)?.riskLevel`.
+  const kindOfFromMap = (map: Record<string, ToolKind>) => (name: string) => map[name];
+
   it('bumps failedDelegationsCount when failed child WROTE side effects', async () => {
     const { entityId, orchId } = await seedContext(db);
     const toolUseId = 'tu_resume_count_001';
@@ -252,6 +257,13 @@ describe('resumeDelegated', () => {
       childJob.id as JobId,
       { error: 'AI_APICallError: Provider returned error' },
       db,
+      {
+        kindOf: kindOfFromMap({
+          file_list: 'read',
+          tavily_search: 'read',
+          file_write: 'write',
+        }),
+      },
     );
 
     const [after] = await db
@@ -263,10 +275,9 @@ describe('resumeDelegated', () => {
 
   it('does NOT bump failedDelegationsCount when failed child only READ', async () => {
     // Live regression: job `b3a67cee` (2026-05-18) — Summarizus crashed after
-    // only file_list / file_read / dashboard_publish-but-actually-no-write
-    // (the dashboard test below covers the write side separately). Without
-    // this smart-cap behaviour the dumb cap refused the retry and the user
-    // got no deliverable when a 2nd attempt would have been safe.
+    // only file_list / file_read / tavily_search / query_memory (all reads).
+    // Without the smart-cap behaviour the dumb cap refused the retry and the
+    // user got no deliverable when a 2nd attempt would have been safe.
     const { entityId, orchId } = await seedContext(db);
     const toolUseId = 'tu_resume_count_001b';
     const childJob = await seedChildJob(db, entityId, orchId, undefined, [
@@ -282,6 +293,14 @@ describe('resumeDelegated', () => {
       childJob.id as JobId,
       { error: 'AI_APICallError: Provider returned error' },
       db,
+      {
+        kindOf: kindOfFromMap({
+          file_list: 'read',
+          file_read: 'read',
+          tavily_search: 'read',
+          query_memory: 'read',
+        }),
+      },
     );
 
     const [after] = await db
@@ -305,6 +324,117 @@ describe('resumeDelegated', () => {
       childJob.id as JobId,
       { error: 'AI_APICallError: Provider returned error' },
       db,
+      {
+        kindOf: kindOfFromMap({
+          file_list: 'read',
+          dashboard_publish: 'write',
+        }),
+      },
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(1);
+  });
+
+  it('bumps on ADAPTER write tools (gmail_send_email, airtable_create_records, …) — declarative riskLevel', async () => {
+    // Refactor regression: the old hardcoded `SIDE_EFFECT_WRITE_TOOLS` set
+    // only knew about 6 builtins and would have silently classified
+    // `gmail_send_email` as read → retried → duplicate emails sent. With the
+    // declarative `riskLevel` lookup, any tool the registry knows about as
+    // `write` or `destructive` counts.
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_adapter';
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
+      'gmail_list_messages',
+      'gmail_send_email',
+    ]);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: Provider returned error' },
+      db,
+      {
+        kindOf: kindOfFromMap({
+          gmail_list_messages: 'read',
+          gmail_send_email: 'write',
+        }),
+      },
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(1);
+  });
+
+  it('treats DESTRUCTIVE tools the same as write (gmail_delete_message)', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_destructive';
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, ['gmail_delete_message']);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: Provider returned error' },
+      db,
+      { kindOf: kindOfFromMap({ gmail_delete_message: 'destructive' }) },
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(1);
+  });
+
+  it('treats UNKNOWN tools as side-effect (safe default — no silent free retries)', async () => {
+    // If the registry doesn't know a tool (typo, unregistered, race condition),
+    // we err on the safe side and treat it as a write. Better to burn one
+    // retry budget than to grant unbounded retries on a tool whose effect we
+    // can't classify.
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_unknown';
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
+      'mystery_tool_not_in_registry',
+    ]);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: Provider returned error' },
+      db,
+      { kindOf: () => undefined }, // explicit: lookup returns undefined for everything
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(1);
+  });
+
+  it('treats NO LOOKUP (legacy callers) as side-effect (safe default)', async () => {
+    // Same safe default applies when `opts.kindOf` is omitted entirely.
+    // Protects unit-test callers and any code that pre-dates the refactor.
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_nolookup';
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, ['file_read']);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: Provider returned error' },
+      db,
+      // no opts → no kindOf → safe default
     );
 
     const [after] = await db
@@ -355,6 +485,7 @@ describe('resumeDelegated', () => {
       childJob.id as JobId,
       { error: 'AI_APICallError: 503 backend unavailable' },
       db,
+      { kindOf: kindOfFromMap({ file_write: 'write' }) },
     );
 
     const [updated] = await db

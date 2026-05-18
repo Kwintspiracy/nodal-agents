@@ -771,6 +771,12 @@ export async function executeJob(
                   delegation.childJobId,
                   { error: childErr },
                   db,
+                  // Smart cap classifies each tool the failed child used by
+                  // looking at the global registry's `riskLevel`. Adapter
+                  // writes (gmail_send_email, airtable_create_records, …)
+                  // come through here automatically — no orchestration-side
+                  // list to maintain. See `ToolKindLookup` in resume.ts.
+                  { kindOf: (name) => registry.get(name)?.riskLevel },
                 );
                 return executeJob(jobId, deps, _runnerEnv);
               }

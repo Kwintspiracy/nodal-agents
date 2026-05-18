@@ -17,36 +17,44 @@ import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types'
 export type DelegationOutcome = string | { error: string };
 
 /**
- * Tools that produce persistent side effects in user-visible storage (file
- * system, in-DB memories, dashboard surface). A failed delegated child that
- * called any of these may have left partial state behind. We use this set in
- * `resumeDelegated` to decide whether a failure should burn the retry budget
- * (`failed_delegations_count`): if the child only read or queried, retry is
- * safe and the counter is left alone. If the child wrote, every retry risks
- * stacking another duplicate so we charge the budget normally.
- *
- * Live regression — job `b3a67cee` (2026-05-18) failed Summarizus that had
- * only called `file_list`/`file_read`/`dashboard_publish` (no real write).
- * The dumb cap (any failure → bump) refused the retry, the orchestrator gave
- * up, and the user got no deliverable when one more attempt would have been
- * safe and likely succeeded against a flaky upstream.
- *
- * Note: `dashboard_publish` IS considered a write because the dashboard row
- * is the user-visible result surface — multiple publishes from sequential
- * failed attempts pollute it the same way duplicate files pollute the vault.
+ * Tool classification, identical to `OperationRiskLevel` in
+ * `@nodal-agents/shared`. Re-declared locally to avoid a runtime dependency
+ * from `@nodal-agents/orchestration` on the tools package (the source of
+ * truth is each `ToolDefinition.riskLevel` field). Callers pass `kindOf` —
+ * typically `(name) => toolRegistry.get(name)?.riskLevel` — and we treat
+ * `write` and `destructive` as side-effect-bearing.
  */
-const SIDE_EFFECT_WRITE_TOOLS: ReadonlySet<string> = new Set([
-  'file_write',
-  'file_edit',
-  'save_memory',
-  'mark_memory_helpful',
-  'mark_memory_outdated',
-  'dashboard_publish',
-]);
+export type ToolKind = 'read' | 'write' | 'destructive';
 
-function childHadWriteSideEffects(toolsUsed: readonly string[] | null | undefined): boolean {
+/**
+ * Caller-supplied lookup from tool name to its declared riskLevel. The
+ * runner wires this to `deps.toolRegistry.get(name)?.riskLevel` so any tool
+ * registered globally (builtin or adapter) is classified correctly without
+ * the orchestration layer hardcoding a list.
+ *
+ * Return `undefined` for unknown tools — `resumeDelegated` then treats them
+ * as side-effect-bearing (safe default: a tool that isn't in the registry
+ * shouldn't silently grant free retries on a failed child).
+ */
+export type ToolKindLookup = (toolName: string) => ToolKind | undefined;
+
+function childHadWriteSideEffects(
+  toolsUsed: readonly string[] | null | undefined,
+  kindOf: ToolKindLookup | undefined,
+): boolean {
   if (!toolsUsed || toolsUsed.length === 0) return false;
-  return toolsUsed.some((t) => SIDE_EFFECT_WRITE_TOOLS.has(t));
+  // No lookup supplied (legacy callers, tests without registry): conservative
+  // — assume the child wrote, so we still bump the cap. Burning a retry budget
+  // unnecessarily is a much smaller harm than granting unbounded retries on a
+  // gmail_send_email / airtable_create_records / etc. failure.
+  if (!kindOf) return true;
+  return toolsUsed.some((t) => {
+    const kind = kindOf(t);
+    // Unknown tool (registry returned undefined) → treat as write, same
+    // reasoning as the no-lookup case above.
+    if (kind === undefined) return true;
+    return kind === 'write' || kind === 'destructive';
+  });
 }
 
 // ─── resumeDelegated ──────────────────────────────────────────────────────────
@@ -69,6 +77,10 @@ function childHadWriteSideEffects(toolsUsed: readonly string[] | null | undefine
  * @param childJobId   The ID of the completed child job (for logging/audit)
  * @param childOutcome The child's text result, OR `{error}` if the child failed
  * @param db           Drizzle DB handle
+ * @param opts.kindOf  Optional lookup from tool name → riskLevel. Used by the
+ *   smart-cap branch to decide whether a failed child's side effects warrant
+ *   burning the retry budget. Wire to `toolRegistry.get(name)?.riskLevel` in
+ *   production. Omit in tests that don't care about the cap.
  * @returns            Updated parent job row
  */
 export async function resumeDelegated(
@@ -76,6 +88,7 @@ export async function resumeDelegated(
   childJobId: JobId,
   childOutcome: DelegationOutcome,
   db: AnyDrizzleDb,
+  opts?: { kindOf?: ToolKindLookup },
 ): Promise<AgentJob> {
   // 1. Load parent
   const parentRows = await db
@@ -161,6 +174,12 @@ export async function resumeDelegated(
   // behind, so a retry is safe and we don't want one bad attempt to lock the
   // orchestrator out of trying again. The chainCount cap (max 5) still bounds
   // the absolute number of resumes either way.
+  //
+  // Classification source = `ToolDefinition.riskLevel` declared by each tool
+  // (builtin + adapter). The caller provides a `kindOf` callback wired to the
+  // global tool registry; we never hardcode tool names here, so adding a new
+  // adapter (gmail_send_email, airtable_create_records, …) automatically gets
+  // the right semantics without touching orchestration.
   let childWroteSideEffects = false;
   if (isFailure) {
     const childRows = await db
@@ -168,7 +187,7 @@ export async function resumeDelegated(
       .from(agentJobs)
       .where(eq(agentJobs.id, childJobId as string))
       .limit(1);
-    childWroteSideEffects = childHadWriteSideEffects(childRows[0]?.toolsUsed);
+    childWroteSideEffects = childHadWriteSideEffects(childRows[0]?.toolsUsed, opts?.kindOf);
   }
   const shouldBumpFailedCount = isFailure && childWroteSideEffects;
   const nextFailedCount = (parent.failedDelegationsCount ?? 0) + (shouldBumpFailedCount ? 1 : 0);
