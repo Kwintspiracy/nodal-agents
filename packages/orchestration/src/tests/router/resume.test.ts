@@ -88,7 +88,13 @@ async function seedParentJob(
   return job!;
 }
 
-async function seedChildJob(db: TestDb, entityId: string, agentId: string, parentJobId?: string) {
+async function seedChildJob(
+  db: TestDb,
+  entityId: string,
+  agentId: string,
+  parentJobId?: string,
+  toolsUsed: string[] = [],
+) {
   const [job] = await db
     .insert(agentJobs)
     .values({
@@ -97,6 +103,7 @@ async function seedChildJob(db: TestDb, entityId: string, agentId: string, paren
       channel: 'internal',
       task: 'child task',
       status: 'completed',
+      toolsUsed,
       ...(parentJobId ? { parentJobId } : {}),
     })
     .returning();
@@ -222,18 +229,76 @@ describe('resumeDelegated', () => {
     expect(sideResult?.toolName).toBe('assign_other_agent');
   });
 
-  it('bumps failedDelegationsCount when child outcome is a failure', async () => {
+  it('bumps failedDelegationsCount when failed child WROTE side effects', async () => {
     const { entityId, orchId } = await seedContext(db);
     const toolUseId = 'tu_resume_count_001';
-    const childJob = await seedChildJob(db, entityId, orchId);
+    // Child that crashed AFTER calling file_write — a retry would risk a
+    // duplicate file, so we burn the retry budget.
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
+      'file_list',
+      'tavily_search',
+      'file_write',
+    ]);
     const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
 
-    // Before: count is 0 by default
     const [before] = await db
       .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
       .from(agentJobs)
       .where(eq(agentJobs.id, parentJob.id));
     expect(before?.failedDelegationsCount).toBe(0);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: Provider returned error' },
+      db,
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(1);
+  });
+
+  it('does NOT bump failedDelegationsCount when failed child only READ', async () => {
+    // Live regression: job `b3a67cee` (2026-05-18) — Summarizus crashed after
+    // only file_list / file_read / dashboard_publish-but-actually-no-write
+    // (the dashboard test below covers the write side separately). Without
+    // this smart-cap behaviour the dumb cap refused the retry and the user
+    // got no deliverable when a 2nd attempt would have been safe.
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_001b';
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
+      'file_list',
+      'file_read',
+      'tavily_search',
+      'query_memory',
+    ]);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: Provider returned error' },
+      db,
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(0);
+  });
+
+  it('treats dashboard_publish as a side-effect write (user-visible result surface)', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_001c';
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
+      'file_list',
+      'dashboard_publish',
+    ]);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
 
     await resumeDelegated(
       parentJob.id as JobId,
@@ -273,9 +338,10 @@ describe('resumeDelegated', () => {
     // Live regression: job `29981b47` (2026-05-18) — Conciergus retried 3 times
     // on rate-limited DeepSeek and wrote 3 versions of the same note. The 2nd
     // and later failure injections must tell the LLM explicitly to STOP.
+    // Child here needs a write tool so the smart cap actually bumps.
     const { entityId, orchId } = await seedContext(db);
     const toolUseId = 'tu_resume_count_003';
-    const childJob = await seedChildJob(db, entityId, orchId);
+    const childJob = await seedChildJob(db, entityId, orchId, undefined, ['file_write']);
     const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
 
     // Pre-seed the counter to 1 so the next resume crosses the threshold to 2.

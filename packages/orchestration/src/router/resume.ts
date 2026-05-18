@@ -16,6 +16,39 @@ import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types'
  */
 export type DelegationOutcome = string | { error: string };
 
+/**
+ * Tools that produce persistent side effects in user-visible storage (file
+ * system, in-DB memories, dashboard surface). A failed delegated child that
+ * called any of these may have left partial state behind. We use this set in
+ * `resumeDelegated` to decide whether a failure should burn the retry budget
+ * (`failed_delegations_count`): if the child only read or queried, retry is
+ * safe and the counter is left alone. If the child wrote, every retry risks
+ * stacking another duplicate so we charge the budget normally.
+ *
+ * Live regression — job `b3a67cee` (2026-05-18) failed Summarizus that had
+ * only called `file_list`/`file_read`/`dashboard_publish` (no real write).
+ * The dumb cap (any failure → bump) refused the retry, the orchestrator gave
+ * up, and the user got no deliverable when one more attempt would have been
+ * safe and likely succeeded against a flaky upstream.
+ *
+ * Note: `dashboard_publish` IS considered a write because the dashboard row
+ * is the user-visible result surface — multiple publishes from sequential
+ * failed attempts pollute it the same way duplicate files pollute the vault.
+ */
+const SIDE_EFFECT_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  'file_write',
+  'file_edit',
+  'save_memory',
+  'mark_memory_helpful',
+  'mark_memory_outdated',
+  'dashboard_publish',
+]);
+
+function childHadWriteSideEffects(toolsUsed: readonly string[] | null | undefined): boolean {
+  if (!toolsUsed || toolsUsed.length === 0) return false;
+  return toolsUsed.some((t) => SIDE_EFFECT_WRITE_TOOLS.has(t));
+}
+
 // ─── resumeDelegated ──────────────────────────────────────────────────────────
 
 /**
@@ -40,7 +73,7 @@ export type DelegationOutcome = string | { error: string };
  */
 export async function resumeDelegated(
   parentJobId: JobId,
-  _childJobId: JobId,
+  childJobId: JobId,
   childOutcome: DelegationOutcome,
   db: AnyDrizzleDb,
 ): Promise<AgentJob> {
@@ -121,7 +154,24 @@ export async function resumeDelegated(
   // carry is_error=true so the LLM treats them as failures, not normal results).
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
   const isFailure = typeof childOutcome !== 'string';
-  const nextFailedCount = (parent.failedDelegationsCount ?? 0) + (isFailure ? 1 : 0);
+
+  // Smart cap: only burn the retry budget when the failed child actually
+  // produced persistent side effects. A child that crashed after only reading
+  // (file_list / file_read / query_memory / tavily_search) left no duplicates
+  // behind, so a retry is safe and we don't want one bad attempt to lock the
+  // orchestrator out of trying again. The chainCount cap (max 5) still bounds
+  // the absolute number of resumes either way.
+  let childWroteSideEffects = false;
+  if (isFailure) {
+    const childRows = await db
+      .select({ toolsUsed: agentJobs.toolsUsed })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, childJobId as string))
+      .limit(1);
+    childWroteSideEffects = childHadWriteSideEffects(childRows[0]?.toolsUsed);
+  }
+  const shouldBumpFailedCount = isFailure && childWroteSideEffects;
+  const nextFailedCount = (parent.failedDelegationsCount ?? 0) + (shouldBumpFailedCount ? 1 : 0);
 
   // When this is the SECOND (or later) failed delegation on the same parent
   // we escalate the wording so the orchestrator's LLM stops retrying and
