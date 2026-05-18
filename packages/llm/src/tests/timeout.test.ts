@@ -4,13 +4,19 @@
 //  - 2026-05-15 (job `2461d25b-...`): OpenRouter spike → 5min hang until orphan reset
 //  - 2026-05-18 (job `0fd8d4f7-...`): 213s/attempt × 4 = 852s, custom AbortController
 //    didn't fire because AI SDK's internal retry absorbed it
+//  - 2026-05-18 (job `fa2ea877-...`): 90s timeout fired correctly but cut off
+//    legitimate slow DeepSeek V4 Pro responses on 50-200k-token prompts —
+//    Hermes' equivalent budget is 300s by default (see DEFAULT_LLM_TIMEOUT_MS).
 //
-// Approach now: AI SDK native `timeout` + `maxRetries: 0` (in client.ts), detect
-// the abort/timeout error AI SDK throws, wrap in LLMTimeoutError (retryable).
+// Approach now: AI SDK native `timeout` + `maxRetries: 0` (in client.ts).
+// Detect the abort/timeout error AI SDK throws and surface it as
+// LLMTimeoutError. NOT retried by withRetry — if the per-call budget was hit,
+// the orchestrator decides what to do (notify user, switch model) instead of
+// burning another budget for the same outcome.
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MockLanguageModelV3 } from 'ai/test';
+import { describe, it, expect } from 'vitest';
 import { generateText } from 'ai';
+import { MockLanguageModelV3 } from 'ai/test';
 import { isAbortOrTimeoutError, createLlmClient } from '../client';
 import { LLMTimeoutError } from '../errors';
 import { withRetry } from '../retry';
@@ -102,7 +108,7 @@ describe('createLlmClient — timeout integration', () => {
     }
   });
 
-  it('createLlmClient returns a client object (smoke test that timeout config didn\'t break factory)', () => {
+  it("createLlmClient returns a client object (smoke test that timeout config didn't break factory)", () => {
     const client = createLlmClient({
       provider: 'anthropic',
       model: 'claude-sonnet-4-6-20260217',
@@ -117,56 +123,32 @@ describe('createLlmClient — timeout integration', () => {
 // ─── withRetry + LLMTimeoutError ──────────────────────────────────────────────
 
 describe('withRetry + LLMTimeoutError', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('retries on LLMTimeoutError until success', async () => {
+  it('throws LLMTimeoutError immediately without retry (matches Hermes behaviour)', async () => {
+    // Rationale: if the per-call budget already elapsed (default 300s, matching
+    // Hermes' `_compute_non_stream_stale_timeout`), retrying with another 300s
+    // burns the same budget on the same prompt for the same outcome. The
+    // orchestrator handles it instead (notify user via telegram_send_message,
+    // try a different model, etc.) — see resumeDelegated/error-text path in
+    // `apps/runner/src/job/execute.ts` for the delegation-side handling.
     let attempt = 0;
     const fn = async () => {
       attempt += 1;
-      if (attempt < 3) throw new LLMTimeoutError('openrouter', 'deepseek/x', 90_000);
-      return 'eventually-ok';
-    };
-    let resolved: unknown;
-    let rejected: unknown;
-    const promise = withRetry(fn, {
-      provider: 'openrouter',
-      model: 'deepseek/x',
-      baseDelayMs: 10,
-      maxRetries: 3,
-    }).then(
-      (v) => (resolved = v),
-      (e) => (rejected = e),
-    );
-    await vi.runAllTimersAsync();
-    await promise;
-    expect(rejected).toBeUndefined();
-    expect(resolved).toBe('eventually-ok');
-    expect(attempt).toBe(3);
-  });
-
-  it('stops at maxRetries when timeouts persist (RetryExhaustedError wraps last)', async () => {
-    const fn = async () => {
-      throw new LLMTimeoutError('openrouter', 'deepseek/x', 90_000);
+      throw new LLMTimeoutError('openrouter', 'deepseek/x', 300_000);
     };
     let captured: unknown;
-    const promise = withRetry(fn, {
-      provider: 'openrouter',
-      model: 'deepseek/x',
-      baseDelayMs: 10,
-      maxRetries: 1,
-    }).catch((e) => {
+    try {
+      await withRetry(fn, {
+        provider: 'openrouter',
+        model: 'deepseek/x',
+        baseDelayMs: 10,
+        maxRetries: 3,
+      });
+    } catch (e) {
       captured = e;
-    });
-    await vi.runAllTimersAsync();
-    await promise;
-    expect(captured).toMatchObject({ code: 'retry_exhausted' });
-    expect((captured as { underlyingCause: { code: string } }).underlyingCause.code).toBe(
-      'llm_timeout',
-    );
+    }
+    expect(attempt).toBe(1);
+    expect(captured).toBeInstanceOf(LLMTimeoutError);
+    // Not wrapped in RetryExhaustedError — caller sees the typed timeout directly.
+    expect((captured as { code: string }).code).toBe('llm_timeout');
   });
 });

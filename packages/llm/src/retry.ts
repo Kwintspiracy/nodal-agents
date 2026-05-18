@@ -45,8 +45,13 @@ function getStatusCode(err: unknown): number | null {
 }
 
 function isRetryableError(err: unknown): boolean {
-  // Per-attempt timeout — next attempt gets a fresh window, transient hangs recover.
-  if (err instanceof LLMTimeoutError) return true;
+  // LLMTimeoutError is NOT retryable: if we waited the full per-call budget
+  // (default 300s, matching Hermes' `_compute_non_stream_stale_timeout`) and
+  // got nothing back, retrying spends another 300s for the same outcome on
+  // the same prompt. Surface the timeout to the caller (orchestrator) so it
+  // can take an actual decision — notify the user, switch model, give up.
+  // Hermes' transport never retries on its stale timeout for the same reason.
+  if (err instanceof LLMTimeoutError) return false;
   const status = getStatusCode(err);
   if (status !== null) {
     return RETRYABLE_HTTP_STATUSES.has(status);

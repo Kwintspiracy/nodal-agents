@@ -21,20 +21,28 @@ import { buildOpenRouterModel } from './providers/openrouter';
 // ─── Timeout config ───────────────────────────────────────────────────────────
 
 /**
- * Per-call timeout for non-streaming LLM ops. 90s covers slow reasoning models
- * (o-series, sonnet-thinking) while preventing the multi-minute hangs reported
- * live on 2026-05-15 (OpenRouter spike) and 2026-05-18 (DeepSeek V4 Pro 213s).
- * Override via env `LLM_TIMEOUT_MS` for exceptionally long-running providers.
+ * Per-call timeout for non-streaming LLM ops. 300s matches Hermes' default
+ * `_compute_non_stream_stale_timeout` (run_agent.py:3394) which is the
+ * reference behaviour for OpenRouter+DeepSeek stability — Hermes routinely
+ * completes 50-200k-token prompts on DeepSeek V4 Pro that take 60-180s of
+ * upstream model time. Our previous 90s default fired correctly (verified live
+ * on job `fa2ea877`: `ms=90013`, `ms=90002` in the new instrumentation logs)
+ * but aborted legitimate slow calls, leading to the user-visible "Retry
+ * exhausted" pattern that "Hermes works with DeepSeek" was a direct rebuttal of.
+ *
+ * Override via env `LLM_TIMEOUT_MS` for providers that need a different
+ * budget (LM Studio local can be < 60s; some heavy reasoning models may need
+ * 600s like Hermes' large-prompt tier).
  *
  * Implementation note: we pass this as AI SDK v6's native `timeout` parameter
- * (uses `AbortSignal.timeout()` internally) rather than building our own
- * AbortController. A previous custom-wrapper version (commit `2bb36ec`) did not
- * fire in practice because AI SDK's internal retry (`maxRetries: 2` default)
- * absorbed the aborted attempts as transient errors and retried 3 times per
- * outer attempt — total wall time 213s × 4 retries ≈ 850s before bubbling up.
- * Pairing native timeout with `maxRetries: 0` makes the budget deterministic.
+ * (uses `AbortSignal.timeout()` internally) with `maxRetries: 0` so the budget
+ * is deterministic — AI SDK's internal retry is disabled and our `withRetry`
+ * owns retry semantics. The chain has been audited end-to-end on 2026-05-18
+ * across `generateText` → `wrapLanguageModel` → middleware → openai-compatible
+ * → postJsonToApi → fetch; the AbortSignal reaches the fetch boundary and the
+ * timeout fires reliably at the configured budget.
  */
-const DEFAULT_LLM_TIMEOUT_MS = 90_000;
+const DEFAULT_LLM_TIMEOUT_MS = 300_000;
 const LLM_TIMEOUT_MS = (() => {
   const raw = process.env['LLM_TIMEOUT_MS'];
   if (!raw) return DEFAULT_LLM_TIMEOUT_MS;
