@@ -16,51 +16,12 @@ function generateToolCallId(): string {
   return `call_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
 }
 
-// ─── DeepSeek V3 / V3.1 / V4 — fullwidth Unicode markup ───────────────────────
-// Format:
-//   <｜tool▁calls▁begin｜>
-//     <｜tool▁call▁begin｜>function<｜tool▁sep｜>name
-//     ```json
-//     {"arg": "val"}
-//     ```
-//     <｜tool▁call▁end｜>
-//   <｜tool▁calls▁end｜>
-//
-// Special chars: ｜ = U+FF5C (fullwidth vertical bar), ▁ = U+2581 (lower one
-// eighth block). DeepSeek tokenizer treats these as single tokens.
-
-const DEEPSEEK_START_TOKEN = '<｜tool▁calls▁begin｜>';
-// Groups: 1=kind (unused), 2=name, 3=args. Uses [\s\S] instead of /s flag
-// for ES2017 compatibility (the apps/web tsconfig targets pre-ES2018).
-const DEEPSEEK_PATTERN =
-  /<｜tool▁call▁begin｜>([\s\S]*?)<｜tool▁sep｜>([\s\S]*?)\s*```json\s*([\s\S]*?)\s*```\s*<｜tool▁call▁end｜>/g;
-
-export const deepseekNativeParser: NativeToolCallParser = (text) => {
-  if (!text.includes(DEEPSEEK_START_TOKEN)) return { text, toolCalls: [] };
-
-  const toolCalls: LanguageModelV3ToolCall[] = [];
-  DEEPSEEK_PATTERN.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = DEEPSEEK_PATTERN.exec(text)) !== null) {
-    const name = match[2]?.trim();
-    const args = match[3]?.trim();
-    if (!name) continue;
-    toolCalls.push({
-      type: 'tool-call',
-      toolCallId: generateToolCallId(),
-      toolName: name,
-      input: args && args.length > 0 ? args : '{}',
-    });
-  }
-
-  if (toolCalls.length === 0) return { text, toolCalls: [] };
-
-  const startIdx = text.indexOf(DEEPSEEK_START_TOKEN);
-  return {
-    text: startIdx > 0 ? text.slice(0, startIdx).trim() : '',
-    toolCalls,
-  };
-};
+// DeepSeek V3/V4 was previously parsed here on the assumption it emitted
+// fullwidth-Unicode tool-call markup (<｜tool▁calls▁begin｜>...). Live
+// observation in 2026-05 proved it emits standard OpenAI tool_calls — the only
+// spec violation is `function.arguments` returned as an object instead of a
+// JSON string, normalised at the fetch boundary by `tolerant-fetch.ts`. The
+// DeepSeek parser is no longer wired in `openrouter.ts` and has been removed.
 
 // ─── Kimi K2 / K2.5 / K2.6 — pipe-bracket markup ──────────────────────────────
 // Format:
@@ -172,13 +133,11 @@ export const nodalNativeParser: NativeToolCallParser = (text) => {
 
 // ─── Public middlewares ───────────────────────────────────────────────────────
 
-export const deepseekToolCallMiddleware = createNativeToolCallMiddleware(deepseekNativeParser);
 export const kimiToolCallMiddleware = createNativeToolCallMiddleware(kimiNativeParser);
 export const nodalToolCallMiddleware = createNativeToolCallMiddleware(nodalNativeParser);
 
 /** Exported for unit testing — the middlewares are the public surface. */
 export const __testing = {
-  deepseekNativeParser,
   kimiNativeParser,
   nodalNativeParser,
 };
