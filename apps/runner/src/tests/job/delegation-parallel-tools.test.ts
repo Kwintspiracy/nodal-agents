@@ -336,6 +336,96 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
     expect(saved).toBeDefined();
   });
 
+  it('REGRESSION: cap fires on parallel assigns → deferred sibling still gets tool_result (no unmatched_tool_use)', async () => {
+    // Live regression: job `a5ac5d6e` (2026-05-18) — Conciergus issued 2
+    // parallel `assign_summarizer` while failed_delegations_count was already
+    // at 1 (cap). Only the kept assign received the synthetic
+    // `delegation_retry_cap_reached` tool_result; the deferred sibling
+    // (filtered out by filterToolCallsForDelegation) was orphaned because
+    // `handleDelegation` — the only consumer of `sideToolResults` — never ran
+    // in the cap-refusal path. Next LLM call: `message_structure_invalid:
+    // unmatched_tool_use` → job dead. The fix flushes `sideToolResults` into
+    // `toolResultBlocks` alongside the refusal so every tool_use has a match.
+    const jobId = await createOrchestratorJob();
+
+    // Pre-seed the parent at the cap threshold so the next assign_* is refused.
+    await db.update(agentJobs).set({ failedDelegationsCount: 1 }).where(eq(agentJobs.id, jobId));
+
+    const [childRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, childAgentId));
+    if (!childRow) throw new Error('child agent missing');
+    const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
+
+    // LLM script:
+    //   Parent turn 1: TWO parallel assign_<child> (the failing pattern at cap)
+    //   Parent turn 2: return_result blocked (responding to the cap refusal)
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-assign-kept', toolName: assignToolName, args: { task: 'task A' } },
+          { toolCallId: 'tc-assign-deferred', toolName: assignToolName, args: { task: 'task B' } },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-rr-blocked',
+            toolName: 'return_result',
+            args: { status: 'blocked' },
+          },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    // Parent reaches completion (blocked status), not failed via
+    // message_structure_invalid:unmatched_tool_use.
+    expect(result.status).toBe('completed');
+
+    const [parentRow] = await db
+      .select({ messages: agentJobs.messages, status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(parentRow?.status).toBe('completed');
+    expect(parentRow?.error).toBeNull();
+
+    const messages = (parentRow?.messages ?? []) as Array<{
+      role: string;
+      content: unknown;
+    }>;
+
+    // Find the assistant message that emitted both assigns (turn 1).
+    const assistantWithBoth = messages.find((m) => {
+      if (m.role !== 'assistant' || !Array.isArray(m.content)) return false;
+      const ids = m.content
+        .filter(
+          (b): b is { type: string; toolCallId: string } =>
+            typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool-call',
+        )
+        .map((b) => b.toolCallId);
+      return ids.includes('tc-assign-kept') && ids.includes('tc-assign-deferred');
+    });
+    expect(assistantWithBoth).toBeDefined();
+
+    // The tool message right after must carry BOTH tool_results — the kept
+    // assign gets the cap-refusal error, the deferred sibling gets the
+    // "another handoff took priority" marker. Pre-fix, only the first was
+    // present.
+    const idx = messages.indexOf(assistantWithBoth!);
+    const toolMsg = messages[idx + 1] as { role: string; content: unknown } | undefined;
+    expect(toolMsg?.role).toBe('tool');
+    const toolResultIds = Array.isArray(toolMsg?.content)
+      ? (toolMsg.content as Array<{ type?: string; toolCallId?: string }>)
+          .filter((b) => b.type === 'tool-result')
+          .map((b) => b.toolCallId)
+      : [];
+    expect(toolResultIds).toContain('tc-assign-kept');
+    expect(toolResultIds).toContain('tc-assign-deferred');
+  });
+
   it('REGRESSION: same pair in reverse emission order [save_memory, assign_<child>] also succeeds', async () => {
     // Sanity check that the existing path (save_memory before assign) still works,
     // so the fix didn't regress the happy case.

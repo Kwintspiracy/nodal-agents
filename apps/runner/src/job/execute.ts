@@ -666,6 +666,27 @@ export async function executeJob(
                 error: `delegation_retry_cap_reached: ${job.failedDelegationsCount} prior delegation(s) failed on this task. Do not retry — notify the user via telegram_send_message (or the channel they reached you on) and call return_result with status='blocked'.`,
               }),
             });
+
+            // Flush the deferred siblings (other assign_* calls that the LLM
+            // emitted in the same turn but `filterToolCallsForDelegation`
+            // dropped to keep one-per-turn). In the normal delegation path
+            // `handleDelegation` persists these in `pending_delegation` and
+            // `resumeDelegated` re-injects them. The cap-refusal path skips
+            // `handleDelegation` entirely, so without this loop the dropped
+            // tool_use blocks land in messages with no matching tool_result —
+            // next LLM call trips `message_structure_invalid:unmatched_tool_use`
+            // and the whole job dies. Live regression: job `a5ac5d6e`
+            // (2026-05-18) — Conciergus issued 2 parallel `assign_summarizer`
+            // while cap was already at 1, only the first received a refusal
+            // tool_result, the second stayed orphan, job failed at turn 7.
+            for (const sr of sideToolResults) {
+              toolResultBlocks.push({
+                type: 'tool-result',
+                toolCallId: sr.tool_use_id,
+                toolName: sr.toolName,
+                output: toResultOutput({ error: sr.content }),
+              });
+            }
             continue;
           }
 
