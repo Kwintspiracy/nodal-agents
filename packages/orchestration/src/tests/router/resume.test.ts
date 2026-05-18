@@ -222,6 +222,97 @@ describe('resumeDelegated', () => {
     expect(sideResult?.toolName).toBe('assign_other_agent');
   });
 
+  it('bumps failedDelegationsCount when child outcome is a failure', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_001';
+    const childJob = await seedChildJob(db, entityId, orchId);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    // Before: count is 0 by default
+    const [before] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(before?.failedDelegationsCount).toBe(0);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: Provider returned error' },
+      db,
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(1);
+  });
+
+  it('does NOT bump failedDelegationsCount when child completed normally', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_002';
+    const childJob = await seedChildJob(db, entityId, orchId);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      'child completed successfully',
+      db,
+    );
+
+    const [after] = await db
+      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.failedDelegationsCount).toBe(0);
+  });
+
+  it('escalates the error-text message when failure count reaches the soft threshold (>= 2)', async () => {
+    // Live regression: job `29981b47` (2026-05-18) — Conciergus retried 3 times
+    // on rate-limited DeepSeek and wrote 3 versions of the same note. The 2nd
+    // and later failure injections must tell the LLM explicitly to STOP.
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_resume_count_003';
+    const childJob = await seedChildJob(db, entityId, orchId);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    // Pre-seed the counter to 1 so the next resume crosses the threshold to 2.
+    await db
+      .update(agentJobs)
+      .set({ failedDelegationsCount: 1 })
+      .where(eq(agentJobs.id, parentJob.id));
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      { error: 'AI_APICallError: 503 backend unavailable' },
+      db,
+    );
+
+    const [updated] = await db
+      .select({
+        messages: agentJobs.messages,
+        failedDelegationsCount: agentJobs.failedDelegationsCount,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(updated?.failedDelegationsCount).toBe(2);
+
+    const msgs = updated?.messages as Array<{
+      role: string;
+      content: Array<{ type: string; output?: { type: string; value: string } }>;
+    }>;
+    const last = msgs[msgs.length - 1];
+    const tr = last?.content.find((c) => c.type === 'tool-result');
+    expect(tr?.output?.type).toBe('error-text');
+    // Escalated wording instructs the LLM to give up
+    expect(tr?.output?.value).toContain('DO NOT retry');
+    expect(tr?.output?.value).toContain('telegram_send_message');
+    expect(tr?.output?.value).toContain('return_result');
+  });
+
   it('injects an error-text tool_result when child failed (DelegationOutcome={error})', async () => {
     // Regression for live job `56a3a1b5` (2026-05-17): Conciergus delegated
     // to Summarizus, child failed at turn 5 with "Retry exhausted", the parent

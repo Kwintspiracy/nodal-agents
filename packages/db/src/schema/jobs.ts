@@ -32,6 +32,16 @@ export const agentJobs = pgTable(
     inputTokens: integer('input_tokens').default(0),
     outputTokens: integer('output_tokens').default(0),
     delegationDepth: integer('delegation_depth').default(0),
+    /**
+     * Counts how many delegated child jobs returned `{status: 'failed'}` and
+     * were converted to `error-text` tool_results via `resumeDelegated`. The
+     * runner uses this counter to cap re-delegation attempts (default cap = 1
+     * failed delegation, i.e. 2 attempts total) so an unstable upstream can't
+     * trigger N rounds of duplicate side-effects in the user's workspace
+     * (file_write / dashboard_publish / save_memory all happen inside the
+     * child and aren't rolled back when it fails).
+     */
+    failedDelegationsCount: integer('failed_delegations_count').default(0).notNull(),
     pendingDelegation: jsonb('pending_delegation'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),

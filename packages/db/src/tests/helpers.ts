@@ -136,6 +136,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       input_tokens integer DEFAULT 0,
       output_tokens integer DEFAULT 0,
       delegation_depth integer DEFAULT 0,
+      failed_delegations_count integer NOT NULL DEFAULT 0,
       pending_delegation jsonb,
       completed_at timestamptz,
       created_at timestamptz DEFAULT now(),

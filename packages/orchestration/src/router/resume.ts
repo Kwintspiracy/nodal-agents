@@ -55,6 +55,7 @@ export async function resumeDelegated(
       entityId: agentJobs.entityId,
       chainCount: agentJobs.chainCount,
       delegationDepth: agentJobs.delegationDepth,
+      failedDelegationsCount: agentJobs.failedDelegationsCount,
       parentJobId: agentJobs.parentJobId,
       task: agentJobs.task,
       channel: agentJobs.channel,
@@ -119,10 +120,25 @@ export async function resumeDelegated(
   // results (string) and 'error-text' for the deferred-sibling markers (which
   // carry is_error=true so the LLM treats them as failures, not normal results).
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
-  const primaryOutput: ToolResultOutput =
-    typeof childOutcome === 'string'
-      ? { type: 'text', value: childOutcome }
-      : { type: 'error-text', value: `Delegation failed: ${childOutcome.error}` };
+  const isFailure = typeof childOutcome !== 'string';
+  const nextFailedCount = (parent.failedDelegationsCount ?? 0) + (isFailure ? 1 : 0);
+
+  // When this is the SECOND (or later) failed delegation on the same parent
+  // we escalate the wording so the orchestrator's LLM stops retrying and
+  // notifies the user instead. The hard cap (`FAILED_DELEGATIONS_CAP` in
+  // execute.ts) refuses any further `assign_*` call when this counter is
+  // already at the cap; the escalated message is the soft signal that gets
+  // there first. Live regression: job `29981b47` retried 3 times on an
+  // unstable upstream and wrote 3 versions of the same Obsidian note.
+  const errorValue = isFailure
+    ? nextFailedCount >= 2
+      ? `Delegation failed (attempt ${nextFailedCount}): ${childOutcome.error}. DO NOT retry — notify the user via telegram_send_message and call return_result{status:'blocked'}.`
+      : `Delegation failed: ${childOutcome.error}`
+    : '';
+
+  const primaryOutput: ToolResultOutput = isFailure
+    ? { type: 'error-text', value: errorValue }
+    : { type: 'text', value: childOutcome as string };
 
   const toolResultParts: Array<{
     type: 'tool-result';
@@ -177,6 +193,7 @@ export async function resumeDelegated(
       status: 'pending',
       pendingDelegation: null,
       chainCount: nextChainCount,
+      failedDelegationsCount: nextFailedCount,
       updatedAt: new Date(),
     })
     .where(eq(agentJobs.id, parentJobId as string))

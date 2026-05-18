@@ -74,6 +74,21 @@ import type { RunnerEnv } from '../env.ts';
 // a narrower target. Tunable; 50K chars ≈ ~13K tokens.
 const MAX_TOOL_RESULT_CHARS = 50_000;
 
+/**
+ * Maximum number of failed delegated children we let a single parent retry
+ * before refusing further `assign_*` tool calls. Each failed child bumps
+ * `failed_delegations_count` in `resumeDelegated`; once we cross this cap, new
+ * `assign_*` invocations get a synthetic tool_result error instead of spawning
+ * another child. The cap of 1 means 2 total attempts (initial + 1 retry).
+ *
+ * Why this matters: failed child agents are not transactional. By the time
+ * they fail at turn N, they may already have written files, published
+ * dashboards, or saved memories. Unlimited retries pile up duplicate
+ * side-effects in the user's workspace. Live regression: job `29981b47`
+ * (2026-05-18) wrote 3 versions of the same Obsidian note on a flaky upstream.
+ */
+const FAILED_DELEGATIONS_CAP = 1;
+
 /** Truncate an oversized tool-result string with an explicit, model-readable marker. */
 function truncateForContext(value: string): string {
   if (value.length <= MAX_TOOL_RESULT_CHARS) return value;
@@ -631,6 +646,28 @@ export async function executeJob(
 
         if (call.name.startsWith('assign_')) {
           const childSlug = call.name.replace(/^assign_/, '').replace(/_/g, '-');
+
+          // Hard cap on re-delegation attempts after a child failure.
+          // Each failed child bumps `failedDelegationsCount` in resumeDelegated.
+          // Beyond `FAILED_DELEGATIONS_CAP` the parent's LLM has already been
+          // told (via escalated error-text on its last resume) to stop retrying;
+          // this is the runtime backstop that refuses any further `assign_*`
+          // call so an unstable upstream cannot trigger N rounds of duplicate
+          // side-effects (file_write / dashboard_publish / save_memory) in the
+          // user's workspace. Live regression: job `29981b47` (2026-05-18)
+          // retried 3× on rate-limited DeepSeek and wrote 3 versions of the
+          // same Obsidian note.
+          if ((job.failedDelegationsCount ?? 0) >= FAILED_DELEGATIONS_CAP) {
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: call.id,
+              toolName: call.name,
+              output: toResultOutput({
+                error: `delegation_retry_cap_reached: ${job.failedDelegationsCount} prior delegation(s) failed on this task. Do not retry — notify the user via telegram_send_message (or the channel they reached you on) and call return_result with status='blocked'.`,
+              }),
+            });
+            continue;
+          }
 
           try {
             await executeTool(
