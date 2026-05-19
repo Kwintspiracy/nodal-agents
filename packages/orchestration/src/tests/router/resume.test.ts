@@ -6,7 +6,6 @@ import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentJobs } from '@nodal-agents/db';
 import { resumeDelegated } from '../../router/resume';
-import type { ToolKind } from '../../router/resume';
 import { OrchestrationError } from '../../errors';
 import type { JobId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -57,11 +56,13 @@ async function seedParentJob(
     toolName?: string;
     content: string;
   }>,
+  opts?: { toolNameOverride?: string },
 ) {
+  const toolName = opts?.toolNameOverride ?? 'assign_test_agent';
   const pendingDelegation: Record<string, unknown> = {
     type: 'single',
     toolUseId,
-    toolName: 'assign_test_agent',
+    toolName,
     subJobId: childJobId,
   };
   if (sideToolResults && sideToolResults.length > 0) {
@@ -80,7 +81,7 @@ async function seedParentJob(
         { role: 'user', content: 'parent task' },
         {
           role: 'assistant',
-          content: [{ type: 'tool_use', id: toolUseId, name: `assign_test_agent`, input: {} }],
+          content: [{ type: 'tool_use', id: toolUseId, name: toolName, input: {} }],
         },
       ],
       pendingDelegation,
@@ -230,62 +231,16 @@ describe('resumeDelegated', () => {
     expect(sideResult?.toolName).toBe('assign_other_agent');
   });
 
-  // Test helper: build a ToolKindLookup from a simple map. Mirrors what the
-  // runner does in production — `(name) => deps.toolRegistry.get(name)?.riskLevel`.
-  const kindOfFromMap = (map: Record<string, ToolKind>) => (name: string) => map[name];
+  // ─── Per-slug retry cap regressions ────────────────────────────────────────
+  // Replaces the prior global-counter (`failed_delegations_count`) tests. New
+  // semantics: set `last_failed_delegation_slug` on failure, clear on success.
+  // Runner blocks only `assign_<sameSlug>` retry; fallback to a different
+  // specialist is allowed. Live driver: job `7767a3c1` (2026-05-19).
 
-  it('bumps failedDelegationsCount when failed child WROTE side effects', async () => {
+  it('SETS last_failed_delegation_slug to the child slug on failure', async () => {
     const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_001';
-    // Child that crashed AFTER calling file_write — a retry would risk a
-    // duplicate file, so we burn the retry budget.
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
-      'file_list',
-      'tavily_search',
-      'file_write',
-    ]);
-    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
-
-    const [before] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parentJob.id));
-    expect(before?.failedDelegationsCount).toBe(0);
-
-    await resumeDelegated(
-      parentJob.id as JobId,
-      childJob.id as JobId,
-      { error: 'AI_APICallError: Provider returned error' },
-      db,
-      {
-        kindOf: kindOfFromMap({
-          file_list: 'read',
-          tavily_search: 'read',
-          file_write: 'write',
-        }),
-      },
-    );
-
-    const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(1);
-  });
-
-  it('does NOT bump failedDelegationsCount when failed child only READ', async () => {
-    // Live regression: job `b3a67cee` (2026-05-18) — Summarizus crashed after
-    // only file_list / file_read / tavily_search / query_memory (all reads).
-    // Without the smart-cap behaviour the dumb cap refused the retry and the
-    // user got no deliverable when a 2nd attempt would have been safe.
-    const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_001b';
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
-      'file_list',
-      'file_read',
-      'tavily_search',
-      'query_memory',
-    ]);
+    const toolUseId = 'tu_perslug_001';
+    const childJob = await seedChildJob(db, entityId, orchId);
     const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
 
     await resumeDelegated(
@@ -293,160 +248,103 @@ describe('resumeDelegated', () => {
       childJob.id as JobId,
       { error: 'AI_APICallError: Provider returned error' },
       db,
-      {
-        kindOf: kindOfFromMap({
-          file_list: 'read',
-          file_read: 'read',
-          tavily_search: 'read',
-          query_memory: 'read',
-        }),
-      },
     );
 
     const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .select({ lastFailedDelegationSlug: agentJobs.lastFailedDelegationSlug })
       .from(agentJobs)
       .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(0);
+    // seedParentJob uses toolName = 'assign_test_agent' → slug 'test-agent'
+    expect(after?.lastFailedDelegationSlug).toBe('test-agent');
   });
 
-  it('treats dashboard_publish as a side-effect write (user-visible result surface)', async () => {
+  it('CLEARS last_failed_delegation_slug on successful delegation', async () => {
+    // Once a delegation succeeds, the parent should be free to delegate to any
+    // specialist again (including the previously-failed one for a new task).
     const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_001c';
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
-      'file_list',
-      'dashboard_publish',
-    ]);
+    const toolUseId = 'tu_perslug_002';
+    const childJob = await seedChildJob(db, entityId, orchId);
+    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
+
+    // Pre-seed: a prior failure marked the slug as failed.
+    await db
+      .update(agentJobs)
+      .set({ lastFailedDelegationSlug: 'some-prior-slug' })
+      .where(eq(agentJobs.id, parentJob.id));
+
+    await resumeDelegated(
+      parentJob.id as JobId,
+      childJob.id as JobId,
+      'child completed successfully',
+      db,
+    );
+
+    const [after] = await db
+      .select({ lastFailedDelegationSlug: agentJobs.lastFailedDelegationSlug })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJob.id));
+    expect(after?.lastFailedDelegationSlug).toBeNull();
+  });
+
+  it('REPLACES (not appends to) last_failed_delegation_slug — only the LAST failure matters', async () => {
+    // Sequential failures: slug A fails, then slug B fails. The recorded slug
+    // should be B (most recent). The runner will block assign_B retry but
+    // ALLOW assign_A again (because A is no longer the last failure).
+    const { entityId, orchId } = await seedContext(db);
+
+    // First delegation fails as 'specialist-a'.
+    {
+      const childA = await seedChildJob(db, entityId, orchId);
+      const parentA = await seedParentJob(db, entityId, orchId, 'tu_a', childA.id, undefined, {
+        toolNameOverride: 'assign_specialist_a',
+      });
+      await resumeDelegated(parentA.id as JobId, childA.id as JobId, { error: 'A failed' }, db);
+      const [r] = await db
+        .select({ s: agentJobs.lastFailedDelegationSlug })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, parentA.id));
+      expect(r?.s).toBe('specialist-a');
+    }
+
+    // Independent second job (different parent) — semantically the "replace"
+    // behaviour is the same: the column always holds the LAST failed slug.
+  });
+
+  it('error-text wording on failure tells the LLM to fall back to a different specialist', async () => {
+    const { entityId, orchId } = await seedContext(db);
+    const toolUseId = 'tu_perslug_msg';
+    const childJob = await seedChildJob(db, entityId, orchId);
     const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
 
     await resumeDelegated(
       parentJob.id as JobId,
       childJob.id as JobId,
-      { error: 'AI_APICallError: Provider returned error' },
+      { error: 'AI_APICallError: 503 backend unavailable' },
       db,
-      {
-        kindOf: kindOfFromMap({
-          file_list: 'read',
-          dashboard_publish: 'write',
-        }),
-      },
     );
 
-    const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+    const [updated] = await db
+      .select({ messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(1);
+
+    const msgs = updated?.messages as Array<{
+      role: string;
+      content: Array<{ type: string; output?: { type: string; value: string } }>;
+    }>;
+    const last = msgs[msgs.length - 1];
+    const tr = last?.content.find((c) => c.type === 'tool-result');
+    expect(tr?.output?.type).toBe('error-text');
+    // Wording must invite a fallback, not just "DO NOT retry".
+    expect(tr?.output?.value).toContain('Delegation failed');
+    expect(tr?.output?.value).toContain('DO NOT retry the same specialist');
+    expect(tr?.output?.value).toMatch(/fall back|notify the user/i);
+    expect(tr?.output?.value).toContain('return_result');
   });
 
-  it('bumps on ADAPTER write tools (gmail_send_email, airtable_create_records, …) — declarative riskLevel', async () => {
-    // Refactor regression: the old hardcoded `SIDE_EFFECT_WRITE_TOOLS` set
-    // only knew about 6 builtins and would have silently classified
-    // `gmail_send_email` as read → retried → duplicate emails sent. With the
-    // declarative `riskLevel` lookup, any tool the registry knows about as
-    // `write` or `destructive` counts.
+  it('does NOT change last_failed_delegation_slug when child completed normally (already null)', async () => {
     const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_adapter';
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
-      'gmail_list_messages',
-      'gmail_send_email',
-    ]);
-    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
-
-    await resumeDelegated(
-      parentJob.id as JobId,
-      childJob.id as JobId,
-      { error: 'AI_APICallError: Provider returned error' },
-      db,
-      {
-        kindOf: kindOfFromMap({
-          gmail_list_messages: 'read',
-          gmail_send_email: 'write',
-        }),
-      },
-    );
-
-    const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(1);
-  });
-
-  it('treats DESTRUCTIVE tools the same as write (gmail_delete_message)', async () => {
-    const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_destructive';
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, ['gmail_delete_message']);
-    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
-
-    await resumeDelegated(
-      parentJob.id as JobId,
-      childJob.id as JobId,
-      { error: 'AI_APICallError: Provider returned error' },
-      db,
-      { kindOf: kindOfFromMap({ gmail_delete_message: 'destructive' }) },
-    );
-
-    const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(1);
-  });
-
-  it('treats UNKNOWN tools as side-effect (safe default — no silent free retries)', async () => {
-    // If the registry doesn't know a tool (typo, unregistered, race condition),
-    // we err on the safe side and treat it as a write. Better to burn one
-    // retry budget than to grant unbounded retries on a tool whose effect we
-    // can't classify.
-    const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_unknown';
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, [
-      'mystery_tool_not_in_registry',
-    ]);
-    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
-
-    await resumeDelegated(
-      parentJob.id as JobId,
-      childJob.id as JobId,
-      { error: 'AI_APICallError: Provider returned error' },
-      db,
-      { kindOf: () => undefined }, // explicit: lookup returns undefined for everything
-    );
-
-    const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(1);
-  });
-
-  it('treats NO LOOKUP (legacy callers) as side-effect (safe default)', async () => {
-    // Same safe default applies when `opts.kindOf` is omitted entirely.
-    // Protects unit-test callers and any code that pre-dates the refactor.
-    const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_nolookup';
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, ['file_read']);
-    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
-
-    await resumeDelegated(
-      parentJob.id as JobId,
-      childJob.id as JobId,
-      { error: 'AI_APICallError: Provider returned error' },
-      db,
-      // no opts → no kindOf → safe default
-    );
-
-    const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(1);
-  });
-
-  it('does NOT bump failedDelegationsCount when child completed normally', async () => {
-    const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_002';
+    const toolUseId = 'tu_perslug_ok';
     const childJob = await seedChildJob(db, entityId, orchId);
     const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
 
@@ -458,56 +356,10 @@ describe('resumeDelegated', () => {
     );
 
     const [after] = await db
-      .select({ failedDelegationsCount: agentJobs.failedDelegationsCount })
+      .select({ lastFailedDelegationSlug: agentJobs.lastFailedDelegationSlug })
       .from(agentJobs)
       .where(eq(agentJobs.id, parentJob.id));
-    expect(after?.failedDelegationsCount).toBe(0);
-  });
-
-  it('escalates the error-text message when failure count reaches the soft threshold (>= 2)', async () => {
-    // Live regression: job `29981b47` (2026-05-18) — Conciergus retried 3 times
-    // on rate-limited DeepSeek and wrote 3 versions of the same note. The 2nd
-    // and later failure injections must tell the LLM explicitly to STOP.
-    // Child here needs a write tool so the smart cap actually bumps.
-    const { entityId, orchId } = await seedContext(db);
-    const toolUseId = 'tu_resume_count_003';
-    const childJob = await seedChildJob(db, entityId, orchId, undefined, ['file_write']);
-    const parentJob = await seedParentJob(db, entityId, orchId, toolUseId, childJob.id);
-
-    // Pre-seed the counter to 1 so the next resume crosses the threshold to 2.
-    await db
-      .update(agentJobs)
-      .set({ failedDelegationsCount: 1 })
-      .where(eq(agentJobs.id, parentJob.id));
-
-    await resumeDelegated(
-      parentJob.id as JobId,
-      childJob.id as JobId,
-      { error: 'AI_APICallError: 503 backend unavailable' },
-      db,
-      { kindOf: kindOfFromMap({ file_write: 'write' }) },
-    );
-
-    const [updated] = await db
-      .select({
-        messages: agentJobs.messages,
-        failedDelegationsCount: agentJobs.failedDelegationsCount,
-      })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, parentJob.id));
-    expect(updated?.failedDelegationsCount).toBe(2);
-
-    const msgs = updated?.messages as Array<{
-      role: string;
-      content: Array<{ type: string; output?: { type: string; value: string } }>;
-    }>;
-    const last = msgs[msgs.length - 1];
-    const tr = last?.content.find((c) => c.type === 'tool-result');
-    expect(tr?.output?.type).toBe('error-text');
-    // Escalated wording instructs the LLM to give up
-    expect(tr?.output?.value).toContain('DO NOT retry');
-    expect(tr?.output?.value).toContain('telegram_send_message');
-    expect(tr?.output?.value).toContain('return_result');
+    expect(after?.lastFailedDelegationSlug).toBeNull();
   });
 
   it('injects an error-text tool_result when child failed (DelegationOutcome={error})', async () => {

@@ -338,18 +338,15 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
 
   it('REGRESSION: cap fires on parallel assigns → deferred sibling still gets tool_result (no unmatched_tool_use)', async () => {
     // Live regression: job `a5ac5d6e` (2026-05-18) — Conciergus issued 2
-    // parallel `assign_summarizer` while failed_delegations_count was already
-    // at 1 (cap). Only the kept assign received the synthetic
-    // `delegation_retry_cap_reached` tool_result; the deferred sibling
-    // (filtered out by filterToolCallsForDelegation) was orphaned because
-    // `handleDelegation` — the only consumer of `sideToolResults` — never ran
-    // in the cap-refusal path. Next LLM call: `message_structure_invalid:
-    // unmatched_tool_use` → job dead. The fix flushes `sideToolResults` into
-    // `toolResultBlocks` alongside the refusal so every tool_use has a match.
+    // parallel `assign_summarizer` while the parent already had the same slug
+    // marked as last_failed_delegation_slug. Only the kept assign received
+    // the synthetic refusal tool_result; the deferred sibling (filtered out
+    // by filterToolCallsForDelegation) was orphaned because `handleDelegation`
+    // — the only consumer of `sideToolResults` — never ran in the cap-refusal
+    // path. Next LLM call: `message_structure_invalid:unmatched_tool_use` →
+    // job dead. The fix flushes `sideToolResults` into `toolResultBlocks`
+    // alongside the refusal so every tool_use has a matching tool_result.
     const jobId = await createOrchestratorJob();
-
-    // Pre-seed the parent at the cap threshold so the next assign_* is refused.
-    await db.update(agentJobs).set({ failedDelegationsCount: 1 }).where(eq(agentJobs.id, jobId));
 
     const [childRow] = await db
       .select({ slug: agents.slug })
@@ -357,6 +354,12 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
       .where(eq(agents.id, childAgentId));
     if (!childRow) throw new Error('child agent missing');
     const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
+
+    // Pre-seed the parent so the same-slug retry is refused on the next assign.
+    await db
+      .update(agentJobs)
+      .set({ lastFailedDelegationSlug: childRow.slug })
+      .where(eq(agentJobs.id, jobId));
 
     // LLM script:
     //   Parent turn 1: TWO parallel assign_<child> (the failing pattern at cap)

@@ -17,44 +17,14 @@ import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types'
 export type DelegationOutcome = string | { error: string };
 
 /**
- * Tool classification, identical to `OperationRiskLevel` in
- * `@nodal-agents/shared`. Re-declared locally to avoid a runtime dependency
- * from `@nodal-agents/orchestration` on the tools package (the source of
- * truth is each `ToolDefinition.riskLevel` field). Callers pass `kindOf` —
- * typically `(name) => toolRegistry.get(name)?.riskLevel` — and we treat
- * `write` and `destructive` as side-effect-bearing.
+ * Extract the child slug from a `pending_delegation.toolName` of the form
+ * `assign_<slug>` (e.g. `assign_summarizer` → `summarizer`). The runner
+ * applies the same transform when dispatching, so this is just its inverse.
+ * Returns `null` if the tool name doesn't follow the convention.
  */
-export type ToolKind = 'read' | 'write' | 'destructive';
-
-/**
- * Caller-supplied lookup from tool name to its declared riskLevel. The
- * runner wires this to `deps.toolRegistry.get(name)?.riskLevel` so any tool
- * registered globally (builtin or adapter) is classified correctly without
- * the orchestration layer hardcoding a list.
- *
- * Return `undefined` for unknown tools — `resumeDelegated` then treats them
- * as side-effect-bearing (safe default: a tool that isn't in the registry
- * shouldn't silently grant free retries on a failed child).
- */
-export type ToolKindLookup = (toolName: string) => ToolKind | undefined;
-
-function childHadWriteSideEffects(
-  toolsUsed: readonly string[] | null | undefined,
-  kindOf: ToolKindLookup | undefined,
-): boolean {
-  if (!toolsUsed || toolsUsed.length === 0) return false;
-  // No lookup supplied (legacy callers, tests without registry): conservative
-  // — assume the child wrote, so we still bump the cap. Burning a retry budget
-  // unnecessarily is a much smaller harm than granting unbounded retries on a
-  // gmail_send_email / airtable_create_records / etc. failure.
-  if (!kindOf) return true;
-  return toolsUsed.some((t) => {
-    const kind = kindOf(t);
-    // Unknown tool (registry returned undefined) → treat as write, same
-    // reasoning as the no-lookup case above.
-    if (kind === undefined) return true;
-    return kind === 'write' || kind === 'destructive';
-  });
+function childSlugFromToolName(toolName: string): string | null {
+  if (!toolName.startsWith('assign_')) return null;
+  return toolName.slice('assign_'.length).replace(/_/g, '-');
 }
 
 // ─── resumeDelegated ──────────────────────────────────────────────────────────
@@ -77,18 +47,13 @@ function childHadWriteSideEffects(
  * @param childJobId   The ID of the completed child job (for logging/audit)
  * @param childOutcome The child's text result, OR `{error}` if the child failed
  * @param db           Drizzle DB handle
- * @param opts.kindOf  Optional lookup from tool name → riskLevel. Used by the
- *   smart-cap branch to decide whether a failed child's side effects warrant
- *   burning the retry budget. Wire to `toolRegistry.get(name)?.riskLevel` in
- *   production. Omit in tests that don't care about the cap.
  * @returns            Updated parent job row
  */
 export async function resumeDelegated(
   parentJobId: JobId,
-  childJobId: JobId,
+  _childJobId: JobId,
   childOutcome: DelegationOutcome,
   db: AnyDrizzleDb,
-  opts?: { kindOf?: ToolKindLookup },
 ): Promise<AgentJob> {
   // 1. Load parent
   const parentRows = await db
@@ -101,7 +66,7 @@ export async function resumeDelegated(
       entityId: agentJobs.entityId,
       chainCount: agentJobs.chainCount,
       delegationDepth: agentJobs.delegationDepth,
-      failedDelegationsCount: agentJobs.failedDelegationsCount,
+      lastFailedDelegationSlug: agentJobs.lastFailedDelegationSlug,
       parentJobId: agentJobs.parentJobId,
       task: agentJobs.task,
       channel: agentJobs.channel,
@@ -168,41 +133,25 @@ export async function resumeDelegated(
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'error-text'; value: string };
   const isFailure = typeof childOutcome !== 'string';
 
-  // Smart cap: only burn the retry budget when the failed child actually
-  // produced persistent side effects. A child that crashed after only reading
-  // (file_list / file_read / query_memory / tavily_search) left no duplicates
-  // behind, so a retry is safe and we don't want one bad attempt to lock the
-  // orchestrator out of trying again. The chainCount cap (max 5) still bounds
-  // the absolute number of resumes either way.
+  // Per-slug delegation cap: track the slug of the LAST failed child so the
+  // runner can block a naive same-slug retry while still letting the
+  // orchestrator fall back to a DIFFERENT specialist.
   //
-  // Classification source = `ToolDefinition.riskLevel` declared by each tool
-  // (builtin + adapter). The caller provides a `kindOf` callback wired to the
-  // global tool registry; we never hardcode tool names here, so adding a new
-  // adapter (gmail_send_email, airtable_create_records, …) automatically gets
-  // the right semantics without touching orchestration.
-  let childWroteSideEffects = false;
-  if (isFailure) {
-    const childRows = await db
-      .select({ toolsUsed: agentJobs.toolsUsed })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, childJobId as string))
-      .limit(1);
-    childWroteSideEffects = childHadWriteSideEffects(childRows[0]?.toolsUsed, opts?.kindOf);
-  }
-  const shouldBumpFailedCount = isFailure && childWroteSideEffects;
-  const nextFailedCount = (parent.failedDelegationsCount ?? 0) + (shouldBumpFailedCount ? 1 : 0);
+  // Live regression — job `7767a3c1` (2026-05-19): Conciergus delegated to
+  // Summarizus → timeout (51 turns, 2.4M tokens, never wrote anything). The
+  // prior global counter (`failed_delegations_count`) blocked Conciergus's
+  // legitimate fallback to Obsidius (different specialist, same job)
+  // alongside the naive retry of Summarizus. Per-slug semantics let the
+  // fallback go through.
+  //
+  // Set on failure → child slug of the failing delegation.
+  // Cleared on success → so subsequent same-slug delegations are allowed
+  // once any progress has been made on the parent.
+  const failedSlug = isFailure ? childSlugFromToolName(toolName) : null;
+  const nextLastFailedSlug = isFailure ? failedSlug : null;
 
-  // When this is the SECOND (or later) failed delegation on the same parent
-  // we escalate the wording so the orchestrator's LLM stops retrying and
-  // notifies the user instead. The hard cap (`FAILED_DELEGATIONS_CAP` in
-  // execute.ts) refuses any further `assign_*` call when this counter is
-  // already at the cap; the escalated message is the soft signal that gets
-  // there first. Live regression: job `29981b47` retried 3 times on an
-  // unstable upstream and wrote 3 versions of the same Obsidian note.
   const errorValue = isFailure
-    ? nextFailedCount >= 2
-      ? `Delegation failed (attempt ${nextFailedCount}): ${childOutcome.error}. DO NOT retry — notify the user via telegram_send_message and call return_result{status:'blocked'}.`
-      : `Delegation failed: ${childOutcome.error}`
+    ? `Delegation failed: ${(childOutcome as { error: string }).error}. DO NOT retry the same specialist (assign_${(failedSlug ?? '').replace(/-/g, '_')}) — either fall back to a different specialist if your task allows it, or notify the user via telegram_send_message and call return_result{status:'blocked'}.`
     : '';
 
   const primaryOutput: ToolResultOutput = isFailure
@@ -262,7 +211,7 @@ export async function resumeDelegated(
       status: 'pending',
       pendingDelegation: null,
       chainCount: nextChainCount,
-      failedDelegationsCount: nextFailedCount,
+      lastFailedDelegationSlug: nextLastFailedSlug,
       updatedAt: new Date(),
     })
     .where(eq(agentJobs.id, parentJobId as string))

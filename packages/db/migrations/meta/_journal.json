@@ -85,6 +85,13 @@
       "when": 1779000000000,
       "tag": "0011_agent_jobs_failed_delegations_count",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779100000000,
+      "tag": "0012_agent_jobs_last_failed_delegation_slug",
+      "breakpoints": true
     }
   ]
 }

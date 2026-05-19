@@ -33,15 +33,20 @@ export const agentJobs = pgTable(
     outputTokens: integer('output_tokens').default(0),
     delegationDepth: integer('delegation_depth').default(0),
     /**
-     * Counts how many delegated child jobs returned `{status: 'failed'}` and
-     * were converted to `error-text` tool_results via `resumeDelegated`. The
-     * runner uses this counter to cap re-delegation attempts (default cap = 1
-     * failed delegation, i.e. 2 attempts total) so an unstable upstream can't
-     * trigger N rounds of duplicate side-effects in the user's workspace
-     * (file_write / dashboard_publish / save_memory all happen inside the
-     * child and aren't rolled back when it fails).
+     * The slug of the last delegated child that failed on this parent job.
+     * Set by `resumeDelegated` when a child returns `{status:'failed'}`, cleared
+     * when any subsequent delegation succeeds. The runner uses this to block
+     * NAIVE retries (parent re-emitting `assign_<sameSlug>` immediately after a
+     * failure) while still allowing FALLBACK strategies (parent emitting
+     * `assign_<differentSlug>` after a failure, e.g. note-taker as a fallback
+     * after summarizer timeout).
+     *
+     * Replaces the earlier `failed_delegations_count` global counter from
+     * commit `b76d449`, which was too coarse — it blocked ALL further
+     * delegations after one failure, including legitimate fallbacks to a
+     * different specialist (live regression: job `7767a3c1`, 2026-05-19).
      */
-    failedDelegationsCount: integer('failed_delegations_count').default(0).notNull(),
+    lastFailedDelegationSlug: text('last_failed_delegation_slug'),
     pendingDelegation: jsonb('pending_delegation'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
