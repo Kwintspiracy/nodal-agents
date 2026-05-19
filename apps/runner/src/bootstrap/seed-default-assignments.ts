@@ -19,7 +19,7 @@ import { and, count, eq } from '@nodal-agents/db';
 import { agents, agentSkills, agentSkillAssignments, entities } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { RunnerEnv } from '../env.ts';
-import { systemAssignments } from './catalog/index.ts';
+import { systemAssignments } from '@nodal-agents/catalog';
 
 export async function seedDefaultAssignments(db: AnyDrizzleDb, env: RunnerEnv): Promise<void> {
   if (env.AUTH_MODE === 'bearer-token') return;

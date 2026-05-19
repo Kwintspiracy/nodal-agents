@@ -1,4 +1,4 @@
-// catalog/index.ts — aggregates the system catalog shipped with NodalAI.
+// @nodal-agents/catalog index.ts — aggregates the system catalog shipped with NodalAI.
 //
 // Source of truth: every system skill / agent / default assignment that
 // every install of the same npm version should receive. The bootstrap
@@ -8,7 +8,7 @@
 // Adding a new system item = a new file + an entry in one of these arrays.
 // No SQL on live DBs.
 
-import type { SystemSkill, SystemAgent, SystemAssignment } from './types';
+import type { SystemSkill, SystemAgent, SystemAssignment, ModelPreference } from './types';
 
 import { obsidianSkill } from './skills/obsidian';
 import { researchScopeDisciplineSkill } from './skills/research-scope-discipline';
@@ -42,4 +42,4 @@ export const systemAgents: SystemAgent[] = [
 
 export { systemAssignments };
 
-export type { SystemSkill, SystemAgent, SystemAssignment };
+export type { SystemSkill, SystemAgent, SystemAssignment, ModelPreference };

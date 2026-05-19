@@ -5,11 +5,9 @@
 // Invariant 2: no hardcoded user-facing strings
 // Invariant 3: no agent-specific band-aid catches
 //
-// Exempted directory: `bootstrap/catalog/`. The catalog is data-as-code for
-// the product distribution — its purpose is precisely to declare which
-// system agents/skills ship with NodalAI by name and slug. Treating it as a
-// runtime violation would defeat the seeding architecture (see
-// feedback_product_catalog_thinking).
+// The product catalog (system agents/skills shipped with NodalAI) lives in
+// the separate `@nodal-agents/catalog` package — outside this runner src tree
+// entirely — so its data-as-code slugs never reach the scanner here.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'fs';
@@ -19,7 +17,7 @@ import { join, resolve } from 'path';
 
 function collectTsFiles(dir: string): string[] {
   const files: string[] = [];
-  const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'catalog']);
+  const SKIPPED_DIRS = new Set(['node_modules', 'dist']);
 
   function walk(current: string) {
     for (const entry of readdirSync(current)) {

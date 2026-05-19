@@ -25,8 +25,8 @@ import { count, eq } from '@nodal-agents/db';
 import { agents, entityLlmKeys, entities } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { RunnerEnv } from '../env.ts';
-import { systemAgents } from './catalog/index.ts';
-import type { ModelPreference } from './catalog/types.ts';
+import { systemAgents } from '@nodal-agents/catalog';
+import type { ModelPreference } from '@nodal-agents/catalog';
 
 /**
  * Resolve which `entity_llm_keys.id` + concrete model id to seed an agent

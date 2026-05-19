@@ -13,8 +13,8 @@
 //     to default" button later can copy default_content → content + flip the
 //     flag.
 //
-// Source of truth = `packages/runner/src/bootstrap/catalog/skills/*.ts`. Adding
-// a new system skill means a new TS file + an entry in `catalog/index.ts`,
+// Source of truth = `packages/catalog/src/skills/*.ts`. Adding a new system
+// skill means a new TS file + an entry in `packages/catalog/src/index.ts`,
 // then a runner restart on every install picks it up.
 //
 // Guard logic mirrors `seedDefaultLlmKey`: skip unless the install has
@@ -26,7 +26,7 @@ import { count, eq } from '@nodal-agents/db';
 import { agentSkills, entities } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { RunnerEnv } from '../env.ts';
-import { systemSkills } from './catalog/index.ts';
+import { systemSkills } from '@nodal-agents/catalog';
 
 export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promise<void> {
   // bearer-token mode = multi-tenant; admins manage catalog explicitly.

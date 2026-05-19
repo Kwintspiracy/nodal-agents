@@ -99,6 +99,9 @@ importers:
       '@nodal-agents/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@nodal-agents/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -444,6 +447,8 @@ importers:
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
+
+  packages/catalog: {}
 
   packages/db:
     dependencies:

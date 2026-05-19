@@ -18,7 +18,7 @@ import {
 import { seedDefaultSkills } from '../../bootstrap/seed-default-skills.ts';
 import { seedDefaultAgents } from '../../bootstrap/seed-default-agents.ts';
 import { seedDefaultAssignments } from '../../bootstrap/seed-default-assignments.ts';
-import { systemSkills, systemAgents, systemAssignments } from '../../bootstrap/catalog/index.ts';
+import { systemSkills, systemAgents, systemAssignments } from '@nodal-agents/catalog';
 import type { RunnerEnv } from '../../env.ts';
 
 const env: RunnerEnv = {
