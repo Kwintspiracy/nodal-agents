@@ -149,7 +149,7 @@ describe('seedDefaultAgents', () => {
     }
   });
 
-  it('upgrade case: existing agent keeps user-edited personality untouched, structural fields updated', async () => {
+  it('upgrade with override: existing agent with personalityOverridden=true keeps user personality, structural fields updated', async () => {
     const { db } = await spinUpTestDb();
     const { entityId } = await seedSingleEntityFixture(db);
     await db.insert(entityLlmKeys).values({
@@ -160,7 +160,6 @@ describe('seedDefaultAgents', () => {
       defaultModel: 'deepseek/deepseek-v4-pro',
       isActive: true,
     });
-    // Pre-seed an agent with a user-edited personality + different role
     const customPersonality = 'I am a heavily customized concierge personality';
     await db.insert(agents).values({
       entityId,
@@ -168,6 +167,7 @@ describe('seedDefaultAgents', () => {
       name: 'Old Name',
       role: 'agent', // intentionally wrong, seeder should fix
       personality: customPersonality,
+      personalityOverridden: true, // user has edited — seeder must preserve
       model: 'old-model',
       systemAgent: false, // intentionally wrong, seeder should fix
       active: true,
@@ -181,16 +181,56 @@ describe('seedDefaultAgents', () => {
         role: agents.role,
         orchestratorMode: agents.orchestratorMode,
         systemAgent: agents.systemAgent,
+        personalityOverridden: agents.personalityOverridden,
         name: agents.name,
       })
       .from(agents)
       .where(eq(agents.slug, 'concierge'))
       .limit(1);
-    expect(row?.personality).toBe(customPersonality); // user edit untouched
+    expect(row?.personality).toBe(customPersonality); // user edit preserved
     expect(row?.role).toBe('orchestrator'); // structural updated
     expect(row?.orchestratorMode).toBe('router'); // structural updated
     expect(row?.systemAgent).toBe(true); // flag fixed
+    expect(row?.personalityOverridden).toBe(true); // still overridden
     expect(row?.name).toBe('Conciergus'); // structural updated
+  });
+
+  it('upgrade without override: existing agent with personalityOverridden=false receives new canonical personality', async () => {
+    const { db } = await spinUpTestDb();
+    const { entityId } = await seedSingleEntityFixture(db);
+    await db.insert(entityLlmKeys).values({
+      entityId,
+      provider: 'openrouter',
+      apiKey: 'enc:test',
+      apiKeyLast4: 'xxxx',
+      defaultModel: 'deepseek/deepseek-v4-pro',
+      isActive: true,
+    });
+    await db.insert(agents).values({
+      entityId,
+      slug: 'concierge',
+      name: 'Old Name',
+      role: 'agent',
+      personality: 'Stale personality from an earlier npm version',
+      personalityOverridden: false, // user never edited
+      model: 'old-model',
+      systemAgent: true,
+      active: true,
+    });
+
+    await seedDefaultAgents(db, env);
+
+    const catalogConcierge = systemAgents.find((a) => a.slug === 'concierge')!;
+    const [row] = await db
+      .select({
+        personality: agents.personality,
+        personalityOverridden: agents.personalityOverridden,
+      })
+      .from(agents)
+      .where(eq(agents.slug, 'concierge'))
+      .limit(1);
+    expect(row?.personality).toBe(catalogConcierge.personality); // refreshed
+    expect(row?.personalityOverridden).toBe(false); // flag unchanged
   });
 });
 

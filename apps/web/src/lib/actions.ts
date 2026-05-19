@@ -42,6 +42,7 @@ import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.t
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { systemAgents } from '@nodal-agents/catalog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -135,6 +136,8 @@ export type AgentRow = {
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
   workspaceRootPath: string | null;
+  systemAgent: boolean | null;
+  personalityOverridden: boolean;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -280,9 +283,11 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       parsed.data;
     const db = getDb();
 
-    // Verify agent exists and belongs to this entity
+    // Verify agent exists and belongs to this entity; capture current
+    // personality so we know whether the user is editing it (which flips
+    // personalityOverridden=true so the catalog seeder leaves it alone).
     const [existing] = await db
-      .select({ id: agents.id })
+      .select({ id: agents.id, personality: agents.personality })
       .from(agents)
       .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Agent not found');
@@ -301,6 +306,9 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     };
     if (llmKeyId !== undefined) {
       patch['llmKeyId'] = llmKeyId;
+    }
+    if (personality !== existing.personality) {
+      patch['personalityOverridden'] = true;
     }
 
     await db.update(agents).set(patch).where(eq(agents.id, id));
@@ -334,6 +342,69 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
   } catch (err) {
     console.error('[updateAgentAction]', err);
     return fail('db_error', 'Failed to update agent');
+  }
+}
+
+export async function resetAgentPersonalityAction(
+  id: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+
+    const [existing] = await db
+      .select({
+        id: agents.id,
+        slug: agents.slug,
+        systemAgent: agents.systemAgent,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Agent not found');
+    if (!existing.systemAgent) {
+      return fail(
+        'not_applicable',
+        'Only system agents have a default personality to reset to',
+      );
+    }
+
+    const catalogEntry = systemAgents.find((a) => a.slug === existing.slug);
+    if (!catalogEntry) {
+      return fail(
+        'not_found',
+        'No catalog entry for this agent — slug may have been renamed',
+      );
+    }
+
+    await db
+      .update(agents)
+      .set({
+        personality: catalogEntry.personality,
+        personalityOverridden: false,
+        updatedAt: new Date(),
+      })
+      .where(eq(agents.id, id));
+
+    // Invalidate cached system_prompt on in-flight jobs (same logic as
+    // updateAgentAction) so the next turn picks up the canonical personality.
+    await db
+      .update(agentJobs)
+      .set({ systemPrompt: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(agentJobs.agentId, id),
+          notInArray(agentJobs.status, ['completed', 'failed', 'cancelled']),
+        ),
+      );
+
+    revalidatePath('/agents');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[resetAgentPersonalityAction]', err);
+    return fail('db_error', 'Failed to reset agent personality');
   }
 }
 

@@ -1933,6 +1933,118 @@ describe('updateAgentAction — db path', () => {
   });
 });
 
+describe('updateAgentAction — personalityOverridden flag', () => {
+  it('flips personalityOverridden=true when personality differs from current row', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-0000000000aa', personality: 'Old personality' },
+    ]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-0000000000aa',
+      name: 'A',
+      personality: 'New personality',
+      model: 'gpt-4',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const firstSet = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const firstSetArg = firstSet?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(firstSetArg?.['personalityOverridden']).toBe(true);
+  });
+
+  it('does NOT include personalityOverridden in the patch when personality is unchanged', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-0000000000bb', personality: 'Same personality' },
+    ]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-0000000000bb',
+      name: 'B',
+      personality: 'Same personality',
+      model: 'gpt-4',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const firstSet = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const firstSetArg = firstSet?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect('personalityOverridden' in (firstSetArg ?? {})).toBe(false);
+  });
+});
+
+describe('resetAgentPersonalityAction', () => {
+  it('returns validation_failed on non-uuid id', async () => {
+    const { resetAgentPersonalityAction } = await import('../src/lib/actions.ts');
+    const r = await resetAgentPersonalityAction('not-a-uuid');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when agent does not belong to entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { resetAgentPersonalityAction } = await import('../src/lib/actions.ts');
+    const r = await resetAgentPersonalityAction('aaaaaaaa-0000-0000-0000-0000000000cc');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('rejects non-system agent with not_applicable', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000000dd',
+        slug: 'concierge',
+        systemAgent: false,
+      },
+    ]) as typeof currentDb;
+    const { resetAgentPersonalityAction } = await import('../src/lib/actions.ts');
+    const r = await resetAgentPersonalityAction('aaaaaaaa-0000-0000-0000-0000000000dd');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_applicable');
+  });
+
+  it('rejects when slug has no matching catalog entry', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000000ee',
+        slug: 'no-such-catalog-slug',
+        systemAgent: true,
+      },
+    ]) as typeof currentDb;
+    const { resetAgentPersonalityAction } = await import('../src/lib/actions.ts');
+    const r = await resetAgentPersonalityAction('aaaaaaaa-0000-0000-0000-0000000000ee');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('happy path — writes catalog personality and clears the flag', async () => {
+    const { systemAgents } = await import('@nodal-agents/catalog');
+    const conciergeCatalog = systemAgents.find((a) => a.slug === 'concierge')!;
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000000ff',
+        slug: 'concierge',
+        systemAgent: true,
+      },
+    ]) as typeof currentDb;
+    const { resetAgentPersonalityAction } = await import('../src/lib/actions.ts');
+    const r = await resetAgentPersonalityAction('aaaaaaaa-0000-0000-0000-0000000000ff');
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const sharedSet = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const allSetArgs = sharedSet!.mock.calls.map(
+      (args) => args[0] as Record<string, unknown> | undefined,
+    );
+    // Find the agents-table set (carries personality field)
+    const agentSetArg = allSetArgs.find((arg) => arg !== undefined && 'personality' in arg);
+    expect(agentSetArg?.['personality']).toBe(conciergeCatalog.personality);
+    expect(agentSetArg?.['personalityOverridden']).toBe(false);
+  });
+});
+
 // ─── sendTaskAction — Telegram delivery channel ────────────────────────────────
 // These tests need sequential db.select() calls to return different rows, so we
 // build a small helper that returns a different chain for each call to select().

@@ -1,21 +1,20 @@
 // bootstrap/seed-default-agents.ts — system agents, shipped with the product.
 //
 // For each entry in `systemAgents`, ensure an `agents` row exists in the
-// local entity with the canonical personality + model preference. Idempotent:
+// local entity with the canonical personality + model preference. Idempotent
+// and override-aware (same pattern as `seedDefaultSkills`):
 //
 //   - Agent doesn't exist (fresh install) → INSERT with canonical personality,
-//     systemAgent=true, model = best matching preferred model from available
-//     LLM keys, falling back to the first available key's defaultModel.
-//   - Agent exists (upgrade case) → UPDATE only structural fields (name, role,
-//     orchestratorMode). Personality is treated as USER-OWNED once the row
-//     exists — we never overwrite an existing personality. Users can edit
-//     freely via dashboard, and a future "Reset to default" UX will let them
-//     opt in to a new canonical personality.
-//
-//   Limitation noted: this means an existing install does NOT receive
-//   personality updates when the canonical changes between npm versions.
-//   Acceptable for MVP; future schema work can add a `personality_overridden`
-//   flag mirroring `agent_skills.content_overridden` for a finer story.
+//     systemAgent=true, personalityOverridden=false, model = best matching
+//     preferred model from available LLM keys (fallback: first available key's
+//     defaultModel).
+//   - Agent exists AND personalityOverridden=false → UPDATE personality to
+//     the new canonical along with the structural fields. User had no edits,
+//     so they receive the latest version automatically on upgrade.
+//   - Agent exists AND personalityOverridden=true → UPDATE structural fields
+//     only (name, role, orchestratorMode, systemAgent flag). Personality is
+//     left untouched — the dashboard's "Reset to default personality" action
+//     is how the user opts back into the canonical.
 //
 // Guard: same single-entity gate as `seedDefaultLlmKey` /
 // `seedDefaultSkills`. Multi-tenant deploys do catalog seeding via dedicated
@@ -83,6 +82,7 @@ export async function seedDefaultAgents(db: AnyDrizzleDb, env: RunnerEnv): Promi
       .select({
         id: agents.id,
         systemAgent: agents.systemAgent,
+        personalityOverridden: agents.personalityOverridden,
       })
       .from(agents)
       .where(eq(agents.slug, agent.slug))
@@ -100,25 +100,42 @@ export async function seedDefaultAgents(db: AnyDrizzleDb, env: RunnerEnv): Promi
         model: resolved?.model ?? agent.preferredModels[0]?.model ?? 'claude-sonnet-4-6',
         llmKeyId: resolved?.llmKeyId ?? null,
         systemAgent: true,
+        personalityOverridden: false,
         active: true,
       });
       created++;
       continue;
     }
 
-    // Existing row: update structural fields only (never touch personality
-    // — see header comment). Also ensure systemAgent flag is set so future
-    // logic can distinguish system rows from user rows.
-    await db
-      .update(agents)
-      .set({
-        name: agent.name,
-        role: agent.role,
-        orchestratorMode: agent.orchestratorMode ?? null,
-        systemAgent: true,
-        updatedAt: new Date(),
-      })
-      .where(eq(agents.id, existing.id));
+    if (existing.personalityOverridden) {
+      // User edited this agent's personality — preserve it. Refresh structural
+      // fields only and keep the systemAgent flag set so future logic can
+      // distinguish system rows from user rows.
+      await db
+        .update(agents)
+        .set({
+          name: agent.name,
+          role: agent.role,
+          orchestratorMode: agent.orchestratorMode ?? null,
+          systemAgent: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, existing.id));
+    } else {
+      // No user override → push the new canonical personality alongside the
+      // structural fields.
+      await db
+        .update(agents)
+        .set({
+          name: agent.name,
+          role: agent.role,
+          orchestratorMode: agent.orchestratorMode ?? null,
+          personality: agent.personality,
+          systemAgent: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, existing.id));
+    }
     updatedStructural++;
   }
 
