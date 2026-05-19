@@ -11,8 +11,12 @@ import {
 
 describe('ChainCounters', () => {
   describe('DEFAULT_LIMITS', () => {
-    it('has maxChains=5, maxToolCallsPerTurn=50, maxDelegationDepth=3, maxTurns=50', () => {
-      expect(DEFAULT_LIMITS.maxChains).toBe(5);
+    it('has maxChains=15, maxToolCallsPerTurn=50, maxDelegationDepth=3, maxTurns=50', () => {
+      // maxChains relaxed from 5 → 15 on 2026-05-19 — sequential-delegation
+      // workflows (fill N pages, send N emails, …) need ~N chains and 5 was
+      // killing legitimate jobs. Anti-runaway protection is provided by
+      // failed_delegations_count cap (1) + delegation_depth cap (3).
+      expect(DEFAULT_LIMITS.maxChains).toBe(15);
       expect(DEFAULT_LIMITS.maxToolCallsPerTurn).toBe(50);
       expect(DEFAULT_LIMITS.maxDelegationDepth).toBe(3);
       expect(DEFAULT_LIMITS.maxTurns).toBe(50);
@@ -221,10 +225,10 @@ describe('ChainCounters', () => {
   });
 
   describe('DEFAULT_LIMITS enforcement (invariant 8)', () => {
-    it('throws at exactly 5 chains (invariant 8)', () => {
+    it('throws at exactly 15 chains (invariant 8)', () => {
       const c = new ChainCounters(); // uses DEFAULT_LIMITS
-      for (let i = 0; i < 4; i++) c.bumpChain(); // 1, 2, 3, 4 — fine
-      expect(() => c.bumpChain()).toThrow(ChainLimitExceededError); // 5 >= 5
+      for (let i = 0; i < 14; i++) c.bumpChain(); // 1..14 — fine
+      expect(() => c.bumpChain()).toThrow(ChainLimitExceededError); // 15 >= 15
     });
 
     it('throws at 51st tool call (invariant 8)', () => {

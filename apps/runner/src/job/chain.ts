@@ -6,7 +6,7 @@ import type { RunnerEnv } from '../env.ts';
 // ─── MAX_CHAINS ───────────────────────────────────────────────────────────────
 
 /** Matches DEFAULT_LIMITS.maxChains from @nodal-agents/orchestration */
-export const MAX_CHAINS = 5;
+export const MAX_CHAINS = 15;
 
 // ─── ChainLimitError ──────────────────────────────────────────────────────────
 

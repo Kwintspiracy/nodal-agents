@@ -30,8 +30,12 @@ describe('checkChainLimit', () => {
     }
   });
 
-  it('MAX_CHAINS is 5 (matching @nodal-agents/orchestration DEFAULT_LIMITS)', () => {
-    expect(MAX_CHAINS).toBe(5);
+  it('MAX_CHAINS is 15 (matching @nodal-agents/orchestration DEFAULT_LIMITS)', () => {
+    // Relaxed from 5 → 15 on 2026-05-19 (job `cbc0e2a4` regression). 5 was
+    // killing legitimate sequential workflows like "fill N vault pages".
+    // Runaway protection now comes from `failed_delegations_count` cap (1)
+    // + `delegation_depth` cap (3).
+    expect(MAX_CHAINS).toBe(15);
   });
 });
 

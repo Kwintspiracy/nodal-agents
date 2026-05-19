@@ -252,7 +252,7 @@ export async function resumeDelegated(
 
   // 6. Update parent: inject messages, set status → pending, clear pending_delegation,
   // bump chain_count. Each resume from a delegation suspension counts as one
-  // self-chain step — invariant 8 caps this at maxChains (5) to prevent runaway
+  // self-chain step — invariant 8 caps this at maxChains (15) to prevent runaway
   // orchestrators that delegate forever instead of returning a result.
   const nextChainCount = (parent.chainCount ?? 0) + 1;
   const [updated] = await db

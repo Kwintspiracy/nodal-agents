@@ -781,7 +781,7 @@ export async function executeJob(
                 // sub-agent, return_result{status:'blocked'}, etc.) instead of
                 // dying silently. Anti-loop: resumeDelegated bumps chainCount;
                 // a parent that keeps delegating on every failure will hit
-                // chain_limit_exceeded (max 5 chains, invariant #8).
+                // chain_limit_exceeded (max 15 chains, invariant #8).
                 //
                 // Live regression — job `56a3a1b5` (2026-05-17): Conciergus
                 // delegated to Summarizus, child failed at turn 5, parent died

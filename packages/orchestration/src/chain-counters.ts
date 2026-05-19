@@ -1,5 +1,5 @@
 // chain-counters.ts — per-job execution limit enforcement
-// Invariant 8: max 5 chains, max 50 tool calls/turn, max 3 delegation depth, max 50 turns.
+// Invariant 8: max N chains, max 50 tool calls/turn, max 3 delegation depth, max 50 turns.
 // Approval semantics: chain_count does NOT bump when resuming from awaiting_approval.
 
 import {
@@ -10,10 +10,31 @@ import {
 import type { ChainLimits } from './types';
 
 // ─── DEFAULT_LIMITS ───────────────────────────────────────────────────────────
-// Hard-coded per invariant 8. Override only in tests via constructor argument.
-
+// Hard-coded defaults. Override only in tests via constructor argument.
+//
+// maxChains was initially calibrated to 5 in commit `7103b3a` (runaway-fix)
+// without empirical data — the assumption was that >5 self-chains signalled a
+// runaway orchestrator. Live data from 2026-05-19 (job `cbc0e2a4`) proved the
+// cap too aggressive once sequential-delegation discipline shipped: a
+// legitimate "fill 5 vault pages" workflow used 5 chains for 5 successful
+// child completions and was killed by the cap BEFORE the parent could
+// telegram + return_result.
+//
+// We can safely raise it because two other guards have shipped since:
+//   - `failed_delegations_count` cap (commit `b76d449`, default 1) blocks the
+//     actual runaway pattern: re-delegating the same task after a failure.
+//   - `maxDelegationDepth: 3` blocks parent→child→grand-child→… recursion.
+// `chain_count` is therefore now just "how many resumes this job has run" —
+// a budget that should accommodate the longest legitimate workflow plus a
+// couple of fallback / finalisation turns.
+//
+// Calibration to 15: typical "fill N pages" workflow burns N chains; allow
+// up to ~10 user-driven sub-tasks plus ~3 chains for fallback (Conciergus
+// retrying via a different specialist) and ~2 chains for wrap-up turns
+// (telegram + return_result). Worst-case wall-clock 15 × ~3 min = ~45 min
+// stays under any reasonable user-patience ceiling for batch work.
 export const DEFAULT_LIMITS: ChainLimits = {
-  maxChains: 5,
+  maxChains: 15,
   maxToolCallsPerTurn: 50,
   maxDelegationDepth: 3,
   maxTurns: 50, // matches Hermes Agent's per-subagent iteration budget; cumulative cap across resumes
