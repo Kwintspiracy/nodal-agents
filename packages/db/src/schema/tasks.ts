@@ -32,8 +32,12 @@ export const agentTasks = pgTable(
     priority: text('priority').notNull().default('medium'),
     jobId: uuid('job_id').references(() => agentJobs.id, { onDelete: 'set null' }),
     result: text('result'),
-    createdByAgentId: uuid('created_by_agent_id').references(() => agents.id),
-    assignedAgentId: uuid('assigned_agent_id').references(() => agents.id),
+    createdByAgentId: uuid('created_by_agent_id').references(() => agents.id, {
+      onDelete: 'cascade',
+    }),
+    assignedAgentId: uuid('assigned_agent_id').references(() => agents.id, {
+      onDelete: 'cascade',
+    }),
     inputTokens: integer('input_tokens').default(0),
     outputTokens: integer('output_tokens').default(0),
     costUsd: numeric('cost_usd', { precision: 10, scale: 6 }).default('0'),

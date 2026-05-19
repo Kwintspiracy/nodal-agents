@@ -337,6 +337,100 @@ describe('FK cascades', () => {
     expect(gone.length).toBe(0);
   });
 
+  it('deleting agent cascades through jobs, runs, memory, tasks (both FKs), approval_requests', async () => {
+    // Live bug 2026-05-20 — clicking Delete on an agent surfaced a FK violation
+    // toast. Five FK refs to agents.id were ON DELETE NO ACTION; migration 0013
+    // flipped them all to CASCADE. Insert one dependent row in each table for a
+    // disposable agent, then DELETE the agent and assert every row is gone.
+    const [a] = await db
+      .insert(schema.agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Sweep Agent ${Date.now()}`,
+        slug: `sweep-agent-${Date.now()}`,
+        personality: 'test',
+      })
+      .returning();
+
+    const [j] = await db
+      .insert(schema.agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: a!.id,
+        channel: 'api',
+        task: 'sweep job',
+      })
+      .returning();
+    const [r] = await db
+      .insert(schema.agentRuns)
+      .values({
+        entityId: seed.entityId,
+        agentId: a!.id,
+        task: 'sweep run',
+      })
+      .returning();
+    const [m] = await db
+      .insert(schema.agentMemory)
+      .values({
+        entityId: seed.entityId,
+        agentId: a!.id,
+        fact: 'sweep memory',
+      })
+      .returning();
+    const [tCreated] = await db
+      .insert(schema.agentTasks)
+      .values({
+        entityId: seed.entityId,
+        orchestratorId: seed.agentId,
+        title: 'sweep task created-by',
+        createdByAgentId: a!.id,
+      })
+      .returning();
+    const [tAssigned] = await db
+      .insert(schema.agentTasks)
+      .values({
+        entityId: seed.entityId,
+        orchestratorId: seed.agentId,
+        title: 'sweep task assigned-to',
+        assignedAgentId: a!.id,
+      })
+      .returning();
+    const [ar] = await db
+      .insert(schema.approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: j!.id,
+        agentId: a!.id,
+        toolName: 'sweep_tool',
+        toolInput: {},
+      })
+      .returning();
+
+    await db.delete(schema.agents).where(eq(schema.agents.id, a!.id));
+
+    expect(
+      await db.select().from(schema.agentJobs).where(eq(schema.agentJobs.id, j!.id)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, r!.id)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.agentMemory).where(eq(schema.agentMemory.id, m!.id)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.agentTasks).where(eq(schema.agentTasks.id, tCreated!.id)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.agentTasks).where(eq(schema.agentTasks.id, tAssigned!.id)),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.approvalRequests)
+        .where(eq(schema.approvalRequests.id, ar!.id)),
+    ).toHaveLength(0);
+  });
+
   it('deleting job sets agent_tasks.job_id to NULL (set null)', async () => {
     const [j] = await db
       .insert(schema.agentJobs)

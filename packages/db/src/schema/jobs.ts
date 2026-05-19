@@ -10,7 +10,7 @@ export const agentJobs = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id').references(() => agents.id),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'cascade' }),
     status: text('status').default('pending'),
     channel: text('channel').notNull(),
     task: text('task').notNull(),

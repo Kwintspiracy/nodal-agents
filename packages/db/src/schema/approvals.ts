@@ -16,7 +16,7 @@ export const approvalRequests = pgTable(
     jobId: uuid('job_id')
       .notNull()
       .references(() => agentJobs.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id').references(() => agents.id),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'cascade' }),
     toolName: text('tool_name').notNull(),
     toolInput: jsonb('tool_input').notNull(),
     status: text('status').default('pending'),

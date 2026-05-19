@@ -36,7 +36,7 @@ export const agentMemory = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id').references(() => agents.id),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'cascade' }),
     fact: text('fact').notNull(),
     category: text('category').default('context'),
     importance: integer('importance').default(3),
