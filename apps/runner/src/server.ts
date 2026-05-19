@@ -16,6 +16,9 @@ import { startTelegramManager } from './telegram/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
+import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
+import { seedDefaultAgents } from './bootstrap/seed-default-agents.ts';
+import { seedDefaultAssignments } from './bootstrap/seed-default-assignments.ts';
 import { AuthError } from '@nodal-agents/auth';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
@@ -113,6 +116,15 @@ async function main(): Promise<void> {
   // One-shot: if the local entity has no entity_llm_keys rows yet, seed one
   // from env so existing agents keep working post-Brique-24 (idempotent).
   await seedDefaultLlmKey(deps.db, runnerEnv);
+
+  // Catalog seeding — every install gets the same system skills, agents, and
+  // default assignments. Idempotent, respects user overrides on skills. Runs
+  // AFTER the LLM key seed so the agents seeder can wire `llm_key_id` to the
+  // freshly-created key. Order matters: skills first, then agents, then
+  // assignments (which reference both).
+  await seedDefaultSkills(deps.db, runnerEnv);
+  await seedDefaultAgents(deps.db, runnerEnv);
+  await seedDefaultAssignments(deps.db, runnerEnv);
 
   // One-shot: generate embeddings for memory rows written before Sprint 1's
   // inline embedding generation existed (idempotent — zero-row pass once caught
