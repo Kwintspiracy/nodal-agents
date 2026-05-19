@@ -1579,6 +1579,8 @@ export type SkillRow = {
   name: string;
   slug: string;
   content: string;
+  defaultContent: string | null;
+  contentOverridden: boolean;
   description: string | null;
   active: boolean;
   requiredBuiltins: string[];
@@ -1598,6 +1600,8 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         name: agentSkills.name,
         slug: agentSkills.slug,
         content: agentSkills.content,
+        defaultContent: agentSkills.defaultContent,
+        contentOverridden: agentSkills.contentOverridden,
         description: agentSkills.description,
         active: agentSkills.active,
         requiredBuiltins: agentSkills.requiredBuiltins,
@@ -1637,6 +1641,8 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         name: r.name,
         slug: r.slug,
         content: r.content,
+        defaultContent: r.defaultContent,
+        contentOverridden: r.contentOverridden ?? false,
         description: r.description,
         active: r.active ?? true,
         requiredBuiltins: (r.requiredBuiltins as string[] | null) ?? [],
@@ -1850,20 +1856,64 @@ export async function updateSkillAction(raw: unknown): Promise<ActionResult<void
     const { id, name, description, content, active } = parsed.data;
     const db = getDb();
 
-    // Verify skill exists and belongs to this entity
+    // Verify skill exists and belongs to this entity; capture current content
+    // so we know whether the user is editing it (which flips contentOverridden
+    // so the catalog seeder leaves it alone on the next boot).
     const [existing] = await db
-      .select({ id: agentSkills.id })
+      .select({ id: agentSkills.id, content: agentSkills.content })
       .from(agentSkills)
       .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Skill not found');
 
+    const patch: Record<string, unknown> = {
+      name,
+      description: description ?? null,
+      content,
+      ...(active !== undefined ? { active } : {}),
+      updatedAt: new Date(),
+    };
+    if (content !== existing.content) {
+      patch['contentOverridden'] = true;
+    }
+
+    await db.update(agentSkills).set(patch).where(eq(agentSkills.id, id));
+
+    revalidatePath('/skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateSkillAction]', err);
+    return fail('db_error', 'Failed to update skill');
+  }
+}
+
+export async function resetSkillToDefaultAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid skill id');
+    }
+    const db = getDb();
+
+    const [existing] = await db
+      .select({
+        id: agentSkills.id,
+        defaultContent: agentSkills.defaultContent,
+      })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Skill not found');
+    if (existing.defaultContent === null) {
+      return fail(
+        'not_applicable',
+        'No default available — this is a user-created skill',
+      );
+    }
+
     await db
       .update(agentSkills)
       .set({
-        name,
-        description: description ?? null,
-        content,
-        ...(active !== undefined ? { active } : {}),
+        content: existing.defaultContent,
+        contentOverridden: false,
         updatedAt: new Date(),
       })
       .where(eq(agentSkills.id, id));
@@ -1871,8 +1921,8 @@ export async function updateSkillAction(raw: unknown): Promise<ActionResult<void
     revalidatePath('/skills');
     return ok(undefined);
   } catch (err) {
-    console.error('[updateSkillAction]', err);
-    return fail('db_error', 'Failed to update skill');
+    console.error('[resetSkillToDefaultAction]', err);
+    return fail('db_error', 'Failed to reset skill');
   }
 }
 
@@ -1889,6 +1939,8 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
         name: agentSkills.name,
         slug: agentSkills.slug,
         content: agentSkills.content,
+        defaultContent: agentSkills.defaultContent,
+        contentOverridden: agentSkills.contentOverridden,
         description: agentSkills.description,
         active: agentSkills.active,
         requiredBuiltins: agentSkills.requiredBuiltins,
@@ -1904,6 +1956,8 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       name: row.name,
       slug: row.slug,
       content: row.content,
+      defaultContent: row.defaultContent,
+      contentOverridden: row.contentOverridden ?? false,
       description: row.description,
       active: row.active ?? true,
       requiredBuiltins: (row.requiredBuiltins as string[] | null) ?? [],

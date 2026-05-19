@@ -3,7 +3,13 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { createSkillAction, updateSkillAction, type SkillRow } from '@/lib/actions.ts';
+import {
+  createSkillAction,
+  updateSkillAction,
+  resetSkillToDefaultAction,
+  type SkillRow,
+} from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 
 interface CreateProps {
   mode?: 'create';
@@ -22,6 +28,29 @@ export default function SkillForm(props: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(isEdit);
   const [isPending, startTransition] = useTransition();
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+
+  // Reset-to-default is meaningful only when the user has edited a system
+  // skill that still has a catalog default to restore to.
+  const canReset =
+    isEdit &&
+    props.initial.contentOverridden === true &&
+    props.initial.defaultContent !== null;
+
+  function handleResetSkill() {
+    if (!isEdit) return;
+    const skillId = props.initial.id;
+    setConfirmResetOpen(false);
+    startTransition(async () => {
+      const r = await resetSkillToDefaultAction(skillId);
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success('Skill reset to default');
+      router.refresh();
+    });
+  }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -82,7 +111,30 @@ export default function SkillForm(props: Props) {
       onSubmit={handleSubmit}
       className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3"
     >
-      <h3 className="text-sm font-semibold text-white">{isEdit ? 'Edit skill' : 'New skill'}</h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-white">{isEdit ? 'Edit skill' : 'New skill'}</h3>
+        {canReset && (
+          <button
+            type="button"
+            onClick={() => setConfirmResetOpen(true)}
+            disabled={isPending}
+            title="Restore the catalog default content for this skill"
+            className="text-xs px-2.5 py-1 rounded border border-amber-700/50 text-amber-300 hover:bg-amber-900/20 transition-colors disabled:opacity-50"
+          >
+            Reset to default
+          </button>
+        )}
+      </div>
+      <ConfirmDialog
+        open={confirmResetOpen}
+        title="Reset skill to default?"
+        message="Your customised instructions will be replaced with the catalog default shipped with NodalAI. This cannot be undone."
+        confirmLabel="Reset"
+        cancelLabel="Cancel"
+        destructive={true}
+        onConfirm={handleResetSkill}
+        onCancel={() => setConfirmResetOpen(false)}
+      />
 
       <div className="grid grid-cols-2 gap-3">
         <div>

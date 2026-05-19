@@ -2402,6 +2402,87 @@ describe('updateSkillAction — db path', () => {
   });
 });
 
+describe('updateSkillAction — contentOverridden flag', () => {
+  it('flips contentOverridden=true when content differs from current row', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-0000000002a1', content: 'Old content' },
+    ]) as typeof currentDb;
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-0000000002a1',
+      name: 'Same Name',
+      content: 'Brand new content',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const firstSet = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const firstSetArg = firstSet?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(firstSetArg?.['contentOverridden']).toBe(true);
+  });
+
+  it('does NOT include contentOverridden in the patch when content is unchanged', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-0000000002a2', content: 'Same content' },
+    ]) as typeof currentDb;
+    const { updateSkillAction } = await import('../src/lib/actions.ts');
+    const r = await updateSkillAction({
+      id: 'aaaaaaaa-0000-0000-0000-0000000002a2',
+      name: 'Renamed only',
+      content: 'Same content',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const firstSet = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const firstSetArg = firstSet?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect('contentOverridden' in (firstSetArg ?? {})).toBe(false);
+  });
+});
+
+describe('resetSkillToDefaultAction', () => {
+  it('returns validation_failed on non-uuid id', async () => {
+    const { resetSkillToDefaultAction } = await import('../src/lib/actions.ts');
+    const r = await resetSkillToDefaultAction('not-a-uuid');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when skill does not belong to entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { resetSkillToDefaultAction } = await import('../src/lib/actions.ts');
+    const r = await resetSkillToDefaultAction('aaaaaaaa-0000-0000-0000-0000000002a3');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('returns not_applicable when defaultContent is null (user-created skill)', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-0000000002a4', defaultContent: null },
+    ]) as typeof currentDb;
+    const { resetSkillToDefaultAction } = await import('../src/lib/actions.ts');
+    const r = await resetSkillToDefaultAction('aaaaaaaa-0000-0000-0000-0000000002a4');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_applicable');
+  });
+
+  it('happy path — writes defaultContent back to content and clears the flag', async () => {
+    const defaultContent = 'Canonical skill body';
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-0000000002a5', defaultContent },
+    ]) as typeof currentDb;
+    const { resetSkillToDefaultAction } = await import('../src/lib/actions.ts');
+    const r = await resetSkillToDefaultAction('aaaaaaaa-0000-0000-0000-0000000002a5');
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setFn = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    const setArg = setFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(setArg?.['content']).toBe(defaultContent);
+    expect(setArg?.['contentOverridden']).toBe(false);
+  });
+});
+
 // ─── LLM key actions (Brique 24) ─────────────────────────────────────────────
 //
 // Critical invariants enforced by these tests:
