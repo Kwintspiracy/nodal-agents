@@ -581,6 +581,28 @@ export default function AgentForm(props: Props) {
           onCancel={() => setConfirmResetOpen(false)}
         />
 
+        {initial.modelMismatchWarning && (
+          <div
+            role="status"
+            data-testid="model-catalog-mismatch"
+            className="px-3 py-2 rounded-lg border border-amber-700/50 bg-amber-900/15 text-xs text-amber-300 space-y-1"
+          >
+            <p>
+              <span className="font-semibold">Catalog recommends</span>{' '}
+              <span className="font-mono">{initial.modelMismatchWarning.catalogModel}</span> (
+              {prettyProviderName(initial.modelMismatchWarning.catalogProvider)}). Current model:{' '}
+              <span className="font-mono">{initial.modelMismatchWarning.currentModel}</span>.
+            </p>
+            <p className="text-amber-400/80">
+              Keep your current pick or{' '}
+              <a href="/settings" className="underline hover:text-amber-100">
+                add the recommended provider in Settings → LLM providers
+              </a>
+              .
+            </p>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-slug">

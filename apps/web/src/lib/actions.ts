@@ -411,6 +411,16 @@ export async function resetAgentPersonalityAction(
 export type AgentEditRow = AgentRow & {
   orchestratorMode: string | null;
   subAgentIds: string[];
+  /**
+   * Set when the agent is a system agent whose current `model` does not match
+   * its catalog's first preferred model. Null otherwise (informational only —
+   * the dashboard renders a banner suggesting the canonical pick).
+   */
+  modelMismatchWarning: {
+    catalogModel: string;
+    catalogProvider: string;
+    currentModel: string;
+  } | null;
 };
 
 export async function getAgentForEditAction(id: string): Promise<ActionResult<AgentEditRow>> {
@@ -432,10 +442,28 @@ export async function getAgentForEditAction(id: string): Promise<ActionResult<Ag
       .where(eq(agentAssignments.orchestratorId, id));
 
     const fullRow = row as AgentRow & { orchestratorMode: string | null };
+
+    // Model-mismatch warning: only for system agents whose slug still maps to a
+    // catalog entry and whose current model differs from the first preferred.
+    // Non-system agents and unknown slugs return null (informational only).
+    let modelMismatchWarning: AgentEditRow['modelMismatchWarning'] = null;
+    if (fullRow.systemAgent === true) {
+      const catalogEntry = systemAgents.find((a) => a.slug === fullRow.slug);
+      const preferred = catalogEntry?.preferredModels[0];
+      if (preferred && fullRow.model && preferred.model !== fullRow.model) {
+        modelMismatchWarning = {
+          catalogModel: preferred.model,
+          catalogProvider: preferred.provider,
+          currentModel: fullRow.model,
+        };
+      }
+    }
+
     return ok({
       ...fullRow,
       orchestratorMode: fullRow.orchestratorMode ?? null,
       subAgentIds: assignments.map((a) => a.subAgentId),
+      modelMismatchWarning,
     });
   } catch (err) {
     console.error('[getAgentForEditAction]', err);

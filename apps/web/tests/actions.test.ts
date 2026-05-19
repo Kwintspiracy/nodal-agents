@@ -2045,6 +2045,88 @@ describe('resetAgentPersonalityAction', () => {
   });
 });
 
+describe('getAgentForEditAction — modelMismatchWarning', () => {
+  it('returns null for non-system agents (warning is informational, system-only)', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000001001',
+        slug: 'concierge',
+        systemAgent: false,
+        model: 'some-other-model',
+        role: 'agent',
+        orchestratorMode: null,
+      },
+    ]) as typeof currentDb;
+    const { getAgentForEditAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentForEditAction('aaaaaaaa-0000-0000-0000-000000001001');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.modelMismatchWarning).toBeNull();
+  });
+
+  it('returns null when system agent model matches the catalog first preferredModel', async () => {
+    const { systemAgents } = await import('@nodal-agents/catalog');
+    const concierge = systemAgents.find((a) => a.slug === 'concierge')!;
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000001002',
+        slug: 'concierge',
+        systemAgent: true,
+        model: concierge.preferredModels[0]!.model,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+      },
+    ]) as typeof currentDb;
+    const { getAgentForEditAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentForEditAction('aaaaaaaa-0000-0000-0000-000000001002');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.modelMismatchWarning).toBeNull();
+  });
+
+  it('returns mismatch detail when system agent model differs from catalog first preferredModel', async () => {
+    const { systemAgents } = await import('@nodal-agents/catalog');
+    const concierge = systemAgents.find((a) => a.slug === 'concierge')!;
+    const wrongModel = 'deepseek/deepseek-chat';
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000001003',
+        slug: 'concierge',
+        systemAgent: true,
+        model: wrongModel,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+      },
+    ]) as typeof currentDb;
+    const { getAgentForEditAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentForEditAction('aaaaaaaa-0000-0000-0000-000000001003');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.modelMismatchWarning).not.toBeNull();
+      expect(r.data.modelMismatchWarning?.catalogModel).toBe(concierge.preferredModels[0]!.model);
+      expect(r.data.modelMismatchWarning?.catalogProvider).toBe(
+        concierge.preferredModels[0]!.provider,
+      );
+      expect(r.data.modelMismatchWarning?.currentModel).toBe(wrongModel);
+    }
+  });
+
+  it('returns null when system agent slug has no catalog entry (user-renamed)', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000001004',
+        slug: 'no-such-slug',
+        systemAgent: true,
+        model: 'whatever',
+        role: 'agent',
+        orchestratorMode: null,
+      },
+    ]) as typeof currentDb;
+    const { getAgentForEditAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentForEditAction('aaaaaaaa-0000-0000-0000-000000001004');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.modelMismatchWarning).toBeNull();
+  });
+});
+
 // ─── sendTaskAction — Telegram delivery channel ────────────────────────────────
 // These tests need sequential db.select() calls to return different rows, so we
 // build a small helper that returns a different chain for each call to select().
