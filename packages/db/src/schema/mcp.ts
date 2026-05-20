@@ -82,6 +82,12 @@ export const agentMcpServers = pgTable(
   (table) => [
     index('idx_agent_mcp_servers_agent').on(table.agentId),
     index('idx_agent_mcp_servers_entity').on(table.entityId),
+    // Backs the assign/unassign UPSERT (onConflictDoUpdate) — one assignment
+    // row per (agent, server).
+    uniqueIndex('agent_mcp_servers_agent_server_unique').on(
+      table.agentId,
+      table.mcpServerId,
+    ),
   ],
 );
 

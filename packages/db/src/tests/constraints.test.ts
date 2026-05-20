@@ -480,6 +480,33 @@ describe('UNIQUE constraints', () => {
     ).rejects.toThrow();
   });
 
+  it('agent_mcp_servers: rejects a duplicate (agent_id, mcp_server_id)', async () => {
+    // Backs the assign/unassign UPSERT — without this unique index the
+    // onConflictDoUpdate in setAgentMcpServerAssignmentAction throws.
+    const [ms] = await db
+      .insert(schema.mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Assign-unique MCP',
+        slug: `assign-uniq-mcp-${Date.now()}`,
+        transport: 'http',
+        url: 'https://mcp.example.com',
+      })
+      .returning();
+    await db.insert(schema.agentMcpServers).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      mcpServerId: ms!.id,
+    });
+    await expect(
+      db.insert(schema.agentMcpServers).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        mcpServerId: ms!.id,
+      }),
+    ).rejects.toThrow();
+  });
+
   it('connectors: allows same slug for different entities (composite unique)', async () => {
     const slug = `shared-slug-${Date.now()}`;
 
