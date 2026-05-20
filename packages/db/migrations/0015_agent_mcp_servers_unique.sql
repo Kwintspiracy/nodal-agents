@@ -8,5 +8,7 @@
 -- assignment". This index backs the UPSERT and enforces one assignment row
 -- per (agent, server).
 
-CREATE UNIQUE INDEX "agent_mcp_servers_agent_server_unique"
+-- IF NOT EXISTS: the index may already be present on installs where it was
+-- created out-of-band before this migration shipped.
+CREATE UNIQUE INDEX IF NOT EXISTS "agent_mcp_servers_agent_server_unique"
   ON "agent_mcp_servers" ("agent_id","mcp_server_id");
