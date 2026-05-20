@@ -7,14 +7,12 @@ import { toast } from 'sonner';
 import {
   createAgentAction,
   updateAgentAction,
-  resetAgentPersonalityAction,
   setAgentConnectorAssignmentAction,
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
   type AgentConnectorRow,
 } from '@/lib/actions.ts';
-import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import {
   detectModelProviders,
@@ -341,27 +339,6 @@ export default function AgentForm(props: Props) {
 
   const [role, setRole] = useState<AgentRole>(initialRole);
   const [subAgentIds, setSubAgentIds] = useState<string[]>(isEdit ? props.initial.subAgentIds : []);
-  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
-
-  // The Reset-to-default button is only meaningful for system agents the user
-  // has actually edited (otherwise resetting is a no-op).
-  const canResetPersonality =
-    isEdit && props.initial.systemAgent === true && props.initial.personalityOverridden === true;
-
-  function handleResetPersonality() {
-    if (!isEdit) return;
-    const agentId = props.initial.id;
-    setConfirmResetOpen(false);
-    startTransition(async () => {
-      const result = await resetAgentPersonalityAction(agentId);
-      if (!result.ok) {
-        toast.error(result.message);
-        return;
-      }
-      toast.success('Personality reset to default');
-      router.refresh();
-    });
-  }
 
   // LLM provider + model state. In edit mode, prefill from initial.llmKeyId
   // (if set) or fall back to the first active key. In create mode, default to
@@ -556,52 +533,7 @@ export default function AgentForm(props: Props) {
 
     return (
       <form ref={formRef} onSubmit={handleSubmit} className="w-full max-w-lg space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-white">Edit agent</h3>
-          {canResetPersonality && (
-            <button
-              type="button"
-              onClick={() => setConfirmResetOpen(true)}
-              disabled={isPending}
-              title="Restore this system agent's catalog default personality"
-              className="text-xs px-2.5 py-1 rounded border border-amber-700/50 text-amber-300 hover:bg-amber-900/20 transition-colors disabled:opacity-50"
-            >
-              Reset to default
-            </button>
-          )}
-        </div>
-        <ConfirmDialog
-          open={confirmResetOpen}
-          title="Reset personality to default?"
-          message="Your customised personality will be replaced with the catalog default shipped with NodalAI. This cannot be undone."
-          confirmLabel="Reset"
-          cancelLabel="Cancel"
-          destructive={true}
-          onConfirm={handleResetPersonality}
-          onCancel={() => setConfirmResetOpen(false)}
-        />
-
-        {initial.modelMismatchWarning && (
-          <div
-            role="status"
-            data-testid="model-catalog-mismatch"
-            className="px-3 py-2 rounded-lg border border-amber-700/50 bg-amber-900/15 text-xs text-amber-300 space-y-1"
-          >
-            <p>
-              <span className="font-semibold">Catalog recommends</span>{' '}
-              <span className="font-mono">{initial.modelMismatchWarning.catalogModel}</span> (
-              {prettyProviderName(initial.modelMismatchWarning.catalogProvider)}). Current model:{' '}
-              <span className="font-mono">{initial.modelMismatchWarning.currentModel}</span>.
-            </p>
-            <p className="text-amber-400/80">
-              Keep your current pick or{' '}
-              <a href="/settings" className="underline hover:text-amber-100">
-                add the recommended provider in Settings → LLM providers
-              </a>
-              .
-            </p>
-          </div>
-        )}
+        <h3 className="text-sm font-semibold text-white">Edit agent</h3>
 
         <div className="grid grid-cols-2 gap-3">
           <div>

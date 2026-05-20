@@ -46,11 +46,6 @@ export const agents = pgTable(
     taskContextTemplate: text('task_context_template'),
     avatarUrl: text('avatar_url'),
     systemAgent: boolean('system_agent').default(false),
-    // Set to true the first time the user edits `personality` on a system agent.
-    // The seeder uses this to decide whether to refresh personality from the
-    // catalog on subsequent boots: false = ship the latest canonical, true =
-    // preserve the user's edits. Mirrors `agent_skills.content_overridden`.
-    personalityOverridden: boolean('personality_overridden').default(false).notNull(),
     maxTokensPerJob: integer('max_tokens_per_job').default(0).notNull(),
     // Cap on characters of agent_memory injected into the system prompt per job
     // (Memory Sprint 2). Pure char budget — token estimation done at call site

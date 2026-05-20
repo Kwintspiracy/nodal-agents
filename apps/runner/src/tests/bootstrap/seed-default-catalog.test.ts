@@ -1,24 +1,15 @@
-// seed-default-catalog.test.ts — regression for the system-catalog-seeding
-// brique (Quentin 2026-05-19): every install gets the same skills, agents,
-// and default assignments out of the box, and user overrides are preserved
-// on subsequent boots.
+// seed-default-catalog.test.ts — regression for system-skill seeding: every
+// install gets the same system skills out of the box, and user overrides are
+// preserved on subsequent boots. Agents are NOT seeded — every agent is
+// created by the user.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { and, eq, count } from '@nodal-agents/db';
-import {
-  agents,
-  agentSkills,
-  agentSkillAssignments,
-  entities,
-  entityLlmKeys,
-  users,
-} from '@nodal-agents/db';
+import { eq, count } from '@nodal-agents/db';
+import { agentSkills, entities, users } from '@nodal-agents/db';
 import { seedDefaultSkills } from '../../bootstrap/seed-default-skills.ts';
-import { seedDefaultAgents } from '../../bootstrap/seed-default-agents.ts';
-import { seedDefaultAssignments } from '../../bootstrap/seed-default-assignments.ts';
-import { systemSkills, systemAgents, systemAssignments } from '@nodal-agents/catalog';
+import { systemSkills } from '@nodal-agents/catalog';
 import type { RunnerEnv } from '../../env.ts';
 
 const env: RunnerEnv = {
@@ -111,222 +102,26 @@ describe('seedDefaultSkills', () => {
   });
 });
 
-describe('seedDefaultAgents', () => {
-  it('fresh install: creates every system agent with systemAgent=true and canonical personality', async () => {
-    const { db } = await spinUpTestDb();
-    const { entityId } = await seedSingleEntityFixture(db);
-    // Seed a default LLM key so resolveModel has something to wire to
-    await db.insert(entityLlmKeys).values({
-      entityId,
-      provider: 'openrouter',
-      apiKey: 'enc:test',
-      apiKeyLast4: 'xxxx',
-      defaultModel: 'deepseek/deepseek-v4-pro',
-      isActive: true,
-    });
-
-    await seedDefaultAgents(db, env);
-
-    for (const agent of systemAgents) {
-      const [row] = await db
-        .select({
-          slug: agents.slug,
-          personality: agents.personality,
-          role: agents.role,
-          orchestratorMode: agents.orchestratorMode,
-          systemAgent: agents.systemAgent,
-          model: agents.model,
-        })
-        .from(agents)
-        .where(eq(agents.slug, agent.slug))
-        .limit(1);
-      expect(row).toBeDefined();
-      expect(row?.personality).toBe(agent.personality);
-      expect(row?.role).toBe(agent.role);
-      expect(row?.orchestratorMode).toBe(agent.orchestratorMode ?? null);
-      expect(row?.systemAgent).toBe(true);
-      expect(row?.model).toBeTruthy();
-    }
-  });
-
-  it('upgrade with override: existing agent with personalityOverridden=true keeps user personality, structural fields updated', async () => {
-    const { db } = await spinUpTestDb();
-    const { entityId } = await seedSingleEntityFixture(db);
-    await db.insert(entityLlmKeys).values({
-      entityId,
-      provider: 'openrouter',
-      apiKey: 'enc:test',
-      apiKeyLast4: 'xxxx',
-      defaultModel: 'deepseek/deepseek-v4-pro',
-      isActive: true,
-    });
-    const customPersonality = 'I am a heavily customized concierge personality';
-    await db.insert(agents).values({
-      entityId,
-      slug: 'concierge',
-      name: 'Old Name',
-      role: 'agent', // intentionally wrong, seeder should fix
-      personality: customPersonality,
-      personalityOverridden: true, // user has edited — seeder must preserve
-      model: 'old-model',
-      systemAgent: false, // intentionally wrong, seeder should fix
-      active: true,
-    });
-
-    await seedDefaultAgents(db, env);
-
-    const [row] = await db
-      .select({
-        personality: agents.personality,
-        role: agents.role,
-        orchestratorMode: agents.orchestratorMode,
-        systemAgent: agents.systemAgent,
-        personalityOverridden: agents.personalityOverridden,
-        name: agents.name,
-      })
-      .from(agents)
-      .where(eq(agents.slug, 'concierge'))
-      .limit(1);
-    expect(row?.personality).toBe(customPersonality); // user edit preserved
-    expect(row?.role).toBe('orchestrator'); // structural updated
-    expect(row?.orchestratorMode).toBe('router'); // structural updated
-    expect(row?.systemAgent).toBe(true); // flag fixed
-    expect(row?.personalityOverridden).toBe(true); // still overridden
-    expect(row?.name).toBe('Conciergus'); // structural updated
-  });
-
-  it('upgrade without override: existing agent with personalityOverridden=false receives new canonical personality', async () => {
-    const { db } = await spinUpTestDb();
-    const { entityId } = await seedSingleEntityFixture(db);
-    await db.insert(entityLlmKeys).values({
-      entityId,
-      provider: 'openrouter',
-      apiKey: 'enc:test',
-      apiKeyLast4: 'xxxx',
-      defaultModel: 'deepseek/deepseek-v4-pro',
-      isActive: true,
-    });
-    await db.insert(agents).values({
-      entityId,
-      slug: 'concierge',
-      name: 'Old Name',
-      role: 'agent',
-      personality: 'Stale personality from an earlier npm version',
-      personalityOverridden: false, // user never edited
-      model: 'old-model',
-      systemAgent: true,
-      active: true,
-    });
-
-    await seedDefaultAgents(db, env);
-
-    const catalogConcierge = systemAgents.find((a) => a.slug === 'concierge')!;
-    const [row] = await db
-      .select({
-        personality: agents.personality,
-        personalityOverridden: agents.personalityOverridden,
-      })
-      .from(agents)
-      .where(eq(agents.slug, 'concierge'))
-      .limit(1);
-    expect(row?.personality).toBe(catalogConcierge.personality); // refreshed
-    expect(row?.personalityOverridden).toBe(false); // flag unchanged
-  });
-});
-
-describe('seedDefaultAssignments', () => {
-  it('fresh install after skills+agents: creates every default assignment', async () => {
-    const { db } = await spinUpTestDb();
-    const { entityId } = await seedSingleEntityFixture(db);
-    await db.insert(entityLlmKeys).values({
-      entityId,
-      provider: 'openrouter',
-      apiKey: 'enc:test',
-      apiKeyLast4: 'xxxx',
-      defaultModel: 'deepseek/deepseek-v4-pro',
-      isActive: true,
-    });
-    await seedDefaultSkills(db, env);
-    await seedDefaultAgents(db, env);
-    await seedDefaultAssignments(db, env);
-
-    for (const link of systemAssignments) {
-      const [agentRow] = await db
-        .select({ id: agents.id })
-        .from(agents)
-        .where(eq(agents.slug, link.agentSlug));
-      const [skillRow] = await db
-        .select({ id: agentSkills.id })
-        .from(agentSkills)
-        .where(eq(agentSkills.slug, link.skillSlug));
-      expect(agentRow).toBeDefined();
-      expect(skillRow).toBeDefined();
-      const [linkRow] = await db
-        .select({ id: agentSkillAssignments.id })
-        .from(agentSkillAssignments)
-        .where(
-          and(
-            eq(agentSkillAssignments.agentId, agentRow!.id),
-            eq(agentSkillAssignments.skillId, skillRow!.id),
-          ),
-        );
-      expect(linkRow).toBeDefined();
-    }
-  });
-
-  it('idempotent: re-running does not duplicate assignments', async () => {
-    const { db } = await spinUpTestDb();
-    const { entityId } = await seedSingleEntityFixture(db);
-    await db.insert(entityLlmKeys).values({
-      entityId,
-      provider: 'openrouter',
-      apiKey: 'enc:test',
-      apiKeyLast4: 'xxxx',
-      defaultModel: 'deepseek/deepseek-v4-pro',
-      isActive: true,
-    });
-    await seedDefaultSkills(db, env);
-    await seedDefaultAgents(db, env);
-    await seedDefaultAssignments(db, env);
-    const firstRows = await db.select({ n: count() }).from(agentSkillAssignments);
-    const firstCount = firstRows[0]?.n ?? -1;
-
-    await seedDefaultAssignments(db, env);
-    const secondRows = await db.select({ n: count() }).from(agentSkillAssignments);
-    const secondCount = secondRows[0]?.n ?? -2;
-
-    expect(secondCount).toBe(firstCount);
-  });
-});
-
-describe('catalog guards', () => {
-  it('bearer-token mode: skips all seeding (multi-tenant safety)', async () => {
+describe('skill seeding guards', () => {
+  it('bearer-token mode: skips seeding (multi-tenant safety)', async () => {
     const { db } = await spinUpTestDb();
     await seedSingleEntityFixture(db);
     const bearerEnv = { ...env, AUTH_MODE: 'bearer-token' as const };
 
     await seedDefaultSkills(db, bearerEnv);
-    await seedDefaultAgents(db, bearerEnv);
-    await seedDefaultAssignments(db, bearerEnv);
 
     const skillRows = await db.select({ n: count() }).from(agentSkills);
-    const agentRows = await db.select({ n: count() }).from(agents);
     expect(skillRows[0]?.n).toBe(0);
-    expect(agentRows[0]?.n).toBe(0);
   });
 
-  it('multi-entity: skips all seeding (>1 entities = future multi-user, defer)', async () => {
+  it('multi-entity: skips seeding (>1 entities = future multi-user, defer)', async () => {
     const { db } = await spinUpTestDb();
     await seedSingleEntityFixture(db);
     await seedSingleEntityFixture(db); // second entity
 
     await seedDefaultSkills(db, env);
-    await seedDefaultAgents(db, env);
-    await seedDefaultAssignments(db, env);
 
     const skillRows = await db.select({ n: count() }).from(agentSkills);
-    const agentRows = await db.select({ n: count() }).from(agents);
     expect(skillRows[0]?.n).toBe(0);
-    expect(agentRows[0]?.n).toBe(0);
   });
 });
