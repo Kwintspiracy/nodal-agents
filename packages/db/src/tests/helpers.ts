@@ -367,10 +367,15 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       command text,
       args text[] DEFAULT '{}',
       env_vars jsonb DEFAULT '{}',
+      api_key text,
+      api_key_last4 text,
+      auth_scheme text CHECK (auth_scheme IN ('header','query') OR auth_scheme IS NULL),
+      auth_param_name text,
       active boolean DEFAULT true,
       available_tools jsonb,
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now()
+      updated_at timestamptz DEFAULT now(),
+      UNIQUE (entity_id, slug)
     );
 
     CREATE TABLE IF NOT EXISTS agent_mcp_servers (

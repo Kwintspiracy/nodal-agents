@@ -1,6 +1,16 @@
 // mcp_servers, agent_mcp_servers, mcp_connections tables
 
-import { pgTable, text, uuid, boolean, jsonb, timestamp, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  boolean,
+  jsonb,
+  timestamp,
+  index,
+  uniqueIndex,
+  check,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -21,12 +31,30 @@ export const mcpServers = pgTable(
       .array()
       .default(sql`'{}'::text[]`),
     envVars: jsonb('env_vars').default(sql`'{}'::jsonb`),
+    // Encrypted (enc:v1: blob) credential for HTTP MCP servers — same pattern
+    // as connectors.api_key. NULL for servers that need no auth.
+    apiKey: text('api_key'),
+    // Plaintext last 4 chars of the key for masked UI display only.
+    apiKeyLast4: text('api_key_last4'),
+    // How the API key is injected into the HTTP request: 'header' (a request
+    // header named by auth_param_name) or 'query' (a URL query param). NULL =
+    // no auth.
+    authScheme: text('auth_scheme'),
+    // The literal header name or query param name (e.g. 'x-api-key', 'api_key').
+    authParamName: text('auth_param_name'),
     active: boolean('active').default(true),
     availableTools: jsonb('available_tools'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
-  (table) => [check('mcp_servers_transport_check', sql`${table.transport} IN ('http','stdio')`)],
+  (table) => [
+    check('mcp_servers_transport_check', sql`${table.transport} IN ('http','stdio')`),
+    check(
+      'mcp_servers_auth_scheme_check',
+      sql`${table.authScheme} IN ('header','query') OR ${table.authScheme} IS NULL`,
+    ),
+    uniqueIndex('mcp_servers_entity_slug_unique').on(table.entityId, table.slug),
+  ],
 );
 
 export type McpServerRow = typeof mcpServers.$inferSelect;

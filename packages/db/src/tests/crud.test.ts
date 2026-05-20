@@ -439,6 +439,63 @@ describe('CRUD: mcp_servers + mcp_connections', () => {
 
     await db.delete(schema.mcpServers).where(eq(schema.mcpServers.id, ms!.id));
   });
+
+  it('persists MCP credential columns (api_key, last4, auth scheme)', async () => {
+    const [ms] = await db
+      .insert(schema.mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Cred MCP Server',
+        slug: `cred-mcp-${Date.now()}`,
+        transport: 'http',
+        url: 'https://mcp.example.com',
+        apiKey: 'enc:v1:fakeiv:faketag:fakect',
+        apiKeyLast4: 'd123',
+        authScheme: 'header',
+        authParamName: 'x-api-key',
+        active: true,
+      })
+      .returning();
+    expect(ms?.apiKey).toBe('enc:v1:fakeiv:faketag:fakect');
+    expect(ms?.apiKeyLast4).toBe('d123');
+    expect(ms?.authScheme).toBe('header');
+    expect(ms?.authParamName).toBe('x-api-key');
+
+    await db.delete(schema.mcpServers).where(eq(schema.mcpServers.id, ms!.id));
+  });
+
+  it('rejects an invalid auth_scheme via the CHECK constraint', async () => {
+    await expect(
+      db.insert(schema.mcpServers).values({
+        entityId: seed.entityId,
+        name: 'Bad Scheme MCP',
+        slug: `bad-scheme-mcp-${Date.now()}`,
+        transport: 'http',
+        url: 'https://mcp.example.com',
+        authScheme: 'bogus',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects a duplicate (entity_id, slug) via the UNIQUE constraint', async () => {
+    const slug = `dup-mcp-${Date.now()}`;
+    await db.insert(schema.mcpServers).values({
+      entityId: seed.entityId,
+      name: 'First',
+      slug,
+      transport: 'http',
+      url: 'https://mcp.example.com',
+    });
+    await expect(
+      db.insert(schema.mcpServers).values({
+        entityId: seed.entityId,
+        name: 'Second',
+        slug,
+        transport: 'http',
+        url: 'https://mcp.example.com',
+      }),
+    ).rejects.toThrow();
+  });
 });
 
 describe('CRUD: configurator_sessions', () => {
