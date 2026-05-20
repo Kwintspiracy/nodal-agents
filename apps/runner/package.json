@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.2",
+    "@nodal-agents/adapter-mcp": "workspace:*",
     "@nodal-agents/auth": "workspace:*",
     "@nodal-agents/catalog": "workspace:*",
     "@nodal-agents/db": "workspace:*",

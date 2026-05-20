@@ -17,9 +17,12 @@ import {
   entityLlmKeys,
   agentConnectorAssignments,
   connectors as connectorsTable,
+  mcpServers as mcpServersTable,
+  agentMcpServers as agentMcpServersTable,
   getDecryptedCredentialById,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { createMcpTools, slugToPrefix } from '@nodal-agents/adapter-mcp';
 import {
   QuotaExhaustedError,
   MessageStructureError,
@@ -321,6 +324,10 @@ export async function executeJob(
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
   }
 
+  // Close callbacks for per-job MCP transports — invoked in the LLM loop's
+  // finally so the Streamable HTTP connections never leak.
+  const mcpClosers: Array<() => Promise<void>> = [];
+
   try {
     if (isOrchestrator) {
       if (orchestratorMode === 'router') {
@@ -415,6 +422,61 @@ export async function executeJob(
           enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));
 
         capabilityTools.push(...filtered);
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
+      // ── MCP server tools ─────────────────────────────────────────────────────
+      // Each assigned MCP server is connected per-job (Streamable HTTP), its
+      // tools discovered via tools/list and wrapped as ToolDefinitions. A
+      // connect failure for one server is swallowed — a broken MCP server must
+      // never fail an unrelated job. Transports are closed in the loop finally.
+      // null enabledTools → all tools; array → whitelist on the original
+      // (un-prefixed) tool name.
+      const mcpAssignments = await db
+        .select({
+          slug: mcpServersTable.slug,
+          url: mcpServersTable.url,
+          apiKey: mcpServersTable.apiKey,
+          authScheme: mcpServersTable.authScheme,
+          authParamName: mcpServersTable.authParamName,
+          enabledTools: agentMcpServersTable.enabledTools,
+        })
+        .from(agentMcpServersTable)
+        .innerJoin(
+          mcpServersTable,
+          eq(mcpServersTable.id, agentMcpServersTable.mcpServerId),
+        )
+        .where(eq(agentMcpServersTable.agentId, agentRow.id));
+
+      for (const ms of mcpAssignments) {
+        if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) continue;
+        let decryptedKey: string;
+        try {
+          decryptedKey = decrypt(ms.apiKey);
+        } catch {
+          continue; // tampered / wrong master key — skip silently
+        }
+        try {
+          const toolset = await createMcpTools({
+            slug: ms.slug,
+            url: ms.url,
+            apiKey: decryptedKey,
+            authScheme: ms.authScheme as 'header' | 'query',
+            authParamName: ms.authParamName,
+          });
+          mcpClosers.push(toolset.close);
+          const enabled = ms.enabledTools as string[] | null;
+          // Wrapped tool names are `${prefix}__${original}`; the whitelist
+          // stores original names → strip the prefix before comparing.
+          const prefixLen = slugToPrefix(ms.slug).length + 2;
+          const filtered =
+            enabled === null
+              ? toolset.tools
+              : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
+          capabilityTools.push(...filtered);
+        } catch {
+          continue; // MCP server unreachable / auth failed — skip silently
+        }
       }
       // ────────────────────────────────────────────────────────────────────────
 
@@ -1064,5 +1126,10 @@ export async function executeJob(
     const errorCode = err instanceof Error ? err.message.slice(0, 200) : 'unknown_error';
     await failJob(db, jobId as string, errorCode, runStats());
     return { status: 'failed', error: errorCode };
+  } finally {
+    // Close every per-job MCP transport, whatever the loop's exit path.
+    for (const close of mcpClosers) {
+      await close().catch(() => {});
+    }
   }
 }
