@@ -604,15 +604,61 @@ describe('executeJob', () => {
     }
   });
 
-  it('fails with no_tool_calls_no_text when LLM returns empty response', async () => {
+  it('fails with no_tool_calls_no_text after exhausting empty-turn retries', async () => {
     const job = await createTestJob(db, seed);
 
+    // The mock repeats its last response, so every attempt (initial + 2
+    // retries) is empty → the retry budget is exhausted and the job fails loud.
     const llmClient = makeMockLlmClient([{ text: '', toolCalls: [] }]);
 
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('failed');
     if (result.status === 'failed') {
       expect(result.error).toBe('no_tool_calls_no_text');
+    }
+  });
+
+  it('retries an empty LLM turn and completes when the retry succeeds', async () => {
+    const job = await createTestJob(db, seed);
+
+    // Turn 1: empty response (transient model glitch). The retry re-calls the
+    // LLM, which this time returns text → the job recovers and completes
+    // instead of hard-failing. Regression for job beb3a4b9 (2026-05-20).
+    const llmClient = makeMockLlmClient([
+      { text: '', toolCalls: [] },
+      { text: 'Recovered answer after the empty turn.' },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.result).toBe('Recovered answer after the empty turn.');
+    }
+
+    const rows = await db
+      .select({ status: agentJobs.status, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.result).toBe('Recovered answer after the empty turn.');
+  });
+
+  it('recovers on the last allowed retry (2 empty turns then success)', async () => {
+    const job = await createTestJob(db, seed);
+
+    // Initial attempt + 2 retries = 3 LLM calls. Two empty turns then a
+    // success on the third call still completes the job — proves the budget
+    // boundary recovers rather than failing one retry short.
+    const llmClient = makeMockLlmClient([
+      { text: '', toolCalls: [] },
+      { text: '', toolCalls: [] },
+      { text: 'Recovered on the final retry.' },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.result).toBe('Recovered on the final retry.');
     }
   });
 
@@ -626,8 +672,9 @@ describe('executeJob', () => {
   it('persists per-turn checkpoint so a later crash preserves prior turns in DB', async () => {
     const job = await createTestJob(db, seed);
 
-    // Two clean turns (save_memory) then a turn-3 LLM response that has
-    // neither tool calls nor text → no_tool_calls_no_text failure path.
+    // Two clean turns (save_memory) then empty LLM responses: turn 3 is empty
+    // and the 2 retries (turns 4 & 5) are empty too → the job fails with
+    // no_tool_calls_no_text once the retry budget is exhausted.
     // After failure, DB must reflect what was done in turns 1 & 2.
     const llmClient = makeMockLlmClient([
       {
@@ -648,7 +695,8 @@ describe('executeJob', () => {
           },
         ],
       },
-      // Turn 3: empty response → runner fails with no_tool_calls_no_text
+      // Turn 3 onward: empty response (mock repeats it) → retried twice, then
+      // the runner fails with no_tool_calls_no_text at turn 5.
       { text: '', toolCalls: [] },
     ]);
 
@@ -668,13 +716,14 @@ describe('executeJob', () => {
       .where(eq(agentJobs.id, job.id));
 
     // PRE-FIX behaviour: messages.length === 1 (only user task), toolsUsed=[],
-    // even though turn=3. POST-FIX: messages reflects both completed turns
+    // even though turn>1. POST-FIX: messages reflects both completed turns
     // (user + asst1 + tool1 + asst2 + tool2 = 5 entries) and toolsUsed
-    // includes save_memory.
+    // includes save_memory. The empty turns 3-5 `continue` before the
+    // end-of-loop checkpoint, so they never overwrite the turn-2 transcript.
     const persistedMessages = (rows[0]?.messages ?? []) as unknown[];
     expect(persistedMessages.length).toBe(5);
     expect(rows[0]?.toolsUsed).toContain('save_memory');
-    expect(rows[0]?.turn).toBe(3);
+    expect(rows[0]?.turn).toBe(5);
 
     // Spot-check shape: messages[1] is the turn-1 assistant tool_call,
     // messages[2] is the turn-1 tool_result with the save_memory id.

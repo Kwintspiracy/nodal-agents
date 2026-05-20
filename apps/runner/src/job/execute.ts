@@ -465,6 +465,10 @@ export async function executeJob(
   }
 
   // ── 12. Main LLM loop ─────────────────────────────────────────────────────────
+  // An empty LLM turn (no tool calls AND no text) is a transient model glitch —
+  // retry the turn a bounded number of times before failing the job loud.
+  const MAX_EMPTY_TURN_RETRIES = 2;
+  let emptyTurnRetries = 0;
   try {
     while (true) {
       turn += 1;
@@ -552,7 +556,17 @@ export async function executeJob(
           await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
           return { status: 'completed', result: textContent };
         }
-        // No text, no tool calls — fail loud (invariant 4)
+        // No text AND no tool calls — an empty LLM turn. Transient (the model
+        // occasionally returns a blank completion); retry a bounded number of
+        // times before failing. Drop the empty assistant message just appended
+        // so the retry re-sends a clean context.
+        if (emptyTurnRetries < MAX_EMPTY_TURN_RETRIES) {
+          emptyTurnRetries += 1;
+          trace('empty_turn_retry', { turn, attempt: emptyTurnRetries });
+          messages = messages.slice(0, -1);
+          continue;
+        }
+        // Retry budget exhausted — fail loud (invariant 4).
         await failJob(db, jobId as string, 'no_tool_calls_no_text', runStats());
         return { status: 'failed', error: 'no_tool_calls_no_text' };
       }
