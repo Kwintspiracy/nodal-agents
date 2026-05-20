@@ -9,6 +9,7 @@ import {
   ClipboardText,
   Brain,
   Plug,
+  PlugsConnected,
   Key,
   BookOpenText,
   ClockCountdown,
@@ -37,7 +38,8 @@ const NAV_ITEMS: NavGroup[] = [
     items: [
       { href: '/jobs', label: 'Jobs', icon: ClipboardText },
       { href: '/memories', label: 'Memories', icon: Brain },
-      { href: '/connectors', label: 'Connectors', icon: Plug },
+      { href: '/connectors', label: 'API Connectors', icon: Plug },
+      { href: '/mcp', label: 'MCP Connectors', icon: PlugsConnected },
       { href: '/credentials', label: 'Credentials', icon: Key },
       { href: '/skills', label: 'Skills', icon: BookOpenText },
     ],
