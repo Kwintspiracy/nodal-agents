@@ -17,12 +17,14 @@
 // skill means a new TS file + an entry in `packages/catalog/src/index.ts`,
 // then a runner restart on every install picks it up.
 //
-// Guard logic mirrors `seedDefaultLlmKey`: skip unless the install has
-// exactly one entity (single-tenant single-user case — local-trust or
-// post-signup local-auth). Multi-tenant deployments handle catalog seeding
-// via dedicated tooling (not in this MVP).
+// Guard: skip in bearer-token mode (multi-tenant SaaS — admins manage the
+// catalog explicitly) and when the DB has no entity yet (fresh pre-signup
+// boot — the cron ticker re-attempts later). Otherwise seed: `agent_skills`
+// rows are matched by globally-unique slug, so there is one install-wide set
+// of system skills. The oldest entity is the bookkeeping owner for any rows
+// inserted fresh; existing rows refresh in place regardless of entity.
 
-import { count, eq } from '@nodal-agents/db';
+import { eq } from '@nodal-agents/db';
 import { agentSkills, entities } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { RunnerEnv } from '../env.ts';
@@ -32,10 +34,13 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
   // bearer-token mode = multi-tenant; admins manage catalog explicitly.
   if (env.AUTH_MODE === 'bearer-token') return;
 
-  // Target entity must be exactly 1 in DB (same guard as seedDefaultLlmKey).
-  const [entityCountRow] = await db.select({ n: count() }).from(entities);
-  if ((entityCountRow?.n ?? 0) !== 1) return;
-  const [entityRow] = await db.select({ id: entities.id }).from(entities).limit(1);
+  // Bookkeeping owner for freshly-inserted skill rows = the oldest entity.
+  // Skip only when there is no entity at all (fresh DB before first signup).
+  const [entityRow] = await db
+    .select({ id: entities.id })
+    .from(entities)
+    .orderBy(entities.createdAt)
+    .limit(1);
   if (!entityRow) return;
   const targetEntityId = entityRow.id;
 

@@ -114,14 +114,31 @@ describe('skill seeding guards', () => {
     expect(skillRows[0]?.n).toBe(0);
   });
 
-  it('multi-entity: skips seeding (>1 entities = future multi-user, defer)', async () => {
+  it('no entity yet: skips seeding (fresh pre-signup boot)', async () => {
     const { db } = await spinUpTestDb();
-    await seedSingleEntityFixture(db);
-    await seedSingleEntityFixture(db); // second entity
-
+    // No entity fixture — DB is empty.
     await seedDefaultSkills(db, env);
 
     const skillRows = await db.select({ n: count() }).from(agentSkills);
     expect(skillRows[0]?.n).toBe(0);
+  });
+
+  it('multi-entity: still seeds, into a single entity (oldest)', async () => {
+    const { db } = await spinUpTestDb();
+    await seedSingleEntityFixture(db);
+    await seedSingleEntityFixture(db); // second entity
+    await seedSingleEntityFixture(db); // third entity — mirrors a dirty local-auth DB
+
+    await seedDefaultSkills(db, env);
+
+    // Every system skill is seeded despite >1 entity (the old guard wrongly skipped).
+    const skillRows = await db.select({ n: count() }).from(agentSkills);
+    expect(skillRows[0]?.n).toBe(systemSkills.length);
+
+    // All seeded rows belong to ONE entity (slug is globally unique → one
+    // install-wide set of system skills).
+    const owners = await db.select({ entityId: agentSkills.entityId }).from(agentSkills);
+    const distinct = new Set(owners.map((r) => r.entityId));
+    expect(distinct.size).toBe(1);
   });
 });
