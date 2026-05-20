@@ -13,6 +13,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@nodal-agents/adapter-mcp": "workspace:*",
     "@nodal-agents/auth": "workspace:*",
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/delivery": "workspace:*",

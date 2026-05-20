@@ -118,6 +118,17 @@ vi.mock('@nodal-agents/memory', async () => {
   };
 });
 
+// ─── Mock @nodal-agents/adapter-mcp ───────────────────────────────────────────
+// createMcpServerFromCatalogAction connects to a live MCP server — stub the
+// connect so tests run offline.
+const mcpAdapterMocks = {
+  connectMcp: vi.fn(),
+};
+
+vi.mock('@nodal-agents/adapter-mcp', () => ({
+  connectMcp: (...args: unknown[]) => mcpAdapterMocks.connectMcp(...args),
+}));
+
 // ─── Mock cli-config (filesystem access) ─────────────────────────────────────
 const cliConfigMocks: {
   read: ReturnType<typeof vi.fn>;
@@ -2286,6 +2297,191 @@ describe('resetSkillToDefaultAction', () => {
     const setArg = setFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(setArg?.['content']).toBe(defaultContent);
     expect(setArg?.['contentOverridden']).toBe(false);
+  });
+});
+
+// ─── MCP connector actions ────────────────────────────────────────────────────
+
+function mockMcpConnection(tools: Array<{ name: string; description?: string }>) {
+  return {
+    client: {
+      callTool: vi.fn().mockResolvedValue({ content: [], isError: false }),
+    },
+    tools,
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe('createMcpServerFromCatalogAction', () => {
+  it('rejects an API key without the catalog key prefix — no connect, no row', async () => {
+    mcpAdapterMocks.connectMcp.mockClear();
+    currentDb = makeDb([]) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'cogni-cortex',
+      apiKey: 'wrong_prefix_key',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+    expect(mcpAdapterMocks.connectMcp).not.toHaveBeenCalled();
+    expect(
+      (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown catalog slug', async () => {
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({ slug: 'no-such', apiKey: 'cog_x' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('fails loud and writes NO row when the MCP connection fails', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockRejectedValue(new Error('401 Unauthorized'));
+    currentDb = makeDb([]) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'cogni-cortex',
+      apiKey: 'cog_badkey',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('mcp_connect_failed');
+    expect(
+      (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('fails loud when the verify tool returns isError — no row', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    const conn = mockMcpConnection([{ name: 'get_home' }]);
+    conn.client.callTool.mockResolvedValue({ content: [], isError: true });
+    mcpAdapterMocks.connectMcp.mockResolvedValue(conn);
+    currentDb = makeDb([]) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'cogni-cortex',
+      apiKey: 'cog_badkey',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('mcp_connect_failed');
+    expect(
+      (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert,
+    ).not.toHaveBeenCalled();
+    expect(conn.close).toHaveBeenCalled();
+  });
+
+  it('happy path — encrypts the key, caches discovered tools, upserts the row', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(
+      mockMcpConnection([
+        { name: 'get_home', description: 'home view' },
+        { name: 'get_feed' },
+      ]),
+    );
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003a1' }]) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'cogni-cortex',
+      apiKey: 'cog_testkey123',
+    });
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const values = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values).toBeDefined();
+    // The stored key is encrypted, never plaintext.
+    expect(isEncrypted(values?.['apiKey'] as string)).toBe(true);
+    expect(values?.['apiKey']).not.toBe('cog_testkey123');
+    expect(values?.['apiKeyLast4']).toBe('y123');
+    expect(values?.['authScheme']).toBe('header');
+    expect(values?.['authParamName']).toBe('x-api-key');
+    // Discovered tools are cached for the UI.
+    expect(values?.['availableTools']).toEqual([
+      { name: 'get_home', description: 'home view' },
+      { name: 'get_feed', description: null },
+    ]);
+  });
+});
+
+describe('deleteMcpServerAction', () => {
+  it('rejects a non-uuid id', async () => {
+    const { deleteMcpServerAction } = await import('../src/lib/actions.ts');
+    const r = await deleteMcpServerAction('not-a-uuid');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when the server does not belong to the entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { deleteMcpServerAction } = await import('../src/lib/actions.ts');
+    const r = await deleteMcpServerAction('aaaaaaaa-0000-0000-0000-0000000003b1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
+describe('setAgentMcpServerAssignmentAction', () => {
+  it('returns not_found when the agent does not belong to the entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { setAgentMcpServerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentMcpServerAssignmentAction(
+      'aaaaaaaa-0000-0000-0000-0000000003c1',
+      'aaaaaaaa-0000-0000-0000-0000000003c2',
+      true,
+      null,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('assigned=true upserts an agent_mcp_servers row with the enabledTools whitelist', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003d1' }]) as typeof currentDb;
+    const { setAgentMcpServerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentMcpServerAssignmentAction(
+      'aaaaaaaa-0000-0000-0000-0000000003d1',
+      'aaaaaaaa-0000-0000-0000-0000000003d2',
+      true,
+      ['get_home'],
+    );
+    expect(r.ok).toBe(true);
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const values = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['enabledTools']).toEqual(['get_home']);
+  });
+
+  it('assigned=false deletes the assignment row', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003e1' }]) as typeof currentDb;
+    const { setAgentMcpServerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await setAgentMcpServerAssignmentAction(
+      'aaaaaaaa-0000-0000-0000-0000000003e1',
+      'aaaaaaaa-0000-0000-0000-0000000003e2',
+      false,
+      null,
+    );
+    expect(r.ok).toBe(true);
+    expect(
+      (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete,
+    ).toHaveBeenCalled();
+  });
+});
+
+describe('listMcpServersAction', () => {
+  it('returns every catalog entry, with server=null when not connected', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listMcpServersAction } = await import('../src/lib/actions.ts');
+    const r = await listMcpServersAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const cogni = r.data.find((e) => e.catalogSlug === 'cogni-cortex');
+      expect(cogni).toBeDefined();
+      expect(cogni?.server).toBeNull();
+      expect(cogni?.keyPrefix).toBe('cog_');
+    }
   });
 });
 

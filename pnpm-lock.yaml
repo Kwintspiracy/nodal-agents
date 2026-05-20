@@ -157,6 +157,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@nodal-agents/adapter-mcp':
+        specifier: workspace:*
+        version: link:../../packages/adapters/mcp
       '@nodal-agents/auth':
         specifier: workspace:*
         version: link:../../packages/auth

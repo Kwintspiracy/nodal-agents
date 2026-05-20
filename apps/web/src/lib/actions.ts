@@ -20,6 +20,8 @@ import {
   agentSkills,
   agentSkillAssignments,
   agentConnectorAssignments,
+  mcpServers,
+  agentMcpServers,
   toolCalls,
   agentSchedules,
   entityLlmKeys,
@@ -39,6 +41,8 @@ import { requireAuth } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
+import { MCP_CATALOG } from './mcp-catalog.ts';
+import { connectMcp } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
@@ -1173,6 +1177,328 @@ export async function deleteConnectorAction(id: string): Promise<ActionResult<vo
   } catch (err) {
     console.error('[deleteConnectorAction]', err);
     return fail('db_error', 'Failed to delete connector');
+  }
+}
+
+// ─── MCP connector Actions ────────────────────────────────────────────────────
+
+/** A cached MCP tool descriptor, stored in mcp_servers.available_tools. */
+type McpToolSummary = { name: string; description: string | null };
+
+export type McpServerListEntry = {
+  catalogSlug: string;
+  label: string;
+  description: string;
+  docsHint: string;
+  keyPrefix: string;
+  /** The connected mcp_servers row, or null if not connected yet. */
+  server: {
+    id: string;
+    active: boolean;
+    hasApiKey: boolean;
+    apiKeyLast4: string | null;
+    toolCount: number;
+    createdAt: Date | null;
+  } | null;
+};
+
+/**
+ * List every MCP catalog entry, annotated with the entity's connected
+ * mcp_servers row (if any). Never returns the encrypted key.
+ */
+export async function listMcpServersAction(): Promise<ActionResult<McpServerListEntry[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(mcpServers)
+      .where(eq(mcpServers.entityId, session.entityId));
+    const bySlug = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) bySlug.set(r.slug, r);
+
+    const entries: McpServerListEntry[] = MCP_CATALOG.map((c) => {
+      const row = bySlug.get(c.slug);
+      return {
+        catalogSlug: c.slug,
+        label: c.label,
+        description: c.description,
+        docsHint: c.docsHint,
+        keyPrefix: c.keyPrefix,
+        server: row
+          ? {
+              id: row.id,
+              active: row.active ?? true,
+              hasApiKey: !!row.apiKey,
+              apiKeyLast4: row.apiKeyLast4 ?? null,
+              toolCount: Array.isArray(row.availableTools) ? row.availableTools.length : 0,
+              createdAt: row.createdAt,
+            }
+          : null,
+      };
+    });
+    return ok(entries);
+  } catch (err) {
+    console.error('[listMcpServersAction]', err);
+    return fail('db_error', 'Failed to load MCP connectors');
+  }
+}
+
+const CreateMcpServerSchema = z.object({
+  slug: z.string().min(1).max(80),
+  apiKey: z.string().min(1, 'API key is required'),
+});
+
+/**
+ * Connect an MCP catalog entry. Connect-and-verify against the live server
+ * BEFORE persisting — a bad key fails loud here and writes no row, so the
+ * catalog never shows a dead connector. On success the encrypted key + the
+ * discovered tool list are upserted into mcp_servers.
+ */
+export async function createMcpServerFromCatalogAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = CreateMcpServerSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const catalog = MCP_CATALOG.find((e) => e.slug === parsed.data.slug);
+    if (!catalog) return fail('validation_failed', 'Unknown MCP connector');
+    const apiKey = parsed.data.apiKey.trim();
+    if (!apiKey.startsWith(catalog.keyPrefix)) {
+      return fail('validation_failed', `API key must start with "${catalog.keyPrefix}"`);
+    }
+
+    // Connect-and-verify before persisting. A bad key must fail loud here and
+    // leave no row behind.
+    let toolDescriptors: McpToolSummary[] = [];
+    let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
+    try {
+      conn = await connectMcp({
+        url: catalog.serverUrl,
+        apiKey,
+        authScheme: catalog.authScheme,
+        authParamName: catalog.authParamName,
+      });
+      // Some servers accept listTools but reject the key on the first real
+      // call — exercise the catalog's verify tool to be certain.
+      const verify = await conn.client.callTool({
+        name: catalog.verifyToolName,
+        arguments: {},
+      });
+      if (verify.isError === true) {
+        return fail('mcp_connect_failed', `${catalog.label} rejected the API key.`);
+      }
+      toolDescriptors = conn.tools.map((t) => ({
+        name: t.name,
+        description: t.description ?? null,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return fail('mcp_connect_failed', `Could not connect to ${catalog.label}: ${msg}`);
+    } finally {
+      if (conn) await conn.close().catch(() => {});
+    }
+
+    const db = getDb();
+    const encApiKey = encrypt(apiKey);
+    const [row] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: session.entityId,
+        name: catalog.label,
+        slug: catalog.slug,
+        transport: catalog.transport,
+        url: catalog.serverUrl,
+        apiKey: encApiKey,
+        apiKeyLast4: last4(apiKey),
+        authScheme: catalog.authScheme,
+        authParamName: catalog.authParamName,
+        availableTools: toolDescriptors,
+        active: true,
+      })
+      .onConflictDoUpdate({
+        target: [mcpServers.entityId, mcpServers.slug],
+        set: {
+          name: catalog.label,
+          transport: catalog.transport,
+          url: catalog.serverUrl,
+          apiKey: encApiKey,
+          apiKeyLast4: last4(apiKey),
+          authScheme: catalog.authScheme,
+          authParamName: catalog.authParamName,
+          availableTools: toolDescriptors,
+          active: true,
+          updatedAt: new Date(),
+        },
+      })
+      .returning({ id: mcpServers.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+    revalidatePath('/mcp');
+    return ok({ id: row.id });
+  } catch (err) {
+    console.error('[createMcpServerFromCatalogAction]', err);
+    return fail('db_error', 'Failed to save MCP connector');
+  }
+}
+
+export async function deleteMcpServerAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid MCP server id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, id), eq(mcpServers.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'MCP connector not found');
+    // CASCADE removes the agent_mcp_servers assignment rows.
+    await db.delete(mcpServers).where(eq(mcpServers.id, id));
+    revalidatePath('/mcp');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteMcpServerAction]', err);
+    return fail('db_error', 'Failed to delete MCP connector');
+  }
+}
+
+export type AgentMcpServerRow = {
+  mcpServerId: string;
+  slug: string;
+  label: string;
+  assigned: boolean;
+  /** null = all tools enabled; array = whitelist of original (un-prefixed) tool names. */
+  enabledTools: string[] | null;
+  availableTools: McpToolSummary[];
+};
+
+/**
+ * List the entity's active MCP servers, annotated with whether the given
+ * agent has each assigned and which tools are enabled.
+ */
+export async function listAgentMcpServersAction(
+  agentId: string,
+): Promise<ActionResult<AgentMcpServerRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const serverRows = await db
+      .select({
+        id: mcpServers.id,
+        slug: mcpServers.slug,
+        name: mcpServers.name,
+        availableTools: mcpServers.availableTools,
+      })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.entityId, session.entityId), eq(mcpServers.active, true)));
+    if (serverRows.length === 0) return ok([]);
+
+    const assignmentRows = await db
+      .select({
+        mcpServerId: agentMcpServers.mcpServerId,
+        enabledTools: agentMcpServers.enabledTools,
+      })
+      .from(agentMcpServers)
+      .where(eq(agentMcpServers.agentId, agentId));
+    const assignmentByServerId = new Map<string, { enabledTools: string[] | null }>();
+    for (const a of assignmentRows) {
+      assignmentByServerId.set(a.mcpServerId, {
+        enabledTools: (a.enabledTools as string[] | null) ?? null,
+      });
+    }
+
+    const result: AgentMcpServerRow[] = serverRows.map((row) => {
+      const assignment = assignmentByServerId.get(row.id);
+      return {
+        mcpServerId: row.id,
+        slug: row.slug,
+        label: row.name,
+        assigned: assignment !== undefined,
+        enabledTools: assignment?.enabledTools ?? null,
+        availableTools: Array.isArray(row.availableTools)
+          ? (row.availableTools as McpToolSummary[])
+          : [],
+      };
+    });
+    return ok(result);
+  } catch (err) {
+    console.error('[listAgentMcpServersAction]', err);
+    return fail('db_error', 'Failed to load agent MCP connectors');
+  }
+}
+
+/**
+ * Assign or unassign an MCP server to an agent, with an optional per-tool
+ * whitelist. Idempotent — mirrors setAgentConnectorAssignmentAction.
+ */
+export async function setAgentMcpServerAssignmentAction(
+  agentId: string,
+  mcpServerId: string,
+  assigned: boolean,
+  enabledTools: string[] | null,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    if (!z.string().guid().safeParse(mcpServerId).success) {
+      return fail('validation_failed', 'Invalid MCP server id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+    const [server] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
+    if (!server) return fail('not_found', 'MCP connector not found');
+
+    if (!assigned) {
+      await db
+        .delete(agentMcpServers)
+        .where(
+          and(
+            eq(agentMcpServers.agentId, agentId),
+            eq(agentMcpServers.mcpServerId, mcpServerId),
+          ),
+        );
+    } else {
+      await db
+        .insert(agentMcpServers)
+        .values({
+          agentId,
+          mcpServerId,
+          entityId: session.entityId,
+          enabledTools: enabledTools ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [agentMcpServers.agentId, agentMcpServers.mcpServerId],
+          set: { enabledTools: enabledTools ?? null, updatedAt: new Date() },
+        });
+    }
+
+    revalidatePath('/agents');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentMcpServerAssignmentAction]', err);
+    return fail('db_error', 'Failed to update MCP assignment');
   }
 }
 
