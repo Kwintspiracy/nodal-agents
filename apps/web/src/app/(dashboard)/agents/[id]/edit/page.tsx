@@ -5,6 +5,7 @@ import {
   listAgentsAction,
   listLlmKeysAction,
   listAgentConnectorsAction,
+  listAgentMcpServersAction,
 } from '@/lib/actions.ts';
 import AgentForm from '@/components/AgentForm.tsx';
 
@@ -31,9 +32,13 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   // (an orchestrator cannot be its own sub-agent).
   const peers = peersResult.ok ? peersResult.data.filter((a) => a.id !== id) : [];
 
-  // Connectors: fetch after agent is confirmed to exist (agentResult.ok checked above).
-  const connectorsResult = await listAgentConnectorsAction(agent.id);
+  // Connectors + MCP servers: fetch after agent is confirmed to exist.
+  const [connectorsResult, mcpServersResult] = await Promise.all([
+    listAgentConnectorsAction(agent.id),
+    listAgentMcpServersAction(agent.id),
+  ]);
   const connectors = connectorsResult.ok ? connectorsResult.data : [];
+  const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -58,6 +63,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
           llmKeys={llmKeys}
           agents={peers}
           connectors={connectors}
+          mcpServers={mcpServers}
         />
       </div>
     </div>

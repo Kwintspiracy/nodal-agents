@@ -8,10 +8,12 @@ import {
   createAgentAction,
   updateAgentAction,
   setAgentConnectorAssignmentAction,
+  setAgentMcpServerAssignmentAction,
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
   type AgentConnectorRow,
+  type AgentMcpServerRow,
 } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import {
@@ -29,6 +31,7 @@ interface CreateProps {
   agents?: AgentRow[];
   initial?: undefined;
   connectors?: AgentConnectorRow[];
+  mcpServers?: AgentMcpServerRow[];
 }
 
 interface EditProps {
@@ -37,6 +40,7 @@ interface EditProps {
   agents?: AgentRow[];
   initial: AgentEditRow;
   connectors?: AgentConnectorRow[];
+  mcpServers?: AgentMcpServerRow[];
 }
 
 type Props = CreateProps | EditProps;
@@ -314,6 +318,233 @@ function ConnectorGrid({ agentId, connectors }: ConnectorGridProps) {
   );
 }
 
+// ─── MCP server grid ──────────────────────────────────────────────────────────
+// Mirrors ConnectorGrid: a checkbox assigns the whole MCP server to the agent,
+// expanding reveals a per-tool whitelist. enabledTools null = all tools.
+
+type McpServerState = {
+  assigned: boolean;
+  enabledTools: string[] | null;
+};
+
+interface McpServerGridProps {
+  agentId: string;
+  servers: AgentMcpServerRow[];
+}
+
+function McpServerGrid({ agentId, servers }: McpServerGridProps) {
+  const [states, setStates] = useState<Map<string, McpServerState>>(() => {
+    const m = new Map<string, McpServerState>();
+    for (const s of servers) {
+      m.set(s.mcpServerId, { assigned: s.assigned, enabledTools: s.enabledTools });
+    }
+    return m;
+  });
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const debounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const persist = useCallback(
+    (mcpServerId: string, assigned: boolean, enabledTools: string[] | null) => {
+      const existing = debounceRef.current.get(mcpServerId);
+      if (existing) clearTimeout(existing);
+      const handle = setTimeout(() => {
+        debounceRef.current.delete(mcpServerId);
+        void setAgentMcpServerAssignmentAction(agentId, mcpServerId, assigned, enabledTools).then(
+          (result) => {
+            if (!result.ok) toast.error(result.message);
+          },
+        );
+      }, 300);
+      debounceRef.current.set(mcpServerId, handle);
+    },
+    [agentId],
+  );
+
+  function toggleServer(mcpServerId: string) {
+    setStates((prev) => {
+      const current = prev.get(mcpServerId) ?? { assigned: false, enabledTools: null };
+      const next: McpServerState = { assigned: !current.assigned, enabledTools: null };
+      const m = new Map(prev);
+      m.set(mcpServerId, next);
+      persist(mcpServerId, next.assigned, next.enabledTools);
+      return m;
+    });
+  }
+
+  function toggleTool(mcpServerId: string, toolName: string, allToolNames: string[]) {
+    setStates((prev) => {
+      const current = prev.get(mcpServerId) ?? { assigned: true, enabledTools: null };
+      let nextEnabled: string[] | null;
+      if (current.enabledTools === null) {
+        // Currently all enabled — unchecking one yields the array of the rest.
+        nextEnabled = allToolNames.filter((t) => t !== toolName);
+      } else {
+        const inList = current.enabledTools.includes(toolName);
+        nextEnabled = inList
+          ? current.enabledTools.filter((t) => t !== toolName)
+          : [...current.enabledTools, toolName];
+      }
+      // All tools checked → collapse to null ("all enabled").
+      if (nextEnabled !== null && nextEnabled.length === allToolNames.length) {
+        nextEnabled = null;
+      }
+      const m = new Map(prev);
+      // Empty whitelist → same as unassigning the server.
+      if (nextEnabled !== null && nextEnabled.length === 0) {
+        m.set(mcpServerId, { assigned: false, enabledTools: null });
+        persist(mcpServerId, false, null);
+        setExpanded((p) => {
+          const s = new Set(p);
+          s.delete(mcpServerId);
+          return s;
+        });
+        return m;
+      }
+      m.set(mcpServerId, { assigned: true, enabledTools: nextEnabled });
+      persist(mcpServerId, true, nextEnabled);
+      return m;
+    });
+  }
+
+  function enableAll(mcpServerId: string) {
+    setStates((prev) => {
+      const m = new Map(prev);
+      m.set(mcpServerId, { assigned: true, enabledTools: null });
+      persist(mcpServerId, true, null);
+      return m;
+    });
+  }
+
+  function uncheckAll(mcpServerId: string) {
+    setStates((prev) => {
+      const m = new Map(prev);
+      m.set(mcpServerId, { assigned: false, enabledTools: null });
+      persist(mcpServerId, false, null);
+      return m;
+    });
+    setExpanded((prev) => {
+      const s = new Set(prev);
+      s.delete(mcpServerId);
+      return s;
+    });
+  }
+
+  function toggleExpand(mcpServerId: string) {
+    setExpanded((prev) => {
+      const s = new Set(prev);
+      if (s.has(mcpServerId)) s.delete(mcpServerId);
+      else s.add(mcpServerId);
+      return s;
+    });
+  }
+
+  if (servers.length === 0) {
+    return (
+      <p className="text-xs text-neutral-600">
+        No MCP connectors yet.{' '}
+        <a href="/mcp" className="underline hover:text-neutral-400 transition-colors">
+          Connect one first.
+        </a>
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {servers.map((s) => {
+        const state = states.get(s.mcpServerId) ?? {
+          assigned: s.assigned,
+          enabledTools: s.enabledTools,
+        };
+        const isExpanded = expanded.has(s.mcpServerId);
+        const allToolNames = s.availableTools.map((t) => t.name);
+        const summary = !state.assigned
+          ? null
+          : state.enabledTools === null
+            ? 'all tools'
+            : `${state.enabledTools.length} of ${allToolNames.length} tools`;
+
+        return (
+          <div
+            key={s.mcpServerId}
+            className="rounded-lg border border-neutral-800 overflow-hidden"
+          >
+            <div className="flex items-center gap-2 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={state.assigned}
+                onChange={() => toggleServer(s.mcpServerId)}
+                className="accent-violet-500 shrink-0"
+              />
+              <button
+                type="button"
+                onClick={() => toggleExpand(s.mcpServerId)}
+                className="flex-1 text-left flex items-center gap-2 min-w-0"
+              >
+                <span className="text-neutral-500 text-xs w-3 shrink-0">
+                  {isExpanded ? '▾' : '▸'}
+                </span>
+                <span className="text-sm text-white font-medium truncate">{s.label}</span>
+                {summary ? (
+                  <span className="text-xs text-neutral-500 shrink-0 ml-auto">{summary}</span>
+                ) : null}
+              </button>
+            </div>
+
+            {state.assigned && isExpanded && (
+              <div className="border-t border-neutral-800 px-3 py-2 bg-neutral-950/40 space-y-2">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => enableAll(s.mcpServerId)}
+                    className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
+                  >
+                    Enable all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => uncheckAll(s.mcpServerId)}
+                    className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
+                  >
+                    Uncheck all
+                  </button>
+                </div>
+                <div className="space-y-0.5">
+                  {s.availableTools.map((tool) => {
+                    const checked =
+                      state.enabledTools === null || state.enabledTools.includes(tool.name);
+                    return (
+                      <label
+                        key={tool.name}
+                        className="flex items-center gap-2 px-1 py-1 rounded text-sm cursor-pointer hover:bg-neutral-800/40"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleTool(s.mcpServerId, tool.name, allToolNames)}
+                          className="accent-violet-500 shrink-0"
+                        />
+                        <code className="font-mono text-xs text-neutral-300 shrink-0">
+                          {tool.name}
+                        </code>
+                        {tool.description ? (
+                          <span className="text-xs text-neutral-600 italic truncate">
+                            {tool.description}
+                          </span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Map DB role columns back to the UX-level enum for pre-filling edit form.
 function dbRoleToUiRole(
   role: string | null,
@@ -527,6 +758,7 @@ export default function AgentForm(props: Props) {
   // ─── Edit mode: form rendered inline (no modal/portal) ─────────────────────
 
   const connectorList = props.connectors ?? [];
+  const mcpServerList = props.mcpServers ?? [];
 
   if (isEdit) {
     const initial = props.initial;
@@ -714,6 +946,24 @@ export default function AgentForm(props: Props) {
           <p className="mt-2 text-xs text-neutral-600">
             <a href="/connectors" className="underline hover:text-neutral-400 transition-colors">
               Manage credentials in /connectors
+            </a>
+          </p>
+        </div>
+
+        {/* ── MCP Connectors ─────────────────────────────────────────── */}
+        <div>
+          <div className="mb-2">
+            <label className="block text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-0.5">
+              MCP Connectors
+            </label>
+            <p className="text-xs text-neutral-600">
+              Tools from connected MCP servers. Expand a server to whitelist individual tools.
+            </p>
+          </div>
+          <McpServerGrid agentId={initial.id} servers={mcpServerList} />
+          <p className="mt-2 text-xs text-neutral-600">
+            <a href="/mcp" className="underline hover:text-neutral-400 transition-colors">
+              Manage MCP connectors in /mcp
             </a>
           </p>
         </div>
