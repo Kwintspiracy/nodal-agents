@@ -1,7 +1,7 @@
 // connectors table — holds API keys per entity per provider.
 // OAuth tokens are now stored in the credentials table (credential_id FK).
 
-import { pgTable, text, uuid, boolean, timestamp, index, check, unique } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, boolean, timestamp, index, check } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { credentials } from './credentials.ts';
@@ -32,7 +32,9 @@ export const connectors = pgTable(
       'connectors_auth_type_check',
       sql`${table.authType} IN ('api_key','oauth2','bearer','basic','none')`,
     ),
-    unique('connectors_entity_slug_unique').on(table.entityId, table.slug),
+    // Multi-instance brique (migration 0016): the (entity_id, slug) UNIQUE
+    // constraint was dropped to allow multiple instances of the same connector
+    // type per entity (e.g. several Gmail accounts).
   ],
 );
 

@@ -113,6 +113,20 @@
       "when": 1779500000000,
       "tag": "0015_agent_mcp_servers_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1779600000000,
+      "tag": "0016_drop_connector_entity_slug_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779700000000,
+      "tag": "0017_drop_mcp_server_entity_slug_unique",
+      "breakpoints": true
     }
   ]
 }

@@ -913,15 +913,15 @@ describe('deleteMemoryAction', () => {
 // ─── Connector Actions ────────────────────────────────────────────────────────
 
 describe('listConnectorsAction', () => {
-  it('returns the full catalog with null connectors when entity has none', async () => {
+  it('returns empty instances and full catalog when entity has none', async () => {
     currentDb = makeDb([]) as typeof currentDb;
     const { listConnectorsAction } = await import('../src/lib/actions.ts');
     const { CONNECTOR_CATALOG } = await import('../src/lib/connector-catalog.ts');
     const r = await listConnectorsAction();
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.data.length).toBe(CONNECTOR_CATALOG.length);
-      expect(r.data.every((e) => e.connector === null)).toBe(true);
+      expect(r.data.instances.length).toBe(0);
+      expect(r.data.catalog.length).toBe(CONNECTOR_CATALOG.length);
     }
   });
 
@@ -948,11 +948,13 @@ describe('listConnectorsAction', () => {
     const r = await listConnectorsAction();
     expect(r.ok).toBe(true);
     if (r.ok) {
-      const notion = r.data.find((e) => e.catalogSlug === 'notion');
-      expect(notion?.connector?.id).toBe(id);
-      expect(notion?.connector?.hasApiKey).toBe(true);
-      // Other catalog entries stay null
-      expect(r.data.find((e) => e.catalogSlug === 'gmail')?.connector).toBe(null);
+      const notion = r.data.instances.find((i) => i.slug === 'notion');
+      expect(notion?.id).toBe(id);
+      expect(notion?.hasApiKey).toBe(true);
+      // Catalog still contains all entries
+      expect(r.data.catalog.find((c) => c.slug === 'gmail')).toBeDefined();
+      // No Gmail instance row exists
+      expect(r.data.instances.find((i) => i.slug === 'gmail')).toBeUndefined();
     }
   });
 });
@@ -979,10 +981,9 @@ describe('saveApiKeyConnectorAction', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('updates an existing row in place (chain mock takes the existing branch)', async () => {
-    // The chain mock returns the same rows for every awaited query, so the
-    // initial existing-check select returns a row → UPDATE path. We assert
-    // on the .set() payload to confirm the api_key + active flags land.
+  it('inserts a new row (pure INSERT — every call creates a new instance)', async () => {
+    // Multi-instance brique: saveApiKeyConnectorAction is now a pure INSERT.
+    // The mock's insert().values().returning() resolves with [{ id }].
     const id = 'aaaaaaaa-0000-0000-0000-000000000071';
     currentDb = makeDb([{ id }]) as typeof currentDb;
     const { saveApiKeyConnectorAction } = await import('../src/lib/actions.ts');
@@ -993,14 +994,21 @@ describe('saveApiKeyConnectorAction', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.id).toBe(id);
+    // INSERT must have been called (no UPDATE)
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).toHaveBeenCalled();
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
-    const setSpy = updateSpy.mock.results.at(-1)!.value as { set: ReturnType<typeof vi.fn> };
-    const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(updateSpy).not.toHaveBeenCalled();
+    // Assert the values payload: apiKey encrypted, authType and active correct.
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(insertValues).toBeDefined();
     // Brique 34 (Agent B): apiKey must be encrypted at rest — assert enc:v1: prefix.
-    expect(typeof setArg['apiKey']).toBe('string');
-    expect(setArg['apiKey'] as string).toMatch(/^enc:v1:/);
-    expect(setArg['authType']).toBe('api_key');
-    expect(setArg['active']).toBe(true);
+    expect(typeof insertValues?.['apiKey']).toBe('string');
+    expect(insertValues?.['apiKey'] as string).toMatch(/^enc:v1:/);
+    expect(insertValues?.['authType']).toBe('api_key');
+    expect(insertValues?.['active']).toBe(true);
   });
 });
 
@@ -1050,17 +1058,24 @@ describe('saveApiKeyConnectorAction — new api_key providers (regression)', () 
   it.each(['apify', 'firecrawl', 'tavily', 'airtable'])(
     'saves %s api_key with enc:v1: prefix',
     async (slug) => {
-      const existingId = 'aaaaaaaa-0000-0000-0000-000000000080';
-      currentDb = makeDb([{ id: existingId }]) as typeof currentDb;
+      const insertedId = 'aaaaaaaa-0000-0000-0000-000000000080';
+      currentDb = makeDb([{ id: insertedId }]) as typeof currentDb;
       const { saveApiKeyConnectorAction } = await import('../src/lib/actions.ts');
-      const r = await saveApiKeyConnectorAction({ slug, apiKey: 'test-api-key-value' });
+      // name is now REQUIRED — pass a display name
+      const r = await saveApiKeyConnectorAction({
+        slug,
+        name: `My ${slug}`,
+        apiKey: 'test-api-key-value',
+      });
       expect(r.ok).toBe(true);
-      // Assert the apiKey in the DB update payload is encrypted.
-      const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
-      const setSpy = updateSpy.mock.results.at(-1)!.value as { set: ReturnType<typeof vi.fn> };
-      const setArg = setSpy.set.mock.calls.at(-1)![0] as Record<string, unknown>;
-      expect(typeof setArg['apiKey']).toBe('string');
-      expect(setArg['apiKey'] as string).toMatch(/^enc:v1:/);
+      // Assert the apiKey in the INSERT values payload is encrypted.
+      const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+      const valuesFn = (
+        insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> }
+      )?.values;
+      const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(typeof insertValues?.['apiKey']).toBe('string');
+      expect(insertValues?.['apiKey'] as string).toMatch(/^enc:v1:/);
     },
   );
 });
@@ -2319,6 +2334,7 @@ describe('createMcpServerFromCatalogAction', () => {
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
     const r = await createMcpServerFromCatalogAction({
       slug: 'cogni-cortex',
+      name: 'My Cortex',
       apiKey: 'wrong_prefix_key',
     });
     expect(r.ok).toBe(false);
@@ -2331,7 +2347,11 @@ describe('createMcpServerFromCatalogAction', () => {
 
   it('rejects an unknown catalog slug', async () => {
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
-    const r = await createMcpServerFromCatalogAction({ slug: 'no-such', apiKey: 'cog_x' });
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'no-such',
+      name: 'X',
+      apiKey: 'cog_x',
+    });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
@@ -2343,6 +2363,7 @@ describe('createMcpServerFromCatalogAction', () => {
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
     const r = await createMcpServerFromCatalogAction({
       slug: 'cogni-cortex',
+      name: 'My Cortex',
       apiKey: 'cog_badkey',
     });
     expect(r.ok).toBe(false);
@@ -2361,6 +2382,7 @@ describe('createMcpServerFromCatalogAction', () => {
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
     const r = await createMcpServerFromCatalogAction({
       slug: 'cogni-cortex',
+      name: 'My Cortex',
       apiKey: 'cog_badkey',
     });
     expect(r.ok).toBe(false);
@@ -2371,18 +2393,16 @@ describe('createMcpServerFromCatalogAction', () => {
     expect(conn.close).toHaveBeenCalled();
   });
 
-  it('happy path — encrypts the key, caches discovered tools, upserts the row', async () => {
+  it('happy path — encrypts the key, caches discovered tools, inserts the row', async () => {
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([
-        { name: 'get_home', description: 'home view' },
-        { name: 'get_feed' },
-      ]),
+      mockMcpConnection([{ name: 'get_home', description: 'home view' }, { name: 'get_feed' }]),
     );
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003a1' }]) as typeof currentDb;
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
     const r = await createMcpServerFromCatalogAction({
       slug: 'cogni-cortex',
+      name: 'My Cortex',
       apiKey: 'cog_testkey123',
     });
     expect(r.ok).toBe(true);
@@ -2471,15 +2491,17 @@ describe('setAgentMcpServerAssignmentAction', () => {
 });
 
 describe('listMcpServersAction', () => {
-  it('returns every catalog entry, with server=null when not connected', async () => {
+  it('returns empty instances and full catalog when entity has none connected', async () => {
     currentDb = makeDb([]) as typeof currentDb;
     const { listMcpServersAction } = await import('../src/lib/actions.ts');
     const r = await listMcpServersAction();
     expect(r.ok).toBe(true);
     if (r.ok) {
-      const cogni = r.data.find((e) => e.catalogSlug === 'cogni-cortex');
+      // No instances when entity has no rows
+      expect(r.data.instances.length).toBe(0);
+      // Catalog always contains all entries
+      const cogni = r.data.catalog.find((c) => c.slug === 'cogni-cortex');
       expect(cogni).toBeDefined();
-      expect(cogni?.server).toBeNull();
       expect(cogni?.keyPrefix).toBe('cog_');
     }
   });

@@ -3,18 +3,15 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import {
-  saveApiKeyConnectorAction,
   deleteConnectorAction,
+  renameConnectorAction,
   assignCredentialAction,
-  createOrAssignOAuthConnectorAction,
-  type ConnectorListEntry,
+  type ConnectorRow,
+  type ConnectorCatalogItem,
 } from '@/lib/actions.ts';
 import { refreshCredentialAction } from '@/lib/credentials.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
-import type { CatalogEntry } from '@/lib/connector-catalog.ts';
-import HelpSteps from '@/components/HelpSteps.tsx';
-import { APIKEY_GUIDES } from '@/lib/connector-help.ts';
 
 /** Credential types that do not support access-token refresh (Notion). */
 const OAUTH_NO_REFRESH_SLUGS: ReadonlySet<string> = new Set(['notion-oauth']);
@@ -54,89 +51,78 @@ export type CompatibleCredential = {
 };
 
 interface Props {
-  entry: ConnectorListEntry;
+  instance: ConnectorRow;
+  catalogEntry: ConnectorCatalogItem;
   /** OAuth credentials compatible with this connector's credentialType. Empty for api_key connectors. */
   compatibleCredentials: CompatibleCredential[];
-  catalogEntry: CatalogEntry;
 }
 
-export default function ConnectorForm({ entry, compatibleCredentials, catalogEntry }: Props) {
-  const [open, setOpen] = useState(false);
+export default function ConnectorForm({ instance, catalogEntry, compatibleCredentials }: Props) {
   const [isPending, startTransition] = useTransition();
   const [isRefreshing, startRefreshTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+
+  // Rename state
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(instance.name);
+
+  // Switch credential state
+  const [switchOpen, setSwitchOpen] = useState(false);
   const [selectedCredentialId, setSelectedCredentialId] = useState<string>(
-    entry.connector?.credentialId ?? compatibleCredentials[0]?.id ?? '',
+    instance.credentialId ?? compatibleCredentials[0]?.id ?? '',
   );
 
-  const isApiKey = entry.authType === 'api_key';
-  const isOAuth = entry.authType === 'oauth2';
-  const isConnected = !!entry.connector?.active;
+  const isApiKey = instance.authType === 'api_key';
+  const isOAuth = instance.authType === 'oauth2';
+  const isConnected = instance.active;
   const supportsRefresh = isOAuth && !OAUTH_NO_REFRESH_SLUGS.has(catalogEntry.credentialType ?? '');
   const credentialType = catalogEntry.credentialType as CredentialWizardType | undefined;
 
-  // Currently-active credential metadata (from the connector row fields).
-  const connectedCredentialId = entry.connector?.credentialId ?? null;
-  const connectedCredentialName = entry.connector?.credentialName ?? null;
-  const connectedAccountName = entry.connector?.credentialAccountName ?? null;
-  const connectedExpiresAt = entry.connector?.credentialExpiresAt ?? null;
-  const connectedScopes = entry.connector?.credentialScopes ?? null;
-  const isTokenExpired = isExpiredDate(connectedExpiresAt);
+  const connectedCredentialId = instance.credentialId;
+  const connectedCredentialName = instance.credentialName;
+  const connectedAccountName = instance.credentialAccountName;
+  const connectedExpiresAt = instance.credentialExpiresAt;
+  const connectedScopes = instance.credentialScopes;
+  const isTokenExpired = isExpiredDate(connectedExpiresAt ?? null);
 
-  const status = entry.connector
-    ? entry.connector.active
-      ? 'connected'
-      : 'inactive'
-    : 'disconnected';
-
-  function handleApiKeySubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-
-    startTransition(async () => {
-      const result = await saveApiKeyConnectorAction({
-        slug: entry.catalogSlug,
-        apiKey: fd.get('apiKey'),
-        name: fd.get('name') || undefined,
-      });
-
-      if (!result.ok) {
-        toast.error(result.message);
-        return;
-      }
-      toast.success(`${entry.label} connected`);
-      setOpen(false);
-    });
-  }
+  const status: 'connected' | 'inactive' = isConnected ? 'connected' : 'inactive';
 
   function performDelete() {
     setConfirmOpen(false);
-    if (!entry.connector) return;
-    const id = entry.connector.id;
     startTransition(async () => {
-      const r = await deleteConnectorAction(id);
+      const r = await deleteConnectorAction(instance.id);
       if (!r.ok) toast.error(r.message);
-      else toast.success(`${entry.label} disconnected`);
+      else toast.success(`${instance.name} removed`);
+    });
+  }
+
+  function performRename() {
+    const trimmed = renameValue.trim();
+    if (!trimmed || trimmed === instance.name) {
+      setIsRenaming(false);
+      return;
+    }
+    startTransition(async () => {
+      const r = await renameConnectorAction(instance.id, trimmed);
+      if (!r.ok) {
+        toast.error(r.message);
+      } else {
+        toast.success('Renamed');
+        setIsRenaming(false);
+      }
     });
   }
 
   function performAssign(credentialId: string) {
     startTransition(async () => {
-      // First-time connect (no connector row yet) → upsert to create the row.
-      // Existing connector → assignCredentialAction (cheaper, no INSERT path).
-      const r = entry.connector
-        ? await assignCredentialAction(entry.connector.id, credentialId)
-        : await createOrAssignOAuthConnectorAction(entry.catalogSlug, credentialId);
-
+      const r = await assignCredentialAction(instance.id, credentialId);
       if (!r.ok) {
         toast.error(r.message);
         return;
       }
-      toast.success(
-        entry.connector ? `${entry.label} credential updated` : `${entry.label} connected`,
-      );
-      setOpen(false);
+      toast.success(`${instance.name} credential updated`);
+      setSwitchOpen(false);
     });
   }
 
@@ -152,47 +138,85 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
     });
   }
 
-  function performDisconnect() {
-    setConfirmOpen(false);
-    if (!entry.connector) return;
-    const id = entry.connector.id;
-    startTransition(async () => {
-      const r = await deleteConnectorAction(id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success(`${entry.label} disconnected`);
-    });
-  }
-
   return (
     <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-4">
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-white">{entry.label}</h3>
-            <span
-              className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                status === 'connected'
-                  ? 'bg-emerald-500/15 text-emerald-400'
-                  : status === 'inactive'
-                    ? 'bg-amber-500/15 text-amber-400'
-                    : 'bg-neutral-800 text-neutral-500'
-              }`}
-            >
-              {status}
-            </span>
-          </div>
+        <div className="flex-1 min-w-0">
+          {/* Instance name — inline rename */}
+          {isRenaming ? (
+            <div className="flex items-center gap-2">
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') performRename();
+                  if (e.key === 'Escape') {
+                    setRenameValue(instance.name);
+                    setIsRenaming(false);
+                  }
+                }}
+                className="bg-neutral-800 border border-neutral-600 rounded-md px-2 py-1 text-sm text-white focus:border-neutral-400 focus:outline-none w-full max-w-xs"
+              />
+              <button
+                type="button"
+                onClick={performRename}
+                disabled={isPending}
+                className="text-xs text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRenameValue(instance.name);
+                  setIsRenaming(false);
+                }}
+                className="text-xs text-neutral-500 hover:text-neutral-300"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-white truncate">{instance.name}</h3>
+              <button
+                type="button"
+                onClick={() => setIsRenaming(true)}
+                aria-label="Rename connector"
+                className="text-neutral-600 hover:text-neutral-400 transition-colors text-xs leading-none"
+                title="Rename"
+              >
+                ✎
+              </button>
+              <span
+                className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                  status === 'connected'
+                    ? 'bg-emerald-500/15 text-emerald-400'
+                    : 'bg-amber-500/15 text-amber-400'
+                }`}
+              >
+                {status}
+              </span>
+            </div>
+          )}
           <p className="text-xs text-neutral-500 mt-1 font-mono">
-            {entry.catalogSlug} · {entry.authType}
+            {catalogEntry.slug} · {instance.authType}
           </p>
           {connectedAccountName && (
             <p className="text-xs text-neutral-400 mt-1">{connectedAccountName}</p>
           )}
+          {isApiKey && instance.hasApiKey && (
+            <p className="text-xs text-neutral-600 mt-0.5 font-mono">
+              key: …{instance.credentialId ?? '????'}
+            </p>
+          )}
         </div>
 
         {/* Action buttons */}
-        <div className="flex gap-2 shrink-0 flex-wrap justify-end">
-          {isConnected && isOAuth ? (
+        <div className="flex gap-2 shrink-0 flex-wrap justify-end items-start">
+          {isOAuth ? (
             <>
               {supportsRefresh && (
                 <button
@@ -212,15 +236,16 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
               >
                 Reconnect
               </button>
-              {/* Switch credential dropdown */}
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                disabled={isPending || isRefreshing}
-                className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
-              >
-                {open ? 'Cancel' : 'Switch credential'}
-              </button>
+              {compatibleCredentials.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSwitchOpen((v) => !v)}
+                  disabled={isPending || isRefreshing}
+                  className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+                >
+                  {switchOpen ? 'Cancel' : 'Switch credential'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setConfirmOpen(true)}
@@ -230,64 +255,23 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
                 Disconnect
               </button>
             </>
-          ) : entry.connector ? (
-            <>
-              {/* api_key connected — show Edit / Disconnect */}
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white"
-              >
-                {open ? 'Cancel' : 'Edit'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={isPending}
-                className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
-              >
-                Disconnect
-              </button>
-            </>
-          ) : isOAuth ? (
-            /* OAuth not connected */
-            compatibleCredentials.length === 0 ? (
-              <button
-                type="button"
-                onClick={() => setWizardOpen(true)}
-                className="px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
-              >
-                Connect with{' '}
-                {catalogEntry.credentialType
-                  ? (PROVIDER_LABEL[catalogEntry.credentialType] ?? entry.label)
-                  : entry.label}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                className="px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
-              >
-                {open ? 'Cancel' : 'Connect'}
-              </button>
-            )
           ) : (
-            /* api_key not connected */
             <button
               type="button"
-              onClick={() => setOpen((v) => !v)}
-              className="px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
+              onClick={() => setConfirmOpen(true)}
+              disabled={isPending}
+              className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
             >
-              {open ? 'Cancel' : 'Connect'}
+              Delete
             </button>
           )}
         </div>
       </div>
 
-      <p className="text-xs text-neutral-500">{entry.docsHint}</p>
+      {catalogEntry.docsHint && <p className="text-xs text-neutral-500">{catalogEntry.docsHint}</p>}
 
       {/* Connected OAuth status panel */}
-      {isConnected && isOAuth && connectedCredentialId && (
+      {isOAuth && connectedCredentialId && (
         <div className="pt-2 border-t border-neutral-800/60 space-y-2">
           {connectedCredentialName && (
             <p className="text-xs text-neutral-400">
@@ -306,12 +290,6 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
               ))}
             </div>
           )}
-          {/* Refreshable providers show a stable "Auto-refreshes when used" line
-              regardless of the underlying expiresAt — the runner refreshes
-              transparently on use, so a countdown timer is anxiety-inducing
-              without adding information. Non-refreshable providers (Notion)
-              keep the real timer + amber alarm when expired since "expired"
-              there means the user actually has to reconnect. */}
           {supportsRefresh && <p className="text-xs text-neutral-500">Auto-refreshes when used</p>}
           {!supportsRefresh && connectedExpiresAt && (
             <p className={`text-xs ${isTokenExpired ? 'text-amber-400' : 'text-neutral-500'}`}>
@@ -321,8 +299,8 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
         </div>
       )}
 
-      {/* OAuth — switch credential or connect with existing */}
-      {isOAuth && open && (
+      {/* Switch credential panel */}
+      {isOAuth && switchOpen && (
         <div className="space-y-3 pt-2 border-t border-neutral-800/60">
           {compatibleCredentials.length > 0 ? (
             <>
@@ -352,7 +330,10 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
                 </button>
                 <button
                   type="button"
-                  onClick={() => setWizardOpen(true)}
+                  onClick={() => {
+                    setSwitchOpen(false);
+                    setWizardOpen(true);
+                  }}
                   className="px-3 py-1.5 text-xs text-neutral-500 hover:text-white underline"
                 >
                   or create new
@@ -365,7 +346,7 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
               <button
                 type="button"
                 onClick={() => {
-                  setOpen(false);
+                  setSwitchOpen(false);
                   setWizardOpen(true);
                 }}
                 className="text-indigo-400 hover:text-indigo-300 underline"
@@ -377,66 +358,17 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
         </div>
       )}
 
-      {/* api_key connect/edit form */}
-      {isApiKey && open && (
-        <form
-          onSubmit={handleApiKeySubmit}
-          className="space-y-3 pt-2 border-t border-neutral-800/60"
-        >
-          <div>
-            <label htmlFor="apikey-name" className="block text-xs text-neutral-500 mb-1">
-              Display name <span className="text-neutral-700">(optional)</span>
-            </label>
-            <input
-              id="apikey-name"
-              name="name"
-              defaultValue={entry.connector?.name ?? ''}
-              placeholder={entry.label}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
-            />
-          </div>
-          {APIKEY_GUIDES[entry.catalogSlug as keyof typeof APIKEY_GUIDES] && (
-            <details className="group text-xs">
-              <summary className="cursor-pointer text-neutral-500 hover:text-neutral-300">
-                Where do I get this?
-              </summary>
-              <div className="mt-3 pl-1">
-                <HelpSteps guide={APIKEY_GUIDES[entry.catalogSlug as keyof typeof APIKEY_GUIDES]} />
-              </div>
-            </details>
-          )}
-          <div>
-            <label htmlFor="apikey-apiKey" className="block text-xs text-neutral-500 mb-1">
-              API key
-            </label>
-            <input
-              id="apikey-apiKey"
-              name="apiKey"
-              type="password"
-              required
-              placeholder={entry.connector?.hasApiKey ? '•••••••• (leave blank to keep)' : ''}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
-            />
-          </div>
-          <div className="pt-1">
-            <button
-              type="submit"
-              disabled={isPending}
-              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
-            >
-              {isPending ? 'Saving…' : entry.connector ? 'Update' : 'Connect'}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {/* Disconnect confirmation */}
+      {/* Delete / Disconnect confirmation */}
       <ConfirmDialog
         open={confirmOpen}
-        title={`Disconnect ${entry.label}?`}
-        message="Tools that depend on this connector will fail until you reconnect. Existing job history is preserved."
-        confirmLabel="Disconnect"
-        onConfirm={isOAuth ? performDisconnect : performDelete}
+        title={`${isOAuth ? 'Disconnect' : 'Delete'} "${instance.name}"?`}
+        message={
+          isOAuth
+            ? 'Tools that depend on this connector will fail until you reconnect. Existing job history is preserved.'
+            : 'This connector instance will be permanently removed. Existing job history is preserved.'
+        }
+        confirmLabel={isOAuth ? 'Disconnect' : 'Delete'}
+        onConfirm={performDelete}
         onCancel={() => setConfirmOpen(false)}
       />
 
@@ -444,17 +376,10 @@ export default function ConnectorForm({ entry, compatibleCredentials, catalogEnt
       {wizardOpen && credentialType && (
         <CredentialWizard
           initialType={credentialType}
-          returnToConnectorSlug={entry.catalogSlug}
+          returnToConnectorSlug={catalogEntry.slug}
           onClose={() => setWizardOpen(false)}
         />
       )}
     </div>
   );
 }
-
-/** Human-friendly label for each credential type, used in button text. */
-const PROVIDER_LABEL: Record<string, string> = {
-  'google-oauth': 'Google',
-  'notion-oauth': 'Notion',
-  'airtable-oauth': 'Airtable',
-};

@@ -53,7 +53,9 @@ export const mcpServers = pgTable(
       'mcp_servers_auth_scheme_check',
       sql`${table.authScheme} IN ('header','query') OR ${table.authScheme} IS NULL`,
     ),
-    uniqueIndex('mcp_servers_entity_slug_unique').on(table.entityId, table.slug),
+    // Multi-instance brique (migration 0017): the (entity_id, slug) UNIQUE
+    // index was dropped to allow multiple instances of the same MCP server
+    // type per entity (e.g. two Cogni Cortex accounts).
   ],
 );
 
@@ -84,10 +86,7 @@ export const agentMcpServers = pgTable(
     index('idx_agent_mcp_servers_entity').on(table.entityId),
     // Backs the assign/unassign UPSERT (onConflictDoUpdate) — one assignment
     // row per (agent, server).
-    uniqueIndex('agent_mcp_servers_agent_server_unique').on(
-      table.agentId,
-      table.mcpServerId,
-    ),
+    uniqueIndex('agent_mcp_servers_agent_server_unique').on(table.agentId, table.mcpServerId),
   ],
 );
 

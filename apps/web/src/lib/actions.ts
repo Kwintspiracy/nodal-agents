@@ -975,16 +975,24 @@ export type ConnectorRow = {
   updatedAt: Date | null;
 };
 
-export type ConnectorListEntry = {
-  catalogSlug: string;
+// Multi-instance brique: the entity can hold N connector rows of the same
+// slug (Gmail perso + Gmail boulot, etc.). `listConnectorsAction` returns a
+// flat `instances` array plus the static `catalog` of available types so the
+// dashboard can render "Active Connectors" + "Marketplace" side by side.
+export type ConnectorCatalogItem = {
+  slug: string;
   label: string;
   authType: ConnectorAuthType;
   docsHint: string;
-  /** Configured connector for this slug, if any. */
-  connector: ConnectorRow | null;
+  credentialType: CredentialType | null;
 };
 
-export async function listConnectorsAction(): Promise<ActionResult<ConnectorListEntry[]>> {
+export type ConnectorsListResponse = {
+  instances: ConnectorRow[];
+  catalog: ConnectorCatalogItem[];
+};
+
+export async function listConnectorsAction(): Promise<ActionResult<ConnectorsListResponse>> {
   try {
     const session = await getSession();
     const db = getDb();
@@ -1032,49 +1040,38 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorList
       }
     }
 
-    const bySlug = new Map<string, (typeof rows)[number]>();
-    for (const r of rows) bySlug.set(r.slug, r);
-
-    const entries: ConnectorListEntry[] = CONNECTOR_CATALOG.map((c) => {
-      const row = bySlug.get(c.slug);
-      if (!row) {
-        return {
-          catalogSlug: c.slug,
-          label: c.label,
-          authType: c.authType,
-          docsHint: c.docsHint,
-          connector: null,
-        };
-      }
-
+    // Map every connector row to a flat ConnectorRow — multi-instance: several
+    // rows can share the same slug.
+    const instances: ConnectorRow[] = rows.map((row) => {
       const cred = row.credentialId ? credById.get(row.credentialId) : undefined;
       const display = row.credentialId ? (credDisplayById.get(row.credentialId) ?? null) : null;
-
       return {
-        catalogSlug: c.slug,
-        label: c.label,
-        authType: c.authType,
-        docsHint: c.docsHint,
-        connector: {
-          id: row.id,
-          slug: row.slug,
-          name: row.name,
-          authType: row.authType,
-          active: row.active ?? true,
-          hasApiKey: !!row.apiKey,
-          credentialId: row.credentialId ?? null,
-          credentialName: cred?.name ?? null,
-          credentialType: cred ? (cred.type as CredentialType) : null,
-          credentialAccountName: display?.accountName ?? null,
-          credentialExpiresAt: display?.expiresAt ?? null,
-          credentialScopes: display?.scopes ?? null,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-        },
+        id: row.id,
+        slug: row.slug,
+        name: row.name,
+        authType: row.authType,
+        active: row.active ?? true,
+        hasApiKey: !!row.apiKey,
+        credentialId: row.credentialId ?? null,
+        credentialName: cred?.name ?? null,
+        credentialType: cred ? (cred.type as CredentialType) : null,
+        credentialAccountName: display?.accountName ?? null,
+        credentialExpiresAt: display?.expiresAt ?? null,
+        credentialScopes: display?.scopes ?? null,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
       };
     });
 
-    return ok(entries);
+    const catalog: ConnectorCatalogItem[] = CONNECTOR_CATALOG.map((c) => ({
+      slug: c.slug,
+      label: c.label,
+      authType: c.authType,
+      docsHint: c.docsHint,
+      credentialType: c.credentialType ?? null,
+    }));
+
+    return ok({ instances, catalog });
   } catch (err) {
     console.error('[listConnectorsAction]', err);
     return fail('db_error', 'Failed to load connectors');
@@ -1083,10 +1080,15 @@ export async function listConnectorsAction(): Promise<ActionResult<ConnectorList
 
 const SaveApiKeyConnectorSchema = z.object({
   slug: z.string().min(1).max(80),
-  name: z.string().min(1).max(120).optional(),
+  name: z.string().min(1, 'Name is required').max(120),
   apiKey: z.string().min(1, 'API key is required'),
 });
 
+/**
+ * Multi-instance brique: this is now a pure INSERT — every call creates a new
+ * connector instance for the (entity, slug) pair. To rotate the API key or
+ * rename an existing instance, use `renameConnectorAction` / delete + recreate.
+ */
 export async function saveApiKeyConnectorAction(
   raw: unknown,
 ): Promise<ActionResult<{ id: string }>> {
@@ -1108,38 +1110,17 @@ export async function saveApiKeyConnectorAction(
     }
 
     const db = getDb();
-    const [existing] = await db
-      .select({ id: connectors.id })
-      .from(connectors)
-      .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, parsed.data.slug)));
-
-    const name = parsed.data.name ?? catalog.label;
     // Encrypt idempotently: if value is already encrypted (enc:v1: prefix), keep it.
     const encApiKey = isEncrypted(parsed.data.apiKey)
       ? parsed.data.apiKey
       : encrypt(parsed.data.apiKey);
-
-    if (existing) {
-      await db
-        .update(connectors)
-        .set({
-          name,
-          apiKey: encApiKey,
-          authType: 'api_key',
-          active: true,
-          updatedAt: new Date(),
-        })
-        .where(eq(connectors.id, existing.id));
-      revalidatePath('/connectors');
-      return ok({ id: existing.id });
-    }
 
     const [row] = await db
       .insert(connectors)
       .values({
         entityId: session.entityId,
         slug: parsed.data.slug,
-        name,
+        name: parsed.data.name,
         apiKey: encApiKey,
         authType: 'api_key',
         active: true,
@@ -1185,28 +1166,37 @@ export async function deleteConnectorAction(id: string): Promise<ActionResult<vo
 /** A cached MCP tool descriptor, stored in mcp_servers.available_tools. */
 type McpToolSummary = { name: string; description: string | null };
 
-export type McpServerListEntry = {
-  catalogSlug: string;
+// Multi-instance brique: one instance per row, several rows per slug allowed.
+export type McpServerInstance = {
+  id: string;
+  slug: string;
+  name: string;
+  active: boolean;
+  hasApiKey: boolean;
+  apiKeyLast4: string | null;
+  toolCount: number;
+  createdAt: Date | null;
+};
+
+export type McpCatalogItem = {
+  slug: string;
   label: string;
   description: string;
   docsHint: string;
   keyPrefix: string;
-  /** The connected mcp_servers row, or null if not connected yet. */
-  server: {
-    id: string;
-    active: boolean;
-    hasApiKey: boolean;
-    apiKeyLast4: string | null;
-    toolCount: number;
-    createdAt: Date | null;
-  } | null;
+};
+
+export type McpServersListResponse = {
+  instances: McpServerInstance[];
+  catalog: McpCatalogItem[];
 };
 
 /**
- * List every MCP catalog entry, annotated with the entity's connected
- * mcp_servers row (if any). Never returns the encrypted key.
+ * Return every mcp_servers row for the entity (multi-instance: several
+ * per slug allowed) plus the static MCP_CATALOG for the marketplace.
+ * Never returns the encrypted key.
  */
-export async function listMcpServersAction(): Promise<ActionResult<McpServerListEntry[]>> {
+export async function listMcpServersAction(): Promise<ActionResult<McpServersListResponse>> {
   try {
     const session = await getSession();
     const db = getDb();
@@ -1214,30 +1204,27 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServerList
       .select()
       .from(mcpServers)
       .where(eq(mcpServers.entityId, session.entityId));
-    const bySlug = new Map<string, (typeof rows)[number]>();
-    for (const r of rows) bySlug.set(r.slug, r);
 
-    const entries: McpServerListEntry[] = MCP_CATALOG.map((c) => {
-      const row = bySlug.get(c.slug);
-      return {
-        catalogSlug: c.slug,
-        label: c.label,
-        description: c.description,
-        docsHint: c.docsHint,
-        keyPrefix: c.keyPrefix,
-        server: row
-          ? {
-              id: row.id,
-              active: row.active ?? true,
-              hasApiKey: !!row.apiKey,
-              apiKeyLast4: row.apiKeyLast4 ?? null,
-              toolCount: Array.isArray(row.availableTools) ? row.availableTools.length : 0,
-              createdAt: row.createdAt,
-            }
-          : null,
-      };
-    });
-    return ok(entries);
+    const instances: McpServerInstance[] = rows.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      active: row.active ?? true,
+      hasApiKey: !!row.apiKey,
+      apiKeyLast4: row.apiKeyLast4 ?? null,
+      toolCount: Array.isArray(row.availableTools) ? row.availableTools.length : 0,
+      createdAt: row.createdAt,
+    }));
+
+    const catalog: McpCatalogItem[] = MCP_CATALOG.map((c) => ({
+      slug: c.slug,
+      label: c.label,
+      description: c.description,
+      docsHint: c.docsHint,
+      keyPrefix: c.keyPrefix,
+    }));
+
+    return ok({ instances, catalog });
   } catch (err) {
     console.error('[listMcpServersAction]', err);
     return fail('db_error', 'Failed to load MCP connectors');
@@ -1246,14 +1233,16 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServerList
 
 const CreateMcpServerSchema = z.object({
   slug: z.string().min(1).max(80),
+  name: z.string().min(1, 'Name is required').max(120),
   apiKey: z.string().min(1, 'API key is required'),
 });
 
 /**
  * Connect an MCP catalog entry. Connect-and-verify against the live server
  * BEFORE persisting — a bad key fails loud here and writes no row, so the
- * catalog never shows a dead connector. On success the encrypted key + the
- * discovered tool list are upserted into mcp_servers.
+ * dashboard never shows a dead connector. On success the encrypted key + the
+ * discovered tool list are INSERTED (multi-instance: several rows per slug
+ * allowed; to rotate a key, delete the instance and re-create).
  */
 export async function createMcpServerFromCatalogAction(
   raw: unknown,
@@ -1304,11 +1293,13 @@ export async function createMcpServerFromCatalogAction(
 
     const db = getDb();
     const encApiKey = encrypt(apiKey);
+    // Multi-instance: pure INSERT — the (entity, slug) UNIQUE is gone (migration
+    // 0017), so a user can register several Cortex servers under different names.
     const [row] = await db
       .insert(mcpServers)
       .values({
         entityId: session.entityId,
-        name: catalog.label,
+        name: parsed.data.name,
         slug: catalog.slug,
         transport: catalog.transport,
         url: catalog.serverUrl,
@@ -1319,21 +1310,6 @@ export async function createMcpServerFromCatalogAction(
         availableTools: toolDescriptors,
         active: true,
       })
-      .onConflictDoUpdate({
-        target: [mcpServers.entityId, mcpServers.slug],
-        set: {
-          name: catalog.label,
-          transport: catalog.transport,
-          url: catalog.serverUrl,
-          apiKey: encApiKey,
-          apiKeyLast4: last4(apiKey),
-          authScheme: catalog.authScheme,
-          authParamName: catalog.authParamName,
-          availableTools: toolDescriptors,
-          active: true,
-          updatedAt: new Date(),
-        },
-      })
       .returning({ id: mcpServers.id });
     if (!row) return fail('db_error', 'Insert returned no row');
     revalidatePath('/mcp');
@@ -1341,6 +1317,42 @@ export async function createMcpServerFromCatalogAction(
   } catch (err) {
     console.error('[createMcpServerFromCatalogAction]', err);
     return fail('db_error', 'Failed to save MCP connector');
+  }
+}
+
+/**
+ * Multi-instance brique: rename an MCP server instance. Used by the /mcp
+ * Active Servers list to let users disambiguate
+ * (e.g. "Cogni Cortex" → "Cortex — perso").
+ */
+export async function renameMcpServerAction(
+  mcpServerId: string,
+  name: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(mcpServerId).success) {
+      return fail('validation_failed', 'Invalid MCP server id');
+    }
+    const nameParsed = z.string().min(1, 'Name is required').max(120).safeParse(name);
+    if (!nameParsed.success) {
+      return fail('validation_failed', nameParsed.error.issues[0]?.message ?? 'Invalid name');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'MCP connector not found');
+    await db
+      .update(mcpServers)
+      .set({ name: nameParsed.data, updatedAt: new Date() })
+      .where(eq(mcpServers.id, mcpServerId));
+    revalidatePath('/mcp');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[renameMcpServerAction]', err);
+    return fail('db_error', 'Failed to rename MCP server');
   }
 }
 
@@ -1474,10 +1486,7 @@ export async function setAgentMcpServerAssignmentAction(
       await db
         .delete(agentMcpServers)
         .where(
-          and(
-            eq(agentMcpServers.agentId, agentId),
-            eq(agentMcpServers.mcpServerId, mcpServerId),
-          ),
+          and(eq(agentMcpServers.agentId, agentId), eq(agentMcpServers.mcpServerId, mcpServerId)),
         );
     } else {
       await db
@@ -1576,11 +1585,14 @@ export async function assignCredentialAction(
 }
 
 /**
- * Create-or-assign an OAuth credential to a connector (upsert-style).
+ * Create a new OAuth connector instance bound to a credential.
  *
  * Called from the /connectors page auto-assignment block when the OAuth callback
- * returns ?connectorSlug=X&credentialId=Y. Unlike `assignCredentialAction`, this
- * will INSERT a new connector row if none exists yet for the slug.
+ * returns ?connectorSlug=X&credentialId=Y. Multi-instance brique: this is now
+ * a pure INSERT — every call creates a new connector instance for the slug.
+ * The instance name defaults to the credential's name (set during OAuth
+ * callback, typically the Google/Notion/Airtable account name) and can be
+ * overridden via `name`, then later renamed via `renameConnectorAction`.
  *
  * Security:
  *   - credential ownership verified against session.userId
@@ -1589,6 +1601,7 @@ export async function assignCredentialAction(
 export async function createOrAssignOAuthConnectorAction(
   slug: string,
   credentialId: string,
+  name?: string,
 ): Promise<ActionResult<{ connectorId: string }>> {
   try {
     const session = await getSession();
@@ -1597,6 +1610,9 @@ export async function createOrAssignOAuthConnectorAction(
     }
     if (!z.string().guid().safeParse(credentialId).success) {
       return fail('validation_failed', 'Invalid credential id');
+    }
+    if (name !== undefined && !z.string().min(1).max(120).safeParse(name).success) {
+      return fail('validation_failed', 'Invalid connector name');
     }
 
     const catalogEntry = CONNECTOR_CATALOG.find((c) => c.slug === slug);
@@ -1609,7 +1625,12 @@ export async function createOrAssignOAuthConnectorAction(
 
     // Verify credential ownership + type
     const [existingCred] = await db
-      .select({ id: credentials.id, ownerUserId: credentials.ownerUserId, type: credentials.type })
+      .select({
+        id: credentials.id,
+        ownerUserId: credentials.ownerUserId,
+        type: credentials.type,
+        name: credentials.name,
+      })
       .from(credentials)
       .where(eq(credentials.id, credentialId));
     if (!existingCred) return fail('not_found', 'Credential not found');
@@ -1623,43 +1644,64 @@ export async function createOrAssignOAuthConnectorAction(
       );
     }
 
-    // Check for existing connector row
-    const [existing] = await db
-      .select({ id: connectors.id })
-      .from(connectors)
-      .where(and(eq(connectors.entityId, session.entityId), eq(connectors.slug, slug)));
-
-    let connectorId: string;
-    if (existing) {
-      // Update existing row
-      await db
-        .update(connectors)
-        .set({ credentialId, active: true, updatedAt: new Date() })
-        .where(eq(connectors.id, existing.id));
-      connectorId = existing.id;
-    } else {
-      // Insert new connector row
-      const [row] = await db
-        .insert(connectors)
-        .values({
-          entityId: session.entityId,
-          slug,
-          name: catalogEntry.label,
-          authType: 'oauth2',
-          credentialId,
-          active: true,
-        })
-        .returning({ id: connectors.id });
-      if (!row) return fail('db_error', 'Insert returned no row');
-      connectorId = row.id;
-    }
+    // Multi-instance: pure INSERT, no lookup-and-update. The user can have
+    // multiple connectors of the same slug (e.g. Gmail perso + Gmail boulot).
+    const instanceName = name ?? existingCred.name ?? catalogEntry.label;
+    const [row] = await db
+      .insert(connectors)
+      .values({
+        entityId: session.entityId,
+        slug,
+        name: instanceName,
+        authType: 'oauth2',
+        credentialId,
+        active: true,
+      })
+      .returning({ id: connectors.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
 
     revalidatePath('/connectors');
-    return ok({ connectorId });
+    return ok({ connectorId: row.id });
   } catch (err) {
     console.error('[createOrAssignOAuthConnectorAction]', err);
     const detail = err instanceof Error ? err.message : String(err);
     return fail('db_error', `Failed to assign credential: ${detail}`);
+  }
+}
+
+/**
+ * Multi-instance brique: rename a connector instance. Used by the
+ * /connectors Active Connectors list to let users disambiguate
+ * (e.g. "Gmail" → "Gmail — perso").
+ */
+export async function renameConnectorAction(
+  connectorId: string,
+  name: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(connectorId).success) {
+      return fail('validation_failed', 'Invalid connector id');
+    }
+    const nameParsed = z.string().min(1, 'Name is required').max(120).safeParse(name);
+    if (!nameParsed.success) {
+      return fail('validation_failed', nameParsed.error.issues[0]?.message ?? 'Invalid name');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Connector not found');
+    await db
+      .update(connectors)
+      .set({ name: nameParsed.data, updatedAt: new Date() })
+      .where(eq(connectors.id, connectorId));
+    revalidatePath('/connectors');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[renameConnectorAction]', err);
+    return fail('db_error', 'Failed to rename connector');
   }
 }
 
@@ -2130,10 +2172,7 @@ export async function resetSkillToDefaultAction(id: string): Promise<ActionResul
       .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Skill not found');
     if (existing.defaultContent === null) {
-      return fail(
-        'not_applicable',
-        'No default available — this is a user-created skill',
-      );
+      return fail('not_applicable', 'No default available — this is a user-created skill');
     }
 
     await db

@@ -3,6 +3,7 @@ import { listConnectorsAction, createOrAssignOAuthConnectorAction } from '@/lib/
 import { listCredentialsAction } from '@/lib/credentials.ts';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
 import ConnectorForm, { type CompatibleCredential } from './ConnectorForm.tsx';
+import ConnectorAddForm from './ConnectorAddForm.tsx';
 import OAuthNotify from './OAuthNotify.tsx';
 import OAuthErrorBanner from './OAuthErrorBanner.tsx';
 
@@ -58,13 +59,9 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
 
   // ── Server-side credential auto-assignment ────────────────────────────────
   // When the OAuth callback redirects back with ?connectorSlug=X&credentialId=Y
-  // we create-or-assign the credential to the connector, then redirect clean.
+  // we create a new connector instance for that credential, then redirect clean.
   if (sp.connectorSlug && sp.credentialId) {
-    // createOrAssignOAuthConnectorAction upserts: it inserts a new connector row
-    // if none exists yet (brand-new flow), or updates the existing one. This
-    // ensures the card always shows CONNECTED + Refresh now after a wizard flow.
     await createOrAssignOAuthConnectorAction(sp.connectorSlug, sp.credentialId);
-    // Redirect clean — strip params, pass a just_connected flag for the toast.
     redirect(`/connectors?just_connected=${sp.connectorSlug}`);
   }
 
@@ -76,8 +73,7 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
     ? (CONNECTOR_CATALOG.find((c) => c.slug === connectedSlug)?.label ?? connectedSlug)
     : null;
 
-  // Resolve error message for ?oauth_error={code}. If the provider supplied an
-  // `error_description` (forwarded as `detail`) we append it for diagnostic precision.
+  // Resolve error message for ?oauth_error={code}.
   const baseError = sp.oauth_error
     ? (OAUTH_ERROR_MESSAGES[sp.oauth_error] ?? OAUTH_ERROR_MESSAGES['unknown'])
     : null;
@@ -95,6 +91,8 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
     );
   }
 
+  const { instances, catalog } = result.data;
+
   // ── Fetch all credentials once, group by type for passing to each form ────
   const credentialsResult = await listCredentialsAction();
   const allCredentials = credentialsResult.ok ? credentialsResult.data : [];
@@ -107,11 +105,8 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
     credsByType.set(cred.type, list);
   }
 
-  const connectedCount = result.data.filter((e) => e.connector?.active).length;
-  const total = result.data.length;
-
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-8 max-w-4xl">
       {/* OAuth success — fires a toast and strips the URL so refresh doesn't re-fire. */}
       <OAuthNotify successLabel={connectedLabel} errorMessage={errorMessage} />
 
@@ -124,7 +119,7 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
         <div>
           <h1 className="text-2xl font-bold text-white">Connectors</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {connectedCount} of {total} connected
+            {instances.length} active instance{instances.length === 1 ? '' : 's'}
           </p>
         </div>
         <a
@@ -135,31 +130,64 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
         </a>
       </div>
 
-      <div className="space-y-3">
-        {result.data.map((entry) => {
-          const catalogEntry = CONNECTOR_CATALOG.find((c) => c.slug === entry.catalogSlug);
-          // For OAuth entries, find compatible credentials by credentialType.
-          const compatibleCredentials = catalogEntry?.credentialType
-            ? (credsByType.get(catalogEntry.credentialType) ?? [])
-            : [];
+      {/* ── Active Connectors ─────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">
+          Active Connectors
+        </h2>
 
-          return (
-            <ConnectorForm
-              key={entry.catalogSlug}
-              entry={entry}
-              compatibleCredentials={compatibleCredentials}
-              catalogEntry={
-                catalogEntry ?? {
-                  slug: entry.catalogSlug,
-                  label: entry.label,
-                  authType: entry.authType,
-                  docsHint: entry.docsHint,
-                }
-              }
-            />
-          );
-        })}
-      </div>
+        {instances.length === 0 ? (
+          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
+            No active connectors yet. Add one from the Marketplace below.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {instances.map((instance) => {
+              const catalogEntry = catalog.find((c) => c.slug === instance.slug);
+              const compatibleCredentials = catalogEntry?.credentialType
+                ? (credsByType.get(catalogEntry.credentialType) ?? [])
+                : [];
+              return (
+                <ConnectorForm
+                  key={instance.id}
+                  instance={instance}
+                  catalogEntry={
+                    catalogEntry ?? {
+                      slug: instance.slug,
+                      label: instance.name,
+                      authType: instance.authType as 'api_key' | 'oauth2',
+                      docsHint: '',
+                      credentialType: instance.credentialType,
+                    }
+                  }
+                  compatibleCredentials={compatibleCredentials}
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* ── Marketplace ───────────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">
+          Marketplace
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {catalog.map((item) => {
+            const compatibleCredentials = item.credentialType
+              ? (credsByType.get(item.credentialType) ?? [])
+              : [];
+            return (
+              <ConnectorAddForm
+                key={item.slug}
+                catalogItem={item}
+                compatibleCredentials={compatibleCredentials}
+              />
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }

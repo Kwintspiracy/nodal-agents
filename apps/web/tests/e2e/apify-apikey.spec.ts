@@ -1,9 +1,11 @@
 /**
- * Playwright e2e — Apify api_key connector smoke test (Brique 34 v3).
+ * Playwright e2e — Apify api_key connector smoke test (multi-instance UI).
  *
- * Apify uses the simple api_key auth flow (same as Notion internal).
- * This test confirms the new catalog entry renders correctly and the
- * api_key connect flow works end-to-end.
+ * Apify uses the simple api_key auth flow. This test confirms:
+ *  1. The Apify card appears in the Marketplace section.
+ *  2. Clicking "+ Add" expands an inline form with name + apiKey fields.
+ *  3. Submitting creates an Active Connector instance with the given name.
+ *  4. The instance is cleaned up via the Active list's Delete button + ConfirmDialog.
  *
  * Requires a running Nodal-Agents stack. Skipped automatically if unreachable.
  */
@@ -11,59 +13,121 @@
 import { test, expect } from '@playwright/test';
 import { requireLiveStack } from './helpers.ts';
 
+const CONNECTOR_LABEL = 'Apify';
+const INSTANCE_NAME = 'Apify — e2e smoke';
+const TEST_API_KEY = 'apify_api_e2e_test_key_12345678';
+
 test.beforeAll(async () => {
   await requireLiveStack();
 });
 
+test.describe.configure({ timeout: 60_000 });
+
 test.describe('Apify api_key connector smoke test', () => {
-  test('catalog entry renders; connect with api_key shows connected', async ({ page }) => {
-    // ── 1. Navigate to /connectors ───────────────────────────────────────────
+  test('marketplace card expands; connect with name + apiKey creates active instance', async ({
+    page,
+  }) => {
+    // ── 0. Pre-cleanup: delete any leftover instance from a prior run ────────────
     await page.goto('/connectors');
+    await page.waitForLoadState('networkidle');
 
-    // Find the Apify card.
-    const apifyCard = page
-      .locator('.rounded-xl')
-      .filter({ has: page.getByRole('heading', { name: 'Apify', level: 3 }) });
-    await expect(apifyCard).toBeVisible({ timeout: 10_000 });
+    async function deleteIfPresent(name: string) {
+      const activeSectionEl = page.locator('section').filter({
+        has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
+      });
+      if (!(await activeSectionEl.isVisible().catch(() => false))) return;
 
-    // Disconnect if already connected.
-    const disconnectBtn = apifyCard.getByRole('button', { name: /disconnect/i });
-    if (await disconnectBtn.isVisible()) {
-      await disconnectBtn.click();
-      await page
-        .getByRole('button', { name: /disconnect/i })
-        .last()
-        .click();
-      await page.waitForTimeout(1_000);
-      await page.reload();
-      await expect(apifyCard).toBeVisible({ timeout: 10_000 });
+      const instanceCard = activeSectionEl
+        .locator('.rounded-xl')
+        .filter({ has: page.getByRole('heading', { name, level: 3, exact: true }) })
+        .first();
+
+      if (!(await instanceCard.isVisible().catch(() => false))) return;
+
+      const deleteBtn = instanceCard.getByRole('button', { name: /^delete$/i });
+      if (!(await deleteBtn.isVisible().catch(() => false))) return;
+
+      await deleteBtn.click();
+      const dialog = page.getByRole('dialog');
+      await dialog.waitFor({ state: 'visible', timeout: 5_000 });
+      await dialog.getByRole('button', { name: /^delete$/i }).click();
+      await expect(page.getByText(`${name} removed`)).toBeVisible({ timeout: 10_000 });
+      await page.waitForTimeout(300);
     }
 
-    // ── 2. Click Connect ──────────────────────────────────────────────────────
-    await apifyCard.getByRole('button', { name: /^connect$/i }).click();
+    await deleteIfPresent(INSTANCE_NAME);
 
-    // The api_key input should appear (no wizard for api_key connectors).
-    const apiKeyInput = apifyCard.locator('input[name="apiKey"]');
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    // ── 1. Find the Apify Marketplace card ──────────────────────────────────────
+    // Scope to the Marketplace <section> to avoid matching Active Connector cards.
+    const marketplaceSection = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Marketplace', level: 2 }),
+    });
+
+    await expect(marketplaceSection).toBeVisible({ timeout: 10_000 });
+
+    const marketplaceCard = marketplaceSection
+      .locator('.rounded-xl')
+      .filter({ has: page.getByRole('heading', { name: CONNECTOR_LABEL, level: 3, exact: true }) });
+
+    await expect(marketplaceCard).toBeVisible({ timeout: 10_000 });
+
+    // ── 2. Click "+ Add" ─────────────────────────────────────────────────────────
+    await marketplaceCard.getByRole('button', { name: /^\+ add$/i }).click();
+
+    const nameInput = marketplaceCard.locator('input[name="name"]');
+    const apiKeyInput = marketplaceCard.locator('input[name="apiKey"]');
+
+    await expect(nameInput).toBeVisible({ timeout: 5_000 });
     await expect(apiKeyInput).toBeVisible({ timeout: 5_000 });
 
     // No wizard dialog should have opened.
     await expect(page.getByRole('dialog')).not.toBeVisible();
 
-    // ── 3. Fill in test api key ───────────────────────────────────────────────
-    const TEST_API_KEY = 'apify_api_e2e_test_key_12345678';
+    // ── 3. Fill name + api key ───────────────────────────────────────────────────
+    await nameInput.fill(INSTANCE_NAME);
     await apiKeyInput.fill(TEST_API_KEY);
 
-    // ── 4. Submit ─────────────────────────────────────────────────────────────
-    await apifyCard.getByRole('button', { name: /^connect$/i }).click();
+    // ── 4. Submit ────────────────────────────────────────────────────────────────
+    await marketplaceCard.getByRole('button', { name: /^connect$/i }).click();
 
-    // ── 5. Assert success toast ───────────────────────────────────────────────
-    await expect(page.getByText(/apify connected/i)).toBeVisible({ timeout: 10_000 });
+    // ── 5. Assert success toast ──────────────────────────────────────────────────
+    // ConnectorAddForm toasts "${name} connected" on success.
+    await expect(page.getByText(`${INSTANCE_NAME} connected`)).toBeVisible({ timeout: 10_000 });
 
-    // ── 6. Assert connected status chip ──────────────────────────────────────
-    await expect(apifyCard.getByText(/connected/i).first()).toBeVisible({ timeout: 10_000 });
+    // Wait for form to close (open = false after success).
+    await expect(nameInput).not.toBeVisible({ timeout: 5_000 });
 
-    // ── 7. No OAuth-specific controls (api_key connector) ────────────────────
-    await expect(apifyCard.getByRole('button', { name: /refresh now/i })).not.toBeVisible();
-    await expect(apifyCard.getByRole('button', { name: /reconnect/i })).not.toBeVisible();
+    // ── 6. Reload and assert instance appears in Active Connectors ───────────────
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    const activeSection = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
+    });
+
+    await expect(activeSection).toBeVisible({ timeout: 10_000 });
+    await expect(activeSection.getByRole('heading', { name: INSTANCE_NAME, level: 3 })).toBeVisible(
+      { timeout: 10_000 },
+    );
+
+    // ── 7. Clean up: delete the created instance ─────────────────────────────────
+    const activeSectionLoc = page.locator('section').filter({
+      has: page.getByRole('heading', { name: 'Active Connectors', level: 2 }),
+    });
+    const instanceCard = activeSectionLoc
+      .locator('.rounded-xl')
+      .filter({ has: page.getByRole('heading', { name: INSTANCE_NAME, level: 3, exact: true }) })
+      .first();
+
+    await instanceCard.getByRole('button', { name: /^delete$/i }).click();
+
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor({ state: 'visible', timeout: 5_000 });
+    await dialog.getByRole('button', { name: /^delete$/i }).click();
+
+    await expect(page.getByText(`${INSTANCE_NAME} removed`)).toBeVisible({ timeout: 10_000 });
   });
 });

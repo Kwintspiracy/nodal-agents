@@ -19,12 +19,16 @@ test.describe('login + dashboard navigation', () => {
     await page.goto('/agents');
 
     // Labels as rendered by Sidebar.tsx NAV_ITEMS (source of truth).
+    // NOTE: 'Connectors' was split into two entries after the multi-instance brique:
+    //   'API Connectors' → /connectors
+    //   'MCP Connectors' → /mcp
     for (const label of [
       'Stats',
       'Agents',
       'Jobs',
       'Memories',
-      'Connectors',
+      'API Connectors',
+      'MCP Connectors',
       'Skills',
       'Automations',
       'Approvals',
