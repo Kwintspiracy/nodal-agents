@@ -41,6 +41,7 @@ import { requireAuth } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
+import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG } from './mcp-catalog.ts';
 import { connectMcp } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
@@ -106,6 +107,15 @@ const CreateAgentSchema = z
       .max(1024)
       .optional()
       .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
+    // Optional avatar path. Empty string → null. Validated against the
+    // bundled catalog in the action body (not via Zod refine) so the
+    // error message is "Unknown avatar" rather than a regex blob.
+    avatarUrl: z
+      .string()
+      .max(200)
+      .optional()
+      .nullable()
+      .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
   })
   .refine((d) => d.role !== 'worker' || d.subAgentIds.length === 0, {
     message: 'Sub-agents only apply when role is router or planner',
@@ -135,25 +145,183 @@ export type AgentRow = {
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
+  avatarUrl: string | null;
   createdAt: Date | null;
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
   workspaceRootPath: string | null;
+  position: number;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
   try {
     const session = await getSession();
     const db = getDb();
+    // Position-first ordering (Brique A): the user can drag agents around
+    // on the /agents page; that user-controlled order should propagate to
+    // every dropdown / picker too (Jobs filter, Memories selector, etc.).
+    // `desc(createdAt)` is the tiebreaker — newly-created agents float to
+    // the top when nothing else discriminates them.
     const rows = await db
       .select()
       .from(agents)
       .where(eq(agents.entityId, session.entityId))
-      .orderBy(desc(agents.createdAt));
+      .orderBy(agents.position, agents.name, desc(agents.createdAt));
     return ok(rows as AgentRow[]);
   } catch (err) {
     console.error('[listAgentsAction]', err);
     return fail('db_error', 'Failed to load agents');
+  }
+}
+
+/**
+ * Grouped agent view for the /agents page.
+ *
+ * Layout the UI renders:
+ *   - One section per orchestrator (sorted by position, then name), with
+ *     the orchestrator as the header and its sub-agents listed under it
+ *     (also sorted by position).
+ *   - A final "Standalone" section for workers that no orchestrator owns.
+ *
+ * An orchestrator that has no sub-agents still gets its own section (just
+ * the header) — it's still a parent in role, even if currently empty.
+ *
+ * Worker rows can technically be owned by multiple orchestrators
+ * (agent_assignments doesn't enforce uniqueness on sub_agent_id). When
+ * that happens we surface the worker under EACH of its parents — the
+ * dashboard's mental model is "what team does this agent belong to" and
+ * a multi-team agent legitimately appears in both.
+ */
+export type AgentGroup = {
+  orchestrator: AgentRow | null;
+  workers: AgentRow[];
+};
+
+export async function listAgentGroupsAction(): Promise<ActionResult<AgentGroup[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    const allAgents = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.entityId, session.entityId))
+      .orderBy(agents.position, agents.name);
+
+    const allAssignments = await db
+      .select({
+        orchestratorId: agentAssignments.orchestratorId,
+        subAgentId: agentAssignments.subAgentId,
+      })
+      .from(agentAssignments)
+      .where(eq(agentAssignments.entityId, session.entityId));
+
+    const byId = new Map<string, AgentRow>();
+    for (const a of allAgents) byId.set(a.id, a as AgentRow);
+
+    // childIds per orchestrator (set so duplicates from row-level repeats
+    // collapse). Iteration order = order of first appearance in
+    // allAssignments, but we re-sort by position below before rendering.
+    const childIdsByParent = new Map<string, Set<string>>();
+    const childOf = new Set<string>(); // every agent that has at least one parent
+    for (const a of allAssignments) {
+      const bucket = childIdsByParent.get(a.orchestratorId) ?? new Set<string>();
+      bucket.add(a.subAgentId);
+      childIdsByParent.set(a.orchestratorId, bucket);
+      childOf.add(a.subAgentId);
+    }
+
+    const groups: AgentGroup[] = [];
+
+    // 1. One group per orchestrator, in their own `position` order.
+    const orchestrators = allAgents.filter((a) => a.role === 'orchestrator') as AgentRow[];
+    for (const orch of orchestrators) {
+      const ids = childIdsByParent.get(orch.id) ?? new Set();
+      const workers = Array.from(ids)
+        .map((id) => byId.get(id))
+        .filter((w): w is AgentRow => Boolean(w))
+        .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+      groups.push({ orchestrator: orch, workers });
+    }
+
+    // 2. Standalone bucket: any non-orchestrator agent that doesn't appear
+    //    as someone's sub_agent. Skip if empty so the section header isn't
+    //    rendered on workspaces that don't need it.
+    const standalone = (allAgents as AgentRow[])
+      .filter((a) => a.role !== 'orchestrator' && !childOf.has(a.id))
+      .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+    if (standalone.length > 0) {
+      groups.push({ orchestrator: null, workers: standalone });
+    }
+
+    return ok(groups);
+  } catch (err) {
+    console.error('[listAgentGroupsAction]', err);
+    return fail('db_error', 'Failed to load agent groups');
+  }
+}
+
+/**
+ * Reorder agents by writing fresh position values to a contiguous slice
+ * of IDs. Caller passes the IDs in the desired new order; the action
+ * assigns `position = index * 10` so subsequent inserts at fractional
+ * positions are cheap (no global renumber needed).
+ *
+ * Cross-entity safety: every ID must belong to the caller's entity. If
+ * even one doesn't, we refuse the whole batch — partial reorders are
+ * confusing and we'd rather fail loud.
+ */
+export async function reorderAgentsAction(orderedIds: string[]): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+      return fail('validation_failed', 'No agent ids provided');
+    }
+    for (const id of orderedIds) {
+      if (!z.string().guid().safeParse(id).success) {
+        return fail('validation_failed', `Invalid agent id: ${id}`);
+      }
+    }
+
+    // Deduplicate while preserving order — accidental dupes shouldn't fail,
+    // but only the first occurrence sets the position.
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    for (const id of orderedIds) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        unique.push(id);
+      }
+    }
+
+    const db = getDb();
+    const owned = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.entityId, session.entityId), inArray(agents.id, unique)));
+    if (owned.length !== unique.length) {
+      return fail('not_found', 'One or more agents not in this workspace');
+    }
+
+    // Sequential UPDATEs — Drizzle has no batched-CASE-WHEN UPDATE helper.
+    // For N ≤ ~50 agents (realistic ceiling) this is fast enough and keeps
+    // the action readable. A future drag-and-drop reorder of 1000 rows
+    // would want a CTE; not our problem today.
+    const now = new Date();
+    for (let i = 0; i < unique.length; i++) {
+      const id = unique[i];
+      if (!id) continue;
+      await db
+        .update(agents)
+        .set({ position: i * 10, updatedAt: now })
+        .where(eq(agents.id, id));
+    }
+
+    revalidatePath('/agents');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[reorderAgentsAction]', err);
+    return fail('db_error', 'Failed to reorder agents');
   }
 }
 
@@ -163,6 +331,11 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
     const parsed = CreateAgentSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    // Avatar must come from the bundled catalog — refuse external URLs,
+    // path traversal, and anything else that didn't ship with the app.
+    if (!isValidAvatarUrl(parsed.data.avatarUrl)) {
+      return fail('validation_failed', 'Unknown avatar — pick one from the gallery');
     }
     const { role, subAgentIds } = parsed.data;
     const db = getDb();
@@ -197,6 +370,7 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
         role: dbRole,
         orchestratorMode,
         workspaceRootPath: parsed.data.workspaceRootPath,
+        avatarUrl: parsed.data.avatarUrl,
       })
       .returning({ id: agents.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -260,6 +434,13 @@ const UpdateAgentSchema = z.object({
     .max(1024)
     .optional()
     .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
+  // Avatar — symmetric with create. Catalog validation in the action body.
+  avatarUrl: z
+    .string()
+    .max(200)
+    .optional()
+    .nullable()
+    .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
   // slug NOT here — it is a stable identifier. Excluded at schema level so
   // even a raw payload with a slug field is silently stripped by safeParse.
 });
@@ -280,8 +461,21 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { id, name, personality, model, llmKeyId, role, subAgentIds, workspaceRootPath } =
-      parsed.data;
+    // Catalog avatar check — refuse external URLs or bogus paths.
+    if (!isValidAvatarUrl(parsed.data.avatarUrl)) {
+      return fail('validation_failed', 'Unknown avatar — pick one from the gallery');
+    }
+    const {
+      id,
+      name,
+      personality,
+      model,
+      llmKeyId,
+      role,
+      subAgentIds,
+      workspaceRootPath,
+      avatarUrl,
+    } = parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
@@ -294,6 +488,8 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     const { dbRole, orchestratorMode } = mapRoleToDb(role);
 
     // Update core fields. llmKeyId: undefined means "don't touch", null clears.
+    // avatarUrl undefined → don't touch (legacy clients don't send it); null
+    // explicitly clears the avatar; a string sets it.
     const patch: Record<string, unknown> = {
       name,
       personality,
@@ -305,6 +501,9 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     };
     if (llmKeyId !== undefined) {
       patch['llmKeyId'] = llmKeyId;
+    }
+    if (avatarUrl !== undefined) {
+      patch['avatarUrl'] = avatarUrl;
     }
 
     await db.update(agents).set(patch).where(eq(agents.id, id));

@@ -16,6 +16,7 @@ import {
   type AgentMcpServerRow,
 } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
+import AvatarPicker from './AvatarPicker.tsx';
 import {
   detectModelProviders,
   isModelCompatibleWithProvider,
@@ -465,10 +466,7 @@ function McpServerGrid({ agentId, servers }: McpServerGridProps) {
             : `${state.enabledTools.length} of ${allToolNames.length} tools`;
 
         return (
-          <div
-            key={s.mcpServerId}
-            className="rounded-lg border border-neutral-800 overflow-hidden"
-          >
+          <div key={s.mcpServerId} className="rounded-lg border border-neutral-800 overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2">
               <input
                 type="checkbox"
@@ -579,6 +577,11 @@ export default function AgentForm(props: Props) {
     (isEdit ? props.initial.llmKeyId : null) ?? activeKeys[0]?.id ?? '';
   const [llmKeyId, setLlmKeyId] = useState<string>(initialLlmKeyId);
   const [model, setModel] = useState<string>(isEdit ? (props.initial.model ?? '') : '');
+  // Avatar URL — controlled state because the picker is non-FormData (modal).
+  // null = no avatar (initials fallback in display components).
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(
+    isEdit ? (props.initial.avatarUrl ?? null) : null,
+  );
 
   const selectedKey = useMemo(
     () => props.llmKeys.find((k) => k.id === llmKeyId) ?? null,
@@ -663,6 +666,7 @@ export default function AgentForm(props: Props) {
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
         workspaceRootPath: fd.get('workspaceRootPath') ?? '',
+        avatarUrl,
       };
       startTransition(async () => {
         const result = await updateAgentAction(payload);
@@ -683,6 +687,7 @@ export default function AgentForm(props: Props) {
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
         workspaceRootPath: fd.get('workspaceRootPath') ?? '',
+        avatarUrl,
       };
       startTransition(async () => {
         const result = await createAgentAction(payload);
@@ -696,6 +701,7 @@ export default function AgentForm(props: Props) {
         setSubAgentIds([]);
         setLlmKeyId(activeKeys[0]?.id ?? '');
         setModel('');
+        setAvatarUrl(null);
         setOpen(false);
       });
     }
@@ -795,6 +801,8 @@ export default function AgentForm(props: Props) {
             />
           </div>
         </div>
+
+        <AvatarPicker value={avatarUrl} onChange={setAvatarUrl} />
 
         <div>
           <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-personality">
@@ -1040,6 +1048,8 @@ export default function AgentForm(props: Props) {
                   />
                 </div>
               </div>
+
+              <AvatarPicker value={avatarUrl} onChange={setAvatarUrl} />
 
               <div>
                 <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-personality">

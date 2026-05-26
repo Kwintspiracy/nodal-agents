@@ -494,6 +494,79 @@ describe('listAgentsAction', () => {
   });
 });
 
+describe('reorderAgentsAction', () => {
+  it('rejects an empty array', async () => {
+    const { reorderAgentsAction } = await import('../src/lib/actions.ts');
+    const r = await reorderAgentsAction([]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects invalid uuids in the list', async () => {
+    const { reorderAgentsAction } = await import('../src/lib/actions.ts');
+    const r = await reorderAgentsAction(['aaaaaaaa-0000-0000-0000-000000000001', 'not-a-uuid']);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('refuses when ownership check returns fewer rows than requested', async () => {
+    // Only 1 row owned out of 2 requested → cross-entity attempt, fail loud.
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000001' }]) as typeof currentDb;
+    const { reorderAgentsAction } = await import('../src/lib/actions.ts');
+    const r = await reorderAgentsAction([
+      'aaaaaaaa-0000-0000-0000-000000000001',
+      'aaaaaaaa-0000-0000-0000-000000000002',
+    ]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('issues UPDATEs in order when all rows are owned', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000001' },
+      { id: 'aaaaaaaa-0000-0000-0000-000000000002' },
+    ]) as typeof currentDb;
+    const { reorderAgentsAction } = await import('../src/lib/actions.ts');
+    const r = await reorderAgentsAction([
+      'aaaaaaaa-0000-0000-0000-000000000001',
+      'aaaaaaaa-0000-0000-0000-000000000002',
+    ]);
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    // Two UPDATEs expected — one per id.
+    expect(updateSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('deduplicates accidental repeats while preserving first-seen order', async () => {
+    // The action should ignore the second occurrence of id-A. The ownership
+    // SELECT only needs to verify 2 distinct ids exist.
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000001' },
+      { id: 'aaaaaaaa-0000-0000-0000-000000000002' },
+    ]) as typeof currentDb;
+    const { reorderAgentsAction } = await import('../src/lib/actions.ts');
+    const r = await reorderAgentsAction([
+      'aaaaaaaa-0000-0000-0000-000000000001',
+      'aaaaaaaa-0000-0000-0000-000000000002',
+      'aaaaaaaa-0000-0000-0000-000000000001', // duplicate
+    ]);
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    // Still only 2 UPDATEs — the duplicate was collapsed.
+    expect(updateSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('listAgentGroupsAction', () => {
+  it('returns ok with array (empty workspace)', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listAgentGroupsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentGroupsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual([]);
+  });
+});
+
 describe('listJobsAction', () => {
   it('returns ok with array', async () => {
     currentDb = makeDb([

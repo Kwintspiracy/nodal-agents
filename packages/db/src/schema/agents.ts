@@ -57,11 +57,17 @@ export const agents = pgTable(
     // vault, another on a code repo). Resolution at tool-call time runs
     // through realpath + boundary check (see file-ops/workspace.ts).
     workspaceRootPath: text('workspace_root_path'),
+    // User-controlled order on the /agents page (Brique A, migration 0019).
+    // Default 0 — ties are broken by `name ASC` in the list query. Newly
+    // created agents land at the front of their group by default; the user
+    // can adjust via the ↑/↓ buttons in the UI.
+    position: integer('position').default(0).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [
     index('idx_agents_entity_id').on(table.entityId),
+    index('idx_agents_position').on(table.position),
     check('agents_role_check', sql`${table.role} IN ('agent', 'orchestrator', 'system')`),
     check(
       'agents_orchestrator_mode_check',
