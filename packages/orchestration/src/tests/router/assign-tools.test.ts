@@ -152,6 +152,91 @@ describe('generateAssignTools', () => {
     expect(tools[0]?.description).toContain('My Custom Skill');
   });
 
+  it('tool description includes sub-agent MCP server tools (Stripe/Cogni/etc)', async () => {
+    // Regression for the Stripe/Conciergus pattern (2026-05-26): without this
+    // the `assign_<child>` tool description omits MCP capabilities and the
+    // orchestrator's LLM refuses to delegate. Symmetric with team-block.ts.
+    const { entityId } = await seedEntity(db);
+    const orch = await seedOrchestrator(db, entityId, `orch-mcp-desc-${Date.now()}`);
+    const w = await seedWorker(db, entityId, `test-mcp-desc-worker-${Date.now()}`);
+    await assignChild(db, orch.id, w.id, entityId);
+
+    const { mcpServers, agentMcpServers } = await import('@nodal-agents/db');
+    const [server] = await db
+      .insert(mcpServers)
+      .values({
+        entityId,
+        name: 'Stripe Test',
+        slug: 'stripe',
+        transport: 'http',
+        url: 'https://mcp.stripe.com',
+        // See note in team-block.test.ts — auth scheme irrelevant here.
+        authScheme: 'header',
+        authParamName: 'x-api-key',
+        availableTools: [
+          { name: 'list_customers', description: 'List recent customers' },
+          { name: 'retrieve_balance', description: 'Read account balance' },
+        ],
+        active: true,
+      })
+      .returning();
+    await db.insert(agentMcpServers).values({
+      entityId,
+      agentId: w.id,
+      mcpServerId: server!.id,
+      enabledTools: null,
+    });
+
+    const tools = await generateAssignTools(orch.id as AgentId, db);
+    const desc = tools[0]?.description ?? '';
+    expect(desc).toContain('Tools:');
+    expect(desc).toContain('stripe');
+    expect(desc).toContain('stripe__list_customers');
+    expect(desc).toContain('stripe__retrieve_balance');
+  });
+
+  it('respects enabled_tools whitelist in MCP server descriptions', async () => {
+    // If the user disables specific MCP tools per-agent, the orchestrator
+    // must NOT see them in the assign description — otherwise it would
+    // delegate work the child can't actually execute.
+    const { entityId } = await seedEntity(db);
+    const orch = await seedOrchestrator(db, entityId, `orch-mcp-filter-${Date.now()}`);
+    const w = await seedWorker(db, entityId, `test-mcp-filter-worker-${Date.now()}`);
+    await assignChild(db, orch.id, w.id, entityId);
+
+    const { mcpServers, agentMcpServers } = await import('@nodal-agents/db');
+    const [server] = await db
+      .insert(mcpServers)
+      .values({
+        entityId,
+        name: 'Cogni Cortex Test',
+        slug: 'cogni-cortex',
+        transport: 'http',
+        url: 'https://cogni-web-psi.vercel.app/api/mcp',
+        authScheme: 'header',
+        authParamName: 'x-api-key',
+        availableTools: [
+          { name: 'get_home', description: null },
+          { name: 'post', description: null },
+          { name: 'delete_post', description: null },
+        ],
+        active: true,
+      })
+      .returning();
+    await db.insert(agentMcpServers).values({
+      entityId,
+      agentId: w.id,
+      mcpServerId: server!.id,
+      enabledTools: ['get_home', 'post'], // delete_post disabled
+    });
+
+    const tools = await generateAssignTools(orch.id as AgentId, db);
+    const desc = tools[0]?.description ?? '';
+    expect(desc).toContain('cogni_cortex__get_home');
+    expect(desc).toContain('cogni_cortex__post');
+    expect(desc).not.toContain('cogni_cortex__delete_post');
+  });
+
   it('tool execute() throws DelegationPendingError (sentinel for runner)', async () => {
     const { entityId } = await seedEntity(db);
     const orch = await seedOrchestrator(db, entityId, `orch-exec-${Date.now()}`);

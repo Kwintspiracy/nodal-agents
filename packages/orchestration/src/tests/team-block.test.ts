@@ -256,6 +256,60 @@ describe('buildTeamBlock', () => {
     expect(block).toMatch(/notion_/); // at least one notion_* tool slug
   });
 
+  it('includes sub-agent MCP server tools so the orchestrator can route Stripe/Cogni/etc requests', async () => {
+    // Regression for the Stripe/Conciergus pattern (2026-05-26): Conciergus
+    // refused 6× to delegate "tu peux te connecter à Stripe ?" to Summarisus
+    // because Stripe was attached as an MCP server (not as a connector) and
+    // therefore invisible in the ## Your team block. The team block must
+    // surface each child's MCP inventory so the orchestrator can route.
+    const { entityId } = await seedContext(db);
+    const orch = await seedAgent(
+      db,
+      entityId,
+      `test-orch-mcp-tools-${Date.now()}`,
+      'orchestrator',
+      'router',
+    );
+    const w = await seedAgent(db, entityId, `test-mcp-worker-${Date.now()}`, 'agent');
+    await assignChild(db, orch.id, w.id, entityId);
+
+    // Seed an MCP server with two available tools, then assign it to the worker.
+    const { mcpServers, agentMcpServers } = await import('@nodal-agents/db');
+    const [server] = await db
+      .insert(mcpServers)
+      .values({
+        entityId,
+        name: 'Stripe Test',
+        slug: 'stripe',
+        transport: 'http',
+        url: 'https://mcp.stripe.com',
+        // 'header' rather than 'bearer' so this test stays compatible with
+        // older test-DB snapshots whose check constraint predates migration
+        // 0018. Auth scheme is irrelevant to what we assert here.
+        authScheme: 'header',
+        authParamName: 'x-api-key',
+        availableTools: [
+          { name: 'list_customers', description: 'List recent customers' },
+          { name: 'retrieve_balance', description: 'Read account balance' },
+        ],
+        active: true,
+      })
+      .returning();
+    await db.insert(agentMcpServers).values({
+      entityId,
+      agentId: w.id,
+      mcpServerId: server!.id,
+      enabledTools: null, // all enabled
+    });
+
+    const block = await buildTeamBlock(orch.id as AgentId, db);
+    // Block must surface the server slug AND the namespaced tool names.
+    expect(block).toContain('Tools:');
+    expect(block).toContain('stripe');
+    expect(block).toContain('stripe__list_customers');
+    expect(block).toContain('stripe__retrieve_balance');
+  });
+
   it('does not contain hardcoded agent slugs (invariant 1 spot-check)', async () => {
     const { entityId } = await seedContext(db);
     const orch = await seedAgent(

@@ -10,6 +10,8 @@ import {
   agentSkills,
   agentConnectorAssignments,
   connectors as connectorsTable,
+  agentMcpServers,
+  mcpServers,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import type { AgentId, AnyDrizzleDb } from './types';
@@ -133,10 +135,62 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     }
   }
 
+  // Load MCP server inventories — same rationale as connectors. MCP servers
+  // are a separate code path from connectors, so without this loop the
+  // orchestrator has zero info about its children's MCP capabilities.
+  // Empirically observed (2026-05-26): a router orchestrator refused 6× to
+  // delegate a payments-API request to a child that had the matching MCP
+  // server attached, because the MCP inventory was invisible here.
+  const mcpRows = await Promise.all(
+    childIds.map((id) =>
+      db
+        .select({
+          agentId: agentMcpServers.agentId,
+          serverSlug: mcpServers.slug,
+          enabledTools: agentMcpServers.enabledTools,
+          availableTools: mcpServers.availableTools,
+          serverActive: mcpServers.active,
+        })
+        .from(agentMcpServers)
+        .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
+        .where(eq(agentMcpServers.agentId, id as string)),
+    ),
+  );
+
+  // For each child: list of (server-slug, namespaced tool names enabled).
+  // Tool names match the runtime convention `<sanitized-slug>__<original-name>`
+  // (see packages/adapters/mcp/src/tools.ts) so the orchestrator sees the
+  // exact tool identifier the child agent has at runtime.
+  const mcpMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  for (const batch of mcpRows) {
+    for (const r of batch) {
+      if (r.serverActive === false) continue;
+      const prefix = r.serverSlug.replace(/-/g, '_');
+      const available = Array.isArray(r.availableTools)
+        ? (r.availableTools as Array<{ name?: unknown }>)
+            .map((t) => (t && typeof t.name === 'string' ? t.name : null))
+            .filter((n): n is string => n !== null)
+        : [];
+      if (available.length === 0) continue;
+      const enabled = Array.isArray(r.enabledTools)
+        ? new Set((r.enabledTools as unknown[]).filter((n): n is string => typeof n === 'string'))
+        : null;
+      const kept = enabled === null ? available : available.filter((n) => enabled.has(n));
+      if (kept.length === 0) continue;
+      const toolNames = kept.map((n) => `${prefix}__${n}`);
+      const existing = mcpMap.get(r.agentId) ?? [];
+      existing.push({ slug: r.serverSlug, toolNames });
+      mcpMap.set(r.agentId, existing);
+    }
+  }
+
   function formatConnectorsTag(subAgentId: string): string {
-    const list = connectorMap.get(subAgentId);
-    if (!list || list.length === 0) return '';
-    const parts = list.map((c) => `${c.slug} (${c.toolNames.join(', ')})`);
+    const conn = connectorMap.get(subAgentId);
+    const mcp = mcpMap.get(subAgentId);
+    const parts: string[] = [];
+    if (conn) parts.push(...conn.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
+    if (mcp) parts.push(...mcp.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
+    if (parts.length === 0) return '';
     return `\n  Tools: ${parts.join('; ')}`;
   }
 

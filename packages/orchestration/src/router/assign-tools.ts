@@ -3,7 +3,17 @@
 
 import { z } from 'zod';
 import { eq, and } from '@nodal-agents/db';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
+import {
+  agents,
+  agentAssignments,
+  agentSkillAssignments,
+  agentSkills,
+  agentConnectorAssignments,
+  connectors as connectorsTable,
+  agentMcpServers,
+  mcpServers,
+} from '@nodal-agents/db';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { DelegationPendingError } from '../errors';
 import type { AgentId, AnyDrizzleDb, ToolDefinition, ChildAgent } from '../types';
 
@@ -88,6 +98,94 @@ export async function generateAssignTools(
     }
   }
 
+  // Load connector tool inventories per child — symmetric with the
+  // ## Your team block (see team-block.ts). Without this, the orchestrator's
+  // `assign_<child>` tool description omits capabilities the child actually
+  // has and the LLM refuses to delegate ("I don't have Airtable access").
+  const connectorRows = await Promise.all(
+    childIds.map((id) =>
+      db
+        .select({
+          agentId: agentConnectorAssignments.agentId,
+          slug: connectorsTable.slug,
+          enabledOperations: agentConnectorAssignments.enabledOperations,
+        })
+        .from(agentConnectorAssignments)
+        .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
+        .where(eq(agentConnectorAssignments.agentId, id as string)),
+    ),
+  );
+
+  const connectorMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  for (const batch of connectorRows) {
+    for (const r of batch) {
+      const entry = ADAPTER_REGISTRY[r.slug];
+      if (!entry) continue;
+      const allToolNames = entry.operations.map((o) => o.slug);
+      const toolNames =
+        r.enabledOperations === null
+          ? allToolNames
+          : allToolNames.filter((n) => r.enabledOperations!.includes(n));
+      if (toolNames.length === 0) continue;
+      const existing = connectorMap.get(r.agentId) ?? [];
+      existing.push({ slug: r.slug, toolNames });
+      connectorMap.set(r.agentId, existing);
+    }
+  }
+
+  // Load MCP server inventories per child — same rationale. A router
+  // orchestrator refused 6× in a row to delegate work the child could
+  // actually do (2026-05-26) because this tool description omitted the
+  // child's MCP capabilities.
+  const mcpRows = await Promise.all(
+    childIds.map((id) =>
+      db
+        .select({
+          agentId: agentMcpServers.agentId,
+          serverSlug: mcpServers.slug,
+          enabledTools: agentMcpServers.enabledTools,
+          availableTools: mcpServers.availableTools,
+          serverActive: mcpServers.active,
+        })
+        .from(agentMcpServers)
+        .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
+        .where(eq(agentMcpServers.agentId, id as string)),
+    ),
+  );
+
+  const mcpMap = new Map<string, { slug: string; toolNames: string[] }[]>();
+  for (const batch of mcpRows) {
+    for (const r of batch) {
+      if (r.serverActive === false) continue;
+      const prefix = r.serverSlug.replace(/-/g, '_');
+      const available = Array.isArray(r.availableTools)
+        ? (r.availableTools as Array<{ name?: unknown }>)
+            .map((t) => (t && typeof t.name === 'string' ? t.name : null))
+            .filter((n): n is string => n !== null)
+        : [];
+      if (available.length === 0) continue;
+      const enabled = Array.isArray(r.enabledTools)
+        ? new Set((r.enabledTools as unknown[]).filter((n): n is string => typeof n === 'string'))
+        : null;
+      const kept = enabled === null ? available : available.filter((n) => enabled.has(n));
+      if (kept.length === 0) continue;
+      const toolNames = kept.map((n) => `${prefix}__${n}`);
+      const existing = mcpMap.get(r.agentId) ?? [];
+      existing.push({ slug: r.serverSlug, toolNames });
+      mcpMap.set(r.agentId, existing);
+    }
+  }
+
+  function formatToolsTag(subAgentId: string): string {
+    const conn = connectorMap.get(subAgentId);
+    const mcp = mcpMap.get(subAgentId);
+    const parts: string[] = [];
+    if (conn) parts.push(...conn.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
+    if (mcp) parts.push(...mcp.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
+    if (parts.length === 0) return '';
+    return ` Tools: ${parts.join('; ')}.`;
+  }
+
   // Build one tool per child
   const tools: ToolDefinition<typeof assignInputSchema, never>[] = [];
 
@@ -101,10 +199,12 @@ export async function generateAssignTools(
     // Build description from live DB data (never hardcoded)
     const skills = skillMap.get(subAgentId) ?? [];
     const skillsDesc = skills.length > 0 ? ` Skills: ${skills.join(', ')}.` : '';
+    const toolsDesc = formatToolsTag(subAgentId);
     const roleNote = agentRole === 'orchestrator' ? ' (orchestrator — manages their own team)' : '';
     const instrNote = instructions ? ` Instructions: ${instructions}` : '';
 
-    const description = `Assign a task to ${agentName}${roleNote}.${skillsDesc}${instrNote}`.trim();
+    const description =
+      `Assign a task to ${agentName}${roleNote}.${skillsDesc}${toolsDesc}${instrNote}`.trim();
 
     // Capture in closure
     const capturedSlug = agentSlug;
