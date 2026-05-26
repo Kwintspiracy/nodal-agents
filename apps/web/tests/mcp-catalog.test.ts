@@ -42,10 +42,26 @@ describe('MCP_CATALOG', () => {
     }
   });
 
-  it('every entry declares the http transport', () => {
+  it('every entry declares a known transport (http or stdio)', () => {
     for (const entry of MCP_CATALOG) {
-      expect(entry.transport).toBe('http');
+      expect(['http', 'stdio']).toContain(entry.transport);
     }
+  });
+
+  it('contains the custom-http-mcp sentinel entry (user-supplied everything)', () => {
+    const custom = MCP_CATALOG.find((e) => e.slug === 'custom-http-mcp');
+    expect(custom).toBeDefined();
+    expect(custom?.transport).toBe('http');
+    expect(custom?.serverUrl).toBeNull();
+    expect(custom?.verifyToolName).toBeNull();
+  });
+
+  it('contains the custom-stdio-mcp sentinel entry', () => {
+    const stdio = MCP_CATALOG.find((e) => e.slug === 'custom-stdio-mcp');
+    expect(stdio).toBeDefined();
+    expect(stdio?.transport).toBe('stdio');
+    expect(stdio?.serverUrl).toBeNull();
+    expect(stdio?.verifyToolName).toBeNull();
   });
 
   it('slugs are unique', () => {

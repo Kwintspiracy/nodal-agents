@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   deleteMcpServerAction,
   renameMcpServerAction,
+  updateMcpServerApiKeyAction,
   type McpServerInstance,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
@@ -23,6 +24,11 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
   // Rename state
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(instance.name);
+
+  // Rotate-key state. Collapsed by default so the sensitive input isn't
+  // sitting visible on the page; same UX as ConnectorForm.
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [newApiKey, setNewApiKey] = useState('');
 
   function performDelete() {
     setConfirmOpen(false);
@@ -50,6 +56,24 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
         toast.success('Renamed');
         setIsRenaming(false);
       }
+    });
+  }
+
+  function performRotate() {
+    const trimmed = newApiKey.trim();
+    if (!trimmed) {
+      toast.error('New API key is required');
+      return;
+    }
+    startTransition(async () => {
+      const r = await updateMcpServerApiKeyAction(instance.id, trimmed);
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success(`${instance.name} key rotated`);
+      setRotateOpen(false);
+      setNewApiKey('');
     });
   }
 
@@ -118,15 +142,82 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
             {instance.apiKeyLast4 ? ` · key …${instance.apiKeyLast4}` : ''}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          disabled={isPending}
-          className="shrink-0 px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
-        >
-          Disconnect
-        </button>
+        <div className="shrink-0 flex gap-2 flex-wrap justify-end">
+          <button
+            type="button"
+            onClick={() => setRotateOpen((v) => !v)}
+            disabled={isPending}
+            className="px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+          >
+            {rotateOpen ? 'Cancel' : 'Rotate key'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            disabled={isPending}
+            className="px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+          >
+            Disconnect
+          </button>
+        </div>
       </div>
+
+      {/* Rotate API key panel. Verifies the new key against the MCP server
+          (tools/list + optional probe) BEFORE persisting, so a bad paste
+          can't silently break the next job. */}
+      {rotateOpen && (
+        <div className="space-y-3 pt-3 mt-3 border-t border-neutral-800/60">
+          <div>
+            <label
+              htmlFor={`mcp-rotate-${instance.id}`}
+              className="block text-xs text-neutral-500 mb-1"
+            >
+              New API key
+            </label>
+            <input
+              id={`mcp-rotate-${instance.id}`}
+              type="password"
+              autoComplete="off"
+              autoFocus
+              value={newApiKey}
+              onChange={(e) => setNewApiKey(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') performRotate();
+                if (e.key === 'Escape') {
+                  setNewApiKey('');
+                  setRotateOpen(false);
+                }
+              }}
+              placeholder="Paste the new key"
+              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+            />
+            <p className="text-[11px] text-neutral-600 mt-1">
+              Agent assignments stay intact — the key is verified against the server before being
+              saved.
+            </p>
+          </div>
+          <div className="flex gap-2 items-center">
+            <button
+              type="button"
+              onClick={performRotate}
+              disabled={isPending || !newApiKey.trim()}
+              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+            >
+              {isPending ? 'Verifying…' : 'Save new key'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNewApiKey('');
+                setRotateOpen(false);
+              }}
+              className="text-xs text-neutral-500 hover:text-white underline"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmOpen}

@@ -16,12 +16,20 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
   StreamableHTTPClientTransport: class {},
 }));
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  // Capturing the constructor args lets the stdio test inspect what the
+  // adapter passed to the SDK without actually spawning a subprocess.
+  StdioClientTransport: vi.fn().mockImplementation(function (this: { args: unknown }, a: unknown) {
+    this.args = a;
+  }),
+}));
 
 import { buildMcpRequest, connectMcp } from '../client.ts';
 
 describe('buildMcpRequest', () => {
   it('injects the key as a query param', () => {
     const t = buildMcpRequest({
+      transport: 'http',
       url: 'https://x.example.com/api/mcp',
       apiKey: 'cog_secret',
       authScheme: 'query',
@@ -33,6 +41,7 @@ describe('buildMcpRequest', () => {
 
   it('injects the key as a request header', () => {
     const t = buildMcpRequest({
+      transport: 'http',
       url: 'https://x.example.com/api/mcp',
       apiKey: 'cog_secret',
       authScheme: 'header',
@@ -44,6 +53,7 @@ describe('buildMcpRequest', () => {
 
   it('injects the key as a bearer Authorization header', () => {
     const t = buildMcpRequest({
+      transport: 'http',
       url: 'https://mcp.stripe.com',
       apiKey: 'sk_test_123',
       authScheme: 'bearer',
@@ -55,6 +65,7 @@ describe('buildMcpRequest', () => {
 
   it('bearer scheme does not require authParamName', () => {
     const t = buildMcpRequest({
+      transport: 'http',
       url: 'https://mcp.stripe.com',
       apiKey: 'sk_live_xyz',
       authScheme: 'bearer',
@@ -63,18 +74,21 @@ describe('buildMcpRequest', () => {
   });
 
   it('emits no auth when apiKey is omitted', () => {
-    const t = buildMcpRequest({ url: 'https://x.example.com/api/mcp' });
+    const t = buildMcpRequest({ transport: 'http', url: 'https://x.example.com/api/mcp' });
     expect(t.headers).toEqual({});
     expect(t.url.toString()).toBe('https://x.example.com/api/mcp');
   });
 
   it('throws when apiKey is set without authScheme', () => {
-    expect(() => buildMcpRequest({ url: 'https://x.example.com', apiKey: 'k' })).toThrow();
+    expect(() =>
+      buildMcpRequest({ transport: 'http', url: 'https://x.example.com', apiKey: 'k' }),
+    ).toThrow();
   });
 
   it('throws when header scheme is set without authParamName', () => {
     expect(() =>
       buildMcpRequest({
+        transport: 'http',
         url: 'https://x.example.com',
         apiKey: 'k',
         authScheme: 'header',
@@ -102,7 +116,10 @@ describe('connectMcp', () => {
       ],
     });
 
-    const conn = await connectMcp({ url: 'https://x.example.com/api/mcp' });
+    const conn = await connectMcp({
+      transport: 'http',
+      url: 'https://x.example.com/api/mcp',
+    });
 
     expect(h.connect).toHaveBeenCalledOnce();
     expect(conn.tools).toHaveLength(1);
@@ -116,7 +133,67 @@ describe('connectMcp', () => {
 
   it('returns an empty tool list when the server lists none', async () => {
     h.listTools.mockResolvedValue({ tools: [] });
-    const conn = await connectMcp({ url: 'https://x.example.com/api/mcp' });
+    const conn = await connectMcp({
+      transport: 'http',
+      url: 'https://x.example.com/api/mcp',
+    });
     expect(conn.tools).toEqual([]);
+  });
+
+  // ── stdio transport ────────────────────────────────────────────────────────
+  // The SDK's StdioClientTransport is mocked above so the test never actually
+  // spawns a subprocess. We verify two things: (1) the adapter passes
+  // command/args/env through verbatim, and (2) the user env is merged on top
+  // of process.env so PATH still resolves.
+
+  it('builds a stdio transport with command, args, and merged env', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+    const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
+    ctorMock.mockClear();
+
+    process.env['TEST_PATH_SENTINEL'] = '/usr/local/bin';
+
+    await connectMcp({
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+      env: { GITHUB_TOKEN: 'ghp_secret' },
+    });
+
+    expect(ctorMock).toHaveBeenCalledOnce();
+    const arg = ctorMock.mock.calls[0]?.[0] as {
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+    };
+    expect(arg.command).toBe('npx');
+    expect(arg.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem', '/tmp']);
+    // User env wins on collision; process.env values flow through.
+    expect(arg.env.GITHUB_TOKEN).toBe('ghp_secret');
+    expect(arg.env.TEST_PATH_SENTINEL).toBe('/usr/local/bin');
+
+    delete process.env['TEST_PATH_SENTINEL'];
+  });
+
+  it('user env overrides process.env on collision', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+    const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
+    ctorMock.mockClear();
+
+    process.env['SHARED_KEY'] = 'system-value';
+
+    await connectMcp({
+      transport: 'stdio',
+      command: 'node',
+      args: [],
+      env: { SHARED_KEY: 'user-value' },
+    });
+
+    const arg = ctorMock.mock.calls[0]?.[0] as { env: Record<string, string> };
+    expect(arg.env.SHARED_KEY).toBe('user-value');
+
+    delete process.env['SHARED_KEY'];
   });
 });

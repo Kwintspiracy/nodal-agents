@@ -87,6 +87,23 @@ function makeDb(rows: unknown[] = []) {
   };
 }
 
+/**
+ * Mock that returns DIFFERENT data for SELECT vs INSERT chains. Useful when
+ * an action does a uniqueness check (SELECT empty = available) then writes
+ * (INSERT returning {id}). The plain `makeDb(rows)` factory returns the same
+ * `rows` for every chain, which conflates the two and fails one of them.
+ */
+function makeDbMixed(opts: { select?: unknown[]; insert?: unknown[]; update?: unknown[] }) {
+  return {
+    select: vi.fn().mockReturnValue(chain(opts.select ?? [])),
+    selectDistinct: vi.fn().mockReturnValue(chain(opts.select ?? [])),
+    insert: vi.fn().mockReturnValue(chain(opts.insert ?? [])),
+    delete: vi.fn().mockReturnValue(chain([])),
+    update: vi.fn().mockReturnValue(chain(opts.update ?? [])),
+    execute: vi.fn().mockResolvedValue([]),
+  };
+}
+
 // ─── Mock server.ts ───────────────────────────────────────────────────────────
 let currentDb = makeDb([]);
 
@@ -2506,6 +2523,164 @@ describe('createMcpServerFromCatalogAction', () => {
       { name: 'get_home', description: 'home view' },
       { name: 'get_feed', description: null },
     ]);
+  });
+
+  // ── Custom HTTP MCP ───────────────────────────────────────────────────────
+  // The catalog has reserved sentinel slugs (`custom-http-mcp`,
+  // `custom-stdio-mcp`) that let the user bring everything themselves.
+  // The action substitutes user fields for catalog placeholders before
+  // connecting; the persisted row uses the user slug, not the sentinel.
+
+  it('custom-http-mcp — substitutes user slug + auth into the persisted row', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(mockMcpConnection([{ name: 'list_things' }]));
+    // SELECT (uniqueness) returns empty; INSERT returning yields the new id.
+    currentDb = makeDbMixed({
+      select: [],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-0000000003a2' }],
+    }) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'custom-http-mcp',
+      name: 'My API',
+      apiKey: 'whatever',
+      url: 'https://api.example.com/mcp',
+      customSlug: 'my-api',
+      customAuthScheme: 'header',
+      customAuthParamName: 'x-custom-key',
+    });
+    expect(r.ok).toBe(true);
+    expect(mcpAdapterMocks.connectMcp).toHaveBeenCalledOnce();
+    const connectArg = mcpAdapterMocks.connectMcp.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(connectArg['transport']).toBe('http');
+    expect(connectArg['url']).toBe('https://api.example.com/mcp');
+    expect(connectArg['authScheme']).toBe('header');
+    expect(connectArg['authParamName']).toBe('x-custom-key');
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const values = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    // The user slug — NOT the sentinel — drives the tool-name prefix.
+    expect(values?.['slug']).toBe('my-api');
+    expect(values?.['authScheme']).toBe('header');
+    expect(values?.['authParamName']).toBe('x-custom-key');
+  });
+
+  it('custom-http-mcp with bearer — authParamName not required from user', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(mockMcpConnection([]));
+    currentDb = makeDbMixed({
+      select: [],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-0000000003a3' }],
+    }) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'custom-http-mcp',
+      name: 'Bearer API',
+      apiKey: 'tok',
+      url: 'https://b.example.com/mcp',
+      customSlug: 'bearer-api',
+      customAuthScheme: 'bearer',
+      // customAuthParamName intentionally omitted — bearer hardcodes Authorization
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('custom-http-mcp — refuses an invalid slug shape', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    currentDb = makeDb([]) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'custom-http-mcp',
+      name: 'X',
+      apiKey: 'k',
+      url: 'https://x.example.com',
+      customSlug: 'Bad Slug!', // uppercase + space — must reject
+      customAuthScheme: 'bearer',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+    expect(mcpAdapterMocks.connectMcp).not.toHaveBeenCalled();
+  });
+
+  it('custom-http-mcp — refuses a slug already taken in this entity', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    // The uniqueness SELECT returns a row → slug taken.
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003b9' }]) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'custom-http-mcp',
+      name: 'Dup',
+      apiKey: 'k',
+      url: 'https://x.example.com',
+      customSlug: 'my-api',
+      customAuthScheme: 'bearer',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('slug_taken');
+    expect(mcpAdapterMocks.connectMcp).not.toHaveBeenCalled();
+  });
+
+  // ── Custom stdio MCP ──────────────────────────────────────────────────────
+
+  it('custom-stdio-mcp — spawns the subprocess, encrypts env values, persists transport=stdio', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(
+      mockMcpConnection([{ name: 'read_file', description: 'read a file' }]),
+    );
+    currentDb = makeDbMixed({
+      select: [],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-0000000003a4' }],
+    }) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'custom-stdio-mcp',
+      name: 'Filesystem',
+      customSlug: 'fs',
+      customCommand: 'npx',
+      customArgs: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+      customEnv: { GITHUB_TOKEN: 'ghp_secret_value' },
+    });
+    expect(r.ok).toBe(true);
+
+    // The connect was invoked with raw env values (decryption happens at
+    // job time, encryption happens AFTER the verify connect).
+    const connectArg = mcpAdapterMocks.connectMcp.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(connectArg['transport']).toBe('stdio');
+    expect(connectArg['command']).toBe('npx');
+    expect(connectArg['args']).toEqual(['-y', '@modelcontextprotocol/server-filesystem', '/tmp']);
+    expect(connectArg['env']).toEqual({ GITHUB_TOKEN: 'ghp_secret_value' });
+
+    // The persisted row has stdio transport + encrypted env values.
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const values = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['slug']).toBe('fs');
+    expect(values?.['transport']).toBe('stdio');
+    expect(values?.['command']).toBe('npx');
+    expect(values?.['url']).toBeNull();
+    expect(values?.['apiKey']).toBeNull();
+    expect(values?.['authScheme']).toBeNull();
+    const envVars = values?.['envVars'] as Record<string, string>;
+    expect(envVars).toBeDefined();
+    // Env value is encrypted, not plaintext.
+    expect(isEncrypted(envVars['GITHUB_TOKEN']!)).toBe(true);
+    expect(envVars['GITHUB_TOKEN']).not.toBe('ghp_secret_value');
+  });
+
+  it('custom-stdio-mcp — refuses missing command', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'custom-stdio-mcp',
+      name: 'Bad',
+      customSlug: 'bad',
+      // customCommand intentionally omitted
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 });
 

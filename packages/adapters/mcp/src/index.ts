@@ -9,10 +9,16 @@ import type { ToolDefinition } from '@nodal-agents/tools';
 import { connectMcp, type McpConnectOptions } from './client.ts';
 import { mcpToolToToolDefinition } from './tools.ts';
 
-export interface CreateMcpToolsOptions extends McpConnectOptions {
+/**
+ * McpConnectOptions is a discriminated union (transport: 'http' | 'stdio'),
+ * so we use intersection rather than interface extension — TypeScript
+ * doesn't allow extending a union with `interface`. The intersection
+ * distributes `slug` across both branches, preserving the discriminant.
+ */
+export type CreateMcpToolsOptions = McpConnectOptions & {
   /** Server slug — namespaces tool names (e.g. `cogni_cortex__get_home`). */
   slug: string;
-}
+};
 
 export interface McpToolset {
   tools: ToolDefinition<z.ZodTypeAny, unknown>[];

@@ -428,19 +428,26 @@ export async function executeJob(
       // ────────────────────────────────────────────────────────────────────────
 
       // ── MCP server tools ─────────────────────────────────────────────────────
-      // Each assigned MCP server is connected per-job (Streamable HTTP), its
-      // tools discovered via tools/list and wrapped as ToolDefinitions. A
+      // Each assigned MCP server is connected per-job. Two transports:
+      //   - 'http' : Streamable HTTP (Stripe, Cogni, Composio, custom-HTTP)
+      //   - 'stdio': local subprocess (filesystem, sqlite, github, custom-stdio)
+      // Tools discovered via tools/list and wrapped as ToolDefinitions. A
       // connect failure for one server is swallowed — a broken MCP server must
-      // never fail an unrelated job. Transports are closed in the loop finally.
+      // never fail an unrelated job. Transports are closed in the loop finally
+      // (closing a stdio transport also terminates the spawned subprocess).
       // null enabledTools → all tools; array → whitelist on the original
       // (un-prefixed) tool name.
       const mcpAssignments = await db
         .select({
           slug: mcpServersTable.slug,
+          transport: mcpServersTable.transport,
           url: mcpServersTable.url,
           apiKey: mcpServersTable.apiKey,
           authScheme: mcpServersTable.authScheme,
           authParamName: mcpServersTable.authParamName,
+          command: mcpServersTable.command,
+          args: mcpServersTable.args,
+          envVars: mcpServersTable.envVars,
           enabledTools: agentMcpServersTable.enabledTools,
         })
         .from(agentMcpServersTable)
@@ -448,21 +455,45 @@ export async function executeJob(
         .where(eq(agentMcpServersTable.agentId, agentRow.id));
 
       for (const ms of mcpAssignments) {
-        if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) continue;
-        let decryptedKey: string;
         try {
-          decryptedKey = decrypt(ms.apiKey);
-        } catch {
-          continue; // tampered / wrong master key — skip silently
-        }
-        try {
-          const toolset = await createMcpTools({
-            slug: ms.slug,
-            url: ms.url,
-            apiKey: decryptedKey,
-            authScheme: ms.authScheme as 'header' | 'query' | 'bearer',
-            authParamName: ms.authParamName,
-          });
+          let toolset: Awaited<ReturnType<typeof createMcpTools>>;
+          if (ms.transport === 'stdio') {
+            // stdio: command + args + env vars (each value encrypted).
+            if (!ms.command) continue; // bad row, skip silently
+            const rawEnv = (ms.envVars ?? {}) as Record<string, string>;
+            let decryptedEnv: Record<string, string>;
+            try {
+              decryptedEnv = Object.fromEntries(
+                Object.entries(rawEnv).map(([k, v]) => [k, decrypt(v)]),
+              );
+            } catch {
+              continue; // tampered env var — skip silently
+            }
+            toolset = await createMcpTools({
+              transport: 'stdio',
+              slug: ms.slug,
+              command: ms.command,
+              args: (ms.args ?? []) as string[],
+              env: decryptedEnv,
+            });
+          } else {
+            // http: URL + apiKey + auth metadata, all of which must be set.
+            if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) continue;
+            let decryptedKey: string;
+            try {
+              decryptedKey = decrypt(ms.apiKey);
+            } catch {
+              continue; // tampered key — skip silently
+            }
+            toolset = await createMcpTools({
+              transport: 'http',
+              slug: ms.slug,
+              url: ms.url,
+              apiKey: decryptedKey,
+              authScheme: ms.authScheme as 'header' | 'query' | 'bearer',
+              authParamName: ms.authParamName,
+            });
+          }
           mcpClosers.push(toolset.close);
           const enabled = ms.enabledTools as string[] | null;
           // Wrapped tool names are `${prefix}__${original}`; the whitelist
@@ -474,7 +505,7 @@ export async function executeJob(
               : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
           capabilityTools.push(...filtered);
         } catch {
-          continue; // MCP server unreachable / auth failed — skip silently
+          continue; // MCP server unreachable / auth failed / spawn failed — skip silently
         }
       }
       // ────────────────────────────────────────────────────────────────────────

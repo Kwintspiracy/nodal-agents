@@ -16,7 +16,10 @@
 export type McpAuthScheme = 'header' | 'query' | 'bearer';
 
 export type McpCatalogEntry = {
-  /** Stable id — also the mcp_servers.slug and the tool-name namespace. */
+  /** Stable id — also the mcp_servers.slug and the tool-name namespace.
+   *  Two reserved sentinel slugs (`custom-http-mcp`, `custom-stdio-mcp`)
+   *  mark the "Custom" entries — the action layer overrides the catalog
+   *  values with user-supplied ones for those. */
   slug: string;
   /** Display name in the /mcp UI. */
   label: string;
@@ -27,16 +30,21 @@ export type McpCatalogEntry = {
    * `null` = the user supplies the URL at connect time (typical of
    * per-account hosted servers like Composio where the URL embeds a
    * server-id and user-id).
+   * Always `null` for stdio entries — meaningless there.
    */
   serverUrl: string | null;
-  /** Transport. Only 'http' (Streamable HTTP) is supported today. */
-  transport: 'http';
-  /** Where the API key goes. */
+  /**
+   * Transport. `'http'` = Streamable HTTP. `'stdio'` = local subprocess
+   * spawned by the runner (uses `mcp_servers.command/args/envVars`).
+   */
+  transport: 'http' | 'stdio';
+  /** Where the API key goes. Ignored for stdio (no key — env vars instead). */
   authScheme: McpAuthScheme;
   /**
    * The literal header name or query-param name (e.g. 'x-api-key').
    * Set to a placeholder (e.g. 'Authorization') and ignored when
-   * `authScheme === 'bearer'` — kept non-null for type stability.
+   * `authScheme === 'bearer'` or `transport === 'stdio'` — kept non-null
+   * for type stability.
    */
   authParamName: string;
   /**
@@ -105,5 +113,43 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     verifyToolName: null,
     docsHint:
       'Create an MCP server at https://app.composio.dev, paste its full URL here (format: https://backend.composio.dev/v3/mcp/<server-id>?user_id=<user-id>) plus your Composio API key.',
+  },
+  // ── Custom entries ────────────────────────────────────────────────────────
+  // Reserved slugs — the action layer (createMcpServerFromCatalogAction)
+  // detects these and substitutes user-supplied values (slug, auth scheme,
+  // command, etc.) for the placeholder catalog values below. The persisted
+  // mcp_servers.slug ends up being whatever the user typed, NOT the catalog
+  // slug; that's what makes tool name prefixes (`<user-slug>__<tool>`)
+  // collision-free even when several customs exist.
+  {
+    slug: 'custom-http-mcp',
+    label: 'Custom MCP (HTTP)',
+    description:
+      'Connect any HTTP-streaming MCP server. You provide the URL, auth, and a short slug for tool naming.',
+    serverUrl: null,
+    transport: 'http',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Anything that speaks the MCP Streamable HTTP protocol. The "Server slug" you choose becomes the tool name prefix.',
+  },
+  {
+    slug: 'custom-stdio-mcp',
+    label: 'Custom MCP (stdio)',
+    description:
+      'Run a local MCP server as a subprocess. Use this for filesystem, sqlite, github, fetch, and other npm/python MCP packages that expect to be spawned by their host.',
+    serverUrl: null,
+    transport: 'stdio',
+    // The next three fields don't apply to stdio (no HTTP key path) but are
+    // kept non-null for type stability — the action layer treats them as
+    // ignored when transport === 'stdio'.
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Runs locally with your permissions — only connect MCP servers you trust. Env var values are encrypted at rest.',
   },
 ];

@@ -1274,6 +1274,8 @@ export type McpCatalogItem = {
    * extra URL input in that case.
    */
   serverUrl: string | null;
+  /** Transport — drives which custom-input fields the form renders. */
+  transport: 'http' | 'stdio';
 };
 
 export type McpServersListResponse = {
@@ -1313,6 +1315,7 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
       docsHint: c.docsHint,
       keyPrefix: c.keyPrefix,
       serverUrl: c.serverUrl,
+      transport: c.transport,
     }));
 
     return ok({ instances, catalog });
@@ -1325,9 +1328,29 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
 const CreateMcpServerSchema = z.object({
   slug: z.string().min(1).max(80),
   name: z.string().min(1, 'Name is required').max(120),
-  apiKey: z.string().min(1, 'API key is required'),
+  /** Required for HTTP entries; optional for stdio (env vars take the secret role). */
+  apiKey: z.string().max(2_000).optional(),
   /** Required when the catalog entry has `serverUrl: null` (user-supplied URL pattern). */
   url: z.string().url('Invalid URL').optional(),
+
+  // ── Custom-only fields, validated only when slug is a custom-* sentinel. ──
+  /** kebab-case slug used as the tool-name prefix at runtime. Must be unique
+   *  per entity (validated at the action body level). */
+  customSlug: z
+    .string()
+    .min(2)
+    .max(30)
+    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase letters, digits, dashes')
+    .optional(),
+  /** HTTP custom only — overrides the catalog placeholder. */
+  customAuthScheme: z.enum(['header', 'query', 'bearer']).optional(),
+  customAuthParamName: z.string().min(1).max(100).optional(),
+  /** stdio custom only — what to spawn. */
+  customCommand: z.string().min(1).max(200).optional(),
+  customArgs: z.array(z.string().max(500)).max(20).optional(),
+  /** stdio custom only — env vars merged on top of process.env. VALUES are
+   *  encrypted before being persisted (the runner decrypts at job time). */
+  customEnv: z.record(z.string(), z.string().max(2_000)).optional(),
 });
 
 /**
@@ -1355,75 +1378,203 @@ export async function createMcpServerFromCatalogAction(
     }
     const catalog = MCP_CATALOG.find((e) => e.slug === parsed.data.slug);
     if (!catalog) return fail('validation_failed', 'Unknown MCP connector');
-    const apiKey = parsed.data.apiKey.trim();
-    if (catalog.keyPrefix.length > 0 && !catalog.keyPrefix.some((p) => apiKey.startsWith(p))) {
-      const expected =
-        catalog.keyPrefix.length === 1
-          ? `"${catalog.keyPrefix[0]}"`
-          : `one of: ${catalog.keyPrefix.map((p) => `"${p}"`).join(', ')}`;
-      return fail('validation_failed', `API key must start with ${expected}`);
-    }
 
-    // Resolve effective URL: catalog wins when set; otherwise user must supply.
-    const effectiveUrl = catalog.serverUrl ?? parsed.data.url ?? null;
-    if (!effectiveUrl) {
-      return fail('validation_failed', `${catalog.label} requires a server URL`);
-    }
+    const isCustomHttp = catalog.slug === 'custom-http-mcp';
+    const isCustomStdio = catalog.slug === 'custom-stdio-mcp';
 
-    // Connect-and-verify before persisting. A bad key must fail loud here and
-    // leave no row behind.
-    let toolDescriptors: McpToolSummary[] = [];
-    let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
-    try {
-      conn = await connectMcp({
-        url: effectiveUrl,
-        apiKey,
-        authScheme: catalog.authScheme,
-        authParamName: catalog.authParamName,
-      });
-      // Optional belt-and-suspenders: some servers accept listTools but reject
-      // the key on the first real call. When the catalog declares a verify
-      // tool, exercise it. Servers without a universal probe (Composio etc.)
-      // leave this null — listTools above is sufficient (it would have thrown
-      // on bad auth).
-      if (catalog.verifyToolName) {
-        const verify = await conn.client.callTool({
-          name: catalog.verifyToolName,
-          arguments: {},
-        });
-        if (verify.isError === true) {
-          return fail('mcp_connect_failed', `${catalog.label} rejected the API key.`);
-        }
+    // ── Resolve effective config: catalog defaults, overridden by user input
+    //    for the two reserved "custom-*" sentinel slugs. ────────────────────────
+    //
+    // The persisted `mcp_servers.slug` becomes the user-typed `customSlug`
+    // for customs (so tool name prefixes stay collision-free), or the catalog
+    // slug otherwise. Substitution happens up-front so the rest of the action
+    // doesn't branch repeatedly.
+    let effectiveSlug = catalog.slug;
+    let effectiveTransport: 'http' | 'stdio' = catalog.transport;
+    let effectiveAuthScheme = catalog.authScheme;
+    let effectiveAuthParamName: string = catalog.authParamName;
+
+    if (isCustomHttp) {
+      if (!parsed.data.customSlug) {
+        return fail('validation_failed', 'Server slug is required for custom MCP');
       }
-      toolDescriptors = conn.tools.map((t) => ({
+      if (!parsed.data.customAuthScheme) {
+        return fail('validation_failed', 'Auth scheme is required for custom MCP');
+      }
+      effectiveSlug = parsed.data.customSlug;
+      effectiveAuthScheme = parsed.data.customAuthScheme;
+      // authParamName is meaningless for bearer (Authorization header is
+      // hardcoded by the SDK). Keep a non-null placeholder for column-not-null
+      // hygiene; the runtime ignores it.
+      effectiveAuthParamName =
+        parsed.data.customAuthScheme === 'bearer'
+          ? 'Authorization'
+          : (parsed.data.customAuthParamName ?? '');
+      if (effectiveAuthScheme !== 'bearer' && !effectiveAuthParamName) {
+        return fail(
+          'validation_failed',
+          `Auth param name is required for the "${effectiveAuthScheme}" scheme`,
+        );
+      }
+    } else if (isCustomStdio) {
+      if (!parsed.data.customSlug) {
+        return fail('validation_failed', 'Server slug is required for custom MCP');
+      }
+      if (!parsed.data.customCommand) {
+        return fail('validation_failed', 'Command is required for stdio MCP');
+      }
+      effectiveSlug = parsed.data.customSlug;
+      effectiveTransport = 'stdio';
+    }
+
+    // ── Slug uniqueness check (for customs only — catalog slugs are allowed
+    //    to repeat per multi-instance brique). Tool name prefixes use this
+    //    slug, so duplicates would collide at the agent level. ─────────────────
+    if (isCustomHttp || isCustomStdio) {
+      const db = getDb();
+      const existing = await db
+        .select({ id: mcpServers.id })
+        .from(mcpServers)
+        .where(and(eq(mcpServers.entityId, session.entityId), eq(mcpServers.slug, effectiveSlug)));
+      if (existing.length > 0) {
+        return fail(
+          'slug_taken',
+          `Slug "${effectiveSlug}" is already used by another MCP server. Pick a different one.`,
+        );
+      }
+    }
+
+    // ── HTTP path: connect-and-verify over Streamable HTTP. ───────────────────
+    if (effectiveTransport === 'http') {
+      const apiKey = (parsed.data.apiKey ?? '').trim();
+      if (!apiKey) return fail('validation_failed', 'API key is required');
+      if (
+        !isCustomHttp &&
+        catalog.keyPrefix.length > 0 &&
+        !catalog.keyPrefix.some((p) => apiKey.startsWith(p))
+      ) {
+        const expected =
+          catalog.keyPrefix.length === 1
+            ? `"${catalog.keyPrefix[0]}"`
+            : `one of: ${catalog.keyPrefix.map((p) => `"${p}"`).join(', ')}`;
+        return fail('validation_failed', `API key must start with ${expected}`);
+      }
+      const effectiveUrl = catalog.serverUrl ?? parsed.data.url ?? null;
+      if (!effectiveUrl) {
+        return fail('validation_failed', `${catalog.label} requires a server URL`);
+      }
+
+      let toolDescriptors: McpToolSummary[] = [];
+      let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
+      try {
+        conn = await connectMcp({
+          transport: 'http',
+          url: effectiveUrl,
+          apiKey,
+          authScheme: effectiveAuthScheme,
+          authParamName: effectiveAuthParamName,
+        });
+        if (catalog.verifyToolName && !isCustomHttp) {
+          const verify = await conn.client.callTool({
+            name: catalog.verifyToolName,
+            arguments: {},
+          });
+          if (verify.isError === true) {
+            return fail('mcp_connect_failed', `${catalog.label} rejected the API key.`);
+          }
+        }
+        toolDescriptors = conn.tools.map((t) => ({
+          name: t.name,
+          description: t.description ?? null,
+        }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return fail('mcp_connect_failed', `Could not connect to ${catalog.label}: ${msg}`);
+      } finally {
+        if (conn) await conn.close().catch(() => {});
+      }
+
+      const db = getDb();
+      const encApiKey = encrypt(apiKey);
+      const [row] = await db
+        .insert(mcpServers)
+        .values({
+          entityId: session.entityId,
+          name: parsed.data.name,
+          slug: effectiveSlug,
+          transport: 'http',
+          url: effectiveUrl,
+          apiKey: encApiKey,
+          apiKeyLast4: last4(apiKey),
+          authScheme: effectiveAuthScheme,
+          authParamName: effectiveAuthParamName,
+          availableTools: toolDescriptors,
+          active: true,
+        })
+        .returning({ id: mcpServers.id });
+      if (!row) return fail('db_error', 'Insert returned no row');
+      revalidatePath('/mcp');
+      return ok({ id: row.id });
+    }
+
+    // ── Stdio path: spawn-and-list. Env values are encrypted at rest because
+    //    they typically carry secrets (GITHUB_TOKEN, etc.). The runner
+    //    decrypts at job execution time before passing to StdioClientTransport.
+    const command = parsed.data.customCommand!;
+    const args = parsed.data.customArgs ?? [];
+    const userEnv = parsed.data.customEnv ?? {};
+
+    let stdioToolDescriptors: McpToolSummary[] = [];
+    let stdioConn: Awaited<ReturnType<typeof connectMcp>> | null = null;
+    try {
+      stdioConn = await connectMcp({
+        transport: 'stdio',
+        command,
+        args,
+        env: userEnv,
+      });
+      stdioToolDescriptors = stdioConn.tools.map((t) => ({
         name: t.name,
         description: t.description ?? null,
       }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return fail('mcp_connect_failed', `Could not connect to ${catalog.label}: ${msg}`);
+      return fail(
+        'mcp_connect_failed',
+        `Could not start ${catalog.label} subprocess (${command}): ${msg}`,
+      );
     } finally {
-      if (conn) await conn.close().catch(() => {});
+      if (stdioConn) await stdioConn.close().catch(() => {});
+    }
+
+    // Encrypt each env value individually so the runner can decrypt one at a
+    // time without holding the whole map in plaintext memory longer than
+    // necessary.
+    const encEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(userEnv)) {
+      encEnv[k] = encrypt(v);
     }
 
     const db = getDb();
-    const encApiKey = encrypt(apiKey);
-    // Multi-instance: pure INSERT — the (entity, slug) UNIQUE is gone (migration
-    // 0017), so a user can register several servers of the same slug under
-    // different names.
     const [row] = await db
       .insert(mcpServers)
       .values({
         entityId: session.entityId,
         name: parsed.data.name,
-        slug: catalog.slug,
-        transport: catalog.transport,
-        url: effectiveUrl,
-        apiKey: encApiKey,
-        apiKeyLast4: last4(apiKey),
-        authScheme: catalog.authScheme,
-        authParamName: catalog.authParamName,
-        availableTools: toolDescriptors,
+        slug: effectiveSlug,
+        transport: 'stdio',
+        // url / apiKey / auth* not meaningful for stdio — leave null. The
+        // runner branches on `transport` so these are never read in the
+        // stdio path.
+        url: null,
+        apiKey: null,
+        apiKeyLast4: null,
+        authScheme: null,
+        authParamName: null,
+        command,
+        args,
+        envVars: encEnv,
+        availableTools: stdioToolDescriptors,
         active: true,
       })
       .returning({ id: mcpServers.id });
@@ -1469,6 +1620,120 @@ export async function renameMcpServerAction(
   } catch (err) {
     console.error('[renameMcpServerAction]', err);
     return fail('db_error', 'Failed to rename MCP server');
+  }
+}
+
+/**
+ * Rotate the API key on an existing MCP server.
+ *
+ * Symmetric with `updateConnectorApiKeyAction`: lets the user change a
+ * compromised or expired key without deleting the row, which would
+ * cascade-drop every `agent_mcp_servers` assignment.
+ *
+ * Validation flow matches `createMcpServerFromCatalogAction`:
+ *   1. Catalog `keyPrefix` check (any-of) when the catalog declares one.
+ *   2. Re-connect + `tools/list` round-trip so a wrong key fails loud
+ *      BEFORE we persist — better than silent breakage on the next job.
+ *      We refresh `available_tools` while we're at it: providers like
+ *      Stripe may have added new endpoints since the original connect.
+ *   3. Encrypt + update + revalidate.
+ */
+export async function updateMcpServerApiKeyAction(
+  mcpServerId: string,
+  newApiKey: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(mcpServerId).success) {
+      return fail('validation_failed', 'Invalid MCP server id');
+    }
+    const keyParsed = z.string().min(1, 'API key is required').max(2_000).safeParse(newApiKey);
+    if (!keyParsed.success) {
+      return fail('validation_failed', keyParsed.error.issues[0]?.message ?? 'Invalid API key');
+    }
+    const apiKey = keyParsed.data.trim();
+
+    const db = getDb();
+    const [existing] = await db
+      .select({
+        id: mcpServers.id,
+        slug: mcpServers.slug,
+        url: mcpServers.url,
+        authScheme: mcpServers.authScheme,
+        authParamName: mcpServers.authParamName,
+      })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'MCP connector not found');
+
+    const catalog = MCP_CATALOG.find((e) => e.slug === existing.slug);
+    // Catalog entry can be missing for legacy rows whose slug was deprecated;
+    // skip the prefix check in that case rather than blocking rotation.
+    if (catalog && catalog.keyPrefix.length > 0) {
+      if (!catalog.keyPrefix.some((p) => apiKey.startsWith(p))) {
+        const expected =
+          catalog.keyPrefix.length === 1
+            ? `"${catalog.keyPrefix[0]}"`
+            : `one of: ${catalog.keyPrefix.map((p) => `"${p}"`).join(', ')}`;
+        return fail('validation_failed', `API key must start with ${expected}`);
+      }
+    }
+
+    if (!existing.url || !existing.authScheme || !existing.authParamName) {
+      // Bad legacy row — bail rather than silently rotate a key on a
+      // server we can't actually connect to. The user should delete and
+      // recreate to fix the data.
+      return fail('validation_failed', 'MCP server has incomplete configuration');
+    }
+
+    // Verify the new key by attempting a fresh connect. If verifyToolName
+    // is set on the catalog, call it for an extra read-only sanity check
+    // (same logic as create). Key rotation only makes sense for HTTP servers
+    // (stdio uses env vars instead of an HTTP-injected key), and the action
+    // is gated on existing.url / authScheme above so we're definitely HTTP
+    // here.
+    let toolDescriptors: McpToolSummary[] = [];
+    let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
+    try {
+      conn = await connectMcp({
+        transport: 'http',
+        url: existing.url,
+        apiKey,
+        authScheme: existing.authScheme as 'header' | 'query' | 'bearer',
+        authParamName: existing.authParamName,
+      });
+      const tools = await conn.client.listTools();
+      toolDescriptors = (tools.tools ?? []).map((t) => ({
+        name: t.name,
+        description: t.description ?? null,
+      }));
+      if (catalog?.verifyToolName) {
+        await conn.client.callTool({ name: catalog.verifyToolName, arguments: {} });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return fail('mcp_connect_failed', `Couldn't verify the new key: ${msg}`);
+    } finally {
+      if (conn) await conn.close().catch(() => {});
+    }
+
+    const enc = isEncrypted(apiKey) ? apiKey : encrypt(apiKey);
+
+    await db
+      .update(mcpServers)
+      .set({
+        apiKey: enc,
+        apiKeyLast4: last4(apiKey),
+        availableTools: toolDescriptors,
+        updatedAt: new Date(),
+      })
+      .where(eq(mcpServers.id, mcpServerId));
+
+    revalidatePath('/mcp');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateMcpServerApiKeyAction]', err);
+    return fail('db_error', 'Failed to rotate MCP API key');
   }
 }
 
