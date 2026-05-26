@@ -30,7 +30,7 @@ export default function LocalTrustBanner() {
           </p>
           <button
             type="button"
-            onClick={() => router.push('/stats')}
+            onClick={() => router.push('/')}
             className="w-full rounded-lg bg-emerald-500 text-black py-2.5 text-sm font-semibold hover:bg-emerald-400 transition-colors"
           >
             Enter dashboard

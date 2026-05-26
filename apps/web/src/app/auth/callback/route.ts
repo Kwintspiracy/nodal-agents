@@ -5,6 +5,6 @@ import type { NextRequest } from 'next/server';
 // In local-auth mode, better-auth handles its own callbacks at /api/auth/*.
 // This route exists to catch OAuth redirects that target /auth/callback.
 export function GET(request: NextRequest): NextResponse {
-  // Redirect to stats on successful OAuth (real handling in 16b).
-  return NextResponse.redirect(new URL('/stats', request.url));
+  // Land on Home after successful OAuth (real handling in 16b).
+  return NextResponse.redirect(new URL('/', request.url));
 }

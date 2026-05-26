@@ -44,7 +44,7 @@ export default function AuthLoginForm() {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
         setError(data?.error ?? 'Invalid email or password.');
       } else {
-        router.push('/stats');
+        router.push('/');
       }
     } catch {
       setError('Network error — please try again.');
