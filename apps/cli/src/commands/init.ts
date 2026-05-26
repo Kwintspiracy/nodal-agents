@@ -16,8 +16,8 @@ function generateSecret(bytes = 32): string {
  * If a config already exists and force=false, asks whether to overwrite.
  *
  * `nonInteractive` writes a sensible default (lan bind, local-auth, no LLM
- * preset) and returns — used by Docker entrypoint where there's no TTY.
- * The user finishes LLM config from the dashboard.
+ * preset) and returns — used by headless / CI environments where there is
+ * no TTY. The user finishes LLM config from the dashboard.
  */
 export async function runInit(
   options: { force?: boolean; nonInteractive?: boolean } = {},

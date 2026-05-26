@@ -10,7 +10,6 @@
 // The resulting `pack/` can be:
 //   - Run directly: `node pack/cli.js up` (after `cd pack && npm install`)
 //   - Tarred:        `cd pack && npm pack` → nodal-agents-X.Y.Z.tgz
-//   - Containerised: COPY pack/ → /app in the Docker runtime stage
 
 import { execSync } from 'node:child_process';
 import {

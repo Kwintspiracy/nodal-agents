@@ -1,80 +1,210 @@
 # Nodal-Agents
 
-Local-first AI agent platform. Self-host on Mac, PC, Linux, VPS, or NAS in 3 commands.
+> **Your AI agents. Your data. Your machine.**
+> Self-hosted, local-first AI agent platform — install in two commands.
 
-## Install in 30 seconds (Docker)
+[![npm](https://img.shields.io/npm/v/nodal-agents?color=cb3837&label=npm&logo=npm)](https://www.npmjs.com/package/nodal-agents)
+[![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 
-Works on any host with Docker — Mac, PC, Linux, VPS, Synology / Unraid / TrueNAS NAS, Raspberry Pi.
+Build and orchestrate AI agents on your own hardware. Multi-LLM,
+multi-channel, multi-connector — **no SaaS lock-in, no per-token markup,
+no cloud roundtrip.** Runs on any machine with Node 22+ — Mac, PC, Linux.
+
+---
+
+## Why Nodal-Agents
+
+| | |
+| --- | --- |
+| 🏠 &nbsp;**Local-first** | Single binary, embedded Postgres, zero cloud dependency. Your conversations, memory, and credentials stay on your machine. |
+| 🔌 &nbsp;**LLM-agnostic** | Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter, or any OpenAI-compatible local model (LM Studio, Ollama). Per-agent key, swap providers without code changes. |
+| 🧠 &nbsp;**Memory that compounds** | Persistent facts (entity-scoped, auto-injected into every job) and chat-thread continuity (your agent remembers what it said 30 seconds ago — and what it said yesterday). |
+| 🤝 &nbsp;**Orchestrators that finish** | Router and planner orchestrators delegate to specialist sub-agents. Hard guards against runaway loops — turn caps, chain caps, per-slug delegation budgets, smart retry on side-effect-free failures. |
+| 🔧 &nbsp;**Multi-instance connectors** | Gmail perso *and* Gmail boulot on the same install. OAuth *and* API-key supported. Active list + Marketplace UI in the dashboard. |
+| 📡 &nbsp;**MCP support** | Connect Streamable HTTP MCP servers — per-job tool discovery, tool whitelisting, multi-instance. |
+| 💬 &nbsp;**Telegram out of the box** | Long-polling, multi-agent routing (`/ask <slug>`), group-chat filters, conversation continuity, delegation gracefulness on Telegram. |
+| ⚙️ &nbsp;**Real engineering** | TypeScript strict, dependency-cruiser-enforced architecture, full unit + integration suite, Playwright e2e, idempotent migrations, encryption at rest for keys. |
+
+---
+
+## Install
 
 ```bash
-curl -O https://raw.githubusercontent.com/Kwintspiracy/nodal-agents/main/docker-compose.yml
-docker compose up -d
+npm install -g nodal-agents
+nodal-agents up
 ```
 
-Open <http://localhost:3000> — Nodal-Agents is running. Configure your LLM provider from **Settings → LLM keys** in the dashboard.
+Open <http://localhost:3000>. The CLI spawns an embedded Postgres on a
+free port, applies migrations, seeds the system skills, and starts the
+runner (`:3001`) and dashboard (`:3000`). Configure your LLM provider
+from **Settings → LLM Keys** in the dashboard.
 
-Data (config, postgres, logs) lives in the `nodal-data` Docker volume. To wipe everything: `docker compose down -v`.
+> Requires Node 22+. No external Postgres, no Redis, no cloud config.
+> Data lives at `~/.nodalai/` — wipe with `rm -rf ~/.nodalai`.
 
-The image is published to `ghcr.io/kwintspiracy/nodal-agents:latest` (multi-arch: amd64 + arm64). To pin a version, replace `latest` with a release tag (e.g. `v0.1.0`).
+To stop the stack: `nodal-agents down`.
 
-### Build the image locally
-
-If you'd rather build from source instead of pulling the published image:
+### Build from source
 
 ```bash
 git clone https://github.com/Kwintspiracy/nodal-agents.git
 cd nodal-agents
-docker compose build
-docker compose up -d
-```
-
-(Comment the `image:` line and uncomment `build: .` in `docker-compose.yml`.)
-
-## Developer setup (monorepo)
-
-```bash
 pnpm install
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm --filter nodal-agents dev   # CLI in tsx watch mode
+pnpm --filter nodal-agents exec tsx src/index.ts --dev
 ```
 
-## Monorepo structure
+Dev mode runs `next dev` so the dashboard hot-reloads on file changes.
 
-- `apps/web` — Next.js dashboard (UI)
-- `apps/runner` — Agent runtime (HTTP API, job execution, cron ticker)
-- `apps/cli` — `nodal-agents` install + ops command
-- `packages/db` — Drizzle schema + migrations + client (only place that imports postgres)
-- `packages/shared` — Zod types and constants shared across web + runner
-- `packages/llm` — Vercel AI SDK wrapper, multi-provider abstraction
-- `packages/tools` — Tool registration + execution + approval gates
-- `packages/memory` — Agent memory CRUD + embeddings
-- `packages/orchestration` — Router + Planner patterns (delegation, task board)
-- `packages/runner-adapters` — Connectors: notion, drive, gmail, sheets, etc.
-- `packages/delivery` — Telegram, email, future Slack/Discord
-- `packages/auth` — Pluggable auth provider (local-trust default, better-auth opt-in, bearer-token for LAN)
+---
 
-## Architecture rules (enforced by `dependency-cruiser`)
+## How it works
 
-- `apps/*` may import `packages/*`, never the reverse
-- `apps/web` and `apps/runner` cannot import each other (DB or HTTP only)
-- Only `packages/db` may import postgres clients (`pg`, `postgres`, `drizzle-orm`)
-- `packages/runner-adapters/*` may only import from `packages/tools` and `packages/shared`
-- No circular dependencies
+```
+   ┌─────────────┐    Telegram /     ┌────────────────────────────────┐
+   │   Channel   │   Dashboard  ───▶ │         Runner (Hono)          │
+   │  (telegram, │    POST /api  ◀── │  • Job queue + executor        │
+   │   web …)    │                   │  • Anti-runaway guards          │
+   └─────────────┘                   │  • Per-agent tool whitelist     │
+                                     │  • Memory auto-injection        │
+                                     │  • Session-thread continuity    │
+                                     └─────────┬──────────┬────────────┘
+                                               │          │
+                                       ┌───────▼───┐  ┌───▼─────────────┐
+                                       │    LLM    │  │  Connectors /   │
+                                       │  client   │  │  MCP servers    │
+                                       │ (multi-   │  │  (Gmail, Drive, │
+                                       │ provider) │  │   Notion, Cogni │
+                                       └───────────┘  │   Cortex …)     │
+                                                      └─────────────────┘
+```
 
-Run `pnpm deps:check` locally before pushing.
+Every agent is a row in Postgres — personality, skills, connectors,
+memory budget, team assignments live in the database. The runtime is
+generic: **zero hardcoded agent metadata.** Adding capabilities means
+inserting rows, not editing code.
+
+A user message via Telegram becomes an `agent_jobs` row. The runner
+loads the agent's prior chat-thread history, injects relevant
+persistent memories, dispatches to the LLM, executes any tool calls
+emitted, and finalizes via `telegram_send_message` + `return_result`.
+Delegations create child jobs that resume the parent on completion.
+
+---
+
+## Dashboard
+
+| Route | Purpose |
+| --- | --- |
+| `/agents` | Create, edit, assign skills + connectors + MCP servers to agents. |
+| `/jobs` | Live job stream — task, agent, status, full transcript, tool I/O. |
+| `/connectors` | Active connector instances + Marketplace (multi-instance, OAuth or API-key). |
+| `/mcp` | Active MCP servers + Marketplace (HTTP transport). |
+| `/memories` | Persistent facts per entity — search, edit, archive. |
+| `/skills` | Procedural memory blocks — shipped with the product, user-overridable. |
+| `/logs` | Tool-call audit — input/output JSON per call, filterable by tool name. |
+| `/approvals` | Human-in-the-loop gates for risky tools. |
+| `/automations` | Cron-scheduled agent triggers. |
+| `/settings` | LLM keys, auth mode, network (loopback / LAN), bot tokens. |
+
+---
 
 ## Stack
 
-- **Runtime:** Node 22+, TypeScript strict
-- **Monorepo:** pnpm workspaces + Turborepo
-- **DB:** embedded-postgres (local + Docker), Drizzle ORM, pgvector
-- **Validation:** Zod
-- **HTTP server:** Hono (runner)
-- **LLM:** Vercel AI SDK
-- **Auth:** local-trust (single-user loopback) / local-auth (better-auth, multi-user LAN) / bearer-token
-- **Tests:** Vitest (unit), Playwright (e2e), dependency-cruiser (architecture)
+| Layer | Tech |
+| --- | --- |
+| Runtime | Node 22+, TypeScript strict (no `any`, no `@ts-ignore` without comment) |
+| Monorepo | pnpm workspaces + Turborepo |
+| Database | embedded-postgres (Win / Mac / Linux), Drizzle ORM, idempotent migrations |
+| Validation | Zod everywhere |
+| HTTP server | Hono (runner), Next.js 16 (dashboard) |
+| LLM | Vercel AI SDK — multi-provider with retry + timeout + tolerant parsing |
+| Auth | local-trust (single-user loopback) / better-auth (multi-user LAN) / bearer-token |
+| Encryption | AES-256-GCM at rest for API keys, master key in `~/.nodalai/secrets.key` |
+| Tests | Vitest (unit + integration), Playwright (e2e), dependency-cruiser (architecture) |
+
+---
+
+## Monorepo
+
+```
+apps/
+├── cli              nodal-agents CLI: install, up, down, ops
+├── runner           Hono server: job execution, cron, channel pollers
+└── web              Next.js dashboard
+
+packages/
+├── db               Drizzle schema + migrations + client (only postgres importer)
+├── shared           Zod types + constants shared across web + runner
+├── llm              Vercel AI SDK wrapper, retry, timeout, native tool-call parsers
+├── tools            Tool registration + execution + approval gates
+├── memory           Persistent memory CRUD + sanitation + dedup + auto-injection
+├── orchestration    Router / Planner patterns, delegation, chain counters
+├── adapters         Connector packages (gmail, drive, sheets, docs, notion,
+│                    airtable, apify, firecrawl, tavily, MCP)
+├── runner-adapters  Adapter registry, agent ↔ tool wiring
+├── delivery         Telegram, email
+├── auth             Pluggable auth provider
+├── catalog          Shipped system skills (telegram-responder, obsidian,
+│                    research-scope-discipline, claude-html-design)
+└── secrets          AES-256-GCM key vault
+```
+
+---
+
+## Architecture rules (enforced by `dependency-cruiser`)
+
+- `apps/*` may import `packages/*` — never the reverse.
+- `apps/web` and `apps/runner` cannot import each other (DB or HTTP only).
+- Only `packages/db` may import `postgres` / `drizzle-orm` / `pg`.
+- `packages/runner-adapters/*` may only import from `packages/tools` and
+  `packages/shared`.
+- No circular dependencies.
+
+```bash
+pnpm deps:check   # runs locally and in CI before every release
+```
+
+---
+
+## Status
+
+**Current release:** `0.1.5` on npm `latest`. Used daily by the
+maintainer, stable enough for personal production. Pre-1.0 — breaking
+changes are still possible between minors.
+
+### Shipped and working
+
+- Multi-LLM provider routing with per-agent keys
+- Persistent memory (sanitation, dedup, importance ranking, auto-injection,
+  feedback loop)
+- Session-thread continuity on chat channels (Telegram today)
+- Orchestrator (router + planner) with delegation chains and anti-runaway
+  caps
+- Multi-instance connectors with OAuth (Gmail, Drive, Sheets, Docs, Notion,
+  Airtable) and API-key (Notion, Airtable, Apify, Firecrawl, Tavily)
+- MCP Streamable HTTP catalog with API-key auth
+- Telegram delivery (long-poll, group filters, multi-agent routing,
+  delegation gracefulness)
+- Approval gates for risky tools
+- Cron scheduling
+- Encryption at rest for LLM keys + MCP keys
+- Embedded Postgres distribution via npm (no external DB to install)
+
+### On the roadmap (genuine, not vaporware)
+
+- **MCP OAuth flow** → unlocks Linear, Notion remote, GitHub remote,
+  Atlassian, Sentry, and the rest of the SaaS-as-MCP ecosystem.
+- **MCP stdio transport** → unlocks the Anthropic reference servers
+  (filesystem, sqlite, brave-search, GitHub stdio…) and the community
+  catalog.
+- **pgvector binaries bundled in the npm pack** → semantic memory search
+  active out-of-the-box. Today, installs without pgvector fall back to
+  keyword search (which works, just less smart for cross-vocabulary
+  recall).
+- Data migration tools from the legacy Python stack.
+
+---
 
 ## License
 

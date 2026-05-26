@@ -116,10 +116,11 @@ export async function startEmbeddedPostgres(
   const capturedErrors: string[] = [];
   const verboseLog = process.env['NODALAI_PG_LOG'] === '1';
 
-  // Postgres refuses to run as root for safety. In Docker the container
-  // usually runs as root, so we ask embedded-postgres to spin up a
-  // dedicated `postgres` system user on first boot. process.getuid is
-  // undefined on Windows — guard accordingly.
+  // Postgres refuses to run as root for safety. When the CLI is launched
+  // as root (e.g. inside a CI container, or by an init system that runs
+  // services as root), we ask embedded-postgres to spin up a dedicated
+  // `postgres` system user on first boot. process.getuid is undefined on
+  // Windows — guard accordingly.
   const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 
   const pg = new EmbeddedPostgres({
