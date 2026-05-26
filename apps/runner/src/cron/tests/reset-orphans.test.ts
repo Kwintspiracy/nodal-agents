@@ -11,7 +11,12 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
-import { resetOrphanedTasks, resetOrphanedJobs } from '../reset-orphans.ts';
+import {
+  resetOrphanedTasks,
+  resetOrphanedJobs,
+  findPendingJobsToRecover,
+  failStalePendingJobs,
+} from '../reset-orphans.ts';
 
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
@@ -323,6 +328,21 @@ describe('resetOrphanedJobs', () => {
     expect(parentAfter?.updatedAt?.getTime() ?? 0).toBeGreaterThan(staleDate.getTime());
   });
 
+  it('DOES NOT touch pending jobs (those are recovered, not failed — see findPendingJobsToRecover)', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const job = await createJob({ status: 'pending', updatedAt: staleDate });
+
+    await resetOrphanedJobs(db, 5);
+
+    const [after] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    // Pending stays pending — this phase only touches processing/awaiting_*.
+    expect(after?.status).toBe('pending');
+    expect(after?.error).toBeNull();
+  });
+
   it('DOES reset awaiting_delegation parent when sub-job already completed (truly orphaned resume)', async () => {
     const staleDate = new Date(Date.now() - 10 * 60 * 1000);
     // Sub-job completed but the resume path never fired (e.g. runner crashed
@@ -356,5 +376,154 @@ describe('resetOrphanedJobs', () => {
 
     expect(parentAfter?.status).toBe('failed');
     expect(parentAfter?.error).toBe('orphan_job_reset');
+  });
+});
+
+describe('findPendingJobsToRecover', () => {
+  // Regression — 2026-05-26: the Telegram poller fires `triggerWorker`
+  // fire-and-forget over HTTP and swallows fetch failures (.catch(()=>{})).
+  // On Windows a zombie sibling on port 3001 (Ctrl+C didn't tree-kill)
+  // can intercept the request, leaving the job pending forever. The
+  // recovery query must surface those rows so the next cron tick drives
+  // them through executeJob directly (no HTTP roundtrip).
+  it('returns ids of pending jobs older than the lower bound (in the recovery window)', async () => {
+    // 1 min old — comfortably past the 30s lower bound and well within
+    // the default 5min upper bound. (Use 5min flat AT the upper bound
+    // and you get edge-case off-by-one flakes; aim for the middle.)
+    const job = await createJob({
+      status: 'pending',
+      updatedAt: new Date(Date.now() - 60 * 1000),
+    });
+
+    const ids = await findPendingJobsToRecover(db, 30);
+    expect(ids).toContain(job.id);
+  });
+
+  it('does NOT return pending jobs that were just inserted (fresh trigger in flight)', async () => {
+    // A pending row whose updated_at is well within the threshold —
+    // the worker fetch is probably already running. Triggering AGAIN
+    // would race with claimJob and waste an LLM call. Skip it.
+    const job = await createJob({ status: 'pending', updatedAt: new Date() });
+
+    const ids = await findPendingJobsToRecover(db, 30);
+    expect(ids).not.toContain(job.id);
+  });
+
+  it('does NOT return rows in any non-pending status', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const processing = await createJob({ status: 'processing', updatedAt: staleDate });
+    const completed = await createJob({ status: 'completed', updatedAt: staleDate });
+    const failed = await createJob({ status: 'failed', updatedAt: staleDate });
+    const cancelled = await createJob({ status: 'cancelled', updatedAt: staleDate });
+    const awaiting = await createJob({ status: 'awaiting_delegation', updatedAt: staleDate });
+
+    const ids = await findPendingJobsToRecover(db, 30);
+    for (const id of [processing.id, completed.id, failed.id, cancelled.id, awaiting.id]) {
+      expect(ids).not.toContain(id);
+    }
+  });
+
+  it('uses updated_at (not created_at) so resumed-pending rows respect the threshold', async () => {
+    // A job that was awaiting_delegation last week, just got bumped to
+    // pending by resumeDelegated 10s ago — updated_at is fresh but
+    // created_at is old. Recovery must skip it.
+    const job = await createJob({
+      status: 'pending',
+      updatedAt: new Date(Date.now() - 10 * 1000),
+    });
+    // Force created_at way back to confirm the query keys on updated_at.
+    await db
+      .update(agentJobs)
+      .set({
+        createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      })
+      .where(eq(agentJobs.id, job.id));
+
+    const ids = await findPendingJobsToRecover(db, 30);
+    expect(ids).not.toContain(job.id);
+  });
+
+  it('does NOT recover pending older than the upper bound (abandoned)', async () => {
+    // Regression — 2026-05-26: a pending job created 4 days earlier
+    // (job 03cd4304) got silently resurrected when the recovery had no
+    // upper age bound. The user had moved on; waking it up created
+    // ghost work they didn't ask for. The fix excludes anything older
+    // than ~5min from recovery so failStalePendingJobs can mark them
+    // abandoned instead.
+    const fourDaysAgo = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+    const job = await createJob({ status: 'pending', updatedAt: fourDaysAgo });
+
+    // Default upper bound = 5 minutes.
+    const ids = await findPendingJobsToRecover(db, 30, 5 * 60);
+    expect(ids).not.toContain(job.id);
+  });
+
+  it('recovers pending in the legit window (older than lower, younger than upper)', async () => {
+    // 2 minutes old — past the 30s lower bound, before the 5min upper.
+    // This is the Windows-zombie-runner case: triggerWorker fetch
+    // failed silently, job sat for a couple minutes, next cron tick
+    // catches it.
+    const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000);
+    const job = await createJob({ status: 'pending', updatedAt: twoMinAgo });
+
+    const ids = await findPendingJobsToRecover(db, 30, 5 * 60);
+    expect(ids).toContain(job.id);
+  });
+});
+
+describe('failStalePendingJobs', () => {
+  // Regression — 2026-05-26: an unbounded recovery (no upper age) tried
+  // to wake a 4-day-old pending job (03cd4304). With this fix, jobs
+  // older than the staleness threshold get a terminal status instead
+  // of being silently resurrected — preserves the "user-moved-on"
+  // invariant.
+  it('marks pending older than the threshold as failed with stale_pending_abandoned', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000); // 10 min old
+    const job = await createJob({ status: 'pending', updatedAt: staleDate });
+
+    const n = await failStalePendingJobs(db, 5 * 60);
+    expect(n).toBeGreaterThanOrEqual(1);
+
+    const [after] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        completedAt: agentJobs.completedAt,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(after?.status).toBe('failed');
+    expect(after?.error).toBe('stale_pending_abandoned');
+    // completedAt must be set so the orphan-cleanup / "in-flight"
+    // filters treat the row as terminal (matches failJob semantics).
+    expect(after?.completedAt).not.toBeNull();
+  });
+
+  it('does NOT touch fresh pending jobs', async () => {
+    const fresh = await createJob({ status: 'pending', updatedAt: new Date() });
+    await failStalePendingJobs(db, 5 * 60);
+    const [after] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, fresh.id));
+    expect(after?.status).toBe('pending');
+  });
+
+  it('does NOT touch jobs in non-pending statuses', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const processing = await createJob({ status: 'processing', updatedAt: staleDate });
+    const completed = await createJob({ status: 'completed', updatedAt: staleDate });
+    const cancelled = await createJob({ status: 'cancelled', updatedAt: staleDate });
+
+    await failStalePendingJobs(db, 5 * 60);
+
+    for (const j of [processing, completed, cancelled]) {
+      const [after] = await db
+        .select({ status: agentJobs.status, error: agentJobs.error })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, j.id));
+      expect(after?.status).toBe(j.status);
+      expect(after?.error).toBeNull();
+    }
   });
 });

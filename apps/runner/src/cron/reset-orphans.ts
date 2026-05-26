@@ -6,7 +6,7 @@
 //   - resetOrphanedJobs:  jobs in `processing` / `awaiting_delegation` with
 //                         no recent activity → marked `failed`
 
-import { and, eq, inArray, isNull, lt, or } from '@nodal-agents/db';
+import { and, eq, gte, inArray, isNull, lt, or } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
@@ -198,4 +198,95 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
   }
 
   return toReset.length;
+}
+
+// ─── pending recovery ─────────────────────────────────────────────────────────
+
+/**
+ * Find `pending` jobs within the "stuck-but-still-relevant" age window
+ * and return their IDs for the caller to drive through executeJob.
+ *
+ * Why this exists: the Telegram poller (and other job creators) call
+ * `triggerWorker(jobId)` fire-and-forget over HTTP to `/api/worker`.
+ * That fetch has a `.catch(() => {})` swallow — any transient failure
+ * (runner mid-restart, port held by a stale-zombie process on Windows
+ * see `feedback_windows_process_tree_kill`, network blip) drops the
+ * job into `pending` forever because nothing else periodically claims
+ * stale pending rows.
+ *
+ * Observed live (2026-05-26, job e846a3e1): the user sent a Telegram
+ * message, the poller inserted the row, the triggerWorker fetch hit a
+ * zombie runner on port 3001 instead of the live one, fetch silently
+ * failed, job sat pending for 3+ minutes with no recovery path.
+ *
+ * Age bounds matter:
+ *   - Lower (default 30s): pending → processing should normally happen
+ *     within ~50ms of insert; anything older than 30s is almost
+ *     certainly a missed trigger and worth a recovery attempt.
+ *   - Upper (default 5min, same as `resetOrphanedJobs`): older pending
+ *     rows are abandoned, NOT recovered. Silently waking up a 4-day-old
+ *     task because the user typed it before the runner zombie-locked
+ *     would be a horror-show UX (live miss 2026-05-26, job 03cd4304
+ *     created 4 days earlier and silently resurrected by an earlier
+ *     version of this recovery). Caller passes those to
+ *     `failStalePendingJobs` below to mark them failed instead.
+ *
+ * We DON'T touch the row here — the caller passes each id to
+ * executeJob, which atomically claims via `claimJob` (status flip with
+ * WHERE), so two concurrent ticks can't double-execute the same job.
+ */
+export async function findPendingJobsToRecover(
+  db: AnyDrizzleDb,
+  staleSecondsLower = 30,
+  staleSecondsUpper = 5 * 60,
+): Promise<string[]> {
+  const lowerCutoff = new Date(Date.now() - staleSecondsLower * 1000);
+  const upperCutoff = new Date(Date.now() - staleSecondsUpper * 1000);
+  // `updated_at` (not `created_at`) so jobs bumped back to pending by
+  // resumeDelegated / approval / self-chain reset are evaluated against
+  // their LAST touch, not their original insert.
+  // `updated_at < lowerCutoff` = older than 30s ago.
+  // `updated_at >= upperCutoff` = NOT older than 5min ago.
+  const rows = await db
+    .select({ id: agentJobs.id })
+    .from(agentJobs)
+    .where(
+      and(
+        eq(agentJobs.status, 'pending'),
+        lt(agentJobs.updatedAt, lowerCutoff),
+        gte(agentJobs.updatedAt, upperCutoff),
+      ),
+    );
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Mark `pending` jobs older than `staleSeconds` as failed with a
+ * dedicated error code, so they don't sit forever in the DB as junk and
+ * — more importantly — don't get silently resurrected by recovery on a
+ * later boot. Threshold matches `resetOrphanedJobs`: anything stuck >5min
+ * past its last update is abandoned, full stop.
+ *
+ * The error code is distinct from `orphan_job_reset` (which is for
+ * processing/awaiting jobs) so the dashboard can tell users "this job
+ * was never picked up by a worker" vs "this job started but the runner
+ * crashed mid-flight" — different remediation.
+ */
+export async function failStalePendingJobs(
+  db: AnyDrizzleDb,
+  staleSeconds = 5 * 60,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - staleSeconds * 1000);
+  const now = new Date();
+  const result = await db
+    .update(agentJobs)
+    .set({
+      status: 'failed',
+      error: 'stale_pending_abandoned',
+      completedAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(agentJobs.status, 'pending'), lt(agentJobs.updatedAt, cutoff)))
+    .returning({ id: agentJobs.id });
+  return result.length;
 }

@@ -1,23 +1,34 @@
 // cron/tick.ts — runCronTick
 // Orchestrates the cron phases in order:
 //   1. resetOrphanedJobs    — fail jobs stuck in processing/awaiting_delegation
-//   2. resetOrphanedTasks   — recover in_progress tasks with no job
-//   3. unblockReadyTasks    — inject dep results for tasks whose deps are done
-//   4. executeReadyTasks    — claim and run up to 5 ready tasks
-//   5. runScheduleTick      — fire active agent_schedules whose next_run is due
-//   6. deliverCompletedRoots — compile and deliver results for finished root jobs
+//   2. recoverPendingJobs   — re-execute pending jobs whose triggerWorker fetch
+//                             silently failed (see findPendingJobsToRecover docs)
+//   3. resetOrphanedTasks   — recover in_progress tasks with no job
+//   4. unblockReadyTasks    — inject dep results for tasks whose deps are done
+//   5. executeReadyTasks    — claim and run up to 5 ready tasks
+//   6. runScheduleTick      — fire active agent_schedules whose next_run is due
+//   7. deliverCompletedRoots — compile and deliver results for finished root jobs
 
-import { resetOrphanedJobs, resetOrphanedTasks } from './reset-orphans.ts';
+import {
+  resetOrphanedJobs,
+  resetOrphanedTasks,
+  findPendingJobsToRecover,
+  failStalePendingJobs,
+} from './reset-orphans.ts';
 import { unblockReadyTasks } from './unblock-ready.ts';
 import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
+import { executeJob } from '../job/execute.ts';
+import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
 
 // ─── CronTickResult ───────────────────────────────────────────────────────────
 
 export interface CronTickResult {
   orphanJobsReset: number;
+  pendingRecovered: number;
+  stalePendingFailed: number;
   orphansReset: number;
   tasksUnblocked: number;
   tasksExecuted: number;
@@ -33,15 +44,43 @@ export interface CronTickResult {
  * as one tick (no double-execution, no double-delivery).
  *
  * Phases run sequentially so that:
- * - Phase 2 (unblock) can benefit from Phase 1 (orphan reset) having freed tasks
- * - Phase 3 (execute) picks up tasks just unblocked by Phase 2
- * - Phase 4 (deliver) sees results from tasks completed by Phase 3
+ * - Phase 2 (recover) catches Telegram/dashboard/API jobs whose triggerWorker
+ *   fetch failed (Windows port-clash zombie, transient network) BEFORE the
+ *   orphan reset has a chance to flag them as failed
+ * - Phase 4 (unblock) can benefit from Phase 1 (orphan reset) having freed tasks
+ * - Phase 5 (execute) picks up tasks just unblocked by Phase 4
+ * - Phase 7 (deliver) sees results from tasks completed by Phase 5
  *
  * @param deps  RunnerDeps (db + llmClient + registry)
- * @param maxTasksPerTick  Max tasks to execute in Phase 3 (default 5)
+ * @param maxTasksPerTick  Max tasks to execute in Phase 5 (default 5)
  */
 export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promise<CronTickResult> {
   const orphanJobsReset = await resetOrphanedJobs(deps.db);
+
+  // Recover stale pending jobs by driving them through executeJob in this
+  // process. We deliberately call executeJob directly (no HTTP roundtrip
+  // to /api/worker) so a zombie sibling holding the same port on Windows
+  // can't intercept the trigger — same machine, same node process, no
+  // possibility of the request landing in the wrong runner. Each call is
+  // fire-and-forget so a long LLM loop doesn't block the rest of the
+  // tick; executeJob has its own internal error handling that ensures
+  // every path persists a final status (completed / failed / cancelled /
+  // awaiting_*) before returning.
+  //
+  // The age window (30s — 5min) is narrow on purpose. Anything older
+  // than 5min is handled by `failStalePendingJobs` right below: those
+  // are abandoned tasks the user has moved on from, and silently
+  // resurrecting a 4-day-old request would create surprise jobs the
+  // user has no context for (caught live 2026-05-26, job 03cd4304).
+  const pendingIds = await findPendingJobsToRecover(deps.db);
+  for (const id of pendingIds) {
+    void executeJob(id as JobId, deps).catch((err) => {
+      console.warn('[cron] pending recovery failed for', id, err);
+    });
+  }
+  const pendingRecovered = pendingIds.length;
+  const stalePendingFailed = await failStalePendingJobs(deps.db);
+
   const orphansReset = await resetOrphanedTasks(deps.db);
   const tasksUnblocked = await unblockReadyTasks(deps.db);
   const tasksExecuted = await executeReadyTasks(deps.db, deps, maxTasksPerTick);
@@ -50,6 +89,8 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
 
   return {
     orphanJobsReset,
+    pendingRecovered,
+    stalePendingFailed,
     orphansReset,
     tasksUnblocked,
     tasksExecuted,
