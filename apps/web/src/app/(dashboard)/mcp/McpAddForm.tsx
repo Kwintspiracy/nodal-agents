@@ -18,11 +18,17 @@ export default function McpAddForm({ catalogItem }: Props) {
   const [isPending, startTransition] = useTransition();
   const [apiKey, setApiKey] = useState('');
   const [name, setName] = useState('');
+  const [url, setUrl] = useState('');
+
+  // Catalog entries with `serverUrl: null` require the user to paste a
+  // per-account URL (e.g. Composio's `/v3/mcp/<server-id>?user_id=…`).
+  const needsUrl = catalogItem.serverUrl === null;
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const trimmedName = name.trim();
     const trimmedKey = apiKey.trim();
+    const trimmedUrl = url.trim();
     if (!trimmedName) {
       toast.error('Name is required');
       return;
@@ -31,11 +37,16 @@ export default function McpAddForm({ catalogItem }: Props) {
       toast.error('API key is required');
       return;
     }
+    if (needsUrl && !trimmedUrl) {
+      toast.error('Server URL is required');
+      return;
+    }
     startTransition(async () => {
       const r = await createMcpServerFromCatalogAction({
         slug: catalogItem.slug,
         name: trimmedName,
         apiKey: trimmedKey,
+        ...(needsUrl ? { url: trimmedUrl } : {}),
       });
       if (!r.ok) {
         toast.error(r.message);
@@ -45,6 +56,7 @@ export default function McpAddForm({ catalogItem }: Props) {
       setOpen(false);
       setName('');
       setApiKey('');
+      setUrl('');
     });
   }
 
@@ -87,6 +99,25 @@ export default function McpAddForm({ catalogItem }: Props) {
               className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
             />
           </div>
+          {needsUrl && (
+            <div>
+              <label
+                htmlFor={`mcp-url-${catalogItem.slug}`}
+                className="block text-xs text-neutral-500 mb-1"
+              >
+                Server URL
+              </label>
+              <input
+                id={`mcp-url-${catalogItem.slug}`}
+                type="url"
+                required
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://…"
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+              />
+            </div>
+          )}
           <div>
             <label
               htmlFor={`mcp-key-${catalogItem.slug}`}
@@ -101,7 +132,7 @@ export default function McpAddForm({ catalogItem }: Props) {
               autoComplete="off"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={`${catalogItem.keyPrefix}…`}
+              placeholder={catalogItem.keyPrefix[0] ? `${catalogItem.keyPrefix[0]}…` : ''}
               className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
             />
             {catalogItem.docsHint && (
@@ -110,7 +141,7 @@ export default function McpAddForm({ catalogItem }: Props) {
           </div>
           <button
             type="submit"
-            disabled={isPending || !name.trim() || !apiKey.trim()}
+            disabled={isPending || !name.trim() || !apiKey.trim() || (needsUrl && !url.trim())}
             className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
           >
             {isPending ? 'Connecting…' : 'Connect'}

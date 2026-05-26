@@ -459,7 +459,7 @@ export async function executeJob(
             slug: ms.slug,
             url: ms.url,
             apiKey: decryptedKey,
-            authScheme: ms.authScheme as 'header' | 'query',
+            authScheme: ms.authScheme as 'header' | 'query' | 'bearer',
             authParamName: ms.authParamName,
           });
           mcpClosers.push(toolset.close);

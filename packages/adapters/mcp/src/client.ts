@@ -7,16 +7,21 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-export type McpAuthScheme = 'header' | 'query';
+export type McpAuthScheme = 'header' | 'query' | 'bearer';
 
 export interface McpConnectOptions {
   /** Base MCP server URL (Streamable HTTP endpoint). */
   url: string;
   /** Decrypted API key. Omit for servers that need no auth. */
   apiKey?: string;
-  /** How to inject the key. Required when `apiKey` is set. */
+  /**
+   * How to inject the key. Required when `apiKey` is set.
+   * - `header`: `headers[authParamName] = apiKey` (e.g. `x-api-key: <key>`)
+   * - `query`: `?<authParamName>=<apiKey>` appended to the URL
+   * - `bearer`: `headers['Authorization'] = 'Bearer ' + apiKey` (authParamName ignored)
+   */
   authScheme?: McpAuthScheme;
-  /** Header name or query-param name (e.g. `x-api-key`). Required when `apiKey` is set. */
+  /** Header name or query-param name (e.g. `x-api-key`). Required for `header` and `query`; ignored for `bearer`. */
   authParamName?: string;
 }
 
@@ -51,15 +56,22 @@ export function buildMcpRequest(opts: McpConnectOptions): McpRequestTarget {
   const headers: Record<string, string> = {};
 
   if (opts.apiKey) {
-    if (!opts.authScheme || !opts.authParamName) {
-      throw new Error(
-        'buildMcpRequest: authScheme and authParamName are required when apiKey is set',
-      );
+    if (!opts.authScheme) {
+      throw new Error('buildMcpRequest: authScheme is required when apiKey is set');
     }
-    if (opts.authScheme === 'query') {
-      url.searchParams.set(opts.authParamName, opts.apiKey);
+    if (opts.authScheme === 'bearer') {
+      headers['Authorization'] = `Bearer ${opts.apiKey}`;
     } else {
-      headers[opts.authParamName] = opts.apiKey;
+      if (!opts.authParamName) {
+        throw new Error(
+          `buildMcpRequest: authParamName is required when authScheme is '${opts.authScheme}'`,
+        );
+      }
+      if (opts.authScheme === 'query') {
+        url.searchParams.set(opts.authParamName, opts.apiKey);
+      } else {
+        headers[opts.authParamName] = opts.apiKey;
+      }
     }
   }
 

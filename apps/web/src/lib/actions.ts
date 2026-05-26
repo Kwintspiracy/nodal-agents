@@ -1183,7 +1183,18 @@ export type McpCatalogItem = {
   label: string;
   description: string;
   docsHint: string;
-  keyPrefix: string;
+  /**
+   * Accepted API-key prefixes. Empty array = no prefix check (provider
+   * has no canonical prefix or accepts many formats — Composio etc.).
+   * Any-of match against the candidate API key.
+   */
+  keyPrefix: string[];
+  /**
+   * `null` means the catalog entry requires the user to paste a server URL
+   * (per-account hosted MCP servers like Composio). The Add form renders an
+   * extra URL input in that case.
+   */
+  serverUrl: string | null;
 };
 
 export type McpServersListResponse = {
@@ -1222,6 +1233,7 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
       description: c.description,
       docsHint: c.docsHint,
       keyPrefix: c.keyPrefix,
+      serverUrl: c.serverUrl,
     }));
 
     return ok({ instances, catalog });
@@ -1235,6 +1247,8 @@ const CreateMcpServerSchema = z.object({
   slug: z.string().min(1).max(80),
   name: z.string().min(1, 'Name is required').max(120),
   apiKey: z.string().min(1, 'API key is required'),
+  /** Required when the catalog entry has `serverUrl: null` (user-supplied URL pattern). */
+  url: z.string().url('Invalid URL').optional(),
 });
 
 /**
@@ -1243,6 +1257,13 @@ const CreateMcpServerSchema = z.object({
  * dashboard never shows a dead connector. On success the encrypted key + the
  * discovered tool list are INSERTED (multi-instance: several rows per slug
  * allowed; to rotate a key, delete the instance and re-create).
+ *
+ * Catalog flexibility (Brique A v3):
+ * - `catalog.serverUrl === null` → the user must supply `input.url`.
+ * - `catalog.verifyToolName === null` → skip the extra verify call; the
+ *   underlying `tools/list` (which fails on bad auth) is sufficient.
+ * - `catalog.keyPrefix === []` → no prefix check (provider has no
+ *   canonical prefix or accepts many formats — Composio etc.).
  */
 export async function createMcpServerFromCatalogAction(
   raw: unknown,
@@ -1256,8 +1277,18 @@ export async function createMcpServerFromCatalogAction(
     const catalog = MCP_CATALOG.find((e) => e.slug === parsed.data.slug);
     if (!catalog) return fail('validation_failed', 'Unknown MCP connector');
     const apiKey = parsed.data.apiKey.trim();
-    if (!apiKey.startsWith(catalog.keyPrefix)) {
-      return fail('validation_failed', `API key must start with "${catalog.keyPrefix}"`);
+    if (catalog.keyPrefix.length > 0 && !catalog.keyPrefix.some((p) => apiKey.startsWith(p))) {
+      const expected =
+        catalog.keyPrefix.length === 1
+          ? `"${catalog.keyPrefix[0]}"`
+          : `one of: ${catalog.keyPrefix.map((p) => `"${p}"`).join(', ')}`;
+      return fail('validation_failed', `API key must start with ${expected}`);
+    }
+
+    // Resolve effective URL: catalog wins when set; otherwise user must supply.
+    const effectiveUrl = catalog.serverUrl ?? parsed.data.url ?? null;
+    if (!effectiveUrl) {
+      return fail('validation_failed', `${catalog.label} requires a server URL`);
     }
 
     // Connect-and-verify before persisting. A bad key must fail loud here and
@@ -1266,19 +1297,24 @@ export async function createMcpServerFromCatalogAction(
     let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
     try {
       conn = await connectMcp({
-        url: catalog.serverUrl,
+        url: effectiveUrl,
         apiKey,
         authScheme: catalog.authScheme,
         authParamName: catalog.authParamName,
       });
-      // Some servers accept listTools but reject the key on the first real
-      // call — exercise the catalog's verify tool to be certain.
-      const verify = await conn.client.callTool({
-        name: catalog.verifyToolName,
-        arguments: {},
-      });
-      if (verify.isError === true) {
-        return fail('mcp_connect_failed', `${catalog.label} rejected the API key.`);
+      // Optional belt-and-suspenders: some servers accept listTools but reject
+      // the key on the first real call. When the catalog declares a verify
+      // tool, exercise it. Servers without a universal probe (Composio etc.)
+      // leave this null — listTools above is sufficient (it would have thrown
+      // on bad auth).
+      if (catalog.verifyToolName) {
+        const verify = await conn.client.callTool({
+          name: catalog.verifyToolName,
+          arguments: {},
+        });
+        if (verify.isError === true) {
+          return fail('mcp_connect_failed', `${catalog.label} rejected the API key.`);
+        }
       }
       toolDescriptors = conn.tools.map((t) => ({
         name: t.name,
@@ -1294,7 +1330,8 @@ export async function createMcpServerFromCatalogAction(
     const db = getDb();
     const encApiKey = encrypt(apiKey);
     // Multi-instance: pure INSERT — the (entity, slug) UNIQUE is gone (migration
-    // 0017), so a user can register several Cortex servers under different names.
+    // 0017), so a user can register several servers of the same slug under
+    // different names.
     const [row] = await db
       .insert(mcpServers)
       .values({
@@ -1302,7 +1339,7 @@ export async function createMcpServerFromCatalogAction(
         name: parsed.data.name,
         slug: catalog.slug,
         transport: catalog.transport,
-        url: catalog.serverUrl,
+        url: effectiveUrl,
         apiKey: encApiKey,
         apiKeyLast4: last4(apiKey),
         authScheme: catalog.authScheme,

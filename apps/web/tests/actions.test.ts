@@ -2502,7 +2502,7 @@ describe('listMcpServersAction', () => {
       // Catalog always contains all entries
       const cogni = r.data.catalog.find((c) => c.slug === 'cogni-cortex');
       expect(cogni).toBeDefined();
-      expect(cogni?.keyPrefix).toBe('cog_');
+      expect(cogni?.keyPrefix).toEqual(['cog_']);
     }
   });
 });

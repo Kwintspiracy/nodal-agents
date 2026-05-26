@@ -7,8 +7,13 @@
 // the user connects it. The row is the runtime source of truth — the runner
 // never imports this catalog.
 
-/** How an MCP server's API key is injected into the HTTP request. */
-export type McpAuthScheme = 'header' | 'query';
+/**
+ * How an MCP server's API key is injected into the HTTP request.
+ * - `header`: `headers[authParamName] = apiKey` (e.g. `x-api-key: <key>`)
+ * - `query`: appended to the URL as `?<authParamName>=<apiKey>`
+ * - `bearer`: `headers['Authorization'] = 'Bearer ' + apiKey` (authParamName ignored)
+ */
+export type McpAuthScheme = 'header' | 'query' | 'bearer';
 
 export type McpCatalogEntry = {
   /** Stable id — also the mcp_servers.slug and the tool-name namespace. */
@@ -17,18 +22,39 @@ export type McpCatalogEntry = {
   label: string;
   /** One-line description shown on the connector card. */
   description: string;
-  /** Streamable HTTP endpoint of the MCP server. */
-  serverUrl: string;
+  /**
+   * Streamable HTTP endpoint of the MCP server.
+   * `null` = the user supplies the URL at connect time (typical of
+   * per-account hosted servers like Composio where the URL embeds a
+   * server-id and user-id).
+   */
+  serverUrl: string | null;
   /** Transport. Only 'http' (Streamable HTTP) is supported today. */
   transport: 'http';
-  /** Where the API key goes: a request header or a URL query param. */
+  /** Where the API key goes. */
   authScheme: McpAuthScheme;
-  /** The literal header name or query-param name (e.g. 'x-api-key'). */
+  /**
+   * The literal header name or query-param name (e.g. 'x-api-key').
+   * Set to a placeholder (e.g. 'Authorization') and ignored when
+   * `authScheme === 'bearer'` — kept non-null for type stability.
+   */
   authParamName: string;
-  /** Expected API-key prefix — the create form rejects keys without it. */
-  keyPrefix: string;
-  /** A read-only tool called once at connect time to verify the key works. */
-  verifyToolName: string;
+  /**
+   * Accepted API-key prefixes — the create form rejects a candidate key
+   * unless it starts with at least one of these. Empty array = no prefix
+   * check (use when the provider has no canonical prefix or accepts many
+   * formats). Stripe e.g. ships both `sk_…` (secret) and `rk_…`
+   * (restricted, recommended for least-privilege) keys, both valid.
+   */
+  keyPrefix: string[];
+  /**
+   * Read-only tool called once at connect time to verify the key works.
+   * `null` = skip the extra verify call; the underlying `tools/list`
+   * (which fails on bad auth) is sufficient. Use for servers whose
+   * tool set is user-specific and has no universal probe (Composio,
+   * Zapier-like aggregators).
+   */
+  verifyToolName: string | null;
   /** User-facing guidance on where to get the key. */
   docsHint: string;
 };
@@ -47,9 +73,37 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     transport: 'http',
     authScheme: 'header',
     authParamName: 'x-api-key',
-    keyPrefix: 'cog_',
+    keyPrefix: ['cog_'],
     verifyToolName: 'get_home',
     docsHint:
       'API key starting with cog_ — created in the Cogni app when a human registers an agent in "I control it" mode.',
+  },
+  {
+    slug: 'stripe',
+    label: 'Stripe',
+    description:
+      'Payment processing — read customers, products, prices, invoices, subscriptions; create coupons, payment links, refunds.',
+    serverUrl: 'https://mcp.stripe.com',
+    transport: 'http',
+    authScheme: 'bearer',
+    authParamName: 'Authorization',
+    keyPrefix: ['sk_', 'rk_'],
+    verifyToolName: 'retrieve_balance',
+    docsHint:
+      'Use a Restricted API Key (rk_test_… or rk_live_…) from https://dashboard.stripe.com/apikeys for least privilege — recommended. Standard secret keys (sk_test_… or sk_live_…) also work.',
+  },
+  {
+    slug: 'composio',
+    label: 'Composio',
+    description:
+      'Meta-toolkit: a Composio MCP server you provision exposes hundreds of tools across Gmail, Slack, GitHub, Linear, and more — configured per-server on composio.dev.',
+    serverUrl: null,
+    transport: 'http',
+    authScheme: 'header',
+    authParamName: 'x-api-key',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create an MCP server at https://app.composio.dev, paste its full URL here (format: https://backend.composio.dev/v3/mcp/<server-id>?user_id=<user-id>) plus your Composio API key.',
   },
 ];

@@ -51,7 +51,7 @@ export const mcpServers = pgTable(
     check('mcp_servers_transport_check', sql`${table.transport} IN ('http','stdio')`),
     check(
       'mcp_servers_auth_scheme_check',
-      sql`${table.authScheme} IN ('header','query') OR ${table.authScheme} IS NULL`,
+      sql`${table.authScheme} IN ('header','query','bearer') OR ${table.authScheme} IS NULL`,
     ),
     // Multi-instance brique (migration 0017): the (entity_id, slug) UNIQUE
     // index was dropped to allow multiple instances of the same MCP server

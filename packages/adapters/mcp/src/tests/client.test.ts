@@ -42,14 +42,44 @@ describe('buildMcpRequest', () => {
     expect(t.url.searchParams.get('x-api-key')).toBeNull();
   });
 
+  it('injects the key as a bearer Authorization header', () => {
+    const t = buildMcpRequest({
+      url: 'https://mcp.stripe.com',
+      apiKey: 'sk_test_123',
+      authScheme: 'bearer',
+      authParamName: 'Authorization', // ignored for bearer, kept for type stability
+    });
+    expect(t.headers['Authorization']).toBe('Bearer sk_test_123');
+    expect(t.url.searchParams.get('Authorization')).toBeNull();
+  });
+
+  it('bearer scheme does not require authParamName', () => {
+    const t = buildMcpRequest({
+      url: 'https://mcp.stripe.com',
+      apiKey: 'sk_live_xyz',
+      authScheme: 'bearer',
+    });
+    expect(t.headers['Authorization']).toBe('Bearer sk_live_xyz');
+  });
+
   it('emits no auth when apiKey is omitted', () => {
     const t = buildMcpRequest({ url: 'https://x.example.com/api/mcp' });
     expect(t.headers).toEqual({});
     expect(t.url.toString()).toBe('https://x.example.com/api/mcp');
   });
 
-  it('throws when apiKey is set without authScheme / authParamName', () => {
+  it('throws when apiKey is set without authScheme', () => {
     expect(() => buildMcpRequest({ url: 'https://x.example.com', apiKey: 'k' })).toThrow();
+  });
+
+  it('throws when header scheme is set without authParamName', () => {
+    expect(() =>
+      buildMcpRequest({
+        url: 'https://x.example.com',
+        apiKey: 'k',
+        authScheme: 'header',
+      }),
+    ).toThrow();
   });
 });
 
