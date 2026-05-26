@@ -1,21 +1,21 @@
+// Settings — Auth / Security / Network / Session. LLM providers used to live
+// here but moved to /llm-providers (their own sidebar entry below /agents)
+// because they're touched far more often than the rest of this page.
 import {
   getSettingsAction,
   getSecuritySettingsAction,
   getNetworkSettingsAction,
-  listLlmKeysAction,
 } from '@/lib/actions.ts';
 import SecurityForm from './SecurityForm.tsx';
 import NetworkForm from './NetworkForm.tsx';
-import LlmKeysList from './LlmKeysList.tsx';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const [result, securityResult, networkResult, llmKeysResult] = await Promise.all([
+  const [result, securityResult, networkResult] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
     getNetworkSettingsAction(),
-    listLlmKeysAction(),
   ]);
 
   if (!result.ok) {
@@ -36,27 +36,14 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-neutral-500 mt-0.5">
-          LLM providers, security mode, and network access are editable here. Session and worker
-          secret are seeded by <code className="font-mono text-neutral-400">nodal-agents init</code>{' '}
-          and surfaced read-only.
+          Security mode and network access are editable here. Session and worker secret are seeded
+          by <code className="font-mono text-neutral-400">nodal-agents init</code> and surfaced
+          read-only. LLM providers moved to{' '}
+          <a href="/llm-providers" className="underline hover:text-neutral-300">
+            their own page
+          </a>
+          .
         </p>
-      </div>
-
-      <div>
-        <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
-          LLM providers
-        </h2>
-        <p className="text-xs text-neutral-500 mb-3">
-          Configure providers your agents can use. Each agent picks one provider and types its own
-          model on top.
-        </p>
-        {llmKeysResult.ok ? (
-          <LlmKeysList initialRows={llmKeysResult.data} />
-        ) : (
-          <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-4 text-sm text-red-300">
-            {llmKeysResult.message}
-          </div>
-        )}
       </div>
 
       <Section title="Auth">

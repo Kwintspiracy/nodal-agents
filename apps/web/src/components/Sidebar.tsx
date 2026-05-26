@@ -19,6 +19,7 @@ import {
   X,
   GearSix,
   CurrencyDollar,
+  Sparkle,
   type Icon,
 } from '@phosphor-icons/react';
 
@@ -31,6 +32,7 @@ const NAV_ITEMS: NavGroup[] = [
     items: [
       { href: '/stats', label: 'Stats', icon: ChartPieSlice },
       { href: '/agents', label: 'Agents', icon: UsersThree },
+      { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
     ],
   },
   {

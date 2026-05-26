@@ -3621,6 +3621,12 @@ export type LlmKeyUiRow = {
    * Null when the apiKey is empty. The full key NEVER leaves the server.
    */
   apiKeyLast4: string | null;
+  /**
+   * Number of active agents in this entity that reference this key via
+   * `agents.llm_key_id`. Surfaced in the /llm-providers row so the user sees
+   * blast radius before deactivating or deleting a key.
+   */
+  agentCount: number;
 };
 
 // baseUrl is optional, accepts empty string (transformed to null) or a valid URL.
@@ -3688,6 +3694,25 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
       .where(eq(entityLlmKeys.entityId, session.entityId))
       .orderBy(desc(entityLlmKeys.createdAt));
 
+    // Side query: count ACTIVE agents per llm_key_id in this entity.
+    // Inactive agents are excluded — they can't run jobs, so they don't
+    // count toward the "is this key in use" signal. Two roundtrips rather
+    // than one LEFT JOIN + GROUP BY keeps the column shape above unchanged
+    // and the count math out of the row mapping.
+    const agentCounts = await db
+      .select({
+        llmKeyId: agents.llmKeyId,
+        n: sql<string>`count(*)`,
+      })
+      .from(agents)
+      .where(and(eq(agents.entityId, session.entityId), eq(agents.active, true)))
+      .groupBy(agents.llmKeyId);
+
+    const countByKey = new Map<string, number>();
+    for (const c of agentCounts) {
+      if (c.llmKeyId) countByKey.set(c.llmKeyId, Number(c.n));
+    }
+
     return ok(
       rows.map((r) => ({
         id: r.id,
@@ -3698,6 +3723,7 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         isActive: r.isActive,
         hasApiKey: Boolean(r.hasApiKey),
         apiKeyLast4: r.apiKeyLast4 ? r.apiKeyLast4 : null,
+        agentCount: countByKey.get(r.id) ?? 0,
       })),
     );
   } catch (err) {

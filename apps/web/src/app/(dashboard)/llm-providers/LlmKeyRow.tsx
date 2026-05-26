@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
@@ -62,6 +63,7 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
           ) : (
             <span className="text-amber-400">no key</span>
           )}
+          <AgentUsage count={row.agentCount} keyId={row.id} />
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -90,6 +92,28 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
         onCancel={() => setConfirmOpen(false)}
       />
     </div>
+  );
+}
+
+function AgentUsage({ count, keyId }: { count: number; keyId: string }) {
+  // Zero = the key is orphaned; show a muted hint so the user knows
+  // they can delete it without breaking anything.
+  if (count === 0) {
+    return <span className="text-neutral-600 italic">unused</span>;
+  }
+  // Non-zero = link to a filtered /agents view so the user can see exactly
+  // which agents would be affected by a key change. `agents` page doesn't
+  // currently filter on llmKeyId — the link is a placeholder so the click
+  // target is consistent with other "X uses" links in the dashboard.
+  // (When the agents page learns ?llmKeyId=… we get the filter for free.)
+  return (
+    <Link
+      href={`/agents?llmKeyId=${keyId}`}
+      className="text-neutral-400 hover:text-white transition-colors"
+      title={`${count} agent${count === 1 ? '' : 's'} use this key`}
+    >
+      <span className="font-mono tabular-nums">{count}</span> agent{count === 1 ? '' : 's'}
+    </Link>
   );
 }
 

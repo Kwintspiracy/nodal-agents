@@ -53,10 +53,13 @@ test.beforeAll(async () => {
 // ─── Test A — LLM key add + test connection + save ────────────────────────────
 
 test.describe('Test A — LLM key add + test connection + save', () => {
-  test('navigate to /settings, add a provider, test connection, save, row appears', async ({
+  test('navigate to /llm-providers, add a provider, test connection, save, row appears', async ({
     page,
   }) => {
-    await page.goto('/settings');
+    // LLM providers moved out of /settings into their own first-class
+    // sidebar entry — the form is rendered by the same `LlmKeysList`
+    // component, just on a new page.
+    await page.goto('/llm-providers');
 
     // Click "+ Add provider" button (inside LlmKeysList)
     await page.getByRole('button', { name: /add provider/i }).click();
