@@ -24,8 +24,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <>
       <Sidebar userMenu={<UserMenu />} />
+      {/*
+        Canonical viewport width for every dashboard page.
+
+        `max-w-6xl` lives HERE so every page has the same horizontal bounds
+        — without it, individual pages each hardcoded their own
+        `max-w-2xl|3xl|4xl|5xl|6xl`, producing visually inconsistent column
+        widths across the dashboard. Left-aligned (no `mx-auto`) so the
+        column hugs the sidebar — matches what the dashboard looked like
+        before, with the bonus of uniform width. Page-level wrappers must
+        NOT add their own `max-w-*` anymore. Forms or other inner blocks
+        that need to be narrower can constrain themselves on the <form>.
+      */}
       <main className="flex-1 w-full lg:ml-56 pt-[72px] lg:pt-4 p-3 sm:p-5 lg:p-8 min-w-0">
-        {children}
+        <div className="max-w-6xl">{children}</div>
       </main>
       <Toaster theme="dark" position="bottom-right" richColors closeButton />
     </>

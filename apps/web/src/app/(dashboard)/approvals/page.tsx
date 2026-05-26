@@ -29,7 +29,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
   const result = await listApprovalsAction({ status });
   if (!result.ok) {
     return (
-      <div className="space-y-6 max-w-5xl">
+      <div className="space-y-6">
         <h1 className="text-2xl font-bold text-white">Approvals</h1>
         <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
           {result.message}
@@ -39,7 +39,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
   }
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Approvals</h1>
         <p className="text-sm text-neutral-500 mt-0.5">

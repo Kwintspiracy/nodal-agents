@@ -9,7 +9,7 @@ export default async function SkillsPage() {
 
   if (!result.ok) {
     return (
-      <div className="space-y-6 max-w-4xl">
+      <div className="space-y-6">
         <h1 className="text-2xl font-bold text-white">Skills</h1>
         <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
           {result.message}
@@ -19,7 +19,7 @@ export default async function SkillsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Skills</h1>

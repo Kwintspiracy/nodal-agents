@@ -11,7 +11,7 @@ export default async function AgentTelegramPage({ params }: { params: Promise<{ 
   if (!result.ok) {
     if (result.code === 'not_found') notFound();
     return (
-      <div className="space-y-6 max-w-2xl">
+      <div className="space-y-6">
         <h1 className="text-2xl font-bold text-white">Telegram</h1>
         <div className="bg-red-950/30 border border-red-900/50 rounded-xl px-5 py-4 text-sm text-red-300">
           {result.message}
@@ -23,7 +23,7 @@ export default async function AgentTelegramPage({ params }: { params: Promise<{ 
   const cfg = result.data;
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       <div>
         <Link
           href="/agents"

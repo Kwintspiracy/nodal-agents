@@ -12,7 +12,7 @@ export default async function AutomationsPage() {
 
   if (!schedulesResult.ok) {
     return (
-      <div className="space-y-6 max-w-4xl">
+      <div className="space-y-6">
         <h1 className="text-2xl font-bold text-white">Automations</h1>
         <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
           {schedulesResult.message}
@@ -25,7 +25,7 @@ export default async function AutomationsPage() {
   const active = schedulesResult.data.filter((s) => s.active).length;
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Automations</h1>
         <p className="text-sm text-neutral-500 mt-0.5">

@@ -41,7 +41,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       <div>
         <Link
           href="/agents"

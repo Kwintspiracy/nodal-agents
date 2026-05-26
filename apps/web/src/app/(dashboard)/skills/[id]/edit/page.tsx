@@ -11,7 +11,7 @@ export default async function EditSkillPage({ params }: { params: Promise<{ id: 
   if (!result.ok || !result.data) notFound();
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       <div>
         <Link
           href="/skills"

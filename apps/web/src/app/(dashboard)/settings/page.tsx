@@ -20,7 +20,7 @@ export default async function SettingsPage() {
 
   if (!result.ok) {
     return (
-      <div className="space-y-6 max-w-3xl">
+      <div className="space-y-6">
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
           {result.message}
@@ -32,7 +32,7 @@ export default async function SettingsPage() {
   const s = result.data;
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-neutral-500 mt-0.5">

@@ -42,7 +42,7 @@ export default async function MemoriesPage({ searchParams }: PageProps) {
   const data = memoriesResult.ok ? memoriesResult.data : null;
 
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Memories</h1>
         <p className="text-sm text-neutral-500 mt-0.5">
