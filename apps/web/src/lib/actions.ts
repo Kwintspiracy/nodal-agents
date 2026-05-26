@@ -3105,6 +3105,192 @@ export async function getEntityStatsAction(): Promise<ActionResult<EntityStats>>
   }
 }
 
+/**
+ * Weekly job activity for the rolling 12-week window, bucketed by status.
+ * Feeds the `WeeklyActivityChart` on /stats — a stacked bar of completed /
+ * failed / cancelled / awaiting jobs per ISO week.
+ *
+ * Why 12 weeks: enough to see a quarterly trend without overwhelming the
+ * x-axis. Empty weeks are still emitted as zero rows so the axis stays
+ * regular (skip a week and the chart looks like the user dropped a tooth).
+ *
+ * Status buckets collapsed to user-meaningful slices:
+ *   - `completed`: successful runs
+ *   - `failed`: errored / orphan-reset / stale-pending-abandoned
+ *   - `cancelled`: user explicitly stopped
+ *   - `awaiting`: still in flight (awaiting_approval OR awaiting_delegation)
+ *   - `pending`: never picked up by a worker (rare once the recovery
+ *     cron is healthy; surfaced as its own bucket so debug is easy)
+ *   - `processing` is folded into `awaiting` for display purposes — both
+ *     mean "in flight" from the user's point of view and rarely linger
+ *     long enough to matter for a weekly view.
+ */
+export type WeeklyActivityRow = {
+  /** ISO date string YYYY-MM-DD pointing at the Monday of the week. */
+  week: string;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  awaiting: number;
+  pending: number;
+};
+
+export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActivityRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    // Single grouped query — pivot client-side. Last 12 weeks bounded by
+    // created_at to keep the index `idx_agent_jobs_entity_created`
+    // efficient even when the workspace has hundreds of thousands of jobs.
+    const rows = await db
+      .select({
+        week: sql<string>`to_char(date_trunc('week', ${agentJobs.createdAt}), 'YYYY-MM-DD')`,
+        status: agentJobs.status,
+        count: sql<string>`count(*)`,
+      })
+      .from(agentJobs)
+      .where(
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          sql`${agentJobs.createdAt} > now() - interval '12 weeks'`,
+        ),
+      )
+      .groupBy(sql`date_trunc('week', ${agentJobs.createdAt})`, agentJobs.status);
+
+    // Build the contiguous bucket list (12 oldest-to-newest weeks) so empty
+    // weeks render as zero columns instead of disappearing. Postgres uses
+    // ISO weeks starting Monday — mirror that here.
+    const buckets = new Map<string, WeeklyActivityRow>();
+    const now = new Date();
+    // Snap to Monday at 00:00 UTC for the current week.
+    const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dayOfWeek = monday.getUTCDay(); // 0 = Sunday
+    const daysSinceMonday = (dayOfWeek + 6) % 7;
+    monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(monday);
+      d.setUTCDate(d.getUTCDate() - i * 7);
+      const iso = d.toISOString().slice(0, 10);
+      buckets.set(iso, {
+        week: iso,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+        awaiting: 0,
+        pending: 0,
+      });
+    }
+
+    for (const r of rows) {
+      // `to_char(date_trunc(...), 'YYYY-MM-DD')` returns a string for the
+      // start-of-week date — match it against the pre-computed buckets.
+      const bucket = buckets.get(r.week);
+      if (!bucket) continue; // older than 12 weeks, ignore
+      const n = Number(r.count);
+      const status = r.status ?? '';
+      if (status === 'completed') bucket.completed += n;
+      else if (status === 'failed') bucket.failed += n;
+      else if (status === 'cancelled') bucket.cancelled += n;
+      else if (status === 'pending') bucket.pending += n;
+      else bucket.awaiting += n; // processing + awaiting_approval + awaiting_delegation
+    }
+
+    return ok(Array.from(buckets.values()));
+  } catch (err) {
+    console.error('[getWeeklyActivityAction]', err);
+    return fail('db_error', 'Failed to load weekly activity');
+  }
+}
+
+/**
+ * Active jobs grouped by agent — feeds the live "Agents at work" panel on
+ * the /stats page (refreshed every 5s by ActiveAgentsPanel).
+ *
+ * Returns one row per agent that currently has at least one job in a
+ * non-terminal state. Agents with zero active work are NOT in the result
+ * (the UI renders an "All agents idle" empty state instead).
+ *
+ * Status buckets:
+ *   - `processing`: actively running an LLM turn
+ *   - `awaiting`: awaiting_approval OR awaiting_delegation (paused, waiting
+ *     for a human or a child job to finish)
+ *   - `pending`: claimed but not yet picked up by the executor cron
+ */
+export type ActiveAgentRow = {
+  agentId: string;
+  agentName: string;
+  agentSlug: string;
+  avatarUrl: string | null;
+  processing: number;
+  awaiting: number;
+  pending: number;
+  total: number;
+};
+
+export async function getActiveJobsByAgentAction(): Promise<ActionResult<ActiveAgentRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    const rows = await db
+      .select({
+        agentId: agentJobs.agentId,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        avatarUrl: agents.avatarUrl,
+        status: agentJobs.status,
+        count: sql<string>`count(*)`,
+      })
+      .from(agentJobs)
+      .innerJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          // SQL `IN (...)` via Drizzle — same set the runner considers
+          // "in flight" (apps/runner/src/job/execute.ts terminal handling).
+          sql`${agentJobs.status} IN ('pending', 'processing', 'awaiting_approval', 'awaiting_delegation')`,
+        ),
+      )
+      .groupBy(agentJobs.agentId, agents.name, agents.slug, agents.avatarUrl, agentJobs.status);
+
+    // Pivot: collapse status rows into one row per agent.
+    const byAgent = new Map<string, ActiveAgentRow>();
+    for (const r of rows) {
+      if (!r.agentId || !r.agentName || !r.agentSlug) continue;
+      const existing: ActiveAgentRow = byAgent.get(r.agentId) ?? {
+        agentId: r.agentId,
+        agentName: r.agentName,
+        agentSlug: r.agentSlug,
+        avatarUrl: r.avatarUrl ?? null,
+        processing: 0,
+        awaiting: 0,
+        pending: 0,
+        total: 0,
+      };
+      const n = Number(r.count);
+      const s = r.status ?? '';
+      if (s === 'processing') existing.processing += n;
+      else if (s === 'awaiting_approval' || s === 'awaiting_delegation') existing.awaiting += n;
+      else if (s === 'pending') existing.pending += n;
+      existing.total += n;
+      byAgent.set(r.agentId, existing);
+    }
+
+    // Sort: busiest agent first, then alphabetic for stable ordering when
+    // counts tie. Matches user expectation of "what's hottest right now".
+    const out = Array.from(byAgent.values()).sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      return a.agentName.localeCompare(b.agentName);
+    });
+
+    return ok(out);
+  } catch (err) {
+    console.error('[getActiveJobsByAgentAction]', err);
+    return fail('db_error', 'Failed to load active jobs');
+  }
+}
+
 // ─── Settings Action ──────────────────────────────────────────────────────────
 
 export type SettingsView = {

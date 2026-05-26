@@ -1,4 +1,10 @@
-import { getEntityStatsAction } from '@/lib/actions.ts';
+import {
+  getEntityStatsAction,
+  getActiveJobsByAgentAction,
+  getWeeklyActivityAction,
+} from '@/lib/actions.ts';
+import ActiveAgentsPanel from './ActiveAgentsPanel.tsx';
+import WeeklyActivityChart from './WeeklyActivityChart.tsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +40,13 @@ function formatNumber(n: number): string {
 }
 
 export default async function StatsPage() {
-  const result = await getEntityStatsAction();
+  const [result, activeResult, weeklyResult] = await Promise.all([
+    getEntityStatsAction(),
+    getActiveJobsByAgentAction(),
+    getWeeklyActivityAction(),
+  ]);
+  const initialActive = activeResult.ok ? activeResult.data : [];
+  const weekly = weeklyResult.ok ? weeklyResult.data : [];
 
   if (!result.ok) {
     return (
@@ -60,6 +72,10 @@ export default async function StatsPage() {
           Workspace activity since the database was first seeded
         </p>
       </div>
+
+      <ActiveAgentsPanel initial={initialActive} />
+
+      <WeeklyActivityChart data={weekly} />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card label="Agents" value={String(s.agentCount)} />
