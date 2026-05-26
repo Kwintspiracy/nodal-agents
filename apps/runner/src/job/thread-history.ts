@@ -116,7 +116,12 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   let nextSynthId = 0;
   const blocks: ModelMessage[][] = [];
   for (const row of chronological) {
-    const assistant = extractAssistantReply(row);
+    const assistant = extractAssistantReply({
+      task: row.task,
+      result: row.result,
+      messages: row.messages,
+      channel: row.channel,
+    });
     if (assistant === null) continue;
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
     if (sendTool) {
@@ -187,8 +192,20 @@ const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
  *   3. Last assistant message's text content — covers exotic flows that
  *      neither populated `result` nor used the channel send tool.
  *   4. `null` to signal "skip this job".
+ *
+ * Important — session-memory chaining defense: each prior job's `messages`
+ * JSONB contains BOTH its own turns AND the history that was injected into
+ * IT when it ran (a chain effect). When we extract a reply via fallbacks
+ * #2 / #3, we must restrict the search to the prior job's OWN turns,
+ * otherwise we surface text from much older jobs and the per-turn
+ * truncation chops the actually-relevant tail. The boundary is the user
+ * message whose content equals `agent_jobs.task` — everything from that
+ * index onwards is the job's own content. Empirically observed on job
+ * 9c22d5b3 (2026-05-26) where 3 Stripe-related prior jobs all returned
+ * the same stale Cortex pre-amble before this fix.
  */
 function extractAssistantReply(row: {
+  task: string;
   result: string | null;
   messages: unknown;
   channel: string;
@@ -198,9 +215,24 @@ function extractAssistantReply(row: {
     return row.result;
   }
 
-  const messages = Array.isArray(row.messages) ? (row.messages as ModelMessage[]) : [];
+  const allMessages = Array.isArray(row.messages) ? (row.messages as ModelMessage[]) : [];
 
-  // 2. channel-specific send-message tool calls.
+  // Locate the boundary between injected history and the job's own turns.
+  // Search backward from the end so we land on the LAST occurrence of the
+  // current task — defensive against duplicate user messages (rare).
+  let currentStart = 0;
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    const m = allMessages[i];
+    if (!m || m.role !== 'user') continue;
+    const c = m.content;
+    if (typeof c === 'string' && c === row.task) {
+      currentStart = i;
+      break;
+    }
+  }
+  const messages = allMessages.slice(currentStart);
+
+  // 2. channel-specific send-message tool calls (within current-job slice).
   const sendTool = CHANNEL_SEND_TOOL[row.channel];
   if (sendTool) {
     const parts: string[] = [];
@@ -222,7 +254,7 @@ function extractAssistantReply(row: {
     if (parts.length > 0) return parts.join('\n\n');
   }
 
-  // 3. last assistant text content.
+  // 3. last assistant text content (within current-job slice).
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (!msg || msg.role !== 'assistant') continue;

@@ -503,4 +503,88 @@ describe('loadThreadHistory', () => {
     // Same toolCallId binds the tool-call to its result (validateMessageStructure requirement).
     expect(resultPart['toolCallId']).toBe(toolCallPart['toolCallId']);
   });
+
+  // Regression: session-memory CHAINING — a prior job's `messages` JSONB
+  // contains BOTH the history that was injected into it when it ran AND
+  // its own actual turns. Without slicing from the task boundary, the
+  // extractor concatenates older telegram_send_message tool-calls from
+  // the injected history with the actual reply and truncates at 2000 chars,
+  // surfacing stale text from much older jobs. Observed live on job
+  // 9c22d5b3 (2026-05-26) where 3 Stripe-related prior jobs all returned
+  // the same stale Cortex pre-amble.
+  it('ignores tool-calls from injected history when extracting a prior job reply', async () => {
+    // Simulate a prior job whose `messages` array starts with an OLD
+    // 3-msg block (the session-memory injection from earlier turns) and
+    // ends with the job's OWN user+assistant turn. The extractor must
+    // surface ONLY the own-turn reply, not concatenate the stale one.
+    const polluted: unknown[] = [
+      // ── Injected history from older jobs (NOT this job's content) ──
+      { role: 'user', content: 'combien font 4 * 5' },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'history-tool-0',
+            toolName: 'telegram_send_message',
+            input: { text: '4 × 5 = 20. Aussi, le Cortex bouillonne aujourd hui…' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'history-tool-0',
+            toolName: 'telegram_send_message',
+            output: { type: 'json', value: { messageId: 'history' } },
+          },
+        ],
+      },
+      // ── This job's actual turn ──
+      { role: 'user', content: 'donne-moi le solde de mon compte Stripe' },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'real-call-0',
+            toolName: 'telegram_send_message',
+            input: { text: 'Solde Stripe : 0,00 € (compte test).' },
+          },
+        ],
+      },
+    ];
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'donne-moi le solde de mon compte Stripe',
+      result: null,
+      minutesAgo: 5,
+      messages: polluted,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(s).toHaveLength(2);
+    expect(s[0]).toEqual({
+      role: 'user',
+      text: 'donne-moi le solde de mon compte Stripe',
+    });
+    expect(s[1]).toEqual({
+      role: 'assistant',
+      text: 'Solde Stripe : 0,00 € (compte test).',
+    });
+    // Most importantly: the stale Cortex/calc text MUST NOT bleed through.
+    expect(s[1]?.text).not.toContain('4 × 5');
+    expect(s[1]?.text).not.toContain('Cortex');
+  });
 });
