@@ -158,7 +158,6 @@ const packPkg = {
     '@mendable/firecrawl-js': '^4.22.0',
     '@tavily/core': '^0.7.0',
     'apify-client': '^2.23.0',
-    exceljs: '^4.4.0',
     'pdf-parse': '^2.4.5',
     mammoth: '^1.9.0',
     // pdfjs-dist (transitive of pdf-parse) tries to require @napi-rs/canvas

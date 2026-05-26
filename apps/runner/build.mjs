@@ -56,7 +56,6 @@ const EXTERNALS = [
   '@tavily/core',
   'apify-client',
   // File ingestion
-  'exceljs',
   'pdf-parse',
   'mammoth',
 ];
