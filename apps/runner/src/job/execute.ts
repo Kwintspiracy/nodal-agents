@@ -66,6 +66,7 @@ import type {
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import { failJob, completeJob, setJobStatus, saveCheckpoint } from './state.ts';
+import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 
@@ -442,10 +443,7 @@ export async function executeJob(
           enabledTools: agentMcpServersTable.enabledTools,
         })
         .from(agentMcpServersTable)
-        .innerJoin(
-          mcpServersTable,
-          eq(mcpServersTable.id, agentMcpServersTable.mcpServerId),
-        )
+        .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
         .where(eq(agentMcpServersTable.agentId, agentRow.id));
 
       for (const ms of mcpAssignments) {
@@ -524,6 +522,45 @@ export async function executeJob(
 
   if (messages.length === 0) {
     messages = [{ role: 'user', content: job.task }];
+  }
+
+  // ── 11.5 Prepend thread history (session memory for chat channels) ────────────
+  // Solves "agent forgets what it just said 30 seconds ago" on Telegram and
+  // other conversational channels: load the last few completed exchanges in
+  // the same (channel, chat_id) thread and prepend them as ModelMessages so
+  // the LLM has continuity.
+  //
+  // A job is considered "fresh execution" when only the initial user message
+  // is in the array — this covers both the Telegram-poller path (which seeds
+  // `messages = [{ role: 'user', content: task }]` at insert time, see
+  // `apps/runner/src/telegram/handler.ts`) and the dashboard `api` path
+  // (which leaves `messages` empty, then the block above seeds it). Resumed
+  // jobs (from `awaiting_delegation` / `awaiting_approval`) carry at least
+  // one assistant turn already and MUST NOT have history prepended a second
+  // time — otherwise we'd duplicate context on every resume.
+  //
+  // Fail-soft: a DB hiccup logs and continues without history rather than
+  // killing the job.
+  const isFreshExecution = messages.length === 1 && messages[0]?.role === 'user';
+  if (isFreshExecution && job.entityId && job.agentId && job.chatId) {
+    try {
+      const history = await loadThreadHistory({
+        db,
+        entityId: job.entityId,
+        agentId: job.agentId,
+        channel: job.channel,
+        chatId: job.chatId,
+        excludeJobId: jobId as string,
+      });
+      if (history.length > 0) {
+        trace('thread_history_loaded', { messages: history.length });
+        messages = [...history, ...messages];
+      }
+    } catch (err) {
+      trace('thread_history_failed', {
+        errMsg: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // ── 12. Main LLM loop ─────────────────────────────────────────────────────────
