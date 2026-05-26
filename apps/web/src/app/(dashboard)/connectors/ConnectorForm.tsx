@@ -6,6 +6,7 @@ import {
   deleteConnectorAction,
   renameConnectorAction,
   assignCredentialAction,
+  updateConnectorApiKeyAction,
   type ConnectorRow,
   type ConnectorCatalogItem,
 } from '@/lib/actions.ts';
@@ -73,6 +74,11 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
     instance.credentialId ?? compatibleCredentials[0]?.id ?? '',
   );
 
+  // Rotate-key state (api_key connectors only). Collapsed by default so a
+  // sensitive input doesn't sit visible on the page; revealed via a button.
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [newApiKey, setNewApiKey] = useState('');
+
   const isApiKey = instance.authType === 'api_key';
   const isOAuth = instance.authType === 'oauth2';
   const isConnected = instance.active;
@@ -135,6 +141,24 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
       } else {
         toast.success('Token refreshed');
       }
+    });
+  }
+
+  function performRotate() {
+    const trimmed = newApiKey.trim();
+    if (!trimmed) {
+      toast.error('New API key is required');
+      return;
+    }
+    startTransition(async () => {
+      const r = await updateConnectorApiKeyAction(instance.id, trimmed);
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success(`${instance.name} key rotated`);
+      setRotateOpen(false);
+      setNewApiKey('');
     });
   }
 
@@ -256,17 +280,83 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmOpen(true)}
-              disabled={isPending}
-              className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
-            >
-              Delete
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setRotateOpen((v) => !v)}
+                disabled={isPending}
+                className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+              >
+                {rotateOpen ? 'Cancel' : 'Rotate key'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(true)}
+                disabled={isPending}
+                className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+              >
+                Delete
+              </button>
+            </>
           )}
         </div>
       </div>
+
+      {/* Rotate API key panel — api_key connectors only.
+          Existing assignments to agents are preserved because we update the
+          row in place rather than delete + recreate. */}
+      {isApiKey && rotateOpen && (
+        <div className="space-y-3 pt-2 border-t border-neutral-800/60">
+          <div>
+            <label
+              htmlFor={`rotate-${instance.id}`}
+              className="block text-xs text-neutral-500 mb-1"
+            >
+              New API key
+            </label>
+            <input
+              id={`rotate-${instance.id}`}
+              type="password"
+              autoComplete="off"
+              autoFocus
+              value={newApiKey}
+              onChange={(e) => setNewApiKey(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') performRotate();
+                if (e.key === 'Escape') {
+                  setNewApiKey('');
+                  setRotateOpen(false);
+                }
+              }}
+              placeholder="Paste the new key"
+              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+            />
+            <p className="text-[11px] text-neutral-600 mt-1">
+              Agent assignments stay intact — only the stored key changes.
+            </p>
+          </div>
+          <div className="flex gap-2 items-center">
+            <button
+              type="button"
+              onClick={performRotate}
+              disabled={isPending || !newApiKey.trim()}
+              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+            >
+              {isPending ? 'Saving…' : 'Save new key'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNewApiKey('');
+                setRotateOpen(false);
+              }}
+              className="text-xs text-neutral-500 hover:text-white underline"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {catalogEntry.docsHint && <p className="text-xs text-neutral-500">{catalogEntry.docsHint}</p>}
 

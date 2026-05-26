@@ -2285,6 +2285,64 @@ export async function renameConnectorAction(
   }
 }
 
+/**
+ * Rotate the API key on an existing api_key connector.
+ *
+ * Before this action existed the only way to change a key was
+ * delete + recreate, which dropped every row in
+ * `agent_connector_assignments` for that connector — the user had to
+ * re-tick the checkboxes on every affected agent. By keeping the same
+ * connector row we preserve all assignments transparently.
+ *
+ * Scope kept narrow on purpose:
+ *   - Only api_key connectors. OAuth credentials live in the
+ *     `credentials` table and rotate through their own flows.
+ *   - Only the apiKey field is touched. baseUrl / authType / active
+ *     are not exposed here — different concerns, different briques.
+ */
+export async function updateConnectorApiKeyAction(
+  connectorId: string,
+  newApiKey: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(connectorId).success) {
+      return fail('validation_failed', 'Invalid connector id');
+    }
+    const keyParsed = z.string().min(1, 'API key is required').max(2_000).safeParse(newApiKey);
+    if (!keyParsed.success) {
+      return fail('validation_failed', keyParsed.error.issues[0]?.message ?? 'Invalid API key');
+    }
+
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: connectors.id, authType: connectors.authType })
+      .from(connectors)
+      .where(and(eq(connectors.id, connectorId), eq(connectors.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Connector not found');
+    if (existing.authType !== 'api_key') {
+      return fail(
+        'validation_failed',
+        `Connector uses ${existing.authType ?? 'unknown'} auth — key rotation only applies to api_key connectors.`,
+      );
+    }
+
+    // Encrypt idempotently: a raw value gets encrypted, an already-encrypted
+    // value passes through unchanged (matches saveApiKeyConnectorAction).
+    const enc = isEncrypted(keyParsed.data) ? keyParsed.data : encrypt(keyParsed.data);
+
+    await db
+      .update(connectors)
+      .set({ apiKey: enc, updatedAt: new Date() })
+      .where(eq(connectors.id, connectorId));
+    revalidatePath('/connectors');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateConnectorApiKeyAction]', err);
+    return fail('db_error', 'Failed to rotate API key');
+  }
+}
+
 // Credential actions live in `./credentials.ts` and must be imported directly
 // from there (no re-export here). Re-exporting a `'use server'` function from
 // another `'use server'` file makes Next.js 16 + Turbopack register the same
