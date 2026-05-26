@@ -35,3 +35,9 @@ test-results/
 apps/web/check-jobs*.ts
 apps/web/test-single.ts
 response.html
+# Throwaway manual Playwright verifications (sub-agent scratch space; the
+# real e2e suite lives under apps/web/tests/e2e/)
+apps/web/tests/manual/
+# Inbound design handoff bundles (Claude Design exports, screenshots,
+# reference uploads). The product is the implementation, not these.
+design/

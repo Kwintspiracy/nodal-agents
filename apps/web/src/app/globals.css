@@ -1,84 +1,194 @@
 @import 'tailwindcss';
 
-/* ═══════════════════════════════════════════════════
-   FONT SCALE
-   ═══════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+   Design system — Nodal handoff (Cb-5bhVRj6b6oYS53mc01w, 2026-05-26)
+   Inter + JetBrains Mono · light/dark themed via data-theme attribute.
 
-html {
-  font-size: 112.5%;
+   Strategy: CSS variables are the source of truth (preserves the design's
+   vocabulary verbatim — --c-canvas, --c-ink-3, etc.). `@theme inline`
+   re-exposes them as Tailwind utility tokens so we get `bg-canvas`,
+   `text-ink-3`, `border-rule-2` for free without losing live theme switch.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* --- Tokens — light (default) --------------------------------------- */
+:root,
+[data-theme='light'] {
+  --c-canvas: #eaeaea;
+  --c-sidebar: #f2f2f2;
+  --c-paper: #ffffff;
+  --c-ink: #0a0a0a;
+  --c-ink-2: #26262a;
+  --c-ink-3: #6a6a6a;
+  --c-ink-4: #9a9a9a;
+  --c-rule: #d6d6d6;
+  --c-rule-2: #e2e2e2;
+  --c-hover: rgba(0, 0, 0, 0.045);
+  --c-hover-2: rgba(0, 0, 0, 0.06);
+
+  /* Section colors — strict 3-color identity */
+  --c-agent: #1c2330;
+  --c-skill: #ff5631;
+  --c-connector: #3565ff;
+  --c-agent-vivid: #d4ff2e;
+  --c-skill-vivid: #ff5631;
+  --c-conn-vivid: #3565ff;
+
+  /* Semantic */
+  --c-ok: #1e7a44;
+  --c-ok-fg: #3a6a18;
+  --c-ok-bg: rgba(212, 255, 46, 0.3);
+  --c-warn: #a25620;
+  --c-warn-bg: rgba(255, 86, 49, 0.13);
+  --c-run: #1d4ed8;
+  --c-run-bg: rgba(53, 101, 255, 0.12);
+  --c-err: #b54141;
+
+  color-scheme: light;
+
+  /* Legacy aliases — existing dashboard pages still read these.
+     Mapped to the new tokens so unmigrated screens at least pick up the
+     correct body bg / text colour while Phase 3 migrations land. */
+  --bg-body: var(--c-canvas);
+  --bg-surface: var(--c-paper);
+  --bg-elevated: var(--c-paper);
+  --bg-input: var(--c-paper);
+  --bg-hover: var(--c-hover);
+  --border: var(--c-rule-2);
+  --border-focus: var(--c-ink-3);
+  --text-primary: var(--c-ink);
+  --text-secondary: var(--c-ink-2);
+  --text-muted: var(--c-ink-3);
+  --text-faint: var(--c-ink-4);
+  --sidebar-bg: var(--c-sidebar);
+  --scrollbar-thumb: var(--c-rule);
 }
 
-/* ═══════════════════════════════════════════════════
-   THEME VARIABLES
-   ═══════════════════════════════════════════════════ */
-
-:root,
+/* --- Tokens — dark -------------------------------------------------- */
 [data-theme='dark'] {
-  --bg-body: #0a0a0a;
-  --bg-surface: rgba(23, 23, 23, 0.5);
-  --bg-elevated: #171717;
-  --bg-input: rgba(38, 38, 38, 0.5);
-  --bg-hover: rgba(38, 38, 38, 0.3);
-  --border: rgba(38, 38, 38, 0.5);
-  --border-focus: #555;
-  --text-primary: #e5e5e5;
-  --text-secondary: #a3a3a3;
-  --text-muted: #9a9a9a;
-  --text-faint: #787878;
-  --sidebar-bg: #0a0a0a;
-  --scrollbar-thumb: #333;
+  --c-canvas: #0e0e10;
+  --c-sidebar: #161618;
+  --c-paper: #1c1c20;
+  --c-ink: #f5f5f3;
+  --c-ink-2: #d8d8d4;
+  --c-ink-3: #9a9a96;
+  --c-ink-4: #6a6a66;
+  --c-rule: #2a2a2e;
+  --c-rule-2: #242428;
+  --c-hover: rgba(255, 255, 255, 0.05);
+  --c-hover-2: rgba(255, 255, 255, 0.07);
+
+  --c-agent: #1c2330;
+  --c-skill: #ff5631;
+  --c-connector: #3565ff;
+  --c-agent-vivid: #d4ff2e;
+  --c-skill-vivid: #ff5631;
+  --c-conn-vivid: #3565ff;
+
+  --c-ok: #d4ff2e;
+  --c-ok-fg: #d4ff2e;
+  --c-ok-bg: rgba(212, 255, 46, 0.16);
+  --c-warn: #ff5631;
+  --c-warn-bg: rgba(255, 86, 49, 0.14);
+  --c-run: #8aa8ff;
+  --c-run-bg: rgba(53, 101, 255, 0.18);
+  --c-err: #ff5631;
+
   color-scheme: dark;
 }
 
-[data-theme='light'] {
-  --bg-body: #f5f5f5;
-  --bg-surface: rgba(255, 255, 255, 0.8);
-  --bg-elevated: #ffffff;
-  --bg-input: rgba(245, 245, 245, 0.8);
-  --bg-hover: rgba(0, 0, 0, 0.03);
-  --border: rgba(229, 229, 229, 0.8);
-  --border-focus: #a3a3a3;
-  --text-primary: #171717;
-  --text-secondary: #525252;
-  --text-muted: #4f4f4f;
-  --text-faint: #666666;
-  --sidebar-bg: #ffffff;
-  --scrollbar-thumb: #d4d4d4;
-  color-scheme: light;
+/* --- Tailwind theme bridge ------------------------------------------ */
+@theme inline {
+  /* Colors — exposed as utility classes (bg-canvas, text-ink-3, ...) */
+  --color-canvas: var(--c-canvas);
+  --color-sidebar: var(--c-sidebar);
+  --color-paper: var(--c-paper);
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-ink-3: var(--c-ink-3);
+  --color-ink-4: var(--c-ink-4);
+  --color-rule: var(--c-rule);
+  --color-rule-2: var(--c-rule-2);
+  --color-hover: var(--c-hover);
+  --color-hover-2: var(--c-hover-2);
+
+  --color-agent: var(--c-agent);
+  --color-skill: var(--c-skill);
+  --color-connector: var(--c-connector);
+  --color-agent-vivid: var(--c-agent-vivid);
+  --color-skill-vivid: var(--c-skill-vivid);
+  --color-conn-vivid: var(--c-conn-vivid);
+
+  --color-ok: var(--c-ok);
+  --color-ok-bg: var(--c-ok-bg);
+  --color-warn: var(--c-warn);
+  --color-warn-bg: var(--c-warn-bg);
+  --color-run: var(--c-run);
+  --color-run-bg: var(--c-run-bg);
+  --color-err: var(--c-err);
+
+  /* Fonts — Inter/JetBrains Mono are wired via next/font in app/layout.tsx
+     (it injects --font-inter and --font-jetbrains). */
+  --font-sans:
+    var(--font-inter, 'Inter'), 'Söhne', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
+    sans-serif;
+  --font-mono:
+    var(--font-jetbrains, 'JetBrains Mono'), ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* Radii — explicit so utility class radii match the bundle */
+  --radius-xs: 5px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 14px;
 }
 
+/* --- Base ------------------------------------------------------------ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
 body {
-  background-color: var(--bg-body);
-  color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+html {
+  font-size: 100%;
+}
+body {
+  background-color: var(--c-canvas);
+  color: var(--c-ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+button {
+  font-family: inherit;
 }
 
-/* ═══════════════════════════════════════════════════
-   SCROLLBARS
-   ═══════════════════════════════════════════════════ */
-
+/* --- Scrollbars ----------------------------------------------------- */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 2px;
+  border-radius: 4px;
 }
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
-/* ═══════════════════════════════════════════════════
-   FORM ELEMENTS
-   ═══════════════════════════════════════════════════ */
-
+/* --- Form base ------------------------------------------------------ */
 input,
 select,
 textarea {
@@ -90,41 +200,33 @@ textarea:focus {
   border-color: var(--border-focus);
 }
 
-/* ═══════════════════════════════════════════════════
-   UTILITY CLASSES
-   ═══════════════════════════════════════════════════ */
-
+/* --- Legacy utility classes used by unmigrated pages ---------------- */
 .card {
-  background-color: rgb(23 23 23);
-  border: 1px solid rgba(38, 38, 38, 0.6);
-  border-radius: 0.75rem;
+  background-color: var(--c-paper);
+  border: 1px solid var(--c-rule-2);
+  border-radius: 12px;
 }
-
 .input {
   width: 100%;
   background-color: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  border: 1px solid var(--c-rule);
+  border-radius: 8px;
   padding: 0.5rem 0.75rem;
   font-size: 1rem;
-  color: var(--text-primary);
+  color: var(--c-ink);
   transition: border-color 150ms ease;
 }
 .input:focus {
-  border-color: var(--border-focus);
+  border-color: var(--c-ink-3);
 }
 .input::placeholder {
-  color: var(--text-faint);
+  color: var(--c-ink-4);
 }
 
-/* ═══════════════════════════════════════════════════
-   PAGE TRANSITIONS
-   ═══════════════════════════════════════════════════ */
-
+/* --- Page transitions ---------------------------------------------- */
 main {
   animation: page-enter 150ms ease-out;
 }
-
 @keyframes page-enter {
   from {
     opacity: 0;
@@ -136,10 +238,7 @@ main {
   }
 }
 
-/* ═══════════════════════════════════════════════════
-   MODAL ANIMATIONS
-   ═══════════════════════════════════════════════════ */
-
+/* --- Modal animations ---------------------------------------------- */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -148,7 +247,6 @@ main {
     opacity: 1;
   }
 }
-
 @keyframes scaleIn {
   from {
     opacity: 0;
@@ -157,5 +255,39 @@ main {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+/* --- Pulsing "live" blip (used by LiveDot + running statuses) ------ */
+@keyframes blip {
+  0% {
+    box-shadow: 0 0 0 0 rgba(30, 122, 68, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(30, 122, 68, 0);
+  }
+}
+@keyframes blip-lime {
+  0% {
+    box-shadow: 0 0 0 0 rgba(212, 255, 46, 0.7);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(212, 255, 46, 0);
+  }
+}
+@keyframes blip-coral {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 86, 49, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(255, 86, 49, 0);
+  }
+}
+@keyframes blip-blue {
+  0% {
+    box-shadow: 0 0 0 0 rgba(53, 101, 255, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(53, 101, 255, 0);
   }
 }
