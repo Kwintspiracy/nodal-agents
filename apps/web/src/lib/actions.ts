@@ -627,6 +627,85 @@ export async function getJobStatusAction(
   }
 }
 
+// Terminal job statuses — same set the runner's state machine treats as
+// having no outbound edges (apps/runner/src/job/state.ts). Mirrored here
+// so `cancelJobAction` refuses requests that would be no-ops anyway, and
+// so the UI can hide the Cancel button on jobs that are already done.
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+/**
+ * Cancel a job from any non-terminal state.
+ *
+ * Behaviour by current status:
+ *   - pending / awaiting_approval / awaiting_delegation — set to 'cancelled'
+ *     immediately. The runner's cron picks no work, so this is enough.
+ *   - processing — set to 'cancelled' too. The runner's LLM loop checks
+ *     the live status between turns (see apps/runner/src/job/execute.ts)
+ *     and bails out cooperatively at the next checkpoint. Current
+ *     in-flight LLM/tool calls finish naturally; we don't kill them
+ *     mid-flight (interrupting an API call mid-stream tends to leave
+ *     half-written DB rows and confused providers).
+ *   - completed / failed / cancelled — refuse, nothing to do.
+ *
+ * Descendants cascade: every non-terminal job whose `parent_job_id`
+ * chain reaches the target is also flipped to 'cancelled' in the same
+ * UPDATE. Without this, a parent that's blocked awaiting a delegated
+ * child would still see the child happily burning LLM turns to
+ * completion — pointless work the user explicitly stopped wanting. The
+ * delegation depth cap is 3 (DEFAULT_LIMITS), so the recursive CTE has
+ * a bounded fan-out.
+ *
+ * Auth: scoped to the caller's entity; cross-entity cancels return
+ * 'not_found' (same shape as the lookup actions — don't leak existence).
+ */
+export async function cancelJobAction(id: string): Promise<ActionResult<{ status: string }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid job id');
+    }
+    const db = getDb();
+
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, id), eq(agentJobs.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'Job not found');
+
+    const current = row.status ?? 'pending';
+    if (TERMINAL_STATUSES.has(current)) {
+      return fail('already_terminal', `Job is already ${current}`);
+    }
+
+    // Recursive cascade: the target job + every non-terminal descendant.
+    // entity_id is re-asserted on the UPDATE side too so a buggy CTE can
+    // never escape the caller's workspace. The status filter spares
+    // completed/failed/cancelled descendants — we don't rewrite history
+    // for jobs that already finished before the cancel hit.
+    await db.execute(sql`
+      WITH RECURSIVE descendants AS (
+        SELECT id FROM agent_jobs WHERE id = ${id}
+        UNION ALL
+        SELECT j.id
+        FROM agent_jobs j
+        INNER JOIN descendants d ON j.parent_job_id = d.id
+      )
+      UPDATE agent_jobs
+      SET status = 'cancelled', updated_at = now()
+      WHERE id IN (SELECT id FROM descendants)
+        AND entity_id = ${session.entityId}
+        AND status NOT IN ('completed', 'failed', 'cancelled')
+    `);
+
+    revalidatePath('/jobs');
+    revalidatePath(`/jobs/${id}`);
+    return ok({ status: 'cancelled' });
+  } catch (err) {
+    console.error('[cancelJobAction]', err);
+    return fail('db_error', 'Failed to cancel job');
+  }
+}
+
 // ─── Telegram Actions ─────────────────────────────────────────────────────────
 //
 // Each agent can have its own Telegram bot. The user pastes a bot token from

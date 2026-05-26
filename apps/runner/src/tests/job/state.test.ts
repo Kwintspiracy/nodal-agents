@@ -12,6 +12,7 @@ import {
   claimJob,
   completeJob,
   failJob,
+  cancelJob,
   saveCheckpoint,
 } from '../../job/state.ts';
 import type { JobStatus } from '../../job/state.ts';
@@ -211,6 +212,48 @@ describe('DB state helpers', () => {
     const completedAtMs = rows[0]?.completedAt?.getTime() ?? 0;
     expect(completedAtMs).toBeGreaterThanOrEqual(before);
     expect(completedAtMs).toBeLessThanOrEqual(after);
+  });
+
+  it('cancelJob stamps completedAt + persists messages WITHOUT touching status', async () => {
+    // The status column is flipped to 'cancelled' by `cancelJobAction`
+    // (web), not by this helper — the helper only finalises the row.
+    // Verify: existing status preserved, completedAt set, messages saved.
+    await setJobStatus(db as Parameters<typeof setJobStatus>[0], seed.jobId, 'cancelled');
+
+    const transcript = [
+      { role: 'user', content: 'long-running task' },
+      { role: 'assistant', content: 'working...' },
+    ];
+
+    const before = Date.now();
+    await cancelJob(
+      db as Parameters<typeof cancelJob>[0],
+      seed.jobId,
+      { inputTokens: 42, outputTokens: 7, turn: 3 },
+      transcript,
+    );
+    const after = Date.now();
+
+    const rows = await db
+      .select({
+        status: agentJobs.status,
+        completedAt: agentJobs.completedAt,
+        messages: agentJobs.messages,
+        inputTokens: agentJobs.inputTokens,
+        turn: agentJobs.turn,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+
+    // Status stays cancelled — we deliberately don't write it again here.
+    expect(rows[0]?.status).toBe('cancelled');
+    expect(rows[0]?.completedAt).not.toBeNull();
+    const ts = rows[0]?.completedAt?.getTime() ?? 0;
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
+    expect(rows[0]?.messages).toEqual(transcript);
+    expect(rows[0]?.inputTokens).toBe(42);
+    expect(rows[0]?.turn).toBe(3);
   });
 
   it('saveCheckpoint persists messages, turn, chainCount', async () => {

@@ -4,6 +4,7 @@ import { getJobDetailAction } from '@/lib/actions.ts';
 import StatusBadge from '@/components/StatusBadge.tsx';
 import JobMessages from '@/components/JobMessages.tsx';
 import JobStatusPoller from '@/components/JobStatusPoller.tsx';
+import CancelJobButton from '../CancelJobButton.tsx';
 
 // Force dynamic — this page reads per-request DB state.
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,7 @@ export default async function JobDetailPage({ params }: Props) {
   if (!result.ok) {
     if (result.code === 'not_found') notFound();
     return (
-      <div className="space-y-4 max-w-3xl">
+      <div className="space-y-4">
         <Link href="/jobs" className="text-xs text-neutral-500 hover:text-neutral-300">
           ← Jobs
         </Link>
@@ -38,7 +39,7 @@ export default async function JobDetailPage({ params }: Props) {
   const messages = Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [];
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/jobs" className="text-xs text-neutral-500 hover:text-neutral-300">
           ← Jobs
@@ -93,9 +94,14 @@ export default async function JobDetailPage({ params }: Props) {
       )}
 
       <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-5">
-        {/* Live status poller when job is active, static badge otherwise */}
+        {/* Live status poller when job is active, static badge otherwise.
+            Cancel button shown only while the job can still be cancelled —
+            once terminal, the action would refuse anyway. */}
         {isLive ? (
-          <JobStatusPoller jobId={job.id} initialStatus={job.status ?? 'pending'} />
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <JobStatusPoller jobId={job.id} initialStatus={job.status ?? 'pending'} />
+            <CancelJobButton jobId={job.id} />
+          </div>
         ) : (
           <div className="space-y-4">
             <StatusBadge status={job.status ?? 'pending'} />

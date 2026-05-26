@@ -154,6 +154,7 @@ export async function runScheduleTick(
     let lastStatus: 'success' | 'failed' | 'no_action';
     if (result.status === 'completed') lastStatus = 'success';
     else if (result.status === 'failed') lastStatus = 'failed';
+    else if (result.status === 'cancelled') lastStatus = 'failed';
     else lastStatus = 'no_action'; // awaiting_approval / awaiting_delegation
 
     await db

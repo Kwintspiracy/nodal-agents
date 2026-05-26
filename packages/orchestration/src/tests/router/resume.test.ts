@@ -445,4 +445,68 @@ describe('resumeDelegated', () => {
       resumeDelegated(job!.id as JobId, 'some-child-id' as JobId, 'result', db),
     ).rejects.toThrow(OrchestrationError);
   });
+
+  // Regression — 2026-05-26: when the dashboard cancels a parent that was
+  // `awaiting_delegation`, the cascade in `cancelJobAction` flips the
+  // parent to 'cancelled' but the child has typically already started its
+  // LLM turn. The child finishes, then calls resumeDelegated against a
+  // 'cancelled' parent. Pre-fix this threw `parent_wrong_status` and the
+  // child got marked `failed` instead of the cancellation it deserved.
+  // Now it must no-op cleanly so the caller can detect the terminal state
+  // via the returned snapshot and exit gracefully.
+  describe.each(['cancelled', 'completed', 'failed'] as const)(
+    'no-ops when parent is already %s (cancel-cascade race)',
+    (terminalStatus) => {
+      it(`returns the existing snapshot WITHOUT throwing or mutating messages`, async () => {
+        const { entityId, orchId } = await seedContext(db);
+        const initialMessages = [{ role: 'user', content: 'task that got cancelled' }];
+        const [job] = await db
+          .insert(agentJobs)
+          .values({
+            entityId,
+            agentId: orchId,
+            channel: 'telegram',
+            task: 'task that got cancelled',
+            status: terminalStatus,
+            // pending_delegation often outlives the cancel since the cascade
+            // doesn't clear it — defensive setup matching live data shape.
+            pendingDelegation: {
+              toolUseId: 'tu_cancel_race',
+              toolName: 'assign_calculatus',
+              subJobId: 'some-child-id',
+              type: 'single',
+            },
+            messages: initialMessages,
+            chainCount: 2,
+          })
+          .returning();
+
+        const snapshot = await resumeDelegated(
+          job!.id as JobId,
+          'some-child-id' as JobId,
+          'late child result',
+          db,
+        );
+
+        // The returned snapshot reflects the terminal status — caller (the
+        // parent's runner loop) will then bail via its own status guard.
+        expect(snapshot.status).toBe(terminalStatus);
+
+        // Critical: the row must NOT have been mutated. The cancellation
+        // intent stays intact, the late child's result is dropped.
+        const [reloaded] = await db
+          .select({
+            status: agentJobs.status,
+            messages: agentJobs.messages,
+            chainCount: agentJobs.chainCount,
+            pendingDelegation: agentJobs.pendingDelegation,
+          })
+          .from(agentJobs)
+          .where(eq(agentJobs.id, job!.id));
+        expect(reloaded?.status).toBe(terminalStatus);
+        expect(reloaded?.messages).toEqual(initialMessages); // untouched
+        expect(reloaded?.chainCount).toBe(2); // NOT bumped
+      });
+    },
+  );
 });

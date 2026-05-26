@@ -79,6 +79,11 @@ function makeDb(rows: unknown[] = []) {
     insert: vi.fn().mockReturnValue(c),
     delete: vi.fn().mockReturnValue(c),
     update: vi.fn().mockReturnValue(c),
+    // execute() is the raw-SQL escape hatch (e.g. WITH RECURSIVE in
+    // cancelJobAction's cascade). Real Drizzle returns a Result with
+    // rowCount; an empty-array resolved promise is enough for unit tests
+    // that only care that execute was called.
+    execute: vi.fn().mockResolvedValue([]),
   };
 }
 
@@ -227,6 +232,84 @@ describe('getJobStatusAction — validation', () => {
     const r = await getJobStatusAction('bad-id');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('cancelJobAction', () => {
+  it('rejects invalid uuid', async () => {
+    const { cancelJobAction } = await import('../src/lib/actions.ts');
+    const r = await cancelJobAction('bad-id');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found for unknown id', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { cancelJobAction } = await import('../src/lib/actions.ts');
+    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('refuses already-terminal jobs (completed)', async () => {
+    currentDb = makeDb([{ status: 'completed' }]) as typeof currentDb;
+    const { cancelJobAction } = await import('../src/lib/actions.ts');
+    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('already_terminal');
+  });
+
+  it('refuses already-terminal jobs (failed)', async () => {
+    currentDb = makeDb([{ status: 'failed' }]) as typeof currentDb;
+    const { cancelJobAction } = await import('../src/lib/actions.ts');
+    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('already_terminal');
+  });
+
+  it('refuses already-terminal jobs (cancelled — re-cancel is a no-op)', async () => {
+    currentDb = makeDb([{ status: 'cancelled' }]) as typeof currentDb;
+    const { cancelJobAction } = await import('../src/lib/actions.ts');
+    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('already_terminal');
+  });
+
+  it('flips status to cancelled for pending / processing / awaiting_*', async () => {
+    for (const status of ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation']) {
+      currentDb = makeDb([{ status }]) as typeof currentDb;
+      const { cancelJobAction } = await import('../src/lib/actions.ts');
+      const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+      expect(r.ok, `should cancel from ${status}`).toBe(true);
+      if (r.ok) expect(r.data.status).toBe('cancelled');
+
+      // The action must have issued the cascade UPDATE via the raw-SQL
+      // escape hatch (WITH RECURSIVE). Drift catch: if the action ever
+      // forgets to actually run it, this assertion fails.
+      const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
+      expect(executeSpy).toHaveBeenCalled();
+    }
+  });
+
+  it('cascade UPDATE includes a recursive CTE over descendants', async () => {
+    // Smoke check on the raw SQL — the cascade is correctness-critical
+    // and we want to catch a regression that silently strips the
+    // WITH RECURSIVE part (would leave child jobs running).
+    currentDb = makeDb([{ status: 'processing' }]) as typeof currentDb;
+    const { cancelJobAction } = await import('../src/lib/actions.ts');
+    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(r.ok).toBe(true);
+
+    const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    // The sql template is opaque from the mock side, but it stringifies
+    // to its query text + params layout; we just sanity-check that the
+    // recursive CTE keyword reached the executor.
+    const callArg = executeSpy.mock.calls[0]?.[0];
+    const text = JSON.stringify(callArg);
+    expect(text).toContain('RECURSIVE');
+    expect(text).toContain('descendants');
+    expect(text).toContain('parent_job_id');
   });
 });
 

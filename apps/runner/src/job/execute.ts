@@ -65,7 +65,7 @@ import type {
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
-import { failJob, completeJob, setJobStatus, saveCheckpoint } from './state.ts';
+import { failJob, completeJob, cancelJob, setJobStatus, saveCheckpoint } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -93,6 +93,7 @@ function truncateForContext(value: string): string {
 export type ExecuteJobResult =
   | { status: 'completed'; result: string }
   | { status: 'failed'; error: string }
+  | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
   | { status: 'awaiting_delegation' }
   | { status: 'awaiting_tasks' }
@@ -573,6 +574,30 @@ export async function executeJob(
       turn += 1;
       counters.resetTurnToolCalls();
 
+      // Cooperative cancellation check.
+      //
+      // The dashboard's `cancelJobAction` (apps/web/src/lib/actions.ts) only
+      // flips the `status` column to 'cancelled'; it never kills processes.
+      // We observe that flip here, at the start of every turn, so the LLM
+      // loop bails out cleanly between turns. The in-flight LLM call from
+      // the PREVIOUS turn (if any) finishes naturally — we don't abort
+      // mid-stream because half-aborted provider calls tend to leave half-
+      // written DB rows and confused tool side-effects.
+      //
+      // Worst case the user waits one extra LLM turn after clicking cancel;
+      // in practice that's a few seconds. Fine for an MVP — if we ever need
+      // sub-second cancellation we'll wire AbortController through the LLM
+      // client instead, but that's a bigger refactor.
+      const [statusRow] = await db
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, jobId as string));
+      if (statusRow?.status === 'cancelled') {
+        trace('cancellation_observed', { turn });
+        await cancelJob(db, jobId as string, runStats(), messages);
+        return { status: 'cancelled' };
+      }
+
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
       // seeded from job.turn), so a job that loops — or resumes — without ever
       // calling return_result fails loud here instead of burning tokens until
@@ -894,6 +919,21 @@ export async function executeJob(
                   db,
                 );
                 return executeJob(jobId, deps, _runnerEnv);
+              }
+
+              if (childOutcome.status === 'cancelled') {
+                // The user cancelled the child mid-flight. Cascade: a parent
+                // whose only outstanding work was the child has nothing left
+                // to do. Flip the parent to cancelled too (the DB row may
+                // still be 'processing' since cancellation was scoped to the
+                // child); orphan-cleanup would catch it eventually but
+                // surfacing it now matches user intent.
+                await db
+                  .update(agentJobs)
+                  .set({ status: 'cancelled', updatedAt: new Date() })
+                  .where(eq(agentJobs.id, jobId as string));
+                await cancelJob(db, jobId as string, runStats(), messages);
+                return { status: 'cancelled' };
               }
 
               if (childOutcome.status !== 'completed') {

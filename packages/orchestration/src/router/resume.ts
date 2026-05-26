@@ -81,8 +81,40 @@ export async function resumeDelegated(
     throw new OrchestrationError('parent_not_found', `Parent job not found: ${parentJobId}`);
   }
 
-  // 2. Verify parent is waiting for delegation
+  // 2. Verify parent is waiting for delegation.
+  //
+  // Special case — parent already terminal: when the user cancels a parent
+  // that was awaiting delegation, the cascade in `cancelJobAction` flips
+  // the parent to 'cancelled' immediately, but the child is typically
+  // already executing and finishes its current LLM turn before observing
+  // its own cancel. When that child then calls resumeDelegated, the
+  // parent is in 'cancelled' / 'completed' / 'failed' rather than
+  // 'awaiting_delegation' — that's a legal race, not a bug. Returning a
+  // no-op snapshot lets the caller's `executeJob(parent)` re-entry see
+  // the terminal status via its own guard and exit with 'already_handled'.
+  //
+  // For non-terminal mismatches (pending / processing) we still throw —
+  // those indicate a real concurrency violation (the parent isn't waiting
+  // for this child) and we want to fail loud rather than silently corrupt
+  // the parent's messages array.
+  const TERMINAL_PARENT_STATUSES = new Set(['cancelled', 'completed', 'failed']);
   if (parent.status !== 'awaiting_delegation') {
+    if (parent.status && TERMINAL_PARENT_STATUSES.has(parent.status)) {
+      return {
+        id: parent.id as JobId,
+        agentId: parent.agentId as AgentId | null,
+        entityId: parent.entityId as EntityId | null,
+        status: parent.status,
+        messages: Array.isArray(parent.messages) ? (parent.messages as unknown[]) : [],
+        pendingDelegation: null,
+        chainCount: parent.chainCount ?? 0,
+        delegationDepth: parent.delegationDepth ?? 0,
+        parentJobId: parent.parentJobId as JobId | null,
+        task: parent.task,
+        channel: parent.channel,
+        chatId: parent.chatId,
+      };
+    }
     throw new OrchestrationError(
       'parent_wrong_status',
       `Parent job ${parentJobId} has status '${parent.status}', expected 'awaiting_delegation'`,

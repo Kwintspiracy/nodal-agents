@@ -208,6 +208,17 @@ export async function executeReadyTasks(
       // Leave in_progress — the approve endpoint will complete it
     } else if (result.status === 'awaiting_delegation') {
       // Leave in_progress — the delegation resume will complete it
+    } else if (result.status === 'cancelled') {
+      // User cancelled the job mid-flight via the dashboard. Mirror that on
+      // the parent task so it doesn't sit forever as `in_progress`.
+      await db
+        .update(agentTasks)
+        .set({
+          status: 'blocked',
+          result: 'cancelled by user',
+          updatedAt: new Date(),
+        })
+        .where(eq(agentTasks.id, exec.taskId));
     }
     // 'already_handled' — status already correct, no-op
   }

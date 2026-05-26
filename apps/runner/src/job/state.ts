@@ -198,6 +198,43 @@ export async function failJob(
 }
 
 /**
+ * Finalize a job that the user cancelled mid-flight.
+ *
+ * The status column is ALREADY 'cancelled' at this point — the dashboard
+ * action `cancelJobAction` flipped it as soon as the user clicked. This
+ * helper just persists the partial transcript + accumulated stats and
+ * stamps `completed_at` so orphan-cleanup / "in-flight" filters treat
+ * the row as terminal.
+ *
+ * Deliberately does NOT touch `status` again: the runner might be racing
+ * against a SECOND status transition (e.g. user re-cancelling a
+ * cancelled job is a no-op) and we never want to clobber a status
+ * intentionally set by another writer.
+ */
+export async function cancelJob(
+  db: AnyDrizzleDb,
+  jobId: string,
+  stats?: RunStats,
+  messages?: unknown[],
+): Promise<void> {
+  const now = new Date();
+  await db
+    .update(agentJobs)
+    .set({
+      completedAt: now,
+      updatedAt: now,
+      ...(messages !== undefined && { messages }),
+      ...(stats && {
+        inputTokens: stats.inputTokens,
+        outputTokens: stats.outputTokens,
+        turn: stats.turn,
+        ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
+      }),
+    })
+    .where(eq(agentJobs.id, jobId));
+}
+
+/**
  * Save job checkpoint (messages + turn + chain_count) for self-chaining.
  * Does NOT change status — caller does that separately.
  */
