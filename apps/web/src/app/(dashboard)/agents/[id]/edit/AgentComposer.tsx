@@ -237,7 +237,6 @@ export default function AgentComposer({
           skills: attachedSkills.length,
           totalRuns,
           successfulRuns,
-          failedRuns,
         }}
         onConfigure={() => setTab('settings')}
       />
@@ -385,7 +384,6 @@ function HeroCard({
     skills: number;
     totalRuns: number;
     successfulRuns: number;
-    failedRuns: number;
   };
   onConfigure: () => void;
 }) {
