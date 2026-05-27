@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
   getAgentForEditAction,
@@ -7,7 +6,7 @@ import {
   listAgentConnectorsAction,
   listAgentMcpServersAction,
 } from '@/lib/actions.ts';
-import AgentForm from '@/components/AgentForm.tsx';
+import AgentComposer from './AgentComposer.tsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,28 +40,12 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link href="/agents" className="text-xs text-ink-3 hover:text-ink-2 transition-colors">
-          ← Agents
-        </Link>
-        <h1 className="text-2xl font-bold text-ink mt-2">Edit agent</h1>
-        <p className="text-sm text-ink-3 mt-1">
-          Updating personality or model invalidates the system-prompt cache for active jobs — the
-          new config applies to all jobs started after saving.
-        </p>
-      </div>
-
-      <div className="bg-paper border border-rule-2 rounded-xl p-6">
-        <AgentForm
-          mode="edit"
-          initial={agent}
-          llmKeys={llmKeys}
-          agents={peers}
-          connectors={connectors}
-          mcpServers={mcpServers}
-        />
-      </div>
-    </div>
+    <AgentComposer
+      agent={agent}
+      peers={peers}
+      llmKeys={llmKeys}
+      connectors={connectors}
+      mcpServers={mcpServers}
+    />
   );
 }
