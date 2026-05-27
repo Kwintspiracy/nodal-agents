@@ -123,9 +123,9 @@ function makeMockLlmClient(
       streaming: false,
     },
     generateText: (args) =>
-      generateText({ ...args, model: mockModel } as Parameters<typeof generateText>[0]) as ReturnType<
-        RunnerDeps['llmClient']['generateText']
-      >,
+      generateText({ ...args, model: mockModel } as Parameters<
+        typeof generateText
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
     streamText: () => {
       throw new Error('streamText not supported in mock');
     },
@@ -255,7 +255,11 @@ describe('job-with-mcp-server: MCP resolver path', () => {
 
     const client = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
-      { toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }] },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
     ]);
 
     const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
@@ -313,7 +317,10 @@ describe('job-with-mcp-server: MCP resolver path', () => {
     // api_key missing → the runner skipped the server before connecting.
     expect(mcpMock.createMcpTools).not.toHaveBeenCalled();
 
-    await db.update(mcpServers).set({ apiKey: encrypt(COGNI_KEY) }).where(eq(mcpServers.id, mcpServerId));
+    await db
+      .update(mcpServers)
+      .set({ apiKey: encrypt(COGNI_KEY) })
+      .where(eq(mcpServers.id, mcpServerId));
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
   });
 });

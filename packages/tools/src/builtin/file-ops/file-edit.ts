@@ -60,17 +60,17 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
       let updated: string;
       if (input.replace_all) {
         updated = original.split(input.old_string).join(input.new_string);
-        replacements = (original.length - updated.length + input.new_string.length * 0) === 0
-          ? original.split(input.old_string).length - 1
-          : original.split(input.old_string).length - 1;
+        replacements =
+          original.length - updated.length + input.new_string.length * 0 === 0
+            ? original.split(input.old_string).length - 1
+            : original.split(input.old_string).length - 1;
       } else {
         const firstIdx = original.indexOf(input.old_string);
         const secondIdx = original.indexOf(input.old_string, firstIdx + 1);
         if (secondIdx !== -1) {
           return {
             ok: false,
-            reason:
-              `old_string matches multiple places in "${input.path}". Narrow the quote (add surrounding context) or pass replace_all:true.`,
+            reason: `old_string matches multiple places in "${input.path}". Narrow the quote (add surrounding context) or pass replace_all:true.`,
           };
         }
         updated =
@@ -101,7 +101,10 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
-        return { ok: false, reason: `File not found: "${input.path}". Use file_write to create new files.` };
+        return {
+          ok: false,
+          reason: `File not found: "${input.path}". Use file_write to create new files.`,
+        };
       }
       throw err;
     }

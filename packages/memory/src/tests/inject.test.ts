@@ -9,12 +9,7 @@ import { createMemory } from '../crud';
 
 // ─── Pure helper tests ────────────────────────────────────────────────────────
 
-function makeMem(
-  id: string,
-  fact: string,
-  importance: number,
-  lastAccessed?: string,
-): AgentMemory {
+function makeMem(id: string, fact: string, importance: number, lastAccessed?: string): AgentMemory {
   return {
     id,
     entity_id: '00000000-0000-0000-0000-000000000001',

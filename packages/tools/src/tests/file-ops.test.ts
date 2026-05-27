@@ -76,10 +76,7 @@ describe('workspace + path security', () => {
 
   it('rejects an absolute path outside the workspace', async () => {
     await writeFile(join(OUTSIDE, 'secret.txt'), 'leaked');
-    const r = await fileReadTool.execute(
-      { path: join(OUTSIDE, 'secret.txt') },
-      ctxWith(WORKSPACE),
-    );
+    const r = await fileReadTool.execute({ path: join(OUTSIDE, 'secret.txt') }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
     expect(r.reason).toMatch(/outside|traversal/i);
@@ -126,9 +123,18 @@ describe('file_read', () => {
     );
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('expected ok');
-    expect(r.content.split('\n')).toEqual(
-      ['line50', 'line51', 'line52', 'line53', 'line54', 'line55', 'line56', 'line57', 'line58', 'line59'],
-    );
+    expect(r.content.split('\n')).toEqual([
+      'line50',
+      'line51',
+      'line52',
+      'line53',
+      'line54',
+      'line55',
+      'line56',
+      'line57',
+      'line58',
+      'line59',
+    ]);
     expect(r.start_line).toBe(50);
     expect(r.end_line).toBe(59);
     expect(r.truncated).toBe(true);
@@ -273,10 +279,7 @@ describe('file_list', () => {
     await mkdir(join(WORKSPACE, 'sub'));
     await writeFile(join(WORKSPACE, 'top.md'), '');
     await writeFile(join(WORKSPACE, 'sub/nested.md'), '');
-    const r = await fileListTool.execute(
-      { recursive: true, glob: '**/*.md' },
-      ctxWith(WORKSPACE),
-    );
+    const r = await fileListTool.execute({ recursive: true, glob: '**/*.md' }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('expected ok');
     const names = r.entries.map((e) => e.name).sort();

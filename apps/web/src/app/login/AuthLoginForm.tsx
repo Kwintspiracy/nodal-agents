@@ -104,9 +104,7 @@ export default function AuthLoginForm() {
             type="button"
             onClick={() => resetMode('signin')}
             className={`flex-1 py-2 text-xs font-medium rounded-md transition-colors ${
-              mode === 'signin'
-                ? 'bg-hover text-ink'
-                : 'text-ink-3 hover:text-ink-2'
+              mode === 'signin' ? 'bg-hover text-ink' : 'text-ink-3 hover:text-ink-2'
             }`}
           >
             Sign in
@@ -115,9 +113,7 @@ export default function AuthLoginForm() {
             type="button"
             onClick={() => resetMode('signup')}
             className={`flex-1 py-2 text-xs font-medium rounded-md transition-colors ${
-              mode === 'signup'
-                ? 'bg-hover text-ink'
-                : 'text-ink-3 hover:text-ink-2'
+              mode === 'signup' ? 'bg-hover text-ink' : 'text-ink-3 hover:text-ink-2'
             }`}
           >
             Create account

@@ -51,9 +51,7 @@ export default function JobStatusPoller({
 
       {state.result && (
         <div>
-          <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider mb-1">
-            Result
-          </p>
+          <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider mb-1">Result</p>
           <pre className="text-sm text-ink-2 whitespace-pre-wrap bg-paper rounded-lg p-4 border border-rule-2 max-h-80 overflow-auto">
             {state.result}
           </pre>
