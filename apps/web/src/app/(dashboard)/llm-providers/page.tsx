@@ -15,10 +15,10 @@ export default async function LlmProvidersPage() {
   const result = await listLlmKeysAction();
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">LLM Providers</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">
+    <div className="py-7">
+      <div className="mb-6">
+        <h1 className="text-[28px] font-semibold tracking-[-0.015em] text-ink">LLM Providers</h1>
+        <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
           Configure providers your agents can use. Each agent picks one provider and types its own
           model on top.
         </p>
@@ -27,7 +27,7 @@ export default async function LlmProvidersPage() {
       {result.ok ? (
         <LlmKeysList initialRows={result.data} />
       ) : (
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-4 text-sm text-red-300">
+        <div className="rounded-xl border border-warn/40 bg-warn-bg px-6 py-4 text-sm text-warn">
           {result.message}
         </div>
       )}

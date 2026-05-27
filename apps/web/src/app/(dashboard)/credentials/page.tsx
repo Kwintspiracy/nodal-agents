@@ -18,9 +18,11 @@ export default async function CredentialsPage({ searchParams }: PageProps) {
 
   if (!result.ok) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">Credentials</h1>
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+      <div className="py-7">
+        <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
+          Credentials
+        </h1>
+        <div className="mt-4 rounded-2xl border border-warn/40 bg-warn-bg p-5 text-sm text-warn">
           {result.message}
         </div>
       </div>

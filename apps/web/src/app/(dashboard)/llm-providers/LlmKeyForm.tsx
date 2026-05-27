@@ -68,6 +68,12 @@ type TestResult =
   | { state: 'pass'; message: string }
   | { state: 'fail'; message: string };
 
+// Shared field chrome classes
+const labelCls = 'block font-mono text-[10px] uppercase tracking-[0.12em] text-ink-4 mb-1.5';
+const inputCls =
+  'w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink placeholder-ink-4 transition-colors focus:border-ink-3 focus:outline-none';
+const inputMonoCls = `${inputCls} font-mono`;
+
 export default function LlmKeyForm(props: Props) {
   const isEdit = props.mode === 'edit';
   const initial = isEdit ? props.initial : null;
@@ -178,18 +184,18 @@ export default function LlmKeyForm(props: Props) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="space-y-4 bg-neutral-950/40 border border-neutral-800/40 rounded-lg p-4"
+      className="space-y-4 rounded-2xl border border-rule-2 bg-paper p-5"
     >
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="llm-provider">
+          <label className={labelCls} htmlFor="llm-provider">
             Provider
           </label>
           <select
             id="llm-provider"
             value={provider}
             onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className={inputCls}
           >
             {PROVIDER_OPTIONS.map((p) => (
               <option key={p} value={p}>
@@ -199,7 +205,7 @@ export default function LlmKeyForm(props: Props) {
           </select>
         </div>
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="llm-nickname">
+          <label className={labelCls} htmlFor="llm-nickname">
             Nickname
           </label>
           <input
@@ -211,19 +217,21 @@ export default function LlmKeyForm(props: Props) {
               setNickname(e.target.value);
             }}
             placeholder={`${prettyProviderName(provider)} main`}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+            className={inputCls}
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="llm-base-url">
+        <label className={labelCls} htmlFor="llm-base-url">
           Base URL
           {provider === 'openai-compatible' || provider === 'ollama' ? (
-            <span className="ml-2 text-amber-400">(required)</span>
+            <span className="ml-2 normal-case font-sans text-[11px] tracking-normal text-warn">
+              required
+            </span>
           ) : (
-            <span className="ml-2 text-neutral-600">
-              (optional — defaults to provider&apos;s canonical)
+            <span className="ml-2 normal-case font-sans text-[11px] tracking-normal text-ink-4">
+              optional
             </span>
           )}
         </label>
@@ -237,17 +245,17 @@ export default function LlmKeyForm(props: Props) {
             markStale();
           }}
           placeholder={baseUrlPlaceholder || 'leave blank to use the provider default'}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+          className={inputMonoCls}
         />
       </div>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="llm-api-key">
+        <label className={labelCls} htmlFor="llm-api-key">
           API key
         </label>
         {showMasked ? (
           <div className="flex items-center gap-2">
-            <div className="flex-1 bg-neutral-800/60 border border-neutral-700/60 rounded-lg px-3 py-2 text-sm font-mono text-neutral-400 tracking-widest select-none">
+            <div className="flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] tracking-widest text-ink-3 select-none">
               {'••••••••'}
               {initial.apiKeyLast4}
             </div>
@@ -257,9 +265,9 @@ export default function LlmKeyForm(props: Props) {
                 setReplacingApiKey(true);
                 markStale();
               }}
-              className="shrink-0 px-3 py-2 text-xs font-medium border border-neutral-700 text-neutral-400 rounded-lg hover:border-neutral-600 hover:text-white transition-colors"
+              className="shrink-0 rounded-md border border-rule px-3 py-2 text-[12px] font-medium text-ink-3 transition-colors hover:border-ink-3 hover:text-ink"
             >
-              Replace API key
+              Replace
             </button>
           </div>
         ) : (
@@ -274,7 +282,7 @@ export default function LlmKeyForm(props: Props) {
                 markStale();
               }}
               placeholder={isEdit && !replacingApiKey ? 'Leave blank to keep current' : ''}
-              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+              className={`flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder-ink-4 transition-colors focus:border-ink-3 focus:outline-none`}
             />
             {isEdit && replacingApiKey && (
               <button
@@ -284,7 +292,7 @@ export default function LlmKeyForm(props: Props) {
                   setApiKey('');
                   markStale();
                 }}
-                className="shrink-0 px-3 py-2 text-xs font-medium text-neutral-500 hover:text-neutral-300 transition-colors"
+                className="shrink-0 px-3 py-2 text-[12px] font-medium text-ink-4 transition-colors hover:text-ink-2"
               >
                 Cancel
               </button>
@@ -294,7 +302,7 @@ export default function LlmKeyForm(props: Props) {
       </div>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="llm-default-model">
+        <label className={labelCls} htmlFor="llm-default-model">
           Default model
         </label>
         <input
@@ -304,32 +312,32 @@ export default function LlmKeyForm(props: Props) {
           value={defaultModel}
           onChange={(e) => setDefaultModel(e.target.value)}
           placeholder={DEFAULT_MODEL_PRESETS[provider]}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+          className={inputMonoCls}
         />
-        <p className="mt-1 text-[11px] text-neutral-600">
+        <p className="mt-1.5 text-[11px] leading-[1.4] text-ink-4">
           Agents reference this provider and pick their own model on top — this is just the
           suggested default.
         </p>
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-neutral-300 cursor-pointer">
+      <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-ink-2">
         <input
           type="checkbox"
           checked={isActive}
           onChange={(e) => setIsActive(e.target.checked)}
-          className="accent-violet-500"
+          className="accent-conn-vivid"
         />
         <span>Active — agents may select this provider</span>
       </label>
 
       {/* Test result inline */}
       {testResult.state === 'pass' && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2 text-xs text-emerald-300">
+        <div className="rounded-md border border-ok/30 bg-ok-bg px-3 py-2 text-[12px] text-ok">
           {testResult.message}
         </div>
       )}
       {testResult.state === 'fail' && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2 text-xs text-red-300 break-all">
+        <div className="rounded-md border border-err/30 bg-warn-bg px-3 py-2 text-[12px] text-err break-all">
           {testResult.message}
         </div>
       )}
@@ -339,7 +347,7 @@ export default function LlmKeyForm(props: Props) {
           type="button"
           onClick={handleTest}
           disabled={testResult.state === 'testing' || isPending}
-          className="px-4 py-2 text-sm font-medium border border-neutral-700 text-neutral-300 rounded-lg hover:border-neutral-600 hover:text-white transition-colors disabled:opacity-50"
+          className="inline-flex h-[34px] items-center rounded-md border border-rule px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink disabled:opacity-50"
         >
           {testResult.state === 'testing' ? 'Testing…' : 'Test connection'}
         </button>
@@ -350,7 +358,7 @@ export default function LlmKeyForm(props: Props) {
             testResult.state === 'testing' ||
             (testResult.state !== 'pass' && !apiKeyUntouched)
           }
-          className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50"
+          className="inline-flex h-[34px] items-center rounded-md bg-ink px-3.5 text-[13px] font-semibold text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
           title={
             testResult.state !== 'pass' && !apiKeyUntouched
               ? 'Test the connection before saving'
@@ -362,7 +370,7 @@ export default function LlmKeyForm(props: Props) {
         <button
           type="button"
           onClick={() => props.onDone('cancelled')}
-          className="px-4 py-2 text-sm font-medium text-neutral-500 hover:text-neutral-300 transition-colors"
+          className="inline-flex h-[34px] items-center px-3.5 text-[13px] font-medium text-ink-3 transition-colors hover:text-ink-2"
         >
           Cancel
         </button>
