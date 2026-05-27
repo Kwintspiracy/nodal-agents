@@ -1,42 +1,36 @@
 'use client';
 
-// AgentsList — grouped + drag-and-droppable view of the entity's agents.
+// AgentsList — Grid view + Hierarchy view for /agents.
 //
-// Rendering rules:
-//   - Each orchestrator gets a section header followed by its sub-agents.
-//   - A worker can appear under multiple orchestrators (that's an
-//     intentional schema property of agent_assignments) — the action layer
-//     surfaces it under each parent and we render it accordingly.
-//   - A final "Standalone" section lists workers that no orchestrator
-//     owns. Hidden when empty.
+// Grid view:
+//   3-column card grid matching `.ag-grid` / `.ag-card` from the design.
+//   A ChipRow filters by derived status (All / Running / Idle / Attention /
+//   Paused). Cards are clickable → /agents/{id}/edit.
 //
-// Reordering uses a flattened-list model: every drag-end rebuilds the
-// complete cross-group order in memory, then submits the full list to
-// `reorderAgentsAction`. The action sets positions to 0, 10, 20, ... for
-// everything in the array. Single source of truth for the `position`
-// column, no per-group bucketing bugs.
+// Hierarchy view:
+//   One OrchestratorCard per orchestrator (including their worker list), then
+//   a "Standalone" section for unassigned workers. dnd-kit drag-and-drop
+//   allows reordering workers within a group and reordering whole teams.
+//   Both behaviours are preserved from the previous AgentsList implementation.
 //
-// Drag-and-drop scoping (dnd-kit):
-//   - WORKERS reorder INSIDE their group only — each group's `<SortableContext>`
-//     is scoped to its worker IDs. dnd-kit's `closestCenter` collision
-//     detection + the per-group context means a drop into another group is
-//     a no-op at the data layer. Cross-group reassignment is a separate
-//     UX (use the Edit page to change agent_assignments).
-//   - GROUPS reorder via a separate `<SortableContext>` over the orchestrator
-//     IDs themselves. Dragging a team header moves the whole team.
-//   - The Standalone bucket has no draggable header — its workers can
-//     reorder among themselves, but the bucket as a whole stays last.
+// State:
+//   - `tab`         — 'grid' | 'hier'
+//   - `statusFilter`— grid chip filter
+//   - `query`       — search string
+//   - `groups`      — live-updated group list (mutated by drag ops)
+//   - `activity`    — polled every 5 s, never shown stale
 //
-// Why drag-and-drop instead of ↑/↓ buttons (which we shipped first):
-//   Quentin called the ↑/↓ UX "la pire UX de tous les temps" after one
-//   live test. Reordering 10+ agents with arrow buttons is genuinely
-//   awful. dnd-kit gives us proper drag, accessible keyboard fallback
-//   (Space to grab, arrows to move, Enter to drop), and touch support.
+// Drag-and-drop scoping (dnd-kit — identical to previous impl):
+//   Groups (orchestrators) are sortable within an outer DndContext over
+//   orchestrator IDs. Each group's workers get their own nested DndContext
+//   scoped to their worker IDs so cross-group drops are no-ops at the data
+//   layer.
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { Plus } from '@phosphor-icons/react';
 import {
   DndContext,
   closestCenter,
@@ -56,23 +50,37 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
   reorderAgentsAction,
-  deleteAgentAction,
   getActiveJobsByAgentAction,
   type ActiveAgentRow,
   type AgentGroup,
   type AgentRow,
 } from '@/lib/actions.ts';
-import DeleteAgentButton from './DeleteAgentButton.tsx';
+import PageTopBar from '@/components/ui/PageTopBar';
+import PillTabs2 from '@/components/ui/PillTabs2';
+import PageSearchInput from '@/components/ui/PageSearchInput';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
+import Banner from '@/components/ui/Banner';
+import AgentGridCard from '@/components/ui/AgentGridCard';
+import OrchestratorCard from '@/components/ui/OrchestratorCard';
+import WorkerRow from '@/components/ui/WorkerRow';
+// DeleteAgentButton import intentionally omitted — delete actions live on
+// the edit page (/agents/[id]/edit). Cards and rows navigate there on click.
 
-/** Refresh cadence for the live activity badges. Same as ActiveAgentsPanel
- *  on /stats — fast enough to feel live without hammering the DB. */
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Tab = 'grid' | 'hier';
+type StatusFilter = 'All' | 'Running' | 'Idle' | 'Attention' | 'Paused';
+
+/** Refresh cadence for activity badges — matches ActiveAgentsPanel on /stats. */
 const ACTIVITY_POLL_MS = 5000;
 
 interface Props {
   initialGroups: AgentGroup[];
-  /** Initial activity snapshot from the server render; refreshed client-side. */
   initialActivity: ActiveAgentRow[];
 }
+
+// ─── Root component ───────────────────────────────────────────────────────────
 
 export default function AgentsList({ initialGroups, initialActivity }: Props) {
   const [groups, setGroups] = useState<AgentGroup[]>(initialGroups);
@@ -80,26 +88,43 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  // Index by agentId for O(1) lookup in each row. Recompute when the
-  // poller delivers a new snapshot — same agent IDs but possibly new
-  // counts.
+  const [tab, setTab] = useState<Tab>('grid');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('All');
+  const [query, setQuery] = useState('');
+
+  // Flat list of all agents (deduped) — used for the grid.
+  const flatAgents = useMemo<AgentRow[]>(() => {
+    const seen = new Set<string>();
+    const out: AgentRow[] = [];
+    for (const g of groups) {
+      if (g.orchestrator && !seen.has(g.orchestrator.id)) {
+        seen.add(g.orchestrator.id);
+        out.push(g.orchestrator);
+      }
+      for (const w of g.workers) {
+        if (!seen.has(w.id)) {
+          seen.add(w.id);
+          out.push(w);
+        }
+      }
+    }
+    return out;
+  }, [groups]);
+
+  // O(1) activity lookup.
   const activityByAgent = useMemo(() => {
     const m = new Map<string, ActiveAgentRow>();
     for (const a of activity) m.set(a.agentId, a);
     return m;
   }, [activity]);
 
-  // Live polling for activity badges. Lives here (rather than each row)
-  // so we do ONE network call per tick regardless of how many agents
-  // are rendered.
+  // Live polling — one call per tick, shared across all cards.
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
       const r = await getActiveJobsByAgentAction();
       if (cancelled) return;
       if (r.ok) setActivity(r.data);
-      // On error we silently keep the previous snapshot — a transient DB
-      // hiccup shouldn't blank out the badges.
     };
     const id = setInterval(() => void tick(), ACTIVITY_POLL_MS);
     return () => {
@@ -108,14 +133,13 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
     };
   }, []);
 
-  // Pointer for mouse/touch drag, Keyboard for a11y (Space → grab, arrows → move).
-  // `distance: 8` on PointerSensor — a click that moves less than 8px stays a
-  // click (so the Edit / Delete buttons on each row remain usable; they're
-  // inside the draggable but a quick click never starts a drag).
+  // dnd-kit sensors — shared between grid-level and worker-level contexts.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
+  // ── Reorder helpers ─────────────────────────────────────────────────────────
 
   function flatten(gs: AgentGroup[]): string[] {
     const out: string[] = [];
@@ -140,9 +164,6 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
     });
   }
 
-  // Drag-end handler for the WORKERS inside a given group. The `over.id` is
-  // the worker we just dropped onto; we arrayMove within that group's
-  // workers and submit.
   function handleWorkerDragEnd(groupIdx: number, e: DragEndEvent) {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
@@ -156,183 +177,311 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
     submitReorder(next);
   }
 
-  // Drag-end for GROUPS (the orchestrator section headers). Reorders teams
-  // among themselves; Standalone (orchestrator === null) stays anchored at
-  // the end because it has no draggable header.
   function handleGroupDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    // Find positions of the two orchestrators in the groups array. Skip
-    // the Standalone bucket; its orchestrator is null and its id never
-    // appears in the SortableContext.
     const oldIdx = groups.findIndex((g) => g.orchestrator?.id === active.id);
     const newIdx = groups.findIndex((g) => g.orchestrator?.id === over.id);
     if (oldIdx < 0 || newIdx < 0) return;
-    const next = arrayMove(groups, oldIdx, newIdx);
-    submitReorder(next);
+    submitReorder(arrayMove(groups, oldIdx, newIdx));
   }
 
-  if (groups.length === 0) {
-    return (
-      <div className="bg-paper border border-rule-2 rounded-xl overflow-hidden">
-        <div className="px-6 py-12 text-center text-ink-4 text-sm">
-          No agents yet. Create one above.
-        </div>
-      </div>
-    );
-  }
+  // ── Derived filtered list for grid ─────────────────────────────────────────
 
-  // IDs for the group-level SortableContext: just the orchestrators that
-  // can shuffle. The Standalone bucket is excluded so it can't be dragged.
+  const filteredGrid = useMemo(() => {
+    let list = flatAgents;
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          a.slug.toLowerCase().includes(q) ||
+          (a.role ?? '').toLowerCase().includes(q),
+      );
+    }
+    if (statusFilter !== 'All') {
+      list = list.filter((a) => {
+        const act = activityByAgent.get(a.id) ?? null;
+        const s = deriveStatusLabel(act);
+        return s === statusFilter;
+      });
+    }
+    return list;
+  }, [flatAgents, query, statusFilter, activityByAgent]);
+
+  // ── Status chip counts ──────────────────────────────────────────────────────
+
+  const chipCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      All: flatAgents.length,
+      Running: 0,
+      Idle: 0,
+      Attention: 0,
+      Paused: 0,
+    };
+    for (const a of flatAgents) {
+      const s = deriveStatusLabel(activityByAgent.get(a.id) ?? null);
+      counts[s] = (counts[s] ?? 0) + 1;
+    }
+    return counts;
+  }, [flatAgents, activityByAgent]);
+
+  const STATUS_CHIPS: ChipItem<StatusFilter>[] = [
+    { value: 'All', label: 'All', count: chipCounts.All },
+    { value: 'Running', label: 'Running', count: chipCounts.Running },
+    { value: 'Idle', label: 'Idle', count: chipCounts.Idle },
+    { value: 'Attention', label: 'Attention', count: chipCounts.Attention },
+    { value: 'Paused', label: 'Paused', count: chipCounts.Paused },
+  ];
+
   const orchestratorIds = groups
     .map((g) => g.orchestrator?.id)
     .filter((id): id is string => Boolean(id));
 
-  return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleGroupDragEnd}>
-      <SortableContext items={orchestratorIds} strategy={verticalListSortingStrategy}>
-        <div className="space-y-6">
-          {groups.map((g, gi) => {
-            const isStandalone = g.orchestrator === null;
-            return (
-              <div key={isStandalone ? '__standalone__' : (g.orchestrator?.id ?? '')}>
-                {/* Section header — sortable when it's an orchestrator (the team
-                    drag handle is the grip icon on the left of the title). */}
-                {g.orchestrator ? (
-                  <SortableTeamHeader orchestrator={g.orchestrator} disabled={isPending} />
-                ) : (
-                  <h2 className="mb-2 text-xs font-semibold text-ink-3 uppercase tracking-wider">
-                    Standalone
-                  </h2>
-                )}
+  // ── Empty state ─────────────────────────────────────────────────────────────
 
-                {/* Worker rows — own DndContext nested for per-group scoping. */}
-                <WorkerList
-                  workers={g.workers}
-                  indent={Boolean(g.orchestrator)}
-                  orchestrator={g.orchestrator}
-                  disabled={isPending}
-                  onWorkerDragEnd={(e) => handleWorkerDragEnd(gi, e)}
-                  sensors={sensors}
-                  activityByAgent={activityByAgent}
+  if (groups.length === 0) {
+    return (
+      <div className="mt-4 rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
+        <p className="text-[13px] leading-[1.5] text-ink-3">No agents yet. Create one above.</p>
+      </div>
+    );
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="pb-10">
+      {/* Top bar */}
+      <PageTopBar
+        tabs={
+          <PillTabs2<Tab>
+            value={tab}
+            onChange={(v) => {
+              setTab(v);
+              setQuery('');
+              setStatusFilter('All');
+            }}
+            tabs={[
+              { value: 'grid', label: 'Grid', count: flatAgents.length },
+              { value: 'hier', label: 'Hierarchy', count: groups.length },
+            ]}
+          />
+        }
+        search={<PageSearchInput value={query} onChange={setQuery} placeholder="Search agents…" />}
+        cta={
+          <PrimaryButton variant="ink" href="/agents/new">
+            <Plus size={13} weight="bold" />
+            New agent
+          </PrimaryButton>
+        }
+      />
+
+      {/* ── Grid view ─────────────────────────────────────────────────────── */}
+      {tab === 'grid' && (
+        <div className="pt-4">
+          <ChipRow
+            items={STATUS_CHIPS}
+            value={statusFilter}
+            onChange={setStatusFilter}
+            className="mb-4"
+          />
+
+          {filteredGrid.length === 0 ? (
+            <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
+              <p className="text-[13px] text-ink-3">No agents match the current filter.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-3">
+              {filteredGrid.map((agent) => (
+                <AgentGridCard
+                  key={agent.id}
+                  agent={agent}
+                  activity={activityByAgent.get(agent.id) ?? null}
                 />
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          )}
         </div>
-      </SortableContext>
-    </DndContext>
+      )}
+
+      {/* ── Hierarchy view ────────────────────────────────────────────────── */}
+      {tab === 'hier' && (
+        <div className="pt-4 space-y-0">
+          <Banner variant="tip" className="mb-4">
+            Drag any worker row to reorder it within its team. Drag an orchestrator header to
+            reorder teams.
+          </Banner>
+
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleGroupDragEnd}
+          >
+            <SortableContext items={orchestratorIds} strategy={verticalListSortingStrategy}>
+              <div className="space-y-3.5">
+                {groups.map((g, gi) => {
+                  const isStandalone = g.orchestrator === null;
+
+                  if (isStandalone) {
+                    // Standalone bucket — workers with no orchestrator parent.
+                    return (
+                      <StandaloneSection
+                        key="__standalone__"
+                        workers={g.workers}
+                        disabled={isPending}
+                        sensors={sensors}
+                        activityByAgent={activityByAgent}
+                        onDragEnd={(e) => handleWorkerDragEnd(gi, e)}
+                      />
+                    );
+                  }
+
+                  return (
+                    <SortableOrchestratorSection
+                      key={g.orchestrator!.id}
+                      orchestrator={g.orchestrator!}
+                      workers={g.workers}
+                      disabled={isPending}
+                      sensors={sensors}
+                      activityByAgent={activityByAgent}
+                      onWorkerDragEnd={(e) => handleWorkerDragEnd(gi, e)}
+                    />
+                  );
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
+
+          {/* "+ New orchestrator" dashed button */}
+          <Link
+            href="/agents/new"
+            className="mt-4 flex items-center justify-center gap-3.5 rounded-[12px] border border-dashed border-rule bg-transparent px-4 py-4 text-[13.5px] font-medium text-ink-2 transition-colors hover:bg-hover"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-canvas dark:bg-white/[0.06]">
+              <Plus size={14} weight="bold" />
+            </span>
+            New orchestrator
+            <span className="font-normal text-ink-4">· group workers under a coordinator</span>
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }
 
-// ─── Sortable team header (orchestrator row) ─────────────────────────────────
+// ─── Sortable orchestrator section ───────────────────────────────────────────
 
-function SortableTeamHeader({
+function SortableOrchestratorSection({
   orchestrator,
+  workers,
   disabled,
+  sensors,
+  activityByAgent,
+  onWorkerDragEnd,
 }: {
   orchestrator: AgentRow;
+  workers: AgentRow[];
   disabled: boolean;
+  sensors: ReturnType<typeof useSensors>;
+  activityByAgent: Map<string, ActiveAgentRow>;
+  onWorkerDragEnd: (e: DragEndEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: orchestrator.id,
     disabled,
   });
 
+  const router = useRouter();
+
   return (
-    <div
-      ref={setNodeRef}
+    <OrchestratorCard
+      orchestrator={orchestrator}
+      workerCount={workers.length}
+      cardRef={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`mb-2 flex items-center gap-2 ${isDragging ? 'opacity-50' : ''}`}
+      className={isDragging ? 'opacity-50' : ''}
+      dragHandleProps={{ ...attributes, ...listeners }}
     >
-      <button
-        type="button"
-        {...attributes}
-        {...listeners}
-        aria-label="Drag team"
-        title="Drag to reorder team"
-        className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-2 transition-colors leading-none touch-none"
-      >
-        ⋮⋮
-      </button>
-      <h2 className="text-xs font-semibold text-ink-3 uppercase tracking-wider">
-        Team — {orchestrator.name}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onWorkerDragEnd}>
+        <SortableContext items={workers.map((w) => w.id)} strategy={verticalListSortingStrategy}>
+          {/* Orchestrator's own entry at the top — non-sortable, spacer drag handle */}
+          <NonSortableWorkerRow
+            agent={orchestrator}
+            activity={activityByAgent.get(orchestrator.id) ?? null}
+            onClick={() => router.push(`/agents/${orchestrator.id}/edit`)}
+            isOrchestrator
+          />
+          {workers.map((w) => (
+            <SortableWorkerEntry
+              key={w.id}
+              agent={w}
+              disabled={disabled}
+              activity={activityByAgent.get(w.id) ?? null}
+              onClick={() => router.push(`/agents/${w.id}/edit`)}
+            />
+          ))}
+        </SortableContext>
+      </DndContext>
+    </OrchestratorCard>
+  );
+}
+
+// ─── Standalone section (no orchestrator parent) ─────────────────────────────
+
+function StandaloneSection({
+  workers,
+  disabled,
+  sensors,
+  activityByAgent,
+  onDragEnd,
+}: {
+  workers: AgentRow[];
+  disabled: boolean;
+  sensors: ReturnType<typeof useSensors>;
+  activityByAgent: Map<string, ActiveAgentRow>;
+  onDragEnd: (e: DragEndEvent) => void;
+}) {
+  const router = useRouter();
+
+  return (
+    <div>
+      <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-ink-3">
+        Standalone
       </h2>
+      <div className="rounded-[14px] border border-rule-2 bg-paper p-3">
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={workers.map((w) => w.id)} strategy={verticalListSortingStrategy}>
+            <div className="flex flex-col gap-1.5">
+              {workers.map((w) => (
+                <SortableWorkerEntry
+                  key={w.id}
+                  agent={w}
+                  disabled={disabled}
+                  activity={activityByAgent.get(w.id) ?? null}
+                  onClick={() => router.push(`/agents/${w.id}/edit`)}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      </div>
     </div>
   );
 }
 
-// ─── Worker list with nested DndContext (per-group scoping) ──────────────────
+// ─── Sortable worker entry (wraps WorkerRow + useSortable) ───────────────────
 
-function WorkerList({
-  workers,
-  indent,
-  orchestrator,
-  disabled,
-  onWorkerDragEnd,
-  sensors,
-  activityByAgent,
-}: {
-  workers: AgentRow[];
-  indent: boolean;
-  orchestrator: AgentRow | null;
-  disabled: boolean;
-  onWorkerDragEnd: (e: DragEndEvent) => void;
-  sensors: ReturnType<typeof useSensors>;
-  activityByAgent: Map<string, ActiveAgentRow>;
-}) {
-  const workerIds = workers.map((w) => w.id);
-
-  // DnDContext lives OUTSIDE the <table> — dnd-kit renders an accessibility
-  // <div> (screen-reader announcer + focus restorer) and the HTML spec
-  // refuses <div> as a direct child of <tbody>, which makes React hydration
-  // error out. SortableContext is a pure provider (no DOM) so it can live
-  // inside <tbody> next to the <tr> children.
-  return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onWorkerDragEnd}>
-      <div className="bg-paper border border-rule-2 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <tbody>
-            <SortableContext items={workerIds} strategy={verticalListSortingStrategy}>
-              {/* Orchestrator's own row first — not draggable HERE (the team
-                  header drag handle moves the whole team). The drag-handle
-                  column stays as a spacer for visual alignment. */}
-              {orchestrator && (
-                <NonSortableRow
-                  agent={orchestrator}
-                  indent={false}
-                  activity={activityByAgent.get(orchestrator.id) ?? null}
-                />
-              )}
-              {workers.map((w) => (
-                <SortableWorkerRow
-                  key={w.id}
-                  agent={w}
-                  indent={indent}
-                  disabled={disabled}
-                  activity={activityByAgent.get(w.id) ?? null}
-                />
-              ))}
-            </SortableContext>
-          </tbody>
-        </table>
-      </div>
-    </DndContext>
-  );
-}
-
-// ─── Sortable worker row ─────────────────────────────────────────────────────
-
-function SortableWorkerRow({
+function SortableWorkerEntry({
   agent,
-  indent,
   disabled,
   activity,
+  onClick,
 }: {
   agent: AgentRow;
-  indent: boolean;
   disabled: boolean;
   activity: ActiveAgentRow | null;
+  onClick: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: agent.id,
@@ -340,186 +489,48 @@ function SortableWorkerRow({
   });
 
   return (
-    <tr
-      ref={setNodeRef}
+    <WorkerRow
+      agent={agent}
+      activity={activity}
+      rowRef={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`border-b border-rule-2 last:border-0 ${isDragging ? 'opacity-50 bg-hover' : ''}`}
-    >
-      <td className={`px-5 py-3 ${indent ? 'pl-10' : ''}`}>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            {...attributes}
-            {...listeners}
-            aria-label="Drag row"
-            title="Drag to reorder"
-            className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-3 transition-colors leading-none touch-none select-none"
-          >
-            ⋮⋮
-          </button>
-          <AgentAvatar agent={agent} />
-          <AgentLabel agent={agent} />
-          <ActivityBadge agent={agent} activity={activity} />
-        </div>
-      </td>
-      <RowActions agent={agent} />
-    </tr>
+      className={isDragging ? 'opacity-50' : ''}
+      dragHandleProps={{ ...attributes, ...listeners }}
+      onClick={onClick}
+    />
   );
 }
 
-// ─── Non-sortable row (orchestrator's own row inside its team table) ─────────
+// ─── Non-sortable worker row (orchestrator's own slot in the team) ────────────
 
-function NonSortableRow({
+function NonSortableWorkerRow({
   agent,
-  indent,
   activity,
+  onClick,
+  isOrchestrator,
 }: {
   agent: AgentRow;
-  indent: boolean;
   activity: ActiveAgentRow | null;
+  onClick: () => void;
+  isOrchestrator?: boolean;
 }) {
   return (
-    <tr className="border-b border-rule-2 last:border-0">
-      <td className={`px-5 py-3 ${indent ? 'pl-10' : ''}`}>
-        <div className="flex items-center gap-3">
-          {/* Spacer aligning with the drag handle on worker rows below. */}
-          <span className="w-4 inline-block" aria-hidden />
-          <AgentAvatar agent={agent} />
-          <AgentLabel agent={agent} />
-          <ActivityBadge agent={agent} activity={activity} />
-        </div>
-      </td>
-      <RowActions agent={agent} />
-    </tr>
+    <WorkerRow
+      agent={agent}
+      activity={activity}
+      onClick={onClick}
+      className={isOrchestrator ? 'border-b border-rule-2 pb-2.5 mb-0.5' : ''}
+    />
   );
 }
 
-// ─── Shared row pieces ───────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function AgentAvatar({ agent }: { agent: AgentRow }) {
-  if (agent.avatarUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={agent.avatarUrl}
-        alt=""
-        width={32}
-        height={32}
-        className="w-8 h-8 rounded-full object-cover border border-rule-2 shrink-0"
-      />
-    );
-  }
-  // Initials fallback — first letter of the agent name in a neutral chip.
-  // Keeps row height stable whether an avatar is set or not.
-  return (
-    <div className="w-8 h-8 rounded-full bg-hover text-ink-3 text-xs font-semibold flex items-center justify-center shrink-0">
-      {agent.name.charAt(0).toUpperCase()}
-    </div>
-  );
-}
+type StatusFilterLabel = 'Running' | 'Idle' | 'Attention' | 'Paused';
 
-function AgentLabel({ agent }: { agent: AgentRow }) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-2">
-        <span className="text-ink font-medium truncate">{agent.name}</span>
-        {agent.isDefault && (
-          <span className="text-[10px] font-semibold text-run uppercase tracking-wider">
-            default
-          </span>
-        )}
-        {agent.role === 'orchestrator' && (
-          <span className="text-[10px] font-semibold text-indigo-400 uppercase tracking-wider">
-            orchestrator
-          </span>
-        )}
-      </div>
-      <span className="font-mono text-ink-3 text-[11px]">{agent.slug}</span>
-      {agent.model && <span className="ml-2 text-ink-4 text-[11px]">· {agent.model}</span>}
-    </div>
-  );
-}
-
-// ─── Live activity badge ─────────────────────────────────────────────────────
-
-/**
- * Renders a small live indicator next to an agent's name when at least one
- * job is in flight. Three buckets, priority-ordered:
- *
- *   - `processing` (blue, animated pulse): a worker is actively running an
- *     LLM turn right now. Most visually "alive" because it's the only
- *     state that actively burns tokens.
- *   - `awaiting` (amber, soft pulse): paused waiting for a child job or a
- *     human approval. Still in flight but not consuming compute.
- *   - `pending` (yellow, static): claimed but never picked up — usually a
- *     recovery candidate. Static dot signals "stuck, not running".
- *
- * Nothing renders when the agent is idle (no active jobs). The badge
- * links to `/jobs?agentId=<id>` so a click jumps to the filtered job
- * list — same target as the ActiveAgentsPanel cards on /stats so the
- * mental model stays consistent.
- */
-function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveAgentRow | null }) {
-  if (!activity || activity.total === 0) return null;
-
-  // Pick the most "alive" bucket for the dot color.
-  // processing > awaiting > pending. Tooltip below shows the full
-  // breakdown so the user can see every category at a glance.
-  const dot =
-    activity.processing > 0
-      ? { color: 'bg-run', pulse: true, label: `${activity.processing} running` }
-      : activity.awaiting > 0
-        ? {
-            color: 'bg-warn',
-            pulse: true,
-            label: `${activity.awaiting} awaiting`,
-          }
-        : { color: 'bg-warn', pulse: false, label: `${activity.pending} pending` };
-
-  const tooltipLines: string[] = [];
-  if (activity.processing > 0) tooltipLines.push(`${activity.processing} processing`);
-  if (activity.awaiting > 0) tooltipLines.push(`${activity.awaiting} awaiting`);
-  if (activity.pending > 0) tooltipLines.push(`${activity.pending} pending`);
-
-  return (
-    <Link
-      href={`/jobs?agentId=${agent.id}`}
-      title={tooltipLines.join(' · ')}
-      onPointerDown={(e) => e.stopPropagation()}
-      className="ml-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-hover hover:bg-hover border border-rule text-[11px] text-ink-2 transition-colors shrink-0"
-    >
-      <span className="relative inline-flex w-2 h-2 shrink-0">
-        {dot.pulse && (
-          <span
-            className={`absolute inset-0 inline-flex h-full w-full rounded-full opacity-60 animate-ping ${dot.color}`}
-          />
-        )}
-        <span className={`relative inline-flex w-2 h-2 rounded-full ${dot.color}`} />
-      </span>
-      <span className="font-mono tabular-nums">{activity.total}</span>
-      <span className="text-ink-3 text-[10px]">active</span>
-    </Link>
-  );
-}
-
-function RowActions({ agent }: { agent: AgentRow }) {
-  return (
-    <td className="px-5 py-3 text-right">
-      <div className="flex items-center justify-end gap-2">
-        <Link
-          href={`/agents/${agent.id}/telegram`}
-          className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-rule hover:text-ink transition-colors"
-        >
-          Telegram
-        </Link>
-        <Link
-          href={`/agents/${agent.id}/edit`}
-          className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-rule hover:text-ink transition-colors"
-        >
-          Edit
-        </Link>
-        <DeleteAgentButton id={agent.id} name={agent.name} deleteAction={deleteAgentAction} />
-      </div>
-    </td>
-  );
+function deriveStatusLabel(activity: ActiveAgentRow | null): StatusFilterLabel {
+  if (!activity || activity.total === 0) return 'Idle';
+  if (activity.processing > 0) return 'Running';
+  if (activity.awaiting > 0) return 'Attention';
+  return 'Idle';
 }

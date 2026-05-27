@@ -1,10 +1,8 @@
 import {
   listAgentsAction,
   listAgentGroupsAction,
-  listLlmKeysAction,
   getActiveJobsByAgentAction,
 } from '@/lib/actions.ts';
-import AgentForm from '@/components/AgentForm.tsx';
 import AgentsErrorRetry from './AgentsErrorRetry.tsx';
 import AgentsList from './AgentsList.tsx';
 
@@ -14,41 +12,32 @@ import AgentsList from './AgentsList.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function AgentsPage() {
-  // listAgentsAction is still needed for the AgentForm picker (sub-agent
-  // selection while editing a team) — keep loading it alongside the grouped
-  // view used by AgentsList. Active jobs feed the per-row live activity
-  // badges; AgentsList re-polls client-side to keep them fresh.
-  const [groupsResult, listResult, llmKeysResult, activityResult] = await Promise.all([
+  // listAgentsAction supplies the flat list for AgentsList's grid dedup logic.
+  // Active jobs seed the per-agent activity badges; AgentsList re-polls.
+  // listLlmKeysAction is no longer needed here — the AgentForm trigger is now
+  // inside AgentsList's PageTopBar CTA which navigates to /agents/new.
+  const [groupsResult, listResult, activityResult] = await Promise.all([
     listAgentGroupsAction(),
     listAgentsAction(),
-    listLlmKeysAction(),
     getActiveJobsByAgentAction(),
   ]);
-  const llmKeys = llmKeysResult.ok ? llmKeysResult.data : [];
-  const flatAgents = listResult.ok ? listResult.data : [];
   const initialActivity = activityResult.ok ? activityResult.data : [];
-  // Count distinct agents across all groups (a worker assigned to multiple
-  // orchestrators appears in each group, but we want the unique total).
-  const totalAgents = flatAgents.length;
 
   return (
     <div className="py-7">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
-            Agents
-          </h1>
-          {groupsResult.ok && (
-            <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
-              {totalAgents} agent{totalAgents !== 1 ? 's' : ''}
-            </p>
-          )}
-        </div>
-        <AgentForm llmKeys={llmKeys} agents={flatAgents} />
-      </div>
+      <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
+        Agents
+      </h1>
+      {listResult.ok && (
+        <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+          {listResult.data.length} agent{listResult.data.length !== 1 ? 's' : ''}
+        </p>
+      )}
 
       {!groupsResult.ok ? (
-        <AgentsErrorRetry message={groupsResult.message} />
+        <div className="mt-4">
+          <AgentsErrorRetry message={groupsResult.message} />
+        </div>
       ) : (
         <AgentsList initialGroups={groupsResult.data} initialActivity={initialActivity} />
       )}
