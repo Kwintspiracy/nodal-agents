@@ -11,6 +11,8 @@ import {
   type LlmKeyUiRow,
   type AgentConnectorRow,
   type AgentMcpServerRow,
+  type JobRow,
+  type SkillRow,
 } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import {
@@ -21,46 +23,32 @@ import {
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import AgentConnectorGrid from '@/components/AgentConnectorGrid.tsx';
 import AgentMcpServerGrid from '@/components/AgentMcpServerGrid.tsx';
+import Disc from '@/components/ui/Disc';
+import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
+import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 
 /**
- * AgentComposer — detail page for /agents/[id]/edit, faithful to the
- * reference screenshot Quentin shared (2026-05-27).
+ * AgentComposer — detail page for /agents/[id]/edit.
  *
- *   Back to agents
+ * Matches the screenshot Quentin shared (2026-05-27): a hero card with
+ * avatar + name + status + meta + Configure CTA, followed by a stat strip
+ * (only metrics we actually have are filled), then tabs:
  *
- *   [● Atlas] [● Meridian] [● Quill] …                       ← agent picker pills
+ *   Overview · Skills · Connectors · Runs · Settings
  *
- *   ╔══════════════════════════════════════════════════════════╗
- *   ║ ▢ avatar   Atlas   ● Idle      [Duplicate][Configure][▶ Run]║   ← hero card
- *   ║            Research lead · Reads broadly, summarises tightly…║
- *   ║            branch main · Model: opus-4 · Owner: Léa · Created …║
- *   ║   ──────────────────────────────────────────────────────────║
- *   ║   RUNS (7D)  SUCCESS RATE  AVG DURATION  TOKENS/JOB  COST/DAY P95║
- *   ║   1,284      99.2%         1m 12s        4,820       $12.40  2.4s║
- *   ╚══════════════════════════════════════════════════════════╝
+ * Per-agent data flows in from page.tsx:
+ *   - connectors / mcpServers   → wired to AgentConnectorGrid / AgentMcpServerGrid
+ *   - attachedSkills            → fed into Overview + Skills tab
+ *   - jobs                      → fed into the shared <RunsTable> (same one /jobs uses)
  *
- *   [Overview*] [Skills] [Connectors] [Runs] [Settings]        ← tabs underline
+ * Visual primitives reused (per "use existing components"):
+ *   - Disc + CONN_BRAND_COLORS / connGlyph from /connectors → identical
+ *     glyph treatment for the "Connectors used" list
+ *   - Disc variant="skill" for attached skills (same disc as /skills)
+ *   - StatusPill for status chips (same as /jobs, /agents list)
+ *   - RunsTable from /jobs for the Runs tab — no second implementation
  *
- *   ┌────────────────────────── overview ──────────────────────┐
- *   │ ┌── runs · 7 days ────────────┐  ┌── connectors used ──┐ │
- *   │ │ 1,219 successful runs       │  │ ● Notion · conn     │ │
- *   │ │ [lime area chart]           │  │ ● Drive  · conn     │ │
- *   │ └──────────────────────────────┘  │ ● Slack  · conn     │ │
- *   │                                   └──────────────────────┘ │
- *   │ ┌── Skills attached ─── 5 · 243 invocations ──────────┐  │
- *   │ │ [+ Web Search] [+ Web Fetch] [+ Summarize] …         │  │
- *   │ └────────────────────────────────────────────────────────┘  │
- *   └──────────────────────────────────────────────────────────┘
- *
- * The Settings tab is where editing happens — name, persona, role, LLM
- * key, model, avatar, workspace root, sub-agents. Save / Cancel live in
- * that tab next to a dirty-state indicator.
- *
- * Overview pulls real data where we have it (connectors assigned,
- * MCPs assigned, sub-agents); the chart + runs/cost/latency strip are
- * honest stubs labelled "—" since per-agent telemetry is not yet wired.
- *
- * AgentForm.tsx remains for the create-mode modal on /agents only.
+ * Settings tab is where editing happens. Sticky save bar at the bottom.
  */
 
 type Tab = 'overview' | 'skills' | 'connectors' | 'runs' | 'settings';
@@ -81,9 +69,19 @@ interface Props {
   llmKeys: LlmKeyUiRow[];
   connectors: AgentConnectorRow[];
   mcpServers: AgentMcpServerRow[];
+  jobs: JobRow[];
+  attachedSkills: SkillRow[];
 }
 
-export default function AgentComposer({ agent, peers, llmKeys, connectors, mcpServers }: Props) {
+export default function AgentComposer({
+  agent,
+  peers,
+  llmKeys,
+  connectors,
+  mcpServers,
+  jobs,
+  attachedSkills,
+}: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [tab, setTab] = useState<Tab>('overview');
@@ -126,6 +124,10 @@ export default function AgentComposer({ agent, peers, llmKeys, connectors, mcpSe
   const subAgentCount = role === 'worker' ? 0 : subAgentIds.length;
   const personaPreview =
     (personality || '').split(/\n+/).filter(Boolean)[0]?.trim() ?? 'No description yet.';
+
+  // Run aggregates from the jobs prop (already filtered to this agent).
+  const totalRuns = jobs.length;
+  const successfulRuns = jobs.filter((j) => j.status === 'completed').length;
 
   // Dirty detection — drives Settings save/reset
   const dirty =
@@ -232,6 +234,10 @@ export default function AgentComposer({ agent, peers, llmKeys, connectors, mcpSe
           connectors: assignedConnectors,
           mcps: assignedMcps,
           subAgents: subAgentCount,
+          skills: attachedSkills.length,
+          totalRuns,
+          successfulRuns,
+          failedRuns,
         }}
         onConfigure={() => setTab('settings')}
       />
@@ -239,19 +245,35 @@ export default function AgentComposer({ agent, peers, llmKeys, connectors, mcpSe
       <TabsBar
         tab={tab}
         onChange={setTab}
-        counts={{ connectors: assignedConnectors, knowledge: assignedMcps }}
+        counts={{
+          skills: attachedSkills.length,
+          connectors: assignedConnectors,
+          runs: totalRuns,
+        }}
       />
 
       {tab === 'overview' && (
-        <OverviewTab connectorsAssigned={assignedConnectorRows} mcpsAssignedCount={assignedMcps} />
+        <OverviewTab
+          attachedSkills={attachedSkills}
+          connectorsAssigned={assignedConnectorRows}
+          mcpsAssignedCount={assignedMcps}
+          onOpenSkills={() => setTab('skills')}
+          onOpenConnectors={() => setTab('connectors')}
+        />
       )}
-      {tab === 'skills' && <SkillsTabStub slug={agent.slug} />}
+      {tab === 'skills' && <SkillsTab skills={attachedSkills} />}
       {tab === 'connectors' && (
         <SectionCard>
           <AgentConnectorGrid agentId={agent.id} connectors={connectors} />
         </SectionCard>
       )}
-      {tab === 'runs' && <RunsTabStub slug={agent.slug} />}
+      {tab === 'runs' && (
+        <RunsTable
+          jobs={jobs}
+          agents={[{ id: agent.id, name: agent.name, slug: agent.slug } as AgentRow, ...peers]}
+          agentId={agent.id}
+        />
+      )}
       {tab === 'settings' && (
         <SettingsTab
           name={name}
@@ -298,7 +320,7 @@ function BackLink() {
   return (
     <Link
       href="/agents"
-      className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-3 hover:text-ink-2 transition-colors"
+      className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-3 transition-colors hover:text-ink-2"
     >
       <span className="text-[14px] leading-none">‹</span>
       Back to agents
@@ -325,10 +347,7 @@ function AgentPicker({ agents, activeId }: { agents: AgentRow[]; activeId: strin
                 : 'border-rule bg-canvas text-ink-3 hover:border-rule-2 hover:text-ink-2',
             ].join(' ')}
           >
-            <span
-              className="inline-block h-[7px] w-[7px] rounded-full bg-agent-vivid"
-              style={{ boxShadow: isActive ? '0 0 0 2px rgba(255,255,255,0.06)' : undefined }}
-            />
+            <span className="inline-block h-[7px] w-[7px] rounded-full bg-agent-vivid" />
             {a.name}
           </Link>
         );
@@ -359,9 +378,19 @@ function HeroCard({
   slug: string;
   model: string | null;
   llmKeyLabel: string | null;
-  stats: { connectors: number; mcps: number; subAgents: number };
+  stats: {
+    connectors: number;
+    mcps: number;
+    subAgents: number;
+    skills: number;
+    totalRuns: number;
+    successfulRuns: number;
+    failedRuns: number;
+  };
   onConfigure: () => void;
 }) {
+  const successRate =
+    stats.totalRuns > 0 ? `${Math.round((stats.successfulRuns / stats.totalRuns) * 100)}%` : '—';
   return (
     <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
       <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-start">
@@ -381,21 +410,21 @@ function HeroCard({
             <h1 className="m-0 text-[22px] font-semibold leading-none tracking-[-0.01em] text-ink">
               {name}
             </h1>
-            <StatusPill running={false} />
+            <span className="inline-flex h-[24px] items-center gap-1.5 rounded-full border border-rule-2 bg-canvas px-2.5 text-[11.5px] font-medium text-ink-3">
+              <span className="h-[6px] w-[6px] rounded-full bg-ink-3" />
+              Idle
+            </span>
           </div>
           <p className="mt-2 text-[13.5px] leading-[1.55] text-ink-3">{personaPreview}</p>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px] text-ink-3">
-            <span className="inline-flex items-center gap-1.5">
-              <BranchIcon />
-              <span className="font-mono">main</span>
-            </span>
-            <Sep />
-            <span>
-              <span className="text-ink-4">Model:</span>{' '}
-              <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-2">
-                {model ?? 'no model'}
-              </code>
-            </span>
+            {model && (
+              <span>
+                <span className="text-ink-4">Model:</span>{' '}
+                <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-2">
+                  {model}
+                </code>
+              </span>
+            )}
             {llmKeyLabel && (
               <>
                 <Sep />
@@ -408,23 +437,29 @@ function HeroCard({
             <Sep />
             <span>
               <span className="text-ink-4">Role:</span>{' '}
-              <span className="text-ink-2 capitalize">{role}</span>
+              <span className="capitalize text-ink-2">{role}</span>
             </span>
             <Sep />
             <span className="font-mono text-ink-4">@{slug}</span>
           </div>
         </div>
 
-        {/* CTAs */}
+        {/* CTAs — only Configure (Duplicate + Run dropped on request) */}
         <div className="flex flex-shrink-0 flex-wrap gap-2">
-          <HeroBtn icon={<DuplicateIcon />} label="Duplicate" disabled />
-          <HeroBtn icon={<GearIcon />} label="Configure" onClick={onConfigure} />
-          <HeroBtn icon={<PlayIcon />} label="Run" primary disabled />
+          <button
+            type="button"
+            onClick={onConfigure}
+            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            <GearIcon />
+            Configure
+          </button>
         </div>
       </div>
 
-      {/* Stats strip */}
+      {/* Stat strip — only metrics we actually have, the rest dropped to avoid empty cells */}
       <div className="grid grid-cols-2 gap-px border-t border-rule-2 bg-rule-2 sm:grid-cols-3 lg:grid-cols-6">
+        <StatCell label="Skills" value={String(stats.skills)} />
         <StatCell label="Connectors" value={String(stats.connectors)} />
         <StatCell label="MCPs" value={String(stats.mcps)} />
         <StatCell
@@ -432,9 +467,8 @@ function HeroCard({
           value={role === 'worker' ? '—' : String(stats.subAgents)}
           dim={role === 'worker'}
         />
-        <StatCell label="Runs (7d)" value="—" dim />
-        <StatCell label="Tokens / job" value="—" dim />
-        <StatCell label="P95 latency" value="—" dim />
+        <StatCell label="Runs" value={String(stats.totalRuns)} dim={stats.totalRuns === 0} />
+        <StatCell label="Success rate" value={successRate} dim={stats.totalRuns === 0} />
       </div>
     </div>
   );
@@ -457,83 +491,6 @@ function StatCell({ label, value, dim }: { label: string; value: string; dim?: b
   );
 }
 
-function HeroBtn({
-  icon,
-  label,
-  primary,
-  disabled,
-  onClick,
-}: {
-  icon?: React.ReactNode;
-  label: string;
-  primary?: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-}) {
-  const base =
-    'inline-flex h-[34px] items-center gap-1.5 rounded-lg px-3.5 text-[12.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40';
-  const skin = primary
-    ? 'bg-ink text-canvas hover:brightness-[0.92]'
-    : 'border border-rule bg-paper text-ink-2 hover:border-rule-2 hover:text-ink';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`${base} ${skin}`}
-      title={disabled ? 'Coming soon' : undefined}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function StatusPill({ running }: { running: boolean }) {
-  const skin = running
-    ? 'bg-skill-vivid/15 text-skill-vivid'
-    : 'border border-rule-2 bg-canvas text-ink-3';
-  return (
-    <span
-      className={`inline-flex h-[24px] items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-medium ${skin}`}
-    >
-      <span className={`h-[6px] w-[6px] rounded-full ${running ? 'bg-skill-vivid' : 'bg-ink-3'}`} />
-      {running ? 'Running' : 'Idle'}
-    </span>
-  );
-}
-
-// Tiny inline SVGs — kept local to avoid extra component churn.
-function BranchIcon() {
-  return (
-    <svg
-      width="11"
-      height="11"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-    >
-      <circle cx="4" cy="4" r="1.5" /> <circle cx="4" cy="12" r="1.5" />
-      <circle cx="12" cy="6" r="1.5" /> <path d="M4 5.5v5M4 8h4a3 3 0 0 0 3-3v-.5" />
-    </svg>
-  );
-}
-function DuplicateIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-    >
-      <rect x="3" y="3" width="8" height="8" rx="1.5" />
-      <rect x="5" y="5" width="8" height="8" rx="1.5" />
-    </svg>
-  );
-}
 function GearIcon() {
   return (
     <svg
@@ -549,13 +506,6 @@ function GearIcon() {
     </svg>
   );
 }
-function PlayIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M4 3l9 5-9 5z" />
-    </svg>
-  );
-}
 
 // ─── Tabs bar ─────────────────────────────────────────────────────────────────
 
@@ -566,13 +516,13 @@ function TabsBar({
 }: {
   tab: Tab;
   onChange: (t: Tab) => void;
-  counts: { connectors: number; knowledge: number };
+  counts: { skills: number; connectors: number; runs: number };
 }) {
   const TABS: { id: Tab; label: string; count?: number }[] = [
     { id: 'overview', label: 'Overview' },
-    { id: 'skills', label: 'Skills' },
+    { id: 'skills', label: 'Skills', count: counts.skills },
     { id: 'connectors', label: 'Connectors', count: counts.connectors },
-    { id: 'runs', label: 'Runs' },
+    { id: 'runs', label: 'Runs', count: counts.runs },
     { id: 'settings', label: 'Settings' },
   ];
   return (
@@ -632,140 +582,219 @@ function SectionHead({
   );
 }
 
-// ─── Overview tab ─────────────────────────────────────────────────────────────
+// ─── Overview tab — real data, no empty placeholder boxes ─────────────────────
 
 function OverviewTab({
+  attachedSkills,
   connectorsAssigned,
   mcpsAssignedCount,
+  onOpenSkills,
+  onOpenConnectors,
 }: {
+  attachedSkills: SkillRow[];
   connectorsAssigned: AgentConnectorRow[];
   mcpsAssignedCount: number;
+  onOpenSkills: () => void;
+  onOpenConnectors: () => void;
 }) {
+  const hasSkills = attachedSkills.length > 0;
+  const hasConnectors = connectorsAssigned.length > 0;
+
+  // If no skills + no connectors, show a single empty state instead of two empty cards.
+  if (!hasSkills && !hasConnectors) {
+    return (
+      <SectionCard>
+        <SectionHead
+          label="Nothing wired yet"
+          hint="Attach skills and connectors to make this agent useful."
+        />
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onOpenSkills}
+            className="rounded-lg border border-rule bg-canvas px-3.5 py-2 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            Attach skills →
+          </button>
+          <button
+            type="button"
+            onClick={onOpenConnectors}
+            className="rounded-lg border border-rule bg-canvas px-3.5 py-2 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            Attach connectors →
+          </button>
+        </div>
+      </SectionCard>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      {/* Left: activity chart placeholder */}
-      <div className="rounded-2xl border border-rule-2 bg-paper p-6 lg:col-span-2">
-        <SectionHead label="Runs · 7 days" />
-        <div className="mb-3">
-          <div className="text-[28px] font-semibold leading-none tracking-[-0.01em] text-ink-4">
-            —<span className="ml-2 text-[14px] font-normal text-ink-4">successful runs</span>
+      {/* Skills attached — 2/3 wide */}
+      {hasSkills && (
+        <SectionCard>
+          <div className="lg:col-span-2">
+            <SectionHead
+              label={`Skills attached · ${attachedSkills.length}`}
+              right={
+                <button
+                  type="button"
+                  onClick={onOpenSkills}
+                  className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
+                >
+                  Manage
+                </button>
+              }
+            />
+            <SkillsGrid skills={attachedSkills.slice(0, 6)} />
+            {attachedSkills.length > 6 && (
+              <button
+                type="button"
+                onClick={onOpenSkills}
+                className="mt-3 text-[11.5px] text-ink-3 underline hover:text-ink-2"
+              >
+                + {attachedSkills.length - 6} more
+              </button>
+            )}
           </div>
-        </div>
-        <div className="flex h-[180px] items-center justify-center rounded-lg border border-dashed border-rule-2 bg-canvas/30">
-          <p className="text-center text-[12px] leading-[1.5] text-ink-4">
-            Per-agent run telemetry is not wired yet.
-            <br />
-            See aggregate activity on{' '}
-            <Link href="/" className="underline hover:text-ink-3">
-              the dashboard
-            </Link>
-            .
+        </SectionCard>
+      )}
+      {!hasSkills && (
+        <SectionCard>
+          <SectionHead label="Skills attached · 0" />
+          <p className="text-[12.5px] text-ink-3">
+            No skills attached yet.{' '}
+            <button type="button" onClick={onOpenSkills} className="underline hover:text-ink-2">
+              Pick from the library →
+            </button>
           </p>
-        </div>
-      </div>
+        </SectionCard>
+      )}
 
-      {/* Right: connectors used */}
-      <div className="rounded-2xl border border-rule-2 bg-paper p-6">
-        <SectionHead label={`Connectors used · ${connectorsAssigned.length}`} />
-        {connectorsAssigned.length === 0 ? (
-          <p className="text-[12.5px] leading-[1.5] text-ink-4">
-            No connectors assigned yet. Pick some in the{' '}
+      {/* Connectors used — 1/3 wide */}
+      <SectionCard>
+        <SectionHead
+          label={`Connectors used · ${connectorsAssigned.length}`}
+          right={
             <button
               type="button"
-              className="underline hover:text-ink-3"
-              // Reach the Connectors tab via a hash so this is keyboard-friendly.
-              onClick={() => {
-                /* tab switch handled by parent — link kept declarative */
-              }}
+              onClick={onOpenConnectors}
+              className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
             >
-              Connectors tab
+              Manage
             </button>
-            .
-          </p>
+          }
+        />
+        {hasConnectors ? (
+          <ConnectorsList rows={connectorsAssigned} />
         ) : (
-          <ul className="flex flex-col gap-2">
-            {connectorsAssigned.map((c) => (
-              <li
-                key={c.connectorId}
-                className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas/40 px-3 py-2"
-              >
-                <span className="flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-full bg-conn-vivid/15 font-mono text-[9.5px] font-semibold uppercase text-conn-vivid">
-                  {c.label.slice(0, 2)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-medium text-ink">{c.label}</div>
-                  {c.credentialName && (
-                    <div className="truncate text-[10.5px] text-ink-4">{c.credentialName}</div>
-                  )}
-                </div>
-                <span className="inline-flex items-center gap-1.5 text-[10.5px] font-mono uppercase tracking-[0.08em] text-ink-3">
-                  <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
-                  on
-                </span>
-              </li>
-            ))}
-          </ul>
+          <p className="text-[12.5px] text-ink-3">
+            No connectors assigned yet.{' '}
+            <button type="button" onClick={onOpenConnectors} className="underline hover:text-ink-2">
+              Wire one →
+            </button>
+          </p>
         )}
         {mcpsAssignedCount > 0 && (
-          <p className="mt-3 text-[11px] text-ink-4">
-            + {mcpsAssignedCount} MCP server{mcpsAssignedCount > 1 ? 's' : ''} in the Knowledge
-            section (Settings tab).
+          <p className="mt-3 border-t border-rule-2 pt-3 text-[11.5px] text-ink-4">
+            + {mcpsAssignedCount} MCP server{mcpsAssignedCount > 1 ? 's' : ''} attached (Settings →
+            Knowledge).
           </p>
         )}
-      </div>
-
-      {/* Bottom full-width: skills attached stub */}
-      <div className="rounded-2xl border border-rule-2 bg-paper p-6 lg:col-span-3">
-        <SectionHead
-          label="Skills attached"
-          hint="Per-agent skill assignment will surface here once exposed. Manage the catalogue in /skills."
-        />
-        <div className="flex h-[80px] items-center justify-center rounded-lg border border-dashed border-rule-2 bg-canvas/30">
-          <Link
-            href="/skills"
-            className="text-[12.5px] font-medium text-ink-2 underline hover:text-ink"
-          >
-            Open Skills page →
-          </Link>
-        </div>
-      </div>
+      </SectionCard>
     </div>
   );
 }
 
-// ─── Stubs ────────────────────────────────────────────────────────────────────
+// ─── Skills grid (compact rows reused from Overview + Skills tabs) ───────────
 
-function SkillsTabStub({ slug }: { slug: string }) {
+function SkillsGrid({ skills }: { skills: SkillRow[] }) {
   return (
-    <SectionCard>
-      <SectionHead
-        label="Skills assigned to this agent"
-        hint="Per-agent skill assignment surfaces here once the data layer exposes it."
-      />
-      <p className="text-[12.5px] text-ink-3">
-        For now, manage skills and assignments from the{' '}
-        <Link href="/skills" className="underline hover:text-ink-2">
-          Skills page
-        </Link>
-        .
-      </p>
-      <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-4">@{slug}</p>
-    </SectionCard>
+    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+      {skills.map((s) => (
+        <SkillRowChip key={s.id} skill={s} />
+      ))}
+    </div>
   );
 }
 
-function RunsTabStub({ slug }: { slug: string }) {
+function SkillRowChip({ skill }: { skill: SkillRow }) {
+  return (
+    <Link
+      href={`/skills/${skill.id}/edit`}
+      className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas/40 px-3 py-2.5 transition-colors hover:border-rule hover:bg-hover"
+    >
+      <Disc variant="skill" size="md" shape="square">
+        <span className="font-mono text-[10.5px] font-semibold uppercase">
+          {skill.slug.slice(0, 2)}
+        </span>
+      </Disc>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-medium text-ink">{skill.name}</div>
+        {skill.description && (
+          <div className="truncate text-[11.5px] text-ink-3">{skill.description}</div>
+        )}
+      </div>
+    </Link>
+  );
+}
+
+// ─── Connectors list (Disc + brand colour) — same treatment as /connectors ───
+
+function ConnectorsList({ rows }: { rows: AgentConnectorRow[] }) {
+  return (
+    <ul className="flex flex-col gap-2">
+      {rows.map((c) => {
+        const brand = CONN_BRAND_COLORS[c.slug];
+        const glyph = connGlyph(c.slug, c.label);
+        return (
+          <li
+            key={c.connectorId}
+            className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas/40 px-3 py-2.5"
+          >
+            <Disc variant="conn" size="sm" shape="square" background={brand}>
+              <span className="font-mono text-[10px] font-semibold">{glyph}</span>
+            </Disc>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[12.5px] font-medium text-ink">{c.label}</div>
+              {c.credentialName && (
+                <div className="truncate text-[10.5px] text-ink-4">{c.credentialName}</div>
+              )}
+            </div>
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3">
+              <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
+              on
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// ─── Skills tab (full page) ──────────────────────────────────────────────────
+
+function SkillsTab({ skills }: { skills: SkillRow[] }) {
+  if (skills.length === 0) {
+    return (
+      <SectionCard>
+        <SectionHead
+          label="No skills attached"
+          hint="Skills are the agent's reusable capabilities. Attach some from the library."
+        />
+        <Link
+          href="/skills"
+          className="inline-flex items-center rounded-lg border border-rule bg-canvas px-3.5 py-2 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+        >
+          Browse skill library →
+        </Link>
+      </SectionCard>
+    );
+  }
   return (
     <SectionCard>
-      <SectionHead label="Recent runs" hint="Run history filtered to this agent will live here." />
-      <p className="text-[12.5px] text-ink-3">
-        In the meantime, see{' '}
-        <Link href="/jobs" className="underline hover:text-ink-2">
-          all runs
-        </Link>
-        .
-      </p>
-      <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-4">@{slug}</p>
+      <SectionHead label={`Attached · ${skills.length}`} />
+      <SkillsGrid skills={skills} />
     </SectionCard>
   );
 }
@@ -842,7 +871,7 @@ function SettingsTab(props: {
   } = props;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24">
       {/* Identity */}
       <SectionCard>
         <SectionHead label="Identity" hint="Slug is immutable. Avatar is used across the app." />
@@ -879,9 +908,9 @@ function SettingsTab(props: {
           <textarea
             value={personality}
             onChange={(e) => onChangePersonality(e.target.value)}
-            rows={8}
+            rows={16}
             placeholder="You are a helpful assistant…"
-            className="w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+            className="min-h-[320px] w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </Field>
         <div className="mt-4">
@@ -1039,7 +1068,7 @@ function SettingsTab(props: {
         </div>
       </SectionCard>
 
-      {/* Save bar */}
+      {/* Sticky save bar */}
       <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 rounded-2xl border border-rule-2 bg-paper px-4 py-3 shadow-lg">
         <div className="text-[12.5px] text-ink-3">
           {dirty ? (

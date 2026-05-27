@@ -5,6 +5,8 @@ import {
   listLlmKeysAction,
   listAgentConnectorsAction,
   listAgentMcpServersAction,
+  listJobsAction,
+  listSkillsAction,
 } from '@/lib/actions.ts';
 import AgentComposer from './AgentComposer.tsx';
 
@@ -31,13 +33,23 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   // (an orchestrator cannot be its own sub-agent).
   const peers = peersResult.ok ? peersResult.data.filter((a) => a.id !== id) : [];
 
-  // Connectors + MCP servers: fetch after agent is confirmed to exist.
-  const [connectorsResult, mcpServersResult] = await Promise.all([
+  // Per-agent data — fetched after the agent is confirmed to exist.
+  const [connectorsResult, mcpServersResult, jobsResult, skillsResult] = await Promise.all([
     listAgentConnectorsAction(agent.id),
     listAgentMcpServersAction(agent.id),
+    listJobsAction({ limit: 100 }),
+    listSkillsAction(),
   ]);
   const connectors = connectorsResult.ok ? connectorsResult.data : [];
   const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
+  // Filter jobs to this agent client-side — `listJobsAction` is global at the
+  // server action layer; the table-level filter keeps that surface unchanged.
+  const jobs = (jobsResult.ok ? jobsResult.data : []).filter((j) => j.agentId === agent.id);
+  // Skills attached to this agent — derived from each SkillRow's enriched
+  // `assignedAgents` (already fetched by listSkillsAction).
+  const attachedSkills = (skillsResult.ok ? skillsResult.data : []).filter((s) =>
+    s.assignedAgents.some((a) => a.id === agent.id),
+  );
 
   return (
     <AgentComposer
@@ -46,6 +58,8 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       llmKeys={llmKeys}
       connectors={connectors}
       mcpServers={mcpServers}
+      jobs={jobs}
+      attachedSkills={attachedSkills}
     />
   );
 }
