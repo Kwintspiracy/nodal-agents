@@ -38,8 +38,8 @@ export default async function LogsPage({ searchParams }: PageProps) {
   if (!result.ok) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">Logs</h1>
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+        <h1 className="text-2xl font-semibold text-ink">Logs</h1>
+        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
           {result.message}
         </div>
       </div>
@@ -49,8 +49,8 @@ export default async function LogsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Logs</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">
+        <h1 className="text-2xl font-semibold text-ink">Logs</h1>
+        <p className="mt-0.5 text-sm text-ink-3">
           {result.data.items.length === PAGE_SIZE
             ? `Showing latest ${PAGE_SIZE} tool calls`
             : `${result.data.items.length} tool call${result.data.items.length === 1 ? '' : 's'}`}
@@ -58,10 +58,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
             <>
               {' '}
               for job{' '}
-              <Link
-                href={`/jobs/${sp.job}`}
-                className="font-mono text-neutral-300 hover:text-white"
-              >
+              <Link href={`/jobs/${sp.job}`} className="font-mono text-ink-2 hover:text-ink">
                 {sp.job.slice(0, 8)}
               </Link>
             </>
@@ -72,7 +69,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
       <LogFilters agents={agents} toolNames={toolNames} />
 
       {result.data.items.length === 0 ? (
-        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
+        <div className="rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
           No tool calls yet. Send a task on the Tasks page to generate some.
         </div>
       ) : (
@@ -95,24 +92,22 @@ function Pagination({ page, sp }: { page: number; sp: Awaited<PageProps['searchP
   prev.set('page', String(Math.max(1, page - 1)));
 
   return (
-    <div className="flex items-center justify-between text-xs text-neutral-500">
+    <div className="flex items-center justify-between text-xs text-ink-3">
       <span>Page {page}</span>
       <div className="flex gap-2">
         {page > 1 ? (
           <Link
             href={`/logs?${prev.toString()}`}
-            className="px-3 py-1.5 border border-neutral-800 rounded-md hover:border-neutral-700 hover:text-white"
+            className="rounded-md border border-rule-2 px-3 py-1.5 transition-colors hover:border-rule hover:text-ink"
           >
             Previous
           </Link>
         ) : (
-          <span className="px-3 py-1.5 border border-neutral-900 text-neutral-700 rounded-md">
-            Previous
-          </span>
+          <span className="rounded-md border border-rule px-3 py-1.5 text-ink-4">Previous</span>
         )}
         <Link
           href={`/logs?${next.toString()}`}
-          className="px-3 py-1.5 border border-neutral-800 rounded-md hover:border-neutral-700 hover:text-white"
+          className="rounded-md border border-rule-2 px-3 py-1.5 transition-colors hover:border-rule hover:text-ink"
         >
           Next
         </Link>
