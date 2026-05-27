@@ -8,11 +8,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./tests/setup.ts'],
-    // Playwright e2e specs live in tests/e2e/*.spec.ts and use
-    // @playwright/test, which isn't compatible with the vitest runner.
-    // Exclude them so `pnpm test` only runs unit tests; `pnpm e2e`
-    // runs the Playwright suite separately.
-    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
+    // Playwright specs live in tests/e2e/*.spec.ts and tests/manual/*.spec.ts
+    // and use @playwright/test, which isn't compatible with the vitest runner.
+    // Exclude them so `pnpm test` only runs unit tests; `pnpm e2e` runs the
+    // Playwright suite separately.
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**', 'tests/manual/**'],
     // Default 5000ms is too tight: the first test in actions.test.ts triggers
     // full module init (server-only mock, env parse, vi.mock chains) and times
     // out under turbo concurrent load on slower runners (CI Ubuntu, 2 vCPU).
