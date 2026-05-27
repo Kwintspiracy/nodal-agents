@@ -1,15 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
-import type {
-  AgentRow,
-  AgentEditRow,
-  LlmKeyUiRow,
-  AgentConnectorRow,
-  AgentMcpServerRow,
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import {
+  updateAgentAction,
+  type AgentRow,
+  type AgentEditRow,
+  type LlmKeyUiRow,
+  type AgentConnectorRow,
+  type AgentMcpServerRow,
 } from '@/lib/actions.ts';
-import AgentForm from '@/components/AgentForm.tsx';
+import { prettyProviderName } from '@/lib/provider-names.ts';
+import {
+  detectModelProviders,
+  isModelCompatibleWithProvider,
+  type ProviderSlug,
+} from '@/lib/model-provider-detect.ts';
+import AvatarPicker from '@/components/AvatarPicker.tsx';
 import AgentConnectorGrid from '@/components/AgentConnectorGrid.tsx';
 import AgentMcpServerGrid from '@/components/AgentMcpServerGrid.tsx';
 
@@ -17,33 +26,41 @@ import AgentMcpServerGrid from '@/components/AgentMcpServerGrid.tsx';
  * AgentComposer — three-column editor for /agents/[id]/edit, faithful to
  * the design handoff `screen-composer-v2.jsx`.
  *
- *   ┌──────────────── toolbar (crumbs · PN · Test / Schedule / Run) ──────────────────┐
- *   ┌────────────────────────────── hero (orb + name + status pill + meta) ──────────┐
- *   ┌────────────────────────── agent picker (row of buttons) ───────────────────────┐
- *   ┌────────────┬──────────────────────────────────────────────────────┬────────────┐
- *   │ CONFIG     │ Tabs: Skills · Connectors · Behavior · Knowledge · Runs │ LIVE      │
- *   │ (read-only │                                                       │ · last    │
- *   │  meta)     │ [active tab content]                                  │   hour    │
- *   │            │                                                       │           │
- *   └────────────┴──────────────────────────────────────────────────────┴────────────┘
+ *   ┌──────── toolbar (crumbs · PN · Test / Schedule / Run stubs) ────────────┐
+ *   ┌──────── hero (orb + name + role + stats meta + status pill) ───────────┐
+ *   ┌──────── agent picker row ───────────────────────────────────────────────┐
+ *   ┌────────────┬──────────────────────────────────────────────────────┬─────┐
+ *   │ Identity   │ Tabs: Behavior · Skills · Connectors · Knowledge ·   │Live │
+ *   │  sidebar   │       Run history                                    │panel│
+ *   │ (form)     │ [active tab content]                                 │stub │
+ *   └────────────┴──────────────────────────────────────────────────────┴─────┘
  *
- * Phase 1 scope (per the user's "structure visuelle uniquement" instruction):
- *  - Shell 3-col + hero + agent picker + tab strip + live panel are present
- *    with the handoff geometry.
- *  - Behavior tab embeds the existing `AgentForm` to preserve every editing
- *    capability (persona / role / LLM key / model / sub-agents / workspace
- *    root / connectors / MCP). Subsequent phases will lift those fields up
- *    into the individual Skills / Connectors / Knowledge tabs to fully
- *    eliminate the embedded legacy form.
- *  - Toolbar buttons (Test / Schedule / Run) and the right "Live" panel are
- *    visual stubs as agreed.
+ * Every editing capability previously living in `AgentForm.tsx` is ported
+ * here, distributed across the handoff zones:
  *
- * `AgentForm` itself still imports the extracted `AgentConnectorGrid` and
- * `AgentMcpServerGrid` — those are the same component instances we surface
- * standalone in the Connectors / Knowledge tabs here.
+ *  - IDENTITY sidebar (left) → name, slug (read-only), avatar, LLM key,
+ *    model + coherence banner, role. Save / Cancel at the bottom.
+ *  - BEHAVIOR tab → persona textarea, sub-agents picker (if role≠worker).
+ *  - CONNECTORS tab → AgentConnectorGrid (per-agent connector + ops list).
+ *  - KNOWLEDGE tab → workspace root path + AgentMcpServerGrid.
+ *  - SKILLS tab + RUN HISTORY tab → honest stubs (no per-agent data yet).
+ *  - TOOLBAR Test/Schedule/Run + LIVE panel → visual stubs as agreed.
+ *
+ * AgentForm.tsx is no longer rendered here — it is reserved for create-mode
+ * (the "+ New agent" modal on /agents).
  */
 
-type Tab = 'skills' | 'connectors' | 'behavior' | 'knowledge' | 'runs';
+type Tab = 'behavior' | 'skills' | 'connectors' | 'knowledge' | 'runs';
+type AgentRole = 'worker' | 'router' | 'planner';
+
+function dbRoleToUiRole(
+  role: string | null,
+  orchestratorMode: string | null | undefined,
+): AgentRole {
+  if (role === 'orchestrator' && orchestratorMode === 'planner') return 'planner';
+  if (role === 'orchestrator') return 'router';
+  return 'worker';
+}
 
 interface Props {
   agent: AgentEditRow;
@@ -54,27 +71,138 @@ interface Props {
 }
 
 export default function AgentComposer({ agent, peers, llmKeys, connectors, mcpServers }: Props) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [tab, setTab] = useState<Tab>('behavior');
 
+  // ── form state (centralised — no nested form component) ───────────────────
+  const initialRole = dbRoleToUiRole(agent.role ?? null, agent.orchestratorMode ?? null);
+  const activeKeys = useMemo(() => llmKeys.filter((k) => k.isActive), [llmKeys]);
+  const initialLlmKeyId = agent.llmKeyId ?? activeKeys[0]?.id ?? '';
+
+  const [name, setName] = useState(agent.name);
+  const [personality, setPersonality] = useState(agent.personality ?? '');
+  const [role, setRole] = useState<AgentRole>(initialRole);
+  const [subAgentIds, setSubAgentIds] = useState<string[]>(agent.subAgentIds);
+  const [llmKeyId, setLlmKeyId] = useState<string>(initialLlmKeyId);
+  const [model, setModel] = useState<string>(agent.model ?? '');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
+  const [workspaceRootPath, setWorkspaceRootPath] = useState<string>(agent.workspaceRootPath ?? '');
+
+  // ── derived ──────────────────────────────────────────────────────────────
+  const selectedKey = useMemo(
+    () => llmKeys.find((k) => k.id === llmKeyId) ?? null,
+    [llmKeys, llmKeyId],
+  );
+  const detectedProviders = useMemo<Set<ProviderSlug>>(() => detectModelProviders(model), [model]);
+  const compatibleActiveKeys = useMemo(
+    () =>
+      activeKeys.filter((k) => isModelCompatibleWithProvider(model, k.provider as ProviderSlug)),
+    [activeKeys, model],
+  );
+  const coherenceOk = selectedKey
+    ? isModelCompatibleWithProvider(model, selectedKey.provider as ProviderSlug)
+    : true;
+  const noLlmKeys = activeKeys.length === 0;
+  const showSubAgents = role !== 'worker';
+  const partNumber = `agt-${agent.slug.slice(0, 8)}`.toUpperCase();
   const initial = (agent.name || agent.slug).slice(0, 1).toUpperCase();
-  const partNumber = `agt-${agent.slug.slice(0, 6)}`.toUpperCase();
-  const llmKey = llmKeys.find((k) => k.id === agent.llmKeyId) ?? null;
-  const personaPreview = (agent.personality ?? '').split('\n').filter(Boolean)[0] ?? '—';
+
   const assignedConnectors = connectors.filter((c) => c.assigned).length;
   const assignedMcps = mcpServers.filter((s) => s.assigned).length;
 
+  // Dirty detection — drives Save/Cancel enabled state
+  const dirty =
+    name !== agent.name ||
+    personality !== (agent.personality ?? '') ||
+    role !== initialRole ||
+    JSON.stringify([...subAgentIds].sort()) !== JSON.stringify([...agent.subAgentIds].sort()) ||
+    llmKeyId !== initialLlmKeyId ||
+    model !== (agent.model ?? '') ||
+    avatarUrl !== (agent.avatarUrl ?? null) ||
+    workspaceRootPath !== (agent.workspaceRootPath ?? '');
+
+  // ── handlers ─────────────────────────────────────────────────────────────
+  function handleLlmKeyChange(id: string) {
+    const newKey = llmKeys.find((row) => row.id === id);
+    const oldDefault = selectedKey?.defaultModel ?? null;
+    setLlmKeyId(id);
+    if (newKey?.defaultModel && (!model || model === oldDefault)) {
+      setModel(newKey.defaultModel);
+    }
+  }
+
+  function handleModelChange(next: string) {
+    setModel(next);
+    if (!selectedKey) return;
+    if (isModelCompatibleWithProvider(next, selectedKey.provider as ProviderSlug)) return;
+    const candidates = activeKeys.filter((k) =>
+      isModelCompatibleWithProvider(next, k.provider as ProviderSlug),
+    );
+    if (candidates.length === 1 && candidates[0]) {
+      setLlmKeyId(candidates[0].id);
+      toast.success(
+        `Switched provider to ${prettyProviderName(candidates[0].provider)} (matches ${next})`,
+      );
+    }
+  }
+
+  function toggleSubAgent(id: string) {
+    setSubAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function handleSave() {
+    if (!coherenceOk || noLlmKeys || isPending || !dirty) return;
+    const payload = {
+      id: agent.id,
+      name,
+      personality,
+      model,
+      llmKeyId: llmKeyId || null,
+      role,
+      subAgentIds: role === 'worker' ? [] : subAgentIds,
+      workspaceRootPath,
+      avatarUrl,
+    };
+    startTransition(async () => {
+      const result = await updateAgentAction(payload);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toast.success('Agent updated');
+      router.refresh();
+    });
+  }
+
+  function handleCancel() {
+    setName(agent.name);
+    setPersonality(agent.personality ?? '');
+    setRole(initialRole);
+    setSubAgentIds(agent.subAgentIds);
+    setLlmKeyId(initialLlmKeyId);
+    setModel(agent.model ?? '');
+    setAvatarUrl(agent.avatarUrl ?? null);
+    setWorkspaceRootPath(agent.workspaceRootPath ?? '');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="-mx-6 -my-6 flex flex-col lg:-mx-8">
       <Toolbar agentName={agent.name} pn={partNumber} />
 
-      <div className="px-6 pb-10 pt-2 lg:px-8">
+      <div className="px-6 pt-4 pb-10 lg:px-8">
         <Hero
           initial={initial}
-          name={agent.name}
+          avatarUrl={avatarUrl}
+          name={name}
           slug={agent.slug}
-          role={agent.role ?? 'worker'}
-          pn={partNumber}
-          model={agent.model}
+          role={role}
+          stats={{
+            subAgents: role === 'worker' ? 0 : subAgentIds.length,
+            connectors: assignedConnectors,
+            mcps: assignedMcps,
+          }}
         />
 
         <AgentPicker
@@ -83,14 +211,31 @@ export default function AgentComposer({ agent, peers, llmKeys, connectors, mcpSe
         />
 
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[280px_minmax(0,1fr)_320px]">
-          <ConfigSidebar
-            personaPreview={personaPreview}
-            model={agent.model ?? '—'}
-            llmKeyLabel={llmKey?.nickname ?? llmKey?.provider ?? '—'}
-            role={agent.role ?? 'worker'}
-            slug={agent.slug}
+          <IdentitySidebar
             pn={partNumber}
-            subAgentCount={agent.subAgentIds.length}
+            name={name}
+            slug={agent.slug}
+            avatarUrl={avatarUrl}
+            llmKeyId={llmKeyId}
+            llmKeys={llmKeys}
+            activeKeys={activeKeys}
+            selectedKey={selectedKey}
+            model={model}
+            role={role}
+            coherenceOk={coherenceOk}
+            detectedProviders={detectedProviders}
+            compatibleActiveKeys={compatibleActiveKeys}
+            noLlmKeys={noLlmKeys}
+            dirty={dirty}
+            isPending={isPending}
+            onChangeName={setName}
+            onChangeAvatar={setAvatarUrl}
+            onChangeLlmKey={handleLlmKeyChange}
+            onChangeModel={handleModelChange}
+            onChangeRole={setRole}
+            onSwitchToCompatibleKey={setLlmKeyId}
+            onSave={handleSave}
+            onCancel={handleCancel}
           />
 
           <section className="min-w-0">
@@ -105,27 +250,26 @@ export default function AgentComposer({ agent, peers, llmKeys, connectors, mcpSe
               }}
             />
 
+            {tab === 'behavior' && (
+              <BehaviorTab
+                personality={personality}
+                onChangePersonality={setPersonality}
+                showSubAgents={showSubAgents}
+                subAgentIds={subAgentIds}
+                peers={peers}
+                onToggleSubAgent={toggleSubAgent}
+              />
+            )}
             {tab === 'skills' && <SkillsTabStub slug={agent.slug} />}
             {tab === 'connectors' && (
               <AgentConnectorGrid agentId={agent.id} connectors={connectors} />
-            )}
-            {tab === 'behavior' && (
-              <div className="rounded-xl border border-rule-2 bg-paper p-6">
-                <AgentForm
-                  mode="edit"
-                  initial={agent}
-                  llmKeys={llmKeys}
-                  agents={peers}
-                  connectors={connectors}
-                  mcpServers={mcpServers}
-                />
-              </div>
             )}
             {tab === 'knowledge' && (
               <KnowledgeTab
                 agentId={agent.id}
                 mcpServers={mcpServers}
-                workspaceRootPath={agent.workspaceRootPath ?? null}
+                workspaceRootPath={workspaceRootPath}
+                onChangeWorkspaceRootPath={setWorkspaceRootPath}
               />
             )}
             {tab === 'runs' && <RunsTabStub slug={agent.slug} />}
@@ -184,39 +328,41 @@ function ToolbarBtn({
 
 function Hero({
   initial,
+  avatarUrl,
   name,
   slug,
   role,
-  pn,
-  model,
+  stats,
 }: {
   initial: string;
+  avatarUrl: string | null;
   name: string;
   slug: string;
-  role: string;
-  pn: string;
-  model: string | null;
+  role: AgentRole;
+  stats: { subAgents: number; connectors: number; mcps: number };
 }) {
   return (
     <div className="mb-6 flex items-end gap-[22px]">
       <div className="relative flex h-[96px] w-[96px] flex-shrink-0 items-center justify-center rounded-full bg-agent-vivid text-[28px] font-semibold text-white shadow-[0_6px_18px_rgba(28,35,48,0.18)]">
-        {/* Concentric design rings — purely decorative, mirrors handoff `.miniorb` */}
         <span className="pointer-events-none absolute -inset-[14px] rounded-full border border-rule" />
         <span className="pointer-events-none absolute -inset-[26px] rounded-full border border-dashed border-rule" />
-        {initial}
+        {avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
+        ) : (
+          initial
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <h1 className="m-0 text-[32px] font-semibold leading-[1.05] tracking-[-0.02em] text-ink">
-          {name}
-          <span className="ml-2 font-normal text-ink-3">, {role.toLowerCase()}</span>
+          {name || 'Untitled agent'}
+          <span className="ml-2 font-normal text-ink-3">, {role}</span>
         </h1>
-        <div className="mt-1.5 font-mono text-[11px] tracking-[0.04em] text-ink-3">
-          <b className="font-medium text-ink-2">{pn}</b>
-          <Sep />
-          {model ?? 'no model'}
-          <Sep />
-          memory · —
-          <Sep />@{slug}
+        <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-[11px] tracking-[0.04em] text-ink-3">
+          <Stat n={stats.connectors} label="connectors" />
+          <Stat n={stats.mcps} label="MCPs" />
+          {role !== 'worker' && <Stat n={stats.subAgents} label="sub-agents" />}
+          <span className="text-ink-4">@{slug}</span>
         </div>
       </div>
       <StatusPill running={false} />
@@ -224,8 +370,13 @@ function Hero({
   );
 }
 
-function Sep() {
-  return <span className="px-2 text-ink-4">·</span>;
+function Stat({ n, label }: { n: number; label: string }) {
+  return (
+    <span>
+      <b className="font-medium text-ink-2">{n}</b>
+      <span className="ml-1">{label}</span>
+    </span>
+  );
 }
 
 function StatusPill({ running }: { running: boolean }) {
@@ -274,56 +425,206 @@ function AgentPicker({ agents, activeId }: { agents: AgentRow[]; activeId: strin
   );
 }
 
-// ─── Config sidebar (left) ────────────────────────────────────────────────────
+// ─── Identity sidebar (form) ─────────────────────────────────────────────────
 
-function ConfigSidebar({
-  personaPreview,
-  model,
-  llmKeyLabel,
-  role,
-  slug,
-  pn,
-  subAgentCount,
-}: {
-  personaPreview: string;
-  model: string;
-  llmKeyLabel: string;
-  role: string;
-  slug: string;
+function IdentitySidebar(props: {
   pn: string;
-  subAgentCount: number;
+  name: string;
+  slug: string;
+  avatarUrl: string | null;
+  llmKeyId: string;
+  llmKeys: LlmKeyUiRow[];
+  activeKeys: LlmKeyUiRow[];
+  selectedKey: LlmKeyUiRow | null;
+  model: string;
+  role: AgentRole;
+  coherenceOk: boolean;
+  detectedProviders: Set<ProviderSlug>;
+  compatibleActiveKeys: LlmKeyUiRow[];
+  noLlmKeys: boolean;
+  dirty: boolean;
+  isPending: boolean;
+  onChangeName: (v: string) => void;
+  onChangeAvatar: (v: string | null) => void;
+  onChangeLlmKey: (id: string) => void;
+  onChangeModel: (v: string) => void;
+  onChangeRole: (r: AgentRole) => void;
+  onSwitchToCompatibleKey: (id: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
 }) {
+  const {
+    pn,
+    name,
+    slug,
+    avatarUrl,
+    llmKeyId,
+    activeKeys,
+    selectedKey,
+    model,
+    role,
+    coherenceOk,
+    detectedProviders,
+    compatibleActiveKeys,
+    noLlmKeys,
+    dirty,
+    isPending,
+    onChangeName,
+    onChangeAvatar,
+    onChangeLlmKey,
+    onChangeModel,
+    onChangeRole,
+    onSwitchToCompatibleKey,
+    onSave,
+    onCancel,
+  } = props;
+
   return (
     <aside className="rounded-xl border border-rule-2 bg-paper p-[18px] lg:sticky lg:top-4">
-      <div className="mb-2.5 flex items-center justify-between font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-4">
-        <span>Configuration</span>
+      <div className="mb-3 flex items-center justify-between font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-4">
+        <span>Identity</span>
         <span>{pn}</span>
       </div>
+
       <div className="flex flex-col gap-3.5">
-        <Field label="Persona">
-          <p className="line-clamp-3 text-[12.5px] leading-[1.5] text-ink-2">{personaPreview}</p>
+        <Field label="Name">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => onChangeName(e.target.value)}
+            placeholder="Agent name"
+            className="w-full rounded-md border border-rule bg-canvas px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+          />
         </Field>
-        <Field label="Model">
-          <code className="font-mono text-[11.5px] tracking-[0.02em] text-ink">{model}</code>
-        </Field>
-        <Field label="LLM key">
-          <span className="text-[13px] font-medium text-ink">{llmKeyLabel}</span>
-        </Field>
-        <Field label="Role">
-          <span className="text-[13px] font-medium capitalize text-ink">{role}</span>
-        </Field>
-        {subAgentCount > 0 && (
-          <Field label="Sub-agents">
-            <span className="text-[13px] font-medium text-ink">{subAgentCount}</span>
-          </Field>
-        )}
+
         <Field label="Slug">
-          <code className="font-mono text-[11.5px] tracking-[0.02em] text-ink-2">@{slug}</code>
+          <code className="block w-full rounded-md border border-rule-2 bg-hover px-2.5 py-1.5 font-mono text-[11.5px] tracking-[0.02em] text-ink-3">
+            {slug}
+          </code>
+        </Field>
+
+        <Field label="Avatar">
+          <AvatarPicker value={avatarUrl} onChange={onChangeAvatar} />
+        </Field>
+
+        <Field label="LLM provider">
+          {noLlmKeys ? (
+            <p className="text-[11.5px] text-warn">
+              No active LLM keys.{' '}
+              <Link href="/llm-providers" className="underline">
+                Add one
+              </Link>
+              .
+            </p>
+          ) : (
+            <select
+              value={llmKeyId}
+              onChange={(e) => onChangeLlmKey(e.target.value)}
+              className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+            >
+              {activeKeys.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {(k.nickname ?? prettyProviderName(k.provider)) +
+                    ' (' +
+                    prettyProviderName(k.provider) +
+                    ')'}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+
+        <Field label="Model">
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => onChangeModel(e.target.value)}
+            placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
+            className="w-full rounded-md border border-rule bg-canvas px-2.5 py-1.5 font-mono text-[11.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+          />
+          {!coherenceOk && selectedKey && (
+            <div
+              role="alert"
+              data-testid="model-provider-mismatch"
+              className="mt-1 space-y-1 rounded border border-warn/30 bg-warn-bg px-2 py-1.5 text-[11px] text-warn"
+            >
+              <p>
+                <span className="font-semibold">Provider mismatch:</span>{' '}
+                <span className="font-mono">{model}</span> looks like it needs{' '}
+                <span className="font-semibold">
+                  {Array.from(detectedProviders)
+                    .map((p) => prettyProviderName(p))
+                    .join(' or ')}
+                </span>
+                , but your selected key is{' '}
+                <span className="font-semibold">{prettyProviderName(selectedKey.provider)}</span>.
+              </p>
+              {compatibleActiveKeys.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  <span className="text-warn/80">Switch to:</span>
+                  {compatibleActiveKeys.map((k) => (
+                    <button
+                      key={k.id}
+                      type="button"
+                      onClick={() => onSwitchToCompatibleKey(k.id)}
+                      className="rounded border border-warn/30 px-1.5 py-0.5 font-medium text-warn hover:bg-warn-bg"
+                    >
+                      {k.nickname ?? prettyProviderName(k.provider)} (
+                      {prettyProviderName(k.provider)})
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p>
+                  No compatible active key.{' '}
+                  <Link href="/llm-providers" className="underline hover:text-warn">
+                    Add one
+                  </Link>
+                  .
+                </p>
+              )}
+            </div>
+          )}
+        </Field>
+
+        <Field label="Role">
+          <select
+            value={role}
+            onChange={(e) => onChangeRole(e.target.value as AgentRole)}
+            className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+          >
+            <option value="worker">Worker — runs its own tools</option>
+            <option value="router">Router — delegates one at a time</option>
+            <option value="planner">Planner — parallel sub-agents</option>
+          </select>
         </Field>
       </div>
-      <p className="mt-4 border-t border-rule-2 pt-3 text-[11px] leading-[1.5] text-ink-4">
-        Edit these fields in the <b>Behavior</b> tab. This rail is read-only for now.
-      </p>
+
+      <div className="mt-5 flex gap-2 border-t border-rule-2 pt-4">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={isPending || noLlmKeys || !coherenceOk || !dirty}
+          title={
+            !coherenceOk
+              ? 'Pick a key that matches the model first'
+              : !dirty
+                ? 'No changes to save'
+                : undefined
+          }
+          className="flex-1 rounded-lg bg-ink px-4 py-2 text-[13px] font-semibold text-canvas transition-colors hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isPending ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={isPending || !dirty}
+          className="rounded-lg border border-rule px-4 py-2 text-[13px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Cancel
+        </button>
+      </div>
     </aside>
   );
 }
@@ -351,9 +652,9 @@ function TabsStrip({
   counts: { skills: number; connectors: number; knowledge: number; runs: number };
 }) {
   const TABS: { id: Tab; label: string; count?: number }[] = [
+    { id: 'behavior', label: 'Behavior' },
     { id: 'skills', label: 'Skills', count: counts.skills },
     { id: 'connectors', label: 'Connectors', count: counts.connectors },
-    { id: 'behavior', label: 'Behavior' },
     { id: 'knowledge', label: 'Knowledge', count: counts.knowledge },
     { id: 'runs', label: 'Run history', count: counts.runs },
   ];
@@ -386,7 +687,79 @@ function TabsStrip({
   );
 }
 
-// ─── Tab content stubs ────────────────────────────────────────────────────────
+// ─── Behavior tab ─────────────────────────────────────────────────────────────
+
+function BehaviorTab({
+  personality,
+  onChangePersonality,
+  showSubAgents,
+  subAgentIds,
+  peers,
+  onToggleSubAgent,
+}: {
+  personality: string;
+  onChangePersonality: (v: string) => void;
+  showSubAgents: boolean;
+  subAgentIds: string[];
+  peers: AgentRow[];
+  onToggleSubAgent: (id: string) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <section>
+        <SectionHead label="Personality / system prompt" />
+        <textarea
+          value={personality}
+          onChange={(e) => onChangePersonality(e.target.value)}
+          rows={10}
+          placeholder="You are a helpful assistant…"
+          className="w-full resize-y rounded-lg border border-rule-2 bg-paper px-4 py-3 font-mono text-[12.5px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+        />
+        <p className="mt-1.5 text-[11px] text-ink-4">
+          Updating the persona invalidates the system-prompt cache for active jobs — the new prompt
+          applies to runs started after Save.
+        </p>
+      </section>
+
+      {showSubAgents && (
+        <section>
+          <SectionHead
+            label={`Sub-agents · ${subAgentIds.length} selected`}
+            hint="The orchestrator can delegate to any sub-agent you check below."
+          />
+          {peers.length === 0 ? (
+            <p className="text-[12.5px] text-warn">
+              Create at least one worker agent first — orchestrators need someone to delegate to.
+            </p>
+          ) : (
+            <div className="divide-y divide-rule-2 overflow-hidden rounded-lg border border-rule-2 bg-paper">
+              {peers.map((a) => {
+                const checked = subAgentIds.includes(a.id);
+                return (
+                  <label
+                    key={a.id}
+                    className="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-[13px] transition-colors hover:bg-hover"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggleSubAgent(a.id)}
+                      className="accent-agent-vivid"
+                    />
+                    <span className="text-ink">{a.name}</span>
+                    <span className="ml-auto font-mono text-[11px] text-ink-3">{a.slug}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab stubs ────────────────────────────────────────────────────────────────
 
 function SkillsTabStub({ slug }: { slug: string }) {
   return (
@@ -394,8 +767,8 @@ function SkillsTabStub({ slug }: { slug: string }) {
       title="Skills assigned to this agent"
       body={
         <>
-          Per-agent skill assignment surfaces here. For now, manage the catalogue and assignments
-          from the{' '}
+          Per-agent skill assignment surfaces here once the data layer exposes it. In the meantime,
+          manage the skill catalogue and assignments from the{' '}
           <Link href="/skills" className="underline hover:text-ink-2">
             Skills page
           </Link>
@@ -413,7 +786,7 @@ function RunsTabStub({ slug }: { slug: string }) {
       title="Recent runs"
       body={
         <>
-          Run history filtered to this agent will live here. In the meantime, see{' '}
+          Run history filtered to this agent will live here. For now, see{' '}
           <Link href="/jobs" className="underline hover:text-ink-2">
             all runs
           </Link>
@@ -425,43 +798,58 @@ function RunsTabStub({ slug }: { slug: string }) {
   );
 }
 
+// ─── Knowledge tab ────────────────────────────────────────────────────────────
+
 function KnowledgeTab({
   agentId,
   mcpServers,
   workspaceRootPath,
+  onChangeWorkspaceRootPath,
 }: {
   agentId: string;
   mcpServers: AgentMcpServerRow[];
-  workspaceRootPath: string | null;
+  workspaceRootPath: string;
+  onChangeWorkspaceRootPath: (v: string) => void;
 }) {
   return (
     <div className="space-y-6">
       <section>
-        <SectionHead label="MCP knowledge sources" />
-        <AgentMcpServerGrid agentId={agentId} servers={mcpServers} />
+        <SectionHead
+          label="Workspace root"
+          hint="Absolute path. Scopes file_read/write/edit/list/search tools. Empty = no file access."
+        />
+        <input
+          type="text"
+          value={workspaceRootPath}
+          onChange={(e) => onChangeWorkspaceRootPath(e.target.value)}
+          placeholder="C:\Users\you\Documents\MyVault  or  /home/you/notes"
+          className="w-full rounded-md border border-rule bg-paper px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+        />
       </section>
 
       <section>
-        <SectionHead label="Workspace root" />
-        <div className="rounded-lg border border-rule-2 bg-paper px-4 py-3">
-          {workspaceRootPath ? (
-            <code className="break-all font-mono text-[12px] text-ink-2">{workspaceRootPath}</code>
-          ) : (
-            <span className="text-[12.5px] text-ink-4">
-              No workspace root configured. Set it in the <b>Behavior</b> tab to enable file_*
-              tools.
-            </span>
-          )}
-        </div>
+        <SectionHead
+          label="MCP knowledge sources"
+          hint="Tools from connected MCP servers. Expand a server to whitelist individual tools."
+        />
+        <AgentMcpServerGrid agentId={agentId} servers={mcpServers} />
+        <p className="mt-2 text-[11px] text-ink-4">
+          <Link href="/mcp" className="underline hover:text-ink-3">
+            Manage MCP servers in /mcp
+          </Link>
+        </p>
       </section>
     </div>
   );
 }
 
-function SectionHead({ label }: { label: string }) {
+// ─── Section head ─────────────────────────────────────────────────────────────
+
+function SectionHead({ label, hint }: { label: string; hint?: string }) {
   return (
-    <div className="mb-3 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
-      {label}
+    <div className="mb-3">
+      <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">{label}</div>
+      {hint && <p className="mt-1 text-[11.5px] leading-[1.5] text-ink-3">{hint}</p>}
     </div>
   );
 }
@@ -512,7 +900,7 @@ function LivePanel() {
         </div>
       ))}
       <p className="border-t border-rule-2 px-1 py-3 text-[10.5px] leading-[1.5] text-ink-4">
-        Visual stub — wire to runner telemetry in a later phase.
+        Visual stub — will wire to runner telemetry.
       </p>
     </aside>
   );
