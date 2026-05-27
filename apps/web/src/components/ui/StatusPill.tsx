@@ -2,7 +2,16 @@ import type { ReactNode } from 'react';
 import { CheckCircle, Warning } from '@phosphor-icons/react/dist/ssr';
 import LiveDot from './LiveDot';
 
-export type StatusVariant = 'done' | 'warn' | 'run' | 'idle';
+export type StatusVariant =
+  | 'done'
+  | 'warn'
+  | 'run'
+  | 'idle'
+  // Log-level variants — map `.lvl.*` chips from the design (screen-ops).
+  | 'lvl-info'
+  | 'lvl-ok'
+  | 'lvl-warn'
+  | 'lvl-err';
 
 /**
  * StatusPill — small coloured pill used in tables (Home activity, Skills
@@ -10,10 +19,14 @@ export type StatusVariant = 'done' | 'warn' | 'run' | 'idle';
  * bundle plus the closely-related `.status-pill` / `.st-pill` patterns.
  *
  * Iconography defaults follow the design:
- *   - `done`  → CheckCircle on a lime tint  (`#3a6a18`)
- *   - `warn`  → Warning triangle on a coral tint  (`#a25620`)
- *   - `run`   → animated blue blip on a blue tint (no static icon)
- *   - `idle`  → no icon, neutral grey
+ *   - `done`     → CheckCircle on a lime tint  (`#3a6a18`)
+ *   - `warn`     → Warning triangle on a coral tint  (`#a25620`)
+ *   - `run`      → animated blue blip on a blue tint (no static icon)
+ *   - `idle`     → no icon, neutral grey
+ *   - `lvl-info` → neutral, used for INFO log level chips
+ *   - `lvl-ok`   → lime, used for OK log level chips
+ *   - `lvl-warn` → amber/coral, used for WARN log level chips
+ *   - `lvl-err`  → red/coral, used for ERR log level chips
  * Pass `label` to override the default text ("Done", "Attention", …).
  */
 type Props = {
@@ -29,6 +42,10 @@ const DEFAULT_LABEL: Record<StatusVariant, string> = {
   warn: 'Attention',
   run: 'Running',
   idle: 'Idle',
+  'lvl-info': 'INFO',
+  'lvl-ok': 'OK',
+  'lvl-warn': 'WARN',
+  'lvl-err': 'ERR',
 };
 
 const STYLE: Record<StatusVariant, string> = {
@@ -36,6 +53,10 @@ const STYLE: Record<StatusVariant, string> = {
   warn: 'bg-warn-bg text-warn',
   run: 'bg-run-bg text-run',
   idle: 'bg-black/5 text-ink-3 dark:bg-white/5',
+  'lvl-info': 'bg-black/5 text-ink-3 dark:bg-white/5',
+  'lvl-ok': 'bg-ok-bg text-ok',
+  'lvl-warn': 'bg-warn-bg text-warn',
+  'lvl-err': 'bg-warn-bg text-err',
 };
 
 export default function StatusPill({ variant, label, icon, className = '' }: Props) {
