@@ -10,6 +10,7 @@ import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import ConnectorsInstalledTable from './ConnectorsInstalledTable.tsx';
 import ConnectorsMarketplaceGrid from './ConnectorsMarketplaceGrid.tsx';
+import { catalogCategory } from './categories.ts';
 
 type Tab = 'installed' | 'marketplace';
 
@@ -110,30 +111,6 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
       </div>
     </div>
   );
-}
-
-/**
- * Maps a catalog slug to one of the ChipRow category labels.
- * Derived from the slug + authType — no extra column needed.
- */
-export function catalogCategory(slug: string): string {
-  if (slug.startsWith('google-') || slug === 'gmail') return 'Productivity';
-  if (
-    slug === 'notion' ||
-    slug === 'notion-oauth' ||
-    slug === 'airtable' ||
-    slug === 'airtable-oauth'
-  )
-    return 'Productivity';
-  if (slug === 'github') return 'DevTools';
-  if (slug === 'linear') return 'DevTools';
-  if (slug === 'hubspot') return 'CRM';
-  if (slug === 'slack') return 'Comms';
-  if (slug === 'intercom') return 'Comms';
-  if (slug === 'apify' || slug === 'firecrawl' || slug === 'tavily') return 'Data';
-  if (slug === 'stripe') return 'Data';
-  if (slug === 'postgres') return 'Data';
-  return 'Other';
 }
 
 function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {

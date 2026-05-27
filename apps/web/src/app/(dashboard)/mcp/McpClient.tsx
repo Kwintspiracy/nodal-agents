@@ -8,6 +8,7 @@ import PillTabs2 from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import McpInstalledTable from './McpInstalledTable.tsx';
 import McpMarketplaceGrid from './McpMarketplaceGrid.tsx';
+import { mcpCategory } from './categories.ts';
 
 type Tab = 'installed' | 'marketplace';
 
@@ -98,17 +99,6 @@ export default function McpClient({ instances, catalog }: Props) {
       </div>
     </div>
   );
-}
-
-/**
- * Maps an MCP catalog slug to one of the ChipRow category labels.
- */
-export function mcpCategory(slug: string): string {
-  if (slug === 'stripe') return 'Data';
-  if (slug === 'composio') return 'Productivity';
-  if (slug === 'cogni-cortex') return 'Comms';
-  if (slug.startsWith('custom-')) return 'Custom';
-  return 'Other';
 }
 
 function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {

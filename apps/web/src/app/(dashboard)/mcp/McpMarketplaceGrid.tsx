@@ -8,7 +8,7 @@ import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import IconButton from '@/components/ui/IconButton';
 import McpAddForm from './McpAddForm.tsx';
-import { mcpCategory } from './McpClient.tsx';
+import { mcpCategory } from './categories.ts';
 
 const MCP_BLUE = '#3565ff';
 

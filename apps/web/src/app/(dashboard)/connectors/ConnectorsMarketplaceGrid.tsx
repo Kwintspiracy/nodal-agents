@@ -9,7 +9,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import IconButton from '@/components/ui/IconButton';
 import ConnectorAddForm from './ConnectorAddForm.tsx';
 import { CONN_BRAND_COLORS, connGlyph } from './connector-brand.ts';
-import { catalogCategory } from './ConnectorsClient.tsx';
+import { catalogCategory } from './categories.ts';
 import { useState } from 'react';
 
 const CATEGORIES: ChipItem<string>[] = [
