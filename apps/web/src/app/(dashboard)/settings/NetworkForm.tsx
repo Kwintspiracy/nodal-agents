@@ -16,9 +16,11 @@ interface Props {
 export default function NetworkForm({ initial }: Props) {
   const [bind, setBind] = useState<'loopback' | 'lan'>(initial.configuredBind);
   const [isPending, startTransition] = useTransition();
+  const [restartHint, setRestartHint] = useState(false);
 
   function handleReset() {
     setBind(initial.configuredBind);
+    setRestartHint(false);
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -26,7 +28,10 @@ export default function NetworkForm({ initial }: Props) {
     startTransition(async () => {
       const r = await updateNetworkSettingsAction({ bind });
       if (!r.ok) toast.error(r.message);
-      else toast.success('Network settings saved');
+      else {
+        toast.success('Network settings saved');
+        setRestartHint(r.data.requiresRestart);
+      }
     });
   }
 
@@ -93,6 +98,13 @@ export default function NetworkForm({ initial }: Props) {
             <b className="block font-medium text-white">Config file missing</b>
             ~/.nodalai/config.json wasn&apos;t found. Save will fail until you&apos;ve run{' '}
             <code className="font-mono text-[11px]">nodal-agents init</code> at least once.
+          </Banner>
+        )}
+
+        {restartHint && (
+          <Banner variant="info" title="Saved. Restart required.">
+            Run <code className="font-mono text-[11px]">nodal-agents down && nodal-agents up</code>{' '}
+            to activate the new network mode.
           </Banner>
         )}
 

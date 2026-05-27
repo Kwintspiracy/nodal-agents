@@ -105,7 +105,7 @@ export default function Sidebar({ userMenu }: { userMenu?: ReactNode }) {
           <span className="flex h-[20px] w-[20px] items-center justify-center rounded-md bg-ink font-mono text-[10px] font-semibold text-canvas">
             N
           </span>
-          <span>Nodal</span>
+          <span>Nodal-Agents</span>
         </div>
         <button
           type="button"

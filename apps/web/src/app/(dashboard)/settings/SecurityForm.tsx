@@ -19,10 +19,12 @@ export default function SecurityForm({ initial }: Props) {
   const [editGoogle, setEditGoogle] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [restartHint, setRestartHint] = useState(false);
 
   function handleReset() {
     setMode(initial.configuredMode);
     setEditGoogle(false);
+    setRestartHint(false);
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -36,7 +38,10 @@ export default function SecurityForm({ initial }: Props) {
         clearGoogle: false,
       });
       if (!r.ok) toast.error(r.message);
-      else toast.success('Auth settings saved');
+      else {
+        toast.success('Auth settings saved');
+        setRestartHint(r.data.requiresRestart);
+      }
     });
   }
 
@@ -157,6 +162,13 @@ export default function SecurityForm({ initial }: Props) {
             in with the new method before applying.
           </span>
         </Banner>
+
+        {restartHint && (
+          <Banner variant="info" title="Saved. Restart required.">
+            Run <code className="font-mono text-[11px]">nodal-agents down && nodal-agents up</code>{' '}
+            to activate the new auth mode.
+          </Banner>
+        )}
 
         <SetCtaRow onCancel={handleReset} pending={isPending} />
       </SetForm>
