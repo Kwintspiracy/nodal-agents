@@ -275,7 +275,7 @@ export default function AgentComposer({
       {tab === 'skills' && <SkillsTab skills={attachedSkills} />}
       {tab === 'connectors' && (
         <SectionCard>
-          <ConnectorsTabContent agentId={agent.id} connectors={connectors} />
+          <ConnectorsTabContent key={agent.id} agentId={agent.id} connectors={connectors} />
         </SectionCard>
       )}
       {tab === 'runs' && (
@@ -1145,7 +1145,7 @@ function SettingsTab(props: {
         </Field>
         <div className="mt-4">
           <Field label="MCP knowledge sources">
-            <KnowledgeMcpRows agentId={agentId} servers={mcpServers} />
+            <KnowledgeMcpRows key={agentId} agentId={agentId} servers={mcpServers} />
           </Field>
         </div>
       </SectionCard>

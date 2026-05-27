@@ -89,7 +89,7 @@ export default function SecurityForm({ initial }: Props) {
                   <button
                     type="button"
                     onClick={() => setEditGoogle((v) => !v)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-neutral-700 text-neutral-400 rounded-[7px] hover:border-neutral-600 hover:text-white transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-rule text-ink-3 rounded-[7px] hover:border-rule-2 hover:text-ink transition-colors"
                   >
                     {editGoogle ? 'Hide fields' : initial.googleConfigured ? 'Rotate' : 'Add'}
                   </button>
@@ -98,7 +98,7 @@ export default function SecurityForm({ initial }: Props) {
                       type="button"
                       onClick={() => setConfirmOpen(true)}
                       disabled={isPending}
-                      className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-[7px] hover:border-red-700 hover:text-red-300 disabled:opacity-40 transition-colors"
+                      className="px-3 py-1.5 text-xs font-medium border border-warn/40 text-warn rounded-[7px] hover:border-warn hover:bg-warn-bg disabled:opacity-40 transition-colors"
                     >
                       Remove
                     </button>
@@ -110,7 +110,7 @@ export default function SecurityForm({ initial }: Props) {
             {editGoogle && (
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 px-1">
                 <div>
-                  <label className="block text-xs text-neutral-500 mb-1" htmlFor="google-client-id">
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="google-client-id">
                     Client ID
                   </label>
                   <input
@@ -118,14 +118,11 @@ export default function SecurityForm({ initial }: Props) {
                     name="googleClientId"
                     type="text"
                     placeholder="xxx.apps.googleusercontent.com"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                    className="w-full bg-canvas border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                   />
                 </div>
                 <div>
-                  <label
-                    className="block text-xs text-neutral-500 mb-1"
-                    htmlFor="google-client-secret"
-                  >
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="google-client-secret">
                     Client secret
                   </label>
                   <input
@@ -133,10 +130,10 @@ export default function SecurityForm({ initial }: Props) {
                     name="googleClientSecret"
                     type="password"
                     placeholder={initial.googleConfigured ? '•••••••• (overwrite)' : ''}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                    className="w-full bg-canvas border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                   />
                 </div>
-                <p className="sm:col-span-2 text-[11px] text-neutral-600">
+                <p className="sm:col-span-2 text-[11px] text-ink-4">
                   Use authorized JavaScript origins{' '}
                   <code className="font-mono">http://localhost:3000</code> and redirect URI{' '}
                   <code className="font-mono">http://localhost:3000/api/auth/callback/google</code>{' '}
@@ -149,7 +146,7 @@ export default function SecurityForm({ initial }: Props) {
 
         {!initial.configPathExists && (
           <Banner variant="warn">
-            <b className="block font-medium text-white">Config file missing</b>
+            <b className="block font-medium text-ink">Config file missing</b>
             ~/.nodalai/config.json wasn&apos;t found. Save will fail until you&apos;ve run{' '}
             <code className="font-mono text-[11px]">nodal-agents init</code> at least once.
           </Banner>
@@ -157,7 +154,7 @@ export default function SecurityForm({ initial }: Props) {
 
         <Banner variant="warn">
           <span>
-            <b className="block font-medium text-white">Switching auth mode signs everyone out</b>
+            <b className="block font-medium text-ink">Switching auth mode signs everyone out</b>
             Active sessions are invalidated when the auth mode changes. Make sure you can still sign
             in with the new method before applying.
           </span>

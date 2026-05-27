@@ -69,14 +69,14 @@ export default function NetworkForm({ initial }: Props) {
               );
             })}
 
-            <p className="text-[12px] leading-[1.5] text-neutral-600 mt-2.5 mx-1">
+            <p className="text-[12px] leading-[1.5] text-ink-4 mt-2.5 mx-1">
               Windows Defender may prompt the first time another device tries to connect — allow
               access on private networks.
             </p>
 
             <Banner variant="warn">
               <span>
-                <b className="block font-medium text-white">
+                <b className="block font-medium text-ink">
                   LAN exposes this dashboard beyond your machine
                 </b>
                 Anyone on the same Wi-Fi can attempt to reach the URL above. Keep email + password
@@ -95,7 +95,7 @@ export default function NetworkForm({ initial }: Props) {
 
         {!initial.configPathExists && (
           <Banner variant="warn">
-            <b className="block font-medium text-white">Config file missing</b>
+            <b className="block font-medium text-ink">Config file missing</b>
             ~/.nodalai/config.json wasn&apos;t found. Save will fail until you&apos;ve run{' '}
             <code className="font-mono text-[11px]">nodal-agents init</code> at least once.
           </Banner>

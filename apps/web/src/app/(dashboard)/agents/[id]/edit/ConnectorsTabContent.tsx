@@ -158,12 +158,17 @@ export default function ConnectorsTabContent({ agentId, connectors }: Props) {
 
   return (
     <SectionWrapper>
-      {connected.length > 0 && (
-        <Section
-          label={`Connected · ${connected.length}`}
-          hint="Revoke any to detach everywhere. Per-operation whitelist lives under the gear icon."
-        >
-          {connected.map((c) => {
+      <Section
+        label={`Connected · ${connected.length}`}
+        hint="Revoke any to detach everywhere. Per-operation whitelist lives under the gear icon."
+      >
+        {connected.length === 0 && (
+          <p className="text-[12.5px] text-ink-3">
+            No connectors attached to this agent yet. Pick one from the marketplace below.
+          </p>
+        )}
+        {connected.length > 0 &&
+          connected.map((c) => {
             const state = states.get(c.connectorId) ?? c;
             const isExpanded = expanded.has(c.connectorId);
             const ops = c.availableOperations;
@@ -187,8 +192,7 @@ export default function ConnectorsTabContent({ agentId, connectors }: Props) {
               />
             );
           })}
-        </Section>
-      )}
+      </Section>
 
       <EdAddButton href="/connectors">Connect from marketplace</EdAddButton>
     </SectionWrapper>
