@@ -8,6 +8,9 @@ type Props = {
   /** When set, a `/` keypress anywhere on the page focuses the input. Default true. */
   keyboardShortcut?: boolean;
   onSubmit?: (value: string) => void;
+  /** Extra classes — used by the topbar to hide the field on mobile widths
+   *  where there's no room (`hidden md:flex`). */
+  className?: string;
 };
 
 /**
@@ -22,6 +25,7 @@ export default function SearchBox({
   placeholder = 'Search agents, skills, runs…',
   keyboardShortcut = true,
   onSubmit,
+  className = '',
 }: Props) {
   const ref = useRef<HTMLInputElement>(null);
 
@@ -48,7 +52,7 @@ export default function SearchBox({
   return (
     <form
       onSubmit={handle}
-      className="flex h-[34px] min-w-[280px] items-center gap-2 rounded-md border border-rule-2 bg-paper px-3 text-[12.5px] text-ink-4"
+      className={`flex h-[34px] min-w-[280px] items-center gap-2 rounded-md border border-rule-2 bg-paper px-3 text-[12.5px] text-ink-4 ${className}`}
     >
       <MagnifyingGlass size={13} className="shrink-0" />
       <input

@@ -29,6 +29,15 @@ type Props = {
  * toggle, primary CTA.
  *
  * Sits between the sidebar and the page content. Each page composes around it.
+ *
+ * Mobile responsiveness:
+ *   - SearchBox (min-width 280px) is hidden below `md` — at 390px viewport
+ *     it would push the bar past the screen and crush the icon buttons
+ *     into deformed shapes. Search is recovered via the `/` shortcut on
+ *     desktop and (future) a search-icon overlay on mobile.
+ *   - The "+ New agent" CTA collapses to icon-only below `md` so the
+ *     button stays square instead of stretching the bar.
+ *   - Horizontal padding tightens from 36px (desktop) to 16px (mobile).
  */
 export default function Topbar({
   left,
@@ -38,18 +47,23 @@ export default function Topbar({
   showSearch = true,
 }: Props) {
   return (
-    <div className="flex h-[52px] shrink-0 items-center gap-2.5 px-9">
+    <div className="flex h-[52px] shrink-0 items-center gap-2 px-4 md:gap-2.5 md:px-9">
       {left}
       <div className="flex-1" />
-      {showSearch && <SearchBox />}
+      {showSearch && <SearchBox className="hidden md:flex" />}
       <IconButton aria-label="Notifications" title="Notifications" badge>
         <Bell size={15} />
       </IconButton>
       <ThemeToggle />
       {showPrimary && (
-        <PrimaryButton variant="ink" href={primaryHref}>
+        <PrimaryButton
+          variant="ink"
+          href={primaryHref}
+          aria-label={primaryLabel}
+          title={primaryLabel}
+        >
           <Plus size={13} weight="bold" />
-          {primaryLabel}
+          <span className="hidden md:inline">{primaryLabel}</span>
         </PrimaryButton>
       )}
     </div>

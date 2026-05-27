@@ -41,3 +41,4 @@ apps/web/tests/manual/
 # Inbound design handoff bundles (Claude Design exports, screenshots,
 # reference uploads). The product is the implementation, not these.
 design/
+start-pg-screenshots.ts
