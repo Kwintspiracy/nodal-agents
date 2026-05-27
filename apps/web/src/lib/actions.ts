@@ -2492,6 +2492,10 @@ export type SkillRow = {
   active: boolean;
   requiredBuiltins: string[];
   assignmentCount: number;
+  /** Each agent currently assigned to this skill. Sized by assignmentCount
+   *  but capped at the SQL layer at 8 names — the UI only renders an avatar
+   *  stack of the first few before collapsing to "+N". */
+  assignedAgents: Array<{ id: string; name: string; slug: string; avatarUrl: string | null }>;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -2542,6 +2546,43 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
     const tallyMap = new Map<string, number>();
     for (const t of tallies) tallyMap.set(t.skillId, Number(t.c));
 
+    // Fetch the agent identities for the avatar stack. One join, returned as
+    // an array of {skillId, agent...} rows that we pivot client-side. Cap at
+    // 8 names per skill so the query stays bounded even for skills used by
+    // every agent in a large workspace.
+    const assignedAgentRows = await db
+      .select({
+        skillId: agentSkillAssignments.skillId,
+        agentId: agents.id,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        avatarUrl: agents.avatarUrl,
+      })
+      .from(agentSkillAssignments)
+      .innerJoin(agents, eq(agents.id, agentSkillAssignments.agentId))
+      .where(
+        and(
+          eq(agentSkillAssignments.entityId, session.entityId),
+          inArray(
+            agentSkillAssignments.skillId,
+            rows.map((r) => r.id),
+          ),
+        ),
+      )
+      .orderBy(agents.name);
+
+    const assignedBySkill = new Map<
+      string,
+      Array<{ id: string; name: string; slug: string; avatarUrl: string | null }>
+    >();
+    for (const a of assignedAgentRows) {
+      const list = assignedBySkill.get(a.skillId) ?? [];
+      if (list.length < 8) {
+        list.push({ id: a.agentId, name: a.agentName, slug: a.agentSlug, avatarUrl: a.avatarUrl });
+        assignedBySkill.set(a.skillId, list);
+      }
+    }
+
     return ok(
       rows.map((r) => ({
         id: r.id,
@@ -2554,6 +2595,7 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         active: r.active ?? true,
         requiredBuiltins: (r.requiredBuiltins as string[] | null) ?? [],
         assignmentCount: tallyMap.get(r.id) ?? 0,
+        assignedAgents: assignedBySkill.get(r.id) ?? [],
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
       })),
@@ -2866,6 +2908,9 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       active: row.active ?? true,
       requiredBuiltins: (row.requiredBuiltins as string[] | null) ?? [],
       assignmentCount: 0,
+      // The skill-detail view doesn't render the avatar stack; cheaper to
+      // return [] here than to pay the join. List callers use listSkillsAction.
+      assignedAgents: [],
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     });

@@ -1,49 +1,28 @@
 import { listSkillsAction } from '@/lib/actions.ts';
-import SkillForm from './SkillForm.tsx';
-import SkillRow from './SkillRow.tsx';
+import SkillsClient from './SkillsClient.tsx';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Skills page — composes the design system's two-tab pattern (Assigned
+ * table + Library card grid). All interactive state (tab, search, modal)
+ * lives in the client shell; the server side just delivers the row list.
+ */
 export default async function SkillsPage() {
   const result = await listSkillsAction();
 
   if (!result.ok) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-ink">Skills</h1>
-        <div className="bg-paper border border-err/30 rounded-xl px-6 py-8 text-sm text-err">
+      <div className="py-7">
+        <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
+          Skills
+        </h1>
+        <div className="mt-4 rounded-2xl border border-warn/40 bg-warn-bg p-5 text-sm text-warn">
           {result.message}
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-ink">Skills</h1>
-          <p className="text-sm text-ink-3 mt-0.5">
-            {result.data.length} skill{result.data.length === 1 ? '' : 's'} · reusable instructions
-            you can attach to any agent
-          </p>
-        </div>
-      </div>
-
-      <SkillForm />
-
-      {result.data.length === 0 ? (
-        <div className="bg-paper border border-rule-2 rounded-xl px-6 py-12 text-center text-ink-4 text-sm">
-          No skills yet. Create one above — the instructions get appended to the agent&apos;s system
-          prompt when assigned.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {result.data.map((s) => (
-            <SkillRow key={s.id} skill={s} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return <SkillsClient skills={result.data} />;
 }

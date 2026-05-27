@@ -14,11 +14,15 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 interface CreateProps {
   mode?: 'create';
   initial?: undefined;
+  /** When true the form renders open without the "+ New skill" toggle.
+   *  Used by the dedicated /skills/new page. */
+  defaultOpen?: boolean;
 }
 
 interface EditProps {
   mode: 'edit';
   initial: SkillRow;
+  defaultOpen?: undefined;
 }
 
 type Props = CreateProps | EditProps;
@@ -26,7 +30,7 @@ type Props = CreateProps | EditProps;
 export default function SkillForm(props: Props) {
   const isEdit = props.mode === 'edit';
   const router = useRouter();
-  const [open, setOpen] = useState(isEdit);
+  const [open, setOpen] = useState(isEdit || props.defaultOpen === true);
   const [isPending, startTransition] = useTransition();
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
