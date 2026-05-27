@@ -24,11 +24,7 @@ const TABS: { value: Tab; label: string }[] = [
 function statusToVariant(status: string | null): StatusVariant {
   if (status === 'completed') return 'done';
   if (status === 'failed' || status === 'cancelled') return 'warn';
-  if (
-    status === 'processing' ||
-    status === 'pending' ||
-    status?.startsWith('awaiting')
-  )
+  if (status === 'processing' || status === 'pending' || status?.startsWith('awaiting'))
     return 'run';
   return 'idle';
 }
@@ -73,10 +69,7 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
   const [query, setQuery] = useState('');
 
   // Build a lookup so we can show agent name + avatar without extra fetches.
-  const agentMap = useMemo(
-    () => new Map(agents.map((a) => [a.id, a])),
-    [agents],
-  );
+  const agentMap = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
 
   const filtered = useMemo(() => {
     let list = agentId ? jobs.filter((j) => j.agentId === agentId) : jobs;
