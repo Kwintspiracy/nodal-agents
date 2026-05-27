@@ -32,12 +32,14 @@ export default async function AgentsPage() {
   const totalAgents = flatAgents.length;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="py-7">
+      <div className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Agents</h1>
+          <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
+            Agents
+          </h1>
           {groupsResult.ok && (
-            <p className="text-sm text-neutral-500 mt-0.5">
+            <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
               {totalAgents} agent{totalAgents !== 1 ? 's' : ''}
             </p>
           )}
