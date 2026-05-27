@@ -21,11 +21,13 @@ import {
   type ProviderSlug,
 } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
-import AgentConnectorGrid from '@/components/AgentConnectorGrid.tsx';
-import AgentMcpServerGrid from '@/components/AgentMcpServerGrid.tsx';
 import Disc from '@/components/ui/Disc';
+import EdRow, { IcBtn } from '@/components/ui/EdRow';
+import EdAddButton from '@/components/ui/EdAddButton';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
+import ConnectorsTabContent from './ConnectorsTabContent.tsx';
+import KnowledgeMcpRows from './KnowledgeMcpRows.tsx';
 
 /**
  * AgentComposer — detail page for /agents/[id]/edit.
@@ -263,7 +265,7 @@ export default function AgentComposer({
       {tab === 'skills' && <SkillsTab skills={attachedSkills} />}
       {tab === 'connectors' && (
         <SectionCard>
-          <AgentConnectorGrid agentId={agent.id} connectors={connectors} />
+          <ConnectorsTabContent agentId={agent.id} connectors={connectors} />
         </SectionCard>
       )}
       {tab === 'runs' && (
@@ -628,70 +630,66 @@ function OverviewTab({
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      {/* Skills attached — 2/3 wide */}
-      {hasSkills && (
-        <SectionCard>
-          <div className="lg:col-span-2">
-            <SectionHead
-              label={`Skills attached · ${attachedSkills.length}`}
-              right={
-                <button
-                  type="button"
-                  onClick={onOpenSkills}
-                  className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
-                >
-                  Manage
-                </button>
-              }
-            />
-            <SkillsGrid skills={attachedSkills.slice(0, 6)} />
+      {/* Skills attached — 2 cols wide */}
+      <SectionCard>
+        <SectionHead
+          label={`Skills attached · ${attachedSkills.length}`}
+          right={
+            hasSkills ? (
+              <button
+                type="button"
+                onClick={onOpenSkills}
+                className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
+              >
+                Manage
+              </button>
+            ) : undefined
+          }
+        />
+        {hasSkills ? (
+          <div className="space-y-2">
+            {attachedSkills.slice(0, 6).map((s) => (
+              <SkillEdRow key={s.id} skill={s} />
+            ))}
             {attachedSkills.length > 6 && (
               <button
                 type="button"
                 onClick={onOpenSkills}
-                className="mt-3 text-[11.5px] text-ink-3 underline hover:text-ink-2"
+                className="mt-1 text-[11.5px] text-ink-3 underline hover:text-ink-2"
               >
                 + {attachedSkills.length - 6} more
               </button>
             )}
           </div>
-        </SectionCard>
-      )}
-      {!hasSkills && (
-        <SectionCard>
-          <SectionHead label="Skills attached · 0" />
-          <p className="text-[12.5px] text-ink-3">
-            No skills attached yet.{' '}
-            <button type="button" onClick={onOpenSkills} className="underline hover:text-ink-2">
-              Pick from the library →
-            </button>
-          </p>
-        </SectionCard>
-      )}
+        ) : (
+          <EdAddButton onClick={onOpenSkills}>Add skill from marketplace</EdAddButton>
+        )}
+      </SectionCard>
 
-      {/* Connectors used — 1/3 wide */}
+      {/* Connectors used */}
       <SectionCard>
         <SectionHead
           label={`Connectors used · ${connectorsAssigned.length}`}
           right={
-            <button
-              type="button"
-              onClick={onOpenConnectors}
-              className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
-            >
-              Manage
-            </button>
+            hasConnectors ? (
+              <button
+                type="button"
+                onClick={onOpenConnectors}
+                className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
+              >
+                Manage
+              </button>
+            ) : undefined
           }
         />
         {hasConnectors ? (
-          <ConnectorsList rows={connectorsAssigned} />
+          <div className="space-y-2">
+            {connectorsAssigned.map((c) => (
+              <ConnectorOverviewRow key={c.connectorId} row={c} />
+            ))}
+          </div>
         ) : (
-          <p className="text-[12.5px] text-ink-3">
-            No connectors assigned yet.{' '}
-            <button type="button" onClick={onOpenConnectors} className="underline hover:text-ink-2">
-              Wire one →
-            </button>
-          </p>
+          <EdAddButton onClick={onOpenConnectors}>Connect from marketplace</EdAddButton>
         )}
         {mcpsAssignedCount > 0 && (
           <p className="mt-3 border-t border-rule-2 pt-3 text-[11.5px] text-ink-4">
@@ -704,73 +702,58 @@ function OverviewTab({
   );
 }
 
-// ─── Skills grid (compact rows reused from Overview + Skills tabs) ───────────
+// ─── Skill row (EdRow with Disc skill glyph + open icon) ──────────────────────
 
-function SkillsGrid({ skills }: { skills: SkillRow[] }) {
+function SkillEdRow({ skill }: { skill: SkillRow }) {
   return (
-    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-      {skills.map((s) => (
-        <SkillRowChip key={s.id} skill={s} />
-      ))}
-    </div>
+    <EdRow
+      glyph={
+        <Disc variant="skill" size="md" shape="square">
+          <span className="font-mono text-[10.5px] font-semibold uppercase">
+            {skill.slug.slice(0, 2)}
+          </span>
+        </Disc>
+      }
+      name={skill.name}
+      description={skill.description ?? undefined}
+      meta={`@${skill.slug}`}
+      actions={
+        <Link
+          href={`/skills/${skill.id}/edit`}
+          className="flex h-7 items-center gap-1 rounded-md border border-rule px-2 text-[11px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
+        >
+          Open ›
+        </Link>
+      }
+    />
   );
 }
 
-function SkillRowChip({ skill }: { skill: SkillRow }) {
+// ─── Connector row in Overview (compact summary, no expand) ──────────────────
+
+function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
   return (
-    <Link
-      href={`/skills/${skill.id}/edit`}
-      className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas/40 px-3 py-2.5 transition-colors hover:border-rule hover:bg-hover"
-    >
-      <Disc variant="skill" size="md" shape="square">
-        <span className="font-mono text-[10.5px] font-semibold uppercase">
-          {skill.slug.slice(0, 2)}
+    <EdRow
+      glyph={
+        <Disc variant="conn" size="md" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
+          <span className="font-mono text-[10.5px] font-semibold">
+            {connGlyph(row.slug, row.label)}
+          </span>
+        </Disc>
+      }
+      name={row.label}
+      description={row.credentialName ?? undefined}
+      actions={
+        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3">
+          <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
+          on
         </span>
-      </Disc>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-ink">{skill.name}</div>
-        {skill.description && (
-          <div className="truncate text-[11.5px] text-ink-3">{skill.description}</div>
-        )}
-      </div>
-    </Link>
+      }
+    />
   );
 }
 
-// ─── Connectors list (Disc + brand colour) — same treatment as /connectors ───
-
-function ConnectorsList({ rows }: { rows: AgentConnectorRow[] }) {
-  return (
-    <ul className="flex flex-col gap-2">
-      {rows.map((c) => {
-        const brand = CONN_BRAND_COLORS[c.slug];
-        const glyph = connGlyph(c.slug, c.label);
-        return (
-          <li
-            key={c.connectorId}
-            className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas/40 px-3 py-2.5"
-          >
-            <Disc variant="conn" size="sm" shape="square" background={brand}>
-              <span className="font-mono text-[10px] font-semibold">{glyph}</span>
-            </Disc>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[12.5px] font-medium text-ink">{c.label}</div>
-              {c.credentialName && (
-                <div className="truncate text-[10.5px] text-ink-4">{c.credentialName}</div>
-              )}
-            </div>
-            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3">
-              <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
-              on
-            </span>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-// ─── Skills tab (full page) ──────────────────────────────────────────────────
+// ─── Skills tab (full page list of attached skills) ──────────────────────────
 
 function SkillsTab({ skills }: { skills: SkillRow[] }) {
   if (skills.length === 0) {
@@ -780,19 +763,21 @@ function SkillsTab({ skills }: { skills: SkillRow[] }) {
           label="No skills attached"
           hint="Skills are the agent's reusable capabilities. Attach some from the library."
         />
-        <Link
-          href="/skills"
-          className="inline-flex items-center rounded-lg border border-rule bg-canvas px-3.5 py-2 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
-        >
-          Browse skill library →
-        </Link>
+        <EdAddButton href="/skills">Add skill from marketplace</EdAddButton>
       </SectionCard>
     );
   }
   return (
     <SectionCard>
       <SectionHead label={`Attached · ${skills.length}`} />
-      <SkillsGrid skills={skills} />
+      <div className="space-y-2">
+        {skills.map((s) => (
+          <SkillEdRow key={s.id} skill={s} />
+        ))}
+      </div>
+      <div className="mt-4">
+        <EdAddButton href="/skills">Add skill from marketplace</EdAddButton>
+      </div>
     </SectionCard>
   );
 }
@@ -1061,7 +1046,7 @@ function SettingsTab(props: {
         </Field>
         <div className="mt-4">
           <Field label="MCP knowledge sources">
-            <AgentMcpServerGrid agentId={agentId} servers={mcpServers} />
+            <KnowledgeMcpRows agentId={agentId} servers={mcpServers} />
           </Field>
         </div>
       </SectionCard>

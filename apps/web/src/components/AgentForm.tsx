@@ -10,13 +10,9 @@ import {
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
-  type AgentConnectorRow,
-  type AgentMcpServerRow,
 } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import AvatarPicker from './AvatarPicker.tsx';
-import AgentConnectorGrid from './AgentConnectorGrid.tsx';
-import AgentMcpServerGrid from './AgentMcpServerGrid.tsx';
 import {
   detectModelProviders,
   isModelCompatibleWithProvider,
@@ -30,8 +26,6 @@ interface CreateProps {
   llmKeys: LlmKeyUiRow[];
   agents?: AgentRow[];
   initial?: undefined;
-  connectors?: AgentConnectorRow[];
-  mcpServers?: AgentMcpServerRow[];
 }
 
 interface EditProps {
@@ -39,15 +33,14 @@ interface EditProps {
   llmKeys: LlmKeyUiRow[];
   agents?: AgentRow[];
   initial: AgentEditRow;
-  connectors?: AgentConnectorRow[];
-  mcpServers?: AgentMcpServerRow[];
 }
 
 type Props = CreateProps | EditProps;
 
-// ConnectorGrid + McpServerGrid moved to AgentConnectorGrid.tsx /
-// AgentMcpServerGrid.tsx so AgentComposer (new 3-col edit) can reuse them
-// without depending on this file. Behaviour is preserved verbatim.
+// Per-agent Connector + MCP assignment has moved to AgentComposer (the
+// `/agents/[id]/edit` page). This file now only powers the "+ New agent"
+// create modal on /agents — agent → connector / MCP wiring happens after
+// creation, in the Composer's Connectors and Knowledge tabs.
 
 // Map DB role columns back to the UX-level enum for pre-filling edit form.
 function dbRoleToUiRole(
@@ -269,9 +262,6 @@ export default function AgentForm(props: Props) {
 
   // ─── Edit mode: form rendered inline (no modal/portal) ─────────────────────
 
-  const connectorList = props.connectors ?? [];
-  const mcpServerList = props.mcpServers ?? [];
-
   if (isEdit) {
     const initial = props.initial;
 
@@ -444,42 +434,9 @@ export default function AgentForm(props: Props) {
           </div>
         )}
 
-        {/* ── Tools & Connectors ─────────────────────────────────────── */}
-        <div>
-          <div className="mb-2">
-            <label className="block text-xs font-semibold text-ink-3 uppercase tracking-wider mb-0.5">
-              Tools &amp; Connectors
-            </label>
-            <p className="text-xs text-ink-4">
-              Choose which tools this agent can use. Fewer tools = smaller prompt + less chance the
-              agent picks the wrong one.
-            </p>
-          </div>
-          <AgentConnectorGrid agentId={initial.id} connectors={connectorList} />
-          <p className="mt-2 text-xs text-ink-4">
-            <a href="/connectors" className="underline hover:text-ink-3 transition-colors">
-              Manage credentials in /connectors
-            </a>
-          </p>
-        </div>
-
-        {/* ── MCP Connectors ─────────────────────────────────────────── */}
-        <div>
-          <div className="mb-2">
-            <label className="block text-xs font-semibold text-ink-3 uppercase tracking-wider mb-0.5">
-              MCP Connectors
-            </label>
-            <p className="text-xs text-ink-4">
-              Tools from connected MCP servers. Expand a server to whitelist individual tools.
-            </p>
-          </div>
-          <AgentMcpServerGrid agentId={initial.id} servers={mcpServerList} />
-          <p className="mt-2 text-xs text-ink-4">
-            <a href="/mcp" className="underline hover:text-ink-3 transition-colors">
-              Manage MCP connectors in /mcp
-            </a>
-          </p>
-        </div>
+        {/* Connector + MCP assignment moved to /agents/[id]/edit (AgentComposer
+            Connectors + Knowledge tabs). Save the agent first, then attach
+            connectors there. */}
 
         <div className="flex gap-2 pt-1">
           <button
