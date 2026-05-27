@@ -120,13 +120,15 @@ export default function KnowledgeMcpRows({ agentId, servers }: Props) {
     });
   }
 
-  const connected = useMemo(() => {
-    const out: AgentMcpServerRow[] = [];
+  const { connected, available } = useMemo(() => {
+    const connected: AgentMcpServerRow[] = [];
+    const available: AgentMcpServerRow[] = [];
     for (const s of servers) {
       const state = states.get(s.mcpServerId) ?? s;
-      if (state.assigned) out.push(s);
+      if (state.assigned) connected.push(s);
+      else available.push(s);
     }
-    return out;
+    return { connected, available };
   }, [servers, states]);
 
   if (servers.length === 0) {
@@ -171,8 +173,52 @@ export default function KnowledgeMcpRows({ agentId, servers }: Props) {
         </div>
       )}
 
+      {available.length > 0 && (
+        <div className="space-y-2">
+          <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
+            Available on this workspace · {available.length}
+          </div>
+          {available.map((s) => (
+            <EdRow
+              key={s.mcpServerId}
+              glyph={
+                <Disc variant="conn" size="lg" shape="square">
+                  <span className="font-mono text-[10.5px] font-semibold">MCP</span>
+                </Disc>
+              }
+              name={s.label}
+              meta={`${s.availableTools.length} tools`}
+              actions={
+                <IcBtn
+                  title="Attach to this agent"
+                  ariaLabel="Attach"
+                  onClick={() => toggleAssigned(s.mcpServerId, true)}
+                >
+                  <PlusIcon />
+                </IcBtn>
+              }
+            />
+          ))}
+        </div>
+      )}
+
       <EdAddButton href="/mcp">Browse MCP servers</EdAddButton>
     </div>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+    >
+      <path d="M6 2v8M2 6h8" />
+    </svg>
   );
 }
 
