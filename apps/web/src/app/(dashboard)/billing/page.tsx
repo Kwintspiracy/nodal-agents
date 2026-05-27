@@ -23,10 +23,10 @@ export default function BillingPage() {
         <p className="text-[13.5px] leading-relaxed text-ink-3">
           Per-agent token usage is on the{' '}
           <Link
-            href="/stats"
+            href="/"
             className="font-medium text-ink underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
           >
-            Stats page
+            Home dashboard
           </Link>
           . Multiply by your provider&apos;s price-per-token to estimate spend.
         </p>

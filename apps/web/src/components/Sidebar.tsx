@@ -4,7 +4,6 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   House,
-  ChartPieSlice,
   Graph,
   Sparkle,
   UsersThree,
@@ -53,7 +52,6 @@ const NAV: Group[] = [
     section: 'Overview',
     items: [
       { href: '/', label: 'Home', icon: House },
-      { href: '/stats', label: 'Stats', icon: ChartPieSlice },
       { href: '/jobs', label: 'Runs', icon: Graph },
       { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
     ],
