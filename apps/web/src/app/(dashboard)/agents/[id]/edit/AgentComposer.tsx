@@ -708,7 +708,7 @@ function SkillEdRow({ skill }: { skill: SkillRow }) {
   return (
     <EdRow
       glyph={
-        <Disc variant="skill" size="md" shape="square">
+        <Disc variant="skill" size="lg" shape="square">
           <span className="font-mono text-[10.5px] font-semibold uppercase">
             {skill.slug.slice(0, 2)}
           </span>
@@ -735,13 +735,20 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
   return (
     <EdRow
       glyph={
-        <Disc variant="conn" size="md" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
+        <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
           <span className="font-mono text-[10.5px] font-semibold">
             {connGlyph(row.slug, row.label)}
           </span>
         </Disc>
       }
-      name={row.label}
+      name={
+        <>
+          {row.label}
+          <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
+            {row.slug.toUpperCase()}
+          </span>
+        </>
+      }
       description={row.credentialName ?? undefined}
       actions={
         <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3">

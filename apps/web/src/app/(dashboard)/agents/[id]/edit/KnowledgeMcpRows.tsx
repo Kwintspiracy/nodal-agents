@@ -182,7 +182,7 @@ export default function KnowledgeMcpRows({ agentId, servers }: Props) {
             <EdRow
               key={s.mcpServerId}
               glyph={
-                <Disc variant="conn" size="md" shape="square">
+                <Disc variant="conn" size="lg" shape="square">
                   <span className="font-mono text-[10.5px] font-semibold">MCP</span>
                 </Disc>
               }
@@ -231,7 +231,7 @@ function McpEdRow({
   return (
     <EdRow
       glyph={
-        <Disc variant="conn" size="md" shape="square">
+        <Disc variant="conn" size="lg" shape="square">
           <span className="font-mono text-[10.5px] font-semibold">MCP</span>
         </Disc>
       }

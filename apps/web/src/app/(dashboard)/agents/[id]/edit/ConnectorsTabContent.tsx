@@ -209,7 +209,14 @@ export default function ConnectorsTabContent({ agentId, connectors }: Props) {
                   </span>
                 </Disc>
               }
-              name={c.label}
+              name={
+                <>
+                  {c.label}
+                  <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
+                    {c.slug.toUpperCase()}
+                  </span>
+                </>
+              }
               description={c.credentialName ?? undefined}
               meta={`${c.availableOperations.length} ops`}
               actions={
@@ -258,13 +265,20 @@ function ConnectorEdRow({
   return (
     <EdRow
       glyph={
-        <Disc variant="conn" size="md" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
+        <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
           <span className="font-mono text-[10.5px] font-semibold">
             {connGlyph(row.slug, row.label)}
           </span>
         </Disc>
       }
-      name={row.label}
+      name={
+        <>
+          {row.label}
+          <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
+            {row.slug.toUpperCase()}
+          </span>
+        </>
+      }
       description={row.credentialName ?? undefined}
       meta={opsLabel}
       actions={

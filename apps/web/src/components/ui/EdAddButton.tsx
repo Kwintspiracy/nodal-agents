@@ -16,7 +16,7 @@ type Props = {
  * Renders as an `<a>` when `href` is provided, otherwise a `<button>`.
  */
 export default function EdAddButton({ onClick, href, children, className = '' }: Props) {
-  const classes = `flex h-[42px] w-full items-center justify-center gap-2 rounded-[10px] border border-dashed border-rule bg-canvas/30 text-[13px] font-medium text-ink-3 transition-colors hover:bg-hover hover:text-ink-2 ${className}`;
+  const classes = `flex h-[42px] w-full items-center justify-center gap-2 rounded-[10px] border border-dashed border-rule bg-paper/40 text-[13px] font-medium text-ink-3 transition-colors hover:bg-paper/60 hover:text-ink-2 ${className}`;
   const icon = (
     <svg
       width="14"

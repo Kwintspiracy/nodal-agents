@@ -39,7 +39,7 @@ export default function EdRow({
 }: Props) {
   return (
     <div className={`overflow-hidden rounded-[10px] border border-rule-2 bg-paper ${className}`}>
-      <div className="flex items-center gap-3.5 px-4 py-3">
+      <div className="flex items-center gap-3.5 px-4 py-3.5">
         {glyph && <div className="flex-shrink-0">{glyph}</div>}
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-medium leading-[1.2] text-ink">{name}</div>
@@ -54,7 +54,7 @@ export default function EdRow({
             {meta}
           </div>
         )}
-        {actions && <div className="flex flex-shrink-0 items-center gap-1.5">{actions}</div>}
+        {actions && <div className="flex flex-shrink-0 items-center gap-2">{actions}</div>}
       </div>
       {expanded && (
         <div className="space-y-2 border-t border-rule-2 bg-canvas/40 px-4 py-3">{expanded}</div>
