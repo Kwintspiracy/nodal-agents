@@ -78,7 +78,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
   }
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-5 py-4">
+    <div className="bg-paper border border-rule-2 rounded-xl px-5 py-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           {/* Instance name — inline rename */}
@@ -95,13 +95,13 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
                     setIsRenaming(false);
                   }
                 }}
-                className="bg-neutral-800 border border-neutral-600 rounded-md px-2 py-1 text-sm text-white focus:border-neutral-400 focus:outline-none w-full max-w-xs"
+                className="bg-hover border border-rule rounded-md px-2 py-1 text-sm text-ink focus:border-ink-3 focus:outline-none w-full max-w-xs"
               />
               <button
                 type="button"
                 onClick={performRename}
                 disabled={isPending}
-                className="text-xs text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                className="text-xs text-ok hover:text-ok disabled:opacity-40"
               >
                 Save
               </button>
@@ -111,33 +111,33 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
                   setRenameValue(instance.name);
                   setIsRenaming(false);
                 }}
-                className="text-xs text-neutral-500 hover:text-neutral-300"
+                className="text-xs text-ink-3 hover:text-ink-2"
               >
                 Cancel
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-white font-medium">{instance.name}</span>
+              <span className="text-ink font-medium">{instance.name}</span>
               <button
                 type="button"
                 onClick={() => setIsRenaming(true)}
                 aria-label="Rename MCP server"
-                className="text-neutral-600 hover:text-neutral-400 transition-colors text-xs leading-none"
+                className="text-ink-4 hover:text-ink-3 transition-colors text-xs leading-none"
                 title="Rename"
               >
                 ✎
               </button>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 font-mono">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 font-mono">
                 {catalogLabel}
               </span>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-ok">
                 connected
               </span>
             </div>
           )}
-          {description && <p className="text-xs text-neutral-500 mt-0.5">{description}</p>}
-          <p className="text-xs text-neutral-600 mt-1">
+          {description && <p className="text-xs text-ink-3 mt-0.5">{description}</p>}
+          <p className="text-xs text-ink-4 mt-1">
             {instance.toolCount} tool{instance.toolCount === 1 ? '' : 's'} discovered
             {instance.apiKeyLast4 ? ` · key …${instance.apiKeyLast4}` : ''}
           </p>
@@ -147,7 +147,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
             type="button"
             onClick={() => setRotateOpen((v) => !v)}
             disabled={isPending}
-            className="px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+            className="px-2.5 py-1 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
           >
             {rotateOpen ? 'Cancel' : 'Rotate key'}
           </button>
@@ -155,7 +155,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
             type="button"
             onClick={() => setConfirmOpen(true)}
             disabled={isPending}
-            className="px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+            className="px-2.5 py-1 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err/30 hover:text-err disabled:opacity-40"
           >
             Disconnect
           </button>
@@ -166,12 +166,9 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
           (tools/list + optional probe) BEFORE persisting, so a bad paste
           can't silently break the next job. */}
       {rotateOpen && (
-        <div className="space-y-3 pt-3 mt-3 border-t border-neutral-800/60">
+        <div className="space-y-3 pt-3 mt-3 border-t border-rule-2">
           <div>
-            <label
-              htmlFor={`mcp-rotate-${instance.id}`}
-              className="block text-xs text-neutral-500 mb-1"
-            >
+            <label htmlFor={`mcp-rotate-${instance.id}`} className="block text-xs text-ink-3 mb-1">
               New API key
             </label>
             <input
@@ -189,9 +186,9 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
                 }
               }}
               placeholder="Paste the new key"
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
-            <p className="text-[11px] text-neutral-600 mt-1">
+            <p className="text-[11px] text-ink-4 mt-1">
               Agent assignments stay intact — the key is verified against the server before being
               saved.
             </p>
@@ -201,7 +198,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
               type="button"
               onClick={performRotate}
               disabled={isPending || !newApiKey.trim()}
-              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Verifying…' : 'Save new key'}
             </button>
@@ -211,7 +208,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
                 setNewApiKey('');
                 setRotateOpen(false);
               }}
-              className="text-xs text-neutral-500 hover:text-white underline"
+              className="text-xs text-ink-3 hover:text-ink underline"
             >
               Cancel
             </button>

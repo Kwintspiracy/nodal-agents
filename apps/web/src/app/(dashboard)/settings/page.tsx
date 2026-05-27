@@ -21,8 +21,8 @@ export default async function SettingsPage() {
   if (!result.ok) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+        <h1 className="text-2xl font-bold text-ink">Settings</h1>
+        <div className="bg-paper border border-err/30 rounded-xl px-6 py-8 text-sm text-err">
           {result.message}
         </div>
       </div>
@@ -34,12 +34,12 @@ export default async function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">
+        <h1 className="text-2xl font-bold text-ink">Settings</h1>
+        <p className="text-sm text-ink-3 mt-0.5">
           Security mode and network access are editable here. Session and worker secret are seeded
-          by <code className="font-mono text-neutral-400">nodal-agents init</code> and surfaced
-          read-only. LLM providers moved to{' '}
-          <a href="/llm-providers" className="underline hover:text-neutral-300">
+          by <code className="font-mono text-ink-3">nodal-agents init</code> and surfaced read-only.
+          LLM providers moved to{' '}
+          <a href="/llm-providers" className="underline hover:text-ink-2">
             their own page
           </a>
           .
@@ -60,7 +60,7 @@ export default async function SettingsPage() {
           label="Worker secret"
           value={
             s.workerSecretConfigured ? (
-              <span className="text-emerald-400">configured</span>
+              <span className="text-ok">configured</span>
             ) : (
               <Missing>missing — runner calls will 403</Missing>
             )
@@ -70,10 +70,10 @@ export default async function SettingsPage() {
 
       {securityResult.ok && (
         <div>
-          <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+          <h2 className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-2">
             Security
           </h2>
-          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-5 py-5">
+          <div className="bg-paper border border-rule-2 rounded-xl px-5 py-5">
             <SecurityForm initial={securityResult.data} />
           </div>
         </div>
@@ -81,13 +81,13 @@ export default async function SettingsPage() {
 
       {networkResult.ok && (
         <div>
-          <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+          <h2 className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-2">
             Network
           </h2>
-          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-5 py-5">
+          <div className="bg-paper border border-rule-2 rounded-xl px-5 py-5">
             <NetworkForm initial={networkResult.data} />
           </div>
-          <div className="mt-3 bg-neutral-900 border border-neutral-800/60 rounded-xl divide-y divide-neutral-800/60">
+          <div className="mt-3 bg-paper border border-rule-2 rounded-xl divide-y divide-neutral-800/60">
             <Field label="App URL" value={s.appUrl} mono />
             <Field label="Runner URL" value={s.runnerUrl} mono />
           </div>
@@ -105,10 +105,8 @@ export default async function SettingsPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
-        {title}
-      </h2>
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl divide-y divide-neutral-800/60">
+      <h2 className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-2">{title}</h2>
+      <div className="bg-paper border border-rule-2 rounded-xl divide-y divide-neutral-800/60">
         {children}
       </div>
     </div>
@@ -118,10 +116,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-4 px-5 py-3">
-      <span className="text-sm text-neutral-400 shrink-0">{label}</span>
-      <span
-        className={`text-sm text-white text-right break-all ${mono ? 'font-mono text-xs' : ''}`}
-      >
+      <span className="text-sm text-ink-3 shrink-0">{label}</span>
+      <span className={`text-sm text-ink text-right break-all ${mono ? 'font-mono text-xs' : ''}`}>
         {value}
       </span>
     </div>
@@ -129,14 +125,14 @@ function Field({ label, value, mono }: { label: string; value: React.ReactNode; 
 }
 
 function Missing({ children }: { children: React.ReactNode }) {
-  return <span className="text-amber-400">{children}</span>;
+  return <span className="text-warn">{children}</span>;
 }
 
 function AuthBadge({ mode }: { mode: 'local-trust' | 'local-auth' | 'bearer-token' }) {
   const map = {
-    'local-trust': { label: 'no auth', cls: 'bg-amber-500/15 text-amber-400' },
-    'local-auth': { label: 'password', cls: 'bg-emerald-500/15 text-emerald-400' },
-    'bearer-token': { label: 'token', cls: 'bg-blue-500/15 text-blue-400' },
+    'local-trust': { label: 'no auth', cls: 'bg-warn-bg text-warn' },
+    'local-auth': { label: 'password', cls: 'bg-agent-vivid/15 text-ok' },
+    'bearer-token': { label: 'token', cls: 'bg-run-bg text-run' },
   } as const;
   const m = map[mode];
   return (

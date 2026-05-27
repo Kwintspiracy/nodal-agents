@@ -58,28 +58,28 @@ export default function TelegramConfigForm({
   return (
     <div className="space-y-5">
       {/* Status block */}
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-5 py-4">
+      <div className="bg-paper border border-rule-2/60 rounded-xl px-5 py-4">
         <div className="flex items-center gap-2">
           <span
             className={
               connected
-                ? 'inline-block w-2 h-2 rounded-full bg-emerald-500'
-                : 'inline-block w-2 h-2 rounded-full bg-neutral-600'
+                ? 'inline-block w-2 h-2 rounded-full bg-agent-vivid'
+                : 'inline-block w-2 h-2 rounded-full bg-ink-4'
             }
             aria-hidden="true"
           />
-          <span className="text-sm font-medium text-white">
+          <span className="text-sm font-medium text-ink">
             {connected ? 'Connected' : 'Not connected'}
           </span>
         </div>
         {config.botUsername && (
-          <p className="text-xs text-neutral-500 mt-1.5">
+          <p className="text-xs text-ink-3 mt-1.5">
             Bot:{' '}
             <a
               href={`https://t.me/${config.botUsername}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-mono text-neutral-300 hover:text-emerald-500"
+              className="font-mono text-ink-2 hover:text-ok"
             >
               @{config.botUsername}
             </a>
@@ -90,9 +90,7 @@ export default function TelegramConfigForm({
       {/* Configure form */}
       <form onSubmit={handleSubmit} className="space-y-3">
         <label className="block">
-          <span className="text-xs font-medium text-neutral-300 uppercase tracking-wider">
-            Bot token
-          </span>
+          <span className="text-xs font-medium text-ink-2 uppercase tracking-wider">Bot token</span>
           <input
             type="text"
             autoComplete="off"
@@ -100,14 +98,14 @@ export default function TelegramConfigForm({
             value={token}
             onChange={(e) => setToken(e.target.value)}
             placeholder="123456789:ABCDEF…"
-            className="mt-2 w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-sm font-mono text-neutral-100 placeholder:text-neutral-700 focus:outline-none focus:border-neutral-600"
+            className="mt-2 w-full px-3 py-2 bg-canvas border border-rule-2 rounded-lg text-sm font-mono text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule"
           />
         </label>
         <div className="flex items-center gap-2">
           <button
             type="submit"
             disabled={isPending || !token}
-            className="px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm font-medium bg-ok text-ink rounded-lg hover:bg-agent-vivid transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isPending ? 'Saving…' : connected ? 'Replace token' : 'Connect'}
           </button>
@@ -116,7 +114,7 @@ export default function TelegramConfigForm({
               type="button"
               onClick={() => setConfirmOpen(true)}
               disabled={isPending}
-              className="px-4 py-2 text-sm font-medium border border-neutral-800 text-neutral-400 rounded-lg hover:border-red-800/60 hover:text-red-400 transition-colors disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-err hover:text-err transition-colors disabled:opacity-50"
             >
               Disconnect
             </button>

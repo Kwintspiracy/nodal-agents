@@ -10,8 +10,8 @@ export default async function SkillsPage() {
   if (!result.ok) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">Skills</h1>
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+        <h1 className="text-2xl font-bold text-ink">Skills</h1>
+        <div className="bg-paper border border-err/30 rounded-xl px-6 py-8 text-sm text-err">
           {result.message}
         </div>
       </div>
@@ -22,8 +22,8 @@ export default async function SkillsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Skills</h1>
-          <p className="text-sm text-neutral-500 mt-0.5">
+          <h1 className="text-2xl font-bold text-ink">Skills</h1>
+          <p className="text-sm text-ink-3 mt-0.5">
             {result.data.length} skill{result.data.length === 1 ? '' : 's'} · reusable instructions
             you can attach to any agent
           </p>
@@ -33,7 +33,7 @@ export default async function SkillsPage() {
       <SkillForm />
 
       {result.data.length === 0 ? (
-        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
+        <div className="bg-paper border border-rule-2 rounded-xl px-6 py-12 text-center text-ink-4 text-sm">
           No skills yet. Create one above — the instructions get appended to the agent&apos;s system
           prompt when assigned.
         </div>

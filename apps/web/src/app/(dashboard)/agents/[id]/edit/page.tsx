@@ -43,20 +43,17 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   return (
     <div className="space-y-6">
       <div>
-        <Link
-          href="/agents"
-          className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-        >
+        <Link href="/agents" className="text-xs text-ink-3 hover:text-ink-2 transition-colors">
           ← Agents
         </Link>
-        <h1 className="text-2xl font-bold text-white mt-2">Edit agent</h1>
-        <p className="text-sm text-neutral-500 mt-1">
+        <h1 className="text-2xl font-bold text-ink mt-2">Edit agent</h1>
+        <p className="text-sm text-ink-3 mt-1">
           Updating personality or model invalidates the system-prompt cache for active jobs — the
           new config applies to all jobs started after saving.
         </p>
       </div>
 
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-6">
+      <div className="bg-paper border border-rule-2 rounded-xl p-6">
         <AgentForm
           mode="edit"
           initial={agent}

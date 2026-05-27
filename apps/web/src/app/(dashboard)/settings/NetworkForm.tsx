@@ -39,7 +39,7 @@ export default function NetworkForm({ initial }: Props) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <fieldset className="space-y-2">
-        <legend className="block text-xs text-neutral-500 mb-2">Network access</legend>
+        <legend className="block text-xs text-ink-3 mb-2">Network access</legend>
         <Choice
           checked={bind === 'loopback'}
           onChange={() => setBind('loopback')}
@@ -55,8 +55,8 @@ export default function NetworkForm({ initial }: Props) {
       </fieldset>
 
       {bind === 'lan' && initial.lanAddresses.length > 0 && (
-        <div className="bg-neutral-950 border border-neutral-800/40 rounded-lg p-4 space-y-2">
-          <div className="text-xs text-neutral-500">
+        <div className="bg-canvas border border-rule-2 rounded-lg p-4 space-y-2">
+          <div className="text-xs text-ink-3">
             From your phone or another device on the same network, open:
           </div>
           <ul className="space-y-1.5">
@@ -64,11 +64,11 @@ export default function NetworkForm({ initial }: Props) {
               const url = `http://${ip}:${initial.webPort}`;
               return (
                 <li key={ip} className="flex items-center justify-between gap-3">
-                  <code className="font-mono text-sm text-white break-all">{url}</code>
+                  <code className="font-mono text-sm text-ink break-all">{url}</code>
                   <button
                     type="button"
                     onClick={() => copyToClipboard(url)}
-                    className="px-2 py-1 text-[11px] font-medium border border-neutral-800 text-neutral-400 rounded hover:border-neutral-700 hover:text-white shrink-0"
+                    className="px-2 py-1 text-[11px] font-medium border border-rule-2 text-ink-3 rounded hover:border-rule hover:text-ink shrink-0"
                   >
                     Copy
                   </button>
@@ -76,7 +76,7 @@ export default function NetworkForm({ initial }: Props) {
               );
             })}
           </ul>
-          <p className="text-[11px] text-neutral-600 pt-1">
+          <p className="text-[11px] text-ink-4 pt-1">
             Windows Defender may prompt the first time another device tries to connect — allow
             access on private networks.
           </p>
@@ -84,14 +84,14 @@ export default function NetworkForm({ initial }: Props) {
       )}
 
       {bind === 'lan' && initial.lanAddresses.length === 0 && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 text-xs text-amber-300">
+        <div className="bg-warn-bg border border-warn/30 rounded-md px-3 py-2 text-xs text-warn">
           No LAN interface detected. Make sure this machine is connected to a network before
           enabling LAN access.
         </div>
       )}
 
       {!initial.configPathExists && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 text-xs text-amber-300">
+        <div className="bg-warn-bg border border-warn/30 rounded-md px-3 py-2 text-xs text-warn">
           ~/.nodalai/config.json wasn&apos;t found. Save here will fail until you&apos;ve run{' '}
           <code className="font-mono">nodal-agents init</code> at least once.
         </div>
@@ -101,12 +101,12 @@ export default function NetworkForm({ initial }: Props) {
         <button
           type="submit"
           disabled={isPending}
-          className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+          className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
         >
           {isPending ? 'Saving…' : 'Save'}
         </button>
         {driftFromRuntime && (
-          <span className="text-xs text-amber-400">
+          <span className="text-xs text-warn">
             New bind <code className="font-mono">{bind}</code> requires{' '}
             <code className="font-mono">nodal-agents down && nodal-agents up</code> to take effect.
           </span>
@@ -114,7 +114,7 @@ export default function NetworkForm({ initial }: Props) {
       </div>
 
       {restartHint && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2 text-xs text-emerald-300">
+        <div className="bg-agent-vivid/10 border border-ok/30 rounded-md px-3 py-2 text-xs text-ok">
           Saved. Restart with{' '}
           <code className="font-mono">nodal-agents down && nodal-agents up</code> to activate the
           new network mode.
@@ -138,9 +138,7 @@ function Choice({
   return (
     <label
       className={`flex items-start gap-3 px-3 py-2 rounded-md cursor-pointer border ${
-        checked
-          ? 'border-violet-500/50 bg-violet-500/5'
-          : 'border-neutral-800 hover:border-neutral-700'
+        checked ? 'border-run/30 bg-run-bg' : 'border-rule-2 hover:border-rule'
       }`}
     >
       <input
@@ -150,8 +148,8 @@ function Choice({
         className="mt-1 accent-violet-500"
       />
       <div>
-        <div className="text-sm text-white">{label}</div>
-        <div className="text-xs text-neutral-500">{subtitle}</div>
+        <div className="text-sm text-ink">{label}</div>
+        <div className="text-xs text-ink-3">{subtitle}</div>
       </div>
     </label>
   );

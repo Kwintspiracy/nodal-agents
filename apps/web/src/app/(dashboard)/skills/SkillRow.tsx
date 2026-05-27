@@ -73,34 +73,32 @@ export default function SkillRowComponent({ skill }: Props) {
     : skill.assignmentCount;
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
+    <div className="bg-paper border border-rule-2 rounded-xl overflow-hidden">
       <div className="flex items-center justify-between gap-3 px-5 py-4">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex-1 text-left flex items-center gap-3 hover:bg-neutral-800/30 -m-2 p-2 rounded-lg"
+          className="flex-1 text-left flex items-center gap-3 hover:bg-hover -m-2 p-2 rounded-lg"
         >
-          <span className="text-neutral-500 text-xs font-mono w-3">{open ? '▾' : '▸'}</span>
+          <span className="text-ink-3 text-xs font-mono w-3">{open ? '▾' : '▸'}</span>
           <div className="flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-white font-medium">{skill.name}</span>
-              <code className="font-mono text-xs text-neutral-500">{skill.slug}</code>
+              <span className="text-ink font-medium">{skill.name}</span>
+              <code className="font-mono text-xs text-ink-3">{skill.slug}</code>
               {!skill.active && (
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-warn">
                   inactive
                 </span>
               )}
             </div>
-            {skill.description && (
-              <p className="text-xs text-neutral-500 mt-0.5">{skill.description}</p>
-            )}
+            {skill.description && <p className="text-xs text-ink-3 mt-0.5">{skill.description}</p>}
           </div>
-          <span className="text-xs text-neutral-500 shrink-0">{liveCount} assigned</span>
+          <span className="text-xs text-ink-3 shrink-0">{liveCount} assigned</span>
         </button>
 
         <Link
           href={`/skills/${skill.id}/edit`}
-          className="shrink-0 px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-600 hover:text-white transition-colors"
+          className="shrink-0 px-2.5 py-1 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink transition-colors"
         >
           Edit
         </Link>
@@ -108,7 +106,7 @@ export default function SkillRowComponent({ skill }: Props) {
           type="button"
           onClick={() => setConfirmOpen(true)}
           disabled={isPending}
-          className="shrink-0 px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+          className="shrink-0 px-2.5 py-1 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err/30 hover:text-err disabled:opacity-40"
         >
           Delete
         </button>
@@ -123,24 +121,24 @@ export default function SkillRowComponent({ skill }: Props) {
       />
 
       {open && (
-        <div className="border-t border-neutral-800/60 px-5 py-4 space-y-4 bg-neutral-950/40">
+        <div className="border-t border-rule-2 px-5 py-4 space-y-4 bg-canvas/40">
           <div>
-            <h4 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+            <h4 className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-2">
               Instructions
             </h4>
-            <pre className="text-xs text-neutral-300 font-mono whitespace-pre-wrap break-words bg-neutral-950 border border-neutral-800/40 rounded-md p-3 max-h-64 overflow-y-auto">
+            <pre className="text-xs text-ink-2 font-mono whitespace-pre-wrap break-words bg-canvas border border-rule-2 rounded-md p-3 max-h-64 overflow-y-auto">
               {skill.content}
             </pre>
           </div>
 
           <div>
-            <h4 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+            <h4 className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-2">
               Assigned to
             </h4>
             {loading ? (
-              <p className="text-xs text-neutral-600">Loading…</p>
+              <p className="text-xs text-ink-4">Loading…</p>
             ) : !assignments || assignments.length === 0 ? (
-              <p className="text-xs text-neutral-600">
+              <p className="text-xs text-ink-4">
                 No agents in this workspace yet. Create one on the Agents page.
               </p>
             ) : (
@@ -148,7 +146,7 @@ export default function SkillRowComponent({ skill }: Props) {
                 {assignments.map((a) => (
                   <label
                     key={a.agentId}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-neutral-800/40"
+                    className="flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-hover"
                   >
                     <input
                       type="checkbox"
@@ -156,10 +154,8 @@ export default function SkillRowComponent({ skill }: Props) {
                       onChange={() => toggleAssignment(a.agentId, a.assigned)}
                       className="accent-violet-500"
                     />
-                    <span className="text-white">{a.agentName}</span>
-                    <span className="font-mono text-xs text-neutral-500 ml-auto">
-                      {a.agentSlug}
-                    </span>
+                    <span className="text-ink">{a.agentName}</span>
+                    <span className="font-mono text-xs text-ink-3 ml-auto">{a.agentSlug}</span>
                   </label>
                 ))}
               </div>

@@ -83,8 +83,8 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
   if (!result.ok) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">Connectors</h1>
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+        <h1 className="text-2xl font-bold text-ink">Connectors</h1>
+        <div className="bg-paper border border-err/30 rounded-xl px-6 py-8 text-sm text-err">
           {result.message}
         </div>
       </div>
@@ -117,14 +117,14 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
 
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Connectors</h1>
-          <p className="text-sm text-neutral-500 mt-0.5">
+          <h1 className="text-2xl font-bold text-ink">Connectors</h1>
+          <p className="text-sm text-ink-3 mt-0.5">
             {instances.length} active instance{instances.length === 1 ? '' : 's'}
           </p>
         </div>
         <a
           href="/credentials"
-          className="shrink-0 px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white transition-colors"
+          className="shrink-0 px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink transition-colors"
         >
           Manage credentials
         </a>
@@ -132,12 +132,12 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
 
       {/* ── Active Connectors ─────────────────────────────────────────────── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">
+        <h2 className="text-sm font-semibold text-ink-3 uppercase tracking-wider">
           Active Connectors
         </h2>
 
         {instances.length === 0 ? (
-          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
+          <div className="bg-paper border border-rule-2 rounded-xl px-6 py-12 text-center text-ink-4 text-sm">
             No active connectors yet. Add one from the Marketplace below.
           </div>
         ) : (
@@ -170,9 +170,7 @@ export default async function ConnectorsPage({ searchParams }: PageProps) {
 
       {/* ── Marketplace ───────────────────────────────────────────────────── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">
-          Marketplace
-        </h2>
+        <h2 className="text-sm font-semibold text-ink-3 uppercase tracking-wider">Marketplace</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {catalog.map((item) => {
             const compatibleCredentials = item.credentialType

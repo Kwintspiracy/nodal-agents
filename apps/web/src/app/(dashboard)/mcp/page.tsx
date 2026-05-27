@@ -10,8 +10,8 @@ export default async function McpPage() {
   if (!result.ok) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">MCP Connectors</h1>
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+        <h1 className="text-2xl font-bold text-ink">MCP Connectors</h1>
+        <div className="bg-paper border border-err/30 rounded-xl px-6 py-8 text-sm text-err">
           {result.message}
         </div>
       </div>
@@ -23,8 +23,8 @@ export default async function McpPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">MCP Connectors</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">
+        <h1 className="text-2xl font-bold text-ink">MCP Connectors</h1>
+        <p className="text-sm text-ink-3 mt-0.5">
           {instances.length} active instance{instances.length === 1 ? '' : 's'} · remote MCP servers
           whose tools your agents can use
         </p>
@@ -32,12 +32,12 @@ export default async function McpPage() {
 
       {/* ── Active Servers ────────────────────────────────────────────────── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">
+        <h2 className="text-sm font-semibold text-ink-3 uppercase tracking-wider">
           Active Servers
         </h2>
 
         {instances.length === 0 ? (
-          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
+          <div className="bg-paper border border-rule-2 rounded-xl px-6 py-12 text-center text-ink-4 text-sm">
             No MCP connectors yet. Pick one from the Marketplace below and paste your API key — its
             tools become available to any agent you assign it to.
           </div>
@@ -60,9 +60,7 @@ export default async function McpPage() {
 
       {/* ── Marketplace ───────────────────────────────────────────────────── */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">
-          Marketplace
-        </h2>
+        <h2 className="text-sm font-semibold text-ink-3 uppercase tracking-wider">Marketplace</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {catalog.map((item) => (
             <McpAddForm key={item.slug} catalogItem={item} />

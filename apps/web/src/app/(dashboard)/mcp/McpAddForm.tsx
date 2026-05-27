@@ -190,34 +190,32 @@ export default function McpAddForm({ catalogItem }: Props) {
     : 'my_slug__list_things';
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-4 space-y-3">
+    <div className="bg-paper border border-rule-2 rounded-xl p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-white">{catalogItem.label}</h3>
-          <p className="text-[11px] text-neutral-500 font-mono mt-0.5">{catalogItem.slug}</p>
+          <h3 className="text-sm font-semibold text-ink">{catalogItem.label}</h3>
+          <p className="text-[11px] text-ink-3 font-mono mt-0.5">{catalogItem.slug}</p>
         </div>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
+          className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92]"
         >
           {open ? 'Cancel' : '+ Add'}
         </button>
       </div>
 
-      {catalogItem.description && (
-        <p className="text-xs text-neutral-600">{catalogItem.description}</p>
-      )}
+      {catalogItem.description && <p className="text-xs text-ink-4">{catalogItem.description}</p>}
 
       {open && (
-        <form onSubmit={handleSubmit} className="space-y-3 pt-2 border-t border-neutral-800/60">
+        <form onSubmit={handleSubmit} className="space-y-3 pt-2 border-t border-rule-2">
           {/* Name — common to all flavors. */}
           <div>
             <label
               htmlFor={`mcp-name-${catalogItem.slug}`}
-              className="block text-xs text-neutral-500 mb-1"
+              className="block text-xs text-ink-3 mb-1"
             >
-              Name <span className="text-neutral-700">(e.g. &quot;Cortex — perso&quot;)</span>
+              Name <span className="text-ink-4">(e.g. &quot;Cortex — perso&quot;)</span>
             </label>
             <input
               id={`mcp-name-${catalogItem.slug}`}
@@ -226,7 +224,7 @@ export default function McpAddForm({ catalogItem }: Props) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={catalogItem.label}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
             />
           </div>
 
@@ -235,9 +233,9 @@ export default function McpAddForm({ catalogItem }: Props) {
             <div>
               <label
                 htmlFor={`mcp-slug-${catalogItem.slug}`}
-                className="block text-xs text-neutral-500 mb-1"
+                className="block text-xs text-ink-3 mb-1"
               >
-                Server slug <span className="text-neutral-700">(tool name prefix)</span>
+                Server slug <span className="text-ink-4">(tool name prefix)</span>
               </label>
               <input
                 id={`mcp-slug-${catalogItem.slug}`}
@@ -247,12 +245,11 @@ export default function McpAddForm({ catalogItem }: Props) {
                 onChange={(e) => setCustomSlug(e.target.value)}
                 placeholder="my-server"
                 pattern="[a-z0-9-]+"
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
               />
-              <p className="text-[11px] text-neutral-600 mt-1">
-                Tools will be named like{' '}
-                <span className="font-mono text-neutral-400">{slugPreview}</span>. Lowercase
-                letters, digits, dashes.
+              <p className="text-[11px] text-ink-4 mt-1">
+                Tools will be named like <span className="font-mono text-ink-3">{slugPreview}</span>
+                . Lowercase letters, digits, dashes.
               </p>
             </div>
           )}
@@ -262,7 +259,7 @@ export default function McpAddForm({ catalogItem }: Props) {
             <div>
               <label
                 htmlFor={`mcp-url-${catalogItem.slug}`}
-                className="block text-xs text-neutral-500 mb-1"
+                className="block text-xs text-ink-3 mb-1"
               >
                 Server URL
               </label>
@@ -273,7 +270,7 @@ export default function McpAddForm({ catalogItem }: Props) {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://…"
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
               />
             </div>
           )}
@@ -281,15 +278,15 @@ export default function McpAddForm({ catalogItem }: Props) {
           {/* Custom HTTP: auth scheme picker. */}
           {isCustomHttp && (
             <div className="space-y-2">
-              <p className="block text-xs text-neutral-500">Auth scheme</p>
+              <p className="block text-xs text-ink-3">Auth scheme</p>
               <div className="flex flex-wrap gap-2">
                 {(['header', 'query', 'bearer'] as const).map((scheme) => (
                   <label
                     key={scheme}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs cursor-pointer border ${
                       customAuthScheme === scheme
-                        ? 'bg-neutral-800 border-neutral-500 text-white'
-                        : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:border-neutral-600'
+                        ? 'bg-hover border-ink-3 text-ink'
+                        : 'bg-paper border-rule text-ink-3 hover:border-rule'
                     }`}
                   >
                     <input
@@ -309,7 +306,7 @@ export default function McpAddForm({ catalogItem }: Props) {
                 <div>
                   <label
                     htmlFor={`mcp-auth-param-${catalogItem.slug}`}
-                    className="block text-xs text-neutral-500 mb-1"
+                    className="block text-xs text-ink-3 mb-1"
                   >
                     {customAuthScheme === 'header' ? 'Header name' : 'Query param name'}
                   </label>
@@ -320,7 +317,7 @@ export default function McpAddForm({ catalogItem }: Props) {
                     value={customAuthParamName}
                     onChange={(e) => setCustomAuthParamName(e.target.value)}
                     placeholder={customAuthScheme === 'header' ? 'x-api-key' : 'api_key'}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                    className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                   />
                 </div>
               )}
@@ -332,7 +329,7 @@ export default function McpAddForm({ catalogItem }: Props) {
             <div>
               <label
                 htmlFor={`mcp-key-${catalogItem.slug}`}
-                className="block text-xs text-neutral-500 mb-1"
+                className="block text-xs text-ink-3 mb-1"
               >
                 API key
               </label>
@@ -344,10 +341,10 @@ export default function McpAddForm({ catalogItem }: Props) {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder={catalogItem.keyPrefix[0] ? `${catalogItem.keyPrefix[0]}…` : ''}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
               />
               {catalogItem.docsHint && (
-                <p className="text-[11px] text-neutral-600 mt-1">{catalogItem.docsHint}</p>
+                <p className="text-[11px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
               )}
             </div>
           )}
@@ -358,7 +355,7 @@ export default function McpAddForm({ catalogItem }: Props) {
               <div>
                 <label
                   htmlFor={`mcp-command-${catalogItem.slug}`}
-                  className="block text-xs text-neutral-500 mb-1"
+                  className="block text-xs text-ink-3 mb-1"
                 >
                   Command
                 </label>
@@ -369,9 +366,9 @@ export default function McpAddForm({ catalogItem }: Props) {
                   value={customCommand}
                   onChange={(e) => setCustomCommand(e.target.value)}
                   placeholder="npx"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                 />
-                <p className="text-[11px] text-neutral-600 mt-1">
+                <p className="text-[11px] text-ink-4 mt-1">
                   Executable name (resolved via PATH) or absolute path.
                 </p>
               </div>
@@ -379,9 +376,9 @@ export default function McpAddForm({ catalogItem }: Props) {
               <div>
                 <label
                   htmlFor={`mcp-args-${catalogItem.slug}`}
-                  className="block text-xs text-neutral-500 mb-1"
+                  className="block text-xs text-ink-3 mb-1"
                 >
-                  Arguments <span className="text-neutral-700">(one per line)</span>
+                  Arguments <span className="text-ink-4">(one per line)</span>
                 </label>
                 <textarea
                   id={`mcp-args-${catalogItem.slug}`}
@@ -389,14 +386,13 @@ export default function McpAddForm({ catalogItem }: Props) {
                   value={customArgsText}
                   onChange={(e) => setCustomArgsText(e.target.value)}
                   placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/folder'}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono resize-none"
+                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
                 />
               </div>
 
               <div>
-                <p className="block text-xs text-neutral-500 mb-1">
-                  Environment variables{' '}
-                  <span className="text-neutral-700">(encrypted at rest)</span>
+                <p className="block text-xs text-ink-3 mb-1">
+                  Environment variables <span className="text-ink-4">(encrypted at rest)</span>
                 </p>
                 <div className="space-y-2">
                   {envRows.map((row, idx) => (
@@ -406,7 +402,7 @@ export default function McpAddForm({ catalogItem }: Props) {
                         value={row.key}
                         onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
                         placeholder="GITHUB_TOKEN"
-                        className="flex-1 bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                        className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                       />
                       <input
                         type="password"
@@ -414,14 +410,14 @@ export default function McpAddForm({ catalogItem }: Props) {
                         value={row.value}
                         onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
                         placeholder="value"
-                        className="flex-1 bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                        className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                       />
                       <button
                         type="button"
                         onClick={() => removeEnvRow(idx)}
                         disabled={envRows.length === 1}
                         aria-label="Remove env var"
-                        className="px-2 text-neutral-500 hover:text-red-400 disabled:opacity-30"
+                        className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
                       >
                         ×
                       </button>
@@ -431,12 +427,12 @@ export default function McpAddForm({ catalogItem }: Props) {
                 <button
                   type="button"
                   onClick={addEnvRow}
-                  className="mt-2 text-[11px] text-neutral-400 hover:text-white"
+                  className="mt-2 text-[11px] text-ink-3 hover:text-ink"
                 >
                   + Add variable
                 </button>
                 {catalogItem.docsHint && (
-                  <p className="text-[11px] text-neutral-600 mt-2">{catalogItem.docsHint}</p>
+                  <p className="text-[11px] text-ink-4 mt-2">{catalogItem.docsHint}</p>
                 )}
               </div>
             </>
@@ -445,7 +441,7 @@ export default function McpAddForm({ catalogItem }: Props) {
           <button
             type="submit"
             disabled={isPending || !name.trim()}
-            className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+            className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
           >
             {isPending ? 'Connecting…' : 'Connect'}
           </button>

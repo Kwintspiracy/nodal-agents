@@ -80,11 +80,11 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
   }
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-4 space-y-3">
+    <div className="bg-paper border border-rule-2 rounded-xl p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-white">{catalogItem.label}</h3>
-          <p className="text-[11px] text-neutral-500 font-mono mt-0.5">
+          <h3 className="text-sm font-semibold text-ink">{catalogItem.label}</h3>
+          <p className="text-[11px] text-ink-3 font-mono mt-0.5">
             {catalogItem.slug} · {catalogItem.authType}
           </p>
         </div>
@@ -98,7 +98,7 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
               setOpen((v) => !v);
             }
           }}
-          className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
+          className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92]"
         >
           {open
             ? 'Cancel'
@@ -108,32 +108,29 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
         </button>
       </div>
 
-      <p className="text-xs text-neutral-600">{catalogItem.docsHint}</p>
+      <p className="text-xs text-ink-4">{catalogItem.docsHint}</p>
 
       {/* api_key expand form */}
       {isApiKey && open && (
-        <form
-          onSubmit={handleApiKeySubmit}
-          className="space-y-3 pt-2 border-t border-neutral-800/60"
-        >
+        <form onSubmit={handleApiKeySubmit} className="space-y-3 pt-2 border-t border-rule-2">
           <div>
             <label
               htmlFor={`add-name-${catalogItem.slug}`}
-              className="block text-xs text-neutral-500 mb-1"
+              className="block text-xs text-ink-3 mb-1"
             >
-              Name <span className="text-neutral-700">(e.g. &quot;Notion — perso&quot;)</span>
+              Name <span className="text-ink-4">(e.g. &quot;Notion — perso&quot;)</span>
             </label>
             <input
               id={`add-name-${catalogItem.slug}`}
               name="name"
               required
               placeholder={catalogItem.label}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
             />
           </div>
           {APIKEY_GUIDES[catalogItem.slug as keyof typeof APIKEY_GUIDES] && (
             <details className="group text-xs">
-              <summary className="cursor-pointer text-neutral-500 hover:text-neutral-300">
+              <summary className="cursor-pointer text-ink-3 hover:text-ink-2">
                 Where do I get this?
               </summary>
               <div className="mt-3 pl-1">
@@ -144,7 +141,7 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
           <div>
             <label
               htmlFor={`add-apikey-${catalogItem.slug}`}
-              className="block text-xs text-neutral-500 mb-1"
+              className="block text-xs text-ink-3 mb-1"
             >
               API key
             </label>
@@ -154,14 +151,14 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
               type="password"
               required
               autoComplete="off"
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
           </div>
           <div className="pt-1">
             <button
               type="submit"
               disabled={isPending}
-              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Connecting…' : 'Connect'}
             </button>
@@ -171,13 +168,13 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
 
       {/* oauth2 expand: pick existing credential or launch wizard */}
       {isOAuth && open && compatibleCredentials.length > 0 && (
-        <div className="space-y-3 pt-2 border-t border-neutral-800/60">
+        <div className="space-y-3 pt-2 border-t border-rule-2">
           <div>
-            <label className="block text-xs text-neutral-500 mb-1">Use existing credential</label>
+            <label className="block text-xs text-ink-3 mb-1">Use existing credential</label>
             <select
               value={selectedCredentialId}
               onChange={(e) => setSelectedCredentialId(e.target.value)}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
             >
               {compatibleCredentials.map((cred) => (
                 <option key={cred.id} value={cred.id}>
@@ -192,7 +189,7 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
               type="button"
               onClick={() => selectedCredentialId && performOAuthAssign(selectedCredentialId)}
               disabled={isPending || !selectedCredentialId}
-              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Connecting…' : 'Connect'}
             </button>
@@ -202,7 +199,7 @@ export default function ConnectorAddForm({ catalogItem, compatibleCredentials }:
                 setOpen(false);
                 setWizardOpen(true);
               }}
-              className="px-3 py-1.5 text-xs text-neutral-500 hover:text-white underline"
+              className="px-3 py-1.5 text-xs text-ink-3 hover:text-ink underline"
             >
               or create new
             </button>
