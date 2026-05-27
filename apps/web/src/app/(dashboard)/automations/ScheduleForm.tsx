@@ -74,7 +74,7 @@ export default function ScheduleForm(props: Props) {
         type="button"
         onClick={() => setOpen(true)}
         disabled={props.agents.length === 0}
-        className="px-4 py-2 text-sm font-medium bg-white text-black rounded-lg hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[13px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-40"
         title={props.agents.length === 0 ? 'Create an agent first' : ''}
       >
         + New schedule
@@ -90,15 +90,15 @@ export default function ScheduleForm(props: Props) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3"
+      className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5"
     >
-      <h3 className="text-sm font-semibold text-white">
+      <h3 className="text-sm font-semibold text-ink">
         {isEdit ? 'Edit schedule' : 'New schedule'}
       </h3>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="schedule-agent">
+          <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-agent">
             Agent
           </label>
           <select
@@ -106,7 +106,7 @@ export default function ScheduleForm(props: Props) {
             name="agentId"
             required
             defaultValue={agentDefault}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             <option value="">Select…</option>
             {props.agents.map((a) => (
@@ -117,7 +117,7 @@ export default function ScheduleForm(props: Props) {
           </select>
         </div>
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="schedule-name">
+          <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-name">
             Name
           </label>
           <input
@@ -126,7 +126,7 @@ export default function ScheduleForm(props: Props) {
             required
             defaultValue={nameDefault}
             placeholder="Daily standup"
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+            className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </div>
       </div>
@@ -134,7 +134,7 @@ export default function ScheduleForm(props: Props) {
       <CronBuilder name="cronExpr" initial={cronDefault} />
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="schedule-task">
+        <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-task">
           Task instructions
         </label>
         <textarea
@@ -144,7 +144,7 @@ export default function ScheduleForm(props: Props) {
           rows={4}
           defaultValue={taskDefault}
           placeholder="What should the agent do each time this fires?"
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-y"
+          className="w-full resize-y rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
         />
       </div>
 
@@ -152,7 +152,7 @@ export default function ScheduleForm(props: Props) {
         <button
           type="submit"
           disabled={isPending}
-          className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[13px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
         >
           {isPending
             ? isEdit
@@ -168,7 +168,7 @@ export default function ScheduleForm(props: Props) {
             if (isEdit) props.onDone?.();
             else setOpen(false);
           }}
-          className="px-4 py-2 text-sm font-medium border border-neutral-700 text-neutral-400 rounded-md hover:border-neutral-600"
+          className="inline-flex h-[34px] items-center rounded-md border border-rule-2 px-3.5 text-[13px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink"
         >
           Cancel
         </button>

@@ -11,6 +11,7 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import ScheduleForm from './ScheduleForm.tsx';
 import { humanLabel } from '@/lib/cron.ts';
+import StatusPill from '@/components/ui/StatusPill';
 
 interface Props {
   schedule: ScheduleRowData;
@@ -48,31 +49,28 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
   }
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3">
+    <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-base font-semibold text-white">{s.name}</h3>
-            <span
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                s.active ? 'bg-emerald-500/15 text-emerald-400' : 'bg-neutral-800 text-neutral-500'
-              }`}
-            >
-              {s.active ? 'active' : 'paused'}
-            </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-ink">{s.name}</h3>
+            <StatusPill
+              variant={s.active ? 'done' : 'idle'}
+              label={s.active ? 'Active' : 'Paused'}
+            />
           </div>
-          <div className="flex items-center gap-3 text-xs text-neutral-500 flex-wrap">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-ink-3">
             <span>{humanLabel(s.cronExpr)}</span>
             {s.agentName && (
               <>
-                <span className="text-neutral-700">·</span>
+                <span className="text-rule">·</span>
                 <span>
-                  {s.agentName} <span className="font-mono text-neutral-600">{s.agentSlug}</span>
+                  {s.agentName} <span className="font-mono text-ink-4">{s.agentSlug}</span>
                 </span>
               </>
             )}
           </div>
-          <div className="flex items-center gap-3 text-[10px] text-neutral-600">
+          <div className="flex items-center gap-3 text-[10px] text-ink-4">
             {s.nextRun && s.active && <span>Next run {new Date(s.nextRun).toLocaleString()}</span>}
             {s.lastRun && (
               <span>
@@ -81,10 +79,10 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
                   <span
                     className={`ml-1 ${
                       s.lastStatus === 'success'
-                        ? 'text-emerald-400'
+                        ? 'text-ok'
                         : s.lastStatus === 'failed'
-                          ? 'text-red-400'
-                          : 'text-neutral-500'
+                          ? 'text-err'
+                          : 'text-ink-4'
                     }`}
                   >
                     ({s.lastStatus})
@@ -100,7 +98,7 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
             type="button"
             onClick={() => setEditing(true)}
             disabled={isPending}
-            className="px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
           >
             Edit
           </button>
@@ -108,7 +106,7 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
             type="button"
             onClick={handleToggle}
             disabled={isPending}
-            className="px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
           >
             {s.active ? 'Pause' : 'Enable'}
           </button>
@@ -116,7 +114,7 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
             type="button"
             onClick={() => setConfirmOpen(true)}
             disabled={isPending}
-            className="px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+            className="rounded-md border border-err/30 px-2.5 py-1 text-xs font-medium text-err transition-colors hover:border-err/60 disabled:opacity-40"
           >
             Delete
           </button>
@@ -124,11 +122,11 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
       </div>
 
       {s.task && (
-        <details className="bg-neutral-950 border border-neutral-800/40 rounded-md">
-          <summary className="cursor-pointer px-3 py-2 text-xs text-neutral-500 hover:text-neutral-300">
+        <details className="rounded-md border border-rule bg-canvas">
+          <summary className="cursor-pointer px-3 py-2 text-xs text-ink-3 hover:text-ink-2">
             Task instructions
           </summary>
-          <pre className="px-3 pb-3 text-xs text-neutral-300 whitespace-pre-wrap">{s.task}</pre>
+          <pre className="whitespace-pre-wrap px-3 pb-3 text-xs text-ink-2">{s.task}</pre>
         </details>
       )}
 
