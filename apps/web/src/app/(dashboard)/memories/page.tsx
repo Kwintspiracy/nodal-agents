@@ -1,18 +1,13 @@
 import Link from 'next/link';
 import { listAgentsAction, listMemoriesAction } from '@/lib/actions.ts';
+import AgentAvatar from '@/components/ui/AgentAvatar';
+import MemoryCategoryChip from '@/components/ui/MemoryCategoryChip';
 import MemoryActions from './MemoryActions.tsx';
 import MemoryFilters from './MemoryFilters.tsx';
 
 export const dynamic = 'force-dynamic';
 
 const PAGE_SIZE = 50;
-
-const CATEGORY_COLOR: Record<string, string> = {
-  preference: 'text-violet-400',
-  context: 'text-neutral-400',
-  outcome: 'text-emerald-400',
-  learned_rule: 'text-amber-400',
-};
 
 interface PageProps {
   searchParams: Promise<{
@@ -42,46 +37,51 @@ export default async function MemoriesPage({ searchParams }: PageProps) {
   const data = memoriesResult.ok ? memoriesResult.data : null;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Memories</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">
+    <div className="py-7">
+      {/* Header ------------------------------------------------------- */}
+      <div className="mb-5">
+        <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
+          Memories
+        </h1>
+        <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
           {data
-            ? `${data.totalCount} memor${data.totalCount === 1 ? 'y' : 'ies'}`
+            ? `${data.totalCount} memor${data.totalCount === 1 ? 'y' : 'ies'} stored`
             : 'Failed to load'}
         </p>
       </div>
 
+      {/* Filters ------------------------------------------------------- */}
       <MemoryFilters agents={agents} />
 
+      {/* Content ------------------------------------------------------- */}
       {!memoriesResult.ok ? (
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+        <div className="mt-4 rounded-xl border border-warn/40 bg-warn-bg px-6 py-8 text-sm text-warn">
           {memoriesResult.message}
         </div>
       ) : data && data.items.length === 0 ? (
-        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
+        <div className="mt-4 rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
           No memories match these filters. Agents save memories automatically when they call{' '}
-          <code className="font-mono text-neutral-500">save_memory</code>.
+          <code className="font-mono text-ink-3">save_memory</code>.
         </div>
       ) : data ? (
-        <>
-          <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
+        <div className="mt-4 space-y-3">
+          <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-neutral-800/60">
-                  <th className="text-left px-5 py-3 text-xs text-neutral-500 font-semibold uppercase tracking-wider">
+                <tr className="border-b border-rule-2">
+                  <th className="px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4">
                     Fact
                   </th>
-                  <th className="text-left px-5 py-3 text-xs text-neutral-500 font-semibold uppercase tracking-wider hidden md:table-cell">
+                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4 md:table-cell">
                     Agent
                   </th>
-                  <th className="text-left px-5 py-3 text-xs text-neutral-500 font-semibold uppercase tracking-wider hidden lg:table-cell">
+                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4 lg:table-cell">
                     Category
                   </th>
-                  <th className="text-left px-5 py-3 text-xs text-neutral-500 font-semibold uppercase tracking-wider hidden lg:table-cell">
+                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4 lg:table-cell">
                     Imp
                   </th>
-                  <th className="text-left px-5 py-3 text-xs text-neutral-500 font-semibold uppercase tracking-wider hidden xl:table-cell">
+                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4 xl:table-cell">
                     Tags
                   </th>
                   <th className="px-5 py-3" />
@@ -89,39 +89,52 @@ export default async function MemoriesPage({ searchParams }: PageProps) {
               </thead>
               <tbody>
                 {data.items.map((m) => (
-                  <tr key={m.id} className="border-b border-neutral-800/40 last:border-0 align-top">
-                    <td className="px-5 py-3">
-                      <div className="text-white">{m.fact}</div>
-                      <div className="text-xs text-neutral-600 mt-1">
+                  <tr
+                    key={m.id}
+                    className="align-top border-b border-rule-2/60 last:border-0 hover:bg-hover/50 transition-colors"
+                  >
+                    {/* Fact + metadata -------------------------------- */}
+                    <td className="px-5 py-3.5">
+                      <div className="text-[13px] leading-snug text-ink">{m.fact}</div>
+                      <div className="mt-1 font-mono text-[11px] text-ink-4">
                         {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
                         {m.access_count > 0 ? ` · accessed ${m.access_count}×` : ''}
                         {m.archived ? ' · archived' : ''}
                       </div>
                     </td>
-                    <td className="hidden md:table-cell px-5 py-3 text-xs">
+
+                    {/* Agent ------------------------------------------ */}
+                    <td className="hidden px-5 py-3.5 md:table-cell">
                       {m.agentName ? (
                         <Link
                           href={`/memories?agent=${m.agent_id}`}
-                          className="text-neutral-300 hover:text-white"
+                          className="inline-flex items-center gap-2 text-[12px] text-ink-2 hover:text-ink transition-colors"
                         >
+                          <AgentAvatar name={m.agentName} size="sm" />
                           {m.agentName}
                         </Link>
                       ) : (
-                        <span className="text-neutral-600">—</span>
+                        <span className="text-ink-4">—</span>
                       )}
                     </td>
-                    <td className="hidden lg:table-cell px-5 py-3 text-xs">
-                      <span className={CATEGORY_COLOR[m.category] ?? 'text-neutral-500'}>
-                        {m.category}
-                      </span>
+
+                    {/* Category chip ---------------------------------- */}
+                    <td className="hidden px-5 py-3.5 lg:table-cell">
+                      <MemoryCategoryChip category={m.category} />
                     </td>
-                    <td className="hidden lg:table-cell px-5 py-3 text-xs text-neutral-400">
+
+                    {/* Importance ------------------------------------- */}
+                    <td className="hidden px-5 py-3.5 font-mono text-[12px] text-ink-3 lg:table-cell">
                       {m.importance}
                     </td>
-                    <td className="hidden xl:table-cell px-5 py-3 text-xs text-neutral-500">
+
+                    {/* Tags ------------------------------------------ */}
+                    <td className="hidden px-5 py-3.5 text-[11px] text-ink-4 xl:table-cell">
                       {m.skill_tags.length > 0 ? m.skill_tags.join(', ') : '—'}
                     </td>
-                    <td className="px-5 py-3 text-right">
+
+                    {/* Actions --------------------------------------- */}
+                    <td className="px-5 py-3.5 text-right">
                       <MemoryActions id={m.id} archived={m.archived} />
                     </td>
                   </tr>
@@ -139,7 +152,7 @@ export default async function MemoriesPage({ searchParams }: PageProps) {
               currentSearch={sp}
             />
           )}
-        </>
+        </div>
       ) : null}
     </div>
   );
@@ -163,7 +176,7 @@ function Pagination({ page, hasMore, totalCount, pageSize, currentSearch }: Pagi
   const nextHref = hasMore ? `/memories?${withPage(params, page + 1)}` : null;
 
   return (
-    <div className="flex items-center justify-between text-xs text-neutral-500">
+    <div className="flex items-center justify-between text-[12px] text-ink-4">
       <span>
         Page {page} of {lastPage}
       </span>
@@ -171,24 +184,24 @@ function Pagination({ page, hasMore, totalCount, pageSize, currentSearch }: Pagi
         {prevHref ? (
           <Link
             href={prevHref}
-            className="px-3 py-1.5 border border-neutral-800 rounded-md hover:border-neutral-700 hover:text-white"
+            className="rounded-md border border-rule-2 bg-paper px-3 py-1.5 text-ink-3 hover:border-rule hover:text-ink transition-colors"
           >
             Previous
           </Link>
         ) : (
-          <span className="px-3 py-1.5 border border-neutral-900 text-neutral-700 rounded-md">
+          <span className="rounded-md border border-rule-2 px-3 py-1.5 text-ink-4 opacity-40">
             Previous
           </span>
         )}
         {nextHref ? (
           <Link
             href={nextHref}
-            className="px-3 py-1.5 border border-neutral-800 rounded-md hover:border-neutral-700 hover:text-white"
+            className="rounded-md border border-rule-2 bg-paper px-3 py-1.5 text-ink-3 hover:border-rule hover:text-ink transition-colors"
           >
             Next
           </Link>
         ) : (
-          <span className="px-3 py-1.5 border border-neutral-900 text-neutral-700 rounded-md">
+          <span className="rounded-md border border-rule-2 px-3 py-1.5 text-ink-4 opacity-40">
             Next
           </span>
         )}

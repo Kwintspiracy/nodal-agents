@@ -34,12 +34,12 @@ export default function MemoryActions({ id, archived }: Props) {
 
   return (
     <>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-end gap-1.5">
         <button
           type="button"
           onClick={handleArchive}
           disabled={isPending}
-          className="px-2.5 py-1 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white transition-colors disabled:opacity-40"
+          className="rounded-md border border-rule-2 px-2.5 py-1 text-[11.5px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
         >
           {archived ? 'Restore' : 'Archive'}
         </button>
@@ -47,7 +47,7 @@ export default function MemoryActions({ id, archived }: Props) {
           type="button"
           onClick={() => setConfirmOpen(true)}
           disabled={isPending}
-          className="px-2.5 py-1 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 transition-colors disabled:opacity-40"
+          className="rounded-md border border-err/30 px-2.5 py-1 text-[11.5px] font-medium text-err transition-colors hover:border-err/60 hover:brightness-110 disabled:opacity-40"
         >
           Delete
         </button>
