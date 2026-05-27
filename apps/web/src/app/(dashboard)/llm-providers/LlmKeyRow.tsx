@@ -130,9 +130,7 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
 
 function AgentUsage({ count, keyId }: { count: number; keyId: string }) {
   if (count === 0) {
-    return (
-      <span className="font-sans text-[12.5px] leading-none text-ink-3">Not in use</span>
-    );
+    return <span className="font-sans text-[12.5px] leading-none text-ink-3">Not in use</span>;
   }
   return (
     <Link
