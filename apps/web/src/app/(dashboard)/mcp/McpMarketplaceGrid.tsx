@@ -52,7 +52,7 @@ export default function McpMarketplaceGrid({
           <p className="text-[13px] text-ink-3">No servers in this category.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
           {catalog.map((item) => {
             const installedInstances = instances.filter((i) => i.slug === item.slug);
             const isInstalled = installedInstances.length > 0;

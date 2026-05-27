@@ -23,7 +23,7 @@ type Props = {
  */
 export default function SkillsLibraryGrid({ skills }: Props) {
   return (
-    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid auto-rows-fr grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {skills.map((s) => (
         <MarketplaceCard
           key={s.id}

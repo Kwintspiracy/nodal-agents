@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import type { ConnectorRow, ConnectorCatalogItem } from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
+import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
@@ -55,6 +56,10 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
 
   return (
     <div className="pb-10">
+      <PageHeader
+        title="API Connectors"
+        subtitle="Wire your agents to external services — Gmail, Slack, HubSpot, and the rest. Browse the marketplace or manage the accounts you've already connected."
+      />
       <PageTopBar
         tabs={
           <PillTabs2

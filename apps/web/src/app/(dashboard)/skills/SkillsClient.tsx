@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Plus, Star } from '@phosphor-icons/react';
 import type { SkillRow } from '@/lib/actions.ts';
+import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
@@ -49,6 +50,10 @@ export default function SkillsClient({ skills }: Props) {
 
   return (
     <div className="pb-10">
+      <PageHeader
+        title="Skills"
+        subtitle={`${skills.length} reusable instruction${skills.length === 1 ? '' : 's'} you can attach to any agent.`}
+      />
       <PageTopBar
         tabs={
           <PillTabs2

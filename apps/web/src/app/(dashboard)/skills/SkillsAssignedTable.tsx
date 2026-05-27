@@ -31,11 +31,13 @@ export default function SkillsAssignedTable({ skills }: Props) {
     <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
       <table className="w-full border-collapse">
         <thead>
-          <Th label="Skill" />
-          <Th label="Assigned to" />
-          <Th label="Required built-ins" />
-          <Th label="Status" />
-          <Th label="Actions" align="right" />
+          <tr>
+            <Th label="Skill" />
+            <Th label="Assigned to" />
+            <Th label="Required built-ins" />
+            <Th label="Status" />
+            <Th label="Actions" align="right" />
+          </tr>
         </thead>
         <tbody>
           {skills.map((s) => (
@@ -49,16 +51,14 @@ export default function SkillsAssignedTable({ skills }: Props) {
 
 function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
   return (
-    <tr>
-      <th
-        className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4 ${
-          align === 'right' ? 'text-right' : 'text-left'
-        }`}
-        scope="col"
-      >
-        {label}
-      </th>
-    </tr>
+    <th
+      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4 ${
+        align === 'right' ? 'text-right' : 'text-left'
+      }`}
+      scope="col"
+    >
+      {label}
+    </th>
   );
 }
 

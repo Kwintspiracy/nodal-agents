@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
+import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
@@ -49,6 +50,10 @@ export default function McpClient({ instances, catalog }: Props) {
 
   return (
     <div className="pb-10">
+      <PageHeader
+        title="MCP Connectors"
+        subtitle="Model Context Protocol servers your agents can call. Install from the marketplace or wire a custom HTTP / stdio server."
+      />
       <PageTopBar
         tabs={
           <PillTabs2

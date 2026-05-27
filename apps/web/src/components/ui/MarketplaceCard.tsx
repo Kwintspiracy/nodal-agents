@@ -57,7 +57,7 @@ export default function MarketplaceCard({
 }: Props) {
   return (
     <div
-      className={`relative flex min-h-[200px] flex-col gap-1.5 rounded-2xl border border-rule-2 bg-paper p-[18px] ${className}`}
+      className={`relative flex h-full min-h-[200px] flex-col gap-1.5 rounded-2xl border border-rule-2 bg-paper p-[18px] ${className}`}
     >
       {topRight && (
         <div className="absolute top-3.5 right-3.5 flex items-center gap-1.5">{topRight}</div>

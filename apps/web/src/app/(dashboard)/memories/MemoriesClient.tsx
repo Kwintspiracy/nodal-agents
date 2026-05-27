@@ -21,6 +21,7 @@
 import { useState, useMemo, useTransition } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2, { type PillTab2 } from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
@@ -270,7 +271,11 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
   ];
 
   return (
-    <div className="py-7">
+    <div className="pb-10">
+      <PageHeader
+        title="Memory"
+        subtitle="What your agents remember between runs. Search across facts and outcomes, filter by agent, or archive what's no longer relevant."
+      />
       {/* PageTopBar ─────────────────────────────────────────────────────── */}
       <PageTopBar
         tabs={<PillTabs2 tabs={tabs} value={tab} onChange={setTab} />}
