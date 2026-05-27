@@ -5,6 +5,15 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   updateAgentAction,
   type AgentRow,
   type AgentEditRow,
@@ -255,6 +264,7 @@ export default function AgentComposer({
 
       {tab === 'overview' && (
         <OverviewTab
+          jobs={jobs}
           attachedSkills={attachedSkills}
           connectorsAssigned={assignedConnectorRows}
           mcpsAssignedCount={assignedMcps}
@@ -457,8 +467,9 @@ function HeroCard({
         </div>
       </div>
 
-      {/* Stat strip — only metrics we actually have, the rest dropped to avoid empty cells */}
-      <div className="grid grid-cols-2 gap-px border-t border-rule-2 bg-rule-2 sm:grid-cols-3 lg:grid-cols-6">
+      {/* Stat strip — 6 independent rounded mini-cards inside the hero,
+          separated by gap (not by border lines). Matches the screenshot. */}
+      <div className="grid grid-cols-2 gap-2 px-6 pb-6 sm:grid-cols-3 lg:grid-cols-6">
         <StatCell label="Skills" value={String(stats.skills)} />
         <StatCell label="Connectors" value={String(stats.connectors)} />
         <StatCell label="MCPs" value={String(stats.mcps)} />
@@ -480,7 +491,7 @@ function Sep() {
 
 function StatCell({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
   return (
-    <div className="bg-paper px-5 py-4">
+    <div className="rounded-lg border border-rule-2 bg-canvas/40 px-4 py-3">
       <div className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-4">{label}</div>
       <div
         className={`mt-1.5 text-[20px] font-semibold leading-none tracking-[-0.01em] ${dim ? 'text-ink-4' : 'text-ink'}`}
@@ -585,12 +596,14 @@ function SectionHead({
 // ─── Overview tab — real data, no empty placeholder boxes ─────────────────────
 
 function OverviewTab({
+  jobs,
   attachedSkills,
   connectorsAssigned,
   mcpsAssignedCount,
   onOpenSkills,
   onOpenConnectors,
 }: {
+  jobs: JobRow[];
   attachedSkills: SkillRow[];
   connectorsAssigned: AgentConnectorRow[];
   mcpsAssignedCount: number;
@@ -600,37 +613,59 @@ function OverviewTab({
   const hasSkills = attachedSkills.length > 0;
   const hasConnectors = connectorsAssigned.length > 0;
 
-  // If no skills + no connectors, show a single empty state instead of two empty cards.
-  if (!hasSkills && !hasConnectors) {
-    return (
-      <SectionCard>
-        <SectionHead
-          label="Nothing wired yet"
-          hint="Attach skills and connectors to make this agent useful."
-        />
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onOpenSkills}
-            className="rounded-lg border border-rule bg-canvas px-3.5 py-2 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
-          >
-            Attach skills →
-          </button>
-          <button
-            type="button"
-            onClick={onOpenConnectors}
-            className="rounded-lg border border-rule bg-canvas px-3.5 py-2 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
-          >
-            Attach connectors →
-          </button>
-        </div>
-      </SectionCard>
-    );
-  }
-
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      {/* Skills attached — 2 cols wide */}
+    <div className="space-y-6">
+      {/* Top row: weekly chart (2/3) + connectors used (1/3) — matches screenshot */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <SectionCard>
+            <AgentWeeklyChart jobs={jobs} />
+          </SectionCard>
+        </div>
+
+        <SectionCard>
+          <SectionHead
+            label={`Connectors used · ${connectorsAssigned.length}`}
+            right={
+              hasConnectors ? (
+                <button
+                  type="button"
+                  onClick={onOpenConnectors}
+                  className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
+                >
+                  Manage
+                </button>
+              ) : undefined
+            }
+          />
+          {hasConnectors ? (
+            <div className="space-y-2">
+              {connectorsAssigned.map((c) => (
+                <ConnectorOverviewRow key={c.connectorId} row={c} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-[12.5px] text-ink-3">
+              No connectors assigned yet.{' '}
+              <button
+                type="button"
+                onClick={onOpenConnectors}
+                className="underline hover:text-ink-2"
+              >
+                Wire one →
+              </button>
+            </p>
+          )}
+          {mcpsAssignedCount > 0 && (
+            <p className="mt-3 border-t border-rule-2 pt-3 text-[11.5px] text-ink-4">
+              + {mcpsAssignedCount} MCP server{mcpsAssignedCount > 1 ? 's' : ''} attached (Settings
+              → Knowledge).
+            </p>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* Skills attached — full-width row underneath */}
       <SectionCard>
         <SectionHead
           label={`Skills attached · ${attachedSkills.length}`}
@@ -647,57 +682,118 @@ function OverviewTab({
           }
         />
         {hasSkills ? (
-          <div className="space-y-2">
-            {attachedSkills.slice(0, 6).map((s) => (
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 xl:grid-cols-3">
+            {attachedSkills.map((s) => (
               <SkillEdRow key={s.id} skill={s} />
             ))}
-            {attachedSkills.length > 6 && (
-              <button
-                type="button"
-                onClick={onOpenSkills}
-                className="mt-1 text-[11.5px] text-ink-3 underline hover:text-ink-2"
-              >
-                + {attachedSkills.length - 6} more
-              </button>
-            )}
           </div>
         ) : (
-          <EdAddButton onClick={onOpenSkills}>Add skill from marketplace</EdAddButton>
-        )}
-      </SectionCard>
-
-      {/* Connectors used */}
-      <SectionCard>
-        <SectionHead
-          label={`Connectors used · ${connectorsAssigned.length}`}
-          right={
-            hasConnectors ? (
-              <button
-                type="button"
-                onClick={onOpenConnectors}
-                className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
-              >
-                Manage
-              </button>
-            ) : undefined
-          }
-        />
-        {hasConnectors ? (
-          <div className="space-y-2">
-            {connectorsAssigned.map((c) => (
-              <ConnectorOverviewRow key={c.connectorId} row={c} />
-            ))}
-          </div>
-        ) : (
-          <EdAddButton onClick={onOpenConnectors}>Connect from marketplace</EdAddButton>
-        )}
-        {mcpsAssignedCount > 0 && (
-          <p className="mt-3 border-t border-rule-2 pt-3 text-[11.5px] text-ink-4">
-            + {mcpsAssignedCount} MCP server{mcpsAssignedCount > 1 ? 's' : ''} attached (Settings →
-            Knowledge).
+          <p className="text-[12.5px] text-ink-3">
+            No skills attached yet. Read-only view — manage on the{' '}
+            <Link href="/skills" className="underline hover:text-ink-2">
+              Skills page
+            </Link>
+            .
           </p>
         )}
       </SectionCard>
+    </div>
+  );
+}
+
+// ─── AgentWeeklyChart — area chart over the last 7 days of completed jobs ────
+
+function AgentWeeklyChart({ jobs }: { jobs: JobRow[] }) {
+  const { data, total } = useMemo(() => {
+    // Build 7 buckets (today and the previous 6 days), labelled by short
+    // weekday name. Each bucket holds the count of completed jobs whose
+    // createdAt falls into that calendar day.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const buckets: { day: string; runs: number; iso: string }[] = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date(today.getTime() - i * 86_400_000);
+      buckets.push({
+        day: d.toLocaleDateString('en-US', { weekday: 'short' }),
+        iso: d.toISOString().slice(0, 10),
+        runs: 0,
+      });
+    }
+    const byIso = new Map(buckets.map((b) => [b.iso, b]));
+    let total = 0;
+    for (const j of jobs) {
+      if (j.status !== 'completed' || !j.createdAt) continue;
+      const created = typeof j.createdAt === 'string' ? new Date(j.createdAt) : j.createdAt;
+      const iso = new Date(created.getFullYear(), created.getMonth(), created.getDate())
+        .toISOString()
+        .slice(0, 10);
+      const bucket = byIso.get(iso);
+      if (!bucket) continue; // older than 7 days
+      bucket.runs += 1;
+      total += 1;
+    }
+    return { data: buckets, total };
+  }, [jobs]);
+
+  return (
+    <div>
+      <div className="mb-3 flex items-baseline gap-2">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
+          Runs · 7 days
+        </span>
+      </div>
+      <div className="mb-4 flex items-baseline gap-3">
+        <span className="text-[34px] font-semibold leading-none tracking-[-0.015em] text-ink">
+          {total.toLocaleString()}
+        </span>
+        <span className="text-[13.5px] text-ink-3">successful run{total === 1 ? '' : 's'}</span>
+      </div>
+      <div className="h-[200px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 6, right: 10, left: -20, bottom: 0 }}>
+            <defs>
+              <linearGradient id="agentWeeklyFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--c-agent-vivid)" stopOpacity={0.55} />
+                <stop offset="100%" stopColor="var(--c-agent-vivid)" stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke="var(--c-rule-2)" vertical={false} />
+            <XAxis
+              dataKey="day"
+              stroke="var(--c-ink-4)"
+              tick={{ fill: 'var(--c-ink-4)', fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              stroke="var(--c-ink-4)"
+              tick={{ fill: 'var(--c-ink-4)', fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+              allowDecimals={false}
+            />
+            <Tooltip
+              cursor={{ stroke: 'var(--c-ink-4)', strokeDasharray: '3 3' }}
+              contentStyle={{
+                background: 'var(--c-paper)',
+                border: '1px solid var(--c-rule)',
+                borderRadius: 10,
+                fontSize: 12,
+                color: 'var(--c-ink)',
+                boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+              }}
+              labelStyle={{ color: 'var(--c-ink-3)' }}
+            />
+            <Area
+              type="monotone"
+              dataKey="runs"
+              stroke="var(--c-agent-vivid)"
+              strokeWidth={2}
+              fill="url(#agentWeeklyFill)"
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
@@ -768,9 +864,8 @@ function SkillsTab({ skills }: { skills: SkillRow[] }) {
       <SectionCard>
         <SectionHead
           label="No skills attached"
-          hint="Skills are the agent's reusable capabilities. Attach some from the library."
+          hint="Read-only view. Manage attachments on the /skills page."
         />
-        <EdAddButton href="/skills">Add skill from marketplace</EdAddButton>
       </SectionCard>
     );
   }
@@ -781,9 +876,6 @@ function SkillsTab({ skills }: { skills: SkillRow[] }) {
         {skills.map((s) => (
           <SkillEdRow key={s.id} skill={s} />
         ))}
-      </div>
-      <div className="mt-4">
-        <EdAddButton href="/skills">Add skill from marketplace</EdAddButton>
       </div>
     </SectionCard>
   );
@@ -898,9 +990,9 @@ function SettingsTab(props: {
           <textarea
             value={personality}
             onChange={(e) => onChangePersonality(e.target.value)}
-            rows={16}
+            rows={24}
             placeholder="You are a helpful assistant…"
-            className="min-h-[320px] w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+            className="min-h-[560px] w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </Field>
         <div className="mt-4">

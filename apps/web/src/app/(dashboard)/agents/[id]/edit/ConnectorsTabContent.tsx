@@ -135,15 +135,13 @@ export default function ConnectorsTabContent({ agentId, connectors }: Props) {
     });
   }
 
-  const { connected, available } = useMemo(() => {
-    const connected: AgentConnectorRow[] = [];
-    const available: AgentConnectorRow[] = [];
+  const connected = useMemo(() => {
+    const out: AgentConnectorRow[] = [];
     for (const c of connectors) {
       const state = states.get(c.connectorId) ?? c;
-      if (state.assigned) connected.push(c);
-      else available.push(c);
+      if (state.assigned) out.push(c);
     }
-    return { connected, available };
+    return out;
   }, [connectors, states]);
 
   if (connectors.length === 0) {
@@ -189,47 +187,6 @@ export default function ConnectorsTabContent({ agentId, connectors }: Props) {
               />
             );
           })}
-        </Section>
-      )}
-
-      {available.length > 0 && (
-        <Section label={`Available · ${available.length}`}>
-          {available.map((c) => (
-            <EdRow
-              key={c.connectorId}
-              glyph={
-                <Disc
-                  variant="conn"
-                  size="md"
-                  shape="square"
-                  background={CONN_BRAND_COLORS[c.slug]}
-                >
-                  <span className="font-mono text-[10.5px] font-semibold">
-                    {connGlyph(c.slug, c.label)}
-                  </span>
-                </Disc>
-              }
-              name={
-                <>
-                  {c.label}
-                  <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
-                    {c.slug.toUpperCase()}
-                  </span>
-                </>
-              }
-              description={c.credentialName ?? undefined}
-              meta={`${c.availableOperations.length} ops`}
-              actions={
-                <IcBtn
-                  title="Add to this agent"
-                  ariaLabel="Add"
-                  onClick={() => toggleAssigned(c.connectorId, true)}
-                >
-                  <PlusIcon />
-                </IcBtn>
-              }
-            />
-          ))}
         </Section>
       )}
 
@@ -416,21 +373,6 @@ function CloseIcon() {
       strokeWidth="1.4"
     >
       <path d="M3 3l6 6M9 3l-6 6" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg
-      width="11"
-      height="11"
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-    >
-      <path d="M6 2v8M2 6h8" />
     </svg>
   );
 }
