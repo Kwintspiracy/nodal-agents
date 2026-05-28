@@ -72,12 +72,8 @@ export default function FleetPicker({
         >
           {active.icon ?? active.tag.slice(0, 2)}
         </span>
-        <span className="flex min-w-0 flex-1 flex-col text-left leading-[1.15]">
-          <span className="truncate text-[12.5px] font-medium text-ink">{active.name}</span>
-          <span className="mt-0.5 font-mono text-[10px] uppercase leading-none tracking-[0.08em] text-ink-4">
-            {active.tag}
-            {typeof active.count === 'number' && ` · ${active.count} agents`}
-          </span>
+        <span className="min-w-0 flex-1 truncate text-left text-[12.5px] font-medium text-ink">
+          {active.name}
         </span>
         {!disabled && <CaretDown size={12} className="shrink-0 text-ink-3" />}
       </button>
@@ -108,13 +104,7 @@ export default function FleetPicker({
                 >
                   {f.icon ?? f.tag.slice(0, 2)}
                 </span>
-                <span className="flex min-w-0 flex-1 flex-col gap-[1px]">
-                  <span className="font-medium text-ink">{f.name}</span>
-                  <span className="font-mono text-[10px] leading-none tracking-[0.04em] text-ink-4">
-                    {typeof f.count === 'number' ? `${f.count} agents · ` : ''}
-                    {f.tag.toLowerCase()}
-                  </span>
-                </span>
+                <span className="min-w-0 flex-1 truncate font-medium text-ink">{f.name}</span>
                 <Check
                   size={12}
                   weight="bold"
