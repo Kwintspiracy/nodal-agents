@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
-import { Plus, Star } from '@phosphor-icons/react';
+import { Star } from '@phosphor-icons/react';
 import type { SkillRow } from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
+import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 
 type Props = {
   skills: SkillRow[];
@@ -33,20 +33,16 @@ export default function SkillsLibraryGrid({ skills }: Props) {
           description={s.description ?? <span className="font-mono">{s.slug}</span>}
           category={s.contentOverridden ? 'Customised' : 'Default'}
           foot={
-            <>
-              <span className="flex-1 text-[12.5px] leading-none text-ink-3">
-                {s.assignmentCount > 0
+            <MarketplaceCardActions
+              status={
+                s.assignmentCount > 0
                   ? `Used by ${s.assignmentCount} ${s.assignmentCount === 1 ? 'agent' : 'agents'}`
-                  : 'Not assigned'}
-              </span>
-              <Link
-                href={`/skills/${s.id}/edit`}
-                className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-skill-vivid px-3.5 text-[13px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
-              >
-                <Plus size={12} weight="bold" />
-                Assign
-              </Link>
-            </>
+                  : 'Not assigned'
+              }
+              ctaLabel="Assign"
+              ctaVariant="coral"
+              ctaHref={`/skills/${s.id}/edit`}
+            />
           }
         />
       ))}
