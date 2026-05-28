@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
-import { Plus, Gear } from '@phosphor-icons/react';
+import { Plus } from '@phosphor-icons/react';
 import PrimaryButton from './PrimaryButton';
-import IconButton from './IconButton';
 
 type Props = {
   /** Optional left-aligned status line (e.g. "Used by 2 agents"). Omit to just
@@ -17,8 +16,6 @@ type Props = {
   onCta?: () => void;
   /** Link-flavour destination. Mutually exclusive with `onCta`. */
   ctaHref?: string;
-  /** Optional settings/gear button (connectors + MCP show it when installed). */
-  onSettings?: () => void;
 };
 
 /**
@@ -35,7 +32,6 @@ export default function MarketplaceCardActions({
   ctaVariant = 'blue',
   onCta,
   ctaHref,
-  onSettings,
 }: Props) {
   return (
     <>
@@ -50,11 +46,6 @@ export default function MarketplaceCardActions({
           <Plus size={12} weight="bold" />
           {ctaLabel}
         </PrimaryButton>
-      )}
-      {onSettings && (
-        <IconButton size="sm" aria-label="Settings" onClick={onSettings}>
-          <Gear size={13} />
-        </IconButton>
       )}
     </>
   );

@@ -107,7 +107,6 @@ function McpMarketCard({
             ctaLabel={isInstalled ? 'Add account' : 'Install'}
             ctaVariant="blue"
             onCta={() => setAddOpen((v) => !v)}
-            onSettings={isInstalled ? () => setAddOpen((v) => !v) : undefined}
           />
         }
       />
