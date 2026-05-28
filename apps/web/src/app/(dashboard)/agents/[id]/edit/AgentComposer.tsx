@@ -36,7 +36,6 @@ import EdAddButton from '@/components/ui/EdAddButton';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 import ConnectorsTabContent from './ConnectorsTabContent.tsx';
-import KnowledgeMcpRows from './KnowledgeMcpRows.tsx';
 
 /**
  * AgentComposer — detail page for /agents/[id]/edit.
@@ -257,7 +256,8 @@ export default function AgentComposer({
         onChange={setTab}
         counts={{
           skills: attachedSkills.length,
-          connectors: assignedConnectors,
+          // Connectors tab now lists API + MCP combined — count both.
+          connectors: assignedConnectors + assignedMcps,
           runs: totalRuns,
         }}
       />
@@ -275,7 +275,12 @@ export default function AgentComposer({
       {tab === 'skills' && <SkillsTab skills={attachedSkills} />}
       {tab === 'connectors' && (
         <SectionCard>
-          <ConnectorsTabContent key={agent.id} agentId={agent.id} connectors={connectors} />
+          <ConnectorsTabContent
+            key={agent.id}
+            agentId={agent.id}
+            connectors={connectors}
+            mcpServers={mcpServers}
+          />
         </SectionCard>
       )}
       {tab === 'runs' && (
@@ -1128,11 +1133,12 @@ function SettingsTab(props: {
         )}
       </SectionCard>
 
-      {/* Knowledge */}
+      {/* Knowledge — workspace root only. MCP servers live in the Connectors tab,
+          mixed with API connectors per the design handoff. */}
       <SectionCard>
         <SectionHead
           label="Knowledge"
-          hint="Workspace path scopes file_* tools. MCP servers contribute extra tools."
+          hint="Workspace path scopes file_* tools. MCP servers are attached from the Connectors tab."
         />
         <Field label="Workspace root">
           <input
@@ -1143,11 +1149,6 @@ function SettingsTab(props: {
             className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </Field>
-        <div className="mt-4">
-          <Field label="MCP knowledge sources">
-            <KnowledgeMcpRows key={agentId} agentId={agentId} servers={mcpServers} />
-          </Field>
-        </div>
       </SectionCard>
 
       {/* Sticky save bar */}

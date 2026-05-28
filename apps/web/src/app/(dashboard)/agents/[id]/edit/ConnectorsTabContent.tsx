@@ -2,7 +2,12 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { setAgentConnectorAssignmentAction, type AgentConnectorRow } from '@/lib/actions.ts';
+import {
+  setAgentConnectorAssignmentAction,
+  setAgentMcpServerAssignmentAction,
+  type AgentConnectorRow,
+  type AgentMcpServerRow,
+} from '@/lib/actions.ts';
 import type { OperationDescriptor } from '@nodal-agents/shared';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import EdAddButton from '@/components/ui/EdAddButton';
@@ -10,339 +15,459 @@ import Disc from '@/components/ui/Disc';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 
 /**
- * ConnectorsTabContent — Connectors tab body for /agents/[id]/edit, built
- * on the handoff's `.ed-row` + `.ed-add` patterns (screen-composer-v2.jsx
- * ConnectorsTab). Replaces the old `AgentConnectorGrid` that used inline
- * checkboxes.
+ * ConnectorsTabContent — unified Connectors tab for /agents/[id]/edit.
  *
- * Layout: two sections — "Connected" + "Available" — each a list of EdRow.
- * Click the settings IcBtn on a connected row to reveal an inline per-op
- * whitelist (no modal). The "+ Add" IcBtn on an available row assigns
- * the connector. The bottom EdAddButton routes to /connectors to install
- * new providers.
+ * Per the design handoff (`screen-composer-v2.jsx` ConnectorsTab) and
+ * Quentin's explicit ask ("qu'ils soient API ou MCP"), this single tab
+ * lists BOTH API connectors AND MCP servers together. Each row carries
+ * a mono "API" or "MCP" tag in the PN slot to distinguish kind.
  *
- * State + persistence behaviour is preserved from the old grid (debounced
- * 300ms, server actions, error toasts).
+ * Layout : two stacked sections —
+ *   1. "Connected · N" — everything currently attached to the agent.
+ *   2. "Available on this workspace · M" — installed but not attached;
+ *      `+` IcBtn attaches.
+ *
+ * Per-op (API) and per-tool (MCP) whitelisting both surface as an inline
+ * expand under the row, triggered by the gear `IcBtn`. Same UX, different
+ * data layer (setAgentConnectorAssignmentAction vs
+ * setAgentMcpServerAssignmentAction, both debounced 300ms).
  */
 
-type ConnState = {
-  assigned: boolean;
-  enabledOperations: string[] | null;
-};
+type ConnState = { assigned: boolean; enabledOperations: string[] | null };
+type McpState = { assigned: boolean; enabledTools: string[] | null };
+
+type Item = { kind: 'api'; row: AgentConnectorRow } | { kind: 'mcp'; row: AgentMcpServerRow };
 
 type Props = {
   agentId: string;
   connectors: AgentConnectorRow[];
+  mcpServers: AgentMcpServerRow[];
 };
 
-export default function ConnectorsTabContent({ agentId, connectors }: Props) {
-  const [states, setStates] = useState<Map<string, ConnState>>(() => {
+export default function ConnectorsTabContent({ agentId, connectors, mcpServers }: Props) {
+  // ── per-type state maps ───────────────────────────────────────────────────
+  const [connStates, setConnStates] = useState<Map<string, ConnState>>(() => {
     const m = new Map<string, ConnState>();
     for (const c of connectors) {
       m.set(c.connectorId, { assigned: c.assigned, enabledOperations: c.enabledOperations });
     }
     return m;
   });
+  const [mcpStates, setMcpStates] = useState<Map<string, McpState>>(() => {
+    const m = new Map<string, McpState>();
+    for (const s of mcpServers) {
+      m.set(s.mcpServerId, { assigned: s.assigned, enabledTools: s.enabledTools });
+    }
+    return m;
+  });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const debounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  const persist = useCallback(
+  // ── persist (debounced) ──────────────────────────────────────────────────
+  const persistConn = useCallback(
     (connectorId: string, assigned: boolean, enabledOperations: string[] | null) => {
-      const existing = debounceRef.current.get(connectorId);
+      const key = `conn:${connectorId}`;
+      const existing = debounceRef.current.get(key);
       if (existing) clearTimeout(existing);
       const handle = setTimeout(() => {
-        debounceRef.current.delete(connectorId);
+        debounceRef.current.delete(key);
         void setAgentConnectorAssignmentAction(
           agentId,
           connectorId,
           assigned,
           enabledOperations,
-        ).then((result) => {
-          if (!result.ok) toast.error(result.message);
+        ).then((r) => {
+          if (!r.ok) toast.error(r.message);
         });
       }, 300);
-      debounceRef.current.set(connectorId, handle);
+      debounceRef.current.set(key, handle);
     },
     [agentId],
   );
 
-  function toggleAssigned(connectorId: string, nextAssigned: boolean) {
-    setStates((prev) => {
+  const persistMcp = useCallback(
+    (mcpServerId: string, assigned: boolean, enabledTools: string[] | null) => {
+      const key = `mcp:${mcpServerId}`;
+      const existing = debounceRef.current.get(key);
+      if (existing) clearTimeout(existing);
+      const handle = setTimeout(() => {
+        debounceRef.current.delete(key);
+        void setAgentMcpServerAssignmentAction(agentId, mcpServerId, assigned, enabledTools).then(
+          (r) => {
+            if (!r.ok) toast.error(r.message);
+          },
+        );
+      }, 300);
+      debounceRef.current.set(key, handle);
+    },
+    [agentId],
+  );
+
+  // ── API connector toggles ────────────────────────────────────────────────
+  function connToggleAssigned(connectorId: string, nextAssigned: boolean) {
+    setConnStates((prev) => {
       const m = new Map(prev);
       m.set(connectorId, { assigned: nextAssigned, enabledOperations: null });
-      persist(connectorId, nextAssigned, null);
+      persistConn(connectorId, nextAssigned, null);
       return m;
     });
-    if (!nextAssigned) {
-      setExpanded((prev) => {
-        const s = new Set(prev);
-        s.delete(connectorId);
-        return s;
-      });
-    }
+    if (!nextAssigned) collapse(connectorId);
   }
 
-  function toggleOp(connectorId: string, slug: string, allOps: OperationDescriptor[]) {
-    setStates((prev) => {
+  function connToggleOp(connectorId: string, slug: string, allOps: OperationDescriptor[]) {
+    setConnStates((prev) => {
       const current = prev.get(connectorId) ?? { assigned: true, enabledOperations: null };
       const allSlugs = allOps.map((o) => o.slug);
-      let nextEnabled: string[] | null;
+      let next: string[] | null;
       if (current.enabledOperations === null) {
-        nextEnabled = allSlugs.filter((s) => s !== slug);
+        next = allSlugs.filter((s) => s !== slug);
       } else {
         const has = current.enabledOperations.includes(slug);
-        nextEnabled = has
+        next = has
           ? current.enabledOperations.filter((s) => s !== slug)
           : [...current.enabledOperations, slug];
       }
-      if (nextEnabled !== null && nextEnabled.length === allSlugs.length) nextEnabled = null;
+      if (next !== null && next.length === allSlugs.length) next = null;
       const m = new Map(prev);
-      if (nextEnabled !== null && nextEnabled.length === 0) {
+      if (next !== null && next.length === 0) {
         m.set(connectorId, { assigned: false, enabledOperations: null });
-        persist(connectorId, false, null);
-        setExpanded((p) => {
-          const s = new Set(p);
-          s.delete(connectorId);
-          return s;
-        });
+        persistConn(connectorId, false, null);
+        collapse(connectorId);
         return m;
       }
-      m.set(connectorId, { ...current, enabledOperations: nextEnabled });
-      persist(connectorId, true, nextEnabled);
+      m.set(connectorId, { ...current, enabledOperations: next });
+      persistConn(connectorId, true, next);
       return m;
     });
   }
 
-  function enableAll(connectorId: string) {
-    setStates((prev) => {
+  function connEnableAll(connectorId: string) {
+    setConnStates((prev) => {
       const m = new Map(prev);
       m.set(connectorId, { assigned: true, enabledOperations: null });
-      persist(connectorId, true, null);
+      persistConn(connectorId, true, null);
       return m;
     });
   }
 
-  function uncheckAll(connectorId: string) {
-    toggleAssigned(connectorId, false);
+  // ── MCP server toggles ───────────────────────────────────────────────────
+  function mcpToggleAssigned(mcpServerId: string, nextAssigned: boolean) {
+    setMcpStates((prev) => {
+      const m = new Map(prev);
+      m.set(mcpServerId, { assigned: nextAssigned, enabledTools: null });
+      persistMcp(mcpServerId, nextAssigned, null);
+      return m;
+    });
+    if (!nextAssigned) collapse(mcpServerId);
   }
 
-  function toggleExpand(connectorId: string) {
+  function mcpToggleTool(mcpServerId: string, toolName: string, allTools: string[]) {
+    setMcpStates((prev) => {
+      const current = prev.get(mcpServerId) ?? { assigned: true, enabledTools: null };
+      let next: string[] | null;
+      if (current.enabledTools === null) {
+        next = allTools.filter((t) => t !== toolName);
+      } else {
+        const has = current.enabledTools.includes(toolName);
+        next = has
+          ? current.enabledTools.filter((t) => t !== toolName)
+          : [...current.enabledTools, toolName];
+      }
+      if (next !== null && next.length === allTools.length) next = null;
+      const m = new Map(prev);
+      if (next !== null && next.length === 0) {
+        m.set(mcpServerId, { assigned: false, enabledTools: null });
+        persistMcp(mcpServerId, false, null);
+        collapse(mcpServerId);
+        return m;
+      }
+      m.set(mcpServerId, { assigned: true, enabledTools: next });
+      persistMcp(mcpServerId, true, next);
+      return m;
+    });
+  }
+
+  function mcpEnableAll(mcpServerId: string) {
+    setMcpStates((prev) => {
+      const m = new Map(prev);
+      m.set(mcpServerId, { assigned: true, enabledTools: null });
+      persistMcp(mcpServerId, true, null);
+      return m;
+    });
+  }
+
+  // ── expand helpers (shared) ──────────────────────────────────────────────
+  function toggleExpand(id: string) {
     setExpanded((prev) => {
       const s = new Set(prev);
-      if (s.has(connectorId)) s.delete(connectorId);
-      else s.add(connectorId);
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      return s;
+    });
+  }
+  function collapse(id: string) {
+    setExpanded((prev) => {
+      const s = new Set(prev);
+      s.delete(id);
       return s;
     });
   }
 
+  // ── compute connected / available (combined) ─────────────────────────────
   const { connected, available } = useMemo(() => {
-    const connected: AgentConnectorRow[] = [];
-    const available: AgentConnectorRow[] = [];
+    const connected: Item[] = [];
+    const available: Item[] = [];
     for (const c of connectors) {
-      const state = states.get(c.connectorId) ?? c;
-      if (state.assigned) connected.push(c);
-      else available.push(c);
+      const state = connStates.get(c.connectorId) ?? c;
+      const item: Item = { kind: 'api', row: c };
+      if (state.assigned) connected.push(item);
+      else available.push(item);
+    }
+    for (const s of mcpServers) {
+      const state = mcpStates.get(s.mcpServerId) ?? s;
+      const item: Item = { kind: 'mcp', row: s };
+      if (state.assigned) connected.push(item);
+      else available.push(item);
     }
     return { connected, available };
-  }, [connectors, states]);
+  }, [connectors, mcpServers, connStates, mcpStates]);
 
-  if (connectors.length === 0) {
+  if (connectors.length === 0 && mcpServers.length === 0) {
     return (
-      <SectionWrapper>
-        <p className="mb-3 text-[12.5px] text-ink-3">
-          No connectors installed yet. Add some on the Connectors page first; you&apos;ll then be
-          able to assign them here.
+      <div className="space-y-4">
+        <p className="text-[12.5px] text-ink-3">
+          No connectors or MCP servers installed on this workspace yet. Add some first; you&apos;ll
+          then be able to attach them to this agent.
         </p>
         <EdAddButton href="/connectors">Browse connectors marketplace</EdAddButton>
-      </SectionWrapper>
+        <EdAddButton href="/mcp">Browse MCP servers</EdAddButton>
+      </div>
     );
   }
 
   return (
-    <SectionWrapper>
+    <div className="space-y-6">
       <Section
         label={`Connected · ${connected.length}`}
-        hint="Revoke any to detach everywhere. Per-operation whitelist lives under the gear icon."
+        hint="Revoke any to detach everywhere. Per-op (API) / per-tool (MCP) whitelist via the gear icon."
       >
         {connected.length === 0 && (
           <p className="text-[12.5px] text-ink-3">
-            No connectors attached to this agent yet. Pick one from the marketplace below.
+            No connectors or MCP servers attached to this agent yet. Pick from the list below.
           </p>
         )}
-        {connected.length > 0 &&
-          connected.map((c) => {
-            const state = states.get(c.connectorId) ?? c;
-            const isExpanded = expanded.has(c.connectorId);
-            const ops = c.availableOperations;
-            const enabledOps = state.enabledOperations;
-            const opsLabel =
-              enabledOps === null
-                ? `all ${ops.length} ops`
-                : `${enabledOps.length} of ${ops.length} ops`;
-            return (
-              <ConnectorEdRow
-                key={c.connectorId}
-                row={c}
-                opsLabel={opsLabel}
-                expanded={isExpanded}
-                state={state}
-                onToggleExpand={() => toggleExpand(c.connectorId)}
-                onRemove={() => toggleAssigned(c.connectorId, false)}
-                onToggleOp={(slug) => toggleOp(c.connectorId, slug, ops)}
-                onEnableAll={() => enableAll(c.connectorId)}
-                onUncheckAll={() => uncheckAll(c.connectorId)}
-              />
-            );
-          })}
+        {connected.map((item) => renderRow(item, true))}
       </Section>
 
       {available.length > 0 && (
         <Section
           label={`Available on this workspace · ${available.length}`}
-          hint="Connectors installed on the platform but not yet attached to this agent."
+          hint="Already installed at the workspace level; click + to attach to this agent."
         >
-          {available.map((c) => (
-            <EdRow
-              key={c.connectorId}
-              glyph={
-                <Disc
-                  variant="conn"
-                  size="lg"
-                  shape="square"
-                  background={CONN_BRAND_COLORS[c.slug]}
-                >
-                  <span className="font-mono text-[10.5px] font-semibold">
-                    {connGlyph(c.slug, c.label)}
-                  </span>
-                </Disc>
-              }
-              name={
-                <>
-                  {c.label}
-                  <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
-                    {c.slug.toUpperCase()}
-                  </span>
-                </>
-              }
-              description={c.credentialName ?? undefined}
-              meta={`${c.availableOperations.length} ops`}
-              actions={
-                <IcBtn
-                  title="Attach to this agent"
-                  ariaLabel="Attach"
-                  onClick={() => toggleAssigned(c.connectorId, true)}
-                >
-                  <PlusIcon />
-                </IcBtn>
-              }
-            />
-          ))}
+          {available.map((item) => renderRow(item, false))}
         </Section>
       )}
 
-      <EdAddButton href="/connectors">Browse connectors marketplace</EdAddButton>
-    </SectionWrapper>
+      <div className="flex flex-col gap-2">
+        <EdAddButton href="/connectors">Browse connectors marketplace</EdAddButton>
+        <EdAddButton href="/mcp">Browse MCP servers</EdAddButton>
+      </div>
+    </div>
   );
-}
 
-// ─── Connector row with optional per-op expand ────────────────────────────────
-
-function ConnectorEdRow({
-  row,
-  opsLabel,
-  expanded,
-  state,
-  onToggleExpand,
-  onRemove,
-  onToggleOp,
-  onEnableAll,
-  onUncheckAll,
-}: {
-  row: AgentConnectorRow;
-  opsLabel: string;
-  expanded: boolean;
-  state: ConnState;
-  onToggleExpand: () => void;
-  onRemove: () => void;
-  onToggleOp: (slug: string) => void;
-  onEnableAll: () => void;
-  onUncheckAll: () => void;
-}) {
-  const ops = row.availableOperations;
-  return (
-    <EdRow
-      glyph={
-        <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
-          <span className="font-mono text-[10.5px] font-semibold">
-            {connGlyph(row.slug, row.label)}
-          </span>
-        </Disc>
-      }
-      name={
-        <>
-          {row.label}
-          <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
-            {row.slug.toUpperCase()}
-          </span>
-        </>
-      }
-      description={row.credentialName ?? undefined}
-      meta={opsLabel}
-      actions={
-        <>
-          <IcBtn
-            title={expanded ? 'Hide operations' : 'Configure operations'}
-            ariaLabel="Configure"
-            onClick={onToggleExpand}
-          >
-            <GearIcon />
-          </IcBtn>
-          <IcBtn title="Remove from this agent" ariaLabel="Remove" onClick={onRemove}>
-            <CloseIcon />
-          </IcBtn>
-        </>
-      }
-      expanded={
-        expanded ? (
+  // ── row renderer (closes over toggle handlers) ───────────────────────────
+  function renderRow(item: Item, isConnected: boolean) {
+    if (item.kind === 'api') {
+      const c = item.row;
+      const state = connStates.get(c.connectorId) ?? c;
+      const isExpanded = expanded.has(c.connectorId);
+      const ops = c.availableOperations;
+      const opsLabel =
+        state.enabledOperations === null
+          ? `all ${ops.length} ops`
+          : `${state.enabledOperations.length} of ${ops.length} ops`;
+      return (
+        <EdRow
+          key={`conn:${c.connectorId}`}
+          glyph={
+            <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[c.slug]}>
+              <span className="font-mono text-[10.5px] font-semibold">
+                {connGlyph(c.slug, c.label)}
+              </span>
+            </Disc>
+          }
+          name={
+            <>
+              {c.label}
+              <KindTag kind="API" />
+            </>
+          }
+          description={c.credentialName ?? undefined}
+          meta={isConnected ? opsLabel : `${ops.length} ops`}
+          actions={
+            isConnected ? (
+              <>
+                <IcBtn
+                  title={isExpanded ? 'Hide operations' : 'Configure operations'}
+                  ariaLabel="Configure"
+                  onClick={() => toggleExpand(c.connectorId)}
+                >
+                  <GearIcon />
+                </IcBtn>
+                <IcBtn
+                  title="Detach from this agent"
+                  ariaLabel="Detach"
+                  onClick={() => connToggleAssigned(c.connectorId, false)}
+                >
+                  <CloseIcon />
+                </IcBtn>
+              </>
+            ) : (
+              <IcBtn
+                title="Attach to this agent"
+                ariaLabel="Attach"
+                onClick={() => connToggleAssigned(c.connectorId, true)}
+              >
+                <PlusIcon />
+              </IcBtn>
+            )
+          }
+          expanded={
+            isConnected && isExpanded ? (
+              <>
+                <div className="flex gap-2">
+                  <MiniBtn onClick={() => connEnableAll(c.connectorId)}>Enable all</MiniBtn>
+                  <MiniBtn onClick={() => connToggleAssigned(c.connectorId, false)}>
+                    Uncheck all
+                  </MiniBtn>
+                </div>
+                <div className="space-y-0.5">
+                  {ops.map((op) => {
+                    const checked =
+                      state.enabledOperations === null || state.enabledOperations.includes(op.slug);
+                    return (
+                      <label
+                        key={op.slug}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12.5px] transition-colors hover:bg-hover"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => connToggleOp(c.connectorId, op.slug, ops)}
+                          className="shrink-0 accent-agent-vivid"
+                        />
+                        <code className="shrink-0 font-mono text-[11px] text-ink-2">{op.slug}</code>
+                        <RiskBadge op={op} />
+                        {op.description && (
+                          <span className="truncate text-[11px] italic text-ink-4">
+                            {op.description}
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null
+          }
+        />
+      );
+    }
+    // MCP
+    const s = item.row;
+    const state = mcpStates.get(s.mcpServerId) ?? s;
+    const isExpanded = expanded.has(s.mcpServerId);
+    const allTools = s.availableTools.map((t) => t.name);
+    const toolsLabel =
+      state.enabledTools === null
+        ? `all ${allTools.length} tools`
+        : `${state.enabledTools.length} of ${allTools.length} tools`;
+    return (
+      <EdRow
+        key={`mcp:${s.mcpServerId}`}
+        glyph={
+          <Disc variant="conn" size="lg" shape="square">
+            <span className="font-mono text-[10.5px] font-semibold">MCP</span>
+          </Disc>
+        }
+        name={
           <>
-            <div className="flex gap-2">
-              <ToolbarMiniBtn onClick={onEnableAll}>Enable all</ToolbarMiniBtn>
-              <ToolbarMiniBtn onClick={onUncheckAll}>Uncheck all</ToolbarMiniBtn>
-            </div>
-            <div className="space-y-0.5">
-              {ops.map((op) => {
-                const checked =
-                  state.enabledOperations === null || state.enabledOperations.includes(op.slug);
-                return (
-                  <label
-                    key={op.slug}
-                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12.5px] transition-colors hover:bg-hover"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => onToggleOp(op.slug)}
-                      className="shrink-0 accent-agent-vivid"
-                    />
-                    <code className="shrink-0 font-mono text-[11px] text-ink-2">{op.slug}</code>
-                    <RiskBadge op={op} />
-                    {op.description && (
-                      <span className="truncate text-[11px] italic text-ink-4">
-                        {op.description}
-                      </span>
-                    )}
-                  </label>
-                );
-              })}
-            </div>
+            {s.label}
+            <KindTag kind="MCP" />
           </>
-        ) : null
-      }
-    />
-  );
+        }
+        meta={isConnected ? toolsLabel : `${allTools.length} tools`}
+        actions={
+          isConnected ? (
+            <>
+              <IcBtn
+                title={isExpanded ? 'Hide tools' : 'Configure tools'}
+                ariaLabel="Configure"
+                onClick={() => toggleExpand(s.mcpServerId)}
+              >
+                <GearIcon />
+              </IcBtn>
+              <IcBtn
+                title="Detach from this agent"
+                ariaLabel="Detach"
+                onClick={() => mcpToggleAssigned(s.mcpServerId, false)}
+              >
+                <CloseIcon />
+              </IcBtn>
+            </>
+          ) : (
+            <IcBtn
+              title="Attach to this agent"
+              ariaLabel="Attach"
+              onClick={() => mcpToggleAssigned(s.mcpServerId, true)}
+            >
+              <PlusIcon />
+            </IcBtn>
+          )
+        }
+        expanded={
+          isConnected && isExpanded ? (
+            <>
+              <div className="flex gap-2">
+                <MiniBtn onClick={() => mcpEnableAll(s.mcpServerId)}>Enable all</MiniBtn>
+                <MiniBtn onClick={() => mcpToggleAssigned(s.mcpServerId, false)}>
+                  Uncheck all
+                </MiniBtn>
+              </div>
+              <div className="space-y-0.5">
+                {s.availableTools.map((tool) => {
+                  const checked =
+                    state.enabledTools === null || state.enabledTools.includes(tool.name);
+                  return (
+                    <label
+                      key={tool.name}
+                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12.5px] transition-colors hover:bg-hover"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => mcpToggleTool(s.mcpServerId, tool.name, allTools)}
+                        className="shrink-0 accent-agent-vivid"
+                      />
+                      <code className="shrink-0 font-mono text-[11px] text-ink-2">{tool.name}</code>
+                      {tool.description && (
+                        <span className="truncate text-[11px] italic text-ink-4">
+                          {tool.description}
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          ) : null
+        }
+      />
+    );
+  }
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Section + small helpers ─────────────────────────────────────────────────
 
 function Section({
   label,
@@ -366,11 +491,15 @@ function Section({
   );
 }
 
-function SectionWrapper({ children }: { children: React.ReactNode }) {
-  return <div className="space-y-6">{children}</div>;
+function KindTag({ kind }: { kind: 'API' | 'MCP' }) {
+  return (
+    <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
+      {kind}
+    </span>
+  );
 }
 
-function ToolbarMiniBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function MiniBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
     <button
       type="button"
