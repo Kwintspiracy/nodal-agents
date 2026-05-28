@@ -65,6 +65,27 @@ export type McpCatalogEntry = {
   verifyToolName: string | null;
   /** User-facing guidance on where to get the key. */
   docsHint: string;
+  /**
+   * Pre-filled command for stdio catalog entries (non-custom).
+   * `undefined` for HTTP entries and the `custom-stdio-mcp` sentinel
+   * (user supplies the command for those).
+   * Example: `'npx'` for npm-published MCP servers.
+   */
+  command?: string;
+  /**
+   * Pre-filled args for stdio catalog entries (non-custom).
+   * `undefined` for HTTP entries and `custom-stdio-mcp`.
+   * Example: `['-y', '@modelcontextprotocol/server-filesystem', '/path']`.
+   * Note: for servers that require path arguments, a placeholder such as
+   * `'<root-directory>'` is used — the user edits it before connecting.
+   */
+  args?: string[];
+  /**
+   * Env var names the server expects. Shown in the Add form as pre-labelled
+   * rows so the user knows exactly what to fill in.
+   * `undefined` = no env vars required (e.g. filesystem, sequential-thinking).
+   */
+  envVarNames?: string[];
 };
 
 /**
@@ -113,6 +134,151 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     verifyToolName: null,
     docsHint:
       'Create an MCP server at https://app.composio.dev, paste its full URL here (format: https://backend.composio.dev/v3/mcp/<server-id>?user_id=<user-id>) plus your Composio API key.',
+  },
+  // ── stdio servers ────────────────────────────────────────────────────────
+  // These are spawned locally via `npx -y <pkg>` the first time. The runner
+  // downloads the package on first use (needs network + adds ~5–30 s latency
+  // on the initial connect). Subsequent runs use the npx cache.
+  {
+    slug: 'mcp-filesystem',
+    label: 'Filesystem',
+    description:
+      'Read and write files on the host machine. Useful for broad disk access outside an agent workspace. First run downloads the package via npx (requires network, ~5 s latency).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Replace <root-directory> in the args with the absolute path of the folder to expose (e.g. /home/user/docs). The server restricts all operations to that tree.',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-filesystem@2026.1.14', '<root-directory>'],
+  },
+  {
+    slug: 'mcp-fetch',
+    label: 'Fetch',
+    description:
+      'Fetch web pages and convert them to clean Markdown or plain text for agents. First run downloads the package via npx (requires network, ~5 s latency).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint: 'No API key required. The server fetches URLs on behalf of the agent.',
+    command: 'npx',
+    args: ['-y', 'mcp-fetch-server@1.1.2'],
+  },
+  {
+    slug: 'mcp-git',
+    label: 'Git',
+    description:
+      'Run git operations (status, diff, log, commit, branch, etc.) on a local repository. First run downloads the package via npx (requires network, ~5–10 s latency).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Replace <repo-path> in the args with the absolute path to the git repository root (e.g. /home/user/myrepo). No API key required.',
+    command: 'npx',
+    args: ['-y', '@cyanheads/git-mcp-server@2.15.1', '--repo', '<repo-path>'],
+  },
+  {
+    slug: 'mcp-github',
+    label: 'GitHub',
+    description:
+      'Read and manage GitHub repositories, issues, PRs, and code via a Personal Access Token. First run downloads the package via npx (requires network, ~5 s latency).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create a GitHub Personal Access Token (PAT) at https://github.com/settings/tokens with the repo scope and paste it as the GITHUB_PERSONAL_ACCESS_TOKEN env var below.',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-github@2025.4.8'],
+    envVarNames: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
+  },
+  {
+    slug: 'mcp-postgres',
+    label: 'PostgreSQL',
+    description:
+      'Run read-only SQL queries against a PostgreSQL database. First run downloads the package via npx (requires network, ~5 s latency).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Replace <connection-string> in the args with your Postgres connection URL (e.g. postgresql://user:pass@host:5432/dbname). The server connects in read-only mode.',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-postgres@0.6.2', '<connection-string>'],
+  },
+  {
+    slug: 'mcp-sequential-thinking',
+    label: 'Sequential Thinking',
+    description:
+      'Structured multi-step reasoning helper — guides agents through decomposing complex problems step-by-step before acting. First run downloads the package via npx (requires network, ~5 s latency).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'No configuration needed. Add it to an agent to enable structured reasoning scaffolding.',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-sequential-thinking@2025.12.18'],
+  },
+  {
+    slug: 'mcp-playwright',
+    label: 'Playwright',
+    description:
+      'Browser automation — navigate pages, click, type, screenshot, and extract content from the web via a headless browser. First run downloads the package via npx (requires network, ~10–30 s latency for browser binary).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'No API key required. Playwright launches a local headless browser — make sure Chromium or Chrome is available on the host machine.',
+    command: 'npx',
+    args: ['-y', '@playwright/mcp@0.0.75'],
+  },
+  // ── HTTP servers ──────────────────────────────────────────────────────────
+  {
+    slug: 'linear',
+    label: 'Linear',
+    description:
+      'Manage Linear issues, projects, teams, and cycles via a personal API key. Requires a Linear account.',
+    serverUrl: null,
+    transport: 'http',
+    authScheme: 'bearer',
+    authParamName: 'Authorization',
+    keyPrefix: ['lin_api_'],
+    verifyToolName: null,
+    docsHint:
+      'Create a Personal API key at https://linear.app/settings/api. Paste the full URL of your Linear MCP endpoint (format: https://mcp.linear.app/sse) and your API key.',
+  },
+  {
+    slug: 'sentry',
+    label: 'Sentry',
+    description:
+      'Query Sentry issues, events, and releases for debugging. Auth via a Sentry auth token.',
+    serverUrl: null,
+    transport: 'http',
+    authScheme: 'bearer',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create a Sentry Auth Token at https://sentry.io/settings/account/api/auth-tokens/. Paste the full URL of your Sentry MCP endpoint and your token.',
   },
   // ── Custom entries ────────────────────────────────────────────────────────
   // Reserved slugs — the action layer (createMcpServerFromCatalogAction)

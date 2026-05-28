@@ -55,15 +55,25 @@ export default function McpAddForm({ catalogItem }: Props) {
   const [customAuthScheme, setCustomAuthScheme] = useState<AuthScheme>('header');
   const [customAuthParamName, setCustomAuthParamName] = useState('');
 
-  // Stdio custom
+  // Stdio custom (custom-stdio-mcp sentinel only)
   const [customCommand, setCustomCommand] = useState('');
   const [customArgsText, setCustomArgsText] = useState('');
-  const [envRows, setEnvRows] = useState<EnvRow[]>([{ key: '', value: '' }]);
+  // Stdio pre-filled: args are editable (user may need to fill placeholders)
+  const [prefilledArgsText, setPrefilledArgsText] = useState(() =>
+    (catalogItem.args ?? []).join('\n'),
+  );
+  const [envRows, setEnvRows] = useState<EnvRow[]>(() => {
+    // Pre-seed env var rows from envVarNames if present
+    const names = catalogItem.envVarNames ?? [];
+    return names.length > 0 ? names.map((k) => ({ key: k, value: '' })) : [{ key: '', value: '' }];
+  });
 
   // ── Flavor flags ───────────────────────────────────────────────────────────
   const isCustomHttp = catalogItem.slug === 'custom-http-mcp';
   const isCustomStdio = catalogItem.slug === 'custom-stdio-mcp';
   const isStdio = catalogItem.transport === 'stdio';
+  // Pre-filled stdio: a catalog entry with command/args pre-set (not custom).
+  const isPrefilledStdio = isStdio && !isCustomStdio;
   const needsUrl = !isStdio && catalogItem.serverUrl === null;
 
   function resetForm() {
@@ -75,7 +85,11 @@ export default function McpAddForm({ catalogItem }: Props) {
     setCustomAuthParamName('');
     setCustomCommand('');
     setCustomArgsText('');
-    setEnvRows([{ key: '', value: '' }]);
+    setPrefilledArgsText((catalogItem.args ?? []).join('\n'));
+    const names = catalogItem.envVarNames ?? [];
+    setEnvRows(
+      names.length > 0 ? names.map((k) => ({ key: k, value: '' })) : [{ key: '', value: '' }],
+    );
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -86,7 +100,40 @@ export default function McpAddForm({ catalogItem }: Props) {
       return;
     }
 
-    if (isStdio) {
+    if (isPrefilledStdio) {
+      // ── Pre-filled stdio catalog entry ────────────────────────────────────
+      // command + args come from the catalog (user may have edited args to
+      // fill in placeholders like <root-directory>). No slug input needed —
+      // the catalog slug is used directly.
+      const argList = prefilledArgsText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const envMap: Record<string, string> = {};
+      for (const r of envRows) {
+        const k = r.key.trim();
+        if (!k) continue;
+        envMap[k] = r.value;
+      }
+      startTransition(async () => {
+        const res = await createMcpServerFromCatalogAction({
+          slug: catalogItem.slug,
+          name: trimmedName,
+          customArgs: argList,
+          customEnv: Object.keys(envMap).length > 0 ? envMap : undefined,
+        });
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        toast.success(`${trimmedName} connected`);
+        setOpen(false);
+        resetForm();
+      });
+      return;
+    }
+
+    if (isCustomStdio) {
       // ── Custom stdio ──────────────────────────────────────────────────────
       const slug = customSlug.trim();
       const cmd = customCommand.trim();
@@ -347,6 +394,83 @@ export default function McpAddForm({ catalogItem }: Props) {
                 <p className="text-[11px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
               )}
             </div>
+          )}
+
+          {/* Pre-filled stdio: editable args (may contain placeholders) + env vars. */}
+          {isPrefilledStdio && (
+            <>
+              <div>
+                <label
+                  htmlFor={`mcp-prefilled-args-${catalogItem.slug}`}
+                  className="block text-xs text-ink-3 mb-1"
+                >
+                  Arguments{' '}
+                  <span className="text-ink-4">
+                    (one per line — edit placeholders like &lt;root-directory&gt;)
+                  </span>
+                </label>
+                <textarea
+                  id={`mcp-prefilled-args-${catalogItem.slug}`}
+                  rows={Math.max(3, (catalogItem.args ?? []).length + 1)}
+                  value={prefilledArgsText}
+                  onChange={(e) => setPrefilledArgsText(e.target.value)}
+                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
+                />
+                <p className="text-[11px] text-ink-4 mt-1">
+                  Command:{' '}
+                  <span className="font-mono text-ink-3">{catalogItem.command ?? 'npx'}</span>
+                </p>
+              </div>
+
+              {(catalogItem.envVarNames ?? []).length > 0 && (
+                <div>
+                  <p className="block text-xs text-ink-3 mb-1">
+                    Environment variables <span className="text-ink-4">(encrypted at rest)</span>
+                  </p>
+                  <div className="space-y-2">
+                    {envRows.map((row, idx) => (
+                      <div key={idx} className="flex gap-2">
+                        <input
+                          type="text"
+                          value={row.key}
+                          onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
+                          placeholder="VAR_NAME"
+                          className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                        />
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={row.value}
+                          onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
+                          placeholder="value"
+                          className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeEnvRow(idx)}
+                          disabled={envRows.length === 1}
+                          aria-label="Remove env var"
+                          className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addEnvRow}
+                    className="mt-2 text-[11px] text-ink-3 hover:text-ink"
+                  >
+                    + Add variable
+                  </button>
+                </div>
+              )}
+
+              {catalogItem.docsHint && (
+                <p className="text-[11px] text-ink-4">{catalogItem.docsHint}</p>
+              )}
+            </>
           )}
 
           {/* Stdio custom: command + args + env vars. */}

@@ -1475,6 +1475,23 @@ export type McpCatalogItem = {
   serverUrl: string | null;
   /** Transport — drives which custom-input fields the form renders. */
   transport: 'http' | 'stdio';
+  /**
+   * Pre-filled command for non-custom stdio entries.
+   * `undefined` for HTTP entries and the `custom-stdio-mcp` sentinel.
+   */
+  command?: string;
+  /**
+   * Pre-filled args for non-custom stdio entries, joined by newline for the
+   * textarea in McpAddForm. `undefined` for HTTP and `custom-stdio-mcp`.
+   * May contain placeholder strings like `'<root-directory>'` that the user
+   * is expected to edit before connecting.
+   */
+  args?: string[];
+  /**
+   * Env var names the server expects — rendered as pre-labelled rows in the
+   * Add form. `undefined` = no env vars required.
+   */
+  envVarNames?: string[];
 };
 
 export type McpServersListResponse = {
@@ -1515,6 +1532,9 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
       keyPrefix: c.keyPrefix,
       serverUrl: c.serverUrl,
       transport: c.transport,
+      command: c.command,
+      args: c.args,
+      envVarNames: c.envVarNames,
     }));
 
     return ok({ instances, catalog });
@@ -1719,8 +1739,16 @@ export async function createMcpServerFromCatalogAction(
     // ── Stdio path: spawn-and-list. Env values are encrypted at rest because
     //    they typically carry secrets (GITHUB_TOKEN, etc.). The runner
     //    decrypts at job execution time before passing to StdioClientTransport.
-    const command = parsed.data.customCommand!;
-    const args = parsed.data.customArgs ?? [];
+    //
+    // For pre-filled catalog entries (non-custom-stdio-mcp): command + args
+    // come from the catalog. The user supplies only env vars (and edited args
+    // via customArgs when they override the catalog defaults, e.g. to fill in
+    // a <root-directory> placeholder).
+    // For the custom-stdio-mcp sentinel: everything comes from user input.
+    const command = isCustomStdio
+      ? parsed.data.customCommand!
+      : (catalog.command ?? parsed.data.customCommand!);
+    const args = parsed.data.customArgs ?? catalog.args ?? [];
     const userEnv = parsed.data.customEnv ?? {};
 
     let stdioToolDescriptors: McpToolSummary[] = [];
