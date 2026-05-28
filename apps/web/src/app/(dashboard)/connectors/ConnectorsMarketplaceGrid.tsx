@@ -115,12 +115,12 @@ function ConnectorMarketCard({
         }
         foot={
           <>
-            <span className="flex-1 text-[12.5px] leading-none text-ink-3">
-              {isInstalled ? `${installedCount} account${installedCount !== 1 ? 's' : ''}` : ''}
-            </span>
-            <PrimaryButton variant="coral" size="sm" onClick={() => setAddOpen((v) => !v)}>
+            {/* Spacer pushes the action to the right. The installed count lives
+                in the top-right badge — no redundant text here. */}
+            <span className="flex-1" />
+            <PrimaryButton variant="blue" size="sm" onClick={() => setAddOpen((v) => !v)}>
               <Plus size={12} weight="bold" />
-              {isInstalled ? '+ Add account' : '+ Install'}
+              {isInstalled ? 'Add account' : 'Install'}
             </PrimaryButton>
             {isInstalled && (
               <IconButton size="sm" aria-label="Settings" onClick={() => setAddOpen((v) => !v)}>
