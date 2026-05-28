@@ -1,17 +1,29 @@
 // file-ops/file-list.ts — list directory entries with optional glob filter
+//
+// Multi-workspace behaviour:
+//   - No path arg → return the list of workspace labels as top-level virtual entries.
+//   - With a path ("notes/a/b") → list inside the resolved workspace (same security
+//     guarantees as before).
 
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { resolveAndCheckPath, assertWorkspaceConfigured, WorkspaceError } from './workspace';
+import {
+  resolveAndCheckPath,
+  assertWorkspacesConfigured,
+  getWorkspaceRootForDisplay,
+  WorkspaceError,
+} from './workspace';
 
 export const FileListInputSchema = z.object({
   path: z
     .string()
     .optional()
     .describe(
-      'Directory path relative to workspace root. Default "." (the workspace root itself).',
+      'Directory path relative to a workspace. For a single-workspace agent, the label prefix ' +
+        'is optional (e.g. "subdir/"). For multi-workspace agents, prefix with the workspace ' +
+        'label (e.g. "notes/subdir/"). Omit entirely to list workspaces at the top level.',
     ),
   glob: z
     .string()
@@ -63,15 +75,37 @@ function globToRegex(glob: string): RegExp {
 export const fileListTool: ToolDefinition<typeof FileListInputSchema, FileListOutput> = {
   name: 'file_list',
   description:
-    'List entries of a directory in the agent workspace. Returns name, type, size, and modified ' +
-    'time per entry. Use `glob` to filter (e.g. "*.md"). Pass `recursive:true` to walk ' +
-    'subdirectories. Caps at 500 entries — narrow the glob if you hit the cap.',
+    'List entries of a directory in the agent workspace(s). With no `path` argument, returns ' +
+    'the list of available workspace labels. With a path, lists that directory. For ' +
+    'multi-workspace agents, prefix paths with the workspace label (e.g. "notes/subdir"). ' +
+    'Returns name, type, size, and modified time per entry. Use `glob` to filter (e.g. "*.md"). ' +
+    'Pass `recursive:true` to walk subdirectories. Caps at 500 entries.',
   inputSchema: FileListInputSchema,
   riskLevel: 'read',
   execute: async (input, ctx) => {
     try {
-      const targetPath = await resolveAndCheckPath(ctx, input.path ?? '.');
-      const workspaceRoot = assertWorkspaceConfigured(ctx);
+      // Guard first (throws if not configured at all)
+      const workspaces = assertWorkspacesConfigured(ctx);
+
+      // No path arg → return workspace labels as virtual top-level entries.
+      // This lets the LLM discover which workspaces exist before navigating.
+      if (input.path === undefined || input.path === null) {
+        const entries: FileListEntry[] = workspaces.map((ws) => {
+          return {
+            name: ws.label,
+            type: 'dir' as const,
+            size: 0,
+            modified: new Date(0).toISOString(),
+          };
+        });
+        return { ok: true, entries, truncated: false };
+      }
+
+      const targetPath = await resolveAndCheckPath(ctx, input.path);
+
+      // Use the workspace root that the requested path resolves under for
+      // computing relative display paths (the 'name' field in entries).
+      const workspaceRoot = getWorkspaceRootForDisplay(ctx, input.path) ?? targetPath;
       const matcher = input.glob ? globToRegex(input.glob) : null;
       const entries: FileListEntry[] = [];
       let truncated = false;

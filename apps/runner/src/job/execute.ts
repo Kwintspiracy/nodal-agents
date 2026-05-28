@@ -14,11 +14,13 @@ import {
   agentTasks,
   approvalRules,
   agentSkillAssignments,
+  agentSkills,
   entityLlmKeys,
   agentConnectorAssignments,
   connectors as connectorsTable,
   mcpServers as mcpServersTable,
   agentMcpServers as agentMcpServersTable,
+  agentWorkspaces as agentWorkspacesTable,
   getDecryptedCredentialById,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
@@ -215,6 +217,15 @@ export async function executeJob(
     memoryTokenBudget: agentRow.memoryTokenBudget,
   };
 
+  // ── 3.5 Load agent workspaces ─────────────────────────────────────────────────
+  // Ordered by position so the LLM sees workspaces in the user-configured order.
+  const wsRows = await db
+    .select({ label: agentWorkspacesTable.label, path: agentWorkspacesTable.path })
+    .from(agentWorkspacesTable)
+    .where(eq(agentWorkspacesTable.agentId, agentRow.id))
+    .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
+  const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
+
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
   // Agents MUST have an llmKeyId pointing at an active entity_llm_keys row.
   // No env-based fallback — fail loud (invariant 4).
@@ -358,10 +369,23 @@ export async function executeJob(
       }
     } else {
       // Worker: whitelist from skill assignments + always-on tools + capability tools
+      // Join to agent_skills to retrieve requiredBuiltins for each assigned skill.
+      // requiredBuiltins are unioned into the alwaysOn list so that office tools
+      // (and any future gated builtins) are unlocked only for agents holding the
+      // relevant skill — not globally. This is the gating mechanism for invariant #9.
       const skillRows = await db
-        .select({ skillId: agentSkillAssignments.skillId })
+        .select({
+          skillId: agentSkillAssignments.skillId,
+          requiredBuiltins: agentSkills.requiredBuiltins,
+        })
         .from(agentSkillAssignments)
+        .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
         .where(eq(agentSkillAssignments.agentId, agentRow.id));
+
+      // Collect all requiredBuiltins from assigned skills (deduplicated).
+      const skillRequiredBuiltins: string[] = Array.from(
+        new Set(skillRows.flatMap((r) => r.requiredBuiltins ?? [])),
+      );
 
       // For workers without adapter registrations, only always-on tools are available.
       // Adapters will be registered in the registry when adapter packages are loaded.
@@ -510,11 +534,18 @@ export async function executeJob(
       }
       // ────────────────────────────────────────────────────────────────────────
 
+      // skillRequiredBuiltins: union of requiredBuiltins from all assigned skills.
+      // Only add builtins that actually exist in the registry to avoid WhitelistDriftError
+      // if a skill references a tool name that hasn't been registered yet.
+      const registeredSkillBuiltins = skillRequiredBuiltins.filter(
+        (name) => registry.get(name) !== undefined,
+      );
+
       toolDefs = computeToolWhitelist(
         {
           agentId: agentRow.id,
           configuredTools: registeredConfigured,
-          alwaysOn: [...ALWAYS_ON_TOOLS],
+          alwaysOn: [...ALWAYS_ON_TOOLS, ...registeredSkillBuiltins],
         },
         registry,
         capabilityTools,
@@ -857,7 +888,7 @@ export async function executeJob(
                 db,
                 jobChatId: job.chatId ?? null,
                 embeddingClient: deps.embeddingClient,
-                workspaceRootPath: agentRow.workspaceRootPath ?? null,
+                workspaces: agentWorkspacesList,
               },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },
             );
@@ -1007,7 +1038,7 @@ export async function executeJob(
             db,
             jobChatId: job.chatId ?? null,
             embeddingClient: deps.embeddingClient,
-            workspaceRootPath: agentRow.workspaceRootPath ?? null,
+            workspaces: agentWorkspacesList,
           },
           {
             approvalRules: approvalRuleList,

@@ -1,4 +1,4 @@
-// file-ops.test.ts — workspace security + 5 file_* tools
+// file-ops.test.ts — workspace security + 5 file_* tools (multi-workspace, Volet 5)
 //
 // Tests use a real fs tempdir (not pglite) — these tools are about real
 // filesystem behavior, mocking fs would only test the mock.
@@ -17,15 +17,18 @@ import {
 import type { ToolContext } from '../types';
 
 let WORKSPACE: string;
+let WORKSPACE2: string;
 let OUTSIDE: string;
 
 beforeAll(async () => {
   WORKSPACE = await mkdtemp(join(tmpdir(), 'nodal-fileops-ws-'));
+  WORKSPACE2 = await mkdtemp(join(tmpdir(), 'nodal-fileops-ws2-'));
   OUTSIDE = await mkdtemp(join(tmpdir(), 'nodal-fileops-outside-'));
 });
 
 afterAll(async () => {
   await rm(WORKSPACE, { recursive: true, force: true });
+  await rm(WORKSPACE2, { recursive: true, force: true });
   await rm(OUTSIDE, { recursive: true, force: true });
 });
 
@@ -33,8 +36,13 @@ beforeEach(async () => {
   // Wipe + recreate workspace contents to isolate tests.
   await rm(WORKSPACE, { recursive: true, force: true });
   await mkdir(WORKSPACE, { recursive: true });
+  await rm(WORKSPACE2, { recursive: true, force: true });
+  await mkdir(WORKSPACE2, { recursive: true });
 });
 
+// ─── Context helpers ──────────────────────────────────────────────────────────
+
+/** Single-workspace context (backward-compat helper). */
 function ctxWith(rootPath: string | null | undefined): ToolContext {
   return {
     jobId: '00000000-0000-0000-0000-000000000aaa',
@@ -42,14 +50,34 @@ function ctxWith(rootPath: string | null | undefined): ToolContext {
     entityId: '00000000-0000-0000-0000-000000000ccc',
     db: undefined as unknown as ToolContext['db'],
     jobChatId: null,
-    workspaceRootPath: rootPath,
+    workspaces:
+      rootPath === null || rootPath === undefined
+        ? undefined
+        : rootPath.trim() === ''
+          ? []
+          : [{ label: 'ws', path: rootPath }],
   };
 }
 
-// ─── Workspace security ──────────────────────────────────────────────────────
+/** Multi-workspace context: { notes: WORKSPACE, code: WORKSPACE2 } */
+function ctxMulti(): ToolContext {
+  return {
+    jobId: '00000000-0000-0000-0000-000000000aaa',
+    agentId: '00000000-0000-0000-0000-000000000bbb',
+    entityId: '00000000-0000-0000-0000-000000000ccc',
+    db: undefined as unknown as ToolContext['db'],
+    jobChatId: null,
+    workspaces: [
+      { label: 'notes', path: WORKSPACE },
+      { label: 'code', path: WORKSPACE2 },
+    ],
+  };
+}
+
+// ─── Workspace security (single-root, unchanged semantics) ───────────────────
 
 describe('workspace + path security', () => {
-  it('fails loud when workspace_root_path is not set', async () => {
+  it('fails loud when workspaces is not set', async () => {
     const r = await fileReadTool.execute({ path: 'anything.txt' }, ctxWith(null));
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
@@ -92,7 +120,107 @@ describe('workspace + path security', () => {
       if (code === 'EPERM' || code === 'EACCES') return;
       throw err;
     }
-    const r = await fileReadTool.execute({ path: 'link.txt' }, ctxWith(WORKSPACE));
+    const r = await fileReadTool.execute({ path: 'ws/link.txt' }, ctxWith(WORKSPACE));
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toMatch(/outside|traversal/i);
+  });
+});
+
+// ─── Multi-workspace routing ─────────────────────────────────────────────────
+
+describe('multi-workspace routing', () => {
+  it('routes "notes/a.md" to the notes workspace', async () => {
+    await writeFile(join(WORKSPACE, 'a.md'), 'notes content');
+    const r = await fileReadTool.execute({ path: 'notes/a.md' }, ctxMulti());
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected ok');
+    expect(r.content).toBe('notes content');
+  });
+
+  it('routes "code/x.ts" to the code workspace', async () => {
+    await writeFile(join(WORKSPACE2, 'x.ts'), 'code content');
+    const r = await fileReadTool.execute({ path: 'code/x.ts' }, ctxMulti());
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected ok');
+    expect(r.content).toBe('code content');
+  });
+
+  it('requires a label when >1 workspace and no label given', async () => {
+    const r = await fileReadTool.execute({ path: 'a.md' }, ctxMulti());
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toMatch(/workspace_label_required|label/i);
+    // Error must list valid labels so the LLM can self-correct
+    expect(r.reason).toContain('notes');
+    expect(r.reason).toContain('code');
+  });
+
+  it('label is optional for a single-workspace agent (bare path resolves)', async () => {
+    await writeFile(join(WORKSPACE, 'a.md'), 'single ws content');
+    const ctx: ToolContext = {
+      ...ctxMulti(),
+      workspaces: [{ label: 'notes', path: WORKSPACE }],
+    };
+    const r = await fileReadTool.execute({ path: 'a.md' }, ctx);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected ok');
+    expect(r.content).toBe('single ws content');
+  });
+
+  it('returns workspace_not_configured error when workspaces is empty', async () => {
+    const ctx: ToolContext = {
+      ...ctxMulti(),
+      workspaces: [],
+    };
+    const r = await fileReadTool.execute({ path: 'notes/a.md' }, ctx);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toContain('no workspace configured');
+  });
+});
+
+// ─── Traversal / symlink security per root ───────────────────────────────────
+
+describe('traversal blocked per workspace root (multi-workspace)', () => {
+  it('blocks ../ traversal in notes workspace root', async () => {
+    await writeFile(join(OUTSIDE, 'secret.txt'), 'leaked');
+    const r = await fileReadTool.execute(
+      {
+        path:
+          'notes/../' + resolve(OUTSIDE, 'secret.txt').slice(resolve(WORKSPACE, '..').length + 1),
+      },
+      ctxMulti(),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toMatch(/outside|traversal/i);
+  });
+
+  it('blocks ../ traversal in code workspace root', async () => {
+    await writeFile(join(OUTSIDE, 'secret.txt'), 'leaked');
+    const r = await fileReadTool.execute(
+      {
+        path:
+          'code/../' + resolve(OUTSIDE, 'secret.txt').slice(resolve(WORKSPACE2, '..').length + 1),
+      },
+      ctxMulti(),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toMatch(/outside|traversal/i);
+  });
+
+  it('blocks symlink escape in notes workspace root (multi-workspace)', async () => {
+    await writeFile(join(OUTSIDE, 'secret.txt'), 'leaked');
+    try {
+      await symlink(join(OUTSIDE, 'secret.txt'), join(WORKSPACE, 'link-notes.txt'));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EACCES') return;
+      throw err;
+    }
+    const r = await fileReadTool.execute({ path: 'notes/link-notes.txt' }, ctxMulti());
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
     expect(r.reason).toMatch(/outside|traversal/i);
@@ -104,7 +232,7 @@ describe('workspace + path security', () => {
 describe('file_read', () => {
   it('reads a file and returns content + line counts', async () => {
     await writeFile(join(WORKSPACE, 'a.txt'), 'line1\nline2\nline3');
-    const r = await fileReadTool.execute({ path: 'a.txt' }, ctxWith(WORKSPACE));
+    const r = await fileReadTool.execute({ path: 'ws/a.txt' }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('expected ok');
     expect(r.content).toBe('line1\nline2\nline3');
@@ -118,7 +246,7 @@ describe('file_read', () => {
     const content = Array.from({ length: 100 }, (_, i) => `line${i + 1}`).join('\n');
     await writeFile(join(WORKSPACE, 'b.txt'), content);
     const r = await fileReadTool.execute(
-      { path: 'b.txt', offset: 50, limit: 10 },
+      { path: 'ws/b.txt', offset: 50, limit: 10 },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
@@ -141,7 +269,7 @@ describe('file_read', () => {
   });
 
   it('returns clean error on missing file', async () => {
-    const r = await fileReadTool.execute({ path: 'nope.txt' }, ctxWith(WORKSPACE));
+    const r = await fileReadTool.execute({ path: 'ws/nope.txt' }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
     expect(r.reason).toMatch(/not found/i);
@@ -153,7 +281,7 @@ describe('file_read', () => {
 describe('file_write', () => {
   it('creates a file atomically and reports bytes written', async () => {
     const r = await fileWriteTool.execute(
-      { path: 'new.txt', content: 'hello world', create_dirs: false },
+      { path: 'ws/new.txt', content: 'hello world', create_dirs: false },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
@@ -166,7 +294,7 @@ describe('file_write', () => {
   it('overwrites existing files', async () => {
     await writeFile(join(WORKSPACE, 'over.txt'), 'old');
     const r = await fileWriteTool.execute(
-      { path: 'over.txt', content: 'new', create_dirs: false },
+      { path: 'ws/over.txt', content: 'new', create_dirs: false },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
@@ -176,7 +304,7 @@ describe('file_write', () => {
 
   it('refuses to create when parent dir missing without create_dirs', async () => {
     const r = await fileWriteTool.execute(
-      { path: 'nested/dir/file.txt', content: 'x', create_dirs: false },
+      { path: 'ws/nested/dir/file.txt', content: 'x', create_dirs: false },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(false);
@@ -186,7 +314,7 @@ describe('file_write', () => {
 
   it('creates missing parent dirs with create_dirs:true', async () => {
     const r = await fileWriteTool.execute(
-      { path: 'nested/dir/file.txt', content: 'x', create_dirs: true },
+      { path: 'ws/nested/dir/file.txt', content: 'x', create_dirs: true },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
@@ -201,7 +329,7 @@ describe('file_edit', () => {
   it('replaces a unique substring', async () => {
     await writeFile(join(WORKSPACE, 'e.txt'), 'hello world\ngoodbye world');
     const r = await fileEditTool.execute(
-      { path: 'e.txt', old_string: 'hello', new_string: 'salut', replace_all: false },
+      { path: 'ws/e.txt', old_string: 'hello', new_string: 'salut', replace_all: false },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
@@ -214,7 +342,7 @@ describe('file_edit', () => {
   it('fails loud on ambiguous match (without replace_all)', async () => {
     await writeFile(join(WORKSPACE, 'e.txt'), 'foo bar foo');
     const r = await fileEditTool.execute(
-      { path: 'e.txt', old_string: 'foo', new_string: 'baz', replace_all: false },
+      { path: 'ws/e.txt', old_string: 'foo', new_string: 'baz', replace_all: false },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(false);
@@ -228,7 +356,7 @@ describe('file_edit', () => {
   it('replaces every occurrence with replace_all:true', async () => {
     await writeFile(join(WORKSPACE, 'e.txt'), 'foo bar foo baz foo');
     const r = await fileEditTool.execute(
-      { path: 'e.txt', old_string: 'foo', new_string: 'XX', replace_all: true },
+      { path: 'ws/e.txt', old_string: 'foo', new_string: 'XX', replace_all: true },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(true);
@@ -241,7 +369,7 @@ describe('file_edit', () => {
   it('fails loud when old_string is missing from the file', async () => {
     await writeFile(join(WORKSPACE, 'e.txt'), 'abc');
     const r = await fileEditTool.execute(
-      { path: 'e.txt', old_string: 'xyz', new_string: 'qqq', replace_all: false },
+      { path: 'ws/e.txt', old_string: 'xyz', new_string: 'qqq', replace_all: false },
       ctxWith(WORKSPACE),
     );
     expect(r.ok).toBe(false);
@@ -257,18 +385,30 @@ describe('file_list', () => {
     await writeFile(join(WORKSPACE, 'a.md'), '');
     await writeFile(join(WORKSPACE, 'b.txt'), '');
     await mkdir(join(WORKSPACE, 'sub'));
-    const r = await fileListTool.execute({ recursive: false }, ctxWith(WORKSPACE));
+    const r = await fileListTool.execute({ recursive: false, path: 'ws' }, ctxWith(WORKSPACE));
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('expected ok');
     const names = r.entries.map((e) => e.name).sort();
     expect(names).toEqual(['a.md', 'b.txt', 'sub']);
   });
 
+  it('returns workspace labels as top-level entries when no path given', async () => {
+    const r = await fileListTool.execute({ recursive: false }, ctxMulti());
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected ok');
+    const names = r.entries.map((e) => e.name).sort();
+    expect(names).toEqual(['code', 'notes']);
+    expect(r.entries.every((e) => e.type === 'dir')).toBe(true);
+  });
+
   it('filters by glob', async () => {
     await writeFile(join(WORKSPACE, 'note.md'), '');
     await writeFile(join(WORKSPACE, 'todo.md'), '');
     await writeFile(join(WORKSPACE, 'ignore.txt'), '');
-    const r = await fileListTool.execute({ glob: '*.md', recursive: false }, ctxWith(WORKSPACE));
+    const r = await fileListTool.execute(
+      { glob: '*.md', recursive: false, path: 'ws' },
+      ctxWith(WORKSPACE),
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('expected ok');
     const names = r.entries.map((e) => e.name).sort();
@@ -279,7 +419,10 @@ describe('file_list', () => {
     await mkdir(join(WORKSPACE, 'sub'));
     await writeFile(join(WORKSPACE, 'top.md'), '');
     await writeFile(join(WORKSPACE, 'sub/nested.md'), '');
-    const r = await fileListTool.execute({ recursive: true, glob: '**/*.md' }, ctxWith(WORKSPACE));
+    const r = await fileListTool.execute(
+      { recursive: true, glob: '**/*.md', path: 'ws' },
+      ctxWith(WORKSPACE),
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('expected ok');
     const names = r.entries.map((e) => e.name).sort();
@@ -356,5 +499,18 @@ describe('file_search', () => {
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
     expect(r.reason).toMatch(/regex/i);
+  });
+
+  it('searches ALL workspaces when no path given (multi-workspace)', async () => {
+    await writeFile(join(WORKSPACE, 'from-notes.md'), 'SEARCH_ME_NOTES');
+    await writeFile(join(WORKSPACE2, 'from-code.ts'), 'SEARCH_ME_CODE');
+    const r = await fileSearchTool.execute(
+      { pattern: 'SEARCH_ME', target: 'content', case_sensitive: true, max_results: 100 },
+      ctxMulti(),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected ok');
+    // Should find matches in both workspaces
+    expect(r.matches.length).toBeGreaterThanOrEqual(2);
   });
 });

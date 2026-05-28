@@ -5,8 +5,27 @@ import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import {
+  writeFile as fsWriteFile,
+  rename as fsRename,
+  unlink as fsUnlink,
+  readdir as fsReaddir,
+  stat as fsStat,
+  mkdir as fsMkdir,
+} from 'node:fs/promises';
+import {
+  join as pathJoin,
+  basename as pathBasename,
+  dirname as pathDirname,
+  resolve as pathResolve,
+  isAbsolute as pathIsAbsolute,
+  sep as pathSep,
+} from 'node:path';
+import { realpath as fsRealpath } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import {
   eq,
   and,
+  or,
   desc,
   inArray,
   notInArray,
@@ -25,6 +44,7 @@ import {
   toolCalls,
   agentSchedules,
   entityLlmKeys,
+  agentWorkspaces,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -43,6 +63,7 @@ import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG } from './mcp-catalog.ts';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { connectMcp } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -99,14 +120,6 @@ const CreateAgentSchema = z
     llmKeyId: z.string().guid().optional(),
     role: z.enum(['worker', 'router', 'planner']).default('worker'),
     subAgentIds: z.array(z.string().guid()).default([]),
-    // Optional absolute filesystem path the agent's file_* tools are scoped
-    // to. Empty string is normalized to null at the action layer so the
-    // form's controlled input can stay a plain string.
-    workspaceRootPath: z
-      .string()
-      .max(1024)
-      .optional()
-      .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
     // Optional avatar path. Empty string → null. Validated against the
     // bundled catalog in the action body (not via Zod refine) so the
     // error message is "Unknown avatar" rather than a regex blob.
@@ -149,7 +162,6 @@ export type AgentRow = {
   createdAt: Date | null;
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
-  workspaceRootPath: string | null;
   position: number;
 };
 
@@ -369,7 +381,6 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
         llmKeyId: parsed.data.llmKeyId ?? null,
         role: dbRole,
         orchestratorMode,
-        workspaceRootPath: parsed.data.workspaceRootPath,
         avatarUrl: parsed.data.avatarUrl,
       })
       .returning({ id: agents.id });
@@ -429,11 +440,6 @@ const UpdateAgentSchema = z.object({
   llmKeyId: z.string().guid().nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
-  workspaceRootPath: z
-    .string()
-    .max(1024)
-    .optional()
-    .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
   // Avatar — symmetric with create. Catalog validation in the action body.
   avatarUrl: z
     .string()
@@ -465,17 +471,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (!isValidAvatarUrl(parsed.data.avatarUrl)) {
       return fail('validation_failed', 'Unknown avatar — pick one from the gallery');
     }
-    const {
-      id,
-      name,
-      personality,
-      model,
-      llmKeyId,
-      role,
-      subAgentIds,
-      workspaceRootPath,
-      avatarUrl,
-    } = parsed.data;
+    const { id, name, personality, model, llmKeyId, role, subAgentIds, avatarUrl } = parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
@@ -496,7 +492,6 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       model,
       role: dbRole,
       orchestratorMode,
-      workspaceRootPath,
       updatedAt: new Date(),
     };
     if (llmKeyId !== undefined) {
@@ -544,6 +539,386 @@ export type AgentEditRow = AgentRow & {
   orchestratorMode: string | null;
   subAgentIds: string[];
 };
+
+// ─── Agent workspace actions ──────────────────────────────────────────────────
+
+export type AgentWorkspaceRow = {
+  id: string;
+  agentId: string;
+  entityId: string | null;
+  label: string;
+  path: string;
+  position: number;
+};
+
+export async function listAgentWorkspacesAction(
+  agentId: string,
+): Promise<ActionResult<AgentWorkspaceRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    // Verify ownership via the agent's entityId
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const rows = await db
+      .select()
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.agentId, agentId))
+      .orderBy(agentWorkspaces.position, agentWorkspaces.label);
+    return ok(rows as AgentWorkspaceRow[]);
+  } catch (err) {
+    console.error('[listAgentWorkspacesAction]', err);
+    return fail('db_error', 'Failed to load workspaces');
+  }
+}
+
+export async function addAgentWorkspaceAction(
+  agentId: string,
+  label: string,
+  path: string,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+
+    // Validate inputs
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const labelParsed = z.string().min(1).max(80).safeParse(label);
+    if (!labelParsed.success) {
+      return fail('validation_failed', 'Label must be 1-80 characters');
+    }
+    const trimmedLabel = labelParsed.data.trim();
+    const trimmedPath = path.trim();
+    if (!trimmedPath) {
+      return fail('validation_failed', 'Path is required');
+    }
+    // Validate absolute path (cross-platform: must start with / or X:\)
+    const isAbsolutePath = /^([A-Za-z]:[/\\]|\/|\\\\)/.test(trimmedPath);
+    if (!isAbsolutePath) {
+      return fail(
+        'validation_failed',
+        'Path must be absolute (e.g. /home/user/notes or C:\\Users\\you\\notes)',
+      );
+    }
+
+    const db = getDb();
+    // Verify ownership
+    const [agentRow] = await db
+      .select({ id: agents.id, entityId: agents.entityId })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const [row] = await db
+      .insert(agentWorkspaces)
+      .values({
+        agentId,
+        entityId: agentRow.entityId,
+        label: trimmedLabel,
+        path: trimmedPath,
+        position: 0,
+      })
+      .returning({ id: agentWorkspaces.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok({ id: row.id });
+  } catch (err: unknown) {
+    console.error('[addAgentWorkspaceAction]', err);
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('unique') || msg.includes('23505')) {
+      return fail('conflict', 'A workspace with this label already exists for this agent');
+    }
+    return fail('db_error', 'Failed to add workspace');
+  }
+}
+
+export async function removeAgentWorkspaceAction(workspaceId: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(workspaceId).success) {
+      return fail('validation_failed', 'Invalid workspace id');
+    }
+    const db = getDb();
+    // Verify ownership: join to agents to confirm entity membership
+    const [wsRow] = await db
+      .select({ agentId: agentWorkspaces.agentId })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, workspaceId));
+    if (!wsRow) return fail('not_found', 'Workspace not found');
+
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Workspace not found');
+
+    await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, workspaceId));
+    revalidatePath(`/agents/${wsRow.agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[removeAgentWorkspaceAction]', err);
+    return fail('db_error', 'Failed to remove workspace');
+  }
+}
+
+// ─── Workspace file upload / list / delete ─────────────────────────────────────
+
+/** Max bytes accepted per uploaded Office/document file: 25 MiB. */
+const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+
+/** MIME → extension whitelist for workspace uploads. */
+const UPLOAD_ALLOWED: Record<string, string> = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'application/pdf': '.pdf',
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'text/csv': '.csv',
+  // Browsers sometimes send these for .md / .csv
+  'text/x-markdown': '.md',
+  'application/octet-stream': '', // extension-only fallback — validated by ext below
+};
+
+const UPLOAD_ALLOWED_EXTS = new Set(['.docx', '.xlsx', '.pptx', '.pdf', '.txt', '.md', '.csv']);
+
+/**
+ * Resolve a workspace path for the given (agentId, workspaceLabel) and verify
+ * the resulting path stays inside the workspace root. This is the server-side
+ * equivalent of resolveAndCheckPath from the tools package — we duplicate the
+ * boundary check here to avoid importing the tools package in the web app.
+ */
+async function resolveWorkspacePath(
+  workspaceRoot: string,
+  filename: string,
+): Promise<{ ok: true; resolved: string } | { ok: false; reason: string }> {
+  if (!pathIsAbsolute(workspaceRoot)) {
+    return { ok: false, reason: 'Workspace root is not an absolute path.' };
+  }
+  // Prevent path traversal in filename
+  const safe = pathBasename(filename);
+  if (!safe || safe.startsWith('.')) {
+    return { ok: false, reason: `Invalid filename: "${filename}"` };
+  }
+  const realRoot = await fsRealpath(workspaceRoot).catch(() => null);
+  if (!realRoot) {
+    return { ok: false, reason: `Workspace directory does not exist: "${workspaceRoot}"` };
+  }
+  const candidate = pathResolve(realRoot, safe);
+  const rootWithSep = realRoot.endsWith(pathSep) ? realRoot : realRoot + pathSep;
+  if (candidate !== realRoot && !candidate.startsWith(rootWithSep)) {
+    return { ok: false, reason: `Path traversal blocked for filename "${filename}".` };
+  }
+  return { ok: true, resolved: candidate };
+}
+
+/**
+ * Upload a file into a workspace.
+ * Validates: ownership, workspace label, file size, MIME/extension whitelist,
+ * path safety. Atomic write (temp-rename).
+ */
+export async function uploadToWorkspaceAction(
+  agentId: string,
+  workspaceLabel: string,
+  formData: FormData,
+): Promise<ActionResult<{ filename: string; bytes: number }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    if (!z.string().min(1).max(80).safeParse(workspaceLabel).success) {
+      return fail('validation_failed', 'Invalid workspace label');
+    }
+
+    const db = getDb();
+    // Ownership check
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    // Resolve workspace by label
+    const [wsRow] = await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.label, workspaceLabel)));
+    if (!wsRow) return fail('not_found', `Workspace "${workspaceLabel}" not found for this agent`);
+
+    const file = formData.get('file');
+    if (!(file instanceof File)) {
+      return fail('validation_failed', 'No file provided in FormData (field "file")');
+    }
+
+    // Size cap
+    if (file.size > UPLOAD_MAX_BYTES) {
+      return fail(
+        'file_too_large',
+        `File is ${file.size} bytes (max ${UPLOAD_MAX_BYTES}). Compress or split it first.`,
+      );
+    }
+
+    // MIME + extension check
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    const mimeOk = file.type in UPLOAD_ALLOWED;
+    const extOk = UPLOAD_ALLOWED_EXTS.has(ext);
+    if (!mimeOk && !extOk) {
+      return fail(
+        'unsupported_file_type',
+        `File type "${file.type}" / extension "${ext}" is not allowed. ` +
+          `Allowed: ${[...UPLOAD_ALLOWED_EXTS].join(', ')}.`,
+      );
+    }
+    // Special case: octet-stream is allowed only when extension is in the allowed set
+    if (file.type === 'application/octet-stream' && !extOk) {
+      return fail(
+        'unsupported_file_type',
+        `Extension "${ext}" is not allowed. Allowed: ${[...UPLOAD_ALLOWED_EXTS].join(', ')}.`,
+      );
+    }
+
+    // Ensure workspace directory exists
+    await fsMkdir(wsRow.path, { recursive: true });
+
+    // Path safety check
+    const pathResult = await resolveWorkspacePath(wsRow.path, file.name);
+    if (!pathResult.ok) return fail('path_traversal_blocked', pathResult.reason);
+
+    // Atomic write: tempfile in same dir → rename
+    const dir = pathDirname(pathResult.resolved);
+    const tmp = pathJoin(
+      dir,
+      `.${pathBasename(pathResult.resolved)}.${randomBytes(6).toString('hex')}.tmp`,
+    );
+    const bytes = await file.arrayBuffer();
+    try {
+      await fsWriteFile(tmp, Buffer.from(bytes));
+      await fsRename(tmp, pathResult.resolved);
+    } catch (err) {
+      await fsUnlink(tmp).catch(() => undefined);
+      throw err;
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok({ filename: pathBasename(pathResult.resolved), bytes: file.size });
+  } catch (err) {
+    console.error('[uploadToWorkspaceAction]', err);
+    return fail('db_error', 'Upload failed');
+  }
+}
+
+export type WorkspaceFileRow = {
+  name: string;
+  size: number;
+  modifiedAt: string;
+};
+
+/**
+ * List files in a workspace directory.
+ * Returns a flat list of regular files (no subdirectories) sorted by name.
+ */
+export async function listWorkspaceFilesAction(
+  agentId: string,
+  workspaceLabel: string,
+): Promise<ActionResult<WorkspaceFileRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    // Ownership check
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const [wsRow] = await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.label, workspaceLabel)));
+    if (!wsRow) return fail('not_found', `Workspace "${workspaceLabel}" not found for this agent`);
+
+    // Directory may not exist yet (no files uploaded)
+    const dirExists = await fsStat(wsRow.path)
+      .then((s) => s.isDirectory())
+      .catch(() => false);
+    if (!dirExists) return ok([]);
+
+    const entries = await fsReaddir(wsRow.path, { withFileTypes: true });
+    const files: WorkspaceFileRow[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const fullPath = pathJoin(wsRow.path, entry.name);
+      const info = await fsStat(fullPath).catch(() => null);
+      if (!info) continue;
+      files.push({
+        name: entry.name,
+        size: info.size,
+        modifiedAt: info.mtime.toISOString(),
+      });
+    }
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    return ok(files);
+  } catch (err) {
+    console.error('[listWorkspaceFilesAction]', err);
+    return fail('db_error', 'Failed to list workspace files');
+  }
+}
+
+/**
+ * Delete a single file from a workspace.
+ * Validates ownership + path safety before unlinking.
+ */
+export async function deleteWorkspaceFileAction(
+  agentId: string,
+  workspaceLabel: string,
+  filename: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    // Ownership check
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const [wsRow] = await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.label, workspaceLabel)));
+    if (!wsRow) return fail('not_found', `Workspace "${workspaceLabel}" not found for this agent`);
+
+    // Path safety: only allow a bare filename (no slashes)
+    const pathResult = await resolveWorkspacePath(wsRow.path, filename);
+    if (!pathResult.ok) return fail('path_traversal_blocked', pathResult.reason);
+
+    await fsUnlink(pathResult.resolved);
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return fail('not_found', `File "${filename}" not found in workspace`);
+    console.error('[deleteWorkspaceFileAction]', err);
+    return fail('db_error', 'Failed to delete file');
+  }
+}
 
 export async function getAgentForEditAction(id: string): Promise<ActionResult<AgentEditRow>> {
   try {
@@ -1475,6 +1850,23 @@ export type McpCatalogItem = {
   serverUrl: string | null;
   /** Transport — drives which custom-input fields the form renders. */
   transport: 'http' | 'stdio';
+  /**
+   * Pre-filled command for non-custom stdio entries.
+   * `undefined` for HTTP entries and the `custom-stdio-mcp` sentinel.
+   */
+  command?: string;
+  /**
+   * Pre-filled args for non-custom stdio entries, joined by newline for the
+   * textarea in McpAddForm. `undefined` for HTTP and `custom-stdio-mcp`.
+   * May contain placeholder strings like `'<root-directory>'` that the user
+   * is expected to edit before connecting.
+   */
+  args?: string[];
+  /**
+   * Env var names the server expects — rendered as pre-labelled rows in the
+   * Add form. `undefined` = no env vars required.
+   */
+  envVarNames?: string[];
 };
 
 export type McpServersListResponse = {
@@ -1515,6 +1907,9 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
       keyPrefix: c.keyPrefix,
       serverUrl: c.serverUrl,
       transport: c.transport,
+      command: c.command,
+      args: c.args,
+      envVarNames: c.envVarNames,
     }));
 
     return ok({ instances, catalog });
@@ -1719,8 +2114,16 @@ export async function createMcpServerFromCatalogAction(
     // ── Stdio path: spawn-and-list. Env values are encrypted at rest because
     //    they typically carry secrets (GITHUB_TOKEN, etc.). The runner
     //    decrypts at job execution time before passing to StdioClientTransport.
-    const command = parsed.data.customCommand!;
-    const args = parsed.data.customArgs ?? [];
+    //
+    // For pre-filled catalog entries (non-custom-stdio-mcp): command + args
+    // come from the catalog. The user supplies only env vars (and edited args
+    // via customArgs when they override the catalog defaults, e.g. to fill in
+    // a <root-directory> placeholder).
+    // For the custom-stdio-mcp sentinel: everything comes from user input.
+    const command = isCustomStdio
+      ? parsed.data.customCommand!
+      : (catalog.command ?? parsed.data.customCommand!);
+    const args = parsed.data.customArgs ?? catalog.args ?? [];
     const userEnv = parsed.data.customEnv ?? {};
 
     let stdioToolDescriptors: McpToolSummary[] = [];
@@ -2520,7 +2923,13 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         updatedAt: agentSkills.updatedAt,
       })
       .from(agentSkills)
-      .where(eq(agentSkills.entityId, session.entityId))
+      // System skills are seeded under the oldest entity but are install-wide:
+      // surface them alongside the user's own skills (by canonical slug) so
+      // they're visible even when the session entity differs from the seed
+      // owner (e.g. a LAN-mode signup). Custom skills stay entity-scoped.
+      .where(
+        or(eq(agentSkills.entityId, session.entityId), inArray(agentSkills.slug, systemSkillSlugs)),
+      )
       .orderBy(desc(agentSkills.updatedAt));
 
     if (rows.length === 0) return ok([]);
@@ -2746,7 +3155,16 @@ export async function assignSkillAction(raw: unknown): Promise<ActionResult<void
       .select({ id: agentSkills.id })
       .from(agentSkills)
       .where(
-        and(eq(agentSkills.id, parsed.data.skillId), eq(agentSkills.entityId, session.entityId)),
+        and(
+          eq(agentSkills.id, parsed.data.skillId),
+          // Allow assigning an install-wide system skill (seeded under another
+          // entity) or one of the user's own skills. The assignment row below
+          // is still written under session.entityId.
+          or(
+            eq(agentSkills.entityId, session.entityId),
+            inArray(agentSkills.slug, systemSkillSlugs),
+          ),
+        ),
       );
     if (!skill) return fail('not_found', 'Skill not found');
     const [agent] = await db
@@ -2894,7 +3312,17 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
         updatedAt: agentSkills.updatedAt,
       })
       .from(agentSkills)
-      .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
+      // Visible if it's the user's own skill or an install-wide system skill
+      // (read-only for non-owners; edit/delete stay entity-scoped below).
+      .where(
+        and(
+          eq(agentSkills.id, id),
+          or(
+            eq(agentSkills.entityId, session.entityId),
+            inArray(agentSkills.slug, systemSkillSlugs),
+          ),
+        ),
+      );
     if (!row) return fail('not_found', 'Skill not found');
 
     return ok({

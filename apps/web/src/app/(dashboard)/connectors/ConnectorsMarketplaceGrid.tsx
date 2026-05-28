@@ -1,12 +1,11 @@
 'use client';
 
-import { CheckCircle, Gear, Plus } from '@phosphor-icons/react';
+import { CheckCircle } from '@phosphor-icons/react';
 import type { ConnectorRow, ConnectorCatalogItem } from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
-import PrimaryButton from '@/components/ui/PrimaryButton';
-import IconButton from '@/components/ui/IconButton';
+import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import ConnectorAddForm from './ConnectorAddForm.tsx';
 import { CONN_BRAND_COLORS, connGlyph } from './connector-brand.ts';
 import { catalogCategory } from './categories.ts';
@@ -114,20 +113,11 @@ function ConnectorMarketCard({
           ) : undefined
         }
         foot={
-          <>
-            <span className="flex-1 text-[12.5px] leading-none text-ink-3">
-              {isInstalled ? `${installedCount} account${installedCount !== 1 ? 's' : ''}` : ''}
-            </span>
-            <PrimaryButton variant="coral" size="sm" onClick={() => setAddOpen((v) => !v)}>
-              <Plus size={12} weight="bold" />
-              {isInstalled ? '+ Add account' : '+ Install'}
-            </PrimaryButton>
-            {isInstalled && (
-              <IconButton size="sm" aria-label="Settings" onClick={() => setAddOpen((v) => !v)}>
-                <Gear size={13} />
-              </IconButton>
-            )}
-          </>
+          <MarketplaceCardActions
+            ctaLabel={isInstalled ? 'Add account' : 'Install'}
+            ctaVariant="blue"
+            onCta={() => setAddOpen((v) => !v)}
+          />
         }
       />
 

@@ -17,12 +17,36 @@ import { obsidianSkill } from './skills/obsidian';
 import { researchScopeDisciplineSkill } from './skills/research-scope-discipline';
 import { telegramResponderSkill } from './skills/telegram-responder';
 import { claudeHtmlDesignSkill } from './skills/claude-html-design';
+import { languageMirrorSkill } from './skills/language-mirror';
+import { markdownOutputSkill } from './skills/markdown-output';
+import { taskPlanningSkill } from './skills/task-planning';
+import { verifyBeforeDoneSkill } from './skills/verify-before-done';
+import { citationDisciplineSkill } from './skills/citation-discipline';
+import { safeToolUseSkill } from './skills/safe-tool-use';
+import { officeEditingSkill } from './skills/office-editing';
+
+export { officeEditingSkill } from './skills/office-editing';
 
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
   researchScopeDisciplineSkill,
   telegramResponderSkill,
   claudeHtmlDesignSkill,
+  languageMirrorSkill,
+  markdownOutputSkill,
+  taskPlanningSkill,
+  verifyBeforeDoneSkill,
+  citationDisciplineSkill,
+  safeToolUseSkill,
+  officeEditingSkill,
 ];
+
+/**
+ * Canonical slugs of the system catalog. System skills are seeded under the
+ * oldest entity but are install-wide: dashboard queries use this list to make
+ * them visible/assignable from any entity (e.g. a LAN-mode signup whose entity
+ * differs from the seed owner), without entity-scoping them away.
+ */
+export const systemSkillSlugs: string[] = systemSkills.map((s) => s.slug);
 
 export type { SystemSkill };

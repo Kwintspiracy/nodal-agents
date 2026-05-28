@@ -141,6 +141,13 @@
       "when": 1779900000000,
       "tag": "0019_agents_position",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1780000000000,
+      "tag": "0020_agent_workspaces",
+      "breakpoints": true
     }
   ]
 }
