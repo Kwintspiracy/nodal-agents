@@ -6,6 +6,7 @@ import UserMenu from '@/components/UserMenu.tsx';
 import Topbar from '@/components/ui/Topbar';
 import ThemedToaster from '@/components/ui/ThemedToaster';
 import { requireUserWithEntity } from '@/lib/server.ts';
+import { listWorkspacesAction, type WorkspaceRow } from '@/lib/actions.ts';
 
 // Gate every dashboard route. The proxy only checks cookie *presence*,
 // so a stale/invalidated cookie (DB reset, expired session) reaches the
@@ -22,9 +23,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
     throw err;
   }
 
+  // Fetch workspaces server-side so the Sidebar receives them as a prop.
+  // Failure is non-fatal — the sidebar falls back to an empty list.
+  let workspaces: WorkspaceRow[] = [];
+  const wsResult = await listWorkspacesAction();
+  if (wsResult.ok) workspaces = wsResult.data;
+
   return (
     <div className="flex min-h-screen bg-canvas text-ink">
-      <Sidebar userMenu={<UserMenu />} />
+      <Sidebar workspaces={workspaces} userMenu={<UserMenu />} />
 
       {/*
         Main pane sits next to the 220px sidebar on desktop and accounts for

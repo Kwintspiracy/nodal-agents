@@ -2,9 +2,12 @@ import {
   getSettingsAction,
   getSecuritySettingsAction,
   getNetworkSettingsAction,
+  listWorkspacesAction,
+  type WorkspaceRow,
 } from '@/lib/actions.ts';
 import SecurityForm from './SecurityForm.tsx';
 import NetworkForm from './NetworkForm.tsx';
+import WorkspacesSection from './WorkspacesSection.tsx';
 import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -15,11 +18,13 @@ import { CheckOk } from '@/components/ui/CheckOk.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const [result, securityResult, networkResult] = await Promise.all([
+  const [result, securityResult, networkResult, wsResult] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
     getNetworkSettingsAction(),
+    listWorkspacesAction(),
   ]);
+  const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
   if (!result.ok) {
     return (
@@ -84,6 +89,8 @@ export default async function SettingsPage() {
           <NetworkForm initial={networkResult.data} />
         </SetBlock>
       )}
+
+      <WorkspacesSection initial={workspaces} />
 
       <SetBlock label="URLs">
         <SetPane>

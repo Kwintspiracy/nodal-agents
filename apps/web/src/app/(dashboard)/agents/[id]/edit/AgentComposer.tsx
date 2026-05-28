@@ -1053,12 +1053,12 @@ function SettingsTab(props: {
         toast.error(result.message);
         return;
       }
-      // Reload workspace list
+      // Reload folder list
       const listResult = await listAgentWorkspacesAction(agentId);
       if (listResult.ok) onWorkspacesChange(listResult.data);
       setWsLabel('');
       setWsPath('');
-      toast.success('Workspace added');
+      toast.success('Folder added');
     });
   }
 
@@ -1072,7 +1072,7 @@ function SettingsTab(props: {
       }
       const listResult = await listAgentWorkspacesAction(agentId);
       if (listResult.ok) onWorkspacesChange(listResult.data);
-      toast.success('Workspace removed');
+      toast.success('Folder removed');
     });
   }
 
@@ -1252,18 +1252,18 @@ function SettingsTab(props: {
         )}
       </SectionCard>
 
-      {/* Knowledge — multi-workspace list + file upload. MCP servers live in Connectors tab. */}
+      {/* Knowledge — folder list + file upload. MCP servers live in Connectors tab. */}
       <SectionCard>
         <SectionHead
           label="Knowledge"
-          hint="Workspaces scope file_* tools. Add multiple paths with distinct labels."
+          hint="Folders scope file_* tools. Add multiple paths with distinct labels."
         />
 
-        {/* Existing workspaces with per-workspace file lists + upload */}
+        {/* Existing folders with per-folder file lists + upload */}
         {!workspacesLoaded ? (
           <p className="text-[12.5px] text-ink-4">Loading…</p>
         ) : workspaces.length === 0 ? (
-          <p className="text-[12.5px] text-ink-4">No workspaces configured.</p>
+          <p className="text-[12.5px] text-ink-4">No folders configured.</p>
         ) : (
           <div className="space-y-4 mb-4">
             {workspaces.map((ws) => (
@@ -1271,7 +1271,7 @@ function SettingsTab(props: {
                 key={ws.id}
                 className="rounded-lg border border-rule bg-hover/50 overflow-hidden"
               >
-                {/* Workspace header row */}
+                {/* Folder header row */}
                 <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-rule">
                   <div className="min-w-0 flex-1">
                     <span className="font-mono text-[11px] font-semibold text-ink-2 mr-2">
@@ -1372,9 +1372,9 @@ function SettingsTab(props: {
           </div>
         )}
 
-        {/* Add workspace form */}
+        {/* Add folder form */}
         <div className="flex flex-col gap-2">
-          <Field label="Add workspace">
+          <Field label="Add folder">
             <div className="flex gap-2">
               <input
                 type="text"
@@ -1403,15 +1403,15 @@ function SettingsTab(props: {
           </Field>
           <p className="text-[11px] text-ink-4">
             Absolute path. Label is the prefix the agent uses (e.g.{' '}
-            <code className="font-mono">notes/file.md</code>). Leave label blank if a single
-            workspace — label is then optional.
+            <code className="font-mono">notes/file.md</code>). Leave label blank if a single folder
+            — label is then optional.
           </p>
         </div>
 
-        {/* Confirm workspace removal dialog — never window.confirm (ESLint-enforced ban) */}
+        {/* Confirm folder removal dialog — never window.confirm (ESLint-enforced ban) */}
         <ConfirmDialog
           open={wsRemoveId !== null}
-          title="Remove workspace"
+          title="Remove folder"
           message="The agent will lose file access to this path. Existing files are NOT deleted."
           confirmLabel="Remove"
           destructive
@@ -1425,7 +1425,7 @@ function SettingsTab(props: {
           title="Delete file"
           message={
             wsDeleteTarget
-              ? `Delete "${wsDeleteTarget.name}" from workspace "${wsDeleteTarget.label}"? This cannot be undone.`
+              ? `Delete "${wsDeleteTarget.name}" from folder "${wsDeleteTarget.label}"? This cannot be undone.`
               : ''
           }
           confirmLabel="Delete"

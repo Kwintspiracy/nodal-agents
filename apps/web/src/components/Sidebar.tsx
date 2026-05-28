@@ -22,10 +22,11 @@ import {
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
 import BrandMark from './ui/BrandMark';
-import FleetPicker, { type Fleet } from './ui/FleetPicker';
 import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
 import LiveCard from './ui/LiveCard';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
+import type { WorkspaceRow } from '@/lib/actions';
 
 type Item = {
   href: string;
@@ -84,11 +85,13 @@ const NAV: Group[] = [
   },
 ];
 
-// Single-workspace placeholder. Once a real `fleets` table exists, this
-// list moves to a server-fetched prop and the picker becomes interactive.
-const FLEETS: Fleet[] = [{ id: 'local', name: 'Local workspace', tag: 'LCL', color: '#d4ff2e' }];
-
-export default function Sidebar({ userMenu }: { userMenu?: ReactNode }) {
+export default function Sidebar({
+  workspaces,
+  userMenu,
+}: {
+  workspaces?: WorkspaceRow[];
+  userMenu?: ReactNode;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -133,7 +136,7 @@ export default function Sidebar({ userMenu }: { userMenu?: ReactNode }) {
         }`}
       >
         <BrandMark />
-        <FleetPicker fleets={FLEETS} activeId={FLEETS[0]!.id} disabled />
+        <WorkspaceSwitcher workspaces={workspaces ?? []} />
 
         <nav className="flex flex-1 flex-col overflow-y-auto py-1.5">
           {NAV.map((group, gi) => (

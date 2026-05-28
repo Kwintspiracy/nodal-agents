@@ -2,7 +2,7 @@
 
 import 'server-only';
 import { revalidatePath } from 'next/cache';
-import { headers } from 'next/headers';
+import { headers, cookies } from 'next/headers';
 import { z } from 'zod';
 import {
   writeFile as fsWriteFile,
@@ -45,6 +45,8 @@ import {
   agentSchedules,
   entityLlmKeys,
   agentWorkspaces,
+  entities,
+  entityMembers,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -56,7 +58,7 @@ import {
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import { getLanAddresses } from './network.ts';
 import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
-import { getDb, getAuthProvider } from './server.ts';
+import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { env } from './env.ts';
 import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
@@ -102,7 +104,176 @@ async function getSession() {
   } catch {
     req = new Request('http://localhost/');
   }
-  return requireAuth(req, provider);
+  const session = await requireAuth(req, provider);
+  return applyActiveEntity(session, req);
+}
+
+// ─── Workspaces (entities) ──────────────────────────────────────────────────────
+// A workspace IS an `entity`: an isolated space with its own agents, skills,
+// connectors, jobs, memory, schedules and LLM keys (all entity-scoped). The
+// active workspace is persisted in ACTIVE_ENTITY_COOKIE and applied to the
+// session by applyActiveEntity (server.ts). Switching re-scopes the dashboard.
+
+export type WorkspaceRow = {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string | null;
+  role: string;
+  active: boolean;
+};
+
+function workspaceSlug(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+  return `${base || 'workspace'}-${randomBytes(3).toString('hex')}`;
+}
+
+export async function listWorkspacesAction(): Promise<ActionResult<WorkspaceRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select({
+        id: entities.id,
+        name: entities.name,
+        slug: entities.slug,
+        icon: entities.icon,
+        role: entityMembers.role,
+      })
+      .from(entityMembers)
+      .innerJoin(entities, eq(entities.id, entityMembers.entityId))
+      .where(eq(entityMembers.userId, session.userId))
+      .orderBy(entities.createdAt);
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        icon: r.icon,
+        role: r.role ?? 'member',
+        active: r.id === session.entityId,
+      })),
+    );
+  } catch (err) {
+    console.error('[listWorkspacesAction]', err);
+    return fail('db_error', 'Failed to list workspaces');
+  }
+}
+
+export async function createWorkspaceAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = z
+      .object({ name: z.string().min(1).max(60), icon: z.string().max(8).optional() })
+      .safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const id = crypto.randomUUID();
+    await db.insert(entities).values({
+      id,
+      userId: session.userId,
+      name: parsed.data.name,
+      slug: workspaceSlug(parsed.data.name),
+      icon: parsed.data.icon ?? '🗂️',
+    });
+    await db.insert(entityMembers).values({ entityId: id, userId: session.userId, role: 'owner' });
+    revalidatePath('/', 'layout');
+    return ok({ id });
+  } catch (err) {
+    console.error('[createWorkspaceAction]', err);
+    return fail('db_error', 'Failed to create workspace');
+  }
+}
+
+export async function switchWorkspaceAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = z.object({ id: z.string().guid() }).safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Invalid workspace id');
+    const db = getDb();
+    const [member] = await db
+      .select({ id: entityMembers.id })
+      .from(entityMembers)
+      .where(
+        and(eq(entityMembers.userId, session.userId), eq(entityMembers.entityId, parsed.data.id)),
+      );
+    if (!member) return fail('not_found', 'Workspace not found');
+    const c = await cookies();
+    c.set(ACTIVE_ENTITY_COOKIE, parsed.data.id, {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 365,
+    });
+    revalidatePath('/', 'layout');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[switchWorkspaceAction]', err);
+    return fail('db_error', 'Failed to switch workspace');
+  }
+}
+
+export async function renameWorkspaceAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = z
+      .object({ id: z.string().guid(), name: z.string().min(1).max(60) })
+      .safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const [member] = await db
+      .select({ role: entityMembers.role })
+      .from(entityMembers)
+      .where(
+        and(eq(entityMembers.userId, session.userId), eq(entityMembers.entityId, parsed.data.id)),
+      );
+    if (!member) return fail('not_found', 'Workspace not found');
+    await db
+      .update(entities)
+      .set({ name: parsed.data.name, updatedAt: new Date() })
+      .where(eq(entities.id, parsed.data.id));
+    revalidatePath('/', 'layout');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[renameWorkspaceAction]', err);
+    return fail('db_error', 'Failed to rename workspace');
+  }
+}
+
+export async function deleteWorkspaceAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = z.object({ id: z.string().guid() }).safeParse(raw);
+    if (!parsed.success) return fail('validation_failed', 'Invalid workspace id');
+    if (parsed.data.id === session.entityId) {
+      return fail('validation_failed', 'Switch to another workspace before deleting this one.');
+    }
+    const db = getDb();
+    const memberships = await db
+      .select({ entityId: entityMembers.entityId, role: entityMembers.role })
+      .from(entityMembers)
+      .where(eq(entityMembers.userId, session.userId));
+    if (memberships.length <= 1)
+      return fail('validation_failed', 'Cannot delete your only workspace.');
+    const target = memberships.find((m) => m.entityId === parsed.data.id);
+    if (!target) return fail('not_found', 'Workspace not found');
+    if (target.role !== 'owner') return fail('forbidden', 'Only the owner can delete a workspace.');
+    // FK onDelete:cascade removes all entity-scoped rows + memberships.
+    await db.delete(entities).where(eq(entities.id, parsed.data.id));
+    revalidatePath('/', 'layout');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteWorkspaceAction]', err);
+    return fail('db_error', 'Failed to delete workspace');
+  }
 }
 
 // ─── Zod schemas (input validation) ──────────────────────────────────────────

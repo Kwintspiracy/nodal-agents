@@ -117,6 +117,9 @@ vi.mock('../src/lib/server.ts', async () => {
     requireAuthWithEntity: vi.fn(),
     requireUser: vi.fn(),
     requireUserWithEntity: vi.fn(),
+    // Active-workspace override is a no-op in tests (no cookie): passthrough.
+    applyActiveEntity: vi.fn(async (session: unknown) => session),
+    ACTIVE_ENTITY_COOKIE: 'nodalai_active_entity',
   };
 });
 

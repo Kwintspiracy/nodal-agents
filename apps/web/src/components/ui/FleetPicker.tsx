@@ -15,11 +15,11 @@ export type Fleet = {
 type Props = {
   fleets: Fleet[];
   activeId: string;
-  /** When true, the dropdown is rendered but locked to the active fleet. Used
-   *  in single-workspace mode — keeps the design visible without exposing a
-   *  feature the platform doesn't ship yet. */
+  /** When true, the dropdown is rendered but locked to the active fleet. */
   disabled?: boolean;
   onChange?: (id: string) => void;
+  /** When provided, a "New workspace" button appears at the bottom of the dropdown. */
+  onNewWorkspace?: () => void;
 };
 
 /**
@@ -30,7 +30,13 @@ type Props = {
  * Disabled mode keeps the visual present (one fleet shown, chevron rotated,
  * menu inert) until multi-fleet support actually ships in the DB.
  */
-export default function FleetPicker({ fleets, activeId, disabled, onChange }: Props) {
+export default function FleetPicker({
+  fleets,
+  activeId,
+  disabled,
+  onChange,
+  onNewWorkspace,
+}: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const active = fleets.find((f) => f.id === activeId) ?? fleets[0];
@@ -115,6 +121,21 @@ export default function FleetPicker({ fleets, activeId, disabled, onChange }: Pr
               </div>
             );
           })}
+          {onNewWorkspace && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onNewWorkspace();
+              }}
+              className="mt-1 flex w-full items-center gap-2 rounded-md border-t border-rule px-2 py-1.5 text-[12px] font-medium text-ink-3 hover:bg-hover hover:text-ink-2 transition-colors"
+            >
+              <span className="flex h-4 w-4 items-center justify-center rounded text-[12px] leading-none">
+                +
+              </span>
+              New workspace
+            </button>
+          )}
         </div>
       )}
     </div>

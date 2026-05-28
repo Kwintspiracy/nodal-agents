@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createClient } from '@nodal-agents/db';
+import { createClient, eq, and, entityMembers } from '@nodal-agents/db';
 import {
   LocalTrustProvider,
   LocalAuthProvider,
@@ -15,6 +15,46 @@ import { env } from './env.ts';
 // Re-export helpers so callers only need to import from this module.
 export { requireAuth, requireAuthWithEntity };
 export type { AuthSession };
+
+// ─── Active workspace (entity) selection ────────────────────────────────────────
+// The dashboard lets a user own multiple workspaces (entities) and switch
+// between them. The choice is stored in a cookie; the auth providers stay
+// unchanged (they still resolve the user's DEFAULT entity), and we override
+// `entityId` here — but ONLY when the user is actually a member of the cookie's
+// entity. An invalid/forged cookie silently falls back to the default. The
+// runner is unaffected (it gets entityId from the job row, not a cookie).
+
+export const ACTIVE_ENTITY_COOKIE = 'nodalai_active_entity';
+
+function readActiveEntityCookie(req: Request): string | null {
+  const raw = req.headers.get('cookie');
+  if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const k = part.slice(0, eqIdx).trim();
+    if (k === ACTIVE_ENTITY_COOKIE) {
+      return decodeURIComponent(part.slice(eqIdx + 1).trim());
+    }
+  }
+  return null;
+}
+
+/**
+ * Override the session's entityId with the active-workspace cookie, but only
+ * when the user is genuinely a member of that entity (membership check against
+ * entity_members). Absent or non-member cookie → unchanged default session.
+ */
+export async function applyActiveEntity(session: AuthSession, req: Request): Promise<AuthSession> {
+  const cookieEntity = readActiveEntityCookie(req);
+  if (!cookieEntity || cookieEntity === session.entityId) return session;
+  const [member] = await getDb()
+    .select({ id: entityMembers.id })
+    .from(entityMembers)
+    .where(and(eq(entityMembers.userId, session.userId), eq(entityMembers.entityId, cookieEntity)));
+  if (!member) return session;
+  return { ...session, entityId: cookieEntity };
+}
 
 // ─── DB singleton ──────────────────────────────────────────────────────────────
 // One connection pool per server process. Next.js may instantiate multiple
@@ -85,7 +125,8 @@ export function getBetterAuth() {
  */
 export async function getCurrentUser(req: Request): Promise<AuthSession | null> {
   const provider = getAuthProvider();
-  return provider.getSession(req);
+  const session = await provider.getSession(req);
+  return session ? applyActiveEntity(session, req) : null;
 }
 
 /**
@@ -93,7 +134,8 @@ export async function getCurrentUser(req: Request): Promise<AuthSession | null> 
  * Use inside Server Actions that require a logged-in user.
  */
 export async function requireUser(req: Request): Promise<AuthSession> {
-  return requireAuth(req, getAuthProvider());
+  const session = await requireAuth(req, getAuthProvider());
+  return applyActiveEntity(session, req);
 }
 
 /**
@@ -101,5 +143,6 @@ export async function requireUser(req: Request): Promise<AuthSession> {
  * Throws AuthError (unauthenticated) or NoEntityError (no workspace).
  */
 export async function requireUserWithEntity(req: Request): Promise<AuthSession> {
-  return requireAuthWithEntity(req, getAuthProvider(), getDb());
+  const session = await requireAuthWithEntity(req, getAuthProvider(), getDb());
+  return applyActiveEntity(session, req);
 }
