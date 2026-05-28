@@ -58,6 +58,7 @@ const EXTERNALS = [
   // File ingestion
   'pdf-parse',
   'mammoth',
+  'exceljs',
 ];
 
 // esbuild's external matches the literal import string. Deep imports

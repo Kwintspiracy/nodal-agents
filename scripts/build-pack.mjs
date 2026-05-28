@@ -109,8 +109,8 @@ if (existsSync(migrationsSrc)) {
 // EXTERNALS array.
 const packPkg = {
   name: 'nodal-agents',
-  version: '0.2.0',
-  description: 'Local-first AI agent platform — self-host on Mac, PC, Linux, VPS, or NAS.',
+  version: '0.2.1',
+  description: 'Local-first AI agent platform with a web dashboard — install in one command.',
   license: 'MIT',
   repository: {
     type: 'git',
@@ -159,6 +159,7 @@ const packPkg = {
     'apify-client': '^2.23.0',
     'pdf-parse': '^2.4.5',
     mammoth: '^1.9.0',
+    exceljs: '^4.4.0',
     // pdfjs-dist (transitive of pdf-parse) tries to require @napi-rs/canvas
     // optionally for canvas-based PDF rendering. Without it, SSR pages
     // that import the adapter tree crash with `ReferenceError: DOMMatrix
