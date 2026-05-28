@@ -20,3 +20,4 @@ export * from './mcp.ts';
 export * from './misc.ts';
 export * from './auth.ts';
 export * from './agent-connector-assignments.ts';
+export * from './agent-workspaces.ts';

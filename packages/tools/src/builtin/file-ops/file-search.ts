@@ -1,8 +1,8 @@
-// file-ops/file-search.ts — filename + content search across the workspace
+// file-ops/file-search.ts — filename + content search across the workspace(s)
 //
 // Single tool covers both filename and content search via the `target` param.
-// Implementation walks the workspace (cheap on local FS), filters by file_glob,
-// and either matches the pattern against the path or scans the file contents.
+// Multi-workspace: when no label is given, searches ALL workspaces. When the
+// `path` begins with a known workspace label, searches only that workspace.
 // Hidden / vendor dirs (.git, node_modules) are skipped by default for perf.
 
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -10,8 +10,8 @@ import { join, relative } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
 import {
+  assertWorkspacesConfigured,
   resolveAndCheckPath,
-  assertWorkspaceConfigured,
   MAX_SEARCH_FILE_BYTES,
   WorkspaceError,
 } from './workspace';
@@ -29,7 +29,10 @@ export const FileSearchInputSchema = z.object({
   path: z
     .string()
     .optional()
-    .describe('Subdirectory (under workspace root) to search. Default "." (full workspace).'),
+    .describe(
+      'Subdirectory to search. For multi-workspace agents, prefix with the workspace label ' +
+        '(e.g. "notes/subdir"). Without a label, all workspaces are searched.',
+    ),
   file_glob: z
     .string()
     .optional()
@@ -81,15 +84,17 @@ function globToRegex(glob: string): RegExp {
 export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSearchOutput> = {
   name: 'file_search',
   description:
-    'Search the agent workspace. `target:"files"` matches the regex against file paths. ' +
+    'Search the agent workspace(s). `target:"files"` matches the regex against file paths. ' +
     '`target:"content"` (default) scans file contents and returns line-level matches. Use ' +
-    '`file_glob` to restrict content scans (e.g. "*.md"). Skips .git/node_modules/dist by default.',
+    '`file_glob` to restrict content scans (e.g. "*.md"). For multi-workspace agents, prefix ' +
+    '`path` with a workspace label to search only that workspace (e.g. "notes/subdir"), or ' +
+    'omit to search all workspaces. Skips .git/node_modules/dist by default.',
   inputSchema: FileSearchInputSchema,
   riskLevel: 'read',
   execute: async (input, ctx) => {
     try {
-      const targetPath = await resolveAndCheckPath(ctx, input.path ?? '.');
-      const workspaceRoot = assertWorkspaceConfigured(ctx);
+      const workspaces = assertWorkspacesConfigured(ctx);
+
       const flags = input.case_sensitive ? '' : 'i';
       let patternRe: RegExp;
       try {
@@ -101,7 +106,32 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
       const matches: FileSearchMatch[] = [];
       let truncated = false;
 
-      const walk = async (dir: string): Promise<void> => {
+      // Determine which workspaces to search and what root path to start from.
+      // If `input.path` is given, resolveAndCheckPath selects the right workspace
+      // and returns the exact start dir. Otherwise, we walk each workspace root.
+      const searchTargets: Array<{ rootForRelative: string; startDir: string }> = [];
+
+      if (input.path !== undefined && input.path !== null && input.path !== '.') {
+        // Path provided — let resolver pick the workspace.
+        const resolvedStart = await resolveAndCheckPath(ctx, input.path);
+        // Find which workspace root this resolved path falls under (for relative display).
+        let rootForRelative = workspaces[0]!.path;
+        for (const ws of workspaces) {
+          const sep = ws.path.endsWith('/') || ws.path.endsWith('\\') ? '' : '/';
+          if (resolvedStart === ws.path || resolvedStart.startsWith(ws.path + sep)) {
+            rootForRelative = ws.path;
+            break;
+          }
+        }
+        searchTargets.push({ rootForRelative, startDir: resolvedStart });
+      } else {
+        // No path: search all workspaces from their roots.
+        for (const ws of workspaces) {
+          searchTargets.push({ rootForRelative: ws.path, startDir: ws.path });
+        }
+      }
+
+      const walk = async (dir: string, workspaceRoot: string): Promise<void> => {
         if (matches.length >= input.max_results) {
           truncated = true;
           return;
@@ -116,7 +146,7 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
           const rel = relative(workspaceRoot, full).replace(/\\/g, '/');
           if (dirent.isDirectory()) {
             if (SKIP_DIRS.has(dirent.name)) continue;
-            await walk(full);
+            await walk(full, workspaceRoot);
             continue;
           }
           if (!dirent.isFile()) continue;
@@ -157,7 +187,11 @@ export const fileSearchTool: ToolDefinition<typeof FileSearchInputSchema, FileSe
         }
       };
 
-      await walk(targetPath);
+      for (const { rootForRelative, startDir } of searchTargets) {
+        if (truncated) break;
+        await walk(startDir, rootForRelative);
+      }
+
       return { ok: true, matches, truncated };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };

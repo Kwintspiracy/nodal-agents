@@ -164,7 +164,6 @@ export default function AgentForm(props: Props) {
         llmKeyId: llmKeyId || null,
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
-        workspaceRootPath: fd.get('workspaceRootPath') ?? '',
         avatarUrl,
       };
       startTransition(async () => {
@@ -185,7 +184,6 @@ export default function AgentForm(props: Props) {
         llmKeyId: llmKeyId || undefined,
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
-        workspaceRootPath: fd.get('workspaceRootPath') ?? '',
         avatarUrl,
       };
       startTransition(async () => {
@@ -313,25 +311,6 @@ export default function AgentForm(props: Props) {
             placeholder="You are a helpful assistant..."
             className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y"
           />
-        </div>
-
-        <div>
-          <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-workspace-root">
-            Workspace root path <span className="text-ink-4">(optional — for file_* tools)</span>
-          </label>
-          <input
-            id="agent-workspace-root"
-            name="workspaceRootPath"
-            type="text"
-            defaultValue={isEdit ? (props.initial.workspaceRootPath ?? '') : ''}
-            placeholder="C:\Users\you\Documents\MyVault  or  /home/you/notes"
-            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-          />
-          <p className="text-[11px] text-ink-4 mt-1">
-            Absolute path. The agent&apos;s <code>file_read</code> / <code>file_write</code> /{' '}
-            <code>file_edit</code> / <code>file_list</code> / <code>file_search</code> tools are
-            scoped to this directory. Leave empty to disable file access.
-          </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -525,26 +504,6 @@ export default function AgentForm(props: Props) {
                   placeholder="You are a helpful assistant..."
                   className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-none"
                 />
-              </div>
-
-              <div>
-                <label
-                  className="block text-xs text-ink-3 mb-1"
-                  htmlFor="agent-workspace-root-create"
-                >
-                  Workspace root path{' '}
-                  <span className="text-ink-4">(optional — for file_* tools)</span>
-                </label>
-                <input
-                  id="agent-workspace-root-create"
-                  name="workspaceRootPath"
-                  type="text"
-                  placeholder="C:\Users\you\Documents\MyVault  or  /home/you/notes"
-                  className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-                />
-                <p className="text-[11px] text-ink-4 mt-1">
-                  Absolute path. Leave empty to disable file access for this agent.
-                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

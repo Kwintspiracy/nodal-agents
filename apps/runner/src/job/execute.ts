@@ -19,6 +19,7 @@ import {
   connectors as connectorsTable,
   mcpServers as mcpServersTable,
   agentMcpServers as agentMcpServersTable,
+  agentWorkspaces as agentWorkspacesTable,
   getDecryptedCredentialById,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
@@ -214,6 +215,15 @@ export async function executeJob(
     orchestratorMode: (agentRow.orchestratorMode ?? null) as 'router' | 'planner' | null,
     memoryTokenBudget: agentRow.memoryTokenBudget,
   };
+
+  // ── 3.5 Load agent workspaces ─────────────────────────────────────────────────
+  // Ordered by position so the LLM sees workspaces in the user-configured order.
+  const wsRows = await db
+    .select({ label: agentWorkspacesTable.label, path: agentWorkspacesTable.path })
+    .from(agentWorkspacesTable)
+    .where(eq(agentWorkspacesTable.agentId, agentRow.id))
+    .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
+  const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
 
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
   // Agents MUST have an llmKeyId pointing at an active entity_llm_keys row.
@@ -857,7 +867,7 @@ export async function executeJob(
                 db,
                 jobChatId: job.chatId ?? null,
                 embeddingClient: deps.embeddingClient,
-                workspaceRootPath: agentRow.workspaceRootPath ?? null,
+                workspaces: agentWorkspacesList,
               },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },
             );
@@ -1007,7 +1017,7 @@ export async function executeJob(
             db,
             jobChatId: job.chatId ?? null,
             embeddingClient: deps.embeddingClient,
-            workspaceRootPath: agentRow.workspaceRootPath ?? null,
+            workspaces: agentWorkspacesList,
           },
           {
             approvalRules: approvalRuleList,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -15,14 +15,19 @@ import {
 } from 'recharts';
 import {
   updateAgentAction,
+  listAgentWorkspacesAction,
+  addAgentWorkspaceAction,
+  removeAgentWorkspaceAction,
   type AgentRow,
   type AgentEditRow,
+  type AgentWorkspaceRow,
   type LlmKeyUiRow,
   type AgentConnectorRow,
   type AgentMcpServerRow,
   type JobRow,
   type SkillRow,
 } from '@/lib/actions.ts';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import {
   detectModelProviders,
@@ -108,7 +113,16 @@ export default function AgentComposer({
   const [llmKeyId, setLlmKeyId] = useState<string>(initialLlmKeyId);
   const [model, setModel] = useState<string>(agent.model ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
-  const [workspaceRootPath, setWorkspaceRootPath] = useState<string>(agent.workspaceRootPath ?? '');
+  // Workspaces list — loaded asynchronously from the DB via server action.
+  const [workspaces, setWorkspaces] = useState<AgentWorkspaceRow[]>([]);
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
+
+  useEffect(() => {
+    listAgentWorkspacesAction(agent.id).then((result) => {
+      if (result.ok) setWorkspaces(result.data);
+      setWorkspacesLoaded(true);
+    });
+  }, [agent.id]);
 
   // ── derived ──────────────────────────────────────────────────────────────
   const selectedKey = useMemo(
@@ -139,7 +153,7 @@ export default function AgentComposer({
   const totalRuns = jobs.length;
   const successfulRuns = jobs.filter((j) => j.status === 'completed').length;
 
-  // Dirty detection — drives Settings save/reset
+  // Dirty detection — drives Settings save/reset (workspaces are saved immediately on add/remove)
   const dirty =
     name !== agent.name ||
     personality !== (agent.personality ?? '') ||
@@ -147,8 +161,7 @@ export default function AgentComposer({
     JSON.stringify([...subAgentIds].sort()) !== JSON.stringify([...agent.subAgentIds].sort()) ||
     llmKeyId !== initialLlmKeyId ||
     model !== (agent.model ?? '') ||
-    avatarUrl !== (agent.avatarUrl ?? null) ||
-    workspaceRootPath !== (agent.workspaceRootPath ?? '');
+    avatarUrl !== (agent.avatarUrl ?? null);
 
   // ── handlers ─────────────────────────────────────────────────────────────
   function handleLlmKeyChange(id: string) {
@@ -189,7 +202,6 @@ export default function AgentComposer({
       llmKeyId: llmKeyId || null,
       role,
       subAgentIds: role === 'worker' ? [] : subAgentIds,
-      workspaceRootPath,
       avatarUrl,
     };
     startTransition(async () => {
@@ -211,7 +223,6 @@ export default function AgentComposer({
     setLlmKeyId(initialLlmKeyId);
     setModel(agent.model ?? '');
     setAvatarUrl(agent.avatarUrl ?? null);
-    setWorkspaceRootPath(agent.workspaceRootPath ?? '');
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -308,7 +319,9 @@ export default function AgentComposer({
           detectedProviders={detectedProviders}
           compatibleActiveKeys={compatibleActiveKeys}
           noLlmKeys={noLlmKeys}
-          workspaceRootPath={workspaceRootPath}
+          workspaces={workspaces}
+          workspacesLoaded={workspacesLoaded}
+          onWorkspacesChange={setWorkspaces}
           mcpServers={mcpServers}
           agentId={agent.id}
           dirty={dirty}
@@ -321,7 +334,6 @@ export default function AgentComposer({
           onChangeLlmKey={handleLlmKeyChange}
           onChangeModel={handleModelChange}
           onSwitchKey={setLlmKeyId}
-          onChangeWorkspaceRootPath={setWorkspaceRootPath}
           onSave={handleSave}
           onReset={handleReset}
         />
@@ -905,7 +917,9 @@ function SettingsTab(props: {
   detectedProviders: Set<ProviderSlug>;
   compatibleActiveKeys: LlmKeyUiRow[];
   noLlmKeys: boolean;
-  workspaceRootPath: string;
+  workspaces: AgentWorkspaceRow[];
+  workspacesLoaded: boolean;
+  onWorkspacesChange: (ws: AgentWorkspaceRow[]) => void;
   mcpServers: AgentMcpServerRow[];
   agentId: string;
   dirty: boolean;
@@ -918,7 +932,6 @@ function SettingsTab(props: {
   onChangeLlmKey: (id: string) => void;
   onChangeModel: (v: string) => void;
   onSwitchKey: (id: string) => void;
-  onChangeWorkspaceRootPath: (v: string) => void;
   onSave: () => void;
   onReset: () => void;
 }) {
@@ -939,7 +952,9 @@ function SettingsTab(props: {
     detectedProviders,
     compatibleActiveKeys,
     noLlmKeys,
-    workspaceRootPath,
+    workspaces,
+    workspacesLoaded,
+    onWorkspacesChange,
     mcpServers,
     agentId,
     dirty,
@@ -952,10 +967,49 @@ function SettingsTab(props: {
     onChangeLlmKey,
     onChangeModel,
     onSwitchKey,
-    onChangeWorkspaceRootPath,
     onSave,
     onReset,
   } = props;
+
+  // ── Workspace management local state ─────────────────────────────────────
+  const [wsLabel, setWsLabel] = useState('');
+  const [wsPath, setWsPath] = useState('');
+  const [wsAdding, setWsAdding] = useState(false);
+  const [wsRemoveId, setWsRemoveId] = useState<string | null>(null);
+  const [wsIsPending, startWsTransition] = useTransition();
+
+  function handleAddWorkspace() {
+    if (!wsLabel.trim() || !wsPath.trim()) return;
+    startWsTransition(async () => {
+      setWsAdding(true);
+      const result = await addAgentWorkspaceAction(agentId, wsLabel.trim(), wsPath.trim());
+      setWsAdding(false);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      // Reload workspace list
+      const listResult = await listAgentWorkspacesAction(agentId);
+      if (listResult.ok) onWorkspacesChange(listResult.data);
+      setWsLabel('');
+      setWsPath('');
+      toast.success('Workspace added');
+    });
+  }
+
+  function handleRemoveWorkspace(id: string) {
+    startWsTransition(async () => {
+      const result = await removeAgentWorkspaceAction(id);
+      setWsRemoveId(null);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      const listResult = await listAgentWorkspacesAction(agentId);
+      if (listResult.ok) onWorkspacesChange(listResult.data);
+      toast.success('Workspace removed');
+    });
+  }
 
   return (
     <div className="space-y-6 pb-24">
@@ -1133,22 +1187,90 @@ function SettingsTab(props: {
         )}
       </SectionCard>
 
-      {/* Knowledge — workspace root only. MCP servers live in the Connectors tab,
-          mixed with API connectors per the design handoff. */}
+      {/* Knowledge — multi-workspace list. MCP servers live in the Connectors tab. */}
       <SectionCard>
         <SectionHead
           label="Knowledge"
-          hint="Workspace path scopes file_* tools. MCP servers are attached from the Connectors tab."
+          hint="Workspaces scope file_* tools. Add multiple paths with distinct labels."
         />
-        <Field label="Workspace root">
-          <input
-            type="text"
-            value={workspaceRootPath}
-            onChange={(e) => onChangeWorkspaceRootPath(e.target.value)}
-            placeholder="C:\Users\you\Documents\MyVault  or  /home/you/notes"
-            className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-          />
-        </Field>
+
+        {/* Existing workspaces */}
+        {!workspacesLoaded ? (
+          <p className="text-[12.5px] text-ink-4">Loading…</p>
+        ) : workspaces.length === 0 ? (
+          <p className="text-[12.5px] text-ink-4">No workspaces configured.</p>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {workspaces.map((ws) => (
+              <div
+                key={ws.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-rule bg-hover px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="font-mono text-[11px] font-semibold text-ink-2 mr-2">
+                    {ws.label}
+                  </span>
+                  <span className="font-mono text-[11.5px] text-ink-3 break-all">{ws.path}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWsRemoveId(ws.id)}
+                  disabled={wsIsPending}
+                  className="shrink-0 rounded border border-rule px-2 py-0.5 text-[11px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add workspace form */}
+        <div className="flex flex-col gap-2">
+          <Field label="Add workspace">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={wsLabel}
+                onChange={(e) => setWsLabel(e.target.value)}
+                placeholder="Label (e.g. notes)"
+                maxLength={80}
+                className="w-28 shrink-0 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              />
+              <input
+                type="text"
+                value={wsPath}
+                onChange={(e) => setWsPath(e.target.value)}
+                placeholder="/home/you/notes  or  C:\Users\you\docs"
+                className="min-w-0 flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleAddWorkspace}
+                disabled={wsIsPending || wsAdding || !wsLabel.trim() || !wsPath.trim()}
+                className="shrink-0 rounded-lg border border-rule px-4 py-2 text-[13px] font-medium text-ink-2 hover:border-rule-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {wsAdding ? 'Adding…' : 'Add'}
+              </button>
+            </div>
+          </Field>
+          <p className="text-[11px] text-ink-4">
+            Absolute path. Label is the prefix the agent uses (e.g.{' '}
+            <code className="font-mono">notes/file.md</code>). Leave label blank if a single
+            workspace — label is then optional.
+          </p>
+        </div>
+
+        {/* Confirm removal dialog — never window.confirm (ESLint-enforced ban) */}
+        <ConfirmDialog
+          open={wsRemoveId !== null}
+          title="Remove workspace"
+          message="The agent will lose file access to this path. Existing files are NOT deleted."
+          confirmLabel="Remove"
+          destructive
+          onConfirm={() => wsRemoveId && handleRemoveWorkspace(wsRemoveId)}
+          onCancel={() => setWsRemoveId(null)}
+        />
       </SectionCard>
 
       {/* Sticky save bar */}

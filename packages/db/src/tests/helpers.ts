@@ -108,7 +108,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       system_agent boolean DEFAULT false,
       max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
       memory_token_budget integer NOT NULL DEFAULT 1500,
-      workspace_root_path text,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
@@ -436,6 +435,18 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       instructions text,
       created_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (orchestrator_id, sub_agent_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_workspaces (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      label text NOT NULL,
+      path text NOT NULL,
+      position integer NOT NULL DEFAULT 0,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (agent_id, label)
     );
 
     CREATE TABLE IF NOT EXISTS agent_budgets (

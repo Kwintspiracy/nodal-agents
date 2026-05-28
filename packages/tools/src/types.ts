@@ -36,14 +36,17 @@ export interface ToolContext {
    */
   embeddingClient?: EmbeddingClient;
   /**
-   * Absolute filesystem path the file_* tools are scoped to for this agent.
-   * Resolved from `agents.workspace_root_path` at job start by the runner.
-   * `null` (the column default) means the agent has no workspace configured;
-   * every file_* tool call fails loud with `workspace_not_configured`.
-   * Per-agent so a single entity can run multiple agents over distinct scopes
-   * (e.g. an Obsidian-vault agent vs a code-repo agent).
+   * List of workspaces for this agent, loaded from agent_workspaces rows at
+   * job start by the runner (ordered by position ASC). Each entry carries a
+   * `label` (the path prefix the LLM uses, e.g. "notes") and the absolute
+   * `path` on the filesystem. An empty array means the agent has no workspace
+   * configured — every file_* tool call fails loud with `workspace_not_configured`.
+   *
+   * Addressing:
+   *   - Single workspace: label is optional — `file.md` resolves under the sole root.
+   *   - Multiple workspaces: `<label>/<relative>` is required (e.g. "notes/file.md").
    */
-  workspaceRootPath?: string | null;
+  workspaces?: Array<{ label: string; path: string }>;
 }
 
 // ─── ToolDefinition ────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@
 // skill content was silently dropped. End-to-end skill behavior never worked.
 
 import { eq } from '@nodal-agents/db';
-import { agentSkillAssignments, agentSkills } from '@nodal-agents/db';
+import { agentSkillAssignments, agentSkills, agentWorkspaces } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
@@ -79,6 +79,37 @@ function buildBuiltinCapabilitiesBlock(): string {
   return `## Built-in capabilities\n\nThese tools are always available to you. Use them proactively when they fit:\n\n${lines}`;
 }
 
+// ─── buildWorkspacesBlock ─────────────────────────────────────────────────────
+// Injects the agent's workspace list into the system prompt so the LLM knows
+// exactly which workspaces exist and how to address files in each.
+// Data-driven from DB (agent_workspaces) — no hardcoded agent text (invariant 2).
+function buildWorkspacesBlock(
+  workspaceList: ReadonlyArray<{ label: string; path: string }>,
+): string {
+  if (workspaceList.length === 0) return '';
+
+  if (workspaceList.length === 1) {
+    const ws = workspaceList[0]!;
+    return (
+      `\n\n## Workspace\n\n` +
+      `Your workspace label is **${ws.label}** (path: \`${ws.path}\`). ` +
+      `When using file_read / file_write / file_edit / file_list / file_search, ` +
+      `you may use bare relative paths (e.g. \`notes.md\`) or prefix with the label ` +
+      `(e.g. \`${ws.label}/notes.md\`). Both resolve to the same root.`
+    );
+  }
+
+  const lines = workspaceList.map((ws) => `- **${ws.label}**: \`${ws.path}\``).join('\n');
+  const example = workspaceList[0]!;
+  return (
+    `\n\n## Workspaces\n\n` +
+    `This agent has multiple workspaces. Always prefix paths with the workspace label:\n\n` +
+    `${lines}\n\n` +
+    `Example: \`${example.label}/notes.md\` to access \`notes.md\` in the **${example.label}** workspace. ` +
+    `Use \`file_list\` with no path to see all workspace labels.`
+  );
+}
+
 // ─── buildSystemPrompt ────────────────────────────────────────────────────────
 
 /**
@@ -122,6 +153,15 @@ export async function buildSystemPrompt(
     .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
     .where(eq(agentSkillAssignments.agentId, agent.id as string));
 
+  // 3.5. Workspace list — loaded from agent_workspaces (Volet 5). Data-driven
+  //      from DB so the LLM knows which workspaces exist + how to prefix paths.
+  //      Ordered by position so the first workspace listed is the primary one.
+  const workspaceRows = await db
+    .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
+    .from(agentWorkspaces)
+    .where(eq(agentWorkspaces.agentId, agent.id as string))
+    .orderBy(agentWorkspaces.position, agentWorkspaces.label);
+
   const skillsBlock =
     skillRows.length > 0
       ? `\n\n## Skills\n\n${skillRows
@@ -142,6 +182,10 @@ export async function buildSystemPrompt(
   //    save_memory / query_memory / return_result as first-class capabilities,
   //    not just optional tools buried in the SDK's tool list.
   const builtinBlock = buildBuiltinCapabilitiesBlock();
+
+  // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
+  //     files (label/relative syntax for multi-workspace agents).
+  const workspacesBlock = buildWorkspacesBlock(workspaceRows);
 
   // 6. Persistent memory block — Sprint 2 auto-injection. Top-N durable facts
   //    for the entity, sorted by importance × recency, fit under the agent's
@@ -164,5 +208,13 @@ export async function buildSystemPrompt(
   //    decides how to use this data (e.g. send via Telegram if chat_id is set).
   const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
 
-  return personality + '\n\n' + builtinBlock + memoryBlock + skillsBlock + jobContextBlock;
+  return (
+    personality +
+    '\n\n' +
+    builtinBlock +
+    workspacesBlock +
+    memoryBlock +
+    skillsBlock +
+    jobContextBlock
+  );
 }

@@ -25,6 +25,7 @@ import {
   toolCalls,
   agentSchedules,
   entityLlmKeys,
+  agentWorkspaces,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -99,14 +100,6 @@ const CreateAgentSchema = z
     llmKeyId: z.string().guid().optional(),
     role: z.enum(['worker', 'router', 'planner']).default('worker'),
     subAgentIds: z.array(z.string().guid()).default([]),
-    // Optional absolute filesystem path the agent's file_* tools are scoped
-    // to. Empty string is normalized to null at the action layer so the
-    // form's controlled input can stay a plain string.
-    workspaceRootPath: z
-      .string()
-      .max(1024)
-      .optional()
-      .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
     // Optional avatar path. Empty string → null. Validated against the
     // bundled catalog in the action body (not via Zod refine) so the
     // error message is "Unknown avatar" rather than a regex blob.
@@ -149,7 +142,6 @@ export type AgentRow = {
   createdAt: Date | null;
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
-  workspaceRootPath: string | null;
   position: number;
 };
 
@@ -369,7 +361,6 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
         llmKeyId: parsed.data.llmKeyId ?? null,
         role: dbRole,
         orchestratorMode,
-        workspaceRootPath: parsed.data.workspaceRootPath,
         avatarUrl: parsed.data.avatarUrl,
       })
       .returning({ id: agents.id });
@@ -429,11 +420,6 @@ const UpdateAgentSchema = z.object({
   llmKeyId: z.string().guid().nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
-  workspaceRootPath: z
-    .string()
-    .max(1024)
-    .optional()
-    .transform((v) => (v && v.trim() !== '' ? v.trim() : null)),
   // Avatar — symmetric with create. Catalog validation in the action body.
   avatarUrl: z
     .string()
@@ -465,17 +451,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (!isValidAvatarUrl(parsed.data.avatarUrl)) {
       return fail('validation_failed', 'Unknown avatar — pick one from the gallery');
     }
-    const {
-      id,
-      name,
-      personality,
-      model,
-      llmKeyId,
-      role,
-      subAgentIds,
-      workspaceRootPath,
-      avatarUrl,
-    } = parsed.data;
+    const { id, name, personality, model, llmKeyId, role, subAgentIds, avatarUrl } = parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
@@ -496,7 +472,6 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       model,
       role: dbRole,
       orchestratorMode,
-      workspaceRootPath,
       updatedAt: new Date(),
     };
     if (llmKeyId !== undefined) {
@@ -544,6 +519,136 @@ export type AgentEditRow = AgentRow & {
   orchestratorMode: string | null;
   subAgentIds: string[];
 };
+
+// ─── Agent workspace actions ──────────────────────────────────────────────────
+
+export type AgentWorkspaceRow = {
+  id: string;
+  agentId: string;
+  entityId: string | null;
+  label: string;
+  path: string;
+  position: number;
+};
+
+export async function listAgentWorkspacesAction(
+  agentId: string,
+): Promise<ActionResult<AgentWorkspaceRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    // Verify ownership via the agent's entityId
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const rows = await db
+      .select()
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.agentId, agentId))
+      .orderBy(agentWorkspaces.position, agentWorkspaces.label);
+    return ok(rows as AgentWorkspaceRow[]);
+  } catch (err) {
+    console.error('[listAgentWorkspacesAction]', err);
+    return fail('db_error', 'Failed to load workspaces');
+  }
+}
+
+export async function addAgentWorkspaceAction(
+  agentId: string,
+  label: string,
+  path: string,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+
+    // Validate inputs
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const labelParsed = z.string().min(1).max(80).safeParse(label);
+    if (!labelParsed.success) {
+      return fail('validation_failed', 'Label must be 1-80 characters');
+    }
+    const trimmedLabel = labelParsed.data.trim();
+    const trimmedPath = path.trim();
+    if (!trimmedPath) {
+      return fail('validation_failed', 'Path is required');
+    }
+    // Validate absolute path (cross-platform: must start with / or X:\)
+    const isAbsolutePath = /^([A-Za-z]:[/\\]|\/|\\\\)/.test(trimmedPath);
+    if (!isAbsolutePath) {
+      return fail(
+        'validation_failed',
+        'Path must be absolute (e.g. /home/user/notes or C:\\Users\\you\\notes)',
+      );
+    }
+
+    const db = getDb();
+    // Verify ownership
+    const [agentRow] = await db
+      .select({ id: agents.id, entityId: agents.entityId })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const [row] = await db
+      .insert(agentWorkspaces)
+      .values({
+        agentId,
+        entityId: agentRow.entityId,
+        label: trimmedLabel,
+        path: trimmedPath,
+        position: 0,
+      })
+      .returning({ id: agentWorkspaces.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok({ id: row.id });
+  } catch (err: unknown) {
+    console.error('[addAgentWorkspaceAction]', err);
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('unique') || msg.includes('23505')) {
+      return fail('conflict', 'A workspace with this label already exists for this agent');
+    }
+    return fail('db_error', 'Failed to add workspace');
+  }
+}
+
+export async function removeAgentWorkspaceAction(workspaceId: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(workspaceId).success) {
+      return fail('validation_failed', 'Invalid workspace id');
+    }
+    const db = getDb();
+    // Verify ownership: join to agents to confirm entity membership
+    const [wsRow] = await db
+      .select({ agentId: agentWorkspaces.agentId })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, workspaceId));
+    if (!wsRow) return fail('not_found', 'Workspace not found');
+
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, wsRow.agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Workspace not found');
+
+    await db.delete(agentWorkspaces).where(eq(agentWorkspaces.id, workspaceId));
+    revalidatePath(`/agents/${wsRow.agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[removeAgentWorkspaceAction]', err);
+    return fail('db_error', 'Failed to remove workspace');
+  }
+}
 
 export async function getAgentForEditAction(id: string): Promise<ActionResult<AgentEditRow>> {
   try {

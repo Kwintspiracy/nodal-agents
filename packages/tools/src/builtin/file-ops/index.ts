@@ -12,5 +12,6 @@ export {
   MAX_WRITE_BYTES,
   MAX_SEARCH_FILE_BYTES,
   resolveAndCheckPath,
-  assertWorkspaceConfigured,
+  assertWorkspacesConfigured,
+  getWorkspaceRootForDisplay,
 } from './workspace';
