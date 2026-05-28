@@ -41,4 +41,12 @@ export const systemSkills: SystemSkill[] = [
   officeEditingSkill,
 ];
 
+/**
+ * Canonical slugs of the system catalog. System skills are seeded under the
+ * oldest entity but are install-wide: dashboard queries use this list to make
+ * them visible/assignable from any entity (e.g. a LAN-mode signup whose entity
+ * differs from the seed owner), without entity-scoping them away.
+ */
+export const systemSkillSlugs: string[] = systemSkills.map((s) => s.slug);
+
 export type { SystemSkill };

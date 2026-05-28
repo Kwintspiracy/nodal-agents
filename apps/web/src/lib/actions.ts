@@ -25,6 +25,7 @@ import { randomBytes } from 'node:crypto';
 import {
   eq,
   and,
+  or,
   desc,
   inArray,
   notInArray,
@@ -62,6 +63,7 @@ import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG } from './mcp-catalog.ts';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { connectMcp } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -2921,7 +2923,13 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         updatedAt: agentSkills.updatedAt,
       })
       .from(agentSkills)
-      .where(eq(agentSkills.entityId, session.entityId))
+      // System skills are seeded under the oldest entity but are install-wide:
+      // surface them alongside the user's own skills (by canonical slug) so
+      // they're visible even when the session entity differs from the seed
+      // owner (e.g. a LAN-mode signup). Custom skills stay entity-scoped.
+      .where(
+        or(eq(agentSkills.entityId, session.entityId), inArray(agentSkills.slug, systemSkillSlugs)),
+      )
       .orderBy(desc(agentSkills.updatedAt));
 
     if (rows.length === 0) return ok([]);
@@ -3147,7 +3155,16 @@ export async function assignSkillAction(raw: unknown): Promise<ActionResult<void
       .select({ id: agentSkills.id })
       .from(agentSkills)
       .where(
-        and(eq(agentSkills.id, parsed.data.skillId), eq(agentSkills.entityId, session.entityId)),
+        and(
+          eq(agentSkills.id, parsed.data.skillId),
+          // Allow assigning an install-wide system skill (seeded under another
+          // entity) or one of the user's own skills. The assignment row below
+          // is still written under session.entityId.
+          or(
+            eq(agentSkills.entityId, session.entityId),
+            inArray(agentSkills.slug, systemSkillSlugs),
+          ),
+        ),
       );
     if (!skill) return fail('not_found', 'Skill not found');
     const [agent] = await db
@@ -3295,7 +3312,17 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
         updatedAt: agentSkills.updatedAt,
       })
       .from(agentSkills)
-      .where(and(eq(agentSkills.id, id), eq(agentSkills.entityId, session.entityId)));
+      // Visible if it's the user's own skill or an install-wide system skill
+      // (read-only for non-owners; edit/delete stay entity-scoped below).
+      .where(
+        and(
+          eq(agentSkills.id, id),
+          or(
+            eq(agentSkills.entityId, session.entityId),
+            inArray(agentSkills.slug, systemSkillSlugs),
+          ),
+        ),
+      );
     if (!row) return fail('not_found', 'Skill not found');
 
     return ok({

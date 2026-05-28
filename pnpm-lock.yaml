@@ -175,6 +175,9 @@ importers:
       '@nodal-agents/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@nodal-agents/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@nodal-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
