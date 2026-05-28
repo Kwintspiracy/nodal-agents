@@ -1,7 +1,7 @@
 'use client';
 
 // CancelJobButton — flips a non-terminal job to 'cancelled' via the
-// dashboard action. Used on the job-detail page next to the StatusBadge.
+// dashboard action. Used on the job-detail page next to the StatusPill.
 //
 // The runner observes the status flip cooperatively between LLM turns
 // (apps/runner/src/job/execute.ts) — current in-flight LLM call finishes
@@ -36,7 +36,7 @@ export default function CancelJobButton({ jobId }: Props) {
         return;
       }
       toast.success('Job cancelled');
-      // Force a refresh so the StatusBadge picks up the new status from
+      // Force a refresh so the StatusPill picks up the new status from
       // the server — revalidatePath ran in the action but the client
       // needs a re-render to consume it.
       router.refresh();
@@ -49,7 +49,7 @@ export default function CancelJobButton({ jobId }: Props) {
         type="button"
         onClick={() => setOpen(true)}
         disabled={isPending}
-        className="px-3 py-1.5 text-xs font-medium border border-neutral-700 hover:border-red-700 hover:bg-red-950/40 hover:text-red-300 text-neutral-300 rounded-md transition-colors disabled:opacity-50"
+        className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-rule px-3 text-[12px] font-medium leading-none text-ink-3 transition-colors hover:border-warn/60 hover:bg-warn-bg hover:text-warn disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isPending ? 'Cancelling…' : 'Cancel'}
       </button>

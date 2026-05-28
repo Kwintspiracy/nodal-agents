@@ -163,7 +163,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
   }
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-4">
+    <div className="bg-paper border border-rule-2 rounded-xl p-5 space-y-4">
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
@@ -181,13 +181,13 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                     setIsRenaming(false);
                   }
                 }}
-                className="bg-neutral-800 border border-neutral-600 rounded-md px-2 py-1 text-sm text-white focus:border-neutral-400 focus:outline-none w-full max-w-xs"
+                className="bg-hover border border-rule rounded-md px-2 py-1 text-sm text-ink focus:border-ink-3 focus:outline-none w-full max-w-xs"
               />
               <button
                 type="button"
                 onClick={performRename}
                 disabled={isPending}
-                className="text-xs text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                className="text-xs text-ok hover:text-ok disabled:opacity-40"
               >
                 Save
               </button>
@@ -197,42 +197,40 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                   setRenameValue(instance.name);
                   setIsRenaming(false);
                 }}
-                className="text-xs text-neutral-500 hover:text-neutral-300"
+                className="text-xs text-ink-3 hover:text-ink-2"
               >
                 Cancel
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold text-white truncate">{instance.name}</h3>
+              <h3 className="text-base font-semibold text-ink truncate">{instance.name}</h3>
               <button
                 type="button"
                 onClick={() => setIsRenaming(true)}
                 aria-label="Rename connector"
-                className="text-neutral-600 hover:text-neutral-400 transition-colors text-xs leading-none"
+                className="text-ink-4 hover:text-ink-3 transition-colors text-xs leading-none"
                 title="Rename"
               >
                 ✎
               </button>
               <span
                 className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                  status === 'connected'
-                    ? 'bg-emerald-500/15 text-emerald-400'
-                    : 'bg-amber-500/15 text-amber-400'
+                  status === 'connected' ? 'bg-agent-vivid/15 text-ok' : 'bg-warn-bg text-warn'
                 }`}
               >
                 {status}
               </span>
             </div>
           )}
-          <p className="text-xs text-neutral-500 mt-1 font-mono">
+          <p className="text-xs text-ink-3 mt-1 font-mono">
             {catalogEntry.slug} · {instance.authType}
           </p>
           {connectedAccountName && (
-            <p className="text-xs text-neutral-400 mt-1">{connectedAccountName}</p>
+            <p className="text-xs text-ink-3 mt-1">{connectedAccountName}</p>
           )}
           {isApiKey && instance.hasApiKey && (
-            <p className="text-xs text-neutral-600 mt-0.5 font-mono">
+            <p className="text-xs text-ink-4 mt-0.5 font-mono">
               key: …{instance.credentialId ?? '????'}
             </p>
           )}
@@ -247,7 +245,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                   type="button"
                   onClick={performRefresh}
                   disabled={isRefreshing || isPending}
-                  className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+                  className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
                 >
                   {isRefreshing ? 'Refreshing…' : 'Refresh now'}
                 </button>
@@ -256,7 +254,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                 type="button"
                 onClick={() => setWizardOpen(true)}
                 disabled={isPending || isRefreshing}
-                className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+                className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
               >
                 Reconnect
               </button>
@@ -265,7 +263,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                   type="button"
                   onClick={() => setSwitchOpen((v) => !v)}
                   disabled={isPending || isRefreshing}
-                  className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+                  className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
                 >
                   {switchOpen ? 'Cancel' : 'Switch credential'}
                 </button>
@@ -274,7 +272,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                 type="button"
                 onClick={() => setConfirmOpen(true)}
                 disabled={isPending || isRefreshing}
-                className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+                className="px-3 py-1.5 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err/30 hover:text-err disabled:opacity-40"
               >
                 Disconnect
               </button>
@@ -285,7 +283,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                 type="button"
                 onClick={() => setRotateOpen((v) => !v)}
                 disabled={isPending}
-                className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+                className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
               >
                 {rotateOpen ? 'Cancel' : 'Rotate key'}
               </button>
@@ -293,7 +291,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                 type="button"
                 onClick={() => setConfirmOpen(true)}
                 disabled={isPending}
-                className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+                className="px-3 py-1.5 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err/30 hover:text-err disabled:opacity-40"
               >
                 Delete
               </button>
@@ -306,12 +304,9 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
           Existing assignments to agents are preserved because we update the
           row in place rather than delete + recreate. */}
       {isApiKey && rotateOpen && (
-        <div className="space-y-3 pt-2 border-t border-neutral-800/60">
+        <div className="space-y-3 pt-2 border-t border-rule-2">
           <div>
-            <label
-              htmlFor={`rotate-${instance.id}`}
-              className="block text-xs text-neutral-500 mb-1"
-            >
+            <label htmlFor={`rotate-${instance.id}`} className="block text-xs text-ink-3 mb-1">
               New API key
             </label>
             <input
@@ -329,9 +324,9 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                 }
               }}
               placeholder="Paste the new key"
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
-            <p className="text-[11px] text-neutral-600 mt-1">
+            <p className="text-[11px] text-ink-4 mt-1">
               Agent assignments stay intact — only the stored key changes.
             </p>
           </div>
@@ -340,7 +335,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
               type="button"
               onClick={performRotate}
               disabled={isPending || !newApiKey.trim()}
-              className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Saving…' : 'Save new key'}
             </button>
@@ -350,7 +345,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                 setNewApiKey('');
                 setRotateOpen(false);
               }}
-              className="text-xs text-neutral-500 hover:text-white underline"
+              className="text-xs text-ink-3 hover:text-ink underline"
             >
               Cancel
             </button>
@@ -358,14 +353,14 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
         </div>
       )}
 
-      {catalogEntry.docsHint && <p className="text-xs text-neutral-500">{catalogEntry.docsHint}</p>}
+      {catalogEntry.docsHint && <p className="text-xs text-ink-3">{catalogEntry.docsHint}</p>}
 
       {/* Connected OAuth status panel */}
       {isOAuth && connectedCredentialId && (
-        <div className="pt-2 border-t border-neutral-800/60 space-y-2">
+        <div className="pt-2 border-t border-rule-2 space-y-2">
           {connectedCredentialName && (
-            <p className="text-xs text-neutral-400">
-              Credential: <span className="text-white font-medium">{connectedCredentialName}</span>
+            <p className="text-xs text-ink-3">
+              Credential: <span className="text-ink font-medium">{connectedCredentialName}</span>
             </p>
           )}
           {connectedScopes && (
@@ -373,16 +368,16 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
               {connectedScopes.split(/\s+/).map((scope) => (
                 <span
                   key={scope}
-                  className="px-1.5 py-0.5 bg-neutral-800 text-neutral-400 rounded text-[10px] font-mono"
+                  className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-[10px] font-mono"
                 >
                   {scope}
                 </span>
               ))}
             </div>
           )}
-          {supportsRefresh && <p className="text-xs text-neutral-500">Auto-refreshes when used</p>}
+          {supportsRefresh && <p className="text-xs text-ink-3">Auto-refreshes when used</p>}
           {!supportsRefresh && connectedExpiresAt && (
-            <p className={`text-xs ${isTokenExpired ? 'text-amber-400' : 'text-neutral-500'}`}>
+            <p className={`text-xs ${isTokenExpired ? 'text-warn' : 'text-ink-3'}`}>
               {formatTokenExpiry(connectedExpiresAt)}
             </p>
           )}
@@ -391,15 +386,15 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
 
       {/* Switch credential panel */}
       {isOAuth && switchOpen && (
-        <div className="space-y-3 pt-2 border-t border-neutral-800/60">
+        <div className="space-y-3 pt-2 border-t border-rule-2">
           {compatibleCredentials.length > 0 ? (
             <>
               <div>
-                <label className="block text-xs text-neutral-500 mb-1">Use credential</label>
+                <label className="block text-xs text-ink-3 mb-1">Use credential</label>
                 <select
                   value={selectedCredentialId}
                   onChange={(e) => setSelectedCredentialId(e.target.value)}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
                 >
                   {compatibleCredentials.map((cred) => (
                     <option key={cred.id} value={cred.id}>
@@ -414,7 +409,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                   type="button"
                   onClick={() => selectedCredentialId && performAssign(selectedCredentialId)}
                   disabled={isPending || !selectedCredentialId}
-                  className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+                  className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
                 >
                   {isPending ? 'Saving…' : 'Save'}
                 </button>
@@ -424,14 +419,14 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                     setSwitchOpen(false);
                     setWizardOpen(true);
                   }}
-                  className="px-3 py-1.5 text-xs text-neutral-500 hover:text-white underline"
+                  className="px-3 py-1.5 text-xs text-ink-3 hover:text-ink underline"
                 >
                   or create new
                 </button>
               </div>
             </>
           ) : (
-            <p className="text-xs text-neutral-500">
+            <p className="text-xs text-ink-3">
               No compatible credentials found.{' '}
               <button
                 type="button"

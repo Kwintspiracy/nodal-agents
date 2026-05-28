@@ -23,9 +23,7 @@ export const MarkMemoryOutdatedInputSchema = z.object({
     .string()
     .max(500)
     .optional()
-    .describe(
-      'Brief justification for marking outdated — surfaces in the dashboard for the user.',
-    ),
+    .describe('Brief justification for marking outdated — surfaces in the dashboard for the user.'),
 });
 
 export type MarkMemoryOutdatedInput = z.infer<typeof MarkMemoryOutdatedInputSchema>;

@@ -51,7 +51,7 @@ export default function ApprovalActions({ approvalId }: Props) {
           type="button"
           onClick={handleApprove}
           disabled={isPending}
-          className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-md hover:bg-emerald-500 disabled:opacity-40"
+          className="rounded-md bg-ok px-3 py-1.5 text-xs font-semibold text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-40"
         >
           Approve
         </button>
@@ -59,7 +59,7 @@ export default function ApprovalActions({ approvalId }: Props) {
           type="button"
           onClick={handleReject}
           disabled={isPending}
-          className="px-3 py-1.5 text-xs font-semibold border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+          className="rounded-md border border-err/30 px-3 py-1.5 text-xs font-semibold text-err transition-colors hover:border-err/60 disabled:opacity-40"
         >
           {showRejectInput ? 'Confirm reject' : 'Reject'}
         </button>
@@ -70,7 +70,7 @@ export default function ApprovalActions({ approvalId }: Props) {
               setShowRejectInput(false);
               setNotes('');
             }}
-            className="px-3 py-1.5 text-xs text-neutral-500 hover:text-white"
+            className="px-3 py-1.5 text-xs text-ink-3 hover:text-ink"
           >
             Cancel
           </button>
@@ -83,7 +83,7 @@ export default function ApprovalActions({ approvalId }: Props) {
           placeholder="Reason for rejection (optional, shown to the agent)"
           rows={2}
           maxLength={500}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-xs text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-none"
+          className="w-full resize-none rounded-md border border-rule bg-canvas px-2 py-1.5 text-xs text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
         />
       )}
     </div>

@@ -14,11 +14,15 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 interface CreateProps {
   mode?: 'create';
   initial?: undefined;
+  /** When true the form renders open without the "+ New skill" toggle.
+   *  Used by the dedicated /skills/new page. */
+  defaultOpen?: boolean;
 }
 
 interface EditProps {
   mode: 'edit';
   initial: SkillRow;
+  defaultOpen?: undefined;
 }
 
 type Props = CreateProps | EditProps;
@@ -26,16 +30,14 @@ type Props = CreateProps | EditProps;
 export default function SkillForm(props: Props) {
   const isEdit = props.mode === 'edit';
   const router = useRouter();
-  const [open, setOpen] = useState(isEdit);
+  const [open, setOpen] = useState(isEdit || props.defaultOpen === true);
   const [isPending, startTransition] = useTransition();
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
   // Reset-to-default is meaningful only when the user has edited a system
   // skill that still has a catalog default to restore to.
   const canReset =
-    isEdit &&
-    props.initial.contentOverridden === true &&
-    props.initial.defaultContent !== null;
+    isEdit && props.initial.contentOverridden === true && props.initial.defaultContent !== null;
 
   function handleResetSkill() {
     if (!isEdit) return;
@@ -97,7 +99,7 @@ export default function SkillForm(props: Props) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="px-4 py-2 text-sm font-medium bg-white text-black rounded-lg hover:bg-neutral-200"
+        className="px-4 py-2 text-sm font-medium bg-ink text-canvas rounded-lg hover:brightness-[0.92]"
       >
         + New skill
       </button>
@@ -109,17 +111,17 @@ export default function SkillForm(props: Props) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3"
+      className="bg-paper border border-rule-2 rounded-xl p-5 space-y-3"
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-white">{isEdit ? 'Edit skill' : 'New skill'}</h3>
+        <h3 className="text-sm font-semibold text-ink">{isEdit ? 'Edit skill' : 'New skill'}</h3>
         {canReset && (
           <button
             type="button"
             onClick={() => setConfirmResetOpen(true)}
             disabled={isPending}
             title="Restore the catalog default content for this skill"
-            className="text-xs px-2.5 py-1 rounded border border-amber-700/50 text-amber-300 hover:bg-amber-900/20 transition-colors disabled:opacity-50"
+            className="text-xs px-2.5 py-1 rounded border border-warn/30 text-warn hover:bg-warn-bg transition-colors disabled:opacity-50"
           >
             Reset to default
           </button>
@@ -138,8 +140,8 @@ export default function SkillForm(props: Props) {
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="skill-slug">
-            Slug {isEdit && <span className="text-neutral-700">(stable — not editable)</span>}
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-slug">
+            Slug {isEdit && <span className="text-ink-4">(stable — not editable)</span>}
           </label>
           <input
             id="skill-slug"
@@ -153,13 +155,13 @@ export default function SkillForm(props: Props) {
             title={isEdit ? 'Slug is a stable identifier and cannot be changed' : undefined}
             className={
               isEdit
-                ? 'w-full bg-neutral-800/40 border border-neutral-700/50 rounded-md px-2 py-1.5 text-sm text-neutral-500 cursor-not-allowed font-mono'
-                : 'w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono'
+                ? 'w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink-3 cursor-not-allowed font-mono'
+                : 'w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono'
             }
           />
         </div>
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="skill-name">
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-name">
             Name
           </label>
           <input
@@ -168,14 +170,14 @@ export default function SkillForm(props: Props) {
             required
             placeholder="My Skill"
             defaultValue={initial?.name}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="skill-description">
-          Description <span className="text-neutral-700">(optional)</span>
+        <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-description">
+          Description <span className="text-ink-4">(optional)</span>
         </label>
         <input
           id="skill-description"
@@ -183,12 +185,12 @@ export default function SkillForm(props: Props) {
           maxLength={500}
           placeholder="What does this skill teach the agent?"
           defaultValue={initial?.description ?? ''}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
         />
       </div>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="skill-content">
+        <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-content">
           Instructions
         </label>
         <textarea
@@ -198,7 +200,7 @@ export default function SkillForm(props: Props) {
           rows={6}
           placeholder="Step-by-step instructions or context the agent gets when this skill is enabled."
           defaultValue={initial?.content}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-y"
+          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y"
         />
       </div>
 
@@ -206,7 +208,7 @@ export default function SkillForm(props: Props) {
         <button
           type="submit"
           disabled={isPending}
-          className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+          className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
         >
           {isPending
             ? isEdit
@@ -219,7 +221,7 @@ export default function SkillForm(props: Props) {
         <button
           type="button"
           onClick={() => (isEdit ? router.push('/skills') : setOpen(false))}
-          className="px-4 py-2 text-sm font-medium border border-neutral-700 text-neutral-400 rounded-md hover:border-neutral-600"
+          className="px-4 py-2 text-sm font-medium border border-rule text-ink-3 rounded-md hover:border-rule"
         >
           Cancel
         </button>

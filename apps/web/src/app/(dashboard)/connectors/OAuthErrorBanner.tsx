@@ -25,26 +25,26 @@ export default function OAuthErrorBanner({ code, message }: Props) {
   return (
     <div
       role="alert"
-      className="rounded-xl border border-red-900/40 bg-red-500/5 px-5 py-4 text-sm text-red-200"
+      className="rounded-xl border border-err/30 bg-warn-bg px-5 py-4 text-sm text-err"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1.5 min-w-0">
           <div className="flex items-center gap-2">
-            <span aria-hidden="true" className="font-bold text-red-300">
+            <span aria-hidden="true" className="font-bold text-err">
               !
             </span>
-            <p className="font-semibold text-red-100">OAuth connection failed</p>
-            <code className="font-mono text-[10px] text-red-300/80 bg-red-950/40 px-1.5 py-0.5 rounded">
+            <p className="font-semibold text-err">OAuth connection failed</p>
+            <code className="font-mono text-[10px] text-err/80 bg-warn-bg px-1.5 py-0.5 rounded">
               {code}
             </code>
           </div>
-          <p className="text-red-200/90 leading-relaxed">{message}</p>
+          <p className="text-err leading-relaxed">{message}</p>
         </div>
         <button
           type="button"
           onClick={dismiss}
           aria-label="Dismiss"
-          className="shrink-0 text-red-300/70 hover:text-red-100 transition-colors text-lg leading-none px-2 -mt-0.5"
+          className="shrink-0 text-err/70 hover:text-err transition-colors text-lg leading-none px-2 -mt-0.5"
         >
           ×
         </button>

@@ -13,8 +13,8 @@ export default async function AutomationsPage() {
   if (!schedulesResult.ok) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">Automations</h1>
-        <div className="bg-neutral-900 border border-red-900/40 rounded-xl px-6 py-8 text-sm text-red-300">
+        <h1 className="text-2xl font-semibold text-ink">Automations</h1>
+        <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
           {schedulesResult.message}
         </div>
       </div>
@@ -27,8 +27,8 @@ export default async function AutomationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Automations</h1>
-        <p className="text-sm text-neutral-500 mt-0.5">
+        <h1 className="text-2xl font-semibold text-ink">Automations</h1>
+        <p className="mt-0.5 text-sm text-ink-3">
           {active} active · {schedulesResult.data.length} total
         </p>
       </div>
@@ -36,7 +36,7 @@ export default async function AutomationsPage() {
       <ScheduleForm agents={agents} />
 
       {schedulesResult.data.length === 0 ? (
-        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center text-neutral-600 text-sm">
+        <div className="rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
           {agents.length === 0
             ? 'Create an agent first, then schedule a recurring task.'
             : 'No schedules yet. Add one above.'}

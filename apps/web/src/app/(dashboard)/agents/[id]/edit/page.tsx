@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
   getAgentForEditAction,
@@ -6,8 +5,10 @@ import {
   listLlmKeysAction,
   listAgentConnectorsAction,
   listAgentMcpServersAction,
+  listJobsAction,
+  listSkillsAction,
 } from '@/lib/actions.ts';
-import AgentForm from '@/components/AgentForm.tsx';
+import AgentComposer from './AgentComposer.tsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,40 +33,33 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   // (an orchestrator cannot be its own sub-agent).
   const peers = peersResult.ok ? peersResult.data.filter((a) => a.id !== id) : [];
 
-  // Connectors + MCP servers: fetch after agent is confirmed to exist.
-  const [connectorsResult, mcpServersResult] = await Promise.all([
+  // Per-agent data — fetched after the agent is confirmed to exist.
+  const [connectorsResult, mcpServersResult, jobsResult, skillsResult] = await Promise.all([
     listAgentConnectorsAction(agent.id),
     listAgentMcpServersAction(agent.id),
+    listJobsAction({ limit: 100 }),
+    listSkillsAction(),
   ]);
   const connectors = connectorsResult.ok ? connectorsResult.data : [];
   const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
+  // Filter jobs to this agent client-side — `listJobsAction` is global at the
+  // server action layer; the table-level filter keeps that surface unchanged.
+  const jobs = (jobsResult.ok ? jobsResult.data : []).filter((j) => j.agentId === agent.id);
+  // Skills attached to this agent — derived from each SkillRow's enriched
+  // `assignedAgents` (already fetched by listSkillsAction).
+  const attachedSkills = (skillsResult.ok ? skillsResult.data : []).filter((s) =>
+    s.assignedAgents.some((a) => a.id === agent.id),
+  );
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link
-          href="/agents"
-          className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-        >
-          ← Agents
-        </Link>
-        <h1 className="text-2xl font-bold text-white mt-2">Edit agent</h1>
-        <p className="text-sm text-neutral-500 mt-1">
-          Updating personality or model invalidates the system-prompt cache for active jobs — the
-          new config applies to all jobs started after saving.
-        </p>
-      </div>
-
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-6">
-        <AgentForm
-          mode="edit"
-          initial={agent}
-          llmKeys={llmKeys}
-          agents={peers}
-          connectors={connectors}
-          mcpServers={mcpServers}
-        />
-      </div>
-    </div>
+    <AgentComposer
+      agent={agent}
+      peers={peers}
+      llmKeys={llmKeys}
+      connectors={connectors}
+      mcpServers={mcpServers}
+      jobs={jobs}
+      attachedSkills={attachedSkills}
+    />
   );
 }

@@ -424,10 +424,7 @@ describe('FK cascades', () => {
       await db.select().from(schema.agentTasks).where(eq(schema.agentTasks.id, tAssigned!.id)),
     ).toHaveLength(0);
     expect(
-      await db
-        .select()
-        .from(schema.approvalRequests)
-        .where(eq(schema.approvalRequests.id, ar!.id)),
+      await db.select().from(schema.approvalRequests).where(eq(schema.approvalRequests.id, ar!.id)),
     ).toHaveLength(0);
   });
 

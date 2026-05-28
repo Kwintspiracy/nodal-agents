@@ -1,19 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   createAgentAction,
   updateAgentAction,
-  setAgentConnectorAssignmentAction,
-  setAgentMcpServerAssignmentAction,
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
-  type AgentConnectorRow,
-  type AgentMcpServerRow,
 } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import AvatarPicker from './AvatarPicker.tsx';
@@ -22,7 +18,6 @@ import {
   isModelCompatibleWithProvider,
   type ProviderSlug,
 } from '@/lib/model-provider-detect.ts';
-import type { OperationDescriptor } from '@nodal-agents/shared';
 
 type AgentRole = 'worker' | 'router' | 'planner';
 
@@ -31,8 +26,6 @@ interface CreateProps {
   llmKeys: LlmKeyUiRow[];
   agents?: AgentRow[];
   initial?: undefined;
-  connectors?: AgentConnectorRow[];
-  mcpServers?: AgentMcpServerRow[];
 }
 
 interface EditProps {
@@ -40,508 +33,14 @@ interface EditProps {
   llmKeys: LlmKeyUiRow[];
   agents?: AgentRow[];
   initial: AgentEditRow;
-  connectors?: AgentConnectorRow[];
-  mcpServers?: AgentMcpServerRow[];
 }
 
 type Props = CreateProps | EditProps;
 
-// ─── Connector grid helpers ───────────────────────────────────────────────────
-
-type ConnectorState = {
-  assigned: boolean;
-  enabledOperations: string[] | null;
-};
-
-type ConnectorStates = Map<string, ConnectorState>;
-
-function riskBadge(op: OperationDescriptor): React.ReactNode {
-  const base =
-    'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider';
-  if (op.risk === 'read') {
-    return <span className={`${base} text-emerald-400 bg-emerald-400/10`}>read</span>;
-  }
-  if (op.risk === 'write') {
-    return (
-      <span className={`${base} text-amber-400 bg-amber-400/10`}>
-        {op.requiresApproval ? '⚠ ' : ''}write
-      </span>
-    );
-  }
-  // destructive
-  return <span className={`${base} text-red-400 bg-red-400/10`}>⚠ destr</span>;
-}
-
-interface ConnectorGridProps {
-  agentId: string;
-  connectors: AgentConnectorRow[];
-}
-
-function ConnectorGrid({ agentId, connectors }: ConnectorGridProps) {
-  // Local state mirrors the server-provided assigned/enabledOperations per connector
-  const [states, setStates] = useState<ConnectorStates>(() => {
-    const m = new Map<string, ConnectorState>();
-    for (const c of connectors) {
-      m.set(c.connectorId, { assigned: c.assigned, enabledOperations: c.enabledOperations });
-    }
-    return m;
-  });
-  // Track which connectors are expanded (showing operation grid)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  // Debounce timers — key: connectorId, value: setTimeout handle
-  const debounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
-  const persist = useCallback(
-    (connectorId: string, assigned: boolean, enabledOperations: string[] | null) => {
-      // Clear existing debounce for this connector
-      const existing = debounceRef.current.get(connectorId);
-      if (existing) clearTimeout(existing);
-
-      const handle = setTimeout(() => {
-        debounceRef.current.delete(connectorId);
-        void setAgentConnectorAssignmentAction(
-          agentId,
-          connectorId,
-          assigned,
-          enabledOperations,
-        ).then((result) => {
-          if (!result.ok) toast.error(result.message);
-        });
-      }, 300);
-      debounceRef.current.set(connectorId, handle);
-    },
-    [agentId],
-  );
-
-  function toggleConnector(connectorId: string) {
-    setStates((prev) => {
-      const current = prev.get(connectorId) ?? { assigned: false, enabledOperations: null };
-      const next = { ...current, assigned: !current.assigned };
-      if (next.assigned) {
-        // Turning ON: default to all enabled (null)
-        next.enabledOperations = null;
-      }
-      const m = new Map(prev);
-      m.set(connectorId, next);
-      persist(connectorId, next.assigned, next.enabledOperations);
-      return m;
-    });
-  }
-
-  function toggleOperation(connectorId: string, slug: string, availableOps: OperationDescriptor[]) {
-    setStates((prev) => {
-      const current = prev.get(connectorId) ?? { assigned: true, enabledOperations: null };
-      const allSlugs = availableOps.map((o) => o.slug);
-
-      let nextEnabled: string[] | null;
-      if (current.enabledOperations === null) {
-        // Currently all enabled — user unchecks one → produce array of all others
-        nextEnabled = allSlugs.filter((s) => s !== slug);
-      } else {
-        // Toggle slug presence in the array
-        const inList = current.enabledOperations.includes(slug);
-        nextEnabled = inList
-          ? current.enabledOperations.filter((s) => s !== slug)
-          : [...current.enabledOperations, slug];
-      }
-
-      // Auto-collapse to null: if array now contains all slugs, treat as "all enabled"
-      if (nextEnabled !== null && nextEnabled.length === allSlugs.length) {
-        nextEnabled = null;
-      }
-
-      const m = new Map(prev);
-
-      // Auto-deassign: if array is empty → same as unassigning the connector
-      if (nextEnabled !== null && nextEnabled.length === 0) {
-        m.set(connectorId, { assigned: false, enabledOperations: null });
-        persist(connectorId, false, null);
-        // Collapse the row too
-        setExpanded((prev2) => {
-          const s = new Set(prev2);
-          s.delete(connectorId);
-          return s;
-        });
-        return m;
-      }
-
-      m.set(connectorId, { ...current, enabledOperations: nextEnabled });
-      persist(connectorId, true, nextEnabled);
-      return m;
-    });
-  }
-
-  function enableAll(connectorId: string) {
-    setStates((prev) => {
-      const m = new Map(prev);
-      m.set(connectorId, { assigned: true, enabledOperations: null });
-      persist(connectorId, true, null);
-      return m;
-    });
-  }
-
-  function uncheckAll(connectorId: string) {
-    // Unchecking all = same as deassigning (no "0 of N enabled" state)
-    setStates((prev) => {
-      const m = new Map(prev);
-      m.set(connectorId, { assigned: false, enabledOperations: null });
-      persist(connectorId, false, null);
-      return m;
-    });
-    setExpanded((prev) => {
-      const s = new Set(prev);
-      s.delete(connectorId);
-      return s;
-    });
-  }
-
-  function toggleExpand(connectorId: string) {
-    setExpanded((prev) => {
-      const s = new Set(prev);
-      if (s.has(connectorId)) s.delete(connectorId);
-      else s.add(connectorId);
-      return s;
-    });
-  }
-
-  if (connectors.length === 0) {
-    return (
-      <p className="text-xs text-neutral-600">
-        No connected adapters found.{' '}
-        <a href="/connectors" className="underline hover:text-neutral-400 transition-colors">
-          Connect a service first.
-        </a>
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      {connectors.map((c) => {
-        const state = states.get(c.connectorId) ?? {
-          assigned: c.assigned,
-          enabledOperations: c.enabledOperations,
-        };
-        const isExpanded = expanded.has(c.connectorId);
-        const ops = c.availableOperations;
-
-        // Summary text
-        const summary = !state.assigned
-          ? null
-          : state.enabledOperations === null
-            ? 'all enabled'
-            : `${state.enabledOperations.length} of ${ops.length} enabled`;
-
-        return (
-          <div key={c.connectorId} className="rounded-lg border border-neutral-800 overflow-hidden">
-            {/* Connector row */}
-            <div className="flex items-center gap-2 px-3 py-2">
-              <input
-                type="checkbox"
-                checked={state.assigned}
-                onChange={() => toggleConnector(c.connectorId)}
-                className="accent-violet-500 shrink-0"
-              />
-              <button
-                type="button"
-                onClick={() => toggleExpand(c.connectorId)}
-                className="flex-1 text-left flex items-center gap-2 min-w-0"
-              >
-                <span className="text-neutral-500 text-xs w-3 shrink-0">
-                  {isExpanded ? '▾' : '▸'}
-                </span>
-                <span className="text-sm text-white font-medium truncate">
-                  {c.label}
-                  {c.credentialName ? (
-                    <span className="text-neutral-500 font-normal"> ({c.credentialName})</span>
-                  ) : null}
-                </span>
-                {summary ? (
-                  <span className="text-xs text-neutral-500 shrink-0 ml-auto">{summary}</span>
-                ) : null}
-              </button>
-            </div>
-
-            {/* Operation grid — only when assigned and expanded */}
-            {state.assigned && isExpanded && (
-              <div className="border-t border-neutral-800 px-3 py-2 bg-neutral-950/40 space-y-2">
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => enableAll(c.connectorId)}
-                    className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
-                  >
-                    Enable all
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => uncheckAll(c.connectorId)}
-                    className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
-                  >
-                    Uncheck all
-                  </button>
-                </div>
-                <div className="space-y-0.5">
-                  {ops.map((op) => {
-                    const checked =
-                      state.enabledOperations === null || state.enabledOperations.includes(op.slug);
-                    return (
-                      <label
-                        key={op.slug}
-                        className="flex items-center gap-2 px-1 py-1 rounded text-sm cursor-pointer hover:bg-neutral-800/40"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleOperation(c.connectorId, op.slug, ops)}
-                          className="accent-violet-500 shrink-0"
-                        />
-                        <code className="font-mono text-xs text-neutral-300 shrink-0">
-                          {op.slug}
-                        </code>
-                        {riskBadge(op)}
-                        {op.description ? (
-                          <span className="text-xs text-neutral-600 italic truncate">
-                            {op.description}
-                          </span>
-                        ) : null}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── MCP server grid ──────────────────────────────────────────────────────────
-// Mirrors ConnectorGrid: a checkbox assigns the whole MCP server to the agent,
-// expanding reveals a per-tool whitelist. enabledTools null = all tools.
-
-type McpServerState = {
-  assigned: boolean;
-  enabledTools: string[] | null;
-};
-
-interface McpServerGridProps {
-  agentId: string;
-  servers: AgentMcpServerRow[];
-}
-
-function McpServerGrid({ agentId, servers }: McpServerGridProps) {
-  const [states, setStates] = useState<Map<string, McpServerState>>(() => {
-    const m = new Map<string, McpServerState>();
-    for (const s of servers) {
-      m.set(s.mcpServerId, { assigned: s.assigned, enabledTools: s.enabledTools });
-    }
-    return m;
-  });
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const debounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
-  const persist = useCallback(
-    (mcpServerId: string, assigned: boolean, enabledTools: string[] | null) => {
-      const existing = debounceRef.current.get(mcpServerId);
-      if (existing) clearTimeout(existing);
-      const handle = setTimeout(() => {
-        debounceRef.current.delete(mcpServerId);
-        void setAgentMcpServerAssignmentAction(agentId, mcpServerId, assigned, enabledTools).then(
-          (result) => {
-            if (!result.ok) toast.error(result.message);
-          },
-        );
-      }, 300);
-      debounceRef.current.set(mcpServerId, handle);
-    },
-    [agentId],
-  );
-
-  function toggleServer(mcpServerId: string) {
-    setStates((prev) => {
-      const current = prev.get(mcpServerId) ?? { assigned: false, enabledTools: null };
-      const next: McpServerState = { assigned: !current.assigned, enabledTools: null };
-      const m = new Map(prev);
-      m.set(mcpServerId, next);
-      persist(mcpServerId, next.assigned, next.enabledTools);
-      return m;
-    });
-  }
-
-  function toggleTool(mcpServerId: string, toolName: string, allToolNames: string[]) {
-    setStates((prev) => {
-      const current = prev.get(mcpServerId) ?? { assigned: true, enabledTools: null };
-      let nextEnabled: string[] | null;
-      if (current.enabledTools === null) {
-        // Currently all enabled — unchecking one yields the array of the rest.
-        nextEnabled = allToolNames.filter((t) => t !== toolName);
-      } else {
-        const inList = current.enabledTools.includes(toolName);
-        nextEnabled = inList
-          ? current.enabledTools.filter((t) => t !== toolName)
-          : [...current.enabledTools, toolName];
-      }
-      // All tools checked → collapse to null ("all enabled").
-      if (nextEnabled !== null && nextEnabled.length === allToolNames.length) {
-        nextEnabled = null;
-      }
-      const m = new Map(prev);
-      // Empty whitelist → same as unassigning the server.
-      if (nextEnabled !== null && nextEnabled.length === 0) {
-        m.set(mcpServerId, { assigned: false, enabledTools: null });
-        persist(mcpServerId, false, null);
-        setExpanded((p) => {
-          const s = new Set(p);
-          s.delete(mcpServerId);
-          return s;
-        });
-        return m;
-      }
-      m.set(mcpServerId, { assigned: true, enabledTools: nextEnabled });
-      persist(mcpServerId, true, nextEnabled);
-      return m;
-    });
-  }
-
-  function enableAll(mcpServerId: string) {
-    setStates((prev) => {
-      const m = new Map(prev);
-      m.set(mcpServerId, { assigned: true, enabledTools: null });
-      persist(mcpServerId, true, null);
-      return m;
-    });
-  }
-
-  function uncheckAll(mcpServerId: string) {
-    setStates((prev) => {
-      const m = new Map(prev);
-      m.set(mcpServerId, { assigned: false, enabledTools: null });
-      persist(mcpServerId, false, null);
-      return m;
-    });
-    setExpanded((prev) => {
-      const s = new Set(prev);
-      s.delete(mcpServerId);
-      return s;
-    });
-  }
-
-  function toggleExpand(mcpServerId: string) {
-    setExpanded((prev) => {
-      const s = new Set(prev);
-      if (s.has(mcpServerId)) s.delete(mcpServerId);
-      else s.add(mcpServerId);
-      return s;
-    });
-  }
-
-  if (servers.length === 0) {
-    return (
-      <p className="text-xs text-neutral-600">
-        No MCP connectors yet.{' '}
-        <a href="/mcp" className="underline hover:text-neutral-400 transition-colors">
-          Connect one first.
-        </a>
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      {servers.map((s) => {
-        const state = states.get(s.mcpServerId) ?? {
-          assigned: s.assigned,
-          enabledTools: s.enabledTools,
-        };
-        const isExpanded = expanded.has(s.mcpServerId);
-        const allToolNames = s.availableTools.map((t) => t.name);
-        const summary = !state.assigned
-          ? null
-          : state.enabledTools === null
-            ? 'all tools'
-            : `${state.enabledTools.length} of ${allToolNames.length} tools`;
-
-        return (
-          <div key={s.mcpServerId} className="rounded-lg border border-neutral-800 overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2">
-              <input
-                type="checkbox"
-                checked={state.assigned}
-                onChange={() => toggleServer(s.mcpServerId)}
-                className="accent-violet-500 shrink-0"
-              />
-              <button
-                type="button"
-                onClick={() => toggleExpand(s.mcpServerId)}
-                className="flex-1 text-left flex items-center gap-2 min-w-0"
-              >
-                <span className="text-neutral-500 text-xs w-3 shrink-0">
-                  {isExpanded ? '▾' : '▸'}
-                </span>
-                <span className="text-sm text-white font-medium truncate">{s.label}</span>
-                {summary ? (
-                  <span className="text-xs text-neutral-500 shrink-0 ml-auto">{summary}</span>
-                ) : null}
-              </button>
-            </div>
-
-            {state.assigned && isExpanded && (
-              <div className="border-t border-neutral-800 px-3 py-2 bg-neutral-950/40 space-y-2">
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => enableAll(s.mcpServerId)}
-                    className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
-                  >
-                    Enable all
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => uncheckAll(s.mcpServerId)}
-                    className="text-xs px-2 py-1 rounded border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
-                  >
-                    Uncheck all
-                  </button>
-                </div>
-                <div className="space-y-0.5">
-                  {s.availableTools.map((tool) => {
-                    const checked =
-                      state.enabledTools === null || state.enabledTools.includes(tool.name);
-                    return (
-                      <label
-                        key={tool.name}
-                        className="flex items-center gap-2 px-1 py-1 rounded text-sm cursor-pointer hover:bg-neutral-800/40"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleTool(s.mcpServerId, tool.name, allToolNames)}
-                          className="accent-violet-500 shrink-0"
-                        />
-                        <code className="font-mono text-xs text-neutral-300 shrink-0">
-                          {tool.name}
-                        </code>
-                        {tool.description ? (
-                          <span className="text-xs text-neutral-600 italic truncate">
-                            {tool.description}
-                          </span>
-                        ) : null}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+// Per-agent Connector + MCP assignment has moved to AgentComposer (the
+// `/agents/[id]/edit` page). This file now only powers the "+ New agent"
+// create modal on /agents — agent → connector / MCP wiring happens after
+// creation, in the Composer's Connectors and Knowledge tabs.
 
 // Map DB role columns back to the UX-level enum for pre-filling edit form.
 function dbRoleToUiRole(
@@ -722,7 +221,7 @@ export default function AgentForm(props: Props) {
       <div
         role="alert"
         data-testid="model-provider-mismatch"
-        className="mt-1 px-2 py-1.5 rounded border border-amber-700/50 bg-amber-900/20 text-[11px] text-amber-300 space-y-1"
+        className="mt-1 px-2 py-1.5 rounded border border-warn/30 bg-warn-bg text-[11px] text-warn space-y-1"
       >
         <p>
           <span className="font-semibold">Provider mismatch:</span>{' '}
@@ -737,13 +236,13 @@ export default function AgentForm(props: Props) {
         </p>
         {compatibleActiveKeys.length > 0 ? (
           <div className="flex flex-wrap gap-1">
-            <span className="text-amber-400/80">Switch to:</span>
+            <span className="text-warn/80">Switch to:</span>
             {compatibleActiveKeys.map((k) => (
               <button
                 key={k.id}
                 type="button"
                 onClick={() => setLlmKeyId(k.id)}
-                className="px-1.5 py-0.5 rounded border border-amber-700/60 text-amber-200 hover:bg-amber-800/30 font-medium"
+                className="px-1.5 py-0.5 rounded border border-warn/30 text-warn hover:bg-warn-bg font-medium"
               >
                 {k.nickname ?? prettyProviderName(k.provider)} ({prettyProviderName(k.provider)})
               </button>
@@ -752,7 +251,7 @@ export default function AgentForm(props: Props) {
         ) : (
           <p>
             No compatible active key.{' '}
-            <a href="/settings" className="underline hover:text-amber-100">
+            <a href="/settings" className="underline hover:text-warn">
               Add one in Settings → LLM providers
             </a>
             .
@@ -763,19 +262,16 @@ export default function AgentForm(props: Props) {
 
   // ─── Edit mode: form rendered inline (no modal/portal) ─────────────────────
 
-  const connectorList = props.connectors ?? [];
-  const mcpServerList = props.mcpServers ?? [];
-
   if (isEdit) {
     const initial = props.initial;
 
     return (
       <form ref={formRef} onSubmit={handleSubmit} className="w-full max-w-lg space-y-4">
-        <h3 className="text-sm font-semibold text-white">Edit agent</h3>
+        <h3 className="text-sm font-semibold text-ink">Edit agent</h3>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-slug">
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-slug">
               Slug
             </label>
             <input
@@ -784,11 +280,11 @@ export default function AgentForm(props: Props) {
               readOnly
               defaultValue={initial.slug}
               title="Slug is not editable"
-              className="w-full bg-neutral-800/40 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-neutral-500 cursor-not-allowed"
+              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink-3 cursor-not-allowed"
             />
           </div>
           <div>
-            <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-name">
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-name">
               Name
             </label>
             <input
@@ -797,7 +293,7 @@ export default function AgentForm(props: Props) {
               required
               defaultValue={initial.name}
               placeholder="My Agent"
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
             />
           </div>
         </div>
@@ -805,7 +301,7 @@ export default function AgentForm(props: Props) {
         <AvatarPicker value={avatarUrl} onChange={setAvatarUrl} />
 
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-personality">
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-personality">
             Personality / System prompt
           </label>
           <textarea
@@ -815,14 +311,13 @@ export default function AgentForm(props: Props) {
             rows={6}
             defaultValue={initial.personality}
             placeholder="You are a helpful assistant..."
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-y"
+            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y"
           />
         </div>
 
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-workspace-root">
-            Workspace root path{' '}
-            <span className="text-neutral-600">(optional — for file_* tools)</span>
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-workspace-root">
+            Workspace root path <span className="text-ink-4">(optional — for file_* tools)</span>
           </label>
           <input
             id="agent-workspace-root"
@@ -830,9 +325,9 @@ export default function AgentForm(props: Props) {
             type="text"
             defaultValue={isEdit ? (props.initial.workspaceRootPath ?? '') : ''}
             placeholder="C:\Users\you\Documents\MyVault  or  /home/you/notes"
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
-          <p className="text-[11px] text-neutral-600 mt-1">
+          <p className="text-[11px] text-ink-4 mt-1">
             Absolute path. The agent&apos;s <code>file_read</code> / <code>file_write</code> /{' '}
             <code>file_edit</code> / <code>file_list</code> / <code>file_search</code> tools are
             scoped to this directory. Leave empty to disable file access.
@@ -841,11 +336,11 @@ export default function AgentForm(props: Props) {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-llm-key">
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-llm-key">
               LLM provider
             </label>
             {noLlmKeys ? (
-              <p className="text-xs text-amber-400 mt-1">
+              <p className="text-xs text-warn mt-1">
                 No active LLM providers. Add one in{' '}
                 <a href="/settings" className="underline">
                   Settings → LLM providers
@@ -858,7 +353,7 @@ export default function AgentForm(props: Props) {
                 value={llmKeyId}
                 onChange={(e) => handleLlmKeyChange(e.target.value)}
                 required
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
               >
                 {activeKeys.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -872,7 +367,7 @@ export default function AgentForm(props: Props) {
             )}
           </div>
           <div>
-            <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-model">
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
               Model
             </label>
             <input
@@ -883,21 +378,21 @@ export default function AgentForm(props: Props) {
               value={model}
               onChange={(e) => handleModelChange(e.target.value)}
               placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
             {coherenceBanner}
           </div>
         </div>
 
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-role">
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-role">
             Role
           </label>
           <select
             id="agent-role"
             value={role}
             onChange={(e) => setRole(e.target.value as AgentRole)}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             <option value="worker">Worker — runs its own tools and tasks</option>
             <option value="router">Router — delegates to one sub-agent at a time</option>
@@ -907,21 +402,21 @@ export default function AgentForm(props: Props) {
 
         {showSubAgents && (
           <div>
-            <label className="block text-xs text-neutral-500 mb-1">
-              Sub-agents <span className="text-neutral-600">({subAgentIds.length} selected)</span>
+            <label className="block text-xs text-ink-3 mb-1">
+              Sub-agents <span className="text-ink-4">({subAgentIds.length} selected)</span>
             </label>
             {noAgentsForPicker ? (
-              <p className="text-xs text-amber-400 mt-1">
+              <p className="text-xs text-warn mt-1">
                 Create at least one worker agent first — orchestrators need someone to delegate to.
               </p>
             ) : (
-              <div className="max-h-40 overflow-y-auto bg-neutral-800/60 border border-neutral-700 rounded-lg divide-y divide-neutral-800">
+              <div className="max-h-40 overflow-y-auto bg-hover border border-rule rounded-lg divide-y divide-neutral-800">
                 {agents.map((a) => {
                   const checked = subAgentIds.includes(a.id);
                   return (
                     <label
                       key={a.id}
-                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-neutral-800/80"
+                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-hover/80"
                     >
                       <input
                         type="checkbox"
@@ -929,8 +424,8 @@ export default function AgentForm(props: Props) {
                         onChange={() => toggleSubAgent(a.id)}
                         className="accent-violet-500"
                       />
-                      <span className="text-white">{a.name}</span>
-                      <span className="font-mono text-xs text-neutral-500 ml-auto">{a.slug}</span>
+                      <span className="text-ink">{a.name}</span>
+                      <span className="font-mono text-xs text-ink-3 ml-auto">{a.slug}</span>
                     </label>
                   );
                 })}
@@ -939,56 +434,23 @@ export default function AgentForm(props: Props) {
           </div>
         )}
 
-        {/* ── Tools & Connectors ─────────────────────────────────────── */}
-        <div>
-          <div className="mb-2">
-            <label className="block text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-0.5">
-              Tools &amp; Connectors
-            </label>
-            <p className="text-xs text-neutral-600">
-              Choose which tools this agent can use. Fewer tools = smaller prompt + less chance the
-              agent picks the wrong one.
-            </p>
-          </div>
-          <ConnectorGrid agentId={initial.id} connectors={connectorList} />
-          <p className="mt-2 text-xs text-neutral-600">
-            <a href="/connectors" className="underline hover:text-neutral-400 transition-colors">
-              Manage credentials in /connectors
-            </a>
-          </p>
-        </div>
-
-        {/* ── MCP Connectors ─────────────────────────────────────────── */}
-        <div>
-          <div className="mb-2">
-            <label className="block text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-0.5">
-              MCP Connectors
-            </label>
-            <p className="text-xs text-neutral-600">
-              Tools from connected MCP servers. Expand a server to whitelist individual tools.
-            </p>
-          </div>
-          <McpServerGrid agentId={initial.id} servers={mcpServerList} />
-          <p className="mt-2 text-xs text-neutral-600">
-            <a href="/mcp" className="underline hover:text-neutral-400 transition-colors">
-              Manage MCP connectors in /mcp
-            </a>
-          </p>
-        </div>
+        {/* Connector + MCP assignment moved to /agents/[id]/edit (AgentComposer
+            Connectors + Knowledge tabs). Save the agent first, then attach
+            connectors there. */}
 
         <div className="flex gap-2 pt-1">
           <button
             type="submit"
             disabled={isPending || noLlmKeys || !coherenceOk}
             title={!coherenceOk ? 'Pick a key that matches the model first' : undefined}
-            className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isPending ? 'Saving…' : 'Save changes'}
           </button>
           <button
             type="button"
             onClick={() => router.push('/agents')}
-            className="px-4 py-2 text-sm font-medium border border-neutral-700 text-neutral-400 rounded-lg hover:border-neutral-600 transition-colors"
+            className="px-4 py-2 text-sm font-medium border border-rule text-ink-3 rounded-lg hover:border-rule transition-colors"
           >
             Cancel
           </button>
@@ -1017,13 +479,13 @@ export default function AgentForm(props: Props) {
             <form
               ref={formRef}
               onSubmit={handleSubmit}
-              className="pointer-events-auto w-full max-w-lg max-h-[90vh] overflow-y-auto bg-neutral-900 border border-neutral-800/60 rounded-xl p-6 space-y-4 shadow-2xl animate-[scaleIn_150ms_ease]"
+              className="pointer-events-auto w-full max-w-lg max-h-[90vh] overflow-y-auto bg-paper border border-rule-2 rounded-xl p-6 space-y-4 shadow-2xl animate-[scaleIn_150ms_ease]"
             >
-              <h3 className="text-sm font-semibold text-white">New agent</h3>
+              <h3 className="text-sm font-semibold text-ink">New agent</h3>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-slug">
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-slug">
                     Slug
                   </label>
                   <input
@@ -1032,11 +494,11 @@ export default function AgentForm(props: Props) {
                     required
                     pattern="[a-z0-9\-]+"
                     placeholder="my-agent"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+                    className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-name">
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-name">
                     Name
                   </label>
                   <input
@@ -1044,7 +506,7 @@ export default function AgentForm(props: Props) {
                     name="name"
                     required
                     placeholder="My Agent"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+                    className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
                   />
                 </div>
               </div>
@@ -1052,7 +514,7 @@ export default function AgentForm(props: Props) {
               <AvatarPicker value={avatarUrl} onChange={setAvatarUrl} />
 
               <div>
-                <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-personality">
+                <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-personality">
                   Personality / System prompt
                 </label>
                 <textarea
@@ -1061,37 +523,37 @@ export default function AgentForm(props: Props) {
                   required
                   rows={4}
                   placeholder="You are a helpful assistant..."
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-none"
+                  className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-none"
                 />
               </div>
 
               <div>
                 <label
-                  className="block text-xs text-neutral-500 mb-1"
+                  className="block text-xs text-ink-3 mb-1"
                   htmlFor="agent-workspace-root-create"
                 >
                   Workspace root path{' '}
-                  <span className="text-neutral-600">(optional — for file_* tools)</span>
+                  <span className="text-ink-4">(optional — for file_* tools)</span>
                 </label>
                 <input
                   id="agent-workspace-root-create"
                   name="workspaceRootPath"
                   type="text"
                   placeholder="C:\Users\you\Documents\MyVault  or  /home/you/notes"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+                  className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
                 />
-                <p className="text-[11px] text-neutral-600 mt-1">
+                <p className="text-[11px] text-ink-4 mt-1">
                   Absolute path. Leave empty to disable file access for this agent.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-llm-key">
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-llm-key">
                     LLM provider
                   </label>
                   {noLlmKeys ? (
-                    <p className="text-xs text-amber-400 mt-1">
+                    <p className="text-xs text-warn mt-1">
                       No active LLM providers. Add one in{' '}
                       <a href="/settings" className="underline">
                         Settings → LLM providers
@@ -1104,7 +566,7 @@ export default function AgentForm(props: Props) {
                       value={llmKeyId}
                       onChange={(e) => handleLlmKeyChange(e.target.value)}
                       required
-                      className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+                      className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
                     >
                       {activeKeys.map((k) => (
                         <option key={k.id} value={k.id}>
@@ -1118,7 +580,7 @@ export default function AgentForm(props: Props) {
                   )}
                 </div>
                 <div>
-                  <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-model">
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
                     Model
                   </label>
                   <input
@@ -1129,21 +591,21 @@ export default function AgentForm(props: Props) {
                     value={model}
                     onChange={(e) => handleModelChange(e.target.value)}
                     placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+                    className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                   />
                   {coherenceBanner}
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs text-neutral-500 mb-1" htmlFor="agent-role">
+                <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-role">
                   Role
                 </label>
                 <select
                   id="agent-role"
                   value={role}
                   onChange={(e) => setRole(e.target.value as AgentRole)}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+                  className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
                 >
                   <option value="worker">Worker — runs its own tools and tasks</option>
                   <option value="router">Router — delegates to one sub-agent at a time</option>
@@ -1153,23 +615,22 @@ export default function AgentForm(props: Props) {
 
               {showSubAgents && (
                 <div>
-                  <label className="block text-xs text-neutral-500 mb-1">
-                    Sub-agents{' '}
-                    <span className="text-neutral-600">({subAgentIds.length} selected)</span>
+                  <label className="block text-xs text-ink-3 mb-1">
+                    Sub-agents <span className="text-ink-4">({subAgentIds.length} selected)</span>
                   </label>
                   {noAgentsForPicker ? (
-                    <p className="text-xs text-amber-400 mt-1">
+                    <p className="text-xs text-warn mt-1">
                       Create at least one worker agent first — orchestrators need someone to
                       delegate to.
                     </p>
                   ) : (
-                    <div className="max-h-40 overflow-y-auto bg-neutral-800/60 border border-neutral-700 rounded-lg divide-y divide-neutral-800">
+                    <div className="max-h-40 overflow-y-auto bg-hover border border-rule rounded-lg divide-y divide-neutral-800">
                       {agents.map((a) => {
                         const checked = subAgentIds.includes(a.id);
                         return (
                           <label
                             key={a.id}
-                            className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-neutral-800/80"
+                            className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-hover/80"
                           >
                             <input
                               type="checkbox"
@@ -1177,10 +638,8 @@ export default function AgentForm(props: Props) {
                               onChange={() => toggleSubAgent(a.id)}
                               className="accent-violet-500"
                             />
-                            <span className="text-white">{a.name}</span>
-                            <span className="font-mono text-xs text-neutral-500 ml-auto">
-                              {a.slug}
-                            </span>
+                            <span className="text-ink">{a.name}</span>
+                            <span className="font-mono text-xs text-ink-3 ml-auto">{a.slug}</span>
                           </label>
                         );
                       })}
@@ -1194,14 +653,14 @@ export default function AgentForm(props: Props) {
                   type="submit"
                   disabled={isPending || noLlmKeys || !coherenceOk}
                   title={!coherenceOk ? 'Pick a key that matches the model first' : undefined}
-                  className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isPending ? 'Creating…' : 'Create agent'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="px-4 py-2 text-sm font-medium border border-neutral-700 text-neutral-400 rounded-lg hover:border-neutral-600 transition-colors"
+                  className="px-4 py-2 text-sm font-medium border border-rule text-ink-3 rounded-lg hover:border-rule transition-colors"
                 >
                   Cancel
                 </button>
@@ -1217,7 +676,7 @@ export default function AgentForm(props: Props) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="px-4 py-2 text-sm font-medium bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors"
+        className="px-4 py-2 text-sm font-medium bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors"
       >
         + New agent
       </button>

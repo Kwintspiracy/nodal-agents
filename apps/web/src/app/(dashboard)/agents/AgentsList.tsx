@@ -174,8 +174,8 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
 
   if (groups.length === 0) {
     return (
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
-        <div className="px-6 py-12 text-center text-neutral-600 text-sm">
+      <div className="bg-paper border border-rule-2 rounded-xl overflow-hidden">
+        <div className="px-6 py-12 text-center text-ink-4 text-sm">
           No agents yet. Create one above.
         </div>
       </div>
@@ -201,7 +201,7 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
                 {g.orchestrator ? (
                   <SortableTeamHeader orchestrator={g.orchestrator} disabled={isPending} />
                 ) : (
-                  <h2 className="mb-2 text-xs font-semibold text-neutral-400 uppercase tracking-wider">
+                  <h2 className="mb-2 text-xs font-semibold text-ink-3 uppercase tracking-wider">
                     Standalone
                   </h2>
                 )}
@@ -251,11 +251,11 @@ function SortableTeamHeader({
         {...listeners}
         aria-label="Drag team"
         title="Drag to reorder team"
-        className="cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-300 transition-colors leading-none touch-none"
+        className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-2 transition-colors leading-none touch-none"
       >
         ⋮⋮
       </button>
-      <h2 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">
+      <h2 className="text-xs font-semibold text-ink-3 uppercase tracking-wider">
         Team — {orchestrator.name}
       </h2>
     </div>
@@ -290,7 +290,7 @@ function WorkerList({
   // inside <tbody> next to the <tr> children.
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onWorkerDragEnd}>
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
+      <div className="bg-paper border border-rule-2 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <tbody>
             <SortableContext items={workerIds} strategy={verticalListSortingStrategy}>
@@ -343,7 +343,7 @@ function SortableWorkerRow({
     <tr
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`border-b border-neutral-800/40 last:border-0 ${isDragging ? 'opacity-50 bg-neutral-800/40' : ''}`}
+      className={`border-b border-rule-2 last:border-0 ${isDragging ? 'opacity-50 bg-hover' : ''}`}
     >
       <td className={`px-5 py-3 ${indent ? 'pl-10' : ''}`}>
         <div className="flex items-center gap-3">
@@ -353,7 +353,7 @@ function SortableWorkerRow({
             {...listeners}
             aria-label="Drag row"
             title="Drag to reorder"
-            className="cursor-grab active:cursor-grabbing text-neutral-700 hover:text-neutral-400 transition-colors leading-none touch-none select-none"
+            className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-3 transition-colors leading-none touch-none select-none"
           >
             ⋮⋮
           </button>
@@ -379,7 +379,7 @@ function NonSortableRow({
   activity: ActiveAgentRow | null;
 }) {
   return (
-    <tr className="border-b border-neutral-800/40 last:border-0">
+    <tr className="border-b border-rule-2 last:border-0">
       <td className={`px-5 py-3 ${indent ? 'pl-10' : ''}`}>
         <div className="flex items-center gap-3">
           {/* Spacer aligning with the drag handle on worker rows below. */}
@@ -405,14 +405,14 @@ function AgentAvatar({ agent }: { agent: AgentRow }) {
         alt=""
         width={32}
         height={32}
-        className="w-8 h-8 rounded-full object-cover border border-neutral-800 shrink-0"
+        className="w-8 h-8 rounded-full object-cover border border-rule-2 shrink-0"
       />
     );
   }
   // Initials fallback — first letter of the agent name in a neutral chip.
   // Keeps row height stable whether an avatar is set or not.
   return (
-    <div className="w-8 h-8 rounded-full bg-neutral-800 text-neutral-400 text-xs font-semibold flex items-center justify-center shrink-0">
+    <div className="w-8 h-8 rounded-full bg-hover text-ink-3 text-xs font-semibold flex items-center justify-center shrink-0">
       {agent.name.charAt(0).toUpperCase()}
     </div>
   );
@@ -422,9 +422,9 @@ function AgentLabel({ agent }: { agent: AgentRow }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-2">
-        <span className="text-white font-medium truncate">{agent.name}</span>
+        <span className="text-ink font-medium truncate">{agent.name}</span>
         {agent.isDefault && (
-          <span className="text-[10px] font-semibold text-violet-400 uppercase tracking-wider">
+          <span className="text-[10px] font-semibold text-run uppercase tracking-wider">
             default
           </span>
         )}
@@ -434,8 +434,8 @@ function AgentLabel({ agent }: { agent: AgentRow }) {
           </span>
         )}
       </div>
-      <span className="font-mono text-neutral-500 text-[11px]">{agent.slug}</span>
-      {agent.model && <span className="ml-2 text-neutral-600 text-[11px]">· {agent.model}</span>}
+      <span className="font-mono text-ink-3 text-[11px]">{agent.slug}</span>
+      {agent.model && <span className="ml-2 text-ink-4 text-[11px]">· {agent.model}</span>}
     </div>
   );
 }
@@ -467,14 +467,14 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
   // breakdown so the user can see every category at a glance.
   const dot =
     activity.processing > 0
-      ? { color: 'bg-blue-400', pulse: true, label: `${activity.processing} running` }
+      ? { color: 'bg-run', pulse: true, label: `${activity.processing} running` }
       : activity.awaiting > 0
         ? {
-            color: 'bg-amber-400',
+            color: 'bg-warn',
             pulse: true,
             label: `${activity.awaiting} awaiting`,
           }
-        : { color: 'bg-yellow-400', pulse: false, label: `${activity.pending} pending` };
+        : { color: 'bg-warn', pulse: false, label: `${activity.pending} pending` };
 
   const tooltipLines: string[] = [];
   if (activity.processing > 0) tooltipLines.push(`${activity.processing} processing`);
@@ -486,7 +486,7 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
       href={`/jobs?agentId=${agent.id}`}
       title={tooltipLines.join(' · ')}
       onPointerDown={(e) => e.stopPropagation()}
-      className="ml-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-neutral-800/60 hover:bg-neutral-800 border border-neutral-700/50 text-[11px] text-neutral-300 transition-colors shrink-0"
+      className="ml-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-hover hover:bg-hover border border-rule text-[11px] text-ink-2 transition-colors shrink-0"
     >
       <span className="relative inline-flex w-2 h-2 shrink-0">
         {dot.pulse && (
@@ -497,7 +497,7 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
         <span className={`relative inline-flex w-2 h-2 rounded-full ${dot.color}`} />
       </span>
       <span className="font-mono tabular-nums">{activity.total}</span>
-      <span className="text-neutral-500 text-[10px]">active</span>
+      <span className="text-ink-3 text-[10px]">active</span>
     </Link>
   );
 }
@@ -508,13 +508,13 @@ function RowActions({ agent }: { agent: AgentRow }) {
       <div className="flex items-center justify-end gap-2">
         <Link
           href={`/agents/${agent.id}/telegram`}
-          className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-lg hover:border-neutral-700 hover:text-white transition-colors"
+          className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-rule hover:text-ink transition-colors"
         >
           Telegram
         </Link>
         <Link
           href={`/agents/${agent.id}/edit`}
-          className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-lg hover:border-neutral-700 hover:text-white transition-colors"
+          className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-rule hover:text-ink transition-colors"
         >
           Edit
         </Link>

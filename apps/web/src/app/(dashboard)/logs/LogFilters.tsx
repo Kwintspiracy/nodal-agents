@@ -30,16 +30,14 @@ export default function LogFilters({ agents, toolNames }: Props) {
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-3 bg-neutral-900 border border-neutral-800/60 rounded-xl px-4 py-3">
-      <div className="flex-1 min-w-[180px]">
-        <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-1">
-          Agent
-        </label>
+    <div className="flex flex-wrap items-end gap-3 rounded-xl border border-rule-2 bg-paper px-4 py-3">
+      <div className="min-w-[180px] flex-1">
+        <label className="mb-1 block text-[10px] uppercase tracking-wider text-ink-3">Agent</label>
         <select
           value={agentId}
           onChange={(e) => update({ agent: e.target.value || null })}
           disabled={isPending}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+          className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
         >
           <option value="">All agents</option>
           {agents.map((a) => (
@@ -50,15 +48,15 @@ export default function LogFilters({ agents, toolNames }: Props) {
         </select>
       </div>
 
-      <div className="flex-1 min-w-[200px]">
-        <label className="block text-[10px] uppercase tracking-wider text-neutral-500 mb-1">
+      <div className="min-w-[200px] flex-1">
+        <label className="mb-1 block text-[10px] uppercase tracking-wider text-ink-3">
           Tool name
         </label>
         <select
           value={toolName}
           onChange={(e) => update({ tool: e.target.value || null })}
           disabled={isPending}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none font-mono"
+          className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 font-mono text-sm text-ink focus:border-ink-3 focus:outline-none"
         >
           <option value="">All tools</option>
           {toolNames.map((name) => (

@@ -80,7 +80,7 @@ export function blocksFromContent(content: unknown): RenderedBlock[] {
 
 export default function JobMessages({ messages }: { messages: Message[] }) {
   if (!messages || messages.length === 0) {
-    return <p className="text-xs text-neutral-600">No messages recorded yet.</p>;
+    return <p className="text-xs text-ink-4">No messages recorded yet.</p>;
   }
 
   return (
@@ -95,15 +95,15 @@ export default function JobMessages({ messages }: { messages: Message[] }) {
             key={i}
             className={`rounded-lg p-3 border text-xs leading-relaxed ${
               isAssistant
-                ? 'bg-neutral-900 border-neutral-800/50 text-neutral-300'
+                ? 'bg-paper border-rule-2 text-ink-2'
                 : isTool
-                  ? 'bg-emerald-950/20 border-emerald-900/40 text-neutral-400'
-                  : 'bg-neutral-950 border-neutral-800/30 text-neutral-500'
+                  ? 'bg-ok-bg border-ok/30 text-ink-3'
+                  : 'bg-canvas border-rule-2 text-ink-3'
             }`}
           >
             <span
               className={`inline-block text-[10px] font-semibold uppercase tracking-wider mb-1.5 ${
-                isAssistant ? 'text-violet-400' : isTool ? 'text-emerald-400' : 'text-neutral-600'
+                isAssistant ? 'text-run' : isTool ? 'text-ok' : 'text-ink-4'
               }`}
             >
               {roleLabel(role)}
@@ -113,20 +113,17 @@ export default function JobMessages({ messages }: { messages: Message[] }) {
                 if (block.kind === 'text') {
                   return (
                     <div key={j} className="font-mono whitespace-pre-wrap">
-                      {block.text || <span className="text-neutral-700 italic">(empty)</span>}
+                      {block.text || <span className="text-ink-4 italic">(empty)</span>}
                     </div>
                   );
                 }
                 if (block.kind === 'tool-call') {
                   return (
-                    <div
-                      key={j}
-                      className="border-l-2 border-violet-500/40 pl-3 py-1 bg-violet-950/10 rounded-r"
-                    >
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-300 mb-1">
+                    <div key={j} className="border-l-2 border-run/30 pl-3 py-1 bg-run-bg rounded-r">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-run mb-1">
                         → call {block.toolName}
                       </p>
-                      <pre className="font-mono text-[11px] text-neutral-300 whitespace-pre-wrap break-words">
+                      <pre className="font-mono text-[11px] text-ink-2 whitespace-pre-wrap break-words">
                         {pretty(block.payload)}
                       </pre>
                     </div>
@@ -134,14 +131,11 @@ export default function JobMessages({ messages }: { messages: Message[] }) {
                 }
                 // tool-result
                 return (
-                  <div
-                    key={j}
-                    className="border-l-2 border-emerald-500/40 pl-3 py-1 bg-emerald-950/10 rounded-r"
-                  >
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300 mb-1">
+                  <div key={j} className="border-l-2 border-ok/30 pl-3 py-1 bg-ok-bg rounded-r">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-ok mb-1">
                       ← result {block.toolName ? `from ${block.toolName}` : ''}
                     </p>
-                    <pre className="font-mono text-[11px] text-neutral-300 whitespace-pre-wrap break-words">
+                    <pre className="font-mono text-[11px] text-ink-2 whitespace-pre-wrap break-words">
                       {pretty(block.payload)}
                     </pre>
                   </div>

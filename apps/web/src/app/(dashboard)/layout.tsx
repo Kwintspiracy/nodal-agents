@@ -1,9 +1,10 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { Toaster } from 'sonner';
 import { AuthError, NoEntityError } from '@nodal-agents/auth';
 import Sidebar from '@/components/Sidebar';
 import UserMenu from '@/components/UserMenu.tsx';
+import Topbar from '@/components/ui/Topbar';
+import ThemedToaster from '@/components/ui/ThemedToaster';
 import { requireUserWithEntity } from '@/lib/server.ts';
 
 // Gate every dashboard route. The proxy only checks cookie *presence*,
@@ -22,24 +23,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <>
+    <div className="flex min-h-screen bg-canvas text-ink">
       <Sidebar userMenu={<UserMenu />} />
-      {/*
-        Canonical viewport width for every dashboard page.
 
-        `max-w-6xl` lives HERE so every page has the same horizontal bounds
-        — without it, individual pages each hardcoded their own
-        `max-w-2xl|3xl|4xl|5xl|6xl`, producing visually inconsistent column
-        widths across the dashboard. Left-aligned (no `mx-auto`) so the
-        column hugs the sidebar — matches what the dashboard looked like
-        before, with the bonus of uniform width. Page-level wrappers must
-        NOT add their own `max-w-*` anymore. Forms or other inner blocks
-        that need to be narrower can constrain themselves on the <form>.
+      {/*
+        Main pane sits next to the 220px sidebar on desktop and accounts for
+        the mobile top bar (h-[58px]) when narrower. The Topbar is rendered
+        once per visit at the dashboard level — pages compose their own
+        content underneath. Canonical max-width is set on the inner wrapper.
       */}
-      <main className="flex-1 w-full lg:ml-56 pt-[72px] lg:pt-4 p-3 sm:p-5 lg:p-8 min-w-0">
-        <div className="max-w-6xl">{children}</div>
+      <main className="flex min-w-0 flex-1 flex-col pt-[58px] lg:ml-[220px] lg:pt-0">
+        <Topbar />
+        <div className="flex-1 overflow-x-hidden">
+          <div className="max-w-6xl px-5 pb-10 sm:px-8 lg:px-9">{children}</div>
+        </div>
       </main>
-      <Toaster theme="dark" position="bottom-right" richColors closeButton />
-    </>
+
+      <ThemedToaster />
+    </div>
   );
 }

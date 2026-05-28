@@ -64,10 +64,7 @@ describe('mark_memory_helpful', () => {
 
   it('caps importance at 5 — no-op when already at the ceiling', async () => {
     const seeded = await seedMemory('user is the founder', 5);
-    const result = await markMemoryHelpfulTool.execute(
-      { fact_substring: 'founder' },
-      makeCtx(),
-    );
+    const result = await markMemoryHelpfulTool.execute({ fact_substring: 'founder' }, makeCtx());
     expect(result).toMatchObject({ marked: true, newImportance: 5 });
     const [row] = await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id));
     expect(row?.importance).toBe(5);
@@ -87,10 +84,7 @@ describe('mark_memory_helpful', () => {
   it('returns { marked: false } with ambiguous-match reason when 2+ rows match', async () => {
     await seedMemory('user works in Paris');
     await seedMemory('user used to live in Paris');
-    const result = await markMemoryHelpfulTool.execute(
-      { fact_substring: 'Paris' },
-      makeCtx(),
-    );
+    const result = await markMemoryHelpfulTool.execute({ fact_substring: 'Paris' }, makeCtx());
     expect(result.marked).toBe(false);
     if (result.marked) throw new Error('expected marked: false');
     expect(result.reason).toContain('Ambiguous');
@@ -116,10 +110,7 @@ describe('mark_memory_outdated', () => {
 
   it('returns { archived: false } with explicit reason on zero matches', async () => {
     await seedMemory('user lives in Paris');
-    const result = await markMemoryOutdatedTool.execute(
-      { fact_substring: 'New York' },
-      makeCtx(),
-    );
+    const result = await markMemoryOutdatedTool.execute({ fact_substring: 'New York' }, makeCtx());
     expect(result.archived).toBe(false);
     if (result.archived) throw new Error('expected archived: false');
     expect(result.reason).toContain('No memory matches');
@@ -128,10 +119,7 @@ describe('mark_memory_outdated', () => {
   it('returns { archived: false } on ambiguous matches without archiving any row', async () => {
     const a = await seedMemory('Paris office is at rue X');
     const b = await seedMemory('Paris stand-up is at 10am');
-    const result = await markMemoryOutdatedTool.execute(
-      { fact_substring: 'Paris' },
-      makeCtx(),
-    );
+    const result = await markMemoryOutdatedTool.execute({ fact_substring: 'Paris' }, makeCtx());
     expect(result.archived).toBe(false);
     const [ra] = await db.select().from(agentMemory).where(eq(agentMemory.id, a.id));
     const [rb] = await db.select().from(agentMemory).where(eq(agentMemory.id, b.id));
@@ -142,10 +130,7 @@ describe('mark_memory_outdated', () => {
   it('cannot find an already-archived memory (excluded from search)', async () => {
     const seeded = await seedMemory('user lives in Paris', 3);
     await db.update(agentMemory).set({ archived: true }).where(eq(agentMemory.id, seeded.id));
-    const result = await markMemoryOutdatedTool.execute(
-      { fact_substring: 'Paris' },
-      makeCtx(),
-    );
+    const result = await markMemoryOutdatedTool.execute({ fact_substring: 'Paris' }, makeCtx());
     expect(result.archived).toBe(false);
   });
 });

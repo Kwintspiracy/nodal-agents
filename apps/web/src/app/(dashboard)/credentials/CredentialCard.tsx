@@ -119,18 +119,18 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
   }
 
   return (
-    <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3">
+    <div className="bg-paper border border-rule-2 rounded-xl p-5 space-y-3">
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-base font-semibold text-white truncate">{credential.name}</h3>
+            <h3 className="text-base font-semibold text-ink truncate">{credential.name}</h3>
             <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-indigo-500/15 text-indigo-400 shrink-0">
               {typeLabel}
             </span>
           </div>
           {credential.accountName && (
-            <p className="text-xs text-neutral-400 mt-0.5">{credential.accountName}</p>
+            <p className="text-xs text-ink-3 mt-0.5">{credential.accountName}</p>
           )}
           {/* Status line.
               - Refreshable providers (Google, Airtable): stable "Auto-refreshes
@@ -144,11 +144,9 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
               - Non-refreshable providers (Notion): real timer + amber on
                 expiry because the user actually has to reconnect manually. */}
           {supportsRefresh ? (
-            <p className="text-xs text-neutral-500 mt-0.5">Auto-refreshes when used</p>
+            <p className="text-xs text-ink-3 mt-0.5">Auto-refreshes when used</p>
           ) : expiryText ? (
-            <p className={`text-xs mt-0.5 ${expired ? 'text-amber-400' : 'text-neutral-500'}`}>
-              {expiryText}
-            </p>
+            <p className={`text-xs mt-0.5 ${expired ? 'text-warn' : 'text-ink-3'}`}>{expiryText}</p>
           ) : null}
         </div>
 
@@ -158,7 +156,7 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
             type="button"
             onClick={() => setRenameOpen(true)}
             disabled={isPending || isRefreshing}
-            className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+            className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
           >
             Rename
           </button>
@@ -167,7 +165,7 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
               type="button"
               onClick={performRefresh}
               disabled={isRefreshing || isPending}
-              className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white disabled:opacity-40"
+              className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
             >
               {isRefreshing ? 'Refreshing…' : 'Refresh'}
             </button>
@@ -176,7 +174,7 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
             type="button"
             onClick={() => setDeleteOpen(true)}
             disabled={isPending || isRefreshing}
-            className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
+            className="px-3 py-1.5 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err hover:text-err disabled:opacity-40"
           >
             Delete
           </button>
@@ -187,7 +185,7 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
           (master key rotated or row corrupted). Credential is unusable
           regardless of provider state. */}
       {credential.decryptError && (
-        <div className="px-3 py-2 rounded border border-red-900/50 bg-red-950/30 text-xs text-red-300">
+        <div className="px-3 py-2 rounded border border-err/30 bg-warn-bg text-xs text-err">
           <span className="font-semibold">Cannot decrypt this credential.</span> The encrypted
           payload could not be read (master key changed or row corrupted). Delete and recreate it.
         </div>
@@ -199,7 +197,7 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
           {credential.scopes.split(/\s+/).map((scope) => (
             <span
               key={scope}
-              className="px-1.5 py-0.5 bg-neutral-800 text-neutral-400 rounded text-[10px] font-mono"
+              className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-[10px] font-mono"
             >
               {scope}
             </span>
@@ -210,14 +208,14 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
       {/* In-use chips */}
       {inUseCount > 0 && (
         <div className="flex flex-wrap gap-1 items-center">
-          <span className="text-[10px] text-neutral-600 uppercase tracking-wider font-semibold mr-1">
+          <span className="text-[10px] text-ink-4 uppercase tracking-wider font-semibold mr-1">
             Used by
           </span>
           {credential.inUseBy.map((u) => (
             <Link
               key={u.connectorId}
               href="/connectors"
-              className="px-2 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors font-mono"
+              className="px-2 py-0.5 rounded text-[10px] bg-hover text-ink-3 hover:text-ink hover:bg-hover-2 transition-colors font-mono"
             >
               {u.connectorSlug}
             </Link>
@@ -227,8 +225,8 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
 
       {/* Rename inline form */}
       {renameOpen && (
-        <div className="pt-2 border-t border-neutral-800/60 space-y-2">
-          <label className="block text-xs text-neutral-500">New display name</label>
+        <div className="pt-2 border-t border-rule-2 space-y-2">
+          <label className="block text-xs text-ink-3">New display name</label>
           <input
             type="text"
             value={renameName}
@@ -238,14 +236,14 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
               if (e.key === 'Escape') setRenameOpen(false);
             }}
             autoFocus
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           />
           <div className="flex gap-2">
             <button
               type="button"
               onClick={performRename}
               disabled={isPending}
-              className="px-3 py-1.5 text-xs font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Saving…' : 'Save'}
             </button>
@@ -255,7 +253,7 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
                 setRenameOpen(false);
                 setRenameName(credential.name);
               }}
-              className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white"
+              className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
             >
               Cancel
             </button>

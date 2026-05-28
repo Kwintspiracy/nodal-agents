@@ -36,7 +36,7 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="px-4 py-2 text-sm font-medium bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors"
+        className="px-4 py-2 text-sm font-medium bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors"
       >
         + Send task
       </button>
@@ -47,12 +47,12 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
     <form
       ref={formRef}
       onSubmit={handleSubmit}
-      className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-4 max-w-lg"
+      className="bg-paper border border-rule-2 rounded-xl p-5 space-y-4 max-w-lg"
     >
-      <h3 className="text-sm font-semibold text-white">Send a task</h3>
+      <h3 className="text-sm font-semibold text-ink">Send a task</h3>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="task-prompt">
+        <label className="block text-xs text-ink-3 mb-1" htmlFor="task-prompt">
           Task description
         </label>
         <textarea
@@ -61,13 +61,13 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
           required
           rows={6}
           placeholder="Summarise the last 10 emails from my inbox…"
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none resize-y min-h-[80px]"
+          className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y min-h-[80px]"
         />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="task-agent">
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="task-agent">
             Assign to
           </label>
           <select
@@ -76,7 +76,7 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
             required
             value={selectedAgentId}
             onChange={(e) => setSelectedAgentId(e.target.value)}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             <option value="" disabled>
               Select agent
@@ -89,14 +89,14 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
           </select>
         </div>
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="task-priority">
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="task-priority">
             Priority
           </label>
           <select
             id="task-priority"
             name="priority"
             defaultValue="medium"
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             <option value="low">Low</option>
             <option value="medium">Medium</option>
@@ -106,12 +106,12 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
       </div>
 
       {selectedAgent?.telegramBotToken && selectedAgent?.lastSeenChatIdTelegram && (
-        <label className="flex items-center gap-2 text-sm text-neutral-300">
+        <label className="flex items-center gap-2 text-sm text-ink-2">
           <input
             type="checkbox"
             name="sendViaTelegram"
             value="true"
-            className="rounded border border-neutral-700 bg-neutral-800 accent-white"
+            className="rounded border border-rule bg-hover accent-white"
           />
           Send result via Telegram (chat: {selectedAgent.lastSeenChatIdTelegram})
         </label>
@@ -121,14 +121,14 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
         <button
           type="submit"
           disabled={isPending}
-          className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50"
+          className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors disabled:opacity-50"
         >
           {isPending ? 'Sending…' : 'Send task'}
         </button>
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="px-4 py-2 text-sm font-medium border border-neutral-700 text-neutral-400 rounded-lg hover:border-neutral-600 transition-colors"
+          className="px-4 py-2 text-sm font-medium border border-rule text-ink-3 rounded-lg hover:border-rule transition-colors"
         >
           Cancel
         </button>

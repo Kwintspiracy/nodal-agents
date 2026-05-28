@@ -56,8 +56,8 @@ export default function ConfirmDialog({
   if (!open || !mounted) return null;
 
   const confirmClasses = destructive
-    ? 'bg-red-600 hover:bg-red-500 text-white'
-    : 'bg-white hover:bg-neutral-200 text-black';
+    ? 'bg-err hover:brightness-[0.94] text-ink'
+    : 'bg-ink hover:brightness-[0.92] text-canvas';
 
   return createPortal(
     <div
@@ -71,17 +71,17 @@ export default function ConfirmDialog({
         onClick={onCancel}
         aria-hidden="true"
       />
-      <div className="relative bg-neutral-900 border border-neutral-800/60 rounded-xl p-6 max-w-md w-full shadow-2xl">
-        <h2 id="confirm-dialog-title" className="text-base font-semibold text-white">
+      <div className="relative bg-paper border border-rule-2 rounded-xl p-6 max-w-md w-full shadow-2xl">
+        <h2 id="confirm-dialog-title" className="text-base font-semibold text-ink">
           {title}
         </h2>
-        {message && <p className="mt-2 text-sm text-neutral-400 leading-relaxed">{message}</p>}
+        {message && <p className="mt-2 text-sm text-ink-3 leading-relaxed">{message}</p>}
         <div className="mt-6 flex justify-end gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium border border-neutral-700 text-neutral-300 rounded-lg hover:border-neutral-600 hover:text-white transition-colors"
+            className="px-4 py-2 text-sm font-medium border border-rule text-ink-2 rounded-lg hover:border-rule hover:text-ink transition-colors"
           >
             {cancelLabel}
           </button>

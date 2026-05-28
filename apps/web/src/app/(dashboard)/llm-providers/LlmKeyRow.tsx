@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { GearSix } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { deleteLlmKeyAction, type LlmKeyUiRow } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
+import StatusPill from '@/components/ui/StatusPill.tsx';
 
 interface Props {
   row: LlmKeyUiRow;
@@ -30,63 +32,94 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
     });
   }
 
+  const { bg, fg, initials } = providerGlyph(row.provider);
+
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white truncate">
-            {row.nickname ?? <span className="text-neutral-500 italic">no nickname</span>}
-          </span>
-          <ProviderBadge provider={row.provider} />
-          {!row.isActive && (
-            <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
-              disabled
-            </span>
-          )}
-          {row.isActive && (
-            <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider">
-              active
-            </span>
-          )}
+    <div className="flex flex-col gap-3 rounded-2xl border border-rule-2 bg-paper p-[18px]">
+      {/* Header row: glyph + name + status */}
+      <div className="flex items-center gap-3">
+        {/* Provider glyph */}
+        <div
+          className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl font-mono text-[13px] font-semibold tracking-[0.04em]"
+          style={{ background: bg, color: fg }}
+        >
+          {initials}
         </div>
-        <div className="mt-1 flex items-center gap-3 text-xs">
+
+        {/* Name + region */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[15px] font-semibold leading-[1.2] tracking-[-0.005em] text-ink">
+              {row.nickname ?? prettyProviderName(row.provider)}
+            </span>
+            {row.nickname && (
+              <span className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-4">
+                {prettyProviderName(row.provider)}
+              </span>
+            )}
+          </div>
           {row.defaultModel && (
-            <span className="font-mono text-neutral-400 truncate">{row.defaultModel}</span>
+            <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-4 truncate">
+              {row.defaultModel}
+            </div>
           )}
-          {row.baseUrl && (
-            <span className="font-mono text-neutral-500 truncate">{row.baseUrl}</span>
-          )}
+        </div>
+
+        {/* Status pill */}
+        {row.isActive ? (
+          <StatusPill variant="done" label="Active" />
+        ) : (
+          <StatusPill variant="idle" label="Disabled" />
+        )}
+      </div>
+
+      {/* Detail row: base URL + API key indicator */}
+      <div className="flex flex-col gap-1">
+        {row.baseUrl && (
+          <div className="flex items-center gap-2 rounded-lg bg-canvas px-[10px] py-[7px]">
+            <code className="flex-1 truncate font-mono text-[12px] leading-none text-ink">
+              {row.baseUrl}
+            </code>
+          </div>
+        )}
+        <div className="flex items-center gap-2 rounded-lg bg-canvas px-[10px] py-[7px]">
           {row.hasApiKey ? (
-            <span className="font-mono text-neutral-500" title="API key configured">
-              •••
-            </span>
+            <code className="font-mono text-[12px] leading-none tracking-widest text-ink-3">
+              ••••••••{row.apiKeyLast4 ?? ''}
+            </code>
           ) : (
-            <span className="text-amber-400">no key</span>
+            <span className="text-[12px] leading-none text-warn">No API key</span>
           )}
-          <AgentUsage count={row.agentCount} keyId={row.id} />
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <button
-          type="button"
-          onClick={onEdit}
-          className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-lg hover:border-neutral-700 hover:text-white transition-colors"
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          disabled={isPending}
-          className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-lg hover:border-red-700 hover:text-red-300 transition-colors disabled:opacity-40"
-        >
-          Delete
-        </button>
+
+      {/* Footer row: agent usage + actions */}
+      <div className="flex items-center justify-between border-t border-rule-2 pt-[10px]">
+        <AgentUsage count={row.agentCount} keyId={row.id} />
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="inline-flex h-[28px] items-center gap-1 rounded-md border border-rule px-[10px] text-[11.5px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            <GearSix size={12} weight="regular" />
+            Configure
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            disabled={isPending}
+            className="inline-flex h-[28px] items-center rounded-md border border-err/30 px-[10px] text-[11.5px] font-medium text-err transition-colors hover:border-err/60 hover:bg-warn-bg disabled:opacity-40"
+          >
+            Delete
+          </button>
+        </div>
       </div>
+
       <ConfirmDialog
         open={confirmOpen}
         title="Remove LLM provider?"
-        message={`"${row.nickname ?? row.provider}" will be removed. Agents using it will fall back to the default env-configured provider until reassigned.`}
+        message={`"${row.nickname ?? prettyProviderName(row.provider)}" will be removed. Agents using it will fall back to the default env-configured provider until reassigned.`}
         confirmLabel="Remove"
         onConfirm={performDelete}
         onCancel={() => setConfirmOpen(false)}
@@ -96,57 +129,50 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
 }
 
 function AgentUsage({ count, keyId }: { count: number; keyId: string }) {
-  // Zero = the key is orphaned; show a muted hint so the user knows
-  // they can delete it without breaking anything.
   if (count === 0) {
-    return <span className="text-neutral-600 italic">unused</span>;
+    return <span className="font-sans text-[12.5px] leading-none text-ink-3">Not in use</span>;
   }
-  // Non-zero = link to a filtered /agents view so the user can see exactly
-  // which agents would be affected by a key change. `agents` page doesn't
-  // currently filter on llmKeyId — the link is a placeholder so the click
-  // target is consistent with other "X uses" links in the dashboard.
-  // (When the agents page learns ?llmKeyId=… we get the filter for free.)
   return (
     <Link
       href={`/agents?llmKeyId=${keyId}`}
-      className="text-neutral-400 hover:text-white transition-colors"
+      className="font-sans text-[12.5px] leading-none text-ink-3 transition-colors hover:text-ink"
       title={`${count} agent${count === 1 ? '' : 's'} use this key`}
     >
-      <span className="font-mono tabular-nums">{count}</span> agent{count === 1 ? '' : 's'}
+      <span className="font-mono tabular-nums">{count}</span> agent{count === 1 ? '' : 's'} using
     </Link>
   );
 }
 
-function ProviderBadge({ provider }: { provider: string }) {
-  const cls = providerColor(provider);
-  return (
-    <span
-      className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${cls}`}
-    >
-      {prettyProviderName(provider)}
-    </span>
-  );
-}
-
-function providerColor(p: string): string {
+/** Per-provider glyph: 2-char initials + brand-adjacent colour.
+ *  Colours respect the design's restraint — muted / desaturated versions
+ *  of each brand's identity colour, never garish. */
+function providerGlyph(p: string): { bg: string; fg: string; initials: string } {
   switch (p) {
     case 'anthropic':
-      return 'bg-amber-500/15 text-amber-400';
+      // Warm clay — Anthropic's sand/terracotta palette
+      return { bg: '#c96442', fg: '#fff', initials: 'AN' };
     case 'openai':
-      return 'bg-emerald-500/15 text-emerald-400';
+      // Muted green — OpenAI's signature
+      return { bg: '#0fa47c', fg: '#fff', initials: 'OA' };
     case 'openai-compatible':
-      return 'bg-violet-500/15 text-violet-400';
+      // Soft violet for local/custom
+      return { bg: '#7c5cbf', fg: '#fff', initials: 'LC' };
     case 'ollama':
-      return 'bg-blue-500/15 text-blue-400';
+      // Slate blue — neutral for local inference
+      return { bg: '#3b5a8a', fg: '#fff', initials: 'OL' };
     case 'openrouter':
-      return 'bg-pink-500/15 text-pink-400';
+      // Deep rose — OpenRouter brand
+      return { bg: '#b5455a', fg: '#fff', initials: 'OR' };
     case 'google':
-      return 'bg-cyan-500/15 text-cyan-400';
+      // Google blue
+      return { bg: '#1a73c8', fg: '#fff', initials: 'GG' };
     case 'mistral':
-      return 'bg-orange-500/15 text-orange-400';
+      // Amber orange — Mistral brand
+      return { bg: '#c47a1a', fg: '#fff', initials: 'MI' };
     case 'groq':
-      return 'bg-rose-500/15 text-rose-400';
+      // Dark rose
+      return { bg: '#a33b50', fg: '#fff', initials: 'GQ' };
     default:
-      return 'bg-neutral-500/15 text-neutral-400';
+      return { bg: '#4a4a50', fg: '#fff', initials: p.slice(0, 2).toUpperCase() };
   }
 }

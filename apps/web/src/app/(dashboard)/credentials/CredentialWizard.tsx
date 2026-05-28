@@ -145,10 +145,10 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
       />
 
       {/* Panel */}
-      <div className="relative bg-neutral-900 border border-neutral-800/60 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+      <div className="relative bg-paper border border-rule-2 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
         {/* Header — sticky so close button is always visible */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800/60 shrink-0">
-          <h2 id="wizard-title" className="text-base font-semibold text-white">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-rule-2 shrink-0">
+          <h2 id="wizard-title" className="text-base font-semibold text-ink">
             {step === 'type'
               ? 'New credential'
               : config
@@ -158,7 +158,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
           <button
             type="button"
             onClick={onClose}
-            className="text-neutral-500 hover:text-white transition-colors text-xl leading-none"
+            className="text-ink-3 hover:text-ink transition-colors text-xl leading-none"
             aria-label="Close"
           >
             ×
@@ -168,7 +168,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
         {/* Step 1 — Type selection */}
         {step === 'type' && (
           <div className="overflow-y-auto px-6 py-5 space-y-3">
-            <p className="text-sm text-neutral-400">
+            <p className="text-sm text-ink-3">
               Choose the OAuth provider to connect to Nodal-Agents.
             </p>
             <div className="space-y-2">
@@ -177,12 +177,12 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
                   key={opt.type}
                   type="button"
                   onClick={() => handleTypeSelect(opt.type)}
-                  className="w-full text-left px-4 py-3 rounded-lg border border-neutral-800 hover:border-neutral-600 hover:bg-neutral-800/40 transition-colors group"
+                  className="w-full text-left px-4 py-3 rounded-lg border border-rule-2 hover:border-rule hover:bg-hover transition-colors group"
                 >
-                  <div className="text-sm font-semibold text-white group-hover:text-white">
+                  <div className="text-sm font-semibold text-ink group-hover:text-ink">
                     {opt.label}
                   </div>
-                  <div className="text-xs text-neutral-500 mt-0.5">{opt.description}</div>
+                  <div className="text-xs text-ink-3 mt-0.5">{opt.description}</div>
                 </button>
               ))}
             </div>
@@ -190,7 +190,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-sm font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white"
+                className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
               >
                 Cancel
               </button>
@@ -212,7 +212,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
 
             {/* Instructions */}
             <div className="space-y-2">
-              <p className="text-xs text-neutral-500 font-semibold uppercase tracking-wider">
+              <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider">
                 Setup instructions
               </p>
               <HelpSteps guide={OAUTH_GUIDES[selectedType]} />
@@ -220,15 +220,15 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
 
             {/* Redirect URI copy box */}
             <div className="space-y-1">
-              <p className="text-xs text-neutral-500">Authorized redirect URI</p>
-              <div className="flex items-center gap-2 bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2">
-                <code className="text-xs text-neutral-300 font-mono flex-1 break-all">
+              <p className="text-xs text-ink-3">Authorized redirect URI</p>
+              <div className="flex items-center gap-2 bg-hover border border-rule rounded-md px-3 py-2">
+                <code className="text-xs text-ink-2 font-mono flex-1 break-all">
                   {redirectUri || '…'}
                 </code>
                 <button
                   type="button"
                   onClick={copyRedirectUri}
-                  className="shrink-0 px-2 py-0.5 text-xs font-medium border border-neutral-600 text-neutral-400 rounded hover:border-neutral-500 hover:text-white transition-colors"
+                  className="shrink-0 px-2 py-0.5 text-xs font-medium border border-rule text-ink-3 rounded hover:border-ink-3 hover:text-ink transition-colors"
                 >
                   Copy
                 </button>
@@ -236,38 +236,34 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
             </div>
 
             {/* Form fields */}
-            <div className="space-y-3 border-t border-neutral-800/60 pt-4">
+            <div className="space-y-3 border-t border-rule-2 pt-4">
               <div>
-                <label className="block text-xs text-neutral-500 mb-1">
-                  Display name <span className="text-neutral-700">(optional)</span>
+                <label className="block text-xs text-ink-3 mb-1">
+                  Display name <span className="text-ink-4">(optional)</span>
                 </label>
                 <input
                   name="name"
                   placeholder={config.namePlaceholder}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs text-neutral-500 mb-1">
-                  {config.clientIdLabel}
-                </label>
+                <label className="block text-xs text-ink-3 mb-1">{config.clientIdLabel}</label>
                 <input
                   name="clientId"
                   required
                   autoComplete="off"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none font-mono"
+                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
                 />
               </div>
               <div>
-                <label className="block text-xs text-neutral-500 mb-1">
-                  {config.clientSecretLabel}
-                </label>
+                <label className="block text-xs text-ink-3 mb-1">{config.clientSecretLabel}</label>
                 <input
                   name="clientSecret"
                   type="password"
                   required
                   autoComplete="off"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none font-mono"
+                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
                 />
               </div>
             </div>
@@ -277,7 +273,7 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-sm font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white"
+                className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
               >
                 Cancel
               </button>
@@ -285,14 +281,14 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
                 <button
                   type="button"
                   onClick={() => setStep('type')}
-                  className="px-4 py-2 text-sm font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white"
+                  className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
                 >
                   Back
                 </button>
               )}
               <button
                 type="submit"
-                className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
+                className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92]"
               >
                 Continue with {config.label}
               </button>

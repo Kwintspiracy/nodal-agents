@@ -20,11 +20,7 @@ export const FileListInputSchema = z.object({
       'Optional glob to filter results (e.g. "*.md", "**/*.ts"). Matched against the name ' +
         'for non-recursive, against the relative path for recursive (** prefix).',
     ),
-  recursive: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe('Walk subdirectories. Default false.'),
+  recursive: z.boolean().optional().default(false).describe('Walk subdirectories. Default false.'),
 });
 
 export type FileListInput = z.infer<typeof FileListInputSchema>;

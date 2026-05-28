@@ -59,14 +59,14 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label htmlFor="cron-mode" className="block text-xs text-neutral-500 mb-1">
+          <label htmlFor="cron-mode" className="block text-xs text-ink-3 mb-1">
             Frequency
           </label>
           <select
             id="cron-mode"
             value={mode}
             onChange={(e) => setMode(e.target.value as FrequencyMode)}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             <option value="minutes">Every N minutes</option>
             <option value="hourly">Hourly</option>
@@ -79,14 +79,14 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
 
         {mode === 'minutes' && (
           <div>
-            <label htmlFor="cron-every" className="block text-xs text-neutral-500 mb-1">
+            <label htmlFor="cron-every" className="block text-xs text-ink-3 mb-1">
               Every
             </label>
             <select
               id="cron-every"
               value={everyMinutes}
               onChange={(e) => setEveryMinutes(parseInt(e.target.value, 10))}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
             >
               {PRESET_INTERVALS.map((n) => (
                 <option key={n} value={n}>
@@ -99,7 +99,7 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
 
         {mode === 'hourly' && (
           <div>
-            <label htmlFor="cron-min-of-hour" className="block text-xs text-neutral-500 mb-1">
+            <label htmlFor="cron-min-of-hour" className="block text-xs text-ink-3 mb-1">
               At minute
             </label>
             <input
@@ -112,14 +112,14 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
                 const n = Math.max(0, Math.min(59, parseInt(e.target.value || '0', 10)));
                 setTime(`00:${String(n).padStart(2, '0')}`);
               }}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
             />
           </div>
         )}
 
         {(mode === 'daily' || mode === 'weekly' || mode === 'monthly') && (
           <div>
-            <label htmlFor="cron-time" className="block text-xs text-neutral-500 mb-1">
+            <label htmlFor="cron-time" className="block text-xs text-ink-3 mb-1">
               Time
             </label>
             <input
@@ -127,7 +127,7 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
               type="time"
               value={time}
               onChange={(e) => setTime(e.target.value)}
-              className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
             />
           </div>
         )}
@@ -135,7 +135,7 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
 
       {mode === 'weekly' && (
         <div>
-          <label className="block text-xs text-neutral-500 mb-1">Days</label>
+          <label className="block text-xs text-ink-3 mb-1">Days</label>
           <div className="flex flex-wrap gap-1.5">
             {DAYS.map((d) => {
               const on = weekdays.includes(d.n);
@@ -146,8 +146,8 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
                   onClick={() => toggleWeekday(d.n)}
                   className={`px-2.5 py-1 text-xs font-medium rounded border ${
                     on
-                      ? 'bg-violet-500/15 border-violet-500/50 text-violet-300'
-                      : 'border-neutral-800 text-neutral-500 hover:border-neutral-700 hover:text-white'
+                      ? 'bg-run-bg border-run/30 text-run'
+                      : 'border-rule-2 text-ink-3 hover:border-rule hover:text-ink'
                   }`}
                 >
                   {d.label}
@@ -160,7 +160,7 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
 
       {mode === 'monthly' && (
         <div>
-          <label htmlFor="cron-dom" className="block text-xs text-neutral-500 mb-1">
+          <label htmlFor="cron-dom" className="block text-xs text-ink-3 mb-1">
             Day of month
           </label>
           <input
@@ -172,14 +172,14 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
             onChange={(e) =>
               setDayOfMonth(Math.max(1, Math.min(31, parseInt(e.target.value || '1', 10))))
             }
-            className="w-32 bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-32 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           />
         </div>
       )}
 
       {mode === 'custom' && (
         <div>
-          <label htmlFor="cron-custom" className="block text-xs text-neutral-500 mb-1">
+          <label htmlFor="cron-custom" className="block text-xs text-ink-3 mb-1">
             Cron expression
           </label>
           <input
@@ -188,9 +188,9 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
             value={custom}
             onChange={(e) => setCustom(e.target.value)}
             placeholder="0 9 * * *"
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
           />
-          <p className="text-[10px] text-neutral-600 mt-1">
+          <p className="text-[10px] text-ink-4 mt-1">
             Format: minute hour day-of-month month day-of-week
           </p>
         </div>
@@ -204,20 +204,20 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
 function CronPreview({ expr, preview }: { expr: string; preview: ReturnType<typeof parseCron> }) {
   if (!preview.ok) {
     return (
-      <div className="bg-red-950/30 border border-red-900/40 rounded-md px-3 py-2 text-xs text-red-300">
+      <div className="bg-warn-bg border border-err/30 rounded-md px-3 py-2 text-xs text-err">
         <span className="font-semibold">Invalid:</span> {preview.error}
       </div>
     );
   }
 
   return (
-    <div className="bg-neutral-950 border border-neutral-800/40 rounded-md px-3 py-2 space-y-1">
+    <div className="bg-canvas border border-rule-2 rounded-md px-3 py-2 space-y-1">
       <div className="flex items-center gap-2 text-xs">
-        <span className="text-neutral-500">Schedule:</span>
-        <span className="text-white">{preview.humanLabel}</span>
-        <code className="ml-auto font-mono text-[10px] text-violet-400">{expr}</code>
+        <span className="text-ink-3">Schedule:</span>
+        <span className="text-ink">{preview.humanLabel}</span>
+        <code className="ml-auto font-mono text-[10px] text-run">{expr}</code>
       </div>
-      <div className="text-[10px] text-neutral-600" suppressHydrationWarning>
+      <div className="text-[10px] text-ink-4" suppressHydrationWarning>
         Next runs: {preview.nextRuns.map((d) => formatNextRun(d)).join(' · ')}
       </div>
     </div>

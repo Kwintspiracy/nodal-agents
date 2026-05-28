@@ -44,7 +44,7 @@ export default function AuthLoginForm() {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
         setError(data?.error ?? 'Invalid email or password.');
       } else {
-        router.push('/stats');
+        router.push('/');
       }
     } catch {
       setError('Network error — please try again.');
@@ -86,27 +86,25 @@ export default function AuthLoginForm() {
   }
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-neutral-950 px-4">
+    <div className="flex min-h-screen w-full items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="inline-flex items-center gap-1.5 mb-6">
-            <span className="text-emerald-500 font-mono text-sm">$</span>
-            <span className="text-sm font-mono font-bold text-white tracking-tight">
+            <span className="text-ok font-mono text-sm">$</span>
+            <span className="text-sm font-mono font-bold text-ink tracking-tight">
               nodal-agents
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Welcome</h1>
-          <p className="text-sm text-neutral-500 mt-1">Sign in or create an account to continue</p>
+          <h1 className="text-2xl font-bold text-ink tracking-tight">Welcome</h1>
+          <p className="text-sm text-ink-3 mt-1">Sign in or create an account to continue</p>
         </div>
 
-        <div className="flex mb-6 rounded-lg bg-neutral-900 p-1 border border-neutral-800">
+        <div className="flex mb-6 rounded-lg bg-paper p-1 border border-rule-2">
           <button
             type="button"
             onClick={() => resetMode('signin')}
             className={`flex-1 py-2 text-xs font-medium rounded-md transition-colors ${
-              mode === 'signin'
-                ? 'bg-neutral-800 text-white'
-                : 'text-neutral-500 hover:text-neutral-300'
+              mode === 'signin' ? 'bg-hover text-ink' : 'text-ink-3 hover:text-ink-2'
             }`}
           >
             Sign in
@@ -115,19 +113,17 @@ export default function AuthLoginForm() {
             type="button"
             onClick={() => resetMode('signup')}
             className={`flex-1 py-2 text-xs font-medium rounded-md transition-colors ${
-              mode === 'signup'
-                ? 'bg-neutral-800 text-white'
-                : 'text-neutral-500 hover:text-neutral-300'
+              mode === 'signup' ? 'bg-hover text-ink' : 'text-ink-3 hover:text-ink-2'
             }`}
           >
             Create account
           </button>
         </div>
 
-        <div className="rounded-2xl border border-neutral-800/50 bg-neutral-900/50 p-6 space-y-4">
+        <div className="rounded-2xl border border-rule-2 bg-paper/60 p-6 space-y-4">
           <form onSubmit={mode === 'signin' ? handleSignIn : handleSignUp} className="space-y-3">
             <div>
-              <label className="block text-xs text-neutral-400 mb-1.5">Email address</label>
+              <label className="block text-xs text-ink-3 mb-1.5">Email address</label>
               <input
                 type="email"
                 value={email}
@@ -136,12 +132,12 @@ export default function AuthLoginForm() {
                 required
                 autoFocus
                 data-testid="email-input"
-                className="w-full rounded-lg border border-neutral-800/50 bg-neutral-800/30 px-3 py-2.5 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+                className="w-full rounded-lg border border-rule-2 bg-hover px-3 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule transition-colors"
               />
             </div>
 
             <div>
-              <label className="block text-xs text-neutral-400 mb-1.5">Password</label>
+              <label className="block text-xs text-ink-3 mb-1.5">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -150,12 +146,12 @@ export default function AuthLoginForm() {
                   placeholder="••••••••"
                   required
                   data-testid="password-input"
-                  className="w-full rounded-lg border border-neutral-800/50 bg-neutral-800/30 px-3 py-2.5 pr-10 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+                  className="w-full rounded-lg border border-rule-2 bg-hover px-3 py-2.5 pr-10 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule transition-colors"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink-2 transition-colors"
                 >
                   {showPassword ? <EyeSlash size={15} /> : <Eye size={15} />}
                 </button>
@@ -164,31 +160,31 @@ export default function AuthLoginForm() {
 
             {mode === 'signup' && (
               <div>
-                <label className="block text-xs text-neutral-400 mb-1.5">Confirm password</label>
+                <label className="block text-xs text-ink-3 mb-1.5">Confirm password</label>
                 <input
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full rounded-lg border border-neutral-800/50 bg-neutral-800/30 px-3 py-2.5 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+                  className="w-full rounded-lg border border-rule-2 bg-hover px-3 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule transition-colors"
                 />
               </div>
             )}
 
             {error && (
-              <p className="text-xs text-red-400" data-testid="login-error">
+              <p className="text-xs text-err" data-testid="login-error">
                 {error}
               </p>
             )}
 
-            {info && <p className="text-xs text-emerald-400">{info}</p>}
+            {info && <p className="text-xs text-ok">{info}</p>}
 
             <button
               type="submit"
               disabled={loading}
               data-testid="login-button"
-              className="w-full rounded-lg bg-emerald-500 text-black py-2.5 text-sm font-semibold hover:bg-emerald-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed mt-1"
+              className="w-full rounded-lg bg-agent-vivid text-canvas py-2.5 text-sm font-semibold hover:bg-agent-vivid transition-colors disabled:opacity-40 disabled:cursor-not-allowed mt-1"
             >
               {loading ? '…' : mode === 'signin' ? 'Sign in' : 'Create account'}
             </button>

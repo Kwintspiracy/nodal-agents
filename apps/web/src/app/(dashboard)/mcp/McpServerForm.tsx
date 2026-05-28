@@ -56,20 +56,20 @@ export default function McpServerForm({ catalog }: Props) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3"
+      className="bg-paper border border-rule-2 rounded-xl p-5 space-y-3"
     >
-      <h3 className="text-sm font-semibold text-white">Connect an MCP connector</h3>
+      <h3 className="text-sm font-semibold text-ink">Connect an MCP connector</h3>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="mcp-slug">
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="mcp-slug">
             Connector
           </label>
           <select
             id="mcp-slug"
             value={slug}
             onChange={(ev) => setSlug(ev.target.value)}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             {catalog.map((e) => (
               <option key={e.slug} value={e.slug}>
@@ -79,7 +79,7 @@ export default function McpServerForm({ catalog }: Props) {
           </select>
         </div>
         <div>
-          <label className="block text-xs text-neutral-500 mb-1" htmlFor="mcp-name">
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="mcp-name">
             Name
           </label>
           <input
@@ -89,13 +89,13 @@ export default function McpServerForm({ catalog }: Props) {
             value={name}
             onChange={(ev) => setName(ev.target.value)}
             placeholder={selected?.label ?? ''}
-            className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-xs text-neutral-500 mb-1" htmlFor="mcp-key">
+        <label className="block text-xs text-ink-3 mb-1" htmlFor="mcp-key">
           API key
         </label>
         <input
@@ -107,20 +107,20 @@ export default function McpServerForm({ catalog }: Props) {
           value={apiKey}
           onChange={(ev) => setApiKey(ev.target.value)}
           placeholder={selected ? `${selected.keyPrefix}…` : ''}
-          className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
+          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
         />
       </div>
 
       {selected && (
-        <p className="text-xs text-neutral-600">
-          {selected.description} <span className="text-neutral-500">{selected.docsHint}</span>
+        <p className="text-xs text-ink-4">
+          {selected.description} <span className="text-ink-3">{selected.docsHint}</span>
         </p>
       )}
 
       <button
         type="submit"
         disabled={isPending || !name.trim() || !apiKey.trim()}
-        className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
+        className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
       >
         {isPending ? 'Connecting…' : 'Connect'}
       </button>

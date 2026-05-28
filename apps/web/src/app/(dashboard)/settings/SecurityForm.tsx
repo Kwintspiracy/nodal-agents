@@ -4,6 +4,11 @@ import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { updateAuthSettingsAction, type SecurityView } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
+import Banner from '@/components/ui/Banner';
+import { SetMini } from '@/components/ui/SetMini.tsx';
+import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
+import { SetForm } from '@/components/ui/SetForm.tsx';
 
 interface Props {
   initial: SecurityView;
@@ -13,8 +18,14 @@ export default function SecurityForm({ initial }: Props) {
   const [mode, setMode] = useState<'local-trust' | 'local-auth'>(initial.configuredMode);
   const [editGoogle, setEditGoogle] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [restartHint, setRestartHint] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [restartHint, setRestartHint] = useState(false);
+
+  function handleReset() {
+    setMode(initial.configuredMode);
+    setEditGoogle(false);
+    setRestartHint(false);
+  }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -43,128 +54,122 @@ export default function SecurityForm({ initial }: Props) {
     });
   }
 
-  const driftFromRuntime = mode !== initial.runtimeMode;
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <fieldset className="space-y-2">
-        <legend className="block text-xs text-neutral-500 mb-2">Auth mode</legend>
-        <Choice
-          checked={mode === 'local-trust'}
-          onChange={() => setMode('local-trust')}
-          label="No auth (local-trust)"
-          subtitle="Single hardcoded user. Recommended for solo loopback installs."
+    <form onSubmit={handleSubmit}>
+      <SetForm label="Auth mode">
+        <OptionRadio
+          active={mode === 'local-trust'}
+          onClick={() => setMode('local-trust')}
+          name="No auth (local-trust)"
+          description="Single hardcoded user. Recommended for solo loopback installs."
         />
-        <Choice
-          checked={mode === 'local-auth'}
-          onChange={() => setMode('local-auth')}
-          label="Email + password (local-auth)"
-          subtitle="Sign-up + login via better-auth. Optional Google OAuth on top."
+        <OptionRadio
+          active={mode === 'local-auth'}
+          onClick={() => setMode('local-auth')}
+          name="Email + password (local-auth)"
+          description="Sign-up + login via better-auth. Optional Google OAuth on top."
         />
-      </fieldset>
 
-      {mode === 'local-auth' && (
-        <div className="bg-neutral-950 border border-neutral-800/40 rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm text-white">Google OAuth</div>
-              <div className="text-xs text-neutral-500">
-                {initial.googleConfigured
+        {mode === 'local-auth' && (
+          <>
+            <Banner variant="info">
+              Each user signs in with email + password. Sessions are stored in the local DB and can
+              be revoked from this page.
+            </Banner>
+
+            <SetMini
+              name="Google OAuth"
+              description={
+                initial.googleConfigured
                   ? 'Configured.'
-                  : 'Optional. Add to allow Google sign-in alongside email + password.'}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setEditGoogle((v) => !v)}
-                className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-400 rounded-md hover:border-neutral-700 hover:text-white"
-              >
-                {editGoogle ? 'Hide fields' : initial.googleConfigured ? 'Rotate' : 'Add'}
-              </button>
-              {initial.googleConfigured && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmOpen(true)}
-                  disabled={isPending}
-                  className="px-3 py-1.5 text-xs font-medium border border-red-900/40 text-red-400 rounded-md hover:border-red-700 hover:text-red-300 disabled:opacity-40"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
+                  : 'Optional. Add to allow Google sign-in alongside email + password.'
+              }
+              action={
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditGoogle((v) => !v)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-rule text-ink-3 rounded-[7px] hover:border-rule-2 hover:text-ink transition-colors"
+                  >
+                    {editGoogle ? 'Hide fields' : initial.googleConfigured ? 'Rotate' : 'Add'}
+                  </button>
+                  {initial.googleConfigured && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmOpen(true)}
+                      disabled={isPending}
+                      className="px-3 py-1.5 text-xs font-medium border border-warn/40 text-warn rounded-[7px] hover:border-warn hover:bg-warn-bg disabled:opacity-40 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              }
+            />
 
-          {editGoogle && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-neutral-500 mb-1" htmlFor="google-client-id">
-                  Client ID
-                </label>
-                <input
-                  id="google-client-id"
-                  name="googleClientId"
-                  type="text"
-                  placeholder="xxx.apps.googleusercontent.com"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
-                />
+            {editGoogle && (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 px-1">
+                <div>
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="google-client-id">
+                    Client ID
+                  </label>
+                  <input
+                    id="google-client-id"
+                    name="googleClientId"
+                    type="text"
+                    placeholder="xxx.apps.googleusercontent.com"
+                    className="w-full bg-canvas border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-ink-3 mb-1" htmlFor="google-client-secret">
+                    Client secret
+                  </label>
+                  <input
+                    id="google-client-secret"
+                    name="googleClientSecret"
+                    type="password"
+                    placeholder={initial.googleConfigured ? '•••••••• (overwrite)' : ''}
+                    className="w-full bg-canvas border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                  />
+                </div>
+                <p className="sm:col-span-2 text-[11px] text-ink-4">
+                  Use authorized JavaScript origins{' '}
+                  <code className="font-mono">http://localhost:3000</code> and redirect URI{' '}
+                  <code className="font-mono">http://localhost:3000/api/auth/callback/google</code>{' '}
+                  in the Google Cloud Console.
+                </p>
               </div>
-              <div>
-                <label
-                  className="block text-xs text-neutral-500 mb-1"
-                  htmlFor="google-client-secret"
-                >
-                  Client secret
-                </label>
-                <input
-                  id="google-client-secret"
-                  name="googleClientSecret"
-                  type="password"
-                  placeholder={initial.googleConfigured ? '•••••••• (overwrite)' : ''}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-neutral-500 focus:outline-none font-mono"
-                />
-              </div>
-              <p className="sm:col-span-2 text-[11px] text-neutral-600">
-                Use authorized JavaScript origins{' '}
-                <code className="font-mono">http://localhost:3000</code> and redirect URI{' '}
-                <code className="font-mono">http://localhost:3000/api/auth/callback/google</code> in
-                the Google Cloud Console.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {!initial.configPathExists && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 text-xs text-amber-300">
-          ~/.nodalai/config.json wasn&apos;t found. Save here will fail until you&apos;ve run{' '}
-          <code className="font-mono">nodal-agents init</code> at least once.
-        </div>
-      )}
-
-      <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={isPending}
-          className="px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200 disabled:opacity-50"
-        >
-          {isPending ? 'Saving…' : 'Save'}
-        </button>
-        {driftFromRuntime && (
-          <span className="text-xs text-amber-400">
-            New mode <code className="font-mono">{mode}</code> requires{' '}
-            <code className="font-mono">nodal-agents down && nodal-agents up</code> to take effect.
-          </span>
+            )}
+          </>
         )}
-      </div>
 
-      {restartHint && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-md px-3 py-2 text-xs text-emerald-300">
-          Saved. Restart with{' '}
-          <code className="font-mono">nodal-agents down && nodal-agents up</code> to activate the
-          new auth mode.
-        </div>
-      )}
+        {!initial.configPathExists && (
+          <Banner variant="warn">
+            <b className="block font-medium text-ink">Config file missing</b>
+            ~/.nodalai/config.json wasn&apos;t found. Save will fail until you&apos;ve run{' '}
+            <code className="font-mono text-[11px]">nodal-agents init</code> at least once.
+          </Banner>
+        )}
+
+        <Banner variant="warn">
+          <span>
+            <b className="block font-medium text-ink">Switching auth mode signs everyone out</b>
+            Active sessions are invalidated when the auth mode changes. Make sure you can still sign
+            in with the new method before applying.
+          </span>
+        </Banner>
+
+        {restartHint && (
+          <Banner variant="info" title="Saved. Restart required.">
+            Run <code className="font-mono text-[11px]">nodal-agents down && nodal-agents up</code>{' '}
+            to activate the new auth mode.
+          </Banner>
+        )}
+
+        <SetCtaRow onCancel={handleReset} pending={isPending} />
+      </SetForm>
+
       <ConfirmDialog
         open={confirmOpen}
         title="Remove Google OAuth credentials?"
@@ -174,38 +179,5 @@ export default function SecurityForm({ initial }: Props) {
         onCancel={() => setConfirmOpen(false)}
       />
     </form>
-  );
-}
-
-function Choice({
-  checked,
-  onChange,
-  label,
-  subtitle,
-}: {
-  checked: boolean;
-  onChange: () => void;
-  label: string;
-  subtitle: string;
-}) {
-  return (
-    <label
-      className={`flex items-start gap-3 px-3 py-2 rounded-md cursor-pointer border ${
-        checked
-          ? 'border-violet-500/50 bg-violet-500/5'
-          : 'border-neutral-800 hover:border-neutral-700'
-      }`}
-    >
-      <input
-        type="radio"
-        checked={checked}
-        onChange={onChange}
-        className="mt-1 accent-violet-500"
-      />
-      <div>
-        <div className="text-sm text-white">{label}</div>
-        <div className="text-xs text-neutral-500">{subtitle}</div>
-      </div>
-    </label>
   );
 }

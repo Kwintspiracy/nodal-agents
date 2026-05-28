@@ -3,8 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { Plus } from '@phosphor-icons/react';
 import CredentialCard, { type CredentialEntry } from './CredentialCard.tsx';
 import CredentialWizard from './CredentialWizard.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 import type { ActionResult } from '@/lib/actions.ts';
 
 interface Props {
@@ -35,39 +37,37 @@ export default function CredentialsClient({
   }, [justCreatedId, router]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
+    <div className="py-7">
+      <div className="mb-5 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Credentials</h1>
-          <p className="text-sm text-neutral-500 mt-0.5">
+          <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
+            Credentials
+          </h1>
+          <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
             {credentials.length === 0
               ? 'No credentials yet — create one to connect OAuth providers.'
               : `${credentials.length} credential${credentials.length !== 1 ? 's' : ''}`}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setWizardOpen(true)}
-          className="shrink-0 px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
-        >
-          + New credential
-        </button>
+        <PrimaryButton variant="ink" onClick={() => setWizardOpen(true)}>
+          <Plus size={13} weight="bold" />
+          New credential
+        </PrimaryButton>
       </div>
 
       {credentials.length === 0 ? (
-        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl px-6 py-12 text-center">
-          <p className="text-sm text-neutral-500">
+        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
+          <p className="text-sm text-ink-3">
             Credentials store your OAuth client ID and secret securely (encrypted at rest).
             <br />
             Once created, multiple connectors can share the same credential.
           </p>
-          <button
-            type="button"
-            onClick={() => setWizardOpen(true)}
-            className="mt-4 px-4 py-2 text-sm font-semibold bg-white text-black rounded-md hover:bg-neutral-200"
-          >
-            Create your first credential
-          </button>
+          <div className="mt-4 inline-flex">
+            <PrimaryButton variant="ink" onClick={() => setWizardOpen(true)}>
+              <Plus size={13} weight="bold" />
+              Create your first credential
+            </PrimaryButton>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">

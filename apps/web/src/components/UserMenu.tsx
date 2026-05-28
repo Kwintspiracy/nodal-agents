@@ -13,6 +13,10 @@ import SignOutButton from './SignOutButton.tsx';
  * - local-auth → email + Sign-out button (better-auth)
  * - local-trust → "Local trust" badge, no sign-out (no real user)
  * - bearer-token → "API token" badge, no sign-out
+ *
+ * Restyled for the new design-system shell: paper-on-sidebar instead of
+ * neutral-900-on-black. Colours respond to the active theme automatically
+ * via the design tokens.
  */
 export default async function UserMenu() {
   const mode = env.AUTH_MODE;
@@ -39,12 +43,12 @@ export default async function UserMenu() {
   }
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-neutral-900/40 border border-neutral-800/50">
-      <div className="shrink-0 w-7 h-7 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-400">
+    <div className="flex items-center gap-2 rounded-lg border border-rule-2 bg-paper px-2.5 py-2">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-hover text-ink-3">
         <User size={13} weight="fill" />
       </div>
-      <div className="flex-1 min-w-0" data-testid="user-menu-email">
-        <p className="text-xs text-white font-medium truncate" title={email}>
+      <div className="min-w-0 flex-1" data-testid="user-menu-email">
+        <p className="truncate text-xs font-medium text-ink" title={email}>
           {email}
         </p>
       </div>
@@ -71,11 +75,11 @@ async function getCurrentEmail(): Promise<string | null> {
 
 function ModeBadge({ icon, label, hint }: { icon: React.ReactNode; label: string; hint?: string }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-neutral-900/40 border border-neutral-800/50">
-      <div className="shrink-0 text-emerald-500">{icon}</div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs text-white font-medium leading-tight">{label}</p>
-        {hint && <p className="text-[10px] text-neutral-500 mt-0.5 truncate">{hint}</p>}
+    <div className="flex items-center gap-2 rounded-lg border border-rule-2 bg-paper px-2.5 py-2">
+      <div className="shrink-0 text-ok">{icon}</div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium leading-tight text-ink">{label}</p>
+        {hint && <p className="mt-0.5 truncate text-[10px] text-ink-3">{hint}</p>}
       </div>
     </div>
   );

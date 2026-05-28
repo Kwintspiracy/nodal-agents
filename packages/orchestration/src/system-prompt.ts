@@ -59,9 +59,7 @@ function buildJobContextBlock(ctx: JobContext): string {
  */
 function buildPersistentMemoryBlock(memories: ReadonlyArray<AgentMemory>): string {
   if (memories.length === 0) return '';
-  const lines = memories
-    .map((m) => `- (${m.category}, ${m.importance}★) ${m.fact}`)
-    .join('\n');
+  const lines = memories.map((m) => `- (${m.category}, ${m.importance}★) ${m.fact}`).join('\n');
   return (
     `\n\n## Persistent memory\n\n` +
     `Durable facts loaded from your long-term memory. Treat as authoritative ` +

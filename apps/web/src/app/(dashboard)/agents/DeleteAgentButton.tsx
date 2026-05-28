@@ -34,7 +34,7 @@ export default function DeleteAgentButton({
       <button
         onClick={() => setConfirmOpen(true)}
         disabled={isPending}
-        className="px-3 py-1.5 text-xs font-medium border border-neutral-800 text-neutral-500 rounded-lg hover:border-red-800/60 hover:text-red-400 transition-colors disabled:opacity-50"
+        className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-err hover:text-err transition-colors disabled:opacity-50"
       >
         {isPending ? 'Deleting…' : 'Delete'}
       </button>

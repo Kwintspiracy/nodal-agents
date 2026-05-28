@@ -54,7 +54,10 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
       const path = await resolveAndCheckPath(ctx, input.path);
       const info = await stat(path);
       if (info.isDirectory()) {
-        return { ok: false, reason: `Path is a directory, not a file: "${input.path}". Use file_list.` };
+        return {
+          ok: false,
+          reason: `Path is a directory, not a file: "${input.path}". Use file_list.`,
+        };
       }
       if (info.size > MAX_READ_BYTES) {
         const offset = input.offset ?? 1;

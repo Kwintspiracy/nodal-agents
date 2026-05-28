@@ -45,16 +45,14 @@ export default function JobStatusPoller({
       <div className="flex items-center gap-3">
         <StatusBadge status={state.status} />
         {!TERMINAL.has(state.status) && (
-          <span className="text-xs text-neutral-600 animate-pulse">Polling…</span>
+          <span className="text-xs text-ink-4 animate-pulse">Polling…</span>
         )}
       </div>
 
       {state.result && (
         <div>
-          <p className="text-xs text-neutral-500 font-semibold uppercase tracking-wider mb-1">
-            Result
-          </p>
-          <pre className="text-sm text-neutral-300 whitespace-pre-wrap bg-neutral-900 rounded-lg p-4 border border-neutral-800/60 max-h-80 overflow-auto">
+          <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider mb-1">Result</p>
+          <pre className="text-sm text-ink-2 whitespace-pre-wrap bg-paper rounded-lg p-4 border border-rule-2 max-h-80 overflow-auto">
             {state.result}
           </pre>
         </div>
@@ -62,8 +60,8 @@ export default function JobStatusPoller({
 
       {state.error && (
         <div>
-          <p className="text-xs text-red-400 font-semibold uppercase tracking-wider mb-1">Error</p>
-          <pre className="text-sm text-red-300 whitespace-pre-wrap bg-red-950/20 rounded-lg p-4 border border-red-900/40">
+          <p className="text-xs text-err font-semibold uppercase tracking-wider mb-1">Error</p>
+          <pre className="text-sm text-err whitespace-pre-wrap bg-warn-bg rounded-lg p-4 border border-err/30">
             {state.error}
           </pre>
         </div>

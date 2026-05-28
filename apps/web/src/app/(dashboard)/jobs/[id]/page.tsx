@@ -26,10 +26,10 @@ export default async function JobDetailPage({ params }: Props) {
     if (result.code === 'not_found') notFound();
     return (
       <div className="space-y-4">
-        <Link href="/jobs" className="text-xs text-neutral-500 hover:text-neutral-300">
+        <Link href="/jobs" className="text-xs text-ink-3 hover:text-ink-2">
           ← Jobs
         </Link>
-        <p className="text-sm text-red-400">{result.message}</p>
+        <p className="text-sm text-err">{result.message}</p>
       </div>
     );
   }
@@ -41,49 +41,44 @@ export default async function JobDetailPage({ params }: Props) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3 flex-wrap">
-        <Link href="/jobs" className="text-xs text-neutral-500 hover:text-neutral-300">
+        <Link href="/jobs" className="text-xs text-ink-3 hover:text-ink-2">
           ← Jobs
         </Link>
         {job.agentName && (
-          <span className="text-sm font-medium text-white">
+          <span className="text-sm font-medium text-ink">
             {job.agentName}
             {job.agentSlug && (
-              <span className="ml-1.5 text-neutral-500 font-mono text-xs">({job.agentSlug})</span>
+              <span className="ml-1.5 text-ink-3 font-mono text-xs">({job.agentSlug})</span>
             )}
           </span>
         )}
-        <span className="text-neutral-700 text-xs font-mono ml-auto">{job.id}</span>
+        <span className="text-ink-4 text-xs font-mono ml-auto">{job.id}</span>
       </div>
 
       {/* Delegation context: parent + children */}
       {(job.parentJobId || job.children.length > 0) && (
-        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3">
-          <h2 className="text-xs text-neutral-500 font-semibold uppercase tracking-wider">
-            Delegation
-          </h2>
+        <div className="bg-paper border border-rule-2 rounded-xl p-5 space-y-3">
+          <h2 className="text-xs text-ink-3 font-semibold uppercase tracking-wider">Delegation</h2>
           {job.parentJobId && (
             <div className="text-xs">
-              <span className="text-neutral-600 mr-2">↑ parent</span>
-              <Link
-                href={`/jobs/${job.parentJobId}`}
-                className="font-mono text-violet-400 hover:text-violet-300"
-              >
+              <span className="text-ink-4 mr-2">↑ parent</span>
+              <Link href={`/jobs/${job.parentJobId}`} className="font-mono text-run hover:text-run">
                 {job.parentJobId}
               </Link>
             </div>
           )}
           {job.children.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-xs text-neutral-600">↓ children ({job.children.length})</p>
+              <p className="text-xs text-ink-4">↓ children ({job.children.length})</p>
               {job.children.map((child) => (
                 <Link
                   key={child.id}
                   href={`/jobs/${child.id}`}
-                  className="flex items-center gap-3 text-xs px-3 py-2 bg-neutral-950 border border-neutral-800/40 rounded-lg hover:border-neutral-700"
+                  className="flex items-center gap-3 text-xs px-3 py-2 bg-canvas border border-rule-2 rounded-lg hover:border-rule"
                 >
-                  <span className="text-white font-medium min-w-0">{child.agentName ?? '—'}</span>
+                  <span className="text-ink font-medium min-w-0">{child.agentName ?? '—'}</span>
                   <StatusBadge status={child.status ?? 'pending'} />
-                  <span className="text-neutral-500 truncate min-w-0 flex-1">
+                  <span className="text-ink-3 truncate min-w-0 flex-1">
                     {child.result ?? child.error ?? ''}
                   </span>
                 </Link>
@@ -93,7 +88,7 @@ export default async function JobDetailPage({ params }: Props) {
         </div>
       )}
 
-      <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-5">
+      <div className="bg-paper border border-rule-2 rounded-xl p-5 space-y-5">
         {/* Live status poller when job is active, static badge otherwise.
             Cancel button shown only while the job can still be cancelled —
             once terminal, the action would refuse anyway. */}
@@ -107,20 +102,20 @@ export default async function JobDetailPage({ params }: Props) {
             <StatusBadge status={job.status ?? 'pending'} />
             {job.result && (
               <div>
-                <p className="text-xs text-neutral-500 font-semibold uppercase tracking-wider mb-1">
+                <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider mb-1">
                   Result
                 </p>
-                <pre className="text-sm text-neutral-300 whitespace-pre-wrap bg-neutral-950 rounded-lg p-4 border border-neutral-800/60 max-h-80 overflow-auto">
+                <pre className="text-sm text-ink-2 whitespace-pre-wrap bg-canvas rounded-lg p-4 border border-rule-2 max-h-80 overflow-auto">
                   {job.result}
                 </pre>
               </div>
             )}
             {job.error && (
               <div>
-                <p className="text-xs text-red-400 font-semibold uppercase tracking-wider mb-1">
+                <p className="text-xs text-err font-semibold uppercase tracking-wider mb-1">
                   Error
                 </p>
-                <pre className="text-sm text-red-300 whitespace-pre-wrap bg-red-950/20 rounded-lg p-4 border border-red-900/40">
+                <pre className="text-sm text-err whitespace-pre-wrap bg-warn-bg rounded-lg p-4 border border-err/30">
                   {job.error}
                 </pre>
               </div>
@@ -142,14 +137,9 @@ export default async function JobDetailPage({ params }: Props) {
             ['Created', formatDate(job.createdAt)],
             ['Completed', formatDate(job.completedAt)],
           ].map(([label, value]) => (
-            <div
-              key={label}
-              className="bg-neutral-950 border border-neutral-800/40 rounded-lg px-3 py-2"
-            >
-              <p className="text-[10px] text-neutral-600 uppercase tracking-wider mb-0.5">
-                {label}
-              </p>
-              <p className="text-neutral-400 font-mono truncate">{value ?? '—'}</p>
+            <div key={label} className="bg-canvas border border-rule-2 rounded-lg px-3 py-2">
+              <p className="text-[10px] text-ink-4 uppercase tracking-wider mb-0.5">{label}</p>
+              <p className="text-ink-3 font-mono truncate">{value ?? '—'}</p>
             </div>
           ))}
         </div>
@@ -157,8 +147,8 @@ export default async function JobDetailPage({ params }: Props) {
 
       {/* Messages thread */}
       {messages.length > 0 && (
-        <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-5 space-y-3">
-          <h2 className="text-xs text-neutral-500 font-semibold uppercase tracking-wider">
+        <div className="bg-paper border border-rule-2 rounded-xl p-5 space-y-3">
+          <h2 className="text-xs text-ink-3 font-semibold uppercase tracking-wider">
             Messages ({messages.length})
           </h2>
           <JobMessages messages={messages} />

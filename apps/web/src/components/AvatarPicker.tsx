@@ -51,18 +51,18 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
 
   return (
     <div>
-      {label && <label className="block text-xs text-neutral-500 mb-1">{label}</label>}
+      {label && <label className="block text-xs text-ink-3 mb-1">{label}</label>}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="group flex items-center gap-3 bg-neutral-800 border border-neutral-700 hover:border-neutral-600 rounded-md px-3 py-2 text-left transition-colors w-full max-w-xs"
+        className="group flex items-center gap-3 bg-hover border border-rule hover:border-rule rounded-md px-3 py-2 text-left transition-colors w-full max-w-xs"
       >
         <AvatarPreview url={value} size={36} />
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-white truncate">
+          <p className="text-sm text-ink truncate">
             {value ? value.split('/').pop()?.replace('.png', '') : 'No avatar'}
           </p>
-          <p className="text-[11px] text-neutral-500">Click to {value ? 'change' : 'pick'}</p>
+          <p className="text-[11px] text-ink-3">Click to {value ? 'change' : 'pick'}</p>
         </div>
       </button>
 
@@ -78,14 +78,14 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+              className="bg-paper border border-rule-2 rounded-2xl p-5 max-w-2xl w-full max-h-[80vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-white">Pick an avatar</h3>
+                <h3 className="text-sm font-semibold text-ink">Pick an avatar</h3>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="text-neutral-500 hover:text-white text-xs"
+                  className="text-ink-3 hover:text-ink text-xs"
                 >
                   Close (Esc)
                 </button>
@@ -127,14 +127,14 @@ function AvatarPreview({ url, size = 32 }: { url: string | null; size?: number }
         width={size}
         height={size}
         style={{ width: size, height: size }}
-        className="rounded-full object-cover border border-neutral-700 shrink-0"
+        className="rounded-full object-cover border border-rule shrink-0"
       />
     );
   }
   return (
     <div
       style={{ width: size, height: size }}
-      className="rounded-full bg-neutral-800 border border-dashed border-neutral-700 text-neutral-500 text-xs flex items-center justify-center shrink-0"
+      className="rounded-full bg-hover border border-dashed border-rule text-ink-3 text-xs flex items-center justify-center shrink-0"
     >
       ?
     </div>
@@ -161,8 +161,8 @@ function PickerTile({
       aria-pressed={selected}
       className={`aspect-square rounded-lg p-1 flex items-center justify-center transition-all ${
         selected
-          ? 'bg-white/10 ring-2 ring-emerald-400'
-          : 'bg-neutral-800/40 hover:bg-neutral-800 ring-1 ring-transparent hover:ring-neutral-700'
+          ? 'bg-ink/10 ring-2 ring-emerald-400'
+          : 'bg-hover hover:bg-hover ring-1 ring-transparent hover:ring-neutral-700'
       }`}
     >
       <AvatarPreview url={url} size={56} />

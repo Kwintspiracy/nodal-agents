@@ -90,7 +90,10 @@ export function assertWorkspaceConfigured(ctx: ToolContext): string {
  *      exist yet (file_write creating a new file) — in that case we still
  *      realpath the PARENT to be safe.
  */
-export async function resolveAndCheckPath(ctx: ToolContext, requestedPath: string): Promise<string> {
+export async function resolveAndCheckPath(
+  ctx: ToolContext,
+  requestedPath: string,
+): Promise<string> {
   const workspaceRoot = assertWorkspaceConfigured(ctx);
   const realRoot = await realpath(workspaceRoot).catch(() => {
     throw new WorkspaceError(

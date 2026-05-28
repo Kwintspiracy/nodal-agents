@@ -108,7 +108,10 @@ const nextConfig: NextConfig = {
       const existing = config.externals ?? [];
       config.externals = Array.isArray(existing) ? existing : [existing];
       config.externals.push(({ request }, callback) => {
-        if (request && runtimeExternals.some((pkg) => request === pkg || request.startsWith(pkg + '/'))) {
+        if (
+          request &&
+          runtimeExternals.some((pkg) => request === pkg || request.startsWith(pkg + '/'))
+        ) {
           // CommonJS require — Node resolves these at runtime via node_modules.
           return callback(null, `commonjs ${request}`);
         }

@@ -8,30 +8,28 @@ import { useRouter } from 'next/navigation';
 export default function LocalTrustBanner() {
   const router = useRouter();
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-neutral-950 px-4">
+    <div className="flex min-h-screen w-full items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="inline-flex items-center gap-1.5 mb-6">
-            <span className="text-emerald-500 font-mono text-sm">$</span>
-            <span className="text-sm font-mono font-bold text-white tracking-tight">
+            <span className="text-ok font-mono text-sm">$</span>
+            <span className="text-sm font-mono font-bold text-ink tracking-tight">
               nodal-agents
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Local mode active</h1>
-          <p className="text-sm text-neutral-500 mt-1">
-            No authentication required in local-trust mode.
-          </p>
+          <h1 className="text-2xl font-bold text-ink tracking-tight">Local mode active</h1>
+          <p className="text-sm text-ink-3 mt-1">No authentication required in local-trust mode.</p>
         </div>
-        <div className="rounded-2xl border border-neutral-800/50 bg-neutral-900/50 p-6 space-y-4 text-center">
-          <p className="text-xs text-neutral-400">
-            You are running Nodal-Agents in <code className="text-emerald-400">local-trust</code>{' '}
-            mode. Pick <code className="text-emerald-400">LAN</code> at{' '}
-            <code>nodal-agents init</code> to enable email + password authentication.
+        <div className="rounded-2xl border border-rule-2 bg-paper/60 p-6 space-y-4 text-center">
+          <p className="text-xs text-ink-3">
+            You are running Nodal-Agents in <code className="text-ok">local-trust</code> mode. Pick{' '}
+            <code className="text-ok">LAN</code> at <code>nodal-agents init</code> to enable email +
+            password authentication.
           </p>
           <button
             type="button"
-            onClick={() => router.push('/stats')}
-            className="w-full rounded-lg bg-emerald-500 text-black py-2.5 text-sm font-semibold hover:bg-emerald-400 transition-colors"
+            onClick={() => router.push('/')}
+            className="w-full rounded-lg bg-agent-vivid text-canvas py-2.5 text-sm font-semibold hover:bg-agent-vivid transition-colors"
           >
             Enter dashboard
           </button>
