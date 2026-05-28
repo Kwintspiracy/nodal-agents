@@ -21,6 +21,8 @@ import {
   writePids,
   clearPids,
   killProcessTree,
+  isPidAlive,
+  waitForPidDead,
   type SpawnResult,
 } from '../lib/processes.ts';
 import { createClient } from '@nodal-agents/db';
@@ -106,15 +108,20 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     console.log(chalk.yellow('Cleaning up before starting…'));
 
     const { execa } = await import('execa');
-    // Postgres needs SPECIAL handling: hard-killing it (taskkill /F) on
-    // Windows leaks the shared-memory section, and the next `pg_ctl start`
-    // dies with FATAL "pre-existing shared memory block is still in use".
-    // Try `pg_ctl stop -m fast` first — that's a graceful shutdown that
-    // releases the SHM cleanly. Fallback to taskkill only if pg_ctl fails.
+    // Postgres needs SPECIAL handling. Its Win32 shared-memory section is
+    // keyed to the DATA DIR, not the port — so rotating to a neighbouring
+    // port (section 1.6 below) while an orphan postmaster still lives does
+    // NOT help: the new postgres reattaches the same SHM key and dies with
+    // FATAL "pre-existing shared memory block is still in use". The only real
+    // fix is to make the orphan actually exit (which releases the SHM):
+    //   1. `pg_ctl stop -m fast` (graceful — releases SHM cleanly), then
+    //   2. tree-kill as a fallback, then
+    //   3. VERIFY the pid is dead. If it survives, abort loudly with an
+    //      actionable message instead of rotating into the misleading FATAL.
     const pgOrphan = orphans.find((o) => o.name === 'postgres');
     if (pgOrphan) {
-      const stopped = await stopOrphanPostgres();
-      if (!stopped) {
+      await stopOrphanPostgres();
+      if (isPidAlive(pgOrphan.pid)) {
         try {
           if (process.platform === 'win32') {
             await execa('taskkill', ['/T', '/F', '/PID', String(pgOrphan.pid)], { reject: false });
@@ -124,6 +131,20 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
         } catch {
           /* best-effort */
         }
+        await waitForPidDead(pgOrphan.pid, 5000);
+      }
+      if (isPidAlive(pgOrphan.pid)) {
+        const killCmd =
+          process.platform === 'win32'
+            ? `taskkill /T /F /PID ${pgOrphan.pid}`
+            : `kill -9 ${pgOrphan.pid}`;
+        throw new Error(
+          `An orphaned Postgres (pid ${pgOrphan.pid}) is still running and holds the ` +
+            `shared-memory block for the data dir. Rotating ports won't help — the SHM ` +
+            `segment is keyed to the data dir, not the port.\n` +
+            `  Fix: run \`nodal-agents down\`, then \`${killCmd}\`. If it persists, reboot ` +
+            `to clear the orphan kernel object. No data is lost — pg-data is preserved.`,
+        );
       }
     }
 

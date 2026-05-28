@@ -51,6 +51,36 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
 }
 
 /**
+ * Probe whether a PID is currently alive. `process.kill(pid, 0)` sends no
+ * signal — it only checks existence, throwing ESRCH when the process is gone.
+ * On Windows, EPERM means the process exists but we lack rights to signal it,
+ * which still counts as "alive" for our purposes.
+ */
+export function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Poll until a PID is no longer alive, or the timeout elapses. Returns true
+ * if the process died within the window, false if it's still alive at the
+ * deadline. Used after a kill to confirm a process (and, for Postgres, its
+ * Win32 shared-memory segment) is really gone before we proceed.
+ */
+export async function waitForPidDead(pid: number, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(250);
+  }
+  return !isPidAlive(pid);
+}
+
+/**
  * The CLI runs in two layouts:
  *
  *   1. **Bundled pack** (npm install -g): all artifacts are siblings under
