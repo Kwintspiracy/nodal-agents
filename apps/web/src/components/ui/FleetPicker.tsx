@@ -9,6 +9,8 @@ export type Fleet = {
   tag: string;
   /** Tailwind class or raw hex for the small badge. */
   color: string;
+  /** Optional emoji shown in the badge instead of the 2-letter tag. */
+  icon?: string;
   count?: number;
 };
 
@@ -68,7 +70,7 @@ export default function FleetPicker({
           className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] font-mono text-[10.5px] font-semibold leading-none tracking-[0.04em] text-[#0a0a0a]"
           style={{ background: active.color }}
         >
-          {active.tag.slice(0, 2)}
+          {active.icon ?? active.tag.slice(0, 2)}
         </span>
         <span className="flex min-w-0 flex-1 flex-col text-left leading-[1.15]">
           <span className="truncate text-[12.5px] font-medium text-ink">{active.name}</span>
@@ -104,7 +106,7 @@ export default function FleetPicker({
                   className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] font-mono text-[10px] font-semibold leading-none tracking-[0.04em] text-[#0a0a0a]"
                   style={{ background: f.color }}
                 >
-                  {f.tag.slice(0, 2)}
+                  {f.icon ?? f.tag.slice(0, 2)}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col gap-[1px]">
                   <span className="font-medium text-ink">{f.name}</span>

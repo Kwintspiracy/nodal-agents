@@ -16,6 +16,7 @@ import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import { TagMini } from '@/components/ui/TagMini.tsx';
+import EmojiPicker, { WORKSPACE_EMOJI_PRESETS } from '@/components/ui/EmojiPicker.tsx';
 
 interface Props {
   initial: WorkspaceRow[];
@@ -27,11 +28,13 @@ export default function WorkspacesSection({ initial }: Props) {
 
   // Create form
   const [newName, setNewName] = useState('');
+  const [newIcon, setNewIcon] = useState<string>(WORKSPACE_EMOJI_PRESETS[0]!);
   const [isCreating, startCreateTransition] = useTransition();
 
-  // Rename state — tracks which workspace is being renamed
+  // Rename/edit state — tracks which workspace is being edited (name + icon)
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [renameIcon, setRenameIcon] = useState<string>(WORKSPACE_EMOJI_PRESETS[0]!);
   const [isRenamePending, startRenameTransition] = useTransition();
 
   // Delete confirm
@@ -48,13 +51,14 @@ export default function WorkspacesSection({ initial }: Props) {
     const name = newName.trim();
     if (!name) return;
     startCreateTransition(async () => {
-      const res = await createWorkspaceAction({ name });
+      const res = await createWorkspaceAction({ name, icon: newIcon });
       if (!res.ok) {
         toast.error(res.message);
         return;
       }
       toast.success(`Workspace "${name}" created`);
       setNewName('');
+      setNewIcon(WORKSPACE_EMOJI_PRESETS[0]!);
       await reload();
       router.refresh();
     });
@@ -63,6 +67,7 @@ export default function WorkspacesSection({ initial }: Props) {
   function startRename(ws: WorkspaceRow) {
     setRenamingId(ws.id);
     setRenameValue(ws.name);
+    setRenameIcon(ws.icon ?? WORKSPACE_EMOJI_PRESETS[0]!);
   }
 
   function cancelRename() {
@@ -75,12 +80,12 @@ export default function WorkspacesSection({ initial }: Props) {
     const name = renameValue.trim();
     if (!name) return;
     startRenameTransition(async () => {
-      const res = await renameWorkspaceAction({ id, name });
+      const res = await renameWorkspaceAction({ id, name, icon: renameIcon });
       if (!res.ok) {
         toast.error(res.message);
         return;
       }
-      toast.success('Workspace renamed');
+      toast.success('Workspace updated');
       setRenamingId(null);
       await reload();
       router.refresh();
@@ -141,31 +146,38 @@ export default function WorkspacesSection({ initial }: Props) {
                     {isRenaming ? (
                       <form
                         onSubmit={(e) => handleRenameSubmit(e, ws.id)}
-                        className="flex items-center gap-1.5"
+                        className="flex flex-col gap-2"
                       >
-                        <input
-                          autoFocus
-                          type="text"
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          maxLength={60}
+                        <EmojiPicker
+                          value={renameIcon}
+                          onChange={setRenameIcon}
                           disabled={isRenamePending}
-                          className="w-44 rounded-md border border-rule bg-canvas px-2 py-1 text-[12.5px] text-ink focus:border-ink-3 focus:outline-none"
                         />
-                        <button
-                          type="submit"
-                          disabled={!renameValue.trim()}
-                          className="rounded-md bg-ink px-2.5 py-1 text-[11.5px] font-medium text-canvas hover:brightness-90 disabled:opacity-50"
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={cancelRename}
-                          className="rounded-md border border-rule px-2 py-1 text-[11.5px] text-ink-3 hover:border-rule-2 hover:text-ink-2"
-                        >
-                          Cancel
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            maxLength={60}
+                            disabled={isRenamePending}
+                            className="w-44 rounded-md border border-rule bg-canvas px-2 py-1 text-[12.5px] text-ink focus:border-ink-3 focus:outline-none"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!renameValue.trim()}
+                            className="rounded-md bg-ink px-2.5 py-1 text-[11.5px] font-medium text-canvas hover:brightness-90 disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelRename}
+                            className="rounded-md border border-rule px-2 py-1 text-[11.5px] text-ink-3 hover:border-rule-2 hover:text-ink-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </form>
                     ) : (
                       <span className="text-[13.5px] font-medium text-ink leading-none">
@@ -218,6 +230,9 @@ export default function WorkspacesSection({ initial }: Props) {
         {/* Create form */}
         <form onSubmit={handleCreate}>
           <SetForm label="Create workspace">
+            <div className="mb-2">
+              <EmojiPicker value={newIcon} onChange={setNewIcon} disabled={isCreating} />
+            </div>
             <div className="flex gap-2 items-center">
               <input
                 type="text"

@@ -223,7 +223,11 @@ export async function renameWorkspaceAction(raw: unknown): Promise<ActionResult<
   try {
     const session = await getSession();
     const parsed = z
-      .object({ id: z.string().guid(), name: z.string().min(1).max(60) })
+      .object({
+        id: z.string().guid(),
+        name: z.string().min(1).max(60),
+        icon: z.string().max(8).optional(),
+      })
       .safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
@@ -238,7 +242,11 @@ export async function renameWorkspaceAction(raw: unknown): Promise<ActionResult<
     if (!member) return fail('not_found', 'Workspace not found');
     await db
       .update(entities)
-      .set({ name: parsed.data.name, updatedAt: new Date() })
+      .set({
+        name: parsed.data.name,
+        ...(parsed.data.icon ? { icon: parsed.data.icon } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(entities.id, parsed.data.id));
     revalidatePath('/', 'layout');
     return ok(undefined);

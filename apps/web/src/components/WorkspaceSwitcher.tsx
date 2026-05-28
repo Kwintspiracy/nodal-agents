@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import FleetPicker, { type Fleet } from './ui/FleetPicker';
+import EmojiPicker, { WORKSPACE_EMOJI_PRESETS } from './ui/EmojiPicker';
 import { switchWorkspaceAction, createWorkspaceAction, type WorkspaceRow } from '@/lib/actions';
 
 /**
@@ -30,13 +31,23 @@ function pickColor(slug: string): string {
   return PALETTE[hash % PALETTE.length] ?? PALETTE[0]!;
 }
 
+/** Short text code shown in the subtitle (NOT the emoji — that's the badge). */
+function deriveTag(name: string): string {
+  return (
+    name
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .slice(0, 3)
+      .toUpperCase() || 'WS'
+  );
+}
+
 function rowToFleet(ws: WorkspaceRow): Fleet {
-  const tag = ws.icon ? ws.icon.slice(0, 2) : ws.name.slice(0, 2).toUpperCase() || 'WS';
   return {
     id: ws.id,
     name: ws.name,
-    tag,
+    tag: deriveTag(ws.name),
     color: pickColor(ws.slug),
+    icon: ws.icon ?? undefined,
   };
 }
 
@@ -52,6 +63,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
   // New-workspace inline form state
   const [showNewForm, setShowNewForm] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newIcon, setNewIcon] = useState<string>(WORKSPACE_EMOJI_PRESETS[0]!);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const fleets = workspaces.map(rowToFleet);
@@ -73,6 +85,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
   function handleOpenNew() {
     setShowNewForm(true);
     setNewName('');
+    setNewIcon(WORKSPACE_EMOJI_PRESETS[0]!);
     // Focus the input on next paint
     requestAnimationFrame(() => inputRef.current?.focus());
   }
@@ -82,7 +95,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
     const name = newName.trim();
     if (!name) return;
     startCreateTransition(async () => {
-      const createResult = await createWorkspaceAction({ name });
+      const createResult = await createWorkspaceAction({ name, icon: newIcon });
       if (!createResult.ok) {
         toast.error(createResult.message);
         return;
@@ -118,6 +131,9 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
           <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-4">
             New workspace
           </p>
+          <div className="mb-2">
+            <EmojiPicker value={newIcon} onChange={setNewIcon} disabled={isCreating} />
+          </div>
           <div className="flex gap-1.5">
             <input
               ref={inputRef}
