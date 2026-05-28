@@ -109,7 +109,7 @@ if (existsSync(migrationsSrc)) {
 // EXTERNALS array.
 const packPkg = {
   name: 'nodal-agents',
-  version: '0.1.6',
+  version: '0.2.0',
   description: 'Local-first AI agent platform — self-host on Mac, PC, Linux, VPS, or NAS.',
   license: 'MIT',
   repository: {
