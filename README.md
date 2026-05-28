@@ -53,6 +53,30 @@ from **Settings → LLM Keys** in the dashboard.
 
 To stop the stack: `nodal-agents down`.
 
+## Update
+
+```bash
+nodal-agents update
+```
+
+Checks the npm registry for the latest version, stops the running stack,
+installs `nodal-agents@latest` globally, and restarts services automatically.
+No data is touched — the embedded Postgres data directory is preserved.
+
+```bash
+nodal-agents update --no-restart
+```
+
+Installs the update but skips the automatic restart. Run `nodal-agents up`
+manually when ready.
+
+When a newer version is available, `nodal-agents up` also prints a one-line
+notice:
+
+```
+ℹ v0.4.0 available — run `nodal-agents update`
+```
+
 ### Build from source
 
 ```bash

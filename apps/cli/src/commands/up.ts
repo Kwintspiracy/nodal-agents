@@ -322,6 +322,29 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     throw err;
   }
 
+  // ── 7.5 Non-blocking version notice ──────────────────────────────────────
+  // Fire-and-forget: if a newer version is available, print one informational
+  // line. Must never delay the ready message or throw — all errors are swallowed.
+  // The race against a short timer ensures this can't stall the output.
+  void (async () => {
+    try {
+      const { getInstalledVersion, getLatestVersion } = await import('../lib/version.ts');
+      const installed = getInstalledVersion();
+      // Timeout already capped inside getLatestVersion() at 5 s; we add an
+      // outer race of 3 s here so any internal delay can't push the notice
+      // after the ready block.
+      const latest = await Promise.race([
+        getLatestVersion(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
+      ]);
+      if (latest !== null && latest !== installed) {
+        console.log(chalk.cyan(`  ℹ v${latest} available — run \`nodal-agents update\``));
+      }
+    } catch {
+      /* completely silent — version notice must never disrupt startup */
+    }
+  })();
+
   // ── 8. Open browser ───────────────────────────────────────────────────────
   // NODALAI_NO_BROWSER=1 disables this — set it on headless servers / CI
   // runners with no desktop, where `open` would either hang or crash.

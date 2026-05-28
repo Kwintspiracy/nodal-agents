@@ -4,13 +4,14 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { getInstalledVersion } from './lib/version.ts';
 
 const program = new Command();
 
 program
   .name('nodal-agents')
   .description('Local AI agent platform — one command to start everything')
-  .version('0.0.0')
+  .version(getInstalledVersion())
   // Without this, options registered both at program-level (e.g. --dev for the
   // default action) and at subcommand-level (e.g. up --dev) collide: commander
   // greedily consumes the flag at the program level, so `nodal-agents up --dev`
@@ -109,6 +110,22 @@ program
     const { runReset } = await import('./commands/reset.ts');
     try {
       await runReset({ yes: opts.yes });
+    } catch (err) {
+      console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+// ── nodal-agentsupdate ────────────────────────────────────────────────────────
+
+program
+  .command('update')
+  .description('Update nodal-agents to the latest version and restart the stack')
+  .option('--no-restart', 'Install the update but do not restart services automatically')
+  .action(async (opts: { restart: boolean }) => {
+    const { runUpdate } = await import('./commands/update.ts');
+    try {
+      await runUpdate({ noRestart: opts.restart === false });
     } catch (err) {
       console.error(chalk.red('Error:'), err instanceof Error ? err.message : String(err));
       process.exit(1);
