@@ -5,6 +5,24 @@ import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import {
+  writeFile as fsWriteFile,
+  rename as fsRename,
+  unlink as fsUnlink,
+  readdir as fsReaddir,
+  stat as fsStat,
+  mkdir as fsMkdir,
+} from 'node:fs/promises';
+import {
+  join as pathJoin,
+  basename as pathBasename,
+  dirname as pathDirname,
+  resolve as pathResolve,
+  isAbsolute as pathIsAbsolute,
+  sep as pathSep,
+} from 'node:path';
+import { realpath as fsRealpath } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import {
   eq,
   and,
   desc,
@@ -647,6 +665,256 @@ export async function removeAgentWorkspaceAction(workspaceId: string): Promise<A
   } catch (err) {
     console.error('[removeAgentWorkspaceAction]', err);
     return fail('db_error', 'Failed to remove workspace');
+  }
+}
+
+// ─── Workspace file upload / list / delete ─────────────────────────────────────
+
+/** Max bytes accepted per uploaded Office/document file: 25 MiB. */
+const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+
+/** MIME → extension whitelist for workspace uploads. */
+const UPLOAD_ALLOWED: Record<string, string> = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'application/pdf': '.pdf',
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'text/csv': '.csv',
+  // Browsers sometimes send these for .md / .csv
+  'text/x-markdown': '.md',
+  'application/octet-stream': '', // extension-only fallback — validated by ext below
+};
+
+const UPLOAD_ALLOWED_EXTS = new Set(['.docx', '.xlsx', '.pptx', '.pdf', '.txt', '.md', '.csv']);
+
+/**
+ * Resolve a workspace path for the given (agentId, workspaceLabel) and verify
+ * the resulting path stays inside the workspace root. This is the server-side
+ * equivalent of resolveAndCheckPath from the tools package — we duplicate the
+ * boundary check here to avoid importing the tools package in the web app.
+ */
+async function resolveWorkspacePath(
+  workspaceRoot: string,
+  filename: string,
+): Promise<{ ok: true; resolved: string } | { ok: false; reason: string }> {
+  if (!pathIsAbsolute(workspaceRoot)) {
+    return { ok: false, reason: 'Workspace root is not an absolute path.' };
+  }
+  // Prevent path traversal in filename
+  const safe = pathBasename(filename);
+  if (!safe || safe.startsWith('.')) {
+    return { ok: false, reason: `Invalid filename: "${filename}"` };
+  }
+  const realRoot = await fsRealpath(workspaceRoot).catch(() => null);
+  if (!realRoot) {
+    return { ok: false, reason: `Workspace directory does not exist: "${workspaceRoot}"` };
+  }
+  const candidate = pathResolve(realRoot, safe);
+  const rootWithSep = realRoot.endsWith(pathSep) ? realRoot : realRoot + pathSep;
+  if (candidate !== realRoot && !candidate.startsWith(rootWithSep)) {
+    return { ok: false, reason: `Path traversal blocked for filename "${filename}".` };
+  }
+  return { ok: true, resolved: candidate };
+}
+
+/**
+ * Upload a file into a workspace.
+ * Validates: ownership, workspace label, file size, MIME/extension whitelist,
+ * path safety. Atomic write (temp-rename).
+ */
+export async function uploadToWorkspaceAction(
+  agentId: string,
+  workspaceLabel: string,
+  formData: FormData,
+): Promise<ActionResult<{ filename: string; bytes: number }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    if (!z.string().min(1).max(80).safeParse(workspaceLabel).success) {
+      return fail('validation_failed', 'Invalid workspace label');
+    }
+
+    const db = getDb();
+    // Ownership check
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    // Resolve workspace by label
+    const [wsRow] = await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.label, workspaceLabel)));
+    if (!wsRow) return fail('not_found', `Workspace "${workspaceLabel}" not found for this agent`);
+
+    const file = formData.get('file');
+    if (!(file instanceof File)) {
+      return fail('validation_failed', 'No file provided in FormData (field "file")');
+    }
+
+    // Size cap
+    if (file.size > UPLOAD_MAX_BYTES) {
+      return fail(
+        'file_too_large',
+        `File is ${file.size} bytes (max ${UPLOAD_MAX_BYTES}). Compress or split it first.`,
+      );
+    }
+
+    // MIME + extension check
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    const mimeOk = file.type in UPLOAD_ALLOWED;
+    const extOk = UPLOAD_ALLOWED_EXTS.has(ext);
+    if (!mimeOk && !extOk) {
+      return fail(
+        'unsupported_file_type',
+        `File type "${file.type}" / extension "${ext}" is not allowed. ` +
+          `Allowed: ${[...UPLOAD_ALLOWED_EXTS].join(', ')}.`,
+      );
+    }
+    // Special case: octet-stream is allowed only when extension is in the allowed set
+    if (file.type === 'application/octet-stream' && !extOk) {
+      return fail(
+        'unsupported_file_type',
+        `Extension "${ext}" is not allowed. Allowed: ${[...UPLOAD_ALLOWED_EXTS].join(', ')}.`,
+      );
+    }
+
+    // Ensure workspace directory exists
+    await fsMkdir(wsRow.path, { recursive: true });
+
+    // Path safety check
+    const pathResult = await resolveWorkspacePath(wsRow.path, file.name);
+    if (!pathResult.ok) return fail('path_traversal_blocked', pathResult.reason);
+
+    // Atomic write: tempfile in same dir → rename
+    const dir = pathDirname(pathResult.resolved);
+    const tmp = pathJoin(
+      dir,
+      `.${pathBasename(pathResult.resolved)}.${randomBytes(6).toString('hex')}.tmp`,
+    );
+    const bytes = await file.arrayBuffer();
+    try {
+      await fsWriteFile(tmp, Buffer.from(bytes));
+      await fsRename(tmp, pathResult.resolved);
+    } catch (err) {
+      await fsUnlink(tmp).catch(() => undefined);
+      throw err;
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok({ filename: pathBasename(pathResult.resolved), bytes: file.size });
+  } catch (err) {
+    console.error('[uploadToWorkspaceAction]', err);
+    return fail('db_error', 'Upload failed');
+  }
+}
+
+export type WorkspaceFileRow = {
+  name: string;
+  size: number;
+  modifiedAt: string;
+};
+
+/**
+ * List files in a workspace directory.
+ * Returns a flat list of regular files (no subdirectories) sorted by name.
+ */
+export async function listWorkspaceFilesAction(
+  agentId: string,
+  workspaceLabel: string,
+): Promise<ActionResult<WorkspaceFileRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    // Ownership check
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const [wsRow] = await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.label, workspaceLabel)));
+    if (!wsRow) return fail('not_found', `Workspace "${workspaceLabel}" not found for this agent`);
+
+    // Directory may not exist yet (no files uploaded)
+    const dirExists = await fsStat(wsRow.path)
+      .then((s) => s.isDirectory())
+      .catch(() => false);
+    if (!dirExists) return ok([]);
+
+    const entries = await fsReaddir(wsRow.path, { withFileTypes: true });
+    const files: WorkspaceFileRow[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const fullPath = pathJoin(wsRow.path, entry.name);
+      const info = await fsStat(fullPath).catch(() => null);
+      if (!info) continue;
+      files.push({
+        name: entry.name,
+        size: info.size,
+        modifiedAt: info.mtime.toISOString(),
+      });
+    }
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    return ok(files);
+  } catch (err) {
+    console.error('[listWorkspaceFilesAction]', err);
+    return fail('db_error', 'Failed to list workspace files');
+  }
+}
+
+/**
+ * Delete a single file from a workspace.
+ * Validates ownership + path safety before unlinking.
+ */
+export async function deleteWorkspaceFileAction(
+  agentId: string,
+  workspaceLabel: string,
+  filename: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    // Ownership check
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const [wsRow] = await db
+      .select({ path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(and(eq(agentWorkspaces.agentId, agentId), eq(agentWorkspaces.label, workspaceLabel)));
+    if (!wsRow) return fail('not_found', `Workspace "${workspaceLabel}" not found for this agent`);
+
+    // Path safety: only allow a bare filename (no slashes)
+    const pathResult = await resolveWorkspacePath(wsRow.path, filename);
+    if (!pathResult.ok) return fail('path_traversal_blocked', pathResult.reason);
+
+    await fsUnlink(pathResult.resolved);
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return fail('not_found', `File "${filename}" not found in workspace`);
+    console.error('[deleteWorkspaceFileAction]', err);
+    return fail('db_error', 'Failed to delete file');
   }
 }
 

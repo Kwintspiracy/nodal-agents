@@ -59,6 +59,10 @@ const EXTERNALS = [
   'pdf-parse',
   'mammoth',
   'exceljs',
+  // Office editing tools
+  'docx',
+  'pptxgenjs',
+  'officeparser',
 ];
 
 // esbuild's external matches the literal import string. Deep imports

@@ -23,6 +23,9 @@ import { taskPlanningSkill } from './skills/task-planning';
 import { verifyBeforeDoneSkill } from './skills/verify-before-done';
 import { citationDisciplineSkill } from './skills/citation-discipline';
 import { safeToolUseSkill } from './skills/safe-tool-use';
+import { officeEditingSkill } from './skills/office-editing';
+
+export { officeEditingSkill } from './skills/office-editing';
 
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
@@ -35,6 +38,7 @@ export const systemSkills: SystemSkill[] = [
   verifyBeforeDoneSkill,
   citationDisciplineSkill,
   safeToolUseSkill,
+  officeEditingSkill,
 ];
 
 export type { SystemSkill };

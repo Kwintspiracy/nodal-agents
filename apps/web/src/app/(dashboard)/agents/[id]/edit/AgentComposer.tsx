@@ -18,9 +18,13 @@ import {
   listAgentWorkspacesAction,
   addAgentWorkspaceAction,
   removeAgentWorkspaceAction,
+  uploadToWorkspaceAction,
+  listWorkspaceFilesAction,
+  deleteWorkspaceFileAction,
   type AgentRow,
   type AgentEditRow,
   type AgentWorkspaceRow,
+  type WorkspaceFileRow,
   type LlmKeyUiRow,
   type AgentConnectorRow,
   type AgentMcpServerRow,
@@ -978,6 +982,67 @@ function SettingsTab(props: {
   const [wsRemoveId, setWsRemoveId] = useState<string | null>(null);
   const [wsIsPending, startWsTransition] = useTransition();
 
+  // ── Workspace file upload / list local state ───────────────────────────────
+  // Per-workspace file lists: { [label]: WorkspaceFileRow[] }
+  const [wsFiles, setWsFiles] = useState<Record<string, WorkspaceFileRow[]>>({});
+  const [wsFilesLoaded, setWsFilesLoaded] = useState<Record<string, boolean>>({});
+  const [wsUploadLabel, setWsUploadLabel] = useState<string>('');
+  const [wsUploading, setWsUploading] = useState(false);
+  const [wsDeleteTarget, setWsDeleteTarget] = useState<{ label: string; name: string } | null>(
+    null,
+  );
+  const [wsFilesPending, startWsFileTransition] = useTransition();
+
+  // Load files for all workspaces when workspace list changes
+  useEffect(() => {
+    for (const ws of workspaces) {
+      if (!wsFilesLoaded[ws.label]) {
+        listWorkspaceFilesAction(agentId, ws.label).then((res) => {
+          if (res.ok) {
+            setWsFiles((prev) => ({ ...prev, [ws.label]: res.data }));
+          }
+          setWsFilesLoaded((prev) => ({ ...prev, [ws.label]: true }));
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaces, agentId]);
+
+  async function handleUploadFile(label: string, file: File) {
+    setWsUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    const result = await uploadToWorkspaceAction(agentId, label, fd);
+    setWsUploading(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success(`Uploaded ${result.data.filename}`);
+    const listResult = await listWorkspaceFilesAction(agentId, label);
+    if (listResult.ok) setWsFiles((prev) => ({ ...prev, [label]: listResult.data }));
+  }
+
+  function handleDeleteFile(label: string, name: string) {
+    setWsDeleteTarget({ label, name });
+  }
+
+  function confirmDeleteFile() {
+    if (!wsDeleteTarget) return;
+    const { label, name } = wsDeleteTarget;
+    startWsFileTransition(async () => {
+      setWsDeleteTarget(null);
+      const result = await deleteWorkspaceFileAction(agentId, label, name);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toast.success(`Deleted ${name}`);
+      const listResult = await listWorkspaceFilesAction(agentId, label);
+      if (listResult.ok) setWsFiles((prev) => ({ ...prev, [label]: listResult.data }));
+    });
+  }
+
   function handleAddWorkspace() {
     if (!wsLabel.trim() || !wsPath.trim()) return;
     startWsTransition(async () => {
@@ -1187,39 +1252,121 @@ function SettingsTab(props: {
         )}
       </SectionCard>
 
-      {/* Knowledge — multi-workspace list. MCP servers live in the Connectors tab. */}
+      {/* Knowledge — multi-workspace list + file upload. MCP servers live in Connectors tab. */}
       <SectionCard>
         <SectionHead
           label="Knowledge"
           hint="Workspaces scope file_* tools. Add multiple paths with distinct labels."
         />
 
-        {/* Existing workspaces */}
+        {/* Existing workspaces with per-workspace file lists + upload */}
         {!workspacesLoaded ? (
           <p className="text-[12.5px] text-ink-4">Loading…</p>
         ) : workspaces.length === 0 ? (
           <p className="text-[12.5px] text-ink-4">No workspaces configured.</p>
         ) : (
-          <div className="space-y-2 mb-4">
+          <div className="space-y-4 mb-4">
             {workspaces.map((ws) => (
               <div
                 key={ws.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-rule bg-hover px-3 py-2"
+                className="rounded-lg border border-rule bg-hover/50 overflow-hidden"
               >
-                <div className="min-w-0 flex-1">
-                  <span className="font-mono text-[11px] font-semibold text-ink-2 mr-2">
-                    {ws.label}
-                  </span>
-                  <span className="font-mono text-[11.5px] text-ink-3 break-all">{ws.path}</span>
+                {/* Workspace header row */}
+                <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-rule">
+                  <div className="min-w-0 flex-1">
+                    <span className="font-mono text-[11px] font-semibold text-ink-2 mr-2">
+                      {ws.label}
+                    </span>
+                    <span className="font-mono text-[11.5px] text-ink-3 break-all">{ws.path}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setWsRemoveId(ws.id)}
+                    disabled={wsIsPending}
+                    className="shrink-0 rounded border border-rule px-2 py-0.5 text-[11px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setWsRemoveId(ws.id)}
-                  disabled={wsIsPending}
-                  className="shrink-0 rounded border border-rule px-2 py-0.5 text-[11px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
-                >
-                  Remove
-                </button>
+
+                {/* File list */}
+                <div className="px-3 pt-2 pb-1">
+                  {!wsFilesLoaded[ws.label] ? (
+                    <p className="text-[11.5px] text-ink-4 py-1">Loading files…</p>
+                  ) : (wsFiles[ws.label] ?? []).length === 0 ? (
+                    <p className="text-[11.5px] text-ink-4 py-1">No files uploaded yet.</p>
+                  ) : (
+                    <div className="space-y-1 mb-2">
+                      {(wsFiles[ws.label] ?? []).map((f) => (
+                        <div
+                          key={f.name}
+                          className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-canvas border border-rule-2 text-[11.5px]"
+                        >
+                          <span className="font-mono text-ink-2 truncate min-w-0">{f.name}</span>
+                          <span className="shrink-0 text-ink-4">
+                            {f.size >= 1024 * 1024
+                              ? `${(f.size / 1024 / 1024).toFixed(1)} MB`
+                              : f.size >= 1024
+                                ? `${(f.size / 1024).toFixed(0)} KB`
+                                : `${f.size} B`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteFile(ws.label, f.name)}
+                            disabled={wsFilesPending}
+                            className="shrink-0 rounded border border-rule px-1.5 py-0.5 text-[10px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Upload button + drag-drop */}
+                  <label
+                    className={`flex items-center gap-2 cursor-pointer rounded-lg border border-dashed px-3 py-2 text-[12px] transition-colors mb-2
+                      ${
+                        wsUploading && wsUploadLabel === ws.label
+                          ? 'border-ink-3 text-ink-3 bg-hover'
+                          : 'border-rule text-ink-4 hover:border-ink-3 hover:text-ink-3'
+                      }`}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="shrink-0"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    {wsUploading && wsUploadLabel === ws.label
+                      ? 'Uploading…'
+                      : 'Upload file (.docx .xlsx .pptx .pdf .txt .md .csv — max 25 MB)'}
+                    <input
+                      type="file"
+                      className="sr-only"
+                      accept=".docx,.xlsx,.pptx,.pdf,.txt,.md,.csv"
+                      disabled={wsUploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        // reset so the same file can be re-selected after an error
+                        e.target.value = '';
+                        setWsUploadLabel(ws.label);
+                        void handleUploadFile(ws.label, file);
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
             ))}
           </div>
@@ -1261,7 +1408,7 @@ function SettingsTab(props: {
           </p>
         </div>
 
-        {/* Confirm removal dialog — never window.confirm (ESLint-enforced ban) */}
+        {/* Confirm workspace removal dialog — never window.confirm (ESLint-enforced ban) */}
         <ConfirmDialog
           open={wsRemoveId !== null}
           title="Remove workspace"
@@ -1270,6 +1417,21 @@ function SettingsTab(props: {
           destructive
           onConfirm={() => wsRemoveId && handleRemoveWorkspace(wsRemoveId)}
           onCancel={() => setWsRemoveId(null)}
+        />
+
+        {/* Confirm file deletion dialog */}
+        <ConfirmDialog
+          open={wsDeleteTarget !== null}
+          title="Delete file"
+          message={
+            wsDeleteTarget
+              ? `Delete "${wsDeleteTarget.name}" from workspace "${wsDeleteTarget.label}"? This cannot be undone.`
+              : ''
+          }
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDeleteFile}
+          onCancel={() => setWsDeleteTarget(null)}
         />
       </SectionCard>
 

@@ -14,6 +14,7 @@ import {
   agentTasks,
   approvalRules,
   agentSkillAssignments,
+  agentSkills,
   entityLlmKeys,
   agentConnectorAssignments,
   connectors as connectorsTable,
@@ -368,10 +369,23 @@ export async function executeJob(
       }
     } else {
       // Worker: whitelist from skill assignments + always-on tools + capability tools
+      // Join to agent_skills to retrieve requiredBuiltins for each assigned skill.
+      // requiredBuiltins are unioned into the alwaysOn list so that office tools
+      // (and any future gated builtins) are unlocked only for agents holding the
+      // relevant skill — not globally. This is the gating mechanism for invariant #9.
       const skillRows = await db
-        .select({ skillId: agentSkillAssignments.skillId })
+        .select({
+          skillId: agentSkillAssignments.skillId,
+          requiredBuiltins: agentSkills.requiredBuiltins,
+        })
         .from(agentSkillAssignments)
+        .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
         .where(eq(agentSkillAssignments.agentId, agentRow.id));
+
+      // Collect all requiredBuiltins from assigned skills (deduplicated).
+      const skillRequiredBuiltins: string[] = Array.from(
+        new Set(skillRows.flatMap((r) => r.requiredBuiltins ?? [])),
+      );
 
       // For workers without adapter registrations, only always-on tools are available.
       // Adapters will be registered in the registry when adapter packages are loaded.
@@ -520,11 +534,18 @@ export async function executeJob(
       }
       // ────────────────────────────────────────────────────────────────────────
 
+      // skillRequiredBuiltins: union of requiredBuiltins from all assigned skills.
+      // Only add builtins that actually exist in the registry to avoid WhitelistDriftError
+      // if a skill references a tool name that hasn't been registered yet.
+      const registeredSkillBuiltins = skillRequiredBuiltins.filter(
+        (name) => registry.get(name) !== undefined,
+      );
+
       toolDefs = computeToolWhitelist(
         {
           agentId: agentRow.id,
           configuredTools: registeredConfigured,
-          alwaysOn: [...ALWAYS_ON_TOOLS],
+          alwaysOn: [...ALWAYS_ON_TOOLS, ...registeredSkillBuiltins],
         },
         registry,
         capabilityTools,

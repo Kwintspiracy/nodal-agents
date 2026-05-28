@@ -158,8 +158,11 @@ const packPkg = {
     '@tavily/core': '^0.7.0',
     'apify-client': '^2.23.0',
     'pdf-parse': '^2.4.5',
-    mammoth: '^1.9.0',
+    mammoth: '^1.12.0',
     exceljs: '^4.4.0',
+    docx: '^9.7.1',
+    pptxgenjs: '^4.0.1',
+    officeparser: '^7.1.0',
     // pdfjs-dist (transitive of pdf-parse) tries to require @napi-rs/canvas
     // optionally for canvas-based PDF rendering. Without it, SSR pages
     // that import the adapter tree crash with `ReferenceError: DOMMatrix

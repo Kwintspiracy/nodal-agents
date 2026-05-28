@@ -16,6 +16,7 @@ import {
   fileListTool,
   fileSearchTool,
 } from './file-ops';
+import { OFFICE_TOOLS } from './office-ops';
 
 export { returnResultTool } from './return-result';
 export { saveMemoryTool } from './save-memory';
@@ -33,10 +34,16 @@ export {
   fileSearchTool,
   WorkspaceError,
 } from './file-ops';
+export { OFFICE_TOOLS } from './office-ops';
 
 /**
  * Register all built-in tools into the given registry.
  * Idempotent — calling twice just overwrites with the same tools.
+ *
+ * Office tools (xlsx_*, docx_*, pptx_*) are registered here but NOT added to
+ * ALWAYS_ON_TOOLS — they are gated behind the "office-editing" skill via the
+ * skill's requiredBuiltins field. The runner unions each assigned skill's
+ * requiredBuiltins into the whitelist alongside alwaysOn.
  */
 export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(returnResultTool);
@@ -51,6 +58,10 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(fileEditTool);
   registry.register(fileListTool);
   registry.register(fileSearchTool);
+  // Office tools — gated behind the "office-editing" skill, NOT always-on.
+  for (const tool of OFFICE_TOOLS) {
+    registry.register(tool);
+  }
 }
 
 /**
