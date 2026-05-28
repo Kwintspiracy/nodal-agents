@@ -28,6 +28,14 @@ no cloud roundtrip.** Runs on any machine with Node 22+ — Mac, PC, Linux.
 
 ---
 
+## Screenshots
+
+| Home dashboard — light theme | Agent detail — dark theme |
+| :---: | :---: |
+| ![Home dashboard, light theme](docs/screenshots/home_lightheme.png) | ![Agent detail page, dark theme](docs/screenshots/agent_darktheme.png) |
+
+---
+
 ## Install
 
 ```bash
