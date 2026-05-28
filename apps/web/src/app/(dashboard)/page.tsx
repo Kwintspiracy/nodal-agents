@@ -69,7 +69,11 @@ export default async function DashboardPage() {
 
   // Derived metrics — all from real aggregates, no synthesis.
   const runningCount = active.length;
-  const skillCount = skills.length;
+  // Count skills actually IN USE (assigned to an agent in this workspace), to
+  // mirror the connectors card (installed instances). The library/marketplace
+  // skills that nobody has assigned shouldn't inflate this — they'd read like
+  // "11 skills" on a fresh workspace where none are wired to an agent.
+  const skillCount = skills.filter((sk) => sk.assignmentCount > 0).length;
   const connectorCount = connectors.length + mcp.length;
   const totalTokens = s.totalInputTokens + s.totalOutputTokens;
   const successRate =
