@@ -4,7 +4,7 @@
  */
 export function SetPane({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-3.5 bg-neutral-900 border border-neutral-800/60 rounded-xl overflow-hidden">
+    <div className="mt-3.5 bg-paper border border-rule-2 rounded-xl overflow-hidden">
       {children}
     </div>
   );
