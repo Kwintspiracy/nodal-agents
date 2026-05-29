@@ -38,8 +38,6 @@ type Props = {
   value: string | number;
   /** Secondary descriptor under the big number ("12 running now"). Optional. */
   meta?: ReactNode;
-  /** Sparkline / decorative glyph in the top-right region. Optional. */
-  spark?: ReactNode;
   /** Bottom strip — small text plus optional arrow. Optional. */
   foot?: ReactNode;
   /** Icon for the label row. Pass a small svg or Phosphor icon. */
@@ -55,16 +53,7 @@ type Props = {
  * decorative accent elsewhere — that's what dilutes the signal in tools
  * we're trying to differentiate against.
  */
-export default function VividStatCard({
-  variant,
-  label,
-  value,
-  meta,
-  spark,
-  foot,
-  icon,
-  href,
-}: Props) {
+export default function VividStatCard({ variant, label, value, meta, foot, icon, href }: Props) {
   const v = VARIANT[variant];
   const inner = (
     <div
@@ -93,11 +82,6 @@ export default function VividStatCard({
       </div>
       <div className="mt-0.5 text-[56px] font-medium leading-none tracking-[-0.03em]">{value}</div>
       {meta && <div className={`mt-1 text-[13px] leading-[1.3] ${v.muted}`}>{meta}</div>}
-      {spark && (
-        <div className="pointer-events-none absolute right-[18px] bottom-[46px] h-[34px] w-[120px] opacity-80">
-          {spark}
-        </div>
-      )}
       {foot && (
         <div
           className={`mt-auto flex items-center justify-between border-t pt-3 text-[13px] leading-none ${v.border}`}

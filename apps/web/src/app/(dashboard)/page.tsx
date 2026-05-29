@@ -8,7 +8,6 @@ import {
 } from '@/lib/actions.ts';
 import VividStatCard from '@/components/ui/VividStatCard';
 import MetricCard from '@/components/ui/MetricCard';
-import Sparkline from '@/components/ui/Sparkline';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import ActiveAgentsPanel from './ActiveAgentsPanel.tsx';
@@ -80,12 +79,6 @@ export default async function DashboardPage() {
     s.totalJobs > 0 ? Math.round(((s.statusCounts['completed'] ?? 0) / s.totalJobs) * 100) : null;
   const tokensPerJob = s.totalJobs > 0 ? Math.round(totalTokens / s.totalJobs) : null;
 
-  // Sparkline series for the vivid cards — derive from the weekly rollup.
-  const completedSpark = weekly.map((w) => w.completed);
-  const totalSpark = weekly.map(
-    (w) => w.completed + w.failed + w.cancelled + w.awaiting + w.pending,
-  );
-
   // Greeting — local time-of-day.
   const greet = getGreeting();
   const todayLabel = new Date().toLocaleDateString(undefined, {
@@ -128,11 +121,6 @@ export default async function DashboardPage() {
               ? `${runningCount} ${runningCount === 1 ? 'agent' : 'agents'} active now`
               : 'All agents idle'
           }
-          spark={
-            completedSpark.length >= 2 ? (
-              <Sparkline points={completedSpark} color="#0a0a0a" />
-            ) : null
-          }
         />
         <VividStatCard
           variant="skill"
@@ -140,7 +128,6 @@ export default async function DashboardPage() {
           value={skillCount}
           icon={<Star size={13} weight="regular" />}
           href="/skills"
-          spark={totalSpark.length >= 2 ? <Sparkline points={totalSpark} color="#ffffff" /> : null}
         />
         <VividStatCard
           variant="conn"
@@ -153,7 +140,6 @@ export default async function DashboardPage() {
               ? `${connectors.length} API · ${mcp.length} MCP`
               : `${connectors.length} API`
           }
-          spark={totalSpark.length >= 2 ? <Sparkline points={totalSpark} color="#ffffff" /> : null}
         />
       </div>
 
