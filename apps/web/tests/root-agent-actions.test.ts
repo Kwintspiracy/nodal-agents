@@ -149,7 +149,8 @@ async function clearRootConfig() {
 describe('getRootConfigAction', () => {
   it('returns rootAgentId=null and DEFAULT_ROOT_GRANTS when nothing has been set', async () => {
     await clearRootConfig();
-    const { getRootConfigAction, DEFAULT_ROOT_GRANTS } = await import('../src/lib/actions.ts');
+    const { getRootConfigAction } = await import('../src/lib/actions.ts');
+    const { DEFAULT_ROOT_GRANTS } = await import('@nodal-agents/shared');
     const res = await getRootConfigAction();
     expect(res.ok).toBe(true);
     if (!res.ok) return;

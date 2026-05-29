@@ -6,8 +6,8 @@ import {
   getRootConfigAction,
   listAgentsAction,
   type WorkspaceRow,
-  DEFAULT_ROOT_GRANTS,
 } from '@/lib/actions.ts';
+import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
 import SecurityForm from './SecurityForm.tsx';
 import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';

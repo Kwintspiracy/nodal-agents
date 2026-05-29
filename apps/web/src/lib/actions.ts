@@ -64,11 +64,9 @@ import { getLanAddresses } from './network.ts';
 import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
 import {
   type RootGrants,
-  type AutonomyLevel,
   META_TOOL_NAMES,
   enabledMetaTools,
   parseRootGrants,
-  DEFAULT_ROOT_GRANTS,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
@@ -5116,7 +5114,3 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
     return fail('db_error', 'Failed to save ROOT agent config');
   }
 }
-
-// Re-export types consumed by RootAgentSection
-export type { RootGrants, AutonomyLevel };
-export { DEFAULT_ROOT_GRANTS };

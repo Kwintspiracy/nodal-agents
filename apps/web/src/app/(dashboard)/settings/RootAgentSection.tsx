@@ -14,13 +14,8 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import {
-  setRootAgentAction,
-  type AgentRow,
-  type RootGrants,
-  type AutonomyLevel,
-  DEFAULT_ROOT_GRANTS,
-} from '@/lib/actions.ts';
+import { setRootAgentAction, type AgentRow } from '@/lib/actions.ts';
+import { type RootGrants, type AutonomyLevel, DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
 import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
