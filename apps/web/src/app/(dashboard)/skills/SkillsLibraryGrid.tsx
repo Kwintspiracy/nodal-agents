@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
+import AvatarStack from '@/components/ui/AvatarStack';
 import AssignSkillModal from './AssignSkillModal.tsx';
 
 type Props = {
@@ -38,9 +39,15 @@ function SkillCard({ skill, agents }: { skill: SkillRow; agents: AgentRow[] }) {
         foot={
           <MarketplaceCardActions
             status={
-              skill.assignmentCount > 0
-                ? `Used by ${skill.assignmentCount} ${skill.assignmentCount === 1 ? 'agent' : 'agents'}`
-                : 'Not assigned'
+              skill.assignmentCount > 0 ? (
+                <AvatarStack
+                  avatars={skill.assignedAgents}
+                  max={4}
+                  label={`+${skill.assignmentCount}`}
+                />
+              ) : (
+                <span className="font-mono text-[11px] text-ink-4">Unassigned</span>
+              )
             }
             ctaLabel="Assign"
             ctaVariant="coral"
