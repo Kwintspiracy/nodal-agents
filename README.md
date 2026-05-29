@@ -22,7 +22,10 @@ no cloud roundtrip.** Runs on any machine with Node 22+ — Mac, PC, Linux.
 | 🧠 &nbsp;**Memory that compounds** | Persistent facts (entity-scoped, auto-injected into every job) and chat-thread continuity (your agent remembers what it said 30 seconds ago — and what it said yesterday). |
 | 🤝 &nbsp;**Orchestrators that finish** | Router and planner orchestrators delegate to specialist sub-agents. Hard guards against runaway loops — turn caps, chain caps, per-slug delegation budgets, smart retry on side-effect-free failures. |
 | 🔧 &nbsp;**Multi-instance connectors** | Gmail perso *and* Gmail boulot on the same install. OAuth *and* API-key supported. Active list + Marketplace UI in the dashboard. |
-| 📡 &nbsp;**MCP support** | Connect Streamable HTTP MCP servers — per-job tool discovery, tool whitelisting, multi-instance. |
+| 🗂️ &nbsp;**Workspaces** | Multiple isolated workspaces on one install (personal vs work) — each with its own agents, skills, connectors, jobs and memory. Switch from the sidebar. |
+| 🤖 &nbsp;**Self-extending (ROOT agent)** | Designate an orchestrator as ROOT and let it create skills/agents and assign them on your behalf — gated by per-grant toggles and an autonomy level (propose-confirm → fully-autonomous). |
+| 📄 &nbsp;**Office files** | Read + edit Excel in place, create Word & PowerPoint, inside the agent's workspace — gated behind the office-editing skill. |
+| 📡 &nbsp;**MCP support** | Connect MCP servers over Streamable HTTP *and* stdio (local subprocess) — per-job tool discovery, tool whitelisting, multi-instance. |
 | 💬 &nbsp;**Telegram out of the box** | Long-polling, multi-agent routing (`/ask <slug>`), group-chat filters, conversation continuity, delegation gracefulness on Telegram. |
 | ⚙️ &nbsp;**Real engineering** | TypeScript strict, dependency-cruiser-enforced architecture, full unit + integration suite, Playwright e2e, idempotent migrations, encryption at rest for keys. |
 
@@ -133,11 +136,11 @@ Delegations create child jobs that resume the parent on completion.
 | `/connectors` | Active connector instances + Marketplace (multi-instance, OAuth or API-key). |
 | `/mcp` | Active MCP servers + Marketplace (HTTP transport). |
 | `/memories` | Persistent facts per entity — search, edit, archive. |
-| `/skills` | Procedural memory blocks — shipped with the product, user-overridable. |
+| `/skills` | Assigned / Custom / Built-in Library tabs — reusable instructions appended to an agent's prompt; create your own or customise built-ins. |
 | `/logs` | Tool-call audit — input/output JSON per call, filterable by tool name. |
-| `/approvals` | Human-in-the-loop gates for risky tools. |
+| `/approvals` | Human-in-the-loop gates for risky tools (and the ROOT agent's meta-tools under propose-confirm). |
 | `/automations` | Cron-scheduled agent triggers. |
-| `/settings` | LLM keys, auth mode, network (loopback / LAN), bot tokens. |
+| `/settings` | LLM keys, auth mode, network (loopback / LAN), bot tokens, workspace management, ROOT-agent designation + grants/autonomy. |
 
 ---
 
@@ -177,8 +180,8 @@ packages/
 ├── runner-adapters  Adapter registry, agent ↔ tool wiring
 ├── delivery         Telegram, email
 ├── auth             Pluggable auth provider
-├── catalog          Shipped system skills (telegram-responder, obsidian,
-│                    research-scope-discipline, claude-html-design)
+├── catalog          Shipped system skills (office-editing, telegram-responder,
+│                    obsidian, task-planning, markdown-output, language-mirror …)
 └── secrets          AES-256-GCM key vault
 ```
 
@@ -201,7 +204,7 @@ pnpm deps:check   # runs locally and in CI before every release
 
 ## Status
 
-**Current release:** `0.1.5` on npm `latest`. Used daily by the
+**Current release:** `0.3.7` on npm `latest`. Used daily by the
 maintainer, stable enough for personal production. Pre-1.0 — breaking
 changes are still possible between minors.
 
@@ -215,11 +218,16 @@ changes are still possible between minors.
   caps
 - Multi-instance connectors with OAuth (Gmail, Drive, Sheets, Docs, Notion,
   Airtable) and API-key (Notion, Airtable, Apify, Firecrawl, Tavily)
-- MCP Streamable HTTP catalog with API-key auth
+- MCP catalog — Streamable HTTP *and* stdio (local subprocess) servers, API-key auth
+- Top-level workspaces — multiple isolated entities (agents/skills/connectors/jobs/memory per workspace), switch in the sidebar
+- ROOT agent — designate an orchestrator that can create skills/agents and assign them, gated by per-grant toggles + an autonomy/approval level
+- Office file editing — Excel in-place edit, Word/PowerPoint create, in the agent workspace (office-editing skill)
+- Multiple filesystem folders per agent (sandboxed `file_*` tools)
 - Telegram delivery (long-poll, group filters, multi-agent routing,
   delegation gracefulness)
-- Approval gates for risky tools
+- Approval gates for risky tools (execute-the-approved-action on resume)
 - Cron scheduling
+- `nodal-agents update` — one-command upgrade + boot version notice
 - Encryption at rest for LLM keys + MCP keys
 - Embedded Postgres distribution via npm (no external DB to install)
 
@@ -227,9 +235,9 @@ changes are still possible between minors.
 
 - **MCP OAuth flow** → unlocks Linear, Notion remote, GitHub remote,
   Atlassian, Sentry, and the rest of the SaaS-as-MCP ecosystem.
-- **MCP stdio transport** → unlocks the Anthropic reference servers
-  (filesystem, sqlite, brave-search, GitHub stdio…) and the community
-  catalog.
+- **Dashboard chat for the ROOT companion** → talk to your ROOT agent in
+  the app, multi-turn, instead of via Telegram; plus a dry-run mode and a
+  test-workflow meta-tool.
 - **pgvector binaries bundled in the npm pack** → semantic memory search
   active out-of-the-box. Today, installs without pgvector fall back to
   keyword search (which works, just less smart for cross-vocabulary
