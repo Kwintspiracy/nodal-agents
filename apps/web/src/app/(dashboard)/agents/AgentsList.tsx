@@ -34,7 +34,7 @@
 //   (Space to grab, arrows to move, Enter to drop), and touch support.
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -79,6 +79,19 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
   const [activity, setActivity] = useState<ActiveAgentRow[]>(initialActivity);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  // dnd-kit is not SSR-stable: its a11y announcement IDs (DndDescribedBy-N)
+  // come from an internal counter that drifts between the server and client
+  // renders, triggering a hydration mismatch. useSyncExternalStore is the
+  // SSR-safe "are we on the client yet?" signal — false on the server + first
+  // paint, true after — so we render a static (non-draggable) list for SSR +
+  // hydration and mount the drag-and-drop tree client-only, where the dnd IDs
+  // are only ever generated on the client.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   // Index by agentId for O(1) lookup in each row. Recompute when the
   // poller delivers a new snapshot — same agent IDs but possibly new
@@ -187,6 +200,57 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
   const orchestratorIds = groups
     .map((g) => g.orchestrator?.id)
     .filter((id): id is string => Boolean(id));
+
+  // Server + first client paint: static, non-draggable list (no dnd-kit) so
+  // SSR and hydration match exactly. The drag-and-drop tree mounts below.
+  if (!mounted) {
+    return (
+      <div className="space-y-6">
+        {groups.map((g) => {
+          const isStandalone = g.orchestrator === null;
+          return (
+            <div key={isStandalone ? '__standalone__' : (g.orchestrator?.id ?? '')}>
+              {g.orchestrator ? (
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="leading-none text-ink-4" aria-hidden>
+                    ⋮⋮
+                  </span>
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-3">
+                    Team — {g.orchestrator.name}
+                  </h2>
+                </div>
+              ) : (
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-3">
+                  Standalone
+                </h2>
+              )}
+              <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {g.orchestrator && (
+                      <NonSortableRow
+                        agent={g.orchestrator}
+                        indent={false}
+                        activity={activityByAgent.get(g.orchestrator.id) ?? null}
+                      />
+                    )}
+                    {g.workers.map((w) => (
+                      <NonSortableRow
+                        key={w.id}
+                        agent={w}
+                        indent={Boolean(g.orchestrator)}
+                        activity={activityByAgent.get(w.id) ?? null}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleGroupDragEnd}>
