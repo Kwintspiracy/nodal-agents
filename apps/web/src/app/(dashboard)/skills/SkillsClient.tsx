@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Plus, Star } from '@phosphor-icons/react';
+import { Plus } from '@phosphor-icons/react';
 import type { SkillRow } from '@/lib/actions.ts';
 import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
@@ -83,7 +83,7 @@ export default function SkillsClient({ skills }: Props) {
             </PrimaryButton>
           ) : (
             <PrimaryButton variant="coral" href="/skills/new">
-              <Star size={13} weight="fill" />
+              <Plus size={13} weight="bold" />
               Create skill
             </PrimaryButton>
           )

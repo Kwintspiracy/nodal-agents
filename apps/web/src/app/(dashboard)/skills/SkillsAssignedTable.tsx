@@ -3,10 +3,9 @@
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { DotsThree, PencilSimple, Star, Trash } from '@phosphor-icons/react';
+import { DotsThree, PencilSimple, Trash } from '@phosphor-icons/react';
 import type { SkillRow } from '@/lib/actions.ts';
 import { deleteSkillAction } from '@/lib/actions.ts';
-import Disc from '@/components/ui/Disc';
 import AvatarStack from '@/components/ui/AvatarStack';
 import MonoCode from '@/components/ui/MonoCode';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
@@ -80,9 +79,6 @@ function SkillRow({ skill }: { skill: SkillRow }) {
     <tr className="border-b border-rule-2 last:border-0 hover:bg-hover">
       <td className="px-[18px] py-4 align-middle">
         <div className="flex items-center gap-3">
-          <Disc variant="skill" size="sm" shape="round">
-            <Star size={14} weight="fill" />
-          </Disc>
           <div className="min-w-0">
             <div className="text-[13.5px] font-medium leading-[1.2] text-ink">{skill.name}</div>
             <div className="mt-0.5 text-[12px] leading-[1.3] text-ink-3">
