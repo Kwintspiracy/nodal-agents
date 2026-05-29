@@ -58,6 +58,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       industry text,
       goal text,
       mcp_token uuid DEFAULT gen_random_uuid(),
+      root_agent_id uuid,
+      root_grants jsonb NOT NULL DEFAULT '{}',
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );
@@ -112,6 +114,21 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );
+
+    -- FK from entities.root_agent_id → agents.id (added after agents table exists)
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'entities_root_agent_id_fkey'
+          AND table_name = 'entities'
+      ) THEN
+        ALTER TABLE entities
+          ADD CONSTRAINT entities_root_agent_id_fkey
+          FOREIGN KEY (root_agent_id) REFERENCES agents(id) ON DELETE SET NULL;
+      END IF;
+    END;
+    $$;
 
     CREATE TABLE IF NOT EXISTS agent_jobs (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

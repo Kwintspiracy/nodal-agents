@@ -1,6 +1,15 @@
 // entities + entity_members tables
 
-import { pgTable, text, uuid, timestamp, uniqueIndex, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  jsonb,
+  timestamp,
+  uniqueIndex,
+  index,
+  check,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { users } from './users.ts';
 
@@ -21,12 +30,27 @@ export const entities = pgTable(
     industry: text('industry'),
     goal: text('goal'),
     mcpToken: uuid('mcp_token').defaultRandom(),
+    // ROOT agent designation (Wave 1 — V4 ROOT agent, 2026-05-29).
+    // Points at the agent that receives meta-tools. Set null when no root
+    // agent is designated. FK uses a lazy callback to avoid the circular
+    // import (agents.ts imports entities.ts for its own FK — a direct TS
+    // import here would create a module cycle; the lazy arrow breaks it at
+    // Drizzle schema resolution time while TS only sees the type via the
+    // forward-reference pattern).
+    rootAgentId: uuid('root_agent_id'),
+    // Per-grant toggles + autonomy level for the root agent. Stored as JSONB
+    // and parsed at runtime via parseRootGrants() from @nodal-agents/shared.
+    // Default is an empty object — the runtime falls back to DEFAULT_ROOT_GRANTS.
+    rootGrants: jsonb('root_grants')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),
     index('idx_entities_user_id').on(table.userId),
+    index('idx_entities_root_agent_id').on(table.rootAgentId),
   ],
 );
 

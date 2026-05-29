@@ -47,6 +47,9 @@ import {
   agentWorkspaces,
   entities,
   entityMembers,
+  createAgentRepo,
+  createSkillRepo,
+  assignSkillRepo,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -528,60 +531,36 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
     if (!isValidAvatarUrl(parsed.data.avatarUrl)) {
       return fail('validation_failed', 'Unknown avatar — pick one from the gallery');
     }
-    const { role, subAgentIds } = parsed.data;
-    const db = getDb();
-
-    // Verify all sub-agents exist in the same entity. We do this BEFORE the
-    // insert so we don't end up with a half-created orchestrator pointing at
-    // ghost sub-agents.
-    if (subAgentIds.length > 0) {
-      const found = await db
-        .select({ id: agents.id })
-        .from(agents)
-        .where(and(inArray(agents.id, subAgentIds), eq(agents.entityId, session.entityId)));
-      if (found.length !== subAgentIds.length) {
-        return fail('validation_failed', 'One or more sub-agents not found in this workspace');
-      }
-    }
 
     // role/orchestrator_mode mapping. The DB enum is { agent, orchestrator,
     // system } — we expose a friendlier UX-level enum (worker/router/planner)
     // and translate here.
-    const { dbRole, orchestratorMode } = mapRoleToDb(role);
+    const { dbRole, orchestratorMode } = mapRoleToDb(parsed.data.role);
 
-    const [row] = await db
-      .insert(agents)
-      .values({
-        entityId: session.entityId,
-        slug: parsed.data.slug,
-        name: parsed.data.name,
-        personality: parsed.data.personality,
-        model: parsed.data.model,
-        llmKeyId: parsed.data.llmKeyId ?? null,
-        role: dbRole,
-        orchestratorMode,
-        avatarUrl: parsed.data.avatarUrl,
-      })
-      .returning({ id: agents.id });
-    if (!row) return fail('db_error', 'Insert returned no row');
+    const db = getDb();
+    const result = await createAgentRepo(db, session.entityId, {
+      slug: parsed.data.slug,
+      name: parsed.data.name,
+      personality: parsed.data.personality,
+      model: parsed.data.model,
+      llmKeyId: parsed.data.llmKeyId ?? null,
+      role: dbRole,
+      orchestratorMode,
+      avatarUrl: parsed.data.avatarUrl,
+      subAgentIds: parsed.data.subAgentIds,
+    });
 
-    if (subAgentIds.length > 0) {
-      await db.insert(agentAssignments).values(
-        subAgentIds.map((subId) => ({
-          orchestratorId: row.id,
-          subAgentId: subId,
-          entityId: session.entityId,
-        })),
-      );
+    if ('error' in result) {
+      return fail('conflict', 'An agent with this slug already exists');
     }
 
     revalidatePath('/agents');
-    return ok({ id: row.id });
+    return ok({ id: result.id });
   } catch (err: unknown) {
     console.error('[createAgentAction]', err);
     const msg = err instanceof Error ? err.message : '';
-    if (msg.includes('unique') || msg.includes('23505')) {
-      return fail('conflict', 'An agent with this slug already exists');
+    if (msg === 'sub_agents_not_found') {
+      return fail('validation_failed', 'One or more sub-agents not found in this workspace');
     }
     return fail('db_error', 'Failed to create agent');
   }
@@ -3218,27 +3197,19 @@ export async function createSkillAction(raw: unknown): Promise<ActionResult<{ id
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
-    const [row] = await db
-      .insert(agentSkills)
-      .values({
-        entityId: session.entityId,
-        slug: parsed.data.slug,
-        name: parsed.data.name,
-        content: parsed.data.content,
-        defaultContent: parsed.data.content,
-        description: parsed.data.description ?? null,
-        active: true,
-      })
-      .returning({ id: agentSkills.id });
-    if (!row) return fail('db_error', 'Insert returned no row');
-    revalidatePath('/skills');
-    return ok({ id: row.id });
-  } catch (err: unknown) {
-    console.error('[createSkillAction]', err);
-    const msg = err instanceof Error ? err.message : '';
-    if (msg.includes('unique') || msg.includes('23505')) {
+    const result = await createSkillRepo(db, session.entityId, {
+      slug: parsed.data.slug,
+      name: parsed.data.name,
+      content: parsed.data.content,
+      description: parsed.data.description ?? null,
+    });
+    if ('error' in result) {
       return fail('conflict', 'A skill with this slug already exists');
     }
+    revalidatePath('/skills');
+    return ok({ id: result.id });
+  } catch (err: unknown) {
+    console.error('[createSkillAction]', err);
     return fail('db_error', 'Failed to create skill');
   }
 }
@@ -3331,52 +3302,14 @@ export async function assignSkillAction(raw: unknown): Promise<ActionResult<void
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
-
-    // Confirm both rows belong to the entity (defence in depth — a forged
-    // request shouldn't be able to point one entity's skill at another's
-    // agent).
-    const [skill] = await db
-      .select({ id: agentSkills.id })
-      .from(agentSkills)
-      .where(
-        and(
-          eq(agentSkills.id, parsed.data.skillId),
-          // Allow assigning an install-wide system skill (seeded under another
-          // entity) or one of the user's own skills. The assignment row below
-          // is still written under session.entityId.
-          or(
-            eq(agentSkills.entityId, session.entityId),
-            inArray(agentSkills.slug, systemSkillSlugs),
-          ),
-        ),
-      );
-    if (!skill) return fail('not_found', 'Skill not found');
-    const [agent] = await db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
-    if (!agent) return fail('not_found', 'Agent not found');
-
-    // Idempotent: skip if already assigned.
-    const [existing] = await db
-      .select({ id: agentSkillAssignments.id })
-      .from(agentSkillAssignments)
-      .where(
-        and(
-          eq(agentSkillAssignments.skillId, parsed.data.skillId),
-          eq(agentSkillAssignments.agentId, parsed.data.agentId),
-        ),
-      );
-    if (existing) {
+    const result = await assignSkillRepo(db, session.entityId, parsed.data, systemSkillSlugs);
+    if ('error' in result) {
+      if (result.error === 'skill_not_found') return fail('not_found', 'Skill not found');
+      if (result.error === 'agent_not_found') return fail('not_found', 'Agent not found');
+      // already_assigned → idempotent success (mirrors original behaviour)
       revalidatePath('/skills');
       return ok(undefined);
     }
-
-    await db.insert(agentSkillAssignments).values({
-      entityId: session.entityId,
-      skillId: parsed.data.skillId,
-      agentId: parsed.data.agentId,
-    });
     revalidatePath('/skills');
     return ok(undefined);
   } catch (err) {
