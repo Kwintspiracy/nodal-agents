@@ -3,11 +3,15 @@ import {
   getSecuritySettingsAction,
   getNetworkSettingsAction,
   listWorkspacesAction,
+  getRootConfigAction,
+  listAgentsAction,
   type WorkspaceRow,
+  DEFAULT_ROOT_GRANTS,
 } from '@/lib/actions.ts';
 import SecurityForm from './SecurityForm.tsx';
 import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';
+import RootAgentSection from './RootAgentSection.tsx';
 import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -18,12 +22,15 @@ import { CheckOk } from '@/components/ui/CheckOk.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const [result, securityResult, networkResult, wsResult] = await Promise.all([
-    getSettingsAction(),
-    getSecuritySettingsAction(),
-    getNetworkSettingsAction(),
-    listWorkspacesAction(),
-  ]);
+  const [result, securityResult, networkResult, wsResult, rootConfigResult, agentsResult] =
+    await Promise.all([
+      getSettingsAction(),
+      getSecuritySettingsAction(),
+      getNetworkSettingsAction(),
+      listWorkspacesAction(),
+      getRootConfigAction(),
+      listAgentsAction(),
+    ]);
   const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
   if (!result.ok) {
@@ -89,6 +96,12 @@ export default async function SettingsPage() {
           <NetworkForm initial={networkResult.data} />
         </SetBlock>
       )}
+
+      <RootAgentSection
+        agents={agentsResult.ok ? agentsResult.data : []}
+        initialRootAgentId={rootConfigResult.ok ? rootConfigResult.data.rootAgentId : null}
+        initialGrants={rootConfigResult.ok ? rootConfigResult.data.grants : DEFAULT_ROOT_GRANTS}
+      />
 
       <WorkspacesSection initial={workspaces} />
 

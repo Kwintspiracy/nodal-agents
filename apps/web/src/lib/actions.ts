@@ -36,6 +36,7 @@ import {
   connectors,
   credentials,
   approvalRequests,
+  approvalRules,
   agentSkills,
   agentSkillAssignments,
   agentConnectorAssignments,
@@ -61,6 +62,14 @@ import {
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import { getLanAddresses } from './network.ts';
 import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
+import {
+  type RootGrants,
+  type AutonomyLevel,
+  META_TOOL_NAMES,
+  enabledMetaTools,
+  parseRootGrants,
+  DEFAULT_ROOT_GRANTS,
+} from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { env } from './env.ts';
@@ -4975,3 +4984,139 @@ export async function setAgentConnectorAssignmentAction(
     return fail('db_error', 'Failed to update connector assignment');
   }
 }
+
+// ─── ROOT agent actions (Wave 2b — V4 ROOT agent, 2026-05-29) ─────────────────
+
+/**
+ * Read the current ROOT agent designation + grants for the active workspace.
+ * Falls back to DEFAULT_ROOT_GRANTS when no grants have been saved yet.
+ */
+export async function getRootConfigAction(): Promise<
+  ActionResult<{ rootAgentId: string | null; grants: RootGrants }>
+> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [row] = await db
+      .select({ rootAgentId: entities.rootAgentId, rootGrants: entities.rootGrants })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!row) return fail('not_found', 'Workspace not found');
+    return ok({
+      rootAgentId: row.rootAgentId ?? null,
+      grants: parseRootGrants(row.rootGrants),
+    });
+  } catch (err) {
+    console.error('[getRootConfigAction]', err);
+    return fail('db_error', 'Failed to load ROOT agent config');
+  }
+}
+
+const SetRootAgentSchema = z.object({
+  rootAgentId: z.string().guid().nullable(),
+  grants: z.object({
+    createAgent: z.boolean(),
+    createSkill: z.boolean(),
+    assignSkill: z.boolean(),
+    autonomy: z.enum(['propose_confirm', 'destructive_gate', 'fully_autonomous'] as const),
+  }),
+});
+
+/**
+ * Designate a ROOT agent for the active workspace and configure its grants.
+ *
+ * Side effects:
+ *   1. Updates entities.rootAgentId + entities.rootGrants.
+ *   2. Clears all existing meta-tool approval_rules for this entity.
+ *   3. If rootAgentId is set AND autonomy is 'propose_confirm': inserts
+ *      require_approval rules for each enabled meta-tool.
+ *      - 'destructive_gate' inserts require_approval only for destructive
+ *        meta-tools; none exist in the MVT toolset yet.
+ *      - 'fully_autonomous' inserts nothing — meta-tools execute freely.
+ */
+export async function setRootAgentAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetRootAgentSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { rootAgentId, grants } = parsed.data;
+    const db = getDb();
+
+    // Membership check — caller must be a member of the active entity.
+    const [member] = await db
+      .select({ role: entityMembers.role })
+      .from(entityMembers)
+      .where(
+        and(eq(entityMembers.userId, session.userId), eq(entityMembers.entityId, session.entityId)),
+      );
+    if (!member) return fail('not_found', 'Workspace not found');
+
+    // If a rootAgentId is provided it must be an orchestrator in this entity.
+    if (rootAgentId !== null) {
+      const [agent] = await db
+        .select({ id: agents.id, role: agents.role })
+        .from(agents)
+        .where(and(eq(agents.id, rootAgentId), eq(agents.entityId, session.entityId)));
+      if (!agent) return fail('not_found', 'Agent not found');
+      if (agent.role !== 'orchestrator') {
+        return fail('validation_failed', 'ROOT must be an orchestrator');
+      }
+    }
+
+    // Persist rootAgentId + rootGrants on the entity.
+    // Cast grants to unknown so Drizzle accepts it as JSONB without type friction.
+    await db
+      .update(entities)
+      .set({
+        rootAgentId: rootAgentId,
+        rootGrants: grants as unknown as (typeof entities.$inferInsert)['rootGrants'],
+        updatedAt: new Date(),
+      })
+      .where(eq(entities.id, session.entityId));
+
+    // ── Sync approval_rules for meta-tools ────────────────────────────────────
+    // Step 1: clear any existing meta-tool rules for this entity (covers both
+    // the previous ROOT agent's rules and the current one).
+    await db
+      .delete(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, session.entityId),
+          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
+        ),
+      );
+
+    // Step 2: insert new rules according to autonomy level.
+    if (rootAgentId !== null) {
+      if (grants.autonomy === 'propose_confirm') {
+        // Each enabled meta-tool requires explicit user approval before execution.
+        const tools = enabledMetaTools(grants as RootGrants);
+        if (tools.length > 0) {
+          await db.insert(approvalRules).values(
+            tools.map((toolName) => ({
+              entityId: session.entityId,
+              agentId: rootAgentId,
+              toolName,
+              action: 'require_approval' as const,
+            })),
+          );
+        }
+      }
+      // destructive_gate inserts require_approval only for destructive meta-tools;
+      // none exist in the MVT toolset yet.
+      // fully_autonomous: no approval rules — all meta-tools execute without gating.
+    }
+
+    revalidatePath('/settings');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setRootAgentAction]', err);
+    return fail('db_error', 'Failed to save ROOT agent config');
+  }
+}
+
+// Re-export types consumed by RootAgentSection
+export type { RootGrants, AutonomyLevel };
+export { DEFAULT_ROOT_GRANTS };

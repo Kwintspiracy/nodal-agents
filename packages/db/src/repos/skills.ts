@@ -44,8 +44,17 @@ export async function createSkillRepo(
     if (!row) throw new Error('Insert returned no row');
     return { id: row.id };
   } catch (err: unknown) {
+    // Check both err.message and err.cause.message: drizzle-orm's pglite adapter
+    // wraps the Postgres error in a "Failed query: ..." outer error and places
+    // the actual constraint violation in err.cause.message.
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('unique') || msg.includes('23505')) {
+    const causeMsg = err instanceof Error && err.cause instanceof Error ? err.cause.message : '';
+    if (
+      msg.includes('unique') ||
+      msg.includes('23505') ||
+      causeMsg.includes('unique') ||
+      causeMsg.includes('23505')
+    ) {
       return { error: 'slug_taken' };
     }
     throw err;

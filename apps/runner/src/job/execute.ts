@@ -21,8 +21,10 @@ import {
   mcpServers as mcpServersTable,
   agentMcpServers as agentMcpServersTable,
   agentWorkspaces as agentWorkspacesTable,
+  entities as entitiesTable,
   getDecryptedCredentialById,
 } from '@nodal-agents/db';
+import { enabledMetaTools, parseRootGrants } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { createMcpTools, slugToPrefix } from '@nodal-agents/adapter-mcp';
 import {
@@ -342,13 +344,38 @@ export async function executeJob(
   const mcpClosers: Array<() => Promise<void>> = [];
 
   try {
+    // ── Root-agent meta-tool gating (applies to BOTH branches) ────────────────
+    // The ROOT is always an orchestrator, so this MUST be computed before the
+    // orchestrator/worker split — otherwise the ROOT (orchestrator branch) would
+    // never receive its meta-tools. Approval-gate (autonomy level) is handled by
+    // the existing approval_rules mechanism in executeTool; here we only make the
+    // tools AVAILABLE to the designated ROOT, per its enabled grants.
+    const [rootEntityRow] = await db
+      .select({
+        rootAgentId: entitiesTable.rootAgentId,
+        rootGrants: entitiesTable.rootGrants,
+      })
+      .from(entitiesTable)
+      .where(eq(entitiesTable.id, job.entityId ?? ''))
+      .limit(1);
+    const isRootAgent =
+      rootEntityRow?.rootAgentId != null && rootEntityRow.rootAgentId === agentRow.id;
+    const metaToolNames: string[] = isRootAgent
+      ? enabledMetaTools(parseRootGrants(rootEntityRow?.rootGrants)).filter(
+          (name) => registry.get(name) !== undefined,
+        )
+      : [];
+    const metaToolDefs: AnyToolDef[] = metaToolNames
+      .map((name) => registry.get(name))
+      .filter((t): t is AnyToolDef => t !== undefined);
+
     if (isOrchestrator) {
       if (orchestratorMode === 'router') {
         const assignTools = (await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[];
         const returnResult = registry.get('return_result');
         toolDefs = returnResult
-          ? [...assignTools, ...memoryBuiltins, returnResult, ...capabilityTools]
-          : [...assignTools, ...memoryBuiltins, ...capabilityTools];
+          ? [...assignTools, ...memoryBuiltins, returnResult, ...metaToolDefs, ...capabilityTools]
+          : [...assignTools, ...memoryBuiltins, ...metaToolDefs, ...capabilityTools];
       } else {
         const [createTaskTool, listTasksTool] = generateTaskTools(agent.id, db);
         const returnResult = registry.get('return_result');
@@ -358,12 +385,14 @@ export async function executeJob(
               listTasksTool as unknown as AnyToolDef,
               ...memoryBuiltins,
               returnResult,
+              ...metaToolDefs,
               ...capabilityTools,
             ]
           : [
               createTaskTool as unknown as AnyToolDef,
               listTasksTool as unknown as AnyToolDef,
               ...memoryBuiltins,
+              ...metaToolDefs,
               ...capabilityTools,
             ];
       }
@@ -545,7 +574,7 @@ export async function executeJob(
         {
           agentId: agentRow.id,
           configuredTools: registeredConfigured,
-          alwaysOn: [...ALWAYS_ON_TOOLS, ...registeredSkillBuiltins],
+          alwaysOn: [...ALWAYS_ON_TOOLS, ...registeredSkillBuiltins, ...metaToolNames],
         },
         registry,
         capabilityTools,

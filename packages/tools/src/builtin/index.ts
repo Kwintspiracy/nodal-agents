@@ -17,6 +17,7 @@ import {
   fileSearchTool,
 } from './file-ops';
 import { OFFICE_TOOLS } from './office-ops';
+import { META_TOOLS } from './meta-ops';
 
 export { returnResultTool } from './return-result';
 export { saveMemoryTool } from './save-memory';
@@ -35,6 +36,8 @@ export {
   WorkspaceError,
 } from './file-ops';
 export { OFFICE_TOOLS } from './office-ops';
+export { META_TOOLS } from './meta-ops';
+export { createSkillTool, assignSkillTool, createAgentTool } from './meta-ops';
 
 /**
  * Register all built-in tools into the given registry.
@@ -60,6 +63,12 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(fileSearchTool);
   // Office tools — gated behind the "office-editing" skill, NOT always-on.
   for (const tool of OFFICE_TOOLS) {
+    registry.register(tool);
+  }
+  // Meta-tools (create_agent, create_skill, assign_skill) — gated behind the
+  // root agent designation + per-grant toggles in rootGrants. NOT always-on.
+  // The runner unions these into alwaysOn only for the entity's root agent.
+  for (const tool of META_TOOLS) {
     registry.register(tool);
   }
 }
