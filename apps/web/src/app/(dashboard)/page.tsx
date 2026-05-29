@@ -221,16 +221,16 @@ export default async function DashboardPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-rule-2">
-                  <th className="px-5 py-3 text-left font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4">
+                  <th className="px-5 py-3 text-left font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
                     Agent
                   </th>
-                  <th className="px-5 py-3 text-right font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4">
+                  <th className="px-5 py-3 text-right font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
                     Jobs
                   </th>
-                  <th className="hidden px-5 py-3 text-right font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4 md:table-cell">
+                  <th className="hidden px-5 py-3 text-right font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
                     Input tk
                   </th>
-                  <th className="hidden px-5 py-3 text-right font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4 md:table-cell">
+                  <th className="hidden px-5 py-3 text-right font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
                     Output tk
                   </th>
                 </tr>

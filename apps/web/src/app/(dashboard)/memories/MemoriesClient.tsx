@@ -326,19 +326,19 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-rule-2">
-                <th className="px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4">
+                <th className="px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
                   Memory
                 </th>
-                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4 md:table-cell">
+                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 md:table-cell">
                   Agent
                 </th>
-                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4 lg:table-cell">
+                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 lg:table-cell">
                   Category
                 </th>
-                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider text-ink-4 xl:table-cell">
+                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 xl:table-cell">
                   Last accessed
                 </th>
-                <th className="px-5 py-3 text-right text-[10.5px] font-semibold uppercase tracking-wider text-ink-4">
+                <th className="px-5 py-3 text-right text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
                   Actions
                 </th>
               </tr>

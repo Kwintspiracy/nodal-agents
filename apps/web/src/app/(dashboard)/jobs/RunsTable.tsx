@@ -223,7 +223,7 @@ function Th({
 }) {
   return (
     <th
-      className={`border-b border-rule-2 px-[18px] pt-1.5 pb-2.5 font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4 ${
+      className={`border-b border-rule-2 px-[18px] pt-1.5 pb-2.5 font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
         align === 'right' ? 'text-right' : 'text-left'
       } ${className}`}
     >

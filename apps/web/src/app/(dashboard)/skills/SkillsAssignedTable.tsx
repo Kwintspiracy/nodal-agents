@@ -36,7 +36,6 @@ export default function SkillsAssignedTable({ skills, agents }: Props) {
             <Th label="Skill" />
             <Th label="Assigned to" />
             <Th label="Required built-ins" />
-            <Th label="Status" />
             <Th label="Actions" align="right" />
           </tr>
         </thead>
@@ -53,7 +52,7 @@ export default function SkillsAssignedTable({ skills, agents }: Props) {
 function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
   return (
     <th
-      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-[9.5px] font-normal uppercase tracking-[0.16em] text-ink-4 ${
+      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
       scope="col"
@@ -113,20 +112,6 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
           </div>
         ) : (
           <span className="font-mono text-[11px] text-ink-4">none</span>
-        )}
-      </td>
-
-      <td className="px-[18px] py-4 align-middle">
-        {skill.active ? (
-          <span className="inline-flex items-center gap-1.5 font-sans text-[12.5px] text-ink-2">
-            <span className="h-[7px] w-[7px] rounded-full bg-ok" />
-            Active
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 font-sans text-[12.5px] text-ink-3">
-            <span className="h-[7px] w-[7px] rounded-full bg-ink-4" />
-            Inactive
-          </span>
         )}
       </td>
 

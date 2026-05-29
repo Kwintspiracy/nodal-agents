@@ -56,22 +56,22 @@ export default function LogsTable({ items }: Props) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-rule-2">
-            <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-ink-3">
+            <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3">
               Time
             </th>
-            <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-ink-3">
+            <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3">
               Lvl
             </th>
-            <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-ink-3">
+            <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3">
               Tool
             </th>
-            <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-ink-3 md:table-cell">
+            <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3 md:table-cell">
               Agent
             </th>
-            <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-ink-3 lg:table-cell">
+            <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3 lg:table-cell">
               Duration
             </th>
-            <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-ink-3 lg:table-cell">
+            <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3 lg:table-cell">
               Job
             </th>
           </tr>
