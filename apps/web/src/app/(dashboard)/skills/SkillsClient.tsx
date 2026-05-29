@@ -12,7 +12,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import SkillsAssignedTable from './SkillsAssignedTable.tsx';
 import SkillsLibraryGrid from './SkillsLibraryGrid.tsx';
 
-type Tab = 'mine' | 'library';
+type Tab = 'assigned' | 'custom' | 'library';
 
 type Props = {
   skills: SkillRow[];
@@ -24,32 +24,36 @@ function matchesQuery(s: SkillRow, q: string): boolean {
 }
 
 /**
- * SkillsClient — interactive shell for /skills. The two tabs split by SOURCE
- * (mirroring the Connectors page): "My skills" = the skills the user authored
- * (assigned or not), "Library" = the fixed built-in catalog. A user-created
- * skill therefore never pollutes the Library; built-in skills are managed from
- * their Library card's Assign modal.
+ * SkillsClient — interactive shell for /skills. Three tabs, each answering a
+ * distinct question so the list never reads as "I only have N skills":
+ *   - Assigned       → skills currently wired to ≥1 agent (table)
+ *   - Custom         → skills the user authored, assigned or not (table)
+ *   - Built-in Library → the fixed shipped catalog (card grid)
  *
- * Tab selection is local React state — a fresh visit lands on Library when the
- * user hasn't authored a skill yet (better empty-state framing).
+ * Assigned is a cross-cut by state; Custom / Built-in split by source. An
+ * assigned custom skill therefore legitimately shows under both Assigned and
+ * Custom — the labels make the relationship clear.
+ *
+ * Tab selection is local React state; the landing tab is the first non-empty
+ * one (Assigned → Custom → Built-in Library).
  */
 export default function SkillsClient({ skills, agents }: Props) {
-  const mySkills = useMemo(() => skills.filter((s) => !s.isSystem), [skills]);
+  const assignedSkills = useMemo(() => skills.filter((s) => s.assignmentCount > 0), [skills]);
+  const customSkills = useMemo(() => skills.filter((s) => !s.isSystem), [skills]);
   const librarySkills = useMemo(() => skills.filter((s) => s.isSystem), [skills]);
-  const [tab, setTab] = useState<Tab>(mySkills.length > 0 ? 'mine' : 'library');
+
+  const initialTab: Tab =
+    assignedSkills.length > 0 ? 'assigned' : customSkills.length > 0 ? 'custom' : 'library';
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState('');
 
-  const filteredMine = useMemo(() => {
-    if (!query.trim()) return mySkills;
+  const active =
+    tab === 'assigned' ? assignedSkills : tab === 'custom' ? customSkills : librarySkills;
+  const filtered = useMemo(() => {
+    if (!query.trim()) return active;
     const q = query.toLowerCase();
-    return mySkills.filter((s) => matchesQuery(s, q));
-  }, [mySkills, query]);
-
-  const filteredLibrary = useMemo(() => {
-    if (!query.trim()) return librarySkills;
-    const q = query.toLowerCase();
-    return librarySkills.filter((s) => matchesQuery(s, q));
-  }, [librarySkills, query]);
+    return active.filter((s) => matchesQuery(s, q));
+  }, [active, query]);
 
   return (
     <div className="pb-10">
@@ -66,8 +70,9 @@ export default function SkillsClient({ skills, agents }: Props) {
               setQuery('');
             }}
             tabs={[
-              { value: 'mine', label: 'My skills', count: mySkills.length },
-              { value: 'library', label: 'Library', count: librarySkills.length },
+              { value: 'assigned', label: 'Assigned', count: assignedSkills.length },
+              { value: 'custom', label: 'Custom', count: customSkills.length },
+              { value: 'library', label: 'Built-in Library', count: librarySkills.length },
             ]}
           />
         }
@@ -75,7 +80,13 @@ export default function SkillsClient({ skills, agents }: Props) {
           <PageSearchInput
             value={query}
             onChange={setQuery}
-            placeholder={tab === 'mine' ? 'Search your skills…' : 'Search the library…'}
+            placeholder={
+              tab === 'assigned'
+                ? 'Search assigned skills…'
+                : tab === 'custom'
+                  ? 'Search your skills…'
+                  : 'Search the library…'
+            }
           />
         }
         cta={
@@ -87,23 +98,41 @@ export default function SkillsClient({ skills, agents }: Props) {
       />
 
       <div className="pt-5">
-        {tab === 'mine' ? (
-          mySkills.length === 0 ? (
-            <EmptyMine onBrowse={() => setTab('library')} />
+        {tab === 'assigned' ? (
+          assignedSkills.length === 0 ? (
+            <EmptyAssigned />
           ) : (
-            <SkillsAssignedTable skills={filteredMine} agents={agents} />
+            <SkillsAssignedTable skills={filtered} agents={agents} />
+          )
+        ) : tab === 'custom' ? (
+          customSkills.length === 0 ? (
+            <EmptyCustom onBrowse={() => setTab('library')} />
+          ) : (
+            <SkillsAssignedTable skills={filtered} agents={agents} />
           )
         ) : librarySkills.length === 0 ? (
           <EmptyLibrary />
         ) : (
-          <SkillsLibraryGrid skills={filteredLibrary} agents={agents} />
+          <SkillsLibraryGrid skills={filtered} agents={agents} />
         )}
       </div>
     </div>
   );
 }
 
-function EmptyMine({ onBrowse }: { onBrowse: () => void }) {
+function EmptyAssigned() {
+  return (
+    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
+      <p className="text-[13px] leading-[1.5] text-ink-3">
+        No skills assigned to any agent yet.
+        <br />
+        Assign one from the Custom or Built-in Library tab.
+      </p>
+    </div>
+  );
+}
+
+function EmptyCustom({ onBrowse }: { onBrowse: () => void }) {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
       <p className="text-[13px] leading-[1.5] text-ink-3">
@@ -123,7 +152,7 @@ function EmptyMine({ onBrowse }: { onBrowse: () => void }) {
           onClick={onBrowse}
           className="text-[13px] font-medium text-ink-3 underline underline-offset-2 hover:text-ink"
         >
-          or browse the Library
+          or browse the Built-in Library
         </button>
       </div>
     </div>
