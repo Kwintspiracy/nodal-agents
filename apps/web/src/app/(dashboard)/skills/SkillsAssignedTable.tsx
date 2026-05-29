@@ -3,29 +3,31 @@
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { DotsThree, PencilSimple, Trash } from '@phosphor-icons/react';
-import type { SkillRow } from '@/lib/actions.ts';
+import { DotsThree, PencilSimple, Plus, Trash } from '@phosphor-icons/react';
+import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import { deleteSkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
 import MonoCode from '@/components/ui/MonoCode';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import AssignSkillModal from './AssignSkillModal.tsx';
 
 type Props = {
   skills: SkillRow[];
+  agents: AgentRow[];
 };
 
 /**
- * SkillsAssignedTable — the design's `.sk-tbl` pattern: one row per
- * assigned skill, with disc + name + from-hint, assigned agents avatar
- * stack, customisation chips (from requiredBuiltins), a runs slot
- * (omitted until we track per-skill run counts), and per-row actions.
+ * SkillsTable — the design's `.sk-tbl` pattern, used by the "My skills" tab:
+ * one row per skill the user authored (assigned or not), with name + from-hint,
+ * the agents it's assigned to (avatar stack), required built-ins, status, and
+ * per-row actions (Assign / Customise / Delete).
  *
- * Per-skill "Last used" + per-assignment customisation values from the
- * design mock aren't tracked in our DB — those columns are dropped per
- * the no-fake-data rule. `requiredBuiltins` IS a real array on the skill
- * row, so it gets surfaced as the customisation column.
+ * Per-skill "Last used" + per-assignment customisation values from the design
+ * mock aren't tracked in our DB — those columns are dropped per the
+ * no-fake-data rule. `requiredBuiltins` IS a real array on the skill row, so it
+ * gets surfaced as the customisation column.
  */
-export default function SkillsAssignedTable({ skills }: Props) {
+export default function SkillsAssignedTable({ skills, agents }: Props) {
   return (
     <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
       <table className="w-full border-collapse">
@@ -40,7 +42,7 @@ export default function SkillsAssignedTable({ skills }: Props) {
         </thead>
         <tbody>
           {skills.map((s) => (
-            <SkillRow key={s.id} skill={s} />
+            <SkillTableRow key={s.id} skill={s} agents={agents} />
           ))}
         </tbody>
       </table>
@@ -61,9 +63,10 @@ function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right'
   );
 }
 
-function SkillRow({ skill }: { skill: SkillRow }) {
+function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const performDelete = () => {
@@ -89,7 +92,11 @@ function SkillRow({ skill }: { skill: SkillRow }) {
       </td>
 
       <td className="px-[18px] py-4 align-middle">
-        <AvatarStack avatars={skill.assignedAgents} max={4} label={`+${skill.assignmentCount}`} />
+        {skill.assignmentCount > 0 ? (
+          <AvatarStack avatars={skill.assignedAgents} max={4} label={`+${skill.assignmentCount}`} />
+        ) : (
+          <span className="font-mono text-[11px] text-ink-4">Unassigned</span>
+        )}
       </td>
 
       <td className="px-[18px] py-4 align-middle">
@@ -125,6 +132,14 @@ function SkillRow({ skill }: { skill: SkillRow }) {
 
       <td className="px-[18px] py-4 align-middle">
         <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setAssignOpen(true)}
+            className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+          >
+            <Plus size={13} weight="bold" />
+            Assign
+          </button>
           <Link
             href={`/skills/${skill.id}/edit`}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
@@ -169,6 +184,12 @@ function SkillRow({ skill }: { skill: SkillRow }) {
           confirmLabel="Delete"
           onConfirm={performDelete}
           onCancel={() => setConfirmOpen(false)}
+        />
+        <AssignSkillModal
+          open={assignOpen}
+          onClose={() => setAssignOpen(false)}
+          skill={skill}
+          agents={agents}
         />
       </td>
     </tr>

@@ -3067,6 +3067,10 @@ export type SkillRow = {
   id: string;
   name: string;
   slug: string;
+  /** True when this is a built-in/system skill (slug ∈ systemSkillSlugs) — the
+   *  fixed catalog shown in the Library tab. False for user-authored skills,
+   *  which live in the "My skills" tab. */
+  isSystem: boolean;
   content: string;
   defaultContent: string | null;
   contentOverridden: boolean;
@@ -3176,6 +3180,7 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         id: r.id,
         name: r.name,
         slug: r.slug,
+        isSystem: systemSkillSlugs.includes(r.slug),
         content: r.content,
         defaultContent: r.defaultContent,
         contentOverridden: r.contentOverridden ?? false,
@@ -3508,6 +3513,7 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       id: row.id,
       name: row.name,
       slug: row.slug,
+      isSystem: systemSkillSlugs.includes(row.slug),
       content: row.content,
       defaultContent: row.defaultContent,
       contentOverridden: row.contentOverridden ?? false,

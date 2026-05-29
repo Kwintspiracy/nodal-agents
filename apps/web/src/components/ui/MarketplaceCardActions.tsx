@@ -16,6 +16,9 @@ type Props = {
   onCta?: () => void;
   /** Link-flavour destination. Mutually exclusive with `onCta`. */
   ctaHref?: string;
+  /** Optional secondary action rendered just left of the primary CTA
+   *  (e.g. a "Customise" link on built-in skill cards). */
+  secondary?: ReactNode;
 };
 
 /**
@@ -32,10 +35,12 @@ export default function MarketplaceCardActions({
   ctaVariant = 'blue',
   onCta,
   ctaHref,
+  secondary,
 }: Props) {
   return (
     <>
       <span className="flex-1 text-[12.5px] leading-none text-ink-3">{status}</span>
+      {secondary}
       {ctaHref ? (
         <PrimaryButton variant={ctaVariant} size="sm" href={ctaHref}>
           <Plus size={12} weight="bold" />
