@@ -1,10 +1,11 @@
 type Avatar = {
   /** Stable identifier for the React key — typically the agent id. */
   id: string;
-  /** Full name; only the initials are rendered. */
+  /** Full name; only the initials are rendered when there's no avatar. */
   name: string;
-  /** Optional uploaded image. Falls back to initials when absent. */
-  imageUrl?: string | null;
+  /** Bundled avatar path (e.g. `/avatars/avatar-07.png`). Falls back to the
+   *  initials disc only when null/absent. */
+  avatarUrl?: string | null;
 };
 
 type Props = {
@@ -56,9 +57,9 @@ export default function AvatarStack({ avatars, max = 5, label, className = '' }:
             }`}
             title={a.name}
           >
-            {a.imageUrl ? (
+            {a.avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={a.imageUrl} alt="" className="h-full w-full object-cover" />
+              <img src={a.avatarUrl} alt="" className="h-full w-full object-cover" />
             ) : (
               initials(a.name)
             )}

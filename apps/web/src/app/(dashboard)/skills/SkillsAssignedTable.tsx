@@ -89,11 +89,7 @@ function SkillRow({ skill }: { skill: SkillRow }) {
       </td>
 
       <td className="px-[18px] py-4 align-middle">
-        <AvatarStack
-          avatars={skill.assignedAgents}
-          max={4}
-          label={`${skill.assignmentCount} ${skill.assignmentCount === 1 ? 'agent' : 'agents'}`}
-        />
+        <AvatarStack avatars={skill.assignedAgents} max={4} label={`+${skill.assignmentCount}`} />
       </td>
 
       <td className="px-[18px] py-4 align-middle">
