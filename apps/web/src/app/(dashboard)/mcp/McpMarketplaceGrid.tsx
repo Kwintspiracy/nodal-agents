@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CheckCircle } from '@phosphor-icons/react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
 import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
+import Modal from '@/components/ui/Modal';
 import McpAddForm from './McpAddForm.tsx';
 import { mcpCategory } from './categories.ts';
 
@@ -80,11 +82,17 @@ function McpMarketCard({
   installedCount: number;
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const router = useRouter();
   const glyph = catalogItem.label.slice(0, 2).toUpperCase();
   const cat = mcpCategory(catalogItem.slug);
 
+  function handleDone() {
+    setAddOpen(false);
+    router.refresh();
+  }
+
   return (
-    <div className="flex flex-col">
+    <>
       <MarketplaceCard
         glyph={
           <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
@@ -106,17 +114,18 @@ function McpMarketCard({
           <MarketplaceCardActions
             ctaLabel={isInstalled ? 'Add account' : 'Install'}
             ctaVariant="blue"
-            onCta={() => setAddOpen((v) => !v)}
+            onCta={() => setAddOpen(true)}
           />
         }
       />
 
-      {/* Inline McpAddForm — expands below the card */}
-      {addOpen && (
-        <div className="mt-1.5 rounded-2xl border border-rule-2 bg-paper p-4">
-          <McpAddForm catalogItem={catalogItem} />
-        </div>
-      )}
-    </div>
+      <Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title={isInstalled ? `Add account — ${catalogItem.label}` : `Install ${catalogItem.label}`}
+      >
+        <McpAddForm catalogItem={catalogItem} onDone={handleDone} />
+      </Modal>
+    </>
   );
 }

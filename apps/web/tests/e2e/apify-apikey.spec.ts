@@ -3,7 +3,8 @@
  *
  * Apify uses the simple api_key auth flow. This test confirms:
  *  1. The Apify card appears in the Marketplace section.
- *  2. Clicking "+ Add" expands an inline form with name + apiKey fields.
+ *  2. Clicking "Install" (or "Add account") opens a Modal dialog with name +
+ *     apiKey fields directly visible — no secondary expand step.
  *  3. Submitting creates an Active Connector instance with the given name.
  *  4. The instance is cleaned up via the Active list's Delete button + ConfirmDialog.
  *
@@ -24,7 +25,7 @@ test.beforeAll(async () => {
 test.describe.configure({ timeout: 60_000 });
 
 test.describe('Apify api_key connector smoke test', () => {
-  test('marketplace card expands; connect with name + apiKey creates active instance', async ({
+  test('marketplace card opens modal; connect with name + apiKey creates active instance', async ({
     page,
   }) => {
     // ── 0. Pre-cleanup: delete any leftover instance from a prior run ────────────
@@ -74,31 +75,31 @@ test.describe('Apify api_key connector smoke test', () => {
 
     await expect(marketplaceCard).toBeVisible({ timeout: 10_000 });
 
-    // ── 2. Click "+ Add" ─────────────────────────────────────────────────────────
-    await marketplaceCard.getByRole('button', { name: /^\+ add$/i }).click();
+    // ── 2. Click "Install" — opens the Modal portal ──────────────────────────────
+    await marketplaceCard.getByRole('button', { name: /^install$/i }).click();
 
-    const nameInput = marketplaceCard.locator('input[name="name"]');
-    const apiKeyInput = marketplaceCard.locator('input[name="apiKey"]');
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor({ state: 'visible', timeout: 5_000 });
+
+    const nameInput = dialog.locator('input[name="name"]');
+    const apiKeyInput = dialog.locator('input[name="apiKey"]');
 
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
     await expect(apiKeyInput).toBeVisible({ timeout: 5_000 });
-
-    // No wizard dialog should have opened.
-    await expect(page.getByRole('dialog')).not.toBeVisible();
 
     // ── 3. Fill name + api key ───────────────────────────────────────────────────
     await nameInput.fill(INSTANCE_NAME);
     await apiKeyInput.fill(TEST_API_KEY);
 
     // ── 4. Submit ────────────────────────────────────────────────────────────────
-    await marketplaceCard.getByRole('button', { name: /^connect$/i }).click();
+    await dialog.getByRole('button', { name: /^connect$/i }).click();
 
     // ── 5. Assert success toast ──────────────────────────────────────────────────
     // ConnectorAddForm toasts "${name} connected" on success.
     await expect(page.getByText(`${INSTANCE_NAME} connected`)).toBeVisible({ timeout: 10_000 });
 
-    // Wait for form to close (open = false after success).
-    await expect(nameInput).not.toBeVisible({ timeout: 5_000 });
+    // Wait for the modal portal to unmount (onDone closes the Modal).
+    await expect(dialog).not.toBeVisible({ timeout: 5_000 });
 
     // ── 6. Reload and assert instance appears in Active Connectors ───────────────
     await page.reload();
@@ -124,9 +125,9 @@ test.describe('Apify api_key connector smoke test', () => {
 
     await instanceCard.getByRole('button', { name: /^delete$/i }).click();
 
-    const dialog = page.getByRole('dialog');
-    await dialog.waitFor({ state: 'visible', timeout: 5_000 });
-    await dialog.getByRole('button', { name: /^delete$/i }).click();
+    const dialog2 = page.getByRole('dialog');
+    await dialog2.waitFor({ state: 'visible', timeout: 5_000 });
+    await dialog2.getByRole('button', { name: /^delete$/i }).click();
 
     await expect(page.getByText(`${INSTANCE_NAME} removed`)).toBeVisible({ timeout: 10_000 });
   });

@@ -1,15 +1,18 @@
 'use client';
 
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CheckCircle } from '@phosphor-icons/react';
 import type { ConnectorRow, ConnectorCatalogItem } from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
+import Modal from '@/components/ui/Modal';
 import ConnectorAddForm from './ConnectorAddForm.tsx';
+import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
 import { CONN_BRAND_COLORS, connGlyph } from './connector-brand.ts';
 import { catalogCategory } from './categories.ts';
-import { useState } from 'react';
 
 const CATEGORIES: ChipItem<string>[] = [
   { value: 'All', label: 'All' },
@@ -32,7 +35,8 @@ type Props = {
 /**
  * ConnectorsMarketplaceGrid — the design's `.chip-row` + `.mk2-grid` pattern.
  * Category filter chips + 4-col grid of MarketplaceCard per catalog entry.
- * Each card's CTA expands a ConnectorAddForm inline.
+ * Each card's CTA opens a Modal with ConnectorAddForm rendered directly inside.
+ * The CredentialWizard is owned at card level to avoid nesting two z-50 portals.
  */
 export default function ConnectorsMarketplaceGrid({
   catalog,
@@ -88,13 +92,24 @@ function ConnectorMarketCard({
   compatibleCredentials: CompatibleCredential[];
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const router = useRouter();
 
   const brandColor = CONN_BRAND_COLORS[catalogItem.slug];
   const glyph = connGlyph(catalogItem.slug, catalogItem.label);
   const cat = catalogCategory(catalogItem.slug);
 
+  // For oauth2 connectors with no existing credentials, the CTA skips the
+  // connect-modal and goes straight to the CredentialWizard.
+  const needsWizard = catalogItem.authType === 'oauth2' && compatibleCredentials.length === 0;
+
+  function handleDone() {
+    setAddOpen(false);
+    router.refresh();
+  }
+
   return (
-    <div className="flex flex-col">
+    <>
       <MarketplaceCard
         glyph={
           <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
@@ -116,20 +131,34 @@ function ConnectorMarketCard({
           <MarketplaceCardActions
             ctaLabel={isInstalled ? 'Add account' : 'Install'}
             ctaVariant="blue"
-            onCta={() => setAddOpen((v) => !v)}
+            onCta={() => (needsWizard ? setWizardOpen(true) : setAddOpen(true))}
           />
         }
       />
 
-      {/* Inline ConnectorAddForm — expands below the card */}
-      {addOpen && (
-        <div className="mt-1.5 rounded-2xl border border-rule-2 bg-paper p-4">
-          <ConnectorAddForm
-            catalogItem={catalogItem}
-            compatibleCredentials={compatibleCredentials}
-          />
-        </div>
+      <Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title={isInstalled ? `Add account — ${catalogItem.label}` : `Install ${catalogItem.label}`}
+      >
+        <ConnectorAddForm
+          catalogItem={catalogItem}
+          compatibleCredentials={compatibleCredentials}
+          onDone={handleDone}
+          onCreateNew={() => {
+            setAddOpen(false);
+            setWizardOpen(true);
+          }}
+        />
+      </Modal>
+
+      {wizardOpen && catalogItem.credentialType && (
+        <CredentialWizard
+          initialType={catalogItem.credentialType as CredentialWizardType}
+          returnToConnectorSlug={catalogItem.slug}
+          onClose={() => setWizardOpen(false)}
+        />
       )}
-    </div>
+    </>
   );
 }

@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Plus } from '@phosphor-icons/react';
-import type { SkillRow } from '@/lib/actions.ts';
+import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
@@ -16,6 +16,7 @@ type Tab = 'assigned' | 'library';
 
 type Props = {
   skills: SkillRow[];
+  agents: AgentRow[];
 };
 
 /**
@@ -27,7 +28,7 @@ type Props = {
  * because a fresh dashboard visit lands on Library when there's no
  * assigned skill yet (better empty-state framing).
  */
-export default function SkillsClient({ skills }: Props) {
+export default function SkillsClient({ skills, agents }: Props) {
   const assignedSkills = useMemo(() => skills.filter((s) => s.assignmentCount > 0), [skills]);
   const [tab, setTab] = useState<Tab>(assignedSkills.length > 0 ? 'assigned' : 'library');
   const [query, setQuery] = useState('');
@@ -100,7 +101,7 @@ export default function SkillsClient({ skills }: Props) {
         ) : skills.length === 0 ? (
           <EmptyLibrary />
         ) : (
-          <SkillsLibraryGrid skills={filteredLibrary} />
+          <SkillsLibraryGrid skills={filteredLibrary} agents={agents} />
         )}
       </div>
     </div>

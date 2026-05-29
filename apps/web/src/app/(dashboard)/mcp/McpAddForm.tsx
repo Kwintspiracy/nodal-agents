@@ -1,6 +1,6 @@
 'use client';
 
-// McpAddForm — marketplace card for a single MCP catalog entry.
+// McpAddForm — form rendered directly inside a Modal panel for a single MCP catalog entry.
 //
 // Three flavors of form, chosen by the catalog entry's slug + transport:
 //
@@ -28,6 +28,8 @@ import { createMcpServerFromCatalogAction, type McpCatalogItem } from '@/lib/act
 
 interface Props {
   catalogItem: McpCatalogItem;
+  /** Called after a successful connection so the parent modal can close. */
+  onDone?: () => void;
 }
 
 type AuthScheme = 'header' | 'query' | 'bearer';
@@ -37,8 +39,7 @@ interface EnvRow {
   value: string;
 }
 
-export default function McpAddForm({ catalogItem }: Props) {
-  const [open, setOpen] = useState(false);
+export default function McpAddForm({ catalogItem, onDone }: Props) {
   const [isPending, startTransition] = useTransition();
 
   // Common
@@ -127,8 +128,8 @@ export default function McpAddForm({ catalogItem }: Props) {
           return;
         }
         toast.success(`${trimmedName} connected`);
-        setOpen(false);
         resetForm();
+        onDone?.();
       });
       return;
     }
@@ -166,8 +167,8 @@ export default function McpAddForm({ catalogItem }: Props) {
           return;
         }
         toast.success(`${trimmedName} connected`);
-        setOpen(false);
         resetForm();
+        onDone?.();
       });
       return;
     }
@@ -215,8 +216,8 @@ export default function McpAddForm({ catalogItem }: Props) {
         return;
       }
       toast.success(`${trimmedName} connected`);
-      setOpen(false);
       resetForm();
+      onDone?.();
     });
   }
 
@@ -237,340 +238,307 @@ export default function McpAddForm({ catalogItem }: Props) {
     : 'my_slug__list_things';
 
   return (
-    <div className="bg-paper border border-rule-2 rounded-xl p-4 space-y-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-ink">{catalogItem.label}</h3>
-          <p className="text-[11px] text-ink-3 font-mono mt-0.5">{catalogItem.slug}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92]"
-        >
-          {open ? 'Cancel' : '+ Add'}
-        </button>
-      </div>
-
+    <form onSubmit={handleSubmit} className="space-y-3">
       {catalogItem.description && <p className="text-xs text-ink-4">{catalogItem.description}</p>}
 
-      {open && (
-        <form onSubmit={handleSubmit} className="space-y-3 pt-2 border-t border-rule-2">
-          {/* Name — common to all flavors. */}
+      {/* Name — common to all flavors. */}
+      <div>
+        <label htmlFor={`mcp-name-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
+          Name <span className="text-ink-4">(e.g. &quot;Cortex — perso&quot;)</span>
+        </label>
+        <input
+          id={`mcp-name-${catalogItem.slug}`}
+          type="text"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={catalogItem.label}
+          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+        />
+      </div>
+
+      {/* Server slug — custom only. Drives the tool-name prefix at runtime. */}
+      {(isCustomHttp || isCustomStdio) && (
+        <div>
+          <label htmlFor={`mcp-slug-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
+            Server slug <span className="text-ink-4">(tool name prefix)</span>
+          </label>
+          <input
+            id={`mcp-slug-${catalogItem.slug}`}
+            type="text"
+            required
+            value={customSlug}
+            onChange={(e) => setCustomSlug(e.target.value)}
+            placeholder="my-server"
+            pattern="[a-z0-9-]+"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+          />
+          <p className="text-[11px] text-ink-4 mt-1">
+            Tools will be named like <span className="font-mono text-ink-3">{slugPreview}</span>.
+            Lowercase letters, digits, dashes.
+          </p>
+        </div>
+      )}
+
+      {/* HTTP-only: URL when catalog requires it. */}
+      {needsUrl && (
+        <div>
+          <label htmlFor={`mcp-url-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
+            Server URL
+          </label>
+          <input
+            id={`mcp-url-${catalogItem.slug}`}
+            type="url"
+            required
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://…"
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+          />
+        </div>
+      )}
+
+      {/* Custom HTTP: auth scheme picker. */}
+      {isCustomHttp && (
+        <div className="space-y-2">
+          <p className="block text-xs text-ink-3">Auth scheme</p>
+          <div className="flex flex-wrap gap-2">
+            {(['header', 'query', 'bearer'] as const).map((scheme) => (
+              <label
+                key={scheme}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs cursor-pointer border ${
+                  customAuthScheme === scheme
+                    ? 'bg-hover border-ink-3 text-ink'
+                    : 'bg-paper border-rule text-ink-3 hover:border-rule'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`mcp-scheme-${catalogItem.slug}`}
+                  value={scheme}
+                  checked={customAuthScheme === scheme}
+                  onChange={() => setCustomAuthScheme(scheme)}
+                  className="sr-only"
+                />
+                {scheme === 'header' ? 'Header' : scheme === 'query' ? 'Query param' : 'Bearer'}
+              </label>
+            ))}
+          </div>
+
+          {customAuthScheme !== 'bearer' && (
+            <div>
+              <label
+                htmlFor={`mcp-auth-param-${catalogItem.slug}`}
+                className="block text-xs text-ink-3 mb-1"
+              >
+                {customAuthScheme === 'header' ? 'Header name' : 'Query param name'}
+              </label>
+              <input
+                id={`mcp-auth-param-${catalogItem.slug}`}
+                type="text"
+                required
+                value={customAuthParamName}
+                onChange={(e) => setCustomAuthParamName(e.target.value)}
+                placeholder={customAuthScheme === 'header' ? 'x-api-key' : 'api_key'}
+                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* HTTP-only: API key. */}
+      {!isStdio && (
+        <div>
+          <label htmlFor={`mcp-key-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
+            API key
+          </label>
+          <input
+            id={`mcp-key-${catalogItem.slug}`}
+            type="password"
+            required
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={catalogItem.keyPrefix[0] ? `${catalogItem.keyPrefix[0]}…` : ''}
+            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+          />
+          {catalogItem.docsHint && (
+            <p className="text-[11px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
+          )}
+        </div>
+      )}
+
+      {/* Pre-filled stdio: editable args (may contain placeholders) + env vars. */}
+      {isPrefilledStdio && (
+        <>
           <div>
             <label
-              htmlFor={`mcp-name-${catalogItem.slug}`}
+              htmlFor={`mcp-prefilled-args-${catalogItem.slug}`}
               className="block text-xs text-ink-3 mb-1"
             >
-              Name <span className="text-ink-4">(e.g. &quot;Cortex — perso&quot;)</span>
+              Arguments{' '}
+              <span className="text-ink-4">
+                (one per line — edit placeholders like &lt;root-directory&gt;)
+              </span>
+            </label>
+            <textarea
+              id={`mcp-prefilled-args-${catalogItem.slug}`}
+              rows={Math.max(3, (catalogItem.args ?? []).length + 1)}
+              value={prefilledArgsText}
+              onChange={(e) => setPrefilledArgsText(e.target.value)}
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
+            />
+            <p className="text-[11px] text-ink-4 mt-1">
+              Command: <span className="font-mono text-ink-3">{catalogItem.command ?? 'npx'}</span>
+            </p>
+          </div>
+
+          {(catalogItem.envVarNames ?? []).length > 0 && (
+            <div>
+              <p className="block text-xs text-ink-3 mb-1">
+                Environment variables <span className="text-ink-4">(encrypted at rest)</span>
+              </p>
+              <div className="space-y-2">
+                {envRows.map((row, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={row.key}
+                      onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
+                      placeholder="VAR_NAME"
+                      className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    />
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={row.value}
+                      onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
+                      placeholder="value"
+                      className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeEnvRow(idx)}
+                      disabled={envRows.length === 1}
+                      aria-label="Remove env var"
+                      className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={addEnvRow}
+                className="mt-2 text-[11px] text-ink-3 hover:text-ink"
+              >
+                + Add variable
+              </button>
+            </div>
+          )}
+
+          {catalogItem.docsHint && <p className="text-[11px] text-ink-4">{catalogItem.docsHint}</p>}
+        </>
+      )}
+
+      {/* Stdio custom: command + args + env vars. */}
+      {isCustomStdio && (
+        <>
+          <div>
+            <label
+              htmlFor={`mcp-command-${catalogItem.slug}`}
+              className="block text-xs text-ink-3 mb-1"
+            >
+              Command
             </label>
             <input
-              id={`mcp-name-${catalogItem.slug}`}
+              id={`mcp-command-${catalogItem.slug}`}
               type="text"
               required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={catalogItem.label}
-              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              value={customCommand}
+              onChange={(e) => setCustomCommand(e.target.value)}
+              placeholder="npx"
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+            />
+            <p className="text-[11px] text-ink-4 mt-1">
+              Executable name (resolved via PATH) or absolute path.
+            </p>
+          </div>
+
+          <div>
+            <label
+              htmlFor={`mcp-args-${catalogItem.slug}`}
+              className="block text-xs text-ink-3 mb-1"
+            >
+              Arguments <span className="text-ink-4">(one per line)</span>
+            </label>
+            <textarea
+              id={`mcp-args-${catalogItem.slug}`}
+              rows={3}
+              value={customArgsText}
+              onChange={(e) => setCustomArgsText(e.target.value)}
+              placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/folder'}
+              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
             />
           </div>
 
-          {/* Server slug — custom only. Drives the tool-name prefix at runtime. */}
-          {(isCustomHttp || isCustomStdio) && (
-            <div>
-              <label
-                htmlFor={`mcp-slug-${catalogItem.slug}`}
-                className="block text-xs text-ink-3 mb-1"
-              >
-                Server slug <span className="text-ink-4">(tool name prefix)</span>
-              </label>
-              <input
-                id={`mcp-slug-${catalogItem.slug}`}
-                type="text"
-                required
-                value={customSlug}
-                onChange={(e) => setCustomSlug(e.target.value)}
-                placeholder="my-server"
-                pattern="[a-z0-9-]+"
-                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-              />
-              <p className="text-[11px] text-ink-4 mt-1">
-                Tools will be named like <span className="font-mono text-ink-3">{slugPreview}</span>
-                . Lowercase letters, digits, dashes.
-              </p>
-            </div>
-          )}
-
-          {/* HTTP-only: URL when catalog requires it. */}
-          {needsUrl && (
-            <div>
-              <label
-                htmlFor={`mcp-url-${catalogItem.slug}`}
-                className="block text-xs text-ink-3 mb-1"
-              >
-                Server URL
-              </label>
-              <input
-                id={`mcp-url-${catalogItem.slug}`}
-                type="url"
-                required
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://…"
-                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-              />
-            </div>
-          )}
-
-          {/* Custom HTTP: auth scheme picker. */}
-          {isCustomHttp && (
+          <div>
+            <p className="block text-xs text-ink-3 mb-1">
+              Environment variables <span className="text-ink-4">(encrypted at rest)</span>
+            </p>
             <div className="space-y-2">
-              <p className="block text-xs text-ink-3">Auth scheme</p>
-              <div className="flex flex-wrap gap-2">
-                {(['header', 'query', 'bearer'] as const).map((scheme) => (
-                  <label
-                    key={scheme}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs cursor-pointer border ${
-                      customAuthScheme === scheme
-                        ? 'bg-hover border-ink-3 text-ink'
-                        : 'bg-paper border-rule text-ink-3 hover:border-rule'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`mcp-scheme-${catalogItem.slug}`}
-                      value={scheme}
-                      checked={customAuthScheme === scheme}
-                      onChange={() => setCustomAuthScheme(scheme)}
-                      className="sr-only"
-                    />
-                    {scheme === 'header' ? 'Header' : scheme === 'query' ? 'Query param' : 'Bearer'}
-                  </label>
-                ))}
-              </div>
-
-              {customAuthScheme !== 'bearer' && (
-                <div>
-                  <label
-                    htmlFor={`mcp-auth-param-${catalogItem.slug}`}
-                    className="block text-xs text-ink-3 mb-1"
-                  >
-                    {customAuthScheme === 'header' ? 'Header name' : 'Query param name'}
-                  </label>
+              {envRows.map((row, idx) => (
+                <div key={idx} className="flex gap-2">
                   <input
-                    id={`mcp-auth-param-${catalogItem.slug}`}
                     type="text"
-                    required
-                    value={customAuthParamName}
-                    onChange={(e) => setCustomAuthParamName(e.target.value)}
-                    placeholder={customAuthScheme === 'header' ? 'x-api-key' : 'api_key'}
-                    className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    value={row.key}
+                    onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
+                    placeholder="GITHUB_TOKEN"
+                    className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                   />
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* HTTP-only: API key. */}
-          {!isStdio && (
-            <div>
-              <label
-                htmlFor={`mcp-key-${catalogItem.slug}`}
-                className="block text-xs text-ink-3 mb-1"
-              >
-                API key
-              </label>
-              <input
-                id={`mcp-key-${catalogItem.slug}`}
-                type="password"
-                required
-                autoComplete="off"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={catalogItem.keyPrefix[0] ? `${catalogItem.keyPrefix[0]}…` : ''}
-                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-              />
-              {catalogItem.docsHint && (
-                <p className="text-[11px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
-              )}
-            </div>
-          )}
-
-          {/* Pre-filled stdio: editable args (may contain placeholders) + env vars. */}
-          {isPrefilledStdio && (
-            <>
-              <div>
-                <label
-                  htmlFor={`mcp-prefilled-args-${catalogItem.slug}`}
-                  className="block text-xs text-ink-3 mb-1"
-                >
-                  Arguments{' '}
-                  <span className="text-ink-4">
-                    (one per line — edit placeholders like &lt;root-directory&gt;)
-                  </span>
-                </label>
-                <textarea
-                  id={`mcp-prefilled-args-${catalogItem.slug}`}
-                  rows={Math.max(3, (catalogItem.args ?? []).length + 1)}
-                  value={prefilledArgsText}
-                  onChange={(e) => setPrefilledArgsText(e.target.value)}
-                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
-                />
-                <p className="text-[11px] text-ink-4 mt-1">
-                  Command:{' '}
-                  <span className="font-mono text-ink-3">{catalogItem.command ?? 'npx'}</span>
-                </p>
-              </div>
-
-              {(catalogItem.envVarNames ?? []).length > 0 && (
-                <div>
-                  <p className="block text-xs text-ink-3 mb-1">
-                    Environment variables <span className="text-ink-4">(encrypted at rest)</span>
-                  </p>
-                  <div className="space-y-2">
-                    {envRows.map((row, idx) => (
-                      <div key={idx} className="flex gap-2">
-                        <input
-                          type="text"
-                          value={row.key}
-                          onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
-                          placeholder="VAR_NAME"
-                          className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-                        />
-                        <input
-                          type="password"
-                          autoComplete="off"
-                          value={row.value}
-                          onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
-                          placeholder="value"
-                          className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeEnvRow(idx)}
-                          disabled={envRows.length === 1}
-                          aria-label="Remove env var"
-                          className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={row.value}
+                    onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
+                    placeholder="value"
+                    className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                  />
                   <button
                     type="button"
-                    onClick={addEnvRow}
-                    className="mt-2 text-[11px] text-ink-3 hover:text-ink"
+                    onClick={() => removeEnvRow(idx)}
+                    disabled={envRows.length === 1}
+                    aria-label="Remove env var"
+                    className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
                   >
-                    + Add variable
+                    ×
                   </button>
                 </div>
-              )}
-
-              {catalogItem.docsHint && (
-                <p className="text-[11px] text-ink-4">{catalogItem.docsHint}</p>
-              )}
-            </>
-          )}
-
-          {/* Stdio custom: command + args + env vars. */}
-          {isCustomStdio && (
-            <>
-              <div>
-                <label
-                  htmlFor={`mcp-command-${catalogItem.slug}`}
-                  className="block text-xs text-ink-3 mb-1"
-                >
-                  Command
-                </label>
-                <input
-                  id={`mcp-command-${catalogItem.slug}`}
-                  type="text"
-                  required
-                  value={customCommand}
-                  onChange={(e) => setCustomCommand(e.target.value)}
-                  placeholder="npx"
-                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-                />
-                <p className="text-[11px] text-ink-4 mt-1">
-                  Executable name (resolved via PATH) or absolute path.
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor={`mcp-args-${catalogItem.slug}`}
-                  className="block text-xs text-ink-3 mb-1"
-                >
-                  Arguments <span className="text-ink-4">(one per line)</span>
-                </label>
-                <textarea
-                  id={`mcp-args-${catalogItem.slug}`}
-                  rows={3}
-                  value={customArgsText}
-                  onChange={(e) => setCustomArgsText(e.target.value)}
-                  placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/folder'}
-                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
-                />
-              </div>
-
-              <div>
-                <p className="block text-xs text-ink-3 mb-1">
-                  Environment variables <span className="text-ink-4">(encrypted at rest)</span>
-                </p>
-                <div className="space-y-2">
-                  {envRows.map((row, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      <input
-                        type="text"
-                        value={row.key}
-                        onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
-                        placeholder="GITHUB_TOKEN"
-                        className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-                      />
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        value={row.value}
-                        onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
-                        placeholder="value"
-                        className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeEnvRow(idx)}
-                        disabled={envRows.length === 1}
-                        aria-label="Remove env var"
-                        className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={addEnvRow}
-                  className="mt-2 text-[11px] text-ink-3 hover:text-ink"
-                >
-                  + Add variable
-                </button>
-                {catalogItem.docsHint && (
-                  <p className="text-[11px] text-ink-4 mt-2">{catalogItem.docsHint}</p>
-                )}
-              </div>
-            </>
-          )}
-
-          <button
-            type="submit"
-            disabled={isPending || !name.trim()}
-            className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
-          >
-            {isPending ? 'Connecting…' : 'Connect'}
-          </button>
-        </form>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={addEnvRow}
+              className="mt-2 text-[11px] text-ink-3 hover:text-ink"
+            >
+              + Add variable
+            </button>
+            {catalogItem.docsHint && (
+              <p className="text-[11px] text-ink-4 mt-2">{catalogItem.docsHint}</p>
+            )}
+          </div>
+        </>
       )}
-    </div>
+
+      <button
+        type="submit"
+        disabled={isPending || !name.trim()}
+        className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
+      >
+        {isPending ? 'Connecting…' : 'Connect'}
+      </button>
+    </form>
   );
 }
