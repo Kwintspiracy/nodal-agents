@@ -4,10 +4,11 @@ import Disc from './Disc';
 type DiscVariant = 'agent' | 'skill' | 'conn' | 'ink' | 'neutral';
 
 type Props = {
-  /** Coloured glyph in the upper-left. Either pass an icon child + variant
-   *  to render via the canonical Disc, or pass `glyphBackground` for a
+  /** Coloured glyph in the upper-left, rendered via the canonical Disc. Omit
+   *  entirely for icon-less cards (e.g. the Skills library — text behaviours
+   *  with no meaningful per-item icon). Pass `glyphBackground` for a
    *  brand-specific colour (Gmail red, Slack purple, …). */
-  glyph: ReactNode;
+  glyph?: ReactNode;
   glyphVariant?: DiscVariant;
   glyphBackground?: string;
 
@@ -63,11 +64,13 @@ export default function MarketplaceCard({
         <div className="absolute top-3.5 right-3.5 flex items-center gap-1.5">{topRight}</div>
       )}
 
-      <div className="mb-1.5">
-        <Disc variant={glyphVariant} background={glyphBackground} size="lg" shape="square">
-          {glyph}
-        </Disc>
-      </div>
+      {glyph && (
+        <div className="mb-1.5">
+          <Disc variant={glyphVariant} background={glyphBackground} size="lg" shape="square">
+            {glyph}
+          </Disc>
+        </div>
+      )}
 
       <div className="text-[15.5px] font-semibold leading-[1.2] tracking-[-0.005em] text-ink">
         {name}
