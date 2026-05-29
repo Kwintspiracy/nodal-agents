@@ -1,9 +1,9 @@
-// meta-ops/assign-skill.ts — assign_skill meta-tool
+// meta-ops/assign-skill.ts — attach_skill meta-tool
 // Lets the ROOT agent assign an existing skill to an existing agent.
 // riskLevel 'write': additive, not destructive.
 
 import { z } from 'zod';
-import { eq, and, assignSkillRepo } from '@nodal-agents/db';
+import { eq, and, or, ilike, assignSkillRepo } from '@nodal-agents/db';
 import { agentSkills, agents } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 
@@ -11,14 +11,14 @@ const AssignSkillInput = z.object({
   skillSlug: z
     .string()
     .min(1)
-    .describe('The slug of the skill to assign (e.g. "customer-support-v2").'),
-  agentSlug: z.string().min(1).describe('The slug of the agent to assign the skill to.'),
+    .describe('The slug OR name of the skill to assign (e.g. "customer-support-v2").'),
+  agentSlug: z.string().min(1).describe('The slug OR name of the agent to assign the skill to.'),
 });
 
 type AssignSkillOutput = { ok: true; message: string } | { ok: false; error: string };
 
 export const assignSkillTool: ToolDefinition<typeof AssignSkillInput, AssignSkillOutput> = {
-  name: 'assign_skill',
+  name: 'attach_skill',
   description:
     'Assign an existing skill to an existing agent in this entity. ' +
     'Both skillSlug and agentSlug must already exist. Returns a clear error if either is not found. ' +
@@ -30,7 +30,12 @@ export const assignSkillTool: ToolDefinition<typeof AssignSkillInput, AssignSkil
     const [skillRow] = await ctx.db
       .select({ id: agentSkills.id, name: agentSkills.name })
       .from(agentSkills)
-      .where(and(eq(agentSkills.slug, input.skillSlug), eq(agentSkills.entityId, ctx.entityId)))
+      .where(
+        and(
+          eq(agentSkills.entityId, ctx.entityId),
+          or(eq(agentSkills.slug, input.skillSlug), ilike(agentSkills.name, input.skillSlug)),
+        ),
+      )
       .limit(1);
 
     if (!skillRow) {
@@ -44,7 +49,12 @@ export const assignSkillTool: ToolDefinition<typeof AssignSkillInput, AssignSkil
     const [agentRow] = await ctx.db
       .select({ id: agents.id, name: agents.name })
       .from(agents)
-      .where(and(eq(agents.slug, input.agentSlug), eq(agents.entityId, ctx.entityId)))
+      .where(
+        and(
+          eq(agents.entityId, ctx.entityId),
+          or(eq(agents.slug, input.agentSlug), ilike(agents.name, input.agentSlug)),
+        ),
+      )
       .limit(1);
 
     if (!agentRow) {

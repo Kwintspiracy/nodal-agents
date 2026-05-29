@@ -65,7 +65,7 @@ export function registerBuiltins(registry: ToolRegistry): void {
   for (const tool of OFFICE_TOOLS) {
     registry.register(tool);
   }
-  // Meta-tools (create_agent, create_skill, assign_skill) — gated behind the
+  // Meta-tools (create_agent, create_skill, attach_skill) — gated behind the
   // root agent designation + per-grant toggles in rootGrants. NOT always-on.
   // The runner unions these into alwaysOn only for the entity's root agent.
   for (const tool of META_TOOLS) {

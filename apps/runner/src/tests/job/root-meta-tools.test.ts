@@ -218,12 +218,12 @@ function returnResultScript() {
   ];
 }
 
-const META_TOOL_NAMES = ['create_skill', 'assign_skill', 'create_agent'];
+const META_TOOL_NAMES = ['create_skill', 'attach_skill', 'create_agent'];
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ROOT meta-tool gating — orchestrator branch (regression)', () => {
-  it('designated ROOT orchestrator receives create_skill/assign_skill/create_agent in its toolset', async () => {
+  it('designated ROOT orchestrator receives create_skill/attach_skill/create_agent in its toolset', async () => {
     // Designate the orchestrator agent as ROOT with all grants ON.
     await db
       .update(entities)
@@ -302,7 +302,7 @@ describe('ROOT meta-tool gating — orchestrator branch (regression)', () => {
     }
   });
 
-  it('ROOT orchestrator with createAgent grant OFF gets create_skill+assign_skill but NOT create_agent', async () => {
+  it('ROOT orchestrator with createAgent grant OFF gets create_skill+attach_skill but NOT create_agent', async () => {
     await db
       .update(entities)
       .set({
@@ -325,7 +325,7 @@ describe('ROOT meta-tool gating — orchestrator branch (regression)', () => {
     expect(toolKeysPerCall.length).toBeGreaterThan(0);
     const firstTurnTools = new Set(toolKeysPerCall[0]);
     expect(firstTurnTools.has('create_skill'), 'create_skill should be present').toBe(true);
-    expect(firstTurnTools.has('assign_skill'), 'assign_skill should be present').toBe(true);
+    expect(firstTurnTools.has('attach_skill'), 'attach_skill should be present').toBe(true);
     expect(
       firstTurnTools.has('create_agent'),
       'create_agent must be absent when its grant is OFF',

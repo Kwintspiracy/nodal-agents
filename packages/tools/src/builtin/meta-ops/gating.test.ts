@@ -117,7 +117,7 @@ describe('meta-tool gating via root agent + grants', () => {
       false,
     );
     expect(names.has('create_skill'), 'create_skill should be present').toBe(true);
-    expect(names.has('assign_skill'), 'assign_skill should be present').toBe(true);
+    expect(names.has('attach_skill'), 'attach_skill should be present').toBe(true);
   });
 
   it('root agent with all grants off gets no meta-tools', () => {

@@ -1,4 +1,4 @@
-// meta-ops.test.ts — unit tests for create_skill, assign_skill, create_agent tools.
+// meta-ops.test.ts — unit tests for create_skill, attach_skill, create_agent tools.
 // Uses a real pglite in-memory DB via @nodal-agents/db/test-utils.
 // Asserts on real DB rows — never call counts. (CLAUDE.md invariant 5)
 
@@ -99,9 +99,9 @@ describe('create_skill', () => {
   });
 });
 
-// ─── assign_skill ─────────────────────────────────────────────────────────────
+// ─── attach_skill ─────────────────────────────────────────────────────────────
 
-describe('assign_skill', () => {
+describe('attach_skill', () => {
   it('inserts a real agent_skill_assignments row', async () => {
     const ctx = makeCtx();
 

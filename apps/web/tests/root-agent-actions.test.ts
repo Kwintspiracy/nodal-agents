@@ -286,7 +286,7 @@ describe('setRootAgentAction — write paths', () => {
 
     expect(rules.length).toBe(3);
     const toolNames = rules.map((r) => r.toolName).sort();
-    expect(toolNames).toEqual(['assign_skill', 'create_agent', 'create_skill']);
+    expect(toolNames).toEqual(['attach_skill', 'create_agent', 'create_skill']);
     for (const rule of rules) {
       expect(rule.agentId).toBe(_orchestratorId);
       expect(rule.action).toBe('require_approval');

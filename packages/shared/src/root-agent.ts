@@ -40,10 +40,10 @@ export const DEFAULT_ROOT_GRANTS: RootGrants = {
 export const META_TOOL_BY_GRANT = {
   createAgent: 'create_agent',
   createSkill: 'create_skill',
-  assignSkill: 'assign_skill',
+  assignSkill: 'attach_skill',
 } as const;
 
-export const META_TOOL_NAMES = ['create_agent', 'create_skill', 'assign_skill'] as const;
+export const META_TOOL_NAMES = ['create_agent', 'create_skill', 'attach_skill'] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
