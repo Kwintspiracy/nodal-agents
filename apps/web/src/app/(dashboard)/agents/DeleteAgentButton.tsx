@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { ActionResult } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
@@ -14,6 +15,7 @@ export default function DeleteAgentButton({
   name: string;
   deleteAction: (id: string) => Promise<ActionResult<void>>;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -25,6 +27,8 @@ export default function DeleteAgentButton({
         toast.error(result.message);
       } else {
         toast.success('Agent deleted');
+        // Re-fetch the /agents list so the row disappears without a reload.
+        router.refresh();
       }
     });
   }

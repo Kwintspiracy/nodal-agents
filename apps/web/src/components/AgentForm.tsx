@@ -200,6 +200,10 @@ export default function AgentForm(props: Props) {
         setModel('');
         setAvatarUrl(null);
         setOpen(false);
+        // Re-fetch the /agents server components so the new agent appears
+        // without a manual reload (revalidatePath alone doesn't refresh the
+        // current view when the action is called outside a <form action>).
+        router.refresh();
       });
     }
   }
