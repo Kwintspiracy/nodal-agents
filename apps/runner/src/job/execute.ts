@@ -6,13 +6,14 @@
 //   8: anti-loop guards (ChainCounters from @nodal-agents/orchestration)
 //   9: tool whitelist explicit per agent (computeToolWhitelist)
 
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, isNull } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
   agentAssignments,
   agentTasks,
   approvalRules,
+  approvalRequests,
   agentSkillAssignments,
   agentSkills,
   entityLlmKeys,
@@ -655,6 +656,160 @@ export async function executeJob(
     }
   }
 
+  // ── 11.6 ToolResultOutput type + coerce helper (shared by resume step + loop) ──
+  // AI SDK v6 ToolResultPart.output is a discriminated union; we coerce all raw
+  // tool outputs here so every writer uses the same canonical shape.
+  type ToolResultOutput = { type: 'text'; value: string } | { type: 'json'; value: unknown };
+  const toResultOutput = (raw: unknown): ToolResultOutput => {
+    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(raw) };
+    const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
+    const serialized = JSON.stringify(json);
+    if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
+    return { type: 'text', value: truncateForContext(serialized) };
+  };
+
+  // ── 11.7 Execute-on-resume (Bugs B+C fix) ────────────────────────────────────
+  // When the job is resuming after an approval decision, the approved/rejected
+  // tool has NOT yet been executed. We do it here — before entering the LLM
+  // loop — and replace the [AWAITING_APPROVAL] marker in the saved messages
+  // with the real tool output. This guarantees the LLM sees a valid, complete
+  // conversation on its next turn without re-issuing the approved call.
+  //
+  // Gate: only runs when there are resolved-but-not-yet-executed requests.
+  // Idempotent: executed_at IS NULL guards against double-execution.
+  {
+    const pendingExecRows = await db
+      .select()
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)))
+      .orderBy(approvalRequests.requestedAt);
+
+    // Filter to resolved (approved or rejected) rows; anything still 'pending'
+    // means the human hasn't acted yet — we'll handle those at suspend time.
+    const resolvedRows = pendingExecRows.filter(
+      (r) => r.status === 'approved' || r.status === 'rejected',
+    );
+
+    if (resolvedRows.length > 0) {
+      // Process each resolved request and replace its marker in messages.
+      for (const req of resolvedRows) {
+        let replacementOutput: ToolResultOutput;
+
+        if (req.status === 'approved') {
+          // Execute the tool with empty approvalRules so it bypasses the gate
+          // (the human already approved; re-gating would create an infinite loop).
+          const toolDef = toolMap.get(req.toolName);
+          if (!toolDef) {
+            // Tool no longer in whitelist — treat as error and mark executed.
+            replacementOutput = toResultOutput({
+              error: `approved_tool_not_found:${req.toolName}`,
+            });
+          } else {
+            const execResult = await executeTool(
+              toolDef,
+              req.toolInput,
+              {
+                jobId: jobId as string,
+                agentId: agentRow.id,
+                entityId: job.entityId ?? '',
+                db,
+                jobChatId: job.chatId ?? null,
+                embeddingClient: deps.embeddingClient,
+                workspaces: agentWorkspacesList,
+              },
+              { approvalRules: [], onApprovalRequired: async () => {} },
+            );
+            if (execResult.outcome === 'success') {
+              replacementOutput = toResultOutput(execResult.output);
+            } else if (execResult.outcome === 'error') {
+              replacementOutput = toResultOutput({ error: execResult.error });
+            } else {
+              // outcome === 'awaiting_approval' should never occur because we
+              // passed approvalRules: [] — but handle defensively.
+              replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+            }
+          }
+          trace('resume_approved_tool_executed', { toolName: req.toolName });
+        } else {
+          // Rejected: replace marker with a [REJECTED] explanation.
+          const reason = req.notes ?? 'no reason provided';
+          replacementOutput = toResultOutput(
+            `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.`,
+          );
+          trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
+        }
+
+        // Find and replace the [AWAITING_APPROVAL] marker in the saved messages.
+        // The marker format is: "[AWAITING_APPROVAL] tool_call_id=<callId>"
+        // We match on the toolName as well (the marker is in the tool-result block
+        // whose toolName equals req.toolName and whose output text contains
+        // [AWAITING_APPROVAL]). Using toolName for matching is safe because there
+        // is at most one pending approval per tool per turn in this design
+        // (one approval at a time; siblings are deferred).
+        messages = messages.map((msg) => {
+          if (
+            typeof msg !== 'object' ||
+            msg === null ||
+            (msg as { role: string }).role !== 'tool'
+          ) {
+            return msg;
+          }
+          const toolMsg = msg as { role: 'tool'; content: unknown };
+          if (!Array.isArray(toolMsg.content)) return msg;
+
+          const updatedContent = toolMsg.content.map((block: unknown) => {
+            if (
+              typeof block !== 'object' ||
+              block === null ||
+              (block as { type: string }).type !== 'tool-result'
+            ) {
+              return block;
+            }
+            const tb = block as {
+              type: 'tool-result';
+              toolCallId: string;
+              toolName: string;
+              output: ToolResultOutput;
+            };
+            // Match: same toolName and output contains the [AWAITING_APPROVAL] marker.
+            if (tb.toolName !== req.toolName) return block;
+            const outputText =
+              tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
+            if (!outputText.includes('[AWAITING_APPROVAL]')) return block;
+            // Replace with the real (or rejection) output.
+            return { ...tb, output: replacementOutput };
+          });
+
+          return { ...toolMsg, content: updatedContent };
+        }) as typeof messages;
+
+        // Stamp executed_at so this request is never re-processed.
+        await db
+          .update(approvalRequests)
+          .set({ executedAt: new Date() })
+          .where(eq(approvalRequests.id, req.id));
+      }
+
+      // Persist the updated messages before entering the LLM loop.
+      await saveCheckpoint(db, jobId as string, {
+        messages,
+        turn,
+        chainCount: job.chainCount ?? 0,
+        toolsUsed,
+        inputTokens,
+        outputTokens,
+      });
+    }
+
+    // If there are still PENDING (unresolved) requests, re-suspend and wait.
+    const stillPending = pendingExecRows.filter((r) => r.status === 'pending');
+    if (stillPending.length > 0) {
+      trace('resume_still_pending', { count: stillPending.length });
+      await setJobStatus(db, jobId as string, 'awaiting_approval');
+      return { status: 'awaiting_approval' };
+    }
+  }
+
   // ── 12. Main LLM loop ─────────────────────────────────────────────────────────
   // An empty LLM turn (no tool calls AND no text) is a transient model glitch —
   // retry the turn a bounded number of times before failing the job loud.
@@ -817,38 +972,34 @@ export async function executeJob(
 
       // i. Process tool calls. AI SDK v6 ToolResultPart shape:
       //   { type: 'tool-result', toolCallId, toolName, output: ToolResultOutput }
-      // where ToolResultOutput is a discriminated union — we use 'text' for
-      // plain string outputs and 'json' for structured ones.
-      type ToolResultOutput = { type: 'text'; value: string } | { type: 'json'; value: unknown };
+      // where ToolResultOutput is the discriminated union defined at step 11.6.
       const toolResultBlocks: Array<{
         type: 'tool-result';
         toolCallId: string;
         toolName: string;
         output: ToolResultOutput;
       }> = [];
-      // Coerce a tool's raw return value to a JSON-safe representation. Tools
-      // can return Date objects, undefined fields, etc. — none of which match
-      // AI SDK v6's JSONValue Zod schema (it expects only null/bool/number/
-      // string/array/object). `JSON.parse(JSON.stringify(...))` does the
-      // canonical coercion: Date → ISO string, undefined fields dropped,
-      // anything not serializable surfaces as an explicit JSON.stringify
-      // error which we'd rather see loudly than silently mangle. Caught live
-      // post-v6 bump: query_memory returned rows with `created_at: Date`
-      // which made the Zod ModelMessage[] validation reject the next prompt.
-      const toResultOutput = (raw: unknown): ToolResultOutput => {
-        if (typeof raw === 'string') return { type: 'text', value: truncateForContext(raw) };
-        const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
-        const serialized = JSON.stringify(json);
-        if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
-        // Oversized structured result — return a truncated text rendering. A
-        // truncated JSON string would not parse, so we switch to the 'text'
-        // variant of the discriminated union to keep the message well-formed.
-        return { type: 'text', value: truncateForContext(serialized) };
-      };
 
       let awaitingApproval = false;
 
       for (const call of callsToProcess) {
+        // Bug A fix: if a prior tool in this turn needed approval, do NOT execute
+        // subsequent tool calls. Inject a [DEFERRED] marker so every tool_use block
+        // has a matching tool_result — without this the saved messages are invalid
+        // (unmatched_tool_use) and the job cannot resume. The LLM will re-issue
+        // these calls once the pending approval is resolved.
+        if (awaitingApproval) {
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: call.id,
+            toolName: call.name,
+            output: toResultOutput(
+              '[DEFERRED] a prior action in this turn is awaiting approval; re-issue this call after it resolves.',
+            ),
+          });
+          continue;
+        }
+
         counters.bumpToolCall();
         toolsUsed = [...new Set([...toolsUsed, call.name])];
 
@@ -1084,7 +1235,11 @@ export async function executeJob(
             output: toResultOutput(awaitingMarker),
           });
           awaitingApproval = true;
-          break;
+          // Bug A fix: do NOT break here. Mark the flag and continue the loop
+          // to flush remaining tool calls as [DEFERRED] markers so every
+          // tool_use block in this turn has a matching tool_result. Without
+          // this, the message structure is invalid on resume (unmatched_tool_use).
+          continue;
         }
 
         toolResultBlocks.push({

@@ -11,7 +11,7 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { agentJobs, agents, approvalRequests, approvalRules, agentMemory } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -22,6 +22,7 @@ import { executeJob } from '../../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── Module-level mock registry ───────────────────────────────────────────────
+// Approval-gate regression imports (used in the approval-gate describe block below)
 // execute.ts calls createLlmClient() directly (Brique 25: no env fallback).
 // We intercept that call here and forward to the per-test mock client.
 // vi.hoisted ensures the factory runs before module imports are resolved.
@@ -1243,5 +1244,359 @@ describe('executeJob', () => {
       .update(agents)
       .set({ lastSeenChatIdTelegram: null })
       .where(eq(agents.id, seed.agentId));
+  });
+});
+
+// ─── Approval-gate regression tests ──────────────────────────────────────────
+// Covers the three bugs fixed in feat/v4-root-agent:
+//   Bug A: sibling tool_use blocks in the same turn as a gated tool got no
+//          tool_result → invalid message structure on resume (unmatched_tool_use).
+//   Bug B: injectApproval looked for block.result (string) but AI SDK v6 stores
+//          the output under block.output → the replacement was a no-op.
+//   Bug C: on resume execute.ts only injected [APPROVED] text, never actually
+//          executed the tool.
+//
+// Gated tool: save_memory, which is in ALWAYS_ON_TOOLS → always in the
+// whitelist regardless of skill assignments. Real side-effect: an agent_memory
+// row in DB. We assert that row exists (approve path) or is absent (reject path)
+// to prove real execution, not just a marker swap.
+
+describe('executeJob — approval gate (Bugs A, B, C)', () => {
+  // Fresh DB per suite so approval rules and memory rows don't bleed across tests.
+  let approvalDb: TestDb;
+  let approvalSeed: Awaited<ReturnType<typeof seedMinimal>>;
+
+  beforeAll(async () => {
+    const result = await spinUpTestDb();
+    approvalDb = result.db;
+    approvalSeed = await seedMinimal(approvalDb);
+
+    // Worker role so the whitelist uses registry (not orchestrator paths).
+    await approvalDb
+      .update(agents)
+      .set({ role: 'agent' })
+      .where(eq(agents.id, approvalSeed.agentId));
+  });
+
+  function makeApprovalDeps(llmClient: ReturnType<typeof makeMockLlmClient>): RunnerDeps {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    setActiveLlmClient(llmClient);
+
+    return {
+      db: approvalDb as RunnerDeps['db'],
+      llmClient,
+      embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+      registry,
+      authProvider: new LocalTrustProvider(),
+      close: async () => {},
+    };
+  }
+
+  async function createApprovalJob() {
+    const [job] = await approvalDb
+      .insert(agentJobs)
+      .values({
+        entityId: approvalSeed.entityId,
+        agentId: approvalSeed.agentId,
+        channel: 'api',
+        task: 'Do the gated thing',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create approval test job');
+    return job;
+  }
+
+  it('Bug A: two tools in same turn — gated save_memory + sibling save_memory → messages structurally valid', async () => {
+    // Seed a require_approval rule for save_memory on this entity.
+    await approvalDb.insert(approvalRules).values({
+      entityId: approvalSeed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+
+    const job = await createApprovalJob();
+
+    // LLM emits two save_memory calls in one turn. First one needs approval (gated),
+    // second is the sibling that must get a [DEFERRED] marker (not executed).
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-gated-a',
+            toolName: 'save_memory',
+            args: { fact: 'gated fact A', category: 'context' },
+          },
+          {
+            toolCallId: 'tc-sibling-a',
+            toolName: 'save_memory',
+            args: { fact: 'sibling fact A', category: 'context' },
+          },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+
+    // Job must suspend awaiting_approval.
+    expect(result.status).toBe('awaiting_approval');
+
+    // Load the saved messages from DB.
+    const rows = await approvalDb
+      .select({ messages: agentJobs.messages, status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(rows[0]?.status).toBe('awaiting_approval');
+
+    type MsgShape = { role: string; content: unknown };
+    type ToolCallBlock = { type: string; toolCallId: string };
+    type ToolResultBlock = { type: string; toolCallId: string };
+
+    const msgs = rows[0]?.messages as MsgShape[];
+    expect(msgs).toBeDefined();
+
+    const assistantMsg = msgs.find((m) => m.role === 'assistant');
+    const toolMsg = msgs.find((m) => m.role === 'tool');
+
+    expect(assistantMsg).toBeDefined();
+    expect(toolMsg).toBeDefined();
+
+    const toolCallIds = (assistantMsg!.content as ToolCallBlock[])
+      .filter((b) => b.type === 'tool-call')
+      .map((b) => b.toolCallId);
+
+    const toolResultIds = (toolMsg!.content as ToolResultBlock[])
+      .filter((b) => b.type === 'tool-result')
+      .map((b) => b.toolCallId);
+
+    // Every tool_use id must have a matching tool_result id — Bug A fix.
+    for (const id of toolCallIds) {
+      expect(toolResultIds).toContain(id);
+    }
+
+    type ResultBlock = {
+      type: string;
+      toolCallId: string;
+      output: { type: string; value: string };
+    };
+
+    // First tool got the [AWAITING_APPROVAL] marker.
+    const gatedBlock = (toolMsg!.content as ResultBlock[]).find(
+      (b) => b.toolCallId === 'tc-gated-a',
+    );
+    expect(gatedBlock?.output.value).toContain('[AWAITING_APPROVAL]');
+
+    // Second tool (sibling) got the [DEFERRED] marker.
+    const siblingBlock = (toolMsg!.content as ResultBlock[]).find(
+      (b) => b.toolCallId === 'tc-sibling-a',
+    );
+    expect(siblingBlock?.output.value).toContain('[DEFERRED]');
+
+    // Cleanup rule.
+    await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
+  });
+
+  it('Bug C: approve → save_memory ACTUALLY runs (agent_memory row created) and executed_at stamped', async () => {
+    // Seed the require_approval rule for save_memory.
+    await approvalDb.insert(approvalRules).values({
+      entityId: approvalSeed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+
+    const job = await createApprovalJob();
+
+    // Unique fact string — used to assert the real DB row was created by
+    // save_memory.execute() on resume (not by any earlier code path).
+    const GATED_FACT = `approval-gate-test-fact-${Date.now()}`;
+
+    // Turn 1: LLM emits save_memory → job suspends.
+    // Turn 2 (after approval): LLM calls return_result to finish.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-gated-b',
+            toolName: 'save_memory',
+            args: { fact: GATED_FACT, category: 'context' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-b', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    // First execution → suspends, save_memory NOT executed yet.
+    const suspendResult = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+    expect(suspendResult.status).toBe('awaiting_approval');
+
+    // Confirm no agent_memory row exists yet for the unique fact.
+    const memBefore = await approvalDb
+      .select()
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, GATED_FACT));
+    expect(memBefore.length).toBe(0);
+
+    // Find the pending approval_requests row created by executeTool.
+    const approvalRows = await approvalDb
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    const approvalRow = approvalRows.find(
+      (r) => r.toolName === 'save_memory' && r.status === 'pending',
+    );
+    expect(approvalRow).toBeDefined();
+
+    // Drive the approval through the real path: mark approved, set job back to pending.
+    // This mirrors what approveRoute now does (it only records the decision + re-queues).
+    await approvalDb
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    await approvalDb
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, job.id));
+
+    // Resume — execute.ts step 11.7 executes the approved tool.
+    const resumeResult = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+    expect(resumeResult.status).toBe('completed');
+
+    // Core assertion (Bug C): save_memory.execute() ran → agent_memory row exists.
+    // This is a REAL DB side-effect, not hand-seeded.
+    const memAfter = await approvalDb
+      .select()
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, GATED_FACT));
+    expect(memAfter.length).toBeGreaterThan(0);
+
+    // executed_at is stamped on the approval_requests row.
+    const updatedApproval = await approvalDb
+      .select({ executedAt: approvalRequests.executedAt })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    expect(updatedApproval[0]?.executedAt).not.toBeNull();
+
+    // The messages in DB must NOT contain [AWAITING_APPROVAL] — replaced with real output.
+    const jobRow = await approvalDb
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    const messages = jobRow[0]?.messages as Array<{ role: string; content: unknown }>;
+    let foundAwaiting = false;
+    for (const tm of messages.filter((m) => m.role === 'tool')) {
+      for (const block of tm.content as Array<{ output?: { value?: string } }>) {
+        if (block.output?.value?.includes?.('[AWAITING_APPROVAL]')) foundAwaiting = true;
+      }
+    }
+    expect(foundAwaiting).toBe(false);
+
+    // Cleanup.
+    await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
+  });
+
+  it('rejection: rejected save_memory → [REJECTED] marker replaces [AWAITING_APPROVAL], NO memory row created', async () => {
+    // Seed the require_approval rule.
+    await approvalDb.insert(approvalRules).values({
+      entityId: approvalSeed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+
+    const job = await createApprovalJob();
+
+    const REJECTED_FACT = `rejection-gate-test-fact-${Date.now()}`;
+
+    // LLM: turn 1 emits save_memory, turn 2 (after rejection) calls return_result.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-gated-c',
+            toolName: 'save_memory',
+            args: { fact: REJECTED_FACT, category: 'context' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-c', toolName: 'return_result', args: { status: 'blocked' } },
+        ],
+      },
+    ]);
+
+    // First execution → suspends.
+    const suspendResult = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+    expect(suspendResult.status).toBe('awaiting_approval');
+
+    // Find the pending approval_requests row.
+    const approvalRows = await approvalDb
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    const approvalRow = approvalRows.find(
+      (r) => r.toolName === 'save_memory' && r.status === 'pending',
+    );
+    expect(approvalRow).toBeDefined();
+
+    // Reject the request.
+    await approvalDb
+      .update(approvalRequests)
+      .set({ status: 'rejected', resolvedAt: new Date(), resolvedBy: 'test', notes: 'Too risky' })
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    await approvalDb
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, job.id));
+
+    // Resume.
+    const resumeResult = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+    expect(resumeResult.status).toBe('completed');
+
+    // save_memory.execute() must NOT have run — no agent_memory row for the fact.
+    const memAfter = await approvalDb
+      .select()
+      .from(agentMemory)
+      .where(eq(agentMemory.fact, REJECTED_FACT));
+    expect(memAfter.length).toBe(0);
+
+    // executed_at is stamped even for rejections (marker was replaced, work is done).
+    const updatedApproval = await approvalDb
+      .select({ executedAt: approvalRequests.executedAt })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    expect(updatedApproval[0]?.executedAt).not.toBeNull();
+
+    // Messages must contain [REJECTED], NOT [AWAITING_APPROVAL].
+    const jobRow = await approvalDb
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    const messages = jobRow[0]?.messages as Array<{ role: string; content: unknown }>;
+    let foundRejected = false;
+    let foundAwaiting = false;
+    for (const tm of messages.filter((m) => m.role === 'tool')) {
+      for (const block of tm.content as Array<{ output?: { value?: string } }>) {
+        if (block.output?.value?.includes?.('[REJECTED]')) foundRejected = true;
+        if (block.output?.value?.includes?.('[AWAITING_APPROVAL]')) foundAwaiting = true;
+      }
+    }
+    expect(foundRejected).toBe(true);
+    expect(foundAwaiting).toBe(false);
+
+    // Cleanup.
+    await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
   });
 });

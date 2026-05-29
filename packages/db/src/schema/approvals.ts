@@ -27,6 +27,12 @@ export const approvalRequests = pgTable(
       sql`now() + interval '1 hour'`,
     ),
     notes: text('notes'),
+    /**
+     * Stamped by the runner's resume step once the approved/rejected tool has
+     * been executed (or its marker replaced). NULL = not yet executed.
+     * Guards against double-execution on duplicate resume triggers.
+     */
+    executedAt: timestamp('executed_at', { withTimezone: true }),
   },
   (table) => [
     index('idx_approval_requests_entity_id').on(table.entityId),

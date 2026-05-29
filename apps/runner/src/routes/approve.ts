@@ -1,8 +1,12 @@
 // routes/approve.ts — POST /api/approve — resume an awaiting_approval job
-// 1:1 port of legacy api/approve.py logic
 //
 // POST /api/approve { approvalRequestId, decision: 'approve' | 'reject', notes? }
 //   → { jobId, status }
+//
+// This route only records the human's decision (approved / rejected) and
+// re-queues the job. The actual tool execution happens in execute.ts step 11.7
+// (the execute-on-resume step) which fires at the start of executeJob and
+// replaces the [AWAITING_APPROVAL] marker with the real tool output.
 
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -54,46 +58,15 @@ export async function approveRoute(
 
   const jobId = approval.jobId;
 
-  // Load the paused job
+  // Verify the job exists
   const jobRows = await deps.db.select().from(agentJobs).where(eq(agentJobs.id, jobId)).limit(1);
 
   if (jobRows.length === 0) {
     return c.json({ error: 'job_not_found' }, 404);
   }
 
-  const job = jobRows[0]!;
-
-  // Build updated messages
-  let messages = Array.isArray(job.messages) ? (job.messages as unknown[]) : [];
-
-  if (decision === 'reject') {
-    // Inject rejection into the conversation
-    messages = injectRejection(messages, notes ?? '');
-
-    // Set job back to pending for resume (approval does NOT bump chain_count)
-    await deps.db
-      .update(agentJobs)
-      .set({
-        messages,
-        status: 'pending',
-        updatedAt: new Date(),
-      })
-      .where(eq(agentJobs.id, jobId));
-  } else {
-    // Approve: inject approval marker so LLM sees the gate is open
-    messages = injectApproval(messages);
-
-    await deps.db
-      .update(agentJobs)
-      .set({
-        messages,
-        status: 'pending',
-        updatedAt: new Date(),
-      })
-      .where(eq(agentJobs.id, jobId));
-  }
-
-  // Mark approval resolved (LAST — so a crash between execute+messages is retryable)
+  // Mark approval resolved. execute.ts step 11.7 reads this on resume and
+  // executes or rejects the tool (replacing the [AWAITING_APPROVAL] marker).
   await deps.db
     .update(approvalRequests)
     .set({
@@ -104,75 +77,19 @@ export async function approveRoute(
     })
     .where(eq(approvalRequests.id, approvalRequestId));
 
+  // Set job back to pending so executeJob will pick it up.
+  // Approval does NOT bump chain_count — the LLM did not make an extra chain
+  // call, the human just acted on an already-proposed action.
+  await deps.db
+    .update(agentJobs)
+    .set({
+      status: 'pending',
+      updatedAt: new Date(),
+    })
+    .where(eq(agentJobs.id, jobId));
+
   // Resume the job
   void triggerWorker(jobId, runnerEnv);
 
   return c.json({ ok: true, jobId, status: 'pending', decision }, 200);
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function injectRejection(messages: unknown[], notes: string): unknown[] {
-  return messages.map((msg) => {
-    if (
-      typeof msg === 'object' &&
-      msg !== null &&
-      (msg as Record<string, unknown>)['role'] === 'tool'
-    ) {
-      const content = (msg as Record<string, unknown>)['content'];
-      if (Array.isArray(content)) {
-        const updatedContent = content.map((block) => {
-          if (
-            typeof block === 'object' &&
-            block !== null &&
-            (block as Record<string, unknown>)['type'] === 'tool-result'
-          ) {
-            const result = (block as Record<string, unknown>)['result'];
-            if (typeof result === 'string' && result.includes('[AWAITING_APPROVAL]')) {
-              return {
-                ...(block as Record<string, unknown>),
-                result: `[REJECTED] Human reviewer rejected this action. Reason: ${notes || 'no reason provided'}. Adapt your approach.`,
-              };
-            }
-          }
-          return block;
-        });
-        return { ...(msg as Record<string, unknown>), content: updatedContent };
-      }
-    }
-    return msg;
-  });
-}
-
-function injectApproval(messages: unknown[]): unknown[] {
-  return messages.map((msg) => {
-    if (
-      typeof msg === 'object' &&
-      msg !== null &&
-      (msg as Record<string, unknown>)['role'] === 'tool'
-    ) {
-      const content = (msg as Record<string, unknown>)['content'];
-      if (Array.isArray(content)) {
-        const updatedContent = content.map((block) => {
-          if (
-            typeof block === 'object' &&
-            block !== null &&
-            (block as Record<string, unknown>)['type'] === 'tool-result'
-          ) {
-            const result = (block as Record<string, unknown>)['result'];
-            if (typeof result === 'string' && result.includes('[AWAITING_APPROVAL]')) {
-              return {
-                ...(block as Record<string, unknown>),
-                result:
-                  '[APPROVED] Human reviewer approved this action. Continue with the approved parameters.',
-              };
-            }
-          }
-          return block;
-        });
-        return { ...(msg as Record<string, unknown>), content: updatedContent };
-      }
-    }
-    return msg;
-  });
 }

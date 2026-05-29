@@ -244,7 +244,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       resolved_at timestamptz,
       resolved_by text,
       expires_at timestamptz DEFAULT now() + interval '1 hour',
-      notes text
+      notes text,
+      executed_at timestamptz
     );
 
     CREATE TABLE IF NOT EXISTS approval_rules (
