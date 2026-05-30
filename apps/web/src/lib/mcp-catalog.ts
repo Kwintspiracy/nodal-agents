@@ -66,6 +66,16 @@ export type McpCatalogEntry = {
   /** User-facing guidance on where to get the key. */
   docsHint: string;
   /**
+   * Validation status surfaced as a marketplace badge.
+   * - omitted / `'verified'` → connector has been verified end-to-end live.
+   * - `'pending'` → shipped but not yet live-verified; the card shows a
+   *   "Test pending" badge so the user knows the connection params may
+   *   need adjusting. Lets us extend the catalogue without claiming
+   *   everything works (honest counterpart to the "no half-baked catalog"
+   *   invariant).
+   */
+  status?: 'verified' | 'pending';
+  /**
    * Pre-filled command for stdio catalog entries (non-custom).
    * `undefined` for HTTP entries and the `custom-stdio-mcp` sentinel
    * (user supplies the command for those).
@@ -279,6 +289,99 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     verifyToolName: null,
     docsHint:
       'Create a Sentry Auth Token at https://sentry.io/settings/account/api/auth-tokens/. Paste the full URL of your Sentry MCP endpoint and your token.',
+  },
+  // ── Expansion batch (status: 'pending' — not yet live-verified) ───────────
+  {
+    slug: 'n8n',
+    label: 'n8n',
+    description:
+      'Workflow automation — let an agent list, read, build, and trigger n8n workflows on your instance. Runs the n8n-mcp server locally via npx.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Set N8N_API_URL to your n8n instance (e.g. https://n8n.example.com) and N8N_API_KEY to an API key from Settings → n8n API. First run downloads the package via npx.',
+    command: 'npx',
+    args: ['-y', 'n8n-mcp'],
+    envVarNames: ['N8N_API_URL', 'N8N_API_KEY'],
+    status: 'pending',
+  },
+  {
+    slug: 'supabase',
+    label: 'Supabase',
+    description:
+      'Manage a Supabase project — list tables, run read-only SQL, inspect logs and advisors. Runs the official Supabase MCP server locally via npx (read-only by default).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Replace <project-ref> in the args with your project ref (Project Settings → General). Set SUPABASE_ACCESS_TOKEN to a Personal Access Token from supabase.com/dashboard/account/tokens. Remove --read-only to allow writes.',
+    command: 'npx',
+    args: [
+      '-y',
+      '@supabase/mcp-server-supabase@latest',
+      '--read-only',
+      '--project-ref=<project-ref>',
+    ],
+    envVarNames: ['SUPABASE_ACCESS_TOKEN'],
+    status: 'pending',
+  },
+  {
+    slug: 'vercel',
+    label: 'Vercel',
+    description:
+      'Manage Vercel deployments and projects — list projects, inspect deployments, read build and runtime logs. Connects to the hosted Vercel MCP server.',
+    serverUrl: 'https://mcp.vercel.com',
+    transport: 'http',
+    authScheme: 'bearer',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create an access token at vercel.com/account/tokens and paste it here. Scope it to the relevant team/project for least privilege.',
+    status: 'pending',
+  },
+  {
+    slug: 'airtable',
+    label: 'Airtable',
+    description:
+      'Read and write Airtable bases — list bases and tables, query records, create and update rows. Runs the airtable-mcp-server locally via npx.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create a Personal Access Token at airtable.com/create/tokens (scopes: data.records:read/write, schema.bases:read) and set it as AIRTABLE_API_KEY.',
+    command: 'npx',
+    args: ['-y', 'airtable-mcp-server'],
+    envVarNames: ['AIRTABLE_API_KEY'],
+    status: 'pending',
+  },
+  {
+    slug: 'notion',
+    label: 'Notion',
+    description:
+      'Read and update Notion pages and databases — search, fetch, create, and edit content. Runs the official Notion MCP server locally via npx.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create an internal integration at notion.so/my-integrations, share the target pages/databases with it, and set NOTION_TOKEN to the integration secret (starts with ntn_).',
+    command: 'npx',
+    args: ['-y', '@notionhq/notion-mcp-server'],
+    envVarNames: ['NOTION_TOKEN'],
+    status: 'pending',
   },
   // ── Custom entries ────────────────────────────────────────────────────────
   // Reserved slugs — the action layer (createMcpServerFromCatalogAction)

@@ -17,6 +17,8 @@ const CATEGORIES: ChipItem<string>[] = [
   { value: 'All', label: 'All' },
   { value: 'Comms', label: 'Comms' },
   { value: 'Data', label: 'Data' },
+  { value: 'Dev', label: 'Dev' },
+  { value: 'Web', label: 'Web' },
   { value: 'Productivity', label: 'Productivity' },
   { value: 'Custom', label: 'Custom' },
   { value: 'Other', label: 'Other' },
@@ -85,6 +87,7 @@ function McpMarketCard({
   const router = useRouter();
   const glyph = catalogItem.label.slice(0, 2).toUpperCase();
   const cat = mcpCategory(catalogItem.slug);
+  const isPending = catalogItem.status === 'pending';
 
   function handleDone() {
     setAddOpen(false);
@@ -103,10 +106,22 @@ function McpMarketCard({
         description={catalogItem.description}
         category={cat}
         topRight={
-          isInstalled ? (
-            <span className="inline-flex items-center gap-1 rounded-[6px] bg-ok-bg px-2 py-1 font-sans text-[11px] font-medium text-ok">
-              <CheckCircle size={11} weight="regular" />
-              {installedCount} installed
+          isInstalled || isPending ? (
+            <span className="flex items-center gap-1.5">
+              {isPending && (
+                <span
+                  className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 font-sans text-[11px] font-medium text-warn"
+                  title="Not yet verified end-to-end — connection params may need adjusting."
+                >
+                  Test pending
+                </span>
+              )}
+              {isInstalled && (
+                <span className="inline-flex items-center gap-1 rounded-[6px] bg-ok-bg px-2 py-1 font-sans text-[11px] font-medium text-ok">
+                  <CheckCircle size={11} weight="regular" />
+                  {installedCount} installed
+                </span>
+              )}
             </span>
           ) : undefined
         }

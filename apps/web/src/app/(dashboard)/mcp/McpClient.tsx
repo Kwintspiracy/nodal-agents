@@ -1,13 +1,16 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
 import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
+import Modal from '@/components/ui/Modal';
 import McpInstalledTable from './McpInstalledTable.tsx';
 import McpMarketplaceGrid from './McpMarketplaceGrid.tsx';
+import McpAddForm from './McpAddForm.tsx';
 import { mcpCategory } from './categories.ts';
 
 type Tab = 'installed' | 'marketplace';
@@ -23,9 +26,18 @@ type Props = {
  * search, ChipRow filter on the Marketplace tab.
  */
 export default function McpClient({ instances, catalog }: Props) {
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>(instances.length > 0 ? 'installed' : 'marketplace');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
+
+  // "Add custom MCP" — an always-visible entry point so users don't have to
+  // hunt for the custom-* cards under the Marketplace "Custom" chip.
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customFlavor, setCustomFlavor] = useState<'stdio' | 'http'>('stdio');
+  const customHttp = catalog.find((c) => c.slug === 'custom-http-mcp');
+  const customStdio = catalog.find((c) => c.slug === 'custom-stdio-mcp');
+  const customItem = customFlavor === 'http' ? customHttp : customStdio;
 
   const filteredInstalled = useMemo(() => {
     if (!query.trim()) return instances;
@@ -77,6 +89,15 @@ export default function McpClient({ instances, catalog }: Props) {
             placeholder={tab === 'installed' ? 'Search MCP servers…' : 'Search catalog…'}
           />
         }
+        cta={
+          <button
+            type="button"
+            onClick={() => setCustomOpen(true)}
+            className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-conn-vivid px-3.5 text-[13px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
+          >
+            + Add custom MCP
+          </button>
+        }
       />
 
       <div className="pt-5">
@@ -97,6 +118,44 @@ export default function McpClient({ instances, catalog }: Props) {
           />
         )}
       </div>
+
+      <Modal open={customOpen} onClose={() => setCustomOpen(false)} title="Add a custom MCP server">
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            {(['stdio', 'http'] as const).map((flavor) => (
+              <button
+                key={flavor}
+                type="button"
+                onClick={() => setCustomFlavor(flavor)}
+                className={`flex-1 rounded-md border px-3 py-2 text-xs font-medium ${
+                  customFlavor === flavor
+                    ? 'border-ink-3 bg-hover text-ink'
+                    : 'border-rule bg-paper text-ink-3 hover:border-rule'
+                }`}
+              >
+                {flavor === 'stdio' ? 'Local subprocess (stdio)' : 'Remote server (HTTP)'}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-ink-4">
+            {customFlavor === 'stdio'
+              ? 'Run any MCP package locally (npx, python, a binary…). Provide the command, args, and env vars.'
+              : 'Connect any Streamable-HTTP MCP server. Provide the URL, auth scheme, and API key.'}
+          </p>
+          {customItem ? (
+            <McpAddForm
+              key={customFlavor}
+              catalogItem={customItem}
+              onDone={() => {
+                setCustomOpen(false);
+                router.refresh();
+              }}
+            />
+          ) : (
+            <p className="text-xs text-err">Custom MCP option is unavailable.</p>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

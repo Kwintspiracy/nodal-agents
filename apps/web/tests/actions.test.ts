@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import {
   _setMasterKeyForTests,
   _resetMasterKeyCacheForTests,
+  encrypt,
   decrypt,
   isEncrypted,
 } from '@nodal-agents/secrets';
@@ -2757,6 +2758,205 @@ describe('createMcpServerFromCatalogAction', () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('getMcpServerConfigAction', () => {
+  it('returns structural config + env KEYS but NEVER secret values', async () => {
+    const secret = 'super-secret-token-value';
+    const encVal = encrypt(secret);
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000005a1',
+        name: 'My FS',
+        slug: 'fs',
+        transport: 'stdio',
+        url: null,
+        authScheme: null,
+        authParamName: null,
+        command: 'npx',
+        args: ['-y', 'server-filesystem', '/tmp'],
+        envVars: { GITHUB_TOKEN: encVal },
+        apiKey: null,
+        apiKeyLast4: null,
+      },
+    ]) as typeof currentDb;
+    const { getMcpServerConfigAction } = await import('../src/lib/actions.ts');
+    const r = await getMcpServerConfigAction('aaaaaaaa-0000-0000-0000-0000000005a1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.transport).toBe('stdio');
+    expect(r.data.command).toBe('npx');
+    expect(r.data.args).toEqual(['-y', 'server-filesystem', '/tmp']);
+    expect(r.data.envKeys).toEqual(['GITHUB_TOKEN']);
+    // The plaintext AND ciphertext of the secret must never reach the client.
+    const serialized = JSON.stringify(r.data);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(encVal);
+  });
+
+  it('returns not_found for a server outside the entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { getMcpServerConfigAction } = await import('../src/lib/actions.ts');
+    const r = await getMcpServerConfigAction('aaaaaaaa-0000-0000-0000-0000000005a2');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
+describe('updateMcpServerConfigAction', () => {
+  function setPayload() {
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setFn = (updateSpy.mock.results[0]?.value as { set?: ReturnType<typeof vi.fn> }).set;
+    return setFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+  }
+
+  it('stdio: blank env value KEEPS the stored ciphertext, but verifies with the decrypted plaintext', async () => {
+    const encOld = encrypt('stored-token');
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000005b1',
+        name: 'FS',
+        slug: 'fs',
+        transport: 'stdio',
+        url: null,
+        authScheme: null,
+        authParamName: null,
+        command: 'npx',
+        args: ['-y', 'old-pkg'],
+        envVars: { TOKEN: encOld },
+        apiKey: null,
+      },
+    ]) as typeof currentDb;
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(mockMcpConnection([{ name: 'do_thing' }]));
+
+    const { updateMcpServerConfigAction } = await import('../src/lib/actions.ts');
+    const r = await updateMcpServerConfigAction('aaaaaaaa-0000-0000-0000-0000000005b1', {
+      name: 'FS renamed',
+      command: 'npx',
+      args: ['-y', 'new-pkg'],
+      env: { TOKEN: '' }, // blank → keep stored value
+    });
+    expect(r.ok).toBe(true);
+
+    // connect-and-verify ran with the NEW args and the DECRYPTED stored secret.
+    const connectArg = mcpAdapterMocks.connectMcp.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(connectArg['command']).toBe('npx');
+    expect(connectArg['args']).toEqual(['-y', 'new-pkg']);
+    expect(connectArg['env']).toEqual({ TOKEN: 'stored-token' });
+
+    // Persisted row: new args, name, tools refreshed; ciphertext UNCHANGED (kept).
+    const set = setPayload();
+    expect(set?.['name']).toBe('FS renamed');
+    expect(set?.['args']).toEqual(['-y', 'new-pkg']);
+    expect((set?.['envVars'] as Record<string, string>)['TOKEN']).toBe(encOld);
+    expect(set?.['availableTools']).toEqual([{ name: 'do_thing', description: null }]);
+  });
+
+  it('stdio: a new env value REPLACES with a fresh ciphertext and verifies with the plaintext', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000005b2',
+        name: 'FS',
+        slug: 'fs',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', 'pkg'],
+        envVars: { TOKEN: encrypt('old') },
+        apiKey: null,
+      },
+    ]) as typeof currentDb;
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(mockMcpConnection([]));
+
+    const { updateMcpServerConfigAction } = await import('../src/lib/actions.ts');
+    const r = await updateMcpServerConfigAction('aaaaaaaa-0000-0000-0000-0000000005b2', {
+      name: 'FS',
+      command: 'npx',
+      args: ['-y', 'pkg'],
+      env: { TOKEN: 'brand-new' },
+    });
+    expect(r.ok).toBe(true);
+
+    const connectArg = mcpAdapterMocks.connectMcp.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect((connectArg['env'] as Record<string, string>)['TOKEN']).toBe('brand-new');
+
+    const stored = (setPayload()?.['envVars'] as Record<string, string>)['TOKEN']!;
+    expect(isEncrypted(stored)).toBe(true);
+    expect(stored).not.toBe('brand-new');
+    expect(decrypt(stored)).toBe('brand-new');
+  });
+
+  it('http: blank apiKey KEEPS the stored key (set payload omits apiKey) and verifies with the decrypted key', async () => {
+    const encKey = encrypt('sk_live_existing');
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000005b3',
+        name: 'API',
+        slug: 'my-api',
+        transport: 'http',
+        url: 'https://old.example.com/mcp',
+        authScheme: 'header',
+        authParamName: 'x-api-key',
+        command: null,
+        args: null,
+        envVars: {},
+        apiKey: encKey,
+        apiKeyLast4: 'ting',
+      },
+    ]) as typeof currentDb;
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockResolvedValue(mockMcpConnection([{ name: 'ping' }]));
+
+    const { updateMcpServerConfigAction } = await import('../src/lib/actions.ts');
+    const r = await updateMcpServerConfigAction('aaaaaaaa-0000-0000-0000-0000000005b3', {
+      name: 'API v2',
+      url: 'https://new.example.com/mcp',
+      authScheme: 'header',
+      authParamName: 'x-api-key',
+      // apiKey omitted → keep
+    });
+    expect(r.ok).toBe(true);
+
+    const connectArg = mcpAdapterMocks.connectMcp.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(connectArg['url']).toBe('https://new.example.com/mcp');
+    expect(connectArg['apiKey']).toBe('sk_live_existing'); // decrypted stored key
+
+    const set = setPayload();
+    expect(set?.['url']).toBe('https://new.example.com/mcp');
+    expect(set?.['name']).toBe('API v2');
+    expect('apiKey' in (set ?? {})).toBe(false); // key untouched
+  });
+
+  it('fails loud and writes nothing when the new config cannot connect', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000005b4',
+        name: 'FS',
+        slug: 'fs',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', 'pkg'],
+        envVars: {},
+        apiKey: null,
+      },
+    ]) as typeof currentDb;
+    mcpAdapterMocks.connectMcp.mockReset();
+    mcpAdapterMocks.connectMcp.mockRejectedValue(new Error('spawn failed'));
+
+    const { updateMcpServerConfigAction } = await import('../src/lib/actions.ts');
+    const r = await updateMcpServerConfigAction('aaaaaaaa-0000-0000-0000-0000000005b4', {
+      name: 'FS',
+      command: 'nope',
+      args: [],
+      env: {},
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('mcp_connect_failed');
+    // No UPDATE was issued.
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });
 

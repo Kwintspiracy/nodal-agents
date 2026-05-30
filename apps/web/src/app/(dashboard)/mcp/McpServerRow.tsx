@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   deleteMcpServerAction,
@@ -9,6 +10,7 @@ import {
   type McpServerInstance,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import McpEditForm from './McpEditForm.tsx';
 
 interface Props {
   instance: McpServerInstance;
@@ -18,8 +20,10 @@ interface Props {
 }
 
 export default function McpServerRow({ instance, catalogLabel, description }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   // Rename state
   const [isRenaming, setIsRenaming] = useState(false);
@@ -145,6 +149,17 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
         <div className="shrink-0 flex gap-2 flex-wrap justify-end">
           <button
             type="button"
+            onClick={() => {
+              setEditOpen((v) => !v);
+              setRotateOpen(false);
+            }}
+            disabled={isPending}
+            className="px-2.5 py-1 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
+          >
+            {editOpen ? 'Cancel' : 'Edit config'}
+          </button>
+          <button
+            type="button"
             onClick={() => setRotateOpen((v) => !v)}
             disabled={isPending}
             className="px-2.5 py-1 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
@@ -213,6 +228,19 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {editOpen && (
+        <div className="mt-3">
+          <McpEditForm
+            mcpServerId={instance.id}
+            onDone={() => {
+              setEditOpen(false);
+              router.refresh();
+            }}
+            onCancel={() => setEditOpen(false)}
+          />
         </div>
       )}
 

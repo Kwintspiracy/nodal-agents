@@ -2032,6 +2032,8 @@ export type McpCatalogItem = {
    * Add form. `undefined` = no env vars required.
    */
   envVarNames?: string[];
+  /** Marketplace badge status — `'pending'` renders a "Test pending" pill. */
+  status: 'verified' | 'pending';
 };
 
 export type McpServersListResponse = {
@@ -2075,6 +2077,7 @@ export async function listMcpServersAction(): Promise<ActionResult<McpServersLis
       command: c.command,
       args: c.args,
       envVarNames: c.envVarNames,
+      status: c.status ?? 'verified',
     }));
 
     return ok({ instances, catalog });
@@ -2501,6 +2504,280 @@ export async function updateMcpServerApiKeyAction(
   } catch (err) {
     console.error('[updateMcpServerApiKeyAction]', err);
     return fail('db_error', 'Failed to rotate MCP API key');
+  }
+}
+
+/**
+ * Non-secret configuration of one MCP server, for prefilling the edit form.
+ * Secrets (apiKey, env var VALUES) are NEVER included — only env var KEYS and
+ * the masked apiKeyLast4. Mirrors the "plaintext never leaves the server"
+ * rule used everywhere else (listMcpServersAction, McpServerInstance).
+ */
+export type McpServerConfig = {
+  id: string;
+  name: string;
+  slug: string;
+  transport: 'http' | 'stdio';
+  url: string | null;
+  authScheme: 'header' | 'query' | 'bearer' | null;
+  authParamName: string | null;
+  command: string | null;
+  args: string[];
+  /** Env var KEYS only — values stay encrypted on the server. */
+  envKeys: string[];
+  hasApiKey: boolean;
+  apiKeyLast4: string | null;
+};
+
+/**
+ * Read a single MCP server's structural config for the edit form. Entity-scoped.
+ * Returns NO secrets — only field shapes and env var keys.
+ */
+export async function getMcpServerConfigAction(
+  mcpServerId: string,
+): Promise<ActionResult<McpServerConfig>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(mcpServerId).success) {
+      return fail('validation_failed', 'Invalid MCP server id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'MCP connector not found');
+
+    const envVars = (row.envVars ?? {}) as Record<string, string>;
+    return ok({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      transport: row.transport as 'http' | 'stdio',
+      url: row.url ?? null,
+      authScheme: (row.authScheme ?? null) as 'header' | 'query' | 'bearer' | null,
+      authParamName: row.authParamName ?? null,
+      command: row.command ?? null,
+      args: Array.isArray(row.args) ? (row.args as string[]) : [],
+      envKeys: Object.keys(envVars),
+      hasApiKey: !!row.apiKey,
+      apiKeyLast4: row.apiKeyLast4 ?? null,
+    });
+  } catch (err) {
+    console.error('[getMcpServerConfigAction]', err);
+    return fail('db_error', 'Failed to load MCP server config');
+  }
+}
+
+const UpdateMcpServerSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(120),
+  // ── HTTP fields ──
+  url: z.string().url('Invalid URL').optional(),
+  authScheme: z.enum(['header', 'query', 'bearer']).optional(),
+  authParamName: z.string().max(100).optional(),
+  /** New secret — omit/blank to keep the existing stored key. */
+  apiKey: z.string().max(2_000).optional(),
+  // ── stdio fields ──
+  command: z.string().min(1).max(200).optional(),
+  args: z.array(z.string().max(500)).max(20).optional(),
+  /**
+   * Desired env var set. For each key: a non-empty value REPLACES the stored
+   * one; an empty value KEEPS the existing encrypted value. Keys absent from
+   * this map are DROPPED. Omit the whole field to keep env untouched.
+   */
+  env: z.record(z.string(), z.string().max(2_000)).optional(),
+});
+
+/**
+ * Edit an existing MCP server's structural config (URL/auth for HTTP,
+ * command/args/env for stdio). `slug` and `transport` are immutable — the slug
+ * is the tool-name prefix (changing it would orphan agent assignments) and the
+ * transport determines the whole shape.
+ *
+ * Mirrors createMcpServerFromCatalogAction: connect-and-verify with the NEW
+ * config BEFORE persisting, so a broken edit fails loud and writes nothing.
+ * Secrets follow the rotate-key contract: a blank secret field keeps the
+ * existing encrypted value (the plaintext is decrypted only server-side, only
+ * to re-verify the live connection).
+ */
+export async function updateMcpServerConfigAction(
+  mcpServerId: string,
+  raw: unknown,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(mcpServerId).success) {
+      return fail('validation_failed', 'Invalid MCP server id');
+    }
+    const parsed = UpdateMcpServerSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+
+    const db = getDb();
+    const [existing] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'MCP connector not found');
+
+    const catalog = MCP_CATALOG.find((e) => e.slug === existing.slug);
+
+    // ── HTTP ──────────────────────────────────────────────────────────────────
+    if (existing.transport === 'http') {
+      const effectiveUrl = (parsed.data.url ?? existing.url ?? '').trim();
+      if (!effectiveUrl) return fail('validation_failed', 'Server URL is required');
+      const effectiveScheme = (parsed.data.authScheme ?? existing.authScheme ?? 'header') as
+        | 'header'
+        | 'query'
+        | 'bearer';
+      const effectiveParam =
+        effectiveScheme === 'bearer'
+          ? 'Authorization'
+          : (parsed.data.authParamName ?? existing.authParamName ?? '').trim();
+      if (effectiveScheme !== 'bearer' && !effectiveParam) {
+        return fail(
+          'validation_failed',
+          `Auth param name is required for the "${effectiveScheme}" scheme`,
+        );
+      }
+
+      // Resolve the key: a new key REPLACES; blank KEEPS the existing one
+      // (decrypted server-side only, to re-verify the live connection).
+      const newKey = (parsed.data.apiKey ?? '').trim();
+      const newKeyProvided = newKey.length > 0;
+      let apiKeyPlain: string;
+      if (newKeyProvided) {
+        if (
+          catalog &&
+          catalog.keyPrefix.length > 0 &&
+          !catalog.keyPrefix.some((p) => newKey.startsWith(p))
+        ) {
+          const expected =
+            catalog.keyPrefix.length === 1
+              ? `"${catalog.keyPrefix[0]}"`
+              : `one of: ${catalog.keyPrefix.map((p) => `"${p}"`).join(', ')}`;
+          return fail('validation_failed', `API key must start with ${expected}`);
+        }
+        apiKeyPlain = newKey;
+      } else {
+        if (!existing.apiKey) {
+          return fail('validation_failed', 'No stored API key — provide one to connect');
+        }
+        try {
+          apiKeyPlain = decrypt(existing.apiKey);
+        } catch {
+          return fail('validation_failed', 'Stored API key is unreadable — re-enter it');
+        }
+      }
+
+      let toolDescriptors: McpToolSummary[] = [];
+      let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
+      try {
+        conn = await connectMcp({
+          transport: 'http',
+          url: effectiveUrl,
+          apiKey: apiKeyPlain,
+          authScheme: effectiveScheme,
+          authParamName: effectiveParam,
+        });
+        toolDescriptors = conn.tools.map((t) => ({
+          name: t.name,
+          description: t.description ?? null,
+        }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return fail('mcp_connect_failed', `Could not connect with the new config: ${msg}`);
+      } finally {
+        if (conn) await conn.close().catch(() => {});
+      }
+
+      await db
+        .update(mcpServers)
+        .set({
+          name: parsed.data.name,
+          url: effectiveUrl,
+          authScheme: effectiveScheme,
+          authParamName: effectiveParam,
+          availableTools: toolDescriptors,
+          ...(newKeyProvided
+            ? { apiKey: encrypt(apiKeyPlain), apiKeyLast4: last4(apiKeyPlain) }
+            : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(mcpServers.id, mcpServerId));
+      revalidatePath('/mcp');
+      return ok(undefined);
+    }
+
+    // ── stdio ───────────────────────────────────────────────────────────────────
+    const effectiveCommand = (parsed.data.command ?? existing.command ?? '').trim();
+    if (!effectiveCommand) return fail('validation_failed', 'Command is required');
+    const effectiveArgs =
+      parsed.data.args ?? (Array.isArray(existing.args) ? (existing.args as string[]) : []);
+
+    const existingEnc = (existing.envVars ?? {}) as Record<string, string>;
+    const desired = parsed.data.env;
+    const plaintextEnv: Record<string, string> = {}; // for connect-verify
+    const encEnv: Record<string, string> = {}; // to persist
+    const entries = desired
+      ? Object.entries(desired)
+      : Object.entries(existingEnc).map(([k]) => [k, ''] as [string, string]);
+    for (const [k, v] of entries) {
+      if (v && v.length > 0) {
+        plaintextEnv[k] = v;
+        encEnv[k] = encrypt(v);
+      } else if (existingEnc[k] !== undefined) {
+        // Keep the stored value — decrypt only to re-verify, keep ciphertext to persist.
+        try {
+          plaintextEnv[k] = decrypt(existingEnc[k]);
+        } catch {
+          return fail('validation_failed', `Stored value for "${k}" is unreadable — re-enter it`);
+        }
+        encEnv[k] = existingEnc[k];
+      }
+      // else: blank value with no stored value → treat as unset, skip.
+    }
+
+    let toolDescriptors: McpToolSummary[] = [];
+    let conn: Awaited<ReturnType<typeof connectMcp>> | null = null;
+    try {
+      conn = await connectMcp({
+        transport: 'stdio',
+        command: effectiveCommand,
+        args: effectiveArgs,
+        env: plaintextEnv,
+      });
+      toolDescriptors = conn.tools.map((t) => ({
+        name: t.name,
+        description: t.description ?? null,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return fail(
+        'mcp_connect_failed',
+        `Could not start the subprocess (${effectiveCommand}): ${msg}`,
+      );
+    } finally {
+      if (conn) await conn.close().catch(() => {});
+    }
+
+    await db
+      .update(mcpServers)
+      .set({
+        name: parsed.data.name,
+        command: effectiveCommand,
+        args: effectiveArgs,
+        envVars: encEnv,
+        availableTools: toolDescriptors,
+        updatedAt: new Date(),
+      })
+      .where(eq(mcpServers.id, mcpServerId));
+    revalidatePath('/mcp');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateMcpServerConfigAction]', err);
+    return fail('db_error', 'Failed to update MCP server');
   }
 }
 
