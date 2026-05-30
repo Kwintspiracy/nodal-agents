@@ -322,6 +322,292 @@ describe('executeJob', () => {
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
+  // ─── Anti-spam guard: consecutive delivery-only turns ─────────────────────
+
+  it('anti-spam: caps consecutive delivery-only turns at maxConsecutiveDeliveryTurns and fails loud', async () => {
+    // Regression for live incident job 9bbdbfd7 (2026-05-29): the agent emitted
+    // 11 filler/emoji telegram_send_message turns in a row, never calling
+    // return_result, spamming the user. The guard must cut it off.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [spamJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Reply on Telegram',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!spamJob) throw new Error('Failed to create spam test job');
+
+    // Every turn is a single telegram_send_message and the LLM NEVER calls
+    // return_result. Distinct toolCallIds keep the message structure valid
+    // across turns. Six turns offered; the guard (default 3) must stop earlier.
+    const deliveryOnly = (i: number) => ({
+      toolCalls: [
+        {
+          toolCallId: `tc-spam-${i}`,
+          toolName: 'telegram_send_message',
+          args: { text: `msg ${i}` },
+        },
+      ],
+    });
+    const llmClient = makeMockLlmClient([
+      deliveryOnly(1),
+      deliveryOnly(2),
+      deliveryOnly(3),
+      deliveryOnly(4),
+      deliveryOnly(5),
+      deliveryOnly(6),
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(spamJob.id as JobId, makeDeps(llmClient), testEnv);
+
+    // Guard fired: job failed loud with the dedicated code (invariant 4).
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('delivery_spam_guard');
+    }
+
+    // Real effect asserted (not a call count of the guard): the user received
+    // at most maxConsecutiveDeliveryTurns (3) messages, NOT all 6 — the 4th
+    // turn's send was blocked BEFORE execution.
+    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(3);
+    expect(sendTelegramMessageMock).toHaveBeenLastCalledWith({
+      chatId: '12345',
+      text: 'msg 3',
+      botToken: 'fake-token',
+    });
+
+    // DB row reflects the loud failure.
+    const rows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, spamJob.id));
+    expect(rows[0]?.status).toBe('failed');
+    expect(rows[0]?.error).toBe('delivery_spam_guard');
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // ─── Delivery guard: Telegram job must deliver before completing ──────────
+
+  it('delivery guard: plain-text reply on a Telegram job is re-prompted, then delivered via the tool', async () => {
+    // Regression for live incident job 5d84d72e (2026-05-29): the agent answered
+    // in plain assistant text (no tool call) so nothing reached Telegram. The
+    // guard must re-prompt and force a real telegram_send_message.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Reply on Telegram',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create delivery test job');
+
+    // Turn 1: plain text, NO tool calls (the slip). Turn 2 (after nudge):
+    // telegram_send_message + return_result (the correction).
+    const llmClient = makeMockLlmClient([
+      { text: 'Voici ma réponse en texte brut, non livrée.' },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-tg',
+            toolName: 'telegram_send_message',
+            args: { text: 'la vraie réponse' },
+          },
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    // Real effect: the reply WAS delivered (once), with the right args.
+    expect(result.status).toBe('completed');
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
+      chatId: '12345',
+      text: 'la vraie réponse',
+      botToken: 'fake-token',
+    });
+
+    // The nudge forced a second turn (turn 1 = slip, turn 2 = delivery).
+    const rows = await db
+      .select({ status: agentJobs.status, turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.turn).toBe(2);
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('delivery guard: persistent plain-text on a Telegram job fails loud (telegram_not_delivered), nothing sent', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Reply on Telegram',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create delivery-fail test job');
+
+    // The model never uses the tool — every turn is plain text.
+    const llmClient = makeMockLlmClient([{ text: 'texte brut, encore et toujours' }]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('telegram_not_delivered');
+    }
+    // Nothing was ever delivered to the user.
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+    const rows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('failed');
+    expect(rows[0]?.error).toBe('telegram_not_delivered');
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('delivery guard: return_result without any send on a Telegram job is re-prompted, then delivered', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Reply on Telegram',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create return_result-only test job');
+
+    // Turn 1: return_result ALONE (no prior send). Turn 2: deliver + return_result.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'enfin livré' } },
+          { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
+      chatId: '12345',
+      text: 'enfin livré',
+      botToken: 'fake-token',
+    });
+    const rows = await db
+      .select({ turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.turn).toBe(2);
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('delivery guard: recommended one-turn pattern [telegram_send_message, return_result] completes with no nudge', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Reply on Telegram',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create one-turn test job');
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'pile poil' } },
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+    // No nudge: the whole job is a single turn.
+    const rows = await db
+      .select({ turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.turn).toBe(1);
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
   // ─── Brique 18.6: sibling-tool-error guard ────────────────────────────────
 
   it('Brique 18.6: tool error in same turn as return_result blocks finalization, LLM gets fresh turn with error', async () => {
@@ -863,6 +1149,14 @@ describe('executeJob', () => {
   // ─── Brique 31: Job context block in system_prompt ────────────────────────────
 
   it('Brique 31: Telegram-channel job persists ## Job context block in system_prompt', async () => {
+    // A real Telegram job belongs to an agent with a bot token; it must deliver
+    // via telegram_send_message (the delivery guard now enforces this), so the
+    // mock sends then finalizes — same single turn, system_prompt still persisted.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
     const [tgContextJob] = await db
       .insert(agentJobs)
       .values({
@@ -881,11 +1175,8 @@ describe('executeJob', () => {
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
-          {
-            toolCallId: 'tc-rr-ctx',
-            toolName: 'return_result',
-            args: { status: 'success', text: 'done' },
-          },
+          { toolCallId: 'tc-tg-ctx', toolName: 'telegram_send_message', args: { text: 'done' } },
+          { toolCallId: 'tc-rr-ctx', toolName: 'return_result', args: { status: 'success' } },
         ],
       },
     ]);
@@ -903,6 +1194,8 @@ describe('executeJob', () => {
     expect(sp).toContain('## Job context');
     expect(sp).toContain('- origin: telegram');
     expect(sp).toContain('- telegram_chat_id: 12345');
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
   it('Brique 31: api-channel job system_prompt has Job context with origin=api, no telegram_chat_id', async () => {

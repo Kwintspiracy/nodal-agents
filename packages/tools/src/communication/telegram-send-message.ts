@@ -69,6 +69,12 @@ Wrong (4 LLM round-trips for the same outcome):
   response 3: [{ telegram_send_message: part3 }]
   response 4: [{ return_result: ... }]
 
+**Stop when you're done**: once you have sent your reply, call \`return_result\`
+to end your turn. Do NOT keep sending standalone acknowledgements, follow-ups, or
+emoji-only messages turn after turn — the user did not ask for them and the
+platform will cut you off for spamming if you send on several turns in a row
+without finishing.
+
 Fail conditions:
 - If no chatId is provided and the current job has no origin chat, the tool throws
   \`telegram_no_recipient\`. This is intentional — do not guess a chat ID.

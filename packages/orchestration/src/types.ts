@@ -114,6 +114,13 @@ export interface ChainLimits {
   maxToolCallsPerTurn: number;
   maxDelegationDepth: number;
   maxTurns: number;
+  /**
+   * Max number of consecutive turns whose ONLY tool calls are user-facing
+   * delivery calls (e.g. telegram_send_message) with no return_result. Past
+   * this, the runner treats the agent as monologuing/spamming the user and
+   * fails the job loud. See execute.ts (`delivery_spam_guard`).
+   */
+  maxConsecutiveDeliveryTurns: number;
 }
 
 // ─── ChildAgent (read from DB) ────────────────────────────────────────────────

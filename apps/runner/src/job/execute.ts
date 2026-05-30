@@ -83,6 +83,21 @@ import type { RunnerEnv } from '../env.ts';
 // a narrower target. Tunable; 50K chars ≈ ~13K tokens.
 const MAX_TOOL_RESULT_CHARS = 50_000;
 
+// User-facing delivery tools: ones that push a message to a human channel.
+// A turn whose tool calls are ALL in this set (and contains no return_result)
+// is "delivery-only" — used by the anti-spam guard in the main loop to detect
+// an agent that keeps messaging the user across consecutive turns instead of
+// finishing with return_result. Extend this set as new outbound channels ship
+// (whatsapp_send_message, slack_send_message, …).
+const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(['telegram_send_message']);
+
+// Channels whose ONLY path to the user is a delivery tool call (telegram_send_message).
+// For these, a job that completes without ever delivering is a silent black hole —
+// the delivery guard re-prompts the agent before letting such a job finish. Other
+// channels (api, dashboard, cron, internal, …) expose agent_jobs.result directly, so
+// a text-only completion is fine there. Extend as new tool-only channels ship.
+const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram']);
+
 /** Truncate an oversized tool-result string with an explicit, model-readable marker. */
 function truncateForContext(value: string): string {
   if (value.length <= MAX_TOOL_RESULT_CHARS) return value;
@@ -815,6 +830,30 @@ export async function executeJob(
   // retry the turn a bounded number of times before failing the job loud.
   const MAX_EMPTY_TURN_RETRIES = 2;
   let emptyTurnRetries = 0;
+  // Anti-spam guard (invariant 8): count of consecutive turns whose only tool
+  // calls were user-facing delivery calls with no return_result. In-memory and
+  // intra-run — the spam pattern happens within one continuous run; a resume
+  // resets it, which is fine. Reset to 0 by any turn that does real work or
+  // calls return_result.
+  let consecutiveDeliveryOnlyTurns = 0;
+  // Delivery guard (invariant 8, mirror of the anti-spam guard): for a tool-only
+  // delivery channel (telegram), a job must deliver at least once via the delivery
+  // tool before completing — otherwise the reply is a silent black hole. We flip
+  // this true on the first successful telegram_send_message; if a completion path
+  // is reached while still false, we re-prompt the agent (bounded) before letting
+  // it finish. In-memory/intra-run: in the router/delegation case the parent makes
+  // its final send in the same run it finalizes, so the flag is evaluated correctly.
+  const requiresToolDelivery = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '');
+  const MAX_TELEGRAM_REDELIVERY_NUDGES = 2;
+  let telegramRedeliveryNudges = 0;
+  let telegramDelivered = false;
+  // Internal corrective prompt — never sent to the channel; only steers the LLM
+  // back to delivering via its tool. Not user-facing text (invariant 2 holds).
+  const deliveryNudge =
+    "[système] Tu es sur Telegram. Tu n'as pas encore livré ta réponse à l'utilisateur. " +
+    'Appelle `telegram_send_message` avec ta réponse, PUIS `return_result`. Ne réponds pas ' +
+    'en texte simple — sur Telegram, seul un message envoyé via `telegram_send_message` est ' +
+    "visible par l'utilisateur.";
   try {
     while (true) {
       turn += 1;
@@ -898,6 +937,23 @@ export async function executeJob(
         usage: { in: promptT, out: completionT },
       });
 
+      // e-pré. Anti-spam guard (invariant 8). A "delivery-only" turn is one
+      // whose tool calls are ALL user-facing sends (no return_result, no other
+      // work). A well-behaved agent batches its reply into ONE such turn then
+      // calls return_result; repeating delivery-only turns means it's
+      // monologuing one message per turn at the user. Fail loud BEFORE building
+      // the assistant message or executing the sends, so the (N+1)th batch
+      // never reaches the user. Live incident: job 9bbdbfd7 (2026-05-29) sent
+      // 11 filler/emoji messages this way.
+      const isDeliveryOnlyTurn =
+        rawToolCalls.length > 0 && rawToolCalls.every((tc) => DELIVERY_TOOL_NAMES.has(tc.toolName));
+      consecutiveDeliveryOnlyTurns = isDeliveryOnlyTurn ? consecutiveDeliveryOnlyTurns + 1 : 0;
+      if (consecutiveDeliveryOnlyTurns > DEFAULT_LIMITS.maxConsecutiveDeliveryTurns) {
+        trace('delivery_spam_guard', { turn, consecutiveDeliveryOnlyTurns });
+        await failJob(db, jobId as string, 'delivery_spam_guard', runStats());
+        return { status: 'failed', error: 'delivery_spam_guard' };
+      }
+
       // e. Append assistant message (use text or build from tool calls)
       const assistantMsg: ModelMessage = {
         role: 'assistant',
@@ -923,6 +979,26 @@ export async function executeJob(
         trace('no_tool_calls_branch', { turn, hasText: Boolean(response.text) });
         const textContent = response.text ?? '';
         if (textContent) {
+          // Delivery guard: on a tool-only channel, a plain-text answer was NOT
+          // delivered to the user (only the tool reaches them). Re-prompt the
+          // agent to resend via its tool instead of silently completing. Live
+          // incident: job 5d84d72e (2026-05-29) completed with the reply only in
+          // agent_jobs.result — the Telegram user saw nothing.
+          if (requiresToolDelivery && !telegramDelivered) {
+            if (telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES) {
+              telegramRedeliveryNudges += 1;
+              trace('telegram_redelivery_nudge', {
+                turn,
+                attempt: telegramRedeliveryNudges,
+                via: 'text_branch',
+              });
+              messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
+              continue;
+            }
+            trace('telegram_not_delivered', { turn, via: 'text_branch' });
+            await failJob(db, jobId as string, 'telegram_not_delivered', runStats());
+            return { status: 'failed', error: 'telegram_not_delivered' };
+          }
           await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
           return { status: 'completed', result: textContent };
         }
@@ -1242,6 +1318,12 @@ export async function executeJob(
           continue;
         }
 
+        // Delivery guard: record a successful user-facing delivery so the
+        // completion paths know the user actually received something.
+        if (toolResult.outcome === 'success' && DELIVERY_TOOL_NAMES.has(call.name)) {
+          telegramDelivered = true;
+        }
+
         toolResultBlocks.push({
           type: 'tool-result',
           toolCallId: call.id,
@@ -1314,6 +1396,47 @@ export async function executeJob(
       // invariant (every tool_use has a matching tool_result).
       if (returnResultCall) {
         trace('return_result_branch', { turn });
+
+        // Resolve the task-board state up front: a run that created tasks
+        // delivers asynchronously via the cron (deliverCompletedRoots), so the
+        // delivery guard below must NOT fire for it — only for runs that would
+        // finalize right now with nothing delivered.
+        const taskRows = await db
+          .select({ id: agentTasks.id })
+          .from(agentTasks)
+          .where(eq(agentTasks.rootJobId, jobId as string));
+
+        // Delivery guard (mirror of the anti-spam guard): on a tool-only channel,
+        // calling return_result without ever delivering — and with no task-board
+        // flow to deliver later — would complete the job silently. Re-prompt the
+        // agent to send via its tool first, mirroring the j-pré defer pattern.
+        // Live incident: job 5d84d72e (2026-05-29).
+        if (requiresToolDelivery && !telegramDelivered && taskRows.length === 0) {
+          if (telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES) {
+            telegramRedeliveryNudges += 1;
+            trace('telegram_redelivery_nudge', {
+              turn,
+              attempt: telegramRedeliveryNudges,
+              via: 'return_result_branch',
+            });
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: returnResultCall.toolCallId,
+              toolName: 'return_result',
+              output: toResultOutput({
+                error:
+                  "deferred: tu n'as pas encore livré ta réponse via telegram_send_message — fais-le avant de terminer",
+              }),
+            });
+            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
+            continue;
+          }
+          trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
+          await failJob(db, jobId as string, 'telegram_not_delivered', runStats());
+          return { status: 'failed', error: 'telegram_not_delivered' };
+        }
+
         // Brique 33: return_result is status-only. Content delivery happens via
         // dashboard_publish, telegram_send_message, etc. — those tools already
         // wrote to agent_jobs.result (or a delivery channel) via their side-effects.
@@ -1338,11 +1461,6 @@ export async function executeJob(
         // orchestrator's summary. Instead, save a checkpoint and let the cron
         // own the final state. Status stays 'processing' until the cron flips
         // it to 'completed'.
-        const taskRows = await db
-          .select({ id: agentTasks.id })
-          .from(agentTasks)
-          .where(eq(agentTasks.rootJobId, jobId as string));
-
         if (taskRows.length > 0) {
           trace('return_result_with_tasks', { taskCount: taskRows.length });
           await saveCheckpoint(db, jobId as string, {

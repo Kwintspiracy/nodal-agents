@@ -1,5 +1,6 @@
 // chain-counters.ts — per-job execution limit enforcement
-// Invariant 8: max N chains, max 50 tool calls/turn, max 3 delegation depth, max 50 turns.
+// Invariant 8: max N chains, max 50 tool calls/turn, max 3 delegation depth,
+// max 50 turns, max 3 consecutive user-facing delivery-only turns (anti-spam).
 // Approval semantics: chain_count does NOT bump when resuming from awaiting_approval.
 
 import {
@@ -33,11 +34,19 @@ import type { ChainLimits } from './types';
 // retrying via a different specialist) and ~2 chains for wrap-up turns
 // (telegram + return_result). Worst-case wall-clock 15 × ~3 min = ~45 min
 // stays under any reasonable user-patience ceiling for batch work.
+// maxConsecutiveDeliveryTurns = 3: a well-behaved agent sends its reply in ONE
+// turn (the telegram_send_message tool description tells it to batch multiple
+// messages into a single response) and then calls return_result. So a single
+// delivery-only turn is the norm; 3 leaves slack for a chatty local model that
+// splits a long reply across a couple of turns. Beyond that it's monologuing —
+// live incident: job 9bbdbfd7 (2026-05-29) emitted 11 filler/emoji messages on
+// 11 consecutive delivery-only turns before finally calling return_result.
 export const DEFAULT_LIMITS: ChainLimits = {
   maxChains: 15,
   maxToolCallsPerTurn: 50,
   maxDelegationDepth: 3,
   maxTurns: 50, // matches Hermes Agent's per-subagent iteration budget; cumulative cap across resumes
+  maxConsecutiveDeliveryTurns: 3,
 };
 
 // ─── ChainCounters ────────────────────────────────────────────────────────────

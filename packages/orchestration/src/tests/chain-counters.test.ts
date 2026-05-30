@@ -54,6 +54,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 50,
         maxDelegationDepth: 3,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
       c.bumpChain(); // 1
       try {
@@ -89,6 +90,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 50,
         maxDelegationDepth: 3,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
       // Even with very tight limit, approval-resume never throws
       for (let i = 0; i < 100; i++) {
@@ -102,6 +104,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 50,
         maxDelegationDepth: 3,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
 
       // Simulate: chain 1 → awaiting_approval → resume (no bump) → chain 2
@@ -128,6 +131,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 3,
         maxDelegationDepth: 3,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
       c.bumpToolCall(); // 1
       c.bumpToolCall(); // 2
@@ -142,6 +146,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 2,
         maxDelegationDepth: 3,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
       c.bumpToolCall();
       c.bumpToolCall();
@@ -163,6 +168,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 2,
         maxDelegationDepth: 3,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
       c.bumpToolCall();
       c.bumpToolCall();
@@ -194,6 +200,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 50,
         maxDelegationDepth: 3,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
       c.bumpDelegationDepth(); // 1
       c.bumpDelegationDepth(); // 2
@@ -208,6 +215,7 @@ describe('ChainCounters', () => {
         maxToolCallsPerTurn: 50,
         maxDelegationDepth: 2,
         maxTurns: 50,
+        maxConsecutiveDeliveryTurns: 3,
       });
       c.bumpDelegationDepth();
       c.bumpDelegationDepth();
