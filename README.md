@@ -25,7 +25,7 @@ no cloud roundtrip.** Runs on any machine with Node 22+ — Mac, PC, Linux.
 | 🗂️ &nbsp;**Workspaces** | Multiple isolated workspaces on one install (personal vs work) — each with its own agents, skills, connectors, jobs and memory. Switch from the sidebar. |
 | 🤖 &nbsp;**Self-extending (ROOT agent)** | Designate an orchestrator as ROOT and let it create skills/agents and assign them on your behalf — gated by per-grant toggles and an autonomy level (propose-confirm → fully-autonomous). |
 | 📄 &nbsp;**Office files** | Read + edit Excel in place, create Word & PowerPoint, inside the agent's workspace — gated behind the office-editing skill. |
-| 📡 &nbsp;**MCP support** | Connect MCP servers over Streamable HTTP *and* stdio (local subprocess) — a growing catalogue (Stripe, n8n, Supabase, Vercel, Airtable, Notion…) plus add *and edit* your own custom servers from the UI. Per-job tool discovery, tool whitelisting, multi-instance. |
+| 📡 &nbsp;**MCP support** | Connect MCP servers over Streamable HTTP *and* stdio (local subprocess) — a growing catalogue (Stripe, n8n, Supabase, Airtable, Notion…) plus add *and edit* your own custom servers from the UI. Per-job tool discovery, tool whitelisting, multi-instance. |
 | 💬 &nbsp;**Telegram out of the box** | Long-polling, multi-agent routing (`/ask <slug>`), group-chat filters, conversation continuity, delegation gracefulness on Telegram. |
 | ⚙️ &nbsp;**Real engineering** | TypeScript strict, dependency-cruiser-enforced architecture, full unit + integration suite, Playwright e2e, idempotent migrations, encryption at rest for keys. |
 
@@ -204,7 +204,7 @@ pnpm deps:check   # runs locally and in CI before every release
 
 ## Status
 
-**Current release:** `0.3.8` on npm `latest`. Used daily by the
+**Current release:** `0.3.9` on npm `latest`. Used daily by the
 maintainer, stable enough for personal production. Pre-1.0 — breaking
 changes are still possible between minors.
 
@@ -218,7 +218,7 @@ changes are still possible between minors.
   caps
 - Multi-instance connectors with OAuth (Gmail, Drive, Sheets, Docs, Notion,
   Airtable) and API-key (Notion, Airtable, Apify, Firecrawl, Tavily)
-- MCP catalog — Streamable HTTP *and* stdio (local subprocess) servers, API-key auth; a growing catalogue (Stripe, n8n, Supabase, Vercel, Airtable, Notion…) with a "test pending" badge on entries not yet verified live, plus add *and edit* your own custom HTTP/stdio servers from the dashboard
+- MCP catalog — Streamable HTTP *and* stdio (local subprocess) servers, API-key auth; a growing catalogue (Stripe, n8n, Supabase, Airtable, Notion…) with a "test pending" badge on entries not yet verified live, plus add *and edit* your own custom HTTP/stdio servers from the dashboard
 - Top-level workspaces — multiple isolated entities (agents/skills/connectors/jobs/memory per workspace), switch in the sidebar
 - ROOT agent — designate an orchestrator that can create skills/agents and assign them, gated by per-grant toggles + an autonomy/approval level
 - Office file editing — Excel in-place edit, Word/PowerPoint create, in the agent workspace (office-editing skill)
