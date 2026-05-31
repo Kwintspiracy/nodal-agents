@@ -332,38 +332,22 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     envVarNames: ['SUPABASE_ACCESS_TOKEN'],
     status: 'pending',
   },
-  {
-    slug: 'vercel',
-    label: 'Vercel',
-    description:
-      'Manage Vercel deployments and projects — list projects, inspect deployments, read build and runtime logs. Connects to the hosted Vercel MCP server.',
-    serverUrl: 'https://mcp.vercel.com',
-    transport: 'http',
-    authScheme: 'bearer',
-    authParamName: 'Authorization',
-    keyPrefix: [],
-    verifyToolName: null,
-    docsHint:
-      'Create an access token at vercel.com/account/tokens and paste it here. Scope it to the relevant team/project for least privilege.',
-    status: 'pending',
-  },
+  // NOTE: Vercel's hosted MCP (https://mcp.vercel.com) is OAuth-only — no
+  // static PAT/bearer path — so it can't be connected via the static-key form.
+  // Re-add once MCP OAuth lands (on the roadmap).
   {
     slug: 'airtable',
     label: 'Airtable',
     description:
-      'Read and write Airtable bases — list bases and tables, query records, create and update rows. Runs the airtable-mcp-server locally via npx.',
-    serverUrl: null,
-    transport: 'stdio',
-    authScheme: 'header',
+      'Read and write Airtable bases — list bases and tables, query records, create and update rows. Official hosted Airtable MCP server.',
+    serverUrl: 'https://mcp.airtable.com/mcp',
+    transport: 'http',
+    authScheme: 'bearer',
     authParamName: 'Authorization',
-    keyPrefix: [],
+    keyPrefix: ['pat'],
     verifyToolName: null,
     docsHint:
-      'Create a Personal Access Token at airtable.com/create/tokens (scopes: data.records:read/write, schema.bases:read) and set it as AIRTABLE_API_KEY.',
-    command: 'npx',
-    args: ['-y', 'airtable-mcp-server'],
-    envVarNames: ['AIRTABLE_API_KEY'],
-    status: 'pending',
+      'Create a Personal Access Token at airtable.com/create/tokens (scopes: data.records:read/write, schema.bases:read) and paste it here as a Bearer token. (Airtable API keys are deprecated — use a PAT, which starts with "pat".) After connecting, pick which bases the integration can access at airtable.com/?integrations=thirdParty.',
   },
   {
     slug: 'notion',
@@ -377,10 +361,25 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     keyPrefix: [],
     verifyToolName: null,
     docsHint:
-      'Create an internal integration at notion.so/my-integrations, share the target pages/databases with it, and set NOTION_TOKEN to the integration secret (starts with ntn_).',
+      'Create an internal integration at notion.so/my-integrations, share the target pages/databases with it, and set NOTION_TOKEN to the integration secret (starts with ntn_). (Older package builds want OPENAPI_MCP_HEADERS instead — a JSON string {"Authorization":"Bearer ntn_…","Notion-Version":"2022-06-28"}.)',
     command: 'npx',
     args: ['-y', '@notionhq/notion-mcp-server'],
     envVarNames: ['NOTION_TOKEN'],
+    status: 'pending',
+  },
+  {
+    slug: 'apify',
+    label: 'Apify',
+    description:
+      'Run Apify Actors — thousands of ready-made scrapers and automation tools for social media, search engines, maps, e-commerce, and any website. Connects to the hosted Apify MCP server.',
+    serverUrl: 'https://mcp.apify.com',
+    transport: 'http',
+    authScheme: 'bearer',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create an API token in the Apify Console (Settings → API & Integrations) and paste it here as a Bearer token. The hosted server runs Actors on your behalf.',
     status: 'pending',
   },
   // ── Custom entries ────────────────────────────────────────────────────────

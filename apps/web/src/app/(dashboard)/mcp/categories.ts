@@ -18,9 +18,9 @@ export function mcpCategory(slug: string): string {
   if (slug === 'mcp-git') return 'Dev';
   if (slug === 'mcp-github') return 'Dev';
   if (slug === 'sentry') return 'Dev';
-  if (slug === 'vercel') return 'Dev';
   if (slug === 'mcp-fetch') return 'Web';
   if (slug === 'mcp-playwright') return 'Web';
+  if (slug === 'apify') return 'Web';
   if (slug === 'composio') return 'Productivity';
   if (slug === 'linear') return 'Productivity';
   if (slug === 'n8n') return 'Productivity';
