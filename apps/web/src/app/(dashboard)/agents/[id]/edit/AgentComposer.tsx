@@ -425,15 +425,20 @@ function HeroCard({
   return (
     <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
       <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-start">
-        {/* Avatar */}
-        <div className="flex h-[80px] w-[80px] flex-shrink-0 items-center justify-center rounded-2xl bg-agent-vivid text-[28px] font-semibold text-canvas">
-          {avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatarUrl} alt="" className="h-full w-full rounded-2xl object-cover" />
-          ) : (
-            initial
-          )}
-        </div>
+        {/* Avatar — no background plate behind a real avatar; the coloured
+            rounded badge is only the fallback for agents without an avatar. */}
+        {avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={avatarUrl}
+            alt=""
+            className="h-[80px] w-[80px] flex-shrink-0 rounded-2xl object-cover"
+          />
+        ) : (
+          <div className="flex h-[80px] w-[80px] flex-shrink-0 items-center justify-center rounded-2xl bg-agent-vivid text-[28px] font-semibold text-canvas">
+            {initial}
+          </div>
+        )}
 
         {/* Title + meta */}
         <div className="min-w-0 flex-1">
