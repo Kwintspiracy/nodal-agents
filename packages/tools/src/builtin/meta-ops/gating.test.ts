@@ -82,10 +82,11 @@ describe('meta-tool gating via root agent + grants', () => {
     }
   });
 
-  it('root agent with all grants enabled gets all 3 meta-tools in whitelist', () => {
+  it('root agent with all grants enabled gets all meta-tools in whitelist', () => {
     const allGrantsOn: RootGrants = {
       createAgent: true,
       createSkill: true,
+      updateSkill: true,
       assignSkill: true,
       autonomy: 'fully_autonomous',
     };
@@ -108,6 +109,7 @@ describe('meta-tool gating via root agent + grants', () => {
     const grants: RootGrants = {
       createAgent: false,
       createSkill: true,
+      updateSkill: true,
       assignSkill: true,
       autonomy: 'propose_confirm',
     };
@@ -120,10 +122,27 @@ describe('meta-tool gating via root agent + grants', () => {
     expect(names.has('attach_skill'), 'attach_skill should be present').toBe(true);
   });
 
+  it('root agent with updateSkill=false does NOT get update_skill in whitelist', () => {
+    const grants: RootGrants = {
+      createAgent: true,
+      createSkill: true,
+      updateSkill: false,
+      assignSkill: true,
+      autonomy: 'propose_confirm',
+    };
+    const tools = computeForRootAgent(grants);
+    const names = new Set(tools.map((t) => t.name));
+    expect(names.has('update_skill'), 'update_skill should be absent when grant is off').toBe(
+      false,
+    );
+    expect(names.has('create_skill'), 'create_skill should be present').toBe(true);
+  });
+
   it('root agent with all grants off gets no meta-tools', () => {
     const grants: RootGrants = {
       createAgent: false,
       createSkill: false,
+      updateSkill: false,
       assignSkill: false,
       autonomy: 'propose_confirm',
     };
@@ -138,6 +157,7 @@ describe('meta-tool gating via root agent + grants', () => {
     const allGrantsOn: RootGrants = {
       createAgent: true,
       createSkill: true,
+      updateSkill: true,
       assignSkill: true,
       autonomy: 'fully_autonomous',
     };
@@ -158,6 +178,7 @@ describe('meta-tool gating via root agent + grants', () => {
     // DEFAULT_ROOT_GRANTS has all three grants = true
     expect(grants.createAgent).toBe(true);
     expect(grants.createSkill).toBe(true);
+    expect(grants.updateSkill).toBe(true);
     expect(grants.assignSkill).toBe(true);
   });
 });

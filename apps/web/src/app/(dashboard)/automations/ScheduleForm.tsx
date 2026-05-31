@@ -30,6 +30,12 @@ export default function ScheduleForm(props: Props) {
   const isEdit = props.mode === 'edit';
   const [open, setOpen] = useState(isEdit);
   const [isPending, startTransition] = useTransition();
+  // Controlled so the "no Telegram bot" warning can react to the current agent
+  // + notify choices before submit.
+  const [agentId, setAgentId] = useState(isEdit ? props.initial.agentId : '');
+  const [notifyOnSuccess, setNotifyOnSuccess] = useState(
+    isEdit ? props.initial.notifyOnSuccess === true : false,
+  );
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -40,10 +46,11 @@ export default function ScheduleForm(props: Props) {
       if (isEdit) {
         const r = await updateScheduleAction({
           id: props.initial.id,
-          agentId: fd.get('agentId'),
+          agentId,
           name: fd.get('name'),
           cronExpr: fd.get('cronExpr'),
           task: fd.get('task'),
+          notifyOnSuccess,
         });
         if (!r.ok) toast.error(r.message);
         else {
@@ -52,15 +59,18 @@ export default function ScheduleForm(props: Props) {
         }
       } else {
         const r = await createScheduleAction({
-          agentId: fd.get('agentId'),
+          agentId,
           name: fd.get('name'),
           cronExpr: fd.get('cronExpr'),
           task: fd.get('task'),
+          notifyOnSuccess,
         });
         if (!r.ok) toast.error(r.message);
         else {
           toast.success('Schedule created');
           form.reset();
+          setAgentId('');
+          setNotifyOnSuccess(false);
           setOpen(false);
           props.onDone?.();
         }
@@ -82,10 +92,15 @@ export default function ScheduleForm(props: Props) {
     );
   }
 
-  const agentDefault = isEdit ? props.initial.agentId : '';
   const nameDefault = isEdit ? props.initial.name : '';
   const taskDefault = isEdit ? (props.initial.task ?? '') : '';
   const cronDefault = isEdit ? props.initial.cronExpr : '0 9 * * *';
+
+  // Telegram delivery is per-agent (the runner sends via the executing agent's
+  // own bot token). A "notify" cron on a bot-less agent can never reach the user
+  // — warn instead of letting it silently no-op.
+  const selectedAgent = props.agents.find((a) => a.id === agentId);
+  const lacksBot = notifyOnSuccess && selectedAgent != null && !selectedAgent.telegramBotToken;
 
   return (
     <form
@@ -105,7 +120,8 @@ export default function ScheduleForm(props: Props) {
             id="schedule-agent"
             name="agentId"
             required
-            defaultValue={agentDefault}
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
             className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             <option value="">Select…</option>
@@ -146,6 +162,32 @@ export default function ScheduleForm(props: Props) {
           placeholder="What should the agent do each time this fires?"
           className="w-full resize-y rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
         />
+      </div>
+
+      <div className="space-y-2">
+        <label className="flex items-start gap-2.5 rounded-md border border-rule bg-canvas px-3 py-2.5 text-sm">
+          <input
+            type="checkbox"
+            name="notifyOnSuccess"
+            checked={notifyOnSuccess}
+            onChange={(e) => setNotifyOnSuccess(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-ink"
+          />
+          <span>
+            <span className="font-medium text-ink">Notify me on Telegram when it succeeds</span>
+            <span className="mt-0.5 block text-xs text-ink-3">
+              The agent sends you a short confirmation each time this automation finishes. Requires
+              a Telegram bot on the agent (DM it once so it knows where to reach you).
+            </span>
+          </span>
+        </label>
+
+        {lacksBot && (
+          <p className="rounded-md border border-warn/30 bg-warn-bg px-3 py-2 text-xs text-warn">
+            ⚠️ <span className="font-medium">{selectedAgent?.name}</span>
+            {` has no Telegram bot, so it can't send you this confirmation. Schedule this automation on a Telegram-connected agent, or connect a bot to this one.`}
+          </p>
+        )}
       </div>
 
       <div className="flex gap-2 pt-1">

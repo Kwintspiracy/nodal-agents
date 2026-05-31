@@ -41,6 +41,7 @@ import {
   executeTool,
   ALWAYS_ON_TOOLS,
   createTelegramSendMessageTool,
+  listWorkspaceMcpToolNames,
 } from '@nodal-agents/tools';
 import type { ToolDefinition, ApprovalRule } from '@nodal-agents/tools';
 import {
@@ -316,9 +317,15 @@ export async function executeJob(
   // the agent's last-seen chat at execute time — that would override the
   // explicit "no Telegram" intent expressed by a NULL chat_id (e.g. dashboard
   // checkbox unticked).
+  // A cron job that carries a chatId opted into a success confirmation (the cron
+  // tick only sets chat_id when the schedule's notify_on_success is on). Surface
+  // that intent to the agent so it ends with a confirmation, and engage the
+  // delivery guard below so the send is actually enforced.
+  const cronWantsConfirmation = job.channel === 'cron' && job.chatId != null;
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
+    ...(cronWantsConfirmation ? { notifyOnSuccess: true } : {}),
   };
 
   let systemPrompt = job.systemPrompt;
@@ -623,6 +630,21 @@ export async function executeJob(
   // ── 10. Build tool map ────────────────────────────────────────────────────────
   const toolMap = new Map<string, AnyToolDef>(toolDefs.map((t) => [t.name, t]));
 
+  // Skill-authoring grounding (Phase 2): when this agent can create/update skills
+  // (it's the ROOT with the grant — the meta-tool is in its map), append the
+  // workspace's REAL MCP tool names to those tools' descriptions, so the agent
+  // sees the correct `<slug>__<tool>` names BEFORE it writes a skill — instead of
+  // falling back on its training prior (`mcp__…`, Claude-in-Chrome). Computed once
+  // here (not per turn) since the workspace tool set is fixed for the job.
+  let authoringToolsSuffix = '';
+  if (toolMap.has('create_skill') || toolMap.has('update_skill')) {
+    const mcpToolNames = await listWorkspaceMcpToolNames(db, job.entityId ?? '');
+    authoringToolsSuffix =
+      mcpToolNames.length > 0
+        ? ` When a skill needs an MCP tool, reference one of these EXACT names available in this workspace (built-in and connector tools are bare snake_case and need no namespace): ${mcpToolNames.join(', ')}.`
+        : ' This workspace has no MCP servers connected yet — a skill should only reference built-in tools (bare snake_case) or none.';
+  }
+
   // ── 11. Restore conversation ──────────────────────────────────────────────────
   let messages: ModelMessage[] = Array.isArray(job.messages)
     ? (job.messages as ModelMessage[])
@@ -843,7 +865,12 @@ export async function executeJob(
   // is reached while still false, we re-prompt the agent (bounded) before letting
   // it finish. In-memory/intra-run: in the router/delegation case the parent makes
   // its final send in the same run it finalizes, so the flag is evaluated correctly.
-  const requiresToolDelivery = TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '');
+  // Tool-only channels (Telegram) always require a tool delivery. A cron job
+  // that opted into a success confirmation (chat_id set by the tick) is held to
+  // the same bar: the agent must deliver before completing, otherwise the user
+  // never gets the "done" message they asked for.
+  const requiresToolDelivery =
+    TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || cronWantsConfirmation;
   const MAX_TELEGRAM_REDELIVERY_NUDGES = 2;
   let telegramRedeliveryNudges = 0;
   let telegramDelivered = false;
@@ -854,6 +881,39 @@ export async function executeJob(
     'Appelle `telegram_send_message` avec ta réponse, PUIS `return_result`. Ne réponds pas ' +
     'en texte simple — sur Telegram, seul un message envoyé via `telegram_send_message` est ' +
     "visible par l'utilisateur.";
+
+  // Approval heads-up (mirror of the delivery guard). A gated tool creates an
+  // approval request and pauses the job WITHOUT executing. On a tool-only
+  // delivery channel (Telegram) that pause is otherwise completely silent — the
+  // user gets no signal that anything awaits their decision (live incident: job
+  // eeb2b587, 2026-05-31). `approvalPending` latches once a gate fires so the
+  // completion paths suspend instead of finalizing; the nudge below steers the
+  // agent to tell the user, in its own voice via its own tool, what it launched
+  // and that it's waiting. The nudge is LLM-channel only (never sent verbatim;
+  // invariant 2 holds).
+  let approvalPending = false;
+  const approvalNudge =
+    '[système] Tu es sur Telegram et une de tes actions vient de créer une demande ' +
+    "d'approbation : elle attend la validation de l'utilisateur avant de s'exécuter. Avant que " +
+    "le job se mette en pause, appelle `telegram_send_message` pour dire à l'utilisateur, avec " +
+    'tes propres mots, quelle action tu as lancée et que tu attends son approbation (il la ' +
+    "validera depuis le dashboard). N'appelle PAS `return_result` — la mise en pause est " +
+    'automatique.';
+  // Suspend the job in `awaiting_approval`, persisting the current conversation
+  // so the dashboard-driven resume (section 11.7) picks up exactly where we left
+  // off. Closes over the loop accumulators (reassigned each turn) by reference.
+  const suspendForApproval = async (): Promise<ExecuteJobResult> => {
+    await saveCheckpoint(db, jobId as string, {
+      messages,
+      turn,
+      chainCount: job.chainCount ?? 0,
+      toolsUsed,
+      inputTokens,
+      outputTokens,
+    });
+    await setJobStatus(db, jobId as string, 'awaiting_approval');
+    return { status: 'awaiting_approval' };
+  };
   try {
     while (true) {
       turn += 1;
@@ -899,10 +959,16 @@ export async function executeJob(
       // b. Tool choice
       const toolChoice = computeToolChoice({ isOrchestrator, turn, hasAdapterTools });
 
-      // c. Convert tools to AI SDK format
+      // c. Convert tools to AI SDK format. For the skill-authoring meta-tools,
+      // append the live workspace tool list so the model has the real tool names
+      // in front of it as it decides to author a skill (see step 10).
       const aiSdkTools: Record<string, { description: string; inputSchema: z.ZodTypeAny }> = {};
       for (const [name, toolDef] of toolMap) {
-        aiSdkTools[name] = { description: toolDef.description, inputSchema: toolDef.inputSchema };
+        const description =
+          authoringToolsSuffix && (name === 'create_skill' || name === 'update_skill')
+            ? toolDef.description + authoringToolsSuffix
+            : toolDef.description;
+        aiSdkTools[name] = { description, inputSchema: toolDef.inputSchema };
       }
 
       // d. Call LLM
@@ -977,6 +1043,14 @@ export async function executeJob(
       // g. No tool calls
       if (rawToolCalls.length === 0) {
         trace('no_tool_calls_branch', { turn, hasText: Boolean(response.text) });
+        // An approval is pending (a gate fired on a prior turn) and the agent
+        // produced no tool call this turn. We must NOT complete or fail — the
+        // request still needs the user's decision. Suspend; the dashboard resume
+        // will continue. (Plain text can't reach a Telegram user anyway, and the
+        // heads-up nudge already had its bounded turns above.)
+        if (approvalPending) {
+          return await suspendForApproval();
+        }
         const textContent = response.text ?? '';
         if (textContent) {
           // Delivery guard: on a tool-only channel, a plain-text answer was NOT
@@ -1334,21 +1408,48 @@ export async function executeJob(
         });
       }
 
-      // j. Suspension states
+      // j. Suspension states — approval gate.
+      //
+      // A gated tool created an approval request and did NOT execute. `awaitingApproval`
+      // is per-turn; `approvalPending` latches across turns so the heads-up turn
+      // (below) cannot slip through to a completion path. Before going silent on
+      // a tool-only channel (Telegram), we give the agent up to MAX bounded turns
+      // to tell the user — in its own voice, via its own delivery tool — what it
+      // launched and that it's waiting for approval. Once delivered (or budget
+      // spent, or not a tool-only channel) we suspend; the user resolves the
+      // request from the dashboard, which resumes the job (section 11.7 executes
+      // the approved tool). Live incident: job eeb2b587 (2026-05-31) suspended on
+      // a gated `attach_skill` with zero Telegram signal to the user.
       if (awaitingApproval) {
+        approvalPending = true;
+      }
+      if (approvalPending) {
+        // Keep the saved conversation valid for resume: every tool_use needs a
+        // matching tool_result. Gated/deferred markers are already in
+        // toolResultBlocks; synthesize one for return_result if the agent emitted
+        // it this turn — we are NOT finalizing while an approval is pending.
+        if (returnResultCall && !toolResultBlocks.some((b) => b.toolName === 'return_result')) {
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: returnResultCall.toolCallId,
+            toolName: 'return_result',
+            output: toResultOutput({ error: 'deferred: an action is awaiting user approval' }),
+          });
+        }
         if (toolResultBlocks.length > 0) {
           messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
         }
-        await saveCheckpoint(db, jobId as string, {
-          messages,
-          turn,
-          chainCount: job.chainCount ?? 0,
-          toolsUsed,
-          inputTokens,
-          outputTokens,
-        });
-        await setJobStatus(db, jobId as string, 'awaiting_approval');
-        return { status: 'awaiting_approval' };
+        if (
+          requiresToolDelivery &&
+          !telegramDelivered &&
+          telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES
+        ) {
+          telegramRedeliveryNudges += 1;
+          trace('telegram_approval_nudge', { turn, attempt: telegramRedeliveryNudges });
+          messages = [...messages, { role: 'user', content: approvalNudge } as ModelMessage];
+          continue;
+        }
+        return await suspendForApproval();
       }
 
       // j-pré. Detect tool errors in the same turn as return_result. If a

@@ -4,10 +4,11 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
-import { agentSkills, agentSkillAssignments, agents, eq, and } from '@nodal-agents/db';
+import { agentSkills, agentSkillAssignments, agents, mcpServers, eq, and } from '@nodal-agents/db';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import type { ToolContext } from '../../types';
 import { createSkillTool } from './create-skill';
+import { updateSkillTool } from './update-skill';
 import { assignSkillTool } from './assign-skill';
 import { createAgentTool } from './create-agent';
 
@@ -96,6 +97,170 @@ describe('create_skill', () => {
     if (!result.ok) throw new Error('expected ok');
     // Message must contain a UUID-like id
     expect(result.message).toMatch(/id [0-9a-f-]{36}/);
+  });
+});
+
+// ─── update_skill ─────────────────────────────────────────────────────────────
+
+describe('update_skill', () => {
+  it('updates content + name of an existing skill and flips contentOverridden', async () => {
+    const ctx = makeCtx();
+    await createSkillTool.execute(
+      { slug: 'upd-skill-1', name: 'Upd One', content: 'original content' },
+      ctx,
+    );
+
+    const result = await updateSkillTool.execute(
+      { skillSlug: 'upd-skill-1', name: 'Upd One Renamed', content: 'new content body' },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+
+    const [row] = await db
+      .select()
+      .from(agentSkills)
+      .where(and(eq(agentSkills.slug, 'upd-skill-1'), eq(agentSkills.entityId, seed.entityId)));
+    expect(row!.name).toBe('Upd One Renamed');
+    expect(row!.content).toBe('new content body');
+    expect(row!.contentOverridden).toBe(true);
+    // slug is immutable
+    expect(row!.slug).toBe('upd-skill-1');
+  });
+
+  it('resolves the target by NAME (ilike), not just slug', async () => {
+    const ctx = makeCtx();
+    await createSkillTool.execute(
+      { slug: 'upd-skill-byname', name: 'Findable By Name', content: 'x' },
+      ctx,
+    );
+    const result = await updateSkillTool.execute(
+      { skillSlug: 'findable by name', content: 'updated via name' },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    const [row] = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'upd-skill-byname'));
+    expect(row!.content).toBe('updated via name');
+  });
+
+  it('returns ok:false for a skill that does not exist', async () => {
+    const result = await updateSkillTool.execute(
+      { skillSlug: 'no-such-skill', content: 'whatever' },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ok:false');
+    expect(result.error).toContain('no-such-skill');
+  });
+
+  it('returns ok:false when no updatable field is provided', async () => {
+    const ctx = makeCtx();
+    await createSkillTool.execute({ slug: 'upd-skill-noop', name: 'Noop', content: 'x' }, ctx);
+    const result = await updateSkillTool.execute({ skillSlug: 'upd-skill-noop' }, ctx);
+    expect(result.ok).toBe(false);
+    // The skill was not changed.
+    const [row] = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'upd-skill-noop'));
+    expect(row!.content).toBe('x');
+  });
+});
+
+// ─── skill content linter (agnostic allowlist) ──────────────────────────────────
+
+describe('skill content linter', () => {
+  beforeAll(async () => {
+    // Fixture: one MCP server in this entity → its tools form the allowlist.
+    // The linter only reads slug + availableTools + active, so keep it minimal
+    // (stdio, no auth fields — avoids the auth_scheme check constraint).
+    await db.insert(mcpServers).values({
+      entityId: seed.entityId,
+      name: 'Airtable',
+      slug: 'airtable',
+      transport: 'stdio',
+      availableTools: [{ name: 'list_records_for_table' }, { name: 'create_records_for_table' }],
+      active: true,
+    });
+  });
+
+  it('rejects a foreign mcp__ tool reference and writes no row', async () => {
+    const result = await createSkillTool.execute(
+      {
+        slug: 'lint-foreign-mcp',
+        name: 'Lint Foreign',
+        content:
+          'Call `mcp__Apify__apify--rag-web-browser` then `mcp__Claude_in_Chrome__navigate`.',
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ok:false');
+    expect(result.error).toContain('mcp__Apify__apify--rag-web-browser');
+    const rows = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'lint-foreign-mcp'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('rejects an "mcpServers" config block', async () => {
+    const result = await createSkillTool.execute(
+      {
+        slug: 'lint-config-block',
+        name: 'Lint Config',
+        content: 'Use this config: { "mcpServers": { "airtable": { "command": "npx" } } }',
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    const rows = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'lint-config-block'));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('accepts a real NodalAI MCP tool reference', async () => {
+    const result = await createSkillTool.execute(
+      {
+        slug: 'lint-real-tool',
+        name: 'Lint Real',
+        content: 'Call `airtable__list_records_for_table` with the baseId, then summarise.',
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+    const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'lint-real-tool'));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('never blocks bare snake_case (builtins / connector tools / prose)', async () => {
+    const result = await createSkillTool.execute(
+      {
+        slug: 'lint-bare-snake',
+        name: 'Lint Bare',
+        content: 'Use save_memory and gmail_send. The user_id and job_search terms are fine.',
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+    const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'lint-bare-snake'));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('also lints content on update_skill (no row change on reject)', async () => {
+    const ctx = makeCtx();
+    await createSkillTool.execute(
+      { slug: 'lint-on-update', name: 'Lint Update', content: 'clean original' },
+      ctx,
+    );
+    const result = await updateSkillTool.execute(
+      { skillSlug: 'lint-on-update', content: 'now calls `mcp__Apify__apify--rag-web-browser`' },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    const [row] = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'lint-on-update'));
+    expect(row!.content).toBe('clean original');
   });
 });
 

@@ -204,7 +204,7 @@ pnpm deps:check   # runs locally and in CI before every release
 
 ## Status
 
-**Current release:** `0.3.9` on npm `latest`. Used daily by the
+**Current release:** `0.3.10` on npm `latest`. Used daily by the
 maintainer, stable enough for personal production. Pre-1.0 — breaking
 changes are still possible between minors.
 
@@ -220,15 +220,15 @@ changes are still possible between minors.
   Airtable) and API-key (Notion, Airtable, Apify, Firecrawl, Tavily)
 - MCP catalog — Streamable HTTP *and* stdio (local subprocess) servers, API-key auth; a growing catalogue (Stripe, n8n, Supabase, Airtable, Notion…) with a "test pending" badge on entries not yet verified live, plus add *and edit* your own custom HTTP/stdio servers from the dashboard
 - Top-level workspaces — multiple isolated entities (agents/skills/connectors/jobs/memory per workspace), switch in the sidebar
-- ROOT agent — designate an orchestrator that can create skills/agents and assign them, gated by per-grant toggles + an autonomy/approval level
+- ROOT agent — designate an orchestrator that can create *and update* skills, create agents and assign them, gated by per-grant toggles + an autonomy/approval level; skill authoring is grounded in the workspace's real tools (a linter rejects skills referencing tools the agent doesn't have)
 - Office file editing — Excel in-place edit, Word/PowerPoint create, in the agent workspace (office-editing skill)
 - Multiple filesystem folders per agent (sandboxed `file_*` tools)
 - Telegram delivery (long-poll, group filters, multi-agent routing,
   delegation gracefulness) — exactly-once delivery contract: anti-spam guard
   against runaway message loops + a guard that re-prompts (then fails loud)
   rather than completing a job without ever replying
-- Approval gates for risky tools (execute-the-approved-action on resume)
-- Cron scheduling
+- Approval gates for risky tools (execute-the-approved-action on resume) — on a chat channel, the agent sends a heads-up before the job pauses so the user knows an approval is waiting
+- Cron scheduling — trigger any automation out-of-band ("Run now") + opt-in Telegram confirmation when a scheduled job succeeds
 - `nodal-agents update` — one-command upgrade + boot version notice
 - Encryption at rest for LLM keys + MCP keys
 - Embedded Postgres distribution via npm (no external DB to install)

@@ -14,6 +14,7 @@ const AutonomyLevelSchema = z.enum(['propose_confirm', 'destructive_gate', 'full
 export interface RootGrants {
   createAgent: boolean;
   createSkill: boolean;
+  updateSkill: boolean;
   assignSkill: boolean;
   autonomy: AutonomyLevel;
 }
@@ -21,6 +22,7 @@ export interface RootGrants {
 const RootGrantsSchema = z.object({
   createAgent: z.boolean(),
   createSkill: z.boolean(),
+  updateSkill: z.boolean(),
   assignSkill: z.boolean(),
   autonomy: AutonomyLevelSchema,
 });
@@ -30,6 +32,7 @@ const RootGrantsSchema = z.object({
 export const DEFAULT_ROOT_GRANTS: RootGrants = {
   createAgent: true,
   createSkill: true,
+  updateSkill: true,
   assignSkill: true,
   autonomy: 'propose_confirm',
 };
@@ -40,10 +43,16 @@ export const DEFAULT_ROOT_GRANTS: RootGrants = {
 export const META_TOOL_BY_GRANT = {
   createAgent: 'create_agent',
   createSkill: 'create_skill',
+  updateSkill: 'update_skill',
   assignSkill: 'attach_skill',
 } as const;
 
-export const META_TOOL_NAMES = ['create_agent', 'create_skill', 'attach_skill'] as const;
+export const META_TOOL_NAMES = [
+  'create_agent',
+  'create_skill',
+  'update_skill',
+  'attach_skill',
+] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -69,10 +78,12 @@ export function parseRootGrants(raw: unknown): RootGrants {
     typeof src['createAgent'] === 'boolean' ? src['createAgent'] : DEFAULT_ROOT_GRANTS.createAgent;
   const createSkill =
     typeof src['createSkill'] === 'boolean' ? src['createSkill'] : DEFAULT_ROOT_GRANTS.createSkill;
+  const updateSkill =
+    typeof src['updateSkill'] === 'boolean' ? src['updateSkill'] : DEFAULT_ROOT_GRANTS.updateSkill;
   const assignSkill =
     typeof src['assignSkill'] === 'boolean' ? src['assignSkill'] : DEFAULT_ROOT_GRANTS.assignSkill;
   const autonomyParsed = AutonomyLevelSchema.safeParse(src['autonomy']);
   const autonomy = autonomyParsed.success ? autonomyParsed.data : DEFAULT_ROOT_GRANTS.autonomy;
 
-  return { createAgent, createSkill, assignSkill, autonomy };
+  return { createAgent, createSkill, updateSkill, assignSkill, autonomy };
 }

@@ -30,6 +30,12 @@ export interface JobContext {
   origin: string;
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
   telegramChatId?: string;
+  /**
+   * The user asked to be notified when this job succeeds (per-schedule opt-in).
+   * Instruction to the LLM — it writes the confirmation in its own voice; the
+   * runner only enforces that a delivery happens (invariant 2 holds).
+   */
+  notifyOnSuccess?: boolean;
 }
 
 // ─── buildJobContextBlock ─────────────────────────────────────────────────────
@@ -37,6 +43,13 @@ export interface JobContext {
 function buildJobContextBlock(ctx: JobContext): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
+  if (ctx.notifyOnSuccess) {
+    lines.push(
+      '- notify_on_success: true — when this job finishes, send the user a short ' +
+        'confirmation (what you did + the outcome) via your delivery tool before ' +
+        'calling return_result.',
+    );
+  }
   return `\n\n## Job context\n${lines.join('\n')}`;
 }
 

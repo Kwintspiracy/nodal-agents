@@ -169,6 +169,7 @@ describe('setRootAgentAction — validation', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },
@@ -181,7 +182,13 @@ describe('setRootAgentAction — validation', () => {
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     const res = await setRootAgentAction({
       rootAgentId: null,
-      grants: { createAgent: true, createSkill: true, assignSkill: true, autonomy: 'turbo_mode' },
+      grants: {
+        createAgent: true,
+        createSkill: true,
+        updateSkill: true,
+        assignSkill: true,
+        autonomy: 'turbo_mode',
+      },
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.code).toBe('validation_failed');
@@ -194,6 +201,7 @@ describe('setRootAgentAction — validation', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },
@@ -213,6 +221,7 @@ describe('setRootAgentAction — validation', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },
@@ -237,6 +246,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },
@@ -264,6 +274,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },
@@ -284,9 +295,9 @@ describe('setRootAgentAction — write paths', () => {
         ),
       );
 
-    expect(rules.length).toBe(3);
+    expect(rules.length).toBe(4);
     const toolNames = rules.map((r) => r.toolName).sort();
-    expect(toolNames).toEqual(['attach_skill', 'create_agent', 'create_skill']);
+    expect(toolNames).toEqual(['attach_skill', 'create_agent', 'create_skill', 'update_skill']);
     for (const rule of rules) {
       expect(rule.agentId).toBe(_orchestratorId);
       expect(rule.action).toBe('require_approval');
@@ -301,6 +312,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: false,
+        updateSkill: false,
         assignSkill: false,
         autonomy: 'propose_confirm',
       },
@@ -328,6 +340,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'fully_autonomous',
       },
@@ -354,6 +367,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'destructive_gate',
       },
@@ -382,6 +396,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },
@@ -395,7 +410,7 @@ describe('setRootAgentAction — write paths', () => {
           inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
         ),
       );
-    expect(rulesAfterFirst.length).toBe(3);
+    expect(rulesAfterFirst.length).toBe(4);
 
     // Second: switch to fully_autonomous → rules must be cleared
     await setRootAgentAction({
@@ -403,6 +418,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'fully_autonomous',
       },
@@ -429,6 +445,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },
@@ -440,6 +457,7 @@ describe('setRootAgentAction — write paths', () => {
       grants: {
         createAgent: true,
         createSkill: true,
+        updateSkill: true,
         assignSkill: true,
         autonomy: 'propose_confirm',
       },

@@ -23,6 +23,10 @@ export const agentSchedules = pgTable(
     nextRun: timestamp('next_run', { withTimezone: true }),
     lastStatus: text('last_status'),
     chatId: text('chat_id'),
+    // Opt-in: when true, a fired job carries a delivery target so the runner
+    // forces the agent to send the user a success confirmation before finishing.
+    // Default false → the cron runs silently (the user must opt in per schedule).
+    notifyOnSuccess: boolean('notify_on_success').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

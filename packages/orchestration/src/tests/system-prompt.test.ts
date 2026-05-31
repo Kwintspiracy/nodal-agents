@@ -269,6 +269,51 @@ describe('buildSystemPrompt', () => {
     expect(prompt).not.toContain('telegram_chat_id');
   });
 
+  it('surfaces a notify_on_success directive when the schedule opted into a confirmation', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP Notify Agent',
+        slug: `test-sp-notify-${Date.now()}`,
+        personality: 'You run scheduled tasks.',
+        role: 'agent',
+      })
+      .returning();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    const jobContext: JobContext = {
+      origin: 'cron',
+      telegramChatId: '12345',
+      notifyOnSuccess: true,
+    };
+    const prompt = await buildSystemPrompt(agent, db, jobContext);
+
+    expect(prompt).toContain('## Job context');
+    expect(prompt).toContain('- notify_on_success: true');
+    // It instructs delivery before finishing — the agent writes the text itself.
+    expect(prompt).toContain('return_result');
+  });
+
+  it('omits the notify_on_success directive when the flag is absent', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP No Notify Agent',
+        slug: `test-sp-nonotify-${Date.now()}`,
+        personality: 'You run scheduled tasks.',
+        role: 'agent',
+      })
+      .returning();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    const prompt = await buildSystemPrompt(agent, db, { origin: 'cron' });
+    expect(prompt).not.toContain('notify_on_success');
+  });
+
   it('does NOT include ## Job context when jobContext is not provided', async () => {
     const { entityId } = await seedContext(db);
     const [agentRow] = await db

@@ -355,6 +355,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       next_run timestamptz,
       last_status text CHECK (last_status IN ('success','failed','no_action') OR last_status IS NULL),
       chat_id text,
+      notify_on_success boolean NOT NULL DEFAULT false,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );

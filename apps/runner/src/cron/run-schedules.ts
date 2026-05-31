@@ -37,9 +37,11 @@ export async function runScheduleTick(
       cronExpr: agentSchedules.cronExpr,
       task: agentSchedules.task,
       nextRun: agentSchedules.nextRun,
-      // The agent's last-seen Telegram chat is the default delivery target for
-      // cron-fired jobs (no per-schedule chat UI yet). Populated by the
-      // inbound poller on every DM; null until the user has DM'd the bot once.
+      // Per-schedule opt-in: deliver a success confirmation to the user.
+      notifyOnSuccess: agentSchedules.notifyOnSuccess,
+      // The agent's last-seen Telegram chat is the delivery target for cron-fired
+      // jobs that opted into a confirmation. Populated by the inbound poller on
+      // every DM; null until the user has DM'd the bot once.
       agentLastSeenChatIdTelegram: agents.lastSeenChatIdTelegram,
     })
     .from(agentSchedules)
@@ -104,18 +106,19 @@ export async function runScheduleTick(
 
     if (claimed.length === 0) continue; // Concurrent tick won
 
-    // Cron-fired jobs default their `chatId` to the agent's last-seen Telegram
-    // chat. This puts the delivery intent in the job row at INSERT time
-    // (matching the data-driven semantics: chat_id != null = "deliver to this
-    // chat on Telegram"). Until per-schedule UI ships, every cron fire on an
-    // agent with a Telegram bot will reach the user on Telegram by default.
+    // chat_id carries the delivery intent (chat_id != null = "confirm to this
+    // chat"). We set it ONLY when the schedule opted into a success confirmation
+    // (notify_on_success); otherwise the cron runs silently. A non-null chat_id
+    // on a cron job makes the runner force the agent to deliver before finishing
+    // (see `cronWantsConfirmation` in execute.ts).
+    const notifyChatId = sched.notifyOnSuccess ? (sched.agentLastSeenChatIdTelegram ?? null) : null;
     const [job] = await db
       .insert(agentJobs)
       .values({
         entityId: sched.entityId,
         agentId: sched.agentId,
         channel: 'cron',
-        chatId: sched.agentLastSeenChatIdTelegram ?? null,
+        chatId: notifyChatId,
         task: sched.task,
         status: 'pending',
         messages: [{ role: 'user', content: sched.task }],

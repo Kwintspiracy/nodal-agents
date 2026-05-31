@@ -150,6 +150,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
                       [
                         { key: 'createAgent', label: 'Create agents' },
                         { key: 'createSkill', label: 'Create skills' },
+                        { key: 'updateSkill', label: 'Update skills' },
                         { key: 'assignSkill', label: 'Assign skills' },
                       ] as const
                     ).map(({ key, label }) => (

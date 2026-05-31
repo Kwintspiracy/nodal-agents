@@ -1727,6 +1727,40 @@ describe('createScheduleAction', () => {
     });
     expect(r.ok).toBe(true);
   });
+
+  it('persists notifyOnSuccess (defaults to false when omitted)', async () => {
+    // Explicit true.
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000136' }]) as typeof currentDb;
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000137',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+      notifyOnSuccess: true,
+    });
+    expect(r.ok).toBe(true);
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesOn = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(valuesOn?.['notifyOnSuccess']).toBe(true);
+
+    // Omitted → defaults to false (opt-in).
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000138' }]) as typeof currentDb;
+    const { createScheduleAction: create2 } = await import('../src/lib/actions.ts');
+    const r2 = await create2({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000137',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+    });
+    expect(r2.ok).toBe(true);
+    const insertSpy2 = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesOff = (
+      insertSpy2.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> }
+    )?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(valuesOff?.['notifyOnSuccess']).toBe(false);
+  });
 });
 
 describe('toggleScheduleAction', () => {
@@ -1770,6 +1804,126 @@ describe('deleteScheduleAction', () => {
     const r = await deleteScheduleAction('aaaaaaaa-0000-0000-0000-000000000135');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
+describe('runScheduleNowAction', () => {
+  it('rejects non-uuid', async () => {
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when the schedule is missing or owned by another entity', async () => {
+    // The action's WHERE is entity-scoped, so a cross-entity id yields an empty
+    // SELECT exactly like a non-existent one.
+    currentDb = makeDbMixed({ select: [] }) as typeof currentDb;
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('aaaaaaaa-0000-0000-0000-000000000200');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('rejects a schedule that has no task (nothing to run)', async () => {
+    currentDb = makeDbMixed({
+      select: [
+        {
+          agentId: 'aaaaaaaa-0000-0000-0000-000000000201',
+          task: null,
+          chatId: null,
+          agentChatId: null,
+        },
+      ],
+    }) as typeof currentDb;
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('aaaaaaaa-0000-0000-0000-000000000202');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+    // No job may be created for a task-less schedule.
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('inserts a cron-channel job, wakes the runner, and leaves the planning untouched (notify ON → chatId set)', async () => {
+    const jobId = 'aaaaaaaa-0000-0000-0000-000000000210';
+    currentDb = makeDbMixed({
+      select: [
+        {
+          agentId: 'aaaaaaaa-0000-0000-0000-000000000211',
+          task: 'Summarize the inbox',
+          chatId: null,
+          notifyOnSuccess: true,
+          agentChatId: '12345',
+        },
+      ],
+      insert: [{ id: jobId }],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('aaaaaaaa-0000-0000-0000-000000000212');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.jobId).toBe(jobId);
+
+    // A real agent_jobs row was created with the cron-fire shape.
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(insertValues).toBeDefined();
+    expect(insertValues?.['channel']).toBe('cron');
+    expect(insertValues?.['status']).toBe('pending');
+    expect(insertValues?.['task']).toBe('Summarize the inbox');
+    expect(insertValues?.['agentId']).toBe('aaaaaaaa-0000-0000-0000-000000000211');
+    // notify_on_success is ON → chatId carries the agent's last-seen Telegram chat
+    // so the runner enforces a confirmation.
+    expect(insertValues?.['chatId']).toBe('12345');
+    expect(insertValues?.['messages']).toEqual([{ role: 'user', content: 'Summarize the inbox' }]);
+
+    // A manual run must NOT reschedule the cron — no UPDATE on agent_schedules.
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // Runner was woken with the shared bearer.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const headers = (fetchSpy.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer test-bearer-789');
+    fetchSpy.mockRestore();
+  });
+
+  it('leaves chatId null when the schedule did not opt into a confirmation (notify OFF → silent run)', async () => {
+    const jobId = 'aaaaaaaa-0000-0000-0000-000000000220';
+    currentDb = makeDbMixed({
+      select: [
+        {
+          agentId: 'aaaaaaaa-0000-0000-0000-000000000221',
+          task: 'Silent maintenance',
+          chatId: null,
+          notifyOnSuccess: false,
+          agentChatId: '12345',
+        },
+      ],
+      insert: [{ id: jobId }],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('aaaaaaaa-0000-0000-0000-000000000222');
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    // notify_on_success is OFF → no delivery target even though the agent has a
+    // known Telegram chat. The runner won't force a confirmation.
+    expect('chatId' in (insertValues ?? {})).toBe(false);
+    fetchSpy.mockRestore();
   });
 });
 

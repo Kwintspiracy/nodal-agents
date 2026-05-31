@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   toggleScheduleAction,
   deleteScheduleAction,
+  runScheduleNowAction,
   type AgentRow,
   type ScheduleRow as ScheduleRowData,
 } from '@/lib/actions.ts';
@@ -40,6 +41,14 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
     });
   }
 
+  function handleRunNow() {
+    startTransition(async () => {
+      const r = await runScheduleNowAction(s.id);
+      if (!r.ok) toast.error(r.message);
+      else toast.success(`Running "${s.name}" now`);
+    });
+  }
+
   if (editing) {
     return (
       <div className="space-y-2">
@@ -69,6 +78,12 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
                 </span>
               </>
             )}
+            {s.notifyOnSuccess && (
+              <>
+                <span className="text-rule">·</span>
+                <span title="Sends you a Telegram confirmation when it succeeds">🔔 Notifies</span>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-3 text-[10px] text-ink-4">
             {s.nextRun && s.active && <span>Next run {new Date(s.nextRun).toLocaleString()}</span>}
@@ -94,6 +109,15 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
         </div>
 
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleRunNow}
+            disabled={isPending || !s.task}
+            title={s.task ? 'Run this automation now, outside its schedule' : 'No task to run'}
+            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
+          >
+            ▶ Run now
+          </button>
           <button
             type="button"
             onClick={() => setEditing(true)}

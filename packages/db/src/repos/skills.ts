@@ -61,6 +61,48 @@ export async function createSkillRepo(
   }
 }
 
+// ─── updateSkillRepo ──────────────────────────────────────────────────────────
+
+export interface UpdateSkillPatch {
+  name?: string;
+  description?: string | null;
+  content?: string;
+  active?: boolean;
+}
+
+export type UpdateSkillResult = { ok: true } | { error: 'not_found' };
+
+/**
+ * Update an existing entity-owned skill. `slug` is immutable (it's the
+ * identifier used by assignments). Sets `contentOverridden = true` when the
+ * content changes so a future "reset to default" can tell user-edited skills
+ * apart. Returns `{ error: 'not_found' }` if the skill isn't in this entity.
+ */
+export async function updateSkillRepo(
+  db: AnyDrizzleDb,
+  entityId: string,
+  skillId: string,
+  patch: UpdateSkillPatch,
+): Promise<UpdateSkillResult> {
+  const [existing] = await db
+    .select({ id: agentSkills.id })
+    .from(agentSkills)
+    .where(and(eq(agentSkills.id, skillId), eq(agentSkills.entityId, entityId)));
+  if (!existing) return { error: 'not_found' };
+
+  const set: Partial<typeof agentSkills.$inferInsert> = { updatedAt: new Date() };
+  if (patch.name !== undefined) set.name = patch.name;
+  if (patch.description !== undefined) set.description = patch.description;
+  if (patch.active !== undefined) set.active = patch.active;
+  if (patch.content !== undefined) {
+    set.content = patch.content;
+    set.contentOverridden = true;
+  }
+
+  await db.update(agentSkills).set(set).where(eq(agentSkills.id, skillId));
+  return { ok: true };
+}
+
 // ─── assignSkillRepo ──────────────────────────────────────────────────────────
 
 export interface AssignSkillInput {

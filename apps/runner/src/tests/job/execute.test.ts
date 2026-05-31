@@ -464,6 +464,105 @@ describe('executeJob', () => {
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
+  it('cron confirmation: a cron job WITH a chatId (notify_on_success) forces the agent to deliver a confirmation', async () => {
+    // notify_on_success opt-in: the cron tick sets chat_id, which makes the
+    // runner hold a 'cron' job to the same delivery bar as Telegram — the agent
+    // must send the user a confirmation before completing.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        chatId: '12345',
+        task: 'Nettoyage quotidien',
+        status: 'pending',
+        messages: [{ role: 'user', content: 'Nettoyage quotidien' }],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create cron-notify test job');
+
+    // Turn 1: the agent tries to finish WITHOUT confirming → must be nudged.
+    // Turn 2: it sends the confirmation, then finishes.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-tg',
+            toolName: 'telegram_send_message',
+            args: { text: '✅ Nettoyage quotidien terminé.' },
+          },
+          { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    // The confirmation actually reached the user (real args, not a call count).
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
+      chatId: '12345',
+      text: '✅ Nettoyage quotidien terminé.',
+      botToken: 'fake-token',
+    });
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('cron silence: a cron job WITHOUT a chatId (notify_on_success off) completes silently — no forced delivery', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        chatId: null, // notify_on_success was off → no delivery target
+        task: 'Maintenance silencieuse',
+        status: 'pending',
+        messages: [{ role: 'user', content: 'Maintenance silencieuse' }],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create cron-silent test job');
+
+    // The agent finishes immediately. With no chatId, the runner must NOT force
+    // a delivery — the job completes silently.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
   it('delivery guard: persistent plain-text on a Telegram job fails loud (telegram_not_delivered), nothing sent', async () => {
     await db
       .update(agents)
@@ -1692,6 +1791,91 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
 
     // Cleanup rule.
     await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
+  });
+
+  it('Telegram heads-up: a gated tool on a Telegram job warns the user (via telegram_send_message) before suspending', async () => {
+    // Regression for live incident job eeb2b587 (2026-05-31): a gated meta-tool
+    // suspended the job in awaiting_approval with ZERO Telegram signal — the user
+    // had no way to know an approval was waiting. The runner must give the agent
+    // a bounded turn to tell the user, in its own voice via its own delivery tool,
+    // THEN suspend.
+    await approvalDb.insert(approvalRules).values({
+      entityId: approvalSeed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+    // telegramBotToken makes telegram_send_message available + marks the channel
+    // tool-only, so the heads-up guard engages.
+    await approvalDb
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, approvalSeed.agentId));
+
+    const [tgJob] = await approvalDb
+      .insert(agentJobs)
+      .values({
+        entityId: approvalSeed.entityId,
+        agentId: approvalSeed.agentId,
+        channel: 'telegram',
+        chatId: '199791464',
+        task: 'Mémorise un truc important',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!tgJob) throw new Error('Failed to create telegram approval test job');
+
+    // Turn 1: gated save_memory → gate fires.
+    // Turn 2 (after the approval nudge): the agent tells the user on Telegram.
+    const HEADS_UP = "J'ai lancé la mémorisation, j'attends ton approbation pour continuer.";
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-gated-tg',
+            toolName: 'save_memory',
+            args: { fact: 'truc important', category: 'context' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-headsup', toolName: 'telegram_send_message', args: { text: HEADS_UP } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(tgJob.id as JobId, makeApprovalDeps(llmClient), testEnv);
+
+    // Job still suspends — the gate is unchanged, only the comms is added.
+    expect(result.status).toBe('awaiting_approval');
+
+    // The heads-up actually reached Telegram, with the real args (not a call count).
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
+      chatId: '199791464',
+      text: HEADS_UP,
+      botToken: 'fake-token',
+    });
+
+    // And a pending approval_request was genuinely created for the gated tool.
+    const approvalRows = await approvalDb
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, tgJob.id));
+    expect(approvalRows.some((r) => r.toolName === 'save_memory' && r.status === 'pending')).toBe(
+      true,
+    );
+
+    // Cleanup.
+    await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
+    await approvalDb
+      .update(agents)
+      .set({ telegramBotToken: null })
+      .where(eq(agents.id, approvalSeed.agentId));
   });
 
   it('Bug C: approve → save_memory ACTUALLY runs (agent_memory row created) and executed_at stamped', async () => {

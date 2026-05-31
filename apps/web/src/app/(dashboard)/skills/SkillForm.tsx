@@ -197,10 +197,10 @@ export default function SkillForm(props: Props) {
           id="skill-content"
           name="content"
           required
-          rows={6}
+          rows={18}
           placeholder="Step-by-step instructions or context the agent gets when this skill is enabled."
           defaultValue={initial?.content}
-          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y"
+          className="w-full bg-hover border border-rule rounded-md px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y min-h-[440px]"
         />
       </div>
 

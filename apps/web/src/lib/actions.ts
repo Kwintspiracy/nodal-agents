@@ -4280,6 +4280,7 @@ export type ScheduleRow = {
   lastRun: Date | null;
   nextRun: Date | null;
   lastStatus: string | null;
+  notifyOnSuccess: boolean;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -4301,6 +4302,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
         lastRun: agentSchedules.lastRun,
         nextRun: agentSchedules.nextRun,
         lastStatus: agentSchedules.lastStatus,
+        notifyOnSuccess: agentSchedules.notifyOnSuccess,
         createdAt: agentSchedules.createdAt,
         updatedAt: agentSchedules.updatedAt,
       })
@@ -4313,6 +4315,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
       rows.map((r) => ({
         ...r,
         active: r.active ?? true,
+        notifyOnSuccess: r.notifyOnSuccess ?? false,
       })) as ScheduleRow[],
     );
   } catch (err) {
@@ -4326,6 +4329,7 @@ const CreateScheduleSchema = z.object({
   name: z.string().min(1).max(120),
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
+  notifyOnSuccess: z.boolean().optional().default(false),
 });
 
 export async function createScheduleAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
@@ -4360,6 +4364,7 @@ export async function createScheduleAction(raw: unknown): Promise<ActionResult<{
         task: parsed.data.task,
         active: true,
         nextRun,
+        notifyOnSuccess: parsed.data.notifyOnSuccess,
       })
       .returning({ id: agentSchedules.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -4378,6 +4383,7 @@ const UpdateScheduleSchema = z.object({
   name: z.string().min(1).max(120),
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
+  notifyOnSuccess: z.boolean().optional().default(false),
 });
 
 export async function updateScheduleAction(raw: unknown): Promise<ActionResult<void>> {
@@ -4418,6 +4424,7 @@ export async function updateScheduleAction(raw: unknown): Promise<ActionResult<v
         cronExpr: parsed.data.cronExpr,
         task: parsed.data.task,
         nextRun,
+        notifyOnSuccess: parsed.data.notifyOnSuccess,
         updatedAt: new Date(),
       })
       .where(eq(agentSchedules.id, parsed.data.id));
@@ -4474,6 +4481,89 @@ export async function deleteScheduleAction(id: string): Promise<ActionResult<voi
   } catch (err) {
     console.error('[deleteScheduleAction]', err);
     return fail('db_error', 'Failed to delete schedule');
+  }
+}
+
+/**
+ * Run an automation immediately, out-of-band of its CRON schedule.
+ *
+ * Mirrors the cron launch (apps/runner/src/cron/run-schedules.ts): inserts an
+ * agent_jobs row with channel 'cron' (so it behaves exactly like a scheduled
+ * fire — same Job-context, same chatId resolution) and wakes the runner via the
+ * same /api/worker ping as sendTaskAction. Deliberately does NOT touch the
+ * schedule's lastRun/nextRun — a manual run must not shift the planning.
+ */
+export async function runScheduleNowAction(
+  scheduleId: string,
+): Promise<ActionResult<{ jobId: string }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(scheduleId).success) {
+      return fail('validation_failed', 'Invalid schedule id');
+    }
+    const db = getDb();
+    const [schedule] = await db
+      .select({
+        agentId: agentSchedules.agentId,
+        task: agentSchedules.task,
+        chatId: agentSchedules.chatId,
+        notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        agentChatId: agents.lastSeenChatIdTelegram,
+      })
+      .from(agentSchedules)
+      .leftJoin(agents, eq(agents.id, agentSchedules.agentId))
+      .where(and(eq(agentSchedules.id, scheduleId), eq(agentSchedules.entityId, session.entityId)))
+      .limit(1);
+    if (!schedule) return fail('not_found', 'Schedule not found');
+    if (!schedule.task) {
+      return fail('validation_failed', 'This automation has no task to run.');
+    }
+
+    // Mirror the cron tick: only carry a delivery target when the schedule opted
+    // into a success confirmation, so a manual run notifies exactly like a fired
+    // one (and stays silent when the schedule is silent).
+    const resolvedChatId = schedule.notifyOnSuccess
+      ? (schedule.chatId ?? schedule.agentChatId ?? null)
+      : null;
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: session.entityId,
+        agentId: schedule.agentId,
+        status: 'pending',
+        channel: 'cron',
+        task: schedule.task,
+        messages: [{ role: 'user', content: schedule.task }],
+        ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+      })
+      .returning({ id: agentJobs.id });
+    if (!job) return fail('db_error', 'Failed to create job');
+
+    // Wake the runner (same fire-and-forget ping as sendTaskAction).
+    if (!env.WORKER_SECRET) {
+      console.error('[runScheduleNowAction] WORKER_SECRET missing — cannot ping runner');
+    } else {
+      void fetch(`${env.RUNNER_URL}/api/worker`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ jobId: job.id }),
+      }).catch((err: unknown) => {
+        console.error('[runScheduleNowAction] runner ping failed:', err);
+      });
+    }
+
+    // NOTE: lastRun / nextRun are intentionally left untouched — a manual run is
+    // out-of-band and must not reschedule the cron.
+    revalidatePath('/automations');
+    revalidatePath('/jobs');
+    return ok({ jobId: job.id });
+  } catch (err) {
+    console.error('[runScheduleNowAction]', err);
+    return fail('db_error', 'Failed to run schedule now');
   }
 }
 
@@ -5292,6 +5382,7 @@ const SetRootAgentSchema = z.object({
   grants: z.object({
     createAgent: z.boolean(),
     createSkill: z.boolean(),
+    updateSkill: z.boolean(),
     assignSkill: z.boolean(),
     autonomy: z.enum(['propose_confirm', 'destructive_gate', 'fully_autonomous'] as const),
   }),
