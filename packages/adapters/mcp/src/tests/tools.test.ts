@@ -58,7 +58,7 @@ describe('mcpToolToToolDefinition', () => {
     expect(def.riskLevel).toBe('write');
   });
 
-  it('execute() dispatches to callTool with the original un-prefixed name and returns content', async () => {
+  it('execute() dispatches with the original un-prefixed name and joins text-only content', async () => {
     const callTool = vi.fn(async () => ({
       content: [{ type: 'text', text: 'hi' }],
       isError: false,
@@ -69,7 +69,35 @@ describe('mcpToolToToolDefinition', () => {
     const out = await def.execute({ detail: true }, {} as never);
 
     expect(callTool).toHaveBeenCalledWith({ name: 'get_home', arguments: { detail: true } });
-    expect(out).toEqual([{ type: 'text', text: 'hi' }]);
+    // Text-only content blocks are joined into their text (often serialized JSON),
+    // not surfaced as the raw block wrapper.
+    expect(out).toBe('hi');
+  });
+
+  it('execute() prefers structuredContent over (empty) content blocks', async () => {
+    // Airtable & other structured-output servers return data here while the SDK
+    // defaults `content` to []. Regression for live job c66f1db0 (empty results).
+    const records = [{ id: 'rec1', fields: { Name: 'A' } }];
+    const client = {
+      callTool: vi.fn(async () => ({ content: [], structuredContent: { records } })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'airtable');
+
+    const out = await def.execute({ baseId: 'app1', tableId: 'JobList' }, {} as never);
+
+    expect(out).toEqual({ records });
+  });
+
+  it('execute() returns the raw blocks when content has non-text blocks', async () => {
+    const blocks = [{ type: 'image', data: 'iVBOR', mimeType: 'image/png' }];
+    const client = {
+      callTool: vi.fn(async () => ({ content: blocks })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = await def.execute({}, {} as never);
+
+    expect(out).toEqual(blocks);
   });
 
   it('execute() throws when the MCP tool returns isError', async () => {

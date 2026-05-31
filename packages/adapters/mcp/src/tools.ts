@@ -65,7 +65,24 @@ export function mcpToolToToolDefinition(
         const detail = extractText(result.content);
         throw new Error(`MCP tool ${originalName} failed: ${detail || 'unknown error'}`);
       }
-      return result.content;
+      // An MCP CallToolResult carries two payload channels (spec 2025-06-18):
+      // the historical `content` blocks AND `structuredContent` for tools that
+      // declare an outputSchema. The SDK defaults `content` to [] when the
+      // server omits it, so a structured-output server (e.g. Airtable) that
+      // returns its data in `structuredContent` would otherwise surface as an
+      // empty result. Prefer structuredContent; else join text-only content
+      // blocks (usually serialized JSON); else return the raw blocks so
+      // images/resources are preserved.
+      if (result.structuredContent != null) return result.structuredContent;
+      const content = result.content ?? [];
+      if (
+        Array.isArray(content) &&
+        content.length > 0 &&
+        content.every((c) => (c as { type?: unknown }).type === 'text')
+      ) {
+        return extractText(content);
+      }
+      return content;
     },
   };
 }
