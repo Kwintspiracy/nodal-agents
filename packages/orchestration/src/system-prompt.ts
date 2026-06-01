@@ -68,6 +68,8 @@ function buildJobContextBlock(ctx: JobContext): string {
         'self-contained instruction: it runs as a tracked job with your FULL toolset. ' +
         '`run_task` is your gateway to everything you can do — NEVER tell the user you cannot ' +
         'do something that an action could accomplish; escalate it via `run_task` instead. ' +
+        'When you call `run_task`, ALSO write a brief one-line acknowledgment in your own ' +
+        'voice (e.g. "Je m\'en occupe…") so the user sees you started. ' +
         'Do not call any other named tool on this surface.',
     );
   }

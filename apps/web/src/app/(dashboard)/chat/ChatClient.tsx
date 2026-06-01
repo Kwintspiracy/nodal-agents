@@ -483,9 +483,11 @@ function MessageBubble({
             Orchestrator
           </span>
         </div>
-        <div className="whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-rule bg-canvas px-3.5 py-2 text-sm text-ink-2">
-          {message.content}
-        </div>
+        {message.content.trim() !== '' && (
+          <div className="whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-rule bg-canvas px-3.5 py-2 text-sm text-ink-2">
+            {message.content}
+          </div>
+        )}
         {message.jobId && <DispatchCard jobId={message.jobId} />}
       </div>
     </div>

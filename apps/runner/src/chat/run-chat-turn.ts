@@ -172,7 +172,11 @@ export async function runChatTurn(opts: {
       })
       .returning({ id: agentJobs.id });
 
-    const reply = text || `On it — handling: ${instruction}`;
+    // The acknowledgment is the agent's OWN words (it's prompted to write a
+    // one-liner when it escalates). If it wrote none, the runner stays SILENT
+    // (invariant #2) — content is empty and the UI shows just the dispatch card
+    // + the eventual job result, never a fabricated runner string.
+    const reply = text;
     await db.insert(chatMessages).values({
       entityId,
       agentId,
