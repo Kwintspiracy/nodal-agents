@@ -5379,37 +5379,44 @@ export async function getRootConfigAction(): Promise<
   }
 }
 
-const SetRootAgentSchema = z.object({
-  rootAgentId: z.string().guid().nullable(),
+const SetRootGrantsSchema = z.object({
   grants: z.object({
     createAgent: z.boolean(),
     createSkill: z.boolean(),
     updateSkill: z.boolean(),
     assignSkill: z.boolean(),
+    createMcp: z.boolean(),
+    createConnector: z.boolean(),
     autonomy: z.enum(['propose_confirm', 'destructive_gate', 'fully_autonomous'] as const),
   }),
 });
 
 /**
- * Designate a ROOT agent for the active workspace and configure its grants.
+ * Configure the powers (grants + autonomy) of the active workspace's ROOT agent.
+ *
+ * The ROOT itself is NOT chosen here — it is the entity's "origin orchestrator"
+ * (the first orchestrator created), designated automatically by createAgentRepo.
+ * This action only tunes what that ROOT may do.
  *
  * Side effects:
- *   1. Updates entities.rootAgentId + entities.rootGrants.
+ *   1. Updates entities.rootGrants (rootAgentId is left as-is — structural).
  *   2. Clears all existing meta-tool approval_rules for this entity.
- *   3. If rootAgentId is set AND autonomy is 'propose_confirm': inserts
- *      require_approval rules for each enabled meta-tool.
+ *   3. If autonomy is 'propose_confirm': inserts require_approval rules for each
+ *      enabled meta-tool.
  *      - 'destructive_gate' inserts require_approval only for destructive
  *        meta-tools; none exist in the MVT toolset yet.
  *      - 'fully_autonomous' inserts nothing — meta-tools execute freely.
+ *
+ * Fails with 'not_found' when no ROOT exists yet (no orchestrator created).
  */
 export async function setRootAgentAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
-    const parsed = SetRootAgentSchema.safeParse(raw);
+    const parsed = SetRootGrantsSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { rootAgentId, grants } = parsed.data;
+    const { grants } = parsed.data;
     const db = getDb();
 
     // Membership check — caller must be a member of the active entity.
@@ -5421,24 +5428,22 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
       );
     if (!member) return fail('not_found', 'Workspace not found');
 
-    // If a rootAgentId is provided it must be an orchestrator in this entity.
-    if (rootAgentId !== null) {
-      const [agent] = await db
-        .select({ id: agents.id, role: agents.role })
-        .from(agents)
-        .where(and(eq(agents.id, rootAgentId), eq(agents.entityId, session.entityId)));
-      if (!agent) return fail('not_found', 'Agent not found');
-      if (agent.role !== 'orchestrator') {
-        return fail('validation_failed', 'ROOT must be an orchestrator');
-      }
+    // The ROOT is the entity's origin orchestrator, set automatically. We only
+    // tune its grants — so read it, and refuse if none exists yet.
+    const [ent] = await db
+      .select({ rootAgentId: entities.rootAgentId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    const rootAgentId = ent?.rootAgentId ?? null;
+    if (!rootAgentId) {
+      return fail('not_found', 'No ROOT agent yet — create an orchestrator first');
     }
 
-    // Persist rootAgentId + rootGrants on the entity.
+    // Persist rootGrants on the entity (rootAgentId is structural — left as-is).
     // Cast grants to unknown so Drizzle accepts it as JSONB without type friction.
     await db
       .update(entities)
       .set({
-        rootAgentId: rootAgentId,
         rootGrants: grants as unknown as (typeof entities.$inferInsert)['rootGrants'],
         updatedAt: new Date(),
       })
@@ -5457,25 +5462,23 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
       );
 
     // Step 2: insert new rules according to autonomy level.
-    if (rootAgentId !== null) {
-      if (grants.autonomy === 'propose_confirm') {
-        // Each enabled meta-tool requires explicit user approval before execution.
-        const tools = enabledMetaTools(grants as RootGrants);
-        if (tools.length > 0) {
-          await db.insert(approvalRules).values(
-            tools.map((toolName) => ({
-              entityId: session.entityId,
-              agentId: rootAgentId,
-              toolName,
-              action: 'require_approval' as const,
-            })),
-          );
-        }
+    if (grants.autonomy === 'propose_confirm') {
+      // Each enabled meta-tool requires explicit user approval before execution.
+      const tools = enabledMetaTools(grants as RootGrants);
+      if (tools.length > 0) {
+        await db.insert(approvalRules).values(
+          tools.map((toolName) => ({
+            entityId: session.entityId,
+            agentId: rootAgentId,
+            toolName,
+            action: 'require_approval' as const,
+          })),
+        );
       }
-      // destructive_gate inserts require_approval only for destructive meta-tools;
-      // none exist in the MVT toolset yet.
-      // fully_autonomous: no approval rules — all meta-tools execute without gating.
     }
+    // destructive_gate inserts require_approval only for destructive meta-tools;
+    // none exist in the MVT toolset yet.
+    // fully_autonomous: no approval rules — all meta-tools execute without gating.
 
     revalidatePath('/settings');
     return ok(undefined);
@@ -5498,7 +5501,19 @@ export type ConversationView = {
   preview: string;
   updatedAt: Date | null;
 };
-export type ChatMessageView = { id: string; role: 'user' | 'assistant'; content: string };
+export type ChatMessageView = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  jobId: string | null;
+};
+
+/** A dispatched action job's live state, for the in-chat dispatch card. */
+export type ChatJobStatus = {
+  status: string;
+  result: string | null;
+  children: { agentName: string; status: string }[];
+};
 
 /** Resolve the entity's ROOT agent (id + name), or null when none is designated. */
 async function resolveRoot(
@@ -5635,7 +5650,12 @@ export async function listChatAction(
     if (!conv) return fail('not_found', 'Conversation not found');
 
     const rows = await db
-      .select({ id: chatMessages.id, role: chatMessages.role, content: chatMessages.content })
+      .select({
+        id: chatMessages.id,
+        role: chatMessages.role,
+        content: chatMessages.content,
+        jobId: chatMessages.jobId,
+      })
       .from(chatMessages)
       .where(eq(chatMessages.conversationId, conversationId))
       .orderBy(chatMessages.createdAt)
@@ -5645,6 +5665,7 @@ export async function listChatAction(
       id: r.id,
       role: r.role as 'user' | 'assistant',
       content: r.content,
+      jobId: r.jobId,
     }));
     return ok({ messages });
   } catch (err) {
@@ -5710,5 +5731,42 @@ export async function sendChatMessageAction(
   } catch (err) {
     console.error('[sendChatMessageAction]', err);
     return fail('db_error', 'Failed to send message');
+  }
+}
+
+export async function getChatJobStatusAction(jobId: string): Promise<ActionResult<ChatJobStatus>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(jobId).success) {
+      return fail('validation_failed', 'Invalid job id');
+    }
+    const db = getDb();
+    const [job] = await db
+      .select({ status: agentJobs.status, result: agentJobs.result })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, session.entityId)))
+      .limit(1);
+    if (!job) return fail('not_found', 'Job not found');
+
+    // Delegated sub-agents (children) = the "DISPATCHED TO N AGENTS" rows.
+    const childRows = await db
+      .select({
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        status: agentJobs.status,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(eq(agentJobs.parentJobId, jobId))
+      .orderBy(agentJobs.createdAt);
+
+    const children = childRows.map((r) => ({
+      agentName: r.agentName ?? r.agentSlug ?? 'agent',
+      status: r.status ?? 'pending',
+    }));
+    return ok({ status: job.status ?? 'pending', result: job.result, children });
+  } catch (err) {
+    console.error('[getChatJobStatusAction]', err);
+    return fail('db_error', 'Failed to load job status');
   }
 }

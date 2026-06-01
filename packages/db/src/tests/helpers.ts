@@ -388,7 +388,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       env_vars jsonb DEFAULT '{}',
       api_key text,
       api_key_last4 text,
-      auth_scheme text CHECK (auth_scheme IN ('header','query') OR auth_scheme IS NULL),
+      auth_scheme text CHECK (auth_scheme IN ('header','query','bearer') OR auth_scheme IS NULL),
       auth_param_name text,
       active boolean DEFAULT true,
       available_tools jsonb,

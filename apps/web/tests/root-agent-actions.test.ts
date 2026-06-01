@@ -23,8 +23,6 @@ let _testUserId = 'placeholder-user-id';
 let _testEntityId = 'placeholder-entity-id';
 // Seeded orchestrator agent id — set in beforeAll after seeding.
 let _orchestratorId = 'placeholder-orchestrator-id';
-// Seeded non-orchestrator agent id (the one from seedMinimal).
-let _workerAgentId = 'placeholder-worker-id';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -95,7 +93,6 @@ beforeAll(async () => {
   const seed = await seedMinimal(db);
   _testUserId = seed.userId;
   _testEntityId = seed.entityId;
-  _workerAgentId = seed.agentId; // worker (role='agent') from seedMinimal
 
   // seedMinimal does not insert an entity_members row — add one so the
   // membership guard in setRootAgentAction passes.
@@ -126,16 +123,46 @@ afterAll(() => {
   vi.restoreAllMocks();
 });
 
-// ─── Helper: reset the entity's ROOT config between tests ─────────────────────
+// ─── Helpers: set/clear the entity's ROOT between tests ───────────────────────
+// Brique F: the ROOT is the entity's origin orchestrator, designated
+// automatically (createAgentRepo). setRootAgentAction only TUNES its grants —
+// it no longer picks the agent. So these helpers stand in for what
+// createAgentRepo would have done: point the entity at our seeded orchestrator
+// (or leave it without a ROOT), then exercise the grants-only action.
 
-async function clearRootConfig() {
+async function setRoot(orchId: string | null) {
   if (!_testDb) throw new Error('DB not initialised');
   await _testDb
     .update(entities)
-    .set({ rootAgentId: null, rootGrants: {} })
+    .set({ rootAgentId: orchId, rootGrants: {} })
     .where(eq(entities.id, _testEntityId));
   await _testDb
     .delete(approvalRules)
+    .where(
+      and(
+        eq(approvalRules.entityId, _testEntityId),
+        inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
+      ),
+    );
+}
+
+const ALL_ON = {
+  createAgent: true,
+  createSkill: true,
+  updateSkill: true,
+  assignSkill: true,
+  createMcp: true,
+  createConnector: true,
+} as const;
+
+async function metaRules() {
+  return _testDb!
+    .select({
+      agentId: approvalRules.agentId,
+      toolName: approvalRules.toolName,
+      action: approvalRules.action,
+    })
+    .from(approvalRules)
     .where(
       and(
         eq(approvalRules.entityId, _testEntityId),
@@ -148,116 +175,85 @@ async function clearRootConfig() {
 
 describe('getRootConfigAction', () => {
   it('returns rootAgentId=null and DEFAULT_ROOT_GRANTS when nothing has been set', async () => {
-    await clearRootConfig();
+    await setRoot(null);
     const { getRootConfigAction } = await import('../src/lib/actions.ts');
     const { DEFAULT_ROOT_GRANTS } = await import('@nodal-agents/shared');
     const res = await getRootConfigAction();
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.data.rootAgentId).toBeNull();
-    expect(res.data.grants).toEqual(DEFAULT_ROOT_GRANTS);
+    // Empty stored grants parse to the original defaults, EXCEPT the newer
+    // opt-in grants (createMcp, createConnector): absent → false (never granted
+    // retroactively).
+    expect(res.data.grants).toEqual({
+      ...DEFAULT_ROOT_GRANTS,
+      createMcp: false,
+      createConnector: false,
+    });
+  });
+
+  it('reflects the auto-designated ROOT once one exists', async () => {
+    await setRoot(_orchestratorId);
+    const { getRootConfigAction } = await import('../src/lib/actions.ts');
+    const res = await getRootConfigAction();
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.rootAgentId).toBe(_orchestratorId);
   });
 });
 
-// ─── setRootAgentAction — validation failures ─────────────────────────────────
+// ─── setRootAgentAction — validation / preconditions ──────────────────────────
 
 describe('setRootAgentAction — validation', () => {
-  it('rejects non-guid rootAgentId', async () => {
-    const { setRootAgentAction } = await import('../src/lib/actions.ts');
-    const res = await setRootAgentAction({
-      rootAgentId: 'not-a-uuid',
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'propose_confirm',
-      },
-    });
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.code).toBe('validation_failed');
-  });
-
   it('rejects invalid autonomy value', async () => {
+    await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     const res = await setRootAgentAction({
-      rootAgentId: null,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'turbo_mode',
-      },
+      grants: { ...ALL_ON, autonomy: 'turbo_mode' },
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.code).toBe('validation_failed');
   });
 
-  it('rejects a worker agent as ROOT', async () => {
+  it('returns not_found when no ROOT has been designated yet', async () => {
+    await setRoot(null);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     const res = await setRootAgentAction({
-      rootAgentId: _workerAgentId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'propose_confirm',
-      },
+      grants: { ...ALL_ON, autonomy: 'propose_confirm' },
     });
     expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.code).toBe('validation_failed');
-      expect(res.message).toContain('orchestrator');
-    }
+    if (!res.ok) expect(res.code).toBe('not_found');
   });
 
-  it('does NOT write entity row when validation fails (non-orchestrator agent)', async () => {
-    await clearRootConfig();
+  it('writes nothing when there is no ROOT (rootGrants stays empty)', async () => {
+    await setRoot(null);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
-    await setRootAgentAction({
-      rootAgentId: _workerAgentId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'propose_confirm',
-      },
-    });
-    // Entity rootAgentId must still be null
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
     const [row] = await _testDb!
       .select({ rootAgentId: entities.rootAgentId })
       .from(entities)
       .where(eq(entities.id, _testEntityId));
     expect(row?.rootAgentId).toBeNull();
+    expect((await metaRules()).length).toBe(0);
   });
 });
 
-// ─── setRootAgentAction — happy paths ─────────────────────────────────────────
+// ─── setRootAgentAction — write paths ─────────────────────────────────────────
 
 describe('setRootAgentAction — write paths', () => {
-  it('sets a valid orchestrator as ROOT and writes entities row', async () => {
-    await clearRootConfig();
+  it('tunes grants on the existing ROOT and leaves rootAgentId untouched', async () => {
+    await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     const res = await setRootAgentAction({
-      rootAgentId: _orchestratorId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'propose_confirm',
-      },
+      grants: { ...ALL_ON, autonomy: 'propose_confirm' },
     });
     expect(res.ok).toBe(true);
 
-    // Assert real entity row
     const [row] = await _testDb!
       .select({ rootAgentId: entities.rootAgentId, rootGrants: entities.rootGrants })
       .from(entities)
       .where(eq(entities.id, _testEntityId));
+    // The ROOT itself is structural — the action must not change it.
     expect(row?.rootAgentId).toBe(_orchestratorId);
     const grants = row?.rootGrants as Record<string, unknown>;
     expect(grants?.['createAgent']).toBe(true);
@@ -267,37 +263,21 @@ describe('setRootAgentAction — write paths', () => {
   });
 
   it('propose_confirm: inserts require_approval rules for all enabled meta-tools', async () => {
-    await clearRootConfig();
+    await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
-    await setRootAgentAction({
-      rootAgentId: _orchestratorId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'propose_confirm',
-      },
-    });
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
 
-    // Assert actual approval_rules rows — NOT pre-seeded, created by the action.
-    const rules = await _testDb!
-      .select({
-        agentId: approvalRules.agentId,
-        toolName: approvalRules.toolName,
-        action: approvalRules.action,
-      })
-      .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, _testEntityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-
-    expect(rules.length).toBe(4);
+    const rules = await metaRules();
+    expect(rules.length).toBe(6);
     const toolNames = rules.map((r) => r.toolName).sort();
-    expect(toolNames).toEqual(['attach_skill', 'create_agent', 'create_skill', 'update_skill']);
+    expect(toolNames).toEqual([
+      'attach_skill',
+      'create_agent',
+      'create_connector',
+      'create_mcp',
+      'create_skill',
+      'update_skill',
+    ]);
     for (const rule of rules) {
       expect(rule.agentId).toBe(_orchestratorId);
       expect(rule.action).toBe('require_approval');
@@ -305,182 +285,68 @@ describe('setRootAgentAction — write paths', () => {
   });
 
   it('propose_confirm with only createAgent=true: only 1 rule inserted', async () => {
-    await clearRootConfig();
+    await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     await setRootAgentAction({
-      rootAgentId: _orchestratorId,
       grants: {
         createAgent: true,
         createSkill: false,
         updateSkill: false,
         assignSkill: false,
+        createMcp: false,
+        createConnector: false,
         autonomy: 'propose_confirm',
       },
     });
-
-    const rules = await _testDb!
-      .select({ toolName: approvalRules.toolName })
-      .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, _testEntityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-
+    const rules = await metaRules();
     expect(rules.length).toBe(1);
     expect(rules[0]?.toolName).toBe('create_agent');
   });
 
-  it('fully_autonomous: no approval_rules rows inserted', async () => {
-    await clearRootConfig();
+  it('all grants off (opt-in default): no rules, ROOT preserved', async () => {
+    await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
     await setRootAgentAction({
-      rootAgentId: _orchestratorId,
       grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'fully_autonomous',
-      },
-    });
-
-    const rules = await _testDb!
-      .select({ id: approvalRules.id })
-      .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, _testEntityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-
-    expect(rules.length).toBe(0);
-  });
-
-  it('destructive_gate: no approval_rules rows inserted (no destructive meta-tools in MVT)', async () => {
-    await clearRootConfig();
-    const { setRootAgentAction } = await import('../src/lib/actions.ts');
-    await setRootAgentAction({
-      rootAgentId: _orchestratorId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'destructive_gate',
-      },
-    });
-
-    const rules = await _testDb!
-      .select({ id: approvalRules.id })
-      .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, _testEntityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-
-    expect(rules.length).toBe(0);
-  });
-
-  it('switching from propose_confirm to fully_autonomous deletes existing rules', async () => {
-    await clearRootConfig();
-    const { setRootAgentAction } = await import('../src/lib/actions.ts');
-
-    // First: set propose_confirm → should have 3 rules
-    await setRootAgentAction({
-      rootAgentId: _orchestratorId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
+        createAgent: false,
+        createSkill: false,
+        updateSkill: false,
+        assignSkill: false,
+        createMcp: false,
+        createConnector: false,
         autonomy: 'propose_confirm',
       },
     });
-    const rulesAfterFirst = await _testDb!
-      .select({ id: approvalRules.id })
-      .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, _testEntityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-    expect(rulesAfterFirst.length).toBe(4);
-
-    // Second: switch to fully_autonomous → rules must be cleared
-    await setRootAgentAction({
-      rootAgentId: _orchestratorId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'fully_autonomous',
-      },
-    });
-    const rulesAfterSwitch = await _testDb!
-      .select({ id: approvalRules.id })
-      .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, _testEntityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-    expect(rulesAfterSwitch.length).toBe(0);
-  });
-
-  it('unsets ROOT (rootAgentId=null): clears entity row and removes all meta-tool rules', async () => {
-    await clearRootConfig();
-    const { setRootAgentAction } = await import('../src/lib/actions.ts');
-
-    // First set a root agent
-    await setRootAgentAction({
-      rootAgentId: _orchestratorId,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'propose_confirm',
-      },
-    });
-
-    // Then unset it
-    const res = await setRootAgentAction({
-      rootAgentId: null,
-      grants: {
-        createAgent: true,
-        createSkill: true,
-        updateSkill: true,
-        assignSkill: true,
-        autonomy: 'propose_confirm',
-      },
-    });
-    expect(res.ok).toBe(true);
-
-    // Entity row must have null rootAgentId
+    expect((await metaRules()).length).toBe(0);
     const [row] = await _testDb!
       .select({ rootAgentId: entities.rootAgentId })
       .from(entities)
       .where(eq(entities.id, _testEntityId));
-    expect(row?.rootAgentId).toBeNull();
+    expect(row?.rootAgentId).toBe(_orchestratorId);
+  });
 
-    // Meta-tool rules must be cleared
-    const rules = await _testDb!
-      .select({ id: approvalRules.id })
-      .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, _testEntityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-    expect(rules.length).toBe(0);
+  it('fully_autonomous: no approval_rules rows inserted', async () => {
+    await setRoot(_orchestratorId);
+    const { setRootAgentAction } = await import('../src/lib/actions.ts');
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'fully_autonomous' } });
+    expect((await metaRules()).length).toBe(0);
+  });
+
+  it('destructive_gate: no approval_rules rows inserted (no destructive meta-tools in MVT)', async () => {
+    await setRoot(_orchestratorId);
+    const { setRootAgentAction } = await import('../src/lib/actions.ts');
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'destructive_gate' } });
+    expect((await metaRules()).length).toBe(0);
+  });
+
+  it('switching from propose_confirm to fully_autonomous deletes existing rules', async () => {
+    await setRoot(_orchestratorId);
+    const { setRootAgentAction } = await import('../src/lib/actions.ts');
+
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
+    expect((await metaRules()).length).toBe(6);
+
+    await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'fully_autonomous' } });
+    expect((await metaRules()).length).toBe(0);
   });
 });

@@ -9,9 +9,13 @@ import {
   deleteConversationAction,
   listChatAction,
   sendChatMessageAction,
+  getChatJobStatusAction,
   type ConversationView,
   type ChatMessageView,
+  type ChatJobStatus,
 } from '@/lib/actions.ts';
+
+const TERMINAL_JOB = new Set(['completed', 'failed', 'cancelled']);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -200,7 +204,10 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
     }
 
     // Optimistic user bubble — lastIsUser becomes true → "thinking…" shows at once
-    setMessages((prev) => [...prev, { id: `local-${Date.now()}`, role: 'user', content: message }]);
+    setMessages((prev) => [
+      ...prev,
+      { id: `local-${Date.now()}`, role: 'user', content: message, jobId: null },
+    ]);
 
     const res = await sendChatMessageAction({ conversationId: convId, message });
     if (!res.ok) toast.error(res.message);
@@ -479,7 +486,84 @@ function MessageBubble({
         <div className="whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-rule bg-canvas px-3.5 py-2 text-sm text-ink-2">
           {message.content}
         </div>
+        {message.jobId && <DispatchCard jobId={message.jobId} />}
       </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const done = status === 'completed';
+  const failed = status === 'failed' || status === 'cancelled';
+  const label = done ? 'Done' : failed ? 'Failed' : 'Running';
+  const cls = done
+    ? 'border-ok/40 text-ok'
+    : failed
+      ? 'border-err/40 text-err'
+      : 'border-run/40 text-run';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}
+    >
+      {!done && !failed && <span className="animate-pulse">●</span>}
+      {label}
+    </span>
+  );
+}
+
+function DispatchCard({ jobId }: { jobId: string }) {
+  const [state, setState] = useState<ChatJobStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const r = await getChatJobStatusAction(jobId);
+      if (cancelled) return;
+      if (r.ok) setState(r.data);
+      const done = r.ok && TERMINAL_JOB.has(r.data.status);
+      if (!done && tries < 150) {
+        tries += 1;
+        timer = setTimeout(() => void poll(), 2000);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [jobId]);
+
+  const status = state?.status ?? 'pending';
+  const children = state?.children ?? [];
+
+  return (
+    <div className="mt-2 w-full rounded-lg border border-rule-2 bg-canvas/60 p-2.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-ink-4">
+          {children.length > 0
+            ? `↘ Dispatched to ${children.length} agent${children.length > 1 ? 's' : ''}`
+            : '↘ Task'}
+        </span>
+        {children.length === 0 && <StatusBadge status={status} />}
+      </div>
+      {children.length > 0 ? (
+        <div className="space-y-1">
+          {children.map((c, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between rounded-md border border-rule bg-paper px-2.5 py-1.5"
+            >
+              <span className="truncate text-xs font-medium text-ink-2">{c.agentName}</span>
+              <StatusBadge status={c.status} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {state && TERMINAL_JOB.has(status) && state.result && (
+        <p className="mt-1.5 whitespace-pre-wrap text-xs text-ink-3">{state.result}</p>
+      )}
     </div>
   );
 }

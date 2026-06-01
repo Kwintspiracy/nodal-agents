@@ -1,14 +1,17 @@
 'use client';
 
 /**
- * RootAgentSection — settings block for designating a ROOT agent.
+ * RootAgentSection — settings block for configuring the workspace ROOT agent.
  *
- * Lets the user pick an orchestrator agent to act as the workspace ROOT:
- * it receives meta-tools (create_agent / create_skill / assign_skill) subject
- * to per-grant toggles and an autonomy level that controls when those tools
- * require human approval before executing.
+ * The ROOT is NOT chosen here. Under the "origin orchestrator" model (Brique F),
+ * the first orchestrator created in the workspace is automatically the ROOT —
+ * the single top-level orchestrator. This block shows which agent that is and
+ * lets the user tune its powers: per-grant meta-tool toggles (create_agent /
+ * create_skill / update_skill / attach_skill) and an autonomy level controlling
+ * when those tools require approval. Auto-designated ROOTs start with all powers
+ * OFF — enable them here.
  *
- * Wave 2b — V4 ROOT agent, 2026-05-29.
+ * Wave 2b — V4 ROOT agent, 2026-05-29. Picker removed — Brique F, 2026-06-01.
  */
 
 import { useState, useTransition } from 'react';
@@ -61,10 +64,10 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
   const router = useRouter();
   const [isSaving, startSaveTransition] = useTransition();
 
-  // Filter to orchestrators only — only they may be ROOT.
-  const orchestrators = agents.filter((a) => a.role === 'orchestrator');
+  // The ROOT is the entity's origin orchestrator, designated automatically.
+  // This block only configures its powers.
+  const rootAgent = agents.find((a) => a.id === initialRootAgentId) ?? null;
 
-  const [rootAgentId, setRootAgentId] = useState<string | null>(initialRootAgentId);
   const [grants, setGrants] = useState<RootGrants>(initialGrants ?? DEFAULT_ROOT_GRANTS);
 
   function toggleGrant(key: keyof Omit<RootGrants, 'autonomy'>) {
@@ -78,7 +81,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
     startSaveTransition(async () => {
-      const res = await setRootAgentAction({ rootAgentId, grants });
+      const res = await setRootAgentAction({ grants });
       if (!res.ok) {
         toast.error(res.message);
         return;
@@ -89,105 +92,91 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
   }
 
   function handleCancel() {
-    setRootAgentId(initialRootAgentId);
     setGrants(initialGrants ?? DEFAULT_ROOT_GRANTS);
   }
 
   return (
     <SetBlock
       label="ROOT agent"
-      lede="Designate an orchestrator that can manage this workspace (create skills/agents, assign skills) on your behalf."
+      lede="Your first orchestrator is automatically this workspace's ROOT — the single top-level agent that can manage it (create skills/agents, assign skills) on your behalf. Tune its powers below."
     >
-      {orchestrators.length === 0 ? (
-        /* Empty state — no orchestrators exist yet */
+      {rootAgent === null ? (
+        /* Empty state — no ROOT yet (no orchestrator has been created) */
         <div className="mt-3.5 rounded-xl border border-rule-2 bg-paper px-[18px] py-4">
           <p className="text-[13px] text-ink-3">
-            No orchestrator agents found.{' '}
+            No ROOT agent yet.{' '}
             <a
               href="/agents"
               className="font-medium text-ink underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
             >
               Create an orchestrator agent
             </a>{' '}
-            first, then come back to designate it as ROOT.
+            — the first one you create becomes this workspace&apos;s ROOT automatically.
           </p>
         </div>
       ) : (
         <form onSubmit={handleSave}>
           <SetForm>
-            {/* ── Agent picker ─────────────────────────────────────────────── */}
+            {/* ── ROOT agent (read-only — designated automatically) ─────────── */}
             <div className="mb-4">
-              <label
-                htmlFor="root-agent-select"
-                className="mb-1.5 block text-[13px] leading-none text-ink-3"
-              >
-                Orchestrator agent
-              </label>
-              <select
-                id="root-agent-select"
-                value={rootAgentId ?? ''}
-                onChange={(e) => setRootAgentId(e.target.value === '' ? null : e.target.value)}
-                disabled={isSaving}
-                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink focus:border-ink-3 focus:outline-none disabled:opacity-50"
-              >
-                <option value="">None — disable ROOT agent</option>
-                {orchestrators.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+              <div className="mb-1.5 text-[13px] leading-none text-ink-3">ROOT agent</div>
+              <div className="flex items-center gap-2 rounded-lg border border-rule bg-paper px-3 py-2">
+                <span className="text-[13px] font-medium text-ink">{rootAgent.name}</span>
+                <span className="rounded-full border border-rule-2 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-4">
+                  Origin orchestrator
+                </span>
+              </div>
             </div>
 
-            {/* ── Grant toggles + autonomy (only visible when an agent is selected) */}
-            {rootAgentId !== null && (
-              <>
-                {/* Grant toggles */}
-                <div className="mb-4">
-                  <div className="mb-2 text-[13px] leading-none text-ink-3">Allowed actions</div>
-                  <div className="flex flex-col gap-1.5">
-                    {(
-                      [
-                        { key: 'createAgent', label: 'Create agents' },
-                        { key: 'createSkill', label: 'Create skills' },
-                        { key: 'updateSkill', label: 'Update skills' },
-                        { key: 'assignSkill', label: 'Assign skills' },
-                      ] as const
-                    ).map(({ key, label }) => (
-                      <label
-                        key={key}
-                        className="flex cursor-pointer items-center gap-2.5 select-none"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={grants[key]}
-                          onChange={() => toggleGrant(key)}
-                          disabled={isSaving}
-                          className="h-4 w-4 cursor-pointer rounded border border-rule bg-canvas accent-conn-vivid disabled:opacity-50"
-                        />
-                        <span className="text-[13.5px] text-ink-2">{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Autonomy level */}
-                <div className="mb-1">
-                  <div className="mb-2.5 text-[13px] leading-none text-ink-3">Autonomy level</div>
-                  <div role="radiogroup" aria-label="Autonomy level">
-                    {AUTONOMY_OPTIONS.map((opt) => (
-                      <OptionRadio
-                        key={opt.value}
-                        active={grants.autonomy === opt.value}
-                        onClick={() => setAutonomy(opt.value)}
-                        name={opt.name}
-                        description={opt.description}
+            {/* ── Grant toggles + autonomy ─────────────────────────────────── */}
+            <>
+              {/* Grant toggles */}
+              <div className="mb-4">
+                <div className="mb-2 text-[13px] leading-none text-ink-3">Allowed actions</div>
+                <div className="flex flex-col gap-1.5">
+                  {(
+                    [
+                      { key: 'createAgent', label: 'Create agents' },
+                      { key: 'createSkill', label: 'Create skills' },
+                      { key: 'updateSkill', label: 'Update skills' },
+                      { key: 'assignSkill', label: 'Assign skills' },
+                      { key: 'createMcp', label: 'Create MCP servers' },
+                      { key: 'createConnector', label: 'Create connectors' },
+                    ] as const
+                  ).map(({ key, label }) => (
+                    <label
+                      key={key}
+                      className="flex cursor-pointer items-center gap-2.5 select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={grants[key]}
+                        onChange={() => toggleGrant(key)}
+                        disabled={isSaving}
+                        className="h-4 w-4 cursor-pointer rounded border border-rule bg-canvas accent-conn-vivid disabled:opacity-50"
                       />
-                    ))}
-                  </div>
+                      <span className="text-[13.5px] text-ink-2">{label}</span>
+                    </label>
+                  ))}
                 </div>
-              </>
-            )}
+              </div>
+
+              {/* Autonomy level */}
+              <div className="mb-1">
+                <div className="mb-2.5 text-[13px] leading-none text-ink-3">Autonomy level</div>
+                <div role="radiogroup" aria-label="Autonomy level">
+                  {AUTONOMY_OPTIONS.map((opt) => (
+                    <OptionRadio
+                      key={opt.value}
+                      active={grants.autonomy === opt.value}
+                      onClick={() => setAutonomy(opt.value)}
+                      name={opt.name}
+                      description={opt.description}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
 
             <SetCtaRow onCancel={handleCancel} pending={isSaving} saveLabel="Save" />
           </SetForm>

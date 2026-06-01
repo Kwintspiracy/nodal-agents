@@ -47,6 +47,51 @@ export interface ToolContext {
    *   - Multiple workspaces: `<label>/<relative>` is required (e.g. "notes/file.md").
    */
   workspaces?: Array<{ label: string; path: string }>;
+  /**
+   * Infrastructure-provisioning capabilities for ROOT meta-tools that create
+   * MCP servers (and, later, connectors). Injected by the runner, which owns
+   * the MCP adapter and secret encryption — so packages/tools takes no
+   * dependency on either. Absent in lightweight contexts: a meta-tool that
+   * needs it fails loud (`provisioning_unavailable`) rather than writing an
+   * unverified row.
+   */
+  provisioning?: ToolProvisioning;
+}
+
+// ─── ToolProvisioning ──────────────────────────────────────────────────────────
+
+/**
+ * MCP connect options for provisioning verification. Mirrors the MCP adapter's
+ * option shape, redeclared here so packages/tools stays free of an adapter
+ * dependency — the runner adapts `connectMcp` to this interface.
+ */
+export type ProvisionMcpConnect =
+  | {
+      transport: 'http';
+      url: string;
+      apiKey?: string;
+      authScheme?: 'header' | 'query' | 'bearer';
+      authParamName?: string;
+    }
+  | { transport: 'stdio'; command: string; args: string[]; env: Record<string, string> };
+
+/**
+ * Capabilities the runner injects so ROOT meta-tools can verify-then-write
+ * external infrastructure without packages/tools importing the MCP adapter or
+ * the secrets package.
+ */
+export interface ToolProvisioning {
+  /**
+   * Connect to an MCP server and list its tools. MUST throw on any
+   * connect/auth/spawn failure (fail-loud, no DB write); the caller MUST close
+   * the returned connection.
+   */
+  connectMcp(opts: ProvisionMcpConnect): Promise<{
+    tools: Array<{ name: string; description: string | null }>;
+    close: () => Promise<void>;
+  }>;
+  /** Encrypt a secret value for at-rest storage. */
+  encrypt(plaintext: string): string;
 }
 
 // ─── ToolDefinition ────────────────────────────────────────────────────────────

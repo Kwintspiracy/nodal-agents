@@ -220,7 +220,8 @@ changes are still possible between minors.
   Airtable) and API-key (Notion, Airtable, Apify, Firecrawl, Tavily)
 - MCP catalog — Streamable HTTP *and* stdio (local subprocess) servers, API-key auth; a growing catalogue (Stripe, n8n, Supabase, Airtable, Notion…) with a "test pending" badge on entries not yet verified live, plus add *and edit* your own custom HTTP/stdio servers from the dashboard
 - Top-level workspaces — multiple isolated entities (agents/skills/connectors/jobs/memory per workspace), switch in the sidebar
-- ROOT agent — designate an orchestrator that can create *and update* skills, create agents and assign them, gated by per-grant toggles + an autonomy/approval level; skill authoring is grounded in the workspace's real tools (a linter rejects skills referencing tools the agent doesn't have)
+- In-app ROOT chat — talk to your workspace ROOT right in the dashboard: conversation-first (pure chat never creates a job — recall is free, the agent's memory is auto-loaded), multiple conversations with searchable history, and inline "dispatched to N agents" cards when it escalates a real action into a tracked job
+- ROOT agent — your first orchestrator automatically becomes the workspace ROOT (the single top-level agent; later orchestrators slot under it). It can create *and update* skills, create agents and assign them, and create MCP servers + API connectors — each gated by per-grant toggles + an autonomy/approval level (powers start off, opt in per grant). Provisioning verifies before it writes (an MCP server is connected and its tools listed first); skill authoring is grounded in the workspace's real tools (a linter rejects skills referencing tools the agent doesn't have)
 - Office file editing — Excel in-place edit, Word/PowerPoint create, in the agent workspace (office-editing skill)
 - Multiple filesystem folders per agent (sandboxed `file_*` tools)
 - Telegram delivery (long-poll, group filters, multi-agent routing,
@@ -237,9 +238,8 @@ changes are still possible between minors.
 
 - **MCP OAuth flow** → unlocks Linear, Notion remote, GitHub remote,
   Atlassian, Sentry, and the rest of the SaaS-as-MCP ecosystem.
-- **Dashboard chat for the ROOT companion** → talk to your ROOT agent in
-  the app, multi-turn, instead of via Telegram; plus a dry-run mode and a
-  test-workflow meta-tool.
+- **Dry-run mode + a test-workflow meta-tool** → preview what the ROOT would
+  do before it runs, and let it validate an automation end-to-end.
 - **pgvector binaries bundled in the npm pack** → semantic memory search
   active out-of-the-box. Today, installs without pgvector fall back to
   keyword search (which works, just less smart for cross-vocabulary

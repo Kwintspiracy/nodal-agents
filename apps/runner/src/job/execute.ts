@@ -27,7 +27,7 @@ import {
 } from '@nodal-agents/db';
 import { enabledMetaTools, parseRootGrants } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
-import { createMcpTools, slugToPrefix } from '@nodal-agents/adapter-mcp';
+import { createMcpTools, slugToPrefix, connectMcp } from '@nodal-agents/adapter-mcp';
 import {
   QuotaExhaustedError,
   MessageStructureError,
@@ -43,7 +43,7 @@ import {
   createTelegramSendMessageTool,
   listWorkspaceMcpToolNames,
 } from '@nodal-agents/tools';
-import type { ToolDefinition, ApprovalRule } from '@nodal-agents/tools';
+import type { ToolDefinition, ApprovalRule, ToolProvisioning } from '@nodal-agents/tools';
 import {
   ChainCounters,
   DEFAULT_LIMITS,
@@ -60,7 +60,7 @@ import {
   DelegationDepthExceededError,
   DelegationPendingError,
 } from '@nodal-agents/orchestration';
-import { decrypt } from '@nodal-agents/secrets';
+import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
   AgentId,
   JobId,
@@ -83,6 +83,22 @@ import type { RunnerEnv } from '../env.ts';
 // with an explicit marker so the model knows content was cut and can re-scrape
 // a narrower target. Tunable; 50K chars ≈ ~13K tokens.
 const MAX_TOOL_RESULT_CHARS = 50_000;
+
+// Capabilities injected into ROOT meta-tools (create_mcp) via ToolContext.
+// Verify-then-write: connectMcp throws on any connect/auth/spawn failure, so the
+// meta-tool never persists an unverified server. Adapts the MCP adapter's
+// connection shape to ToolProvisioning and exposes secret encryption — keeping
+// packages/tools free of adapter/secrets dependencies.
+const TOOL_PROVISIONING: ToolProvisioning = {
+  async connectMcp(opts) {
+    const conn = await connectMcp(opts);
+    return {
+      tools: conn.tools.map((t) => ({ name: t.name, description: t.description ?? null })),
+      close: conn.close,
+    };
+  },
+  encrypt,
+};
 
 // User-facing delivery tools: ones that push a message to a human channel.
 // A turn whose tool calls are ALL in this set (and contains no return_result)
@@ -753,6 +769,7 @@ export async function executeJob(
                 jobChatId: job.chatId ?? null,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
+                provisioning: TOOL_PROVISIONING,
               },
               { approvalRules: [], onApprovalRequired: async () => {} },
             );
@@ -1219,6 +1236,7 @@ export async function executeJob(
                 jobChatId: job.chatId ?? null,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
+                provisioning: TOOL_PROVISIONING,
               },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },
             );
@@ -1369,6 +1387,7 @@ export async function executeJob(
             jobChatId: job.chatId ?? null,
             embeddingClient: deps.embeddingClient,
             workspaces: agentWorkspacesList,
+            provisioning: TOOL_PROVISIONING,
           },
           {
             approvalRules: approvalRuleList,

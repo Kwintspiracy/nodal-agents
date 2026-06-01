@@ -4,13 +4,23 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
-import { agentSkills, agentSkillAssignments, agents, mcpServers, eq, and } from '@nodal-agents/db';
+import {
+  agentSkills,
+  agentSkillAssignments,
+  agents,
+  mcpServers,
+  connectors,
+  eq,
+  and,
+} from '@nodal-agents/db';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import type { ToolContext } from '../../types';
+import type { ToolContext, ToolProvisioning } from '../../types';
 import { createSkillTool } from './create-skill';
 import { updateSkillTool } from './update-skill';
 import { assignSkillTool } from './assign-skill';
 import { createAgentTool } from './create-agent';
+import { createMcpTool } from './create-mcp';
+import { createConnectorTool } from './create-connector';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -509,5 +519,189 @@ describe('create_agent', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     expect(result.message).toMatch(/id [0-9a-f-]{36}/);
+  });
+});
+
+// ─── create_mcp ───────────────────────────────────────────────────────────────
+// Verify-then-write: the server is connected + tools listed BEFORE any row is
+// written. provisioning is injected by the runner; absent → fail loud.
+
+function fakeProvisioning(opts?: {
+  fail?: boolean;
+  tools?: { name: string; description: string | null }[];
+}): ToolProvisioning {
+  return {
+    async connectMcp() {
+      if (opts?.fail) throw new Error('connection refused');
+      return {
+        tools: opts?.tools ?? [{ name: 'search', description: 'a search tool' }],
+        close: async () => {},
+      };
+    },
+    encrypt: (plaintext) => `enc:${plaintext}`,
+  };
+}
+
+function makeCtxWith(provisioning: ToolProvisioning | undefined): ToolContext {
+  return { ...makeCtx(), provisioning };
+}
+
+describe('create_mcp', () => {
+  it('http: verifies then inserts a real mcp_servers row with encrypted key + discovered tools', async () => {
+    const result = await createMcpTool.execute(
+      {
+        name: 'My HTTP MCP',
+        slug: 'test-mcp-http',
+        transport: 'http',
+        url: 'https://mcp.example.com/sse',
+        apiKey: 'sk-secret-1234',
+        authScheme: 'bearer',
+      },
+      makeCtxWith(fakeProvisioning({ tools: [{ name: 'do_thing', description: 'does a thing' }] })),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`expected ok: ${result.error}`);
+
+    const [row] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.entityId, seed.entityId), eq(mcpServers.slug, 'test-mcp-http')));
+    expect(row).toBeDefined();
+    expect(row!.transport).toBe('http');
+    expect(row!.url).toBe('https://mcp.example.com/sse');
+    // API key passes through encrypt() before storage (fake prefixes 'enc:');
+    // last4 kept in the clear for masked UI display.
+    expect(row!.apiKey).toBe('enc:sk-secret-1234');
+    expect(row!.apiKeyLast4).toBe('1234');
+    expect(row!.authScheme).toBe('bearer');
+    // Discovered tools from the live connection are persisted.
+    expect(row!.availableTools).toEqual([{ name: 'do_thing', description: 'does a thing' }]);
+  });
+
+  it('stdio: encrypts each env value and stores command + args', async () => {
+    const result = await createMcpTool.execute(
+      {
+        name: 'My Stdio MCP',
+        slug: 'test-mcp-stdio',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', 'some-mcp-server'],
+        env: { TOKEN: 'ghp_abc', REGION: 'eu' },
+      },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`expected ok: ${result.error}`);
+
+    const [row] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.entityId, seed.entityId), eq(mcpServers.slug, 'test-mcp-stdio')));
+    expect(row).toBeDefined();
+    expect(row!.transport).toBe('stdio');
+    expect(row!.command).toBe('npx');
+    expect(row!.args).toEqual(['-y', 'some-mcp-server']);
+    expect(row!.envVars).toEqual({ TOKEN: 'enc:ghp_abc', REGION: 'enc:eu' });
+  });
+
+  it('fail-loud: a connection failure writes NO row and returns a clear error', async () => {
+    const result = await createMcpTool.execute(
+      {
+        name: 'Broken MCP',
+        slug: 'test-mcp-broken',
+        transport: 'http',
+        url: 'https://down.example.com',
+        apiKey: 'sk-x',
+        authScheme: 'bearer',
+      },
+      makeCtxWith(fakeProvisioning({ fail: true })),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toContain('Could not connect');
+
+    // Crucially: no row was written for the unverified server.
+    const rows = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.entityId, seed.entityId), eq(mcpServers.slug, 'test-mcp-broken')));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('fails loud when provisioning is unavailable (no adapter injected)', async () => {
+    const result = await createMcpTool.execute(
+      {
+        name: 'No Provisioning',
+        slug: 'test-mcp-noprov',
+        transport: 'http',
+        url: 'https://x.example.com',
+        apiKey: 'sk-x',
+        authScheme: 'bearer',
+      },
+      makeCtxWith(undefined),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toContain('provisioning is not available');
+
+    const rows = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.entityId, seed.entityId), eq(mcpServers.slug, 'test-mcp-noprov')));
+    expect(rows).toHaveLength(0);
+  });
+});
+
+// ─── create_connector ─────────────────────────────────────────────────────────
+// Catalog-gated, api_key-only. Validates the slug against the shared catalog,
+// encrypts the key, inserts. OAuth slugs + unknown slugs fail loud with no row.
+
+describe('create_connector', () => {
+  it('registers a known api_key connector with the key encrypted at rest', async () => {
+    const result = await createConnectorTool.execute(
+      { slug: 'apify', name: 'My Apify', apiKey: 'apify_pat_123' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`expected ok: ${result.error}`);
+
+    const [row] = await db
+      .select()
+      .from(connectors)
+      .where(and(eq(connectors.entityId, seed.entityId), eq(connectors.slug, 'apify')));
+    expect(row).toBeDefined();
+    expect(row!.name).toBe('My Apify');
+    expect(row!.authType).toBe('api_key');
+    expect(row!.apiKey).toBe('enc:apify_pat_123');
+  });
+
+  it('rejects an unknown slug and writes no row', async () => {
+    const result = await createConnectorTool.execute(
+      { slug: 'totally-made-up', name: 'X', apiKey: 'k' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toContain('Unknown connector slug');
+    const rows = await db
+      .select()
+      .from(connectors)
+      .where(and(eq(connectors.entityId, seed.entityId), eq(connectors.slug, 'totally-made-up')));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('rejects an OAuth (non-api_key) slug and writes no row', async () => {
+    const result = await createConnectorTool.execute(
+      { slug: 'gmail', name: 'Gmail', apiKey: 'k' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toContain('not api_key');
+    const rows = await db
+      .select()
+      .from(connectors)
+      .where(and(eq(connectors.entityId, seed.entityId), eq(connectors.slug, 'gmail')));
+    expect(rows).toHaveLength(0);
   });
 });

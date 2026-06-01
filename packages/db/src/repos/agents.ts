@@ -4,8 +4,10 @@
 // discriminated result or throws on unexpected errors.
 
 import { eq, and, inArray } from 'drizzle-orm';
+import { INITIAL_AUTO_ROOT_GRANTS } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agents, agentAssignments } from '../schema/agents.ts';
+import { entities } from '../schema/entities.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +102,42 @@ export async function createAgentRepo(
         entityId,
       })),
     );
+  }
+
+  // ─── ROOT = origin orchestrator (Brique F) ──────────────────────────────────
+  // Structural invariant: exactly ONE top-level orchestrator per entity = the
+  // ROOT. The first orchestrator created in an entity is auto-designated ROOT;
+  // every subsequent orchestrator is forced under it as a sub-agent, so there is
+  // never a second top-level orchestrator. Workers are untouched.
+  if (input.role === 'orchestrator') {
+    const [ent] = await db
+      .select({ rootAgentId: entities.rootAgentId })
+      .from(entities)
+      .where(eq(entities.id, entityId))
+      .limit(1);
+
+    if (!ent?.rootAgentId) {
+      // First orchestrator → auto-ROOT. Grants start all-OFF (opt-in powers):
+      // the agent is structurally ROOT but holds no meta-tools until the user
+      // enables them in Settings. Writing explicit grants is REQUIRED — a null
+      // rootGrants parses to all-on and would expose un-gated meta-tools.
+      await db
+        .update(entities)
+        .set({
+          rootAgentId: row.id,
+          rootGrants:
+            INITIAL_AUTO_ROOT_GRANTS as unknown as (typeof entities.$inferInsert)['rootGrants'],
+          updatedAt: new Date(),
+        })
+        .where(eq(entities.id, entityId));
+    } else if (ent.rootAgentId !== row.id) {
+      // Subsequent orchestrator → forced as a sub-agent of the ROOT.
+      await db.insert(agentAssignments).values({
+        orchestratorId: ent.rootAgentId,
+        subAgentId: row.id,
+        entityId,
+      });
+    }
   }
 
   return { id: row.id };

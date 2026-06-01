@@ -4,6 +4,8 @@
 export type {
   ToolDefinition,
   ToolContext,
+  ToolProvisioning,
+  ProvisionMcpConnect,
   ToolRegistry,
   ToolListFilter,
   AiSdkTool,

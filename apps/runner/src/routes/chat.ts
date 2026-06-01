@@ -10,6 +10,8 @@ import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { runChatTurn } from '../chat/run-chat-turn.ts';
+import { executeJob } from '../job/execute.ts';
+import type { JobId } from '@nodal-agents/orchestration';
 
 const ChatRequestSchema = z.object({
   entityId: z.string().guid(),
@@ -21,7 +23,7 @@ const ChatRequestSchema = z.object({
 export async function chatRoute(
   c: Context,
   deps: RunnerDeps,
-  _runnerEnv: RunnerEnv,
+  runnerEnv: RunnerEnv,
 ): Promise<Response> {
   const body = await c.req.json().catch(() => null);
   const parsed = ChatRequestSchema.safeParse(body);
@@ -36,5 +38,16 @@ export async function chatRoute(
       result.error === 'agent_not_found' || result.error === 'conversation_not_found';
     return c.json({ error: result.error }, notFound ? 404 : 400);
   }
+
+  // If the turn escalated to an action, run that job in the background (the chat
+  // returns the agent's acknowledgement immediately; the UI polls the job for
+  // its dispatch/progress).
+  if (result.spawnedJobId) {
+    const jobId = result.spawnedJobId as JobId;
+    void executeJob(jobId, deps, runnerEnv).catch((err: unknown) => {
+      console.error('[chatRoute] spawned job failed:', err);
+    });
+  }
+
   return c.json({ reply: result.reply });
 }

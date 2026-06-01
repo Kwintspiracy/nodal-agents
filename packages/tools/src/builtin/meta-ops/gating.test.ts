@@ -88,6 +88,8 @@ describe('meta-tool gating via root agent + grants', () => {
       createSkill: true,
       updateSkill: true,
       assignSkill: true,
+      createMcp: true,
+      createConnector: true,
       autonomy: 'fully_autonomous',
     };
     const tools = computeForRootAgent(allGrantsOn);
@@ -111,6 +113,8 @@ describe('meta-tool gating via root agent + grants', () => {
       createSkill: true,
       updateSkill: true,
       assignSkill: true,
+      createMcp: true,
+      createConnector: true,
       autonomy: 'propose_confirm',
     };
     const tools = computeForRootAgent(grants);
@@ -128,6 +132,8 @@ describe('meta-tool gating via root agent + grants', () => {
       createSkill: true,
       updateSkill: false,
       assignSkill: true,
+      createMcp: true,
+      createConnector: true,
       autonomy: 'propose_confirm',
     };
     const tools = computeForRootAgent(grants);
@@ -144,6 +150,8 @@ describe('meta-tool gating via root agent + grants', () => {
       createSkill: false,
       updateSkill: false,
       assignSkill: false,
+      createMcp: false,
+      createConnector: false,
       autonomy: 'propose_confirm',
     };
     const tools = computeForRootAgent(grants);
@@ -159,6 +167,8 @@ describe('meta-tool gating via root agent + grants', () => {
       createSkill: true,
       updateSkill: true,
       assignSkill: true,
+      createMcp: true,
+      createConnector: true,
       autonomy: 'fully_autonomous',
     };
     const rootTools = computeForRootAgent(allGrantsOn);
@@ -180,5 +190,9 @@ describe('meta-tool gating via root agent + grants', () => {
     expect(grants.createSkill).toBe(true);
     expect(grants.updateSkill).toBe(true);
     expect(grants.assignSkill).toBe(true);
+    // createMcp is a newer grant: absent → opt-in default FALSE (never granted
+    // retroactively), unlike the original grants which default true.
+    expect(grants.createMcp).toBe(false);
+    expect(grants.createConnector).toBe(false);
   });
 });

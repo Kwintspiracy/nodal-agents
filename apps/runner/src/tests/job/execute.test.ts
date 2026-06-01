@@ -10,7 +10,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -621,6 +621,108 @@ describe('executeJob', () => {
       .from(agentJobs)
       .where(eq(agentJobs.agentId, seed.agentId));
     expect(jobsAfter.length).toBe(jobsBefore.length);
+  });
+
+  it('runChatTurn: run_task escalates to a real agent_jobs (dashboard channel) and links it on the assistant message', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    // The model decides this turn requires an action → calls run_task.
+    const llmClient = makeMockLlmClient([
+      {
+        text: 'On it — pulling the numbers.',
+        toolCalls: [
+          {
+            toolCallId: 'tc-run-task',
+            toolName: 'run_task',
+            args: { instruction: 'pull Q2 financials and update the sheet' },
+          },
+        ],
+      },
+    ]);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    const result = await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'pull my Q2 numbers',
+    });
+
+    expect(result.ok).toBe(true);
+    const spawnedJobId = result.ok ? result.spawnedJobId : undefined;
+    expect(spawnedJobId).toBeTruthy();
+
+    // A real job was created on the dashboard channel — the task is the instruction
+    // the model chose, not the raw chat message.
+    const [job] = await db
+      .select()
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, spawnedJobId!), eq(agentJobs.channel, 'dashboard')));
+    expect(job).toBeDefined();
+    expect(job?.task).toBe('pull Q2 financials and update the sheet');
+
+    // The assistant chat message links back to that job (drives the dispatch card).
+    const msgs = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id));
+    const assistant = msgs.find((m) => m.role === 'assistant');
+    expect(assistant?.jobId).toBe(spawnedJobId);
+  });
+
+  it('runChatTurn: a phantom tool-call (tool not on this surface) recovers via a tool-free retry — text reply, no job', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    const jobsBefore = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+
+    // Turn 1: the model calls a tool that does NOT exist on the chat surface
+    // (query_memory) and emits no text. Turn 2 (the tool-free retry) replies.
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'tc-phantom', toolName: 'query_memory', args: { q: 'me' } }] },
+      { text: 'You are Quentin, the builder of Nodal-Agents.' },
+    ]);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    const result = await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'what do you know about me?',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reply).toContain('Quentin');
+      // It recovered as plain conversation — NOT an escalation.
+      expect(result.spawnedJobId).toBeUndefined();
+    }
+
+    // No agent_jobs row — a recovered conversation is still conversation.
+    const jobsAfter = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+    expect(jobsAfter.length).toBe(jobsBefore.length);
+
+    // The recovered assistant reply is persisted.
+    const msgs = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id));
+    expect(msgs.some((m) => m.role === 'assistant' && (m.content ?? '').includes('Quentin'))).toBe(
+      true,
+    );
   });
 
   it('delivery guard: persistent plain-text on a Telegram job fails loud (telegram_not_delivered), nothing sent', async () => {

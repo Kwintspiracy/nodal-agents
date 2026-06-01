@@ -16,6 +16,8 @@ export interface RootGrants {
   createSkill: boolean;
   updateSkill: boolean;
   assignSkill: boolean;
+  createMcp: boolean;
+  createConnector: boolean;
   autonomy: AutonomyLevel;
 }
 
@@ -24,6 +26,8 @@ const RootGrantsSchema = z.object({
   createSkill: z.boolean(),
   updateSkill: z.boolean(),
   assignSkill: z.boolean(),
+  createMcp: z.boolean(),
+  createConnector: z.boolean(),
   autonomy: AutonomyLevelSchema,
 });
 
@@ -34,6 +38,33 @@ export const DEFAULT_ROOT_GRANTS: RootGrants = {
   createSkill: true,
   updateSkill: true,
   assignSkill: true,
+  createMcp: true,
+  createConnector: true,
+  autonomy: 'propose_confirm',
+};
+
+/**
+ * Grants applied when an orchestrator is AUTO-designated ROOT — i.e. the first
+ * orchestrator created in an entity (the "origin orchestrator" model).
+ *
+ * Distinct from DEFAULT_ROOT_GRANTS: manual designation was a deliberate act, so
+ * starting all-on (behind approval) was fine. Auto-designation is passive — the
+ * ROOT is set the moment you create your first orchestrator — so powers start
+ * OFF. The agent is structurally ROOT (chat target + top of the hierarchy) but
+ * holds no meta-tools until the user opts in per-grant in Settings → ROOT agent.
+ *
+ * All-off matters for safety: `enabledMetaTools()` returns [] so the ROOT
+ * receives no meta-tools and no approval rules are required. (A null rootGrants
+ * would instead parse to all-on via parseRootGrants — which is why auto-ROOT
+ * must write these explicit grants.)
+ */
+export const INITIAL_AUTO_ROOT_GRANTS: RootGrants = {
+  createAgent: false,
+  createSkill: false,
+  updateSkill: false,
+  assignSkill: false,
+  createMcp: false,
+  createConnector: false,
   autonomy: 'propose_confirm',
 };
 
@@ -45,6 +76,8 @@ export const META_TOOL_BY_GRANT = {
   createSkill: 'create_skill',
   updateSkill: 'update_skill',
   assignSkill: 'attach_skill',
+  createMcp: 'create_mcp',
+  createConnector: 'create_connector',
 } as const;
 
 export const META_TOOL_NAMES = [
@@ -52,6 +85,8 @@ export const META_TOOL_NAMES = [
   'create_skill',
   'update_skill',
   'attach_skill',
+  'create_mcp',
+  'create_connector',
 ] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -82,8 +117,23 @@ export function parseRootGrants(raw: unknown): RootGrants {
     typeof src['updateSkill'] === 'boolean' ? src['updateSkill'] : DEFAULT_ROOT_GRANTS.updateSkill;
   const assignSkill =
     typeof src['assignSkill'] === 'boolean' ? src['assignSkill'] : DEFAULT_ROOT_GRANTS.assignSkill;
+  // createMcp is a newer grant: when absent from a stored object (a ROOT
+  // configured before this grant existed), fall back to FALSE — a new
+  // capability must be explicitly opt-in, never retroactively granted
+  // (which would expose an un-gated meta-tool on existing ROOTs).
+  const createMcp = typeof src['createMcp'] === 'boolean' ? src['createMcp'] : false;
+  const createConnector =
+    typeof src['createConnector'] === 'boolean' ? src['createConnector'] : false;
   const autonomyParsed = AutonomyLevelSchema.safeParse(src['autonomy']);
   const autonomy = autonomyParsed.success ? autonomyParsed.data : DEFAULT_ROOT_GRANTS.autonomy;
 
-  return { createAgent, createSkill, updateSkill, assignSkill, autonomy };
+  return {
+    createAgent,
+    createSkill,
+    updateSkill,
+    assignSkill,
+    createMcp,
+    createConnector,
+    autonomy,
+  };
 }

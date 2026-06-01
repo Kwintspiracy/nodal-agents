@@ -28,6 +28,14 @@ import type { Agent, AnyDrizzleDb } from './types';
 export interface JobContext {
   /** Origin channel of the job: 'api', 'telegram', 'cron', etc. */
   origin: string;
+  /**
+   * Set to 'chat' ONLY for the jobless in-app chat turn (runChatTurn). On this
+   * surface the agent has exactly ONE tool (run_task) — NOT its built-in tools,
+   * connectors, or skills — so the prompt must not advertise them. Distinct from
+   * `origin: 'dashboard'`, which also tags real jobs spawned by run_task (those
+   * DO have the full toolset and must not get the chat directive).
+   */
+  surface?: 'chat';
   /** Telegram chat ID, set when the job originated from or targets a Telegram chat. */
   telegramChatId?: string;
   /**
@@ -43,14 +51,24 @@ export interface JobContext {
 function buildJobContextBlock(ctx: JobContext): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
-  if (ctx.origin === 'dashboard') {
-    // In-app chat: the user reads your reply directly in the dashboard. Reply in
-    // plain text — there is no Telegram chat and no delivery tool on this surface.
-    // (Instruction to the LLM; it phrases the reply itself.)
+  if (ctx.surface === 'chat') {
+    // In-app chat turn: the user reads your reply directly. You have EXACTLY ONE
+    // tool here — `run_task` — and none of your built-in tools, connectors, or
+    // skills. So: for plain conversation or recalling facts (your Persistent
+    // memory below is already loaded), just reply in plain text. To PERFORM an
+    // action (use a connector/skill, delegate, send, fetch, or any multi-step
+    // work), call `run_task` with a clear instruction — it runs as a tracked
+    // job. Do NOT attempt any other tool; they are not available on this surface.
     lines.push(
-      '- surface: in-app dashboard chat — reply to the user directly, in plain text. ' +
-        'Do NOT call telegram_send_message or any delivery tool: the user reads your ' +
-        'text reply here.',
+      '- surface: in-app dashboard chat — you are talking directly with the user; reply in ' +
+        'plain text. For conversation or recalling facts, just reply (your durable facts are ' +
+        'loaded below). For ANY action — using a connector or skill, delegating to your team, ' +
+        'sending/fetching/creating/publishing, or (as the workspace ROOT) creating agents, ' +
+        'skills, MCP servers, connectors or automations — call `run_task` with a clear, ' +
+        'self-contained instruction: it runs as a tracked job with your FULL toolset. ' +
+        '`run_task` is your gateway to everything you can do — NEVER tell the user you cannot ' +
+        'do something that an action could accomplish; escalate it via `run_task` instead. ' +
+        'Do not call any other named tool on this surface.',
     );
   }
   if (ctx.notifyOnSuccess) {
@@ -204,7 +222,10 @@ export async function buildSystemPrompt(
   // 5. Built-in capabilities block — injected for every agent so the LLM sees
   //    save_memory / query_memory / return_result as first-class capabilities,
   //    not just optional tools buried in the SDK's tool list.
-  const builtinBlock = buildBuiltinCapabilitiesBlock();
+  //    EXCEPT on the in-app chat surface: there the agent has only `run_task`,
+  //    so advertising built-in tools makes it call phantom tools (e.g.
+  //    query_memory) that aren't provided — yielding an empty turn. Omit it.
+  const builtinBlock = jobContext?.surface === 'chat' ? '' : buildBuiltinCapabilitiesBlock();
 
   // 5.5 Workspace block — tells the LLM which workspaces exist and how to address
   //     files (label/relative syntax for multi-workspace agents).
