@@ -90,7 +90,7 @@ testEnum('McpTransport', MCP_TRANSPORTS, McpTransportSchema);
 // Specific DB constraint cross-checks — these encode the exact values from the CHECK clauses
 
 describe('DB constraint: agent_jobs channel_check', () => {
-  it('matches exactly the 8 DB channels', () => {
+  it('matches exactly the 9 DB channels', () => {
     const dbChannels = [
       'telegram',
       'api',
@@ -100,6 +100,7 @@ describe('DB constraint: agent_jobs channel_check', () => {
       'task-board',
       'slack',
       'discord',
+      'dashboard',
     ];
     expect([...JOB_CHANNELS].sort()).toEqual(dbChannels.sort());
   });

@@ -1927,6 +1927,162 @@ describe('runScheduleNowAction', () => {
   });
 });
 
+const CHAT_CONV_ID = 'aaaaaaaa-0000-0000-0000-000000000400';
+
+describe('sendChatMessageAction', () => {
+  it('rejects an empty message', async () => {
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: '' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('fails (no runner call) when no ROOT agent is designated', async () => {
+    currentDb = makeDbMixed({ select: [{ rootAgentId: null }] }) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'hello' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('no_root_agent');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it('calls the runner /api/chat (no job created) and returns the reply', async () => {
+    const rootId = 'aaaaaaaa-0000-0000-0000-000000000301';
+    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ reply: 'Salut Quentin !' }), { status: 200 }),
+      );
+
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({
+      conversationId: CHAT_CONV_ID,
+      message: 'Bonjour ROOT',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.reply).toBe('Salut Quentin !');
+
+    // No agent_jobs row created — chat is conversation, not a job.
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).not.toHaveBeenCalled();
+
+    // It hit the runner's /api/chat with the bearer + the right body (conversationId).
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const url = String(fetchSpy.mock.calls[0]![0]);
+    expect(url).toContain('/api/chat');
+    const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer test-bearer-789',
+    );
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body['agentId']).toBe(rootId);
+    expect(body['conversationId']).toBe(CHAT_CONV_ID);
+    expect(body['message']).toBe('Bonjour ROOT');
+    fetchSpy.mockRestore();
+  });
+});
+
+describe('listConversationsAction', () => {
+  it('returns empty when no ROOT is designated', async () => {
+    currentDb = makeDbSeq([[{ rootAgentId: null }]]) as typeof currentDb;
+    const { listConversationsAction } = await import('../src/lib/actions.ts');
+    const r = await listConversationsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.rootAgentId).toBeNull();
+      expect(r.data.conversations).toEqual([]);
+    }
+  });
+
+  it('lists the ROOT conversations (most recent first) with a last-message preview', async () => {
+    const rootId = 'aaaaaaaa-0000-0000-0000-000000000310';
+    currentDb = makeDbSeq([
+      [{ rootAgentId: rootId }], // entity lookup
+      [{ name: 'Conciergus' }], // root agent name
+      [
+        { id: 'c1', title: 'Q2 board deck', updatedAt: new Date() },
+        { id: 'c2', title: 'Weekend backlog', updatedAt: new Date() },
+      ],
+      [
+        // preview messages (most recent first); first-per-conversation wins
+        { conversationId: 'c1', content: 'Compiled the revenue + burn tables.' },
+        { conversationId: 'c2', content: '54 tickets triaged.' },
+      ],
+    ]) as typeof currentDb;
+
+    const { listConversationsAction } = await import('../src/lib/actions.ts');
+    const r = await listConversationsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.rootName).toBe('Conciergus');
+      expect(r.data.conversations).toHaveLength(2);
+      expect(r.data.conversations[0]!.title).toBe('Q2 board deck');
+      expect(r.data.conversations[0]!.preview).toBe('Compiled the revenue + burn tables.');
+    }
+  });
+});
+
+describe('createConversationAction', () => {
+  it('fails when no ROOT agent is designated', async () => {
+    currentDb = makeDbMixed({ select: [{ rootAgentId: null }] }) as typeof currentDb;
+    const { createConversationAction } = await import('../src/lib/actions.ts');
+    const r = await createConversationAction();
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('no_root_agent');
+  });
+
+  it('creates a conversation for the ROOT and returns its id', async () => {
+    const convId = 'aaaaaaaa-0000-0000-0000-000000000420';
+    currentDb = makeDbMixed({
+      select: [{ rootAgentId: 'aaaaaaaa-0000-0000-0000-000000000311' }],
+      insert: [{ id: convId }],
+    }) as typeof currentDb;
+    const { createConversationAction } = await import('../src/lib/actions.ts');
+    const r = await createConversationAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.id).toBe(convId);
+  });
+});
+
+describe('listChatAction', () => {
+  it('rejects a non-uuid conversation id', async () => {
+    const { listChatAction } = await import('../src/lib/actions.ts');
+    const r = await listChatAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when the conversation is missing / cross-entity', async () => {
+    currentDb = makeDbSeq([[]]) as typeof currentDb; // conversation verify → empty
+    const { listChatAction } = await import('../src/lib/actions.ts');
+    const r = await listChatAction(CHAT_CONV_ID);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('returns the conversation messages', async () => {
+    currentDb = makeDbSeq([
+      [{ id: CHAT_CONV_ID }], // conversation verify
+      [
+        { id: 'm1', role: 'user', content: 'salut' },
+        { id: 'm2', role: 'assistant', content: 'Bonjour Quentin !' },
+      ],
+    ]) as typeof currentDb;
+
+    const { listChatAction } = await import('../src/lib/actions.ts');
+    const r = await listChatAction(CHAT_CONV_ID);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.messages).toHaveLength(2);
+      expect(r.data.messages[0]).toEqual({ id: 'm1', role: 'user', content: 'salut' });
+      expect(r.data.messages[1]!.content).toBe('Bonjour Quentin !');
+    }
+  });
+});
+
 // ─── Security / Auth Settings ────────────────────────────────────────────────
 
 describe('getSecuritySettingsAction', () => {

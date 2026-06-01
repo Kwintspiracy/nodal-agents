@@ -11,7 +11,15 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agents, approvalRequests, approvalRules, agentMemory } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agents,
+  approvalRequests,
+  approvalRules,
+  agentMemory,
+  chatMessages,
+  conversations,
+} from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -561,6 +569,58 @@ describe('executeJob', () => {
     expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // ─── Conversation-first chat: runChatTurn never creates a job ─────────────
+
+  it('runChatTurn: replies in text, persists 2 chat_messages + titles the conversation, and creates ZERO agent_jobs', async () => {
+    const jobsBefore = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+
+    // A conversation must exist first (the sidebar entry).
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    const llmClient = makeMockLlmClient([{ text: 'Salut Quentin, je suis là.' }]);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    const result = await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'salut',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.reply).toContain('Salut Quentin');
+
+    // The conversation turn is persisted in chat_messages (user + assistant).
+    const msgs = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id));
+    expect(msgs.length).toBe(2);
+    expect(msgs.some((m) => m.role === 'user' && m.content === 'salut')).toBe(true);
+    expect(msgs.some((m) => m.role === 'assistant' && (m.content?.length ?? 0) > 0)).toBe(true);
+
+    // The first message auto-titles the conversation.
+    const [titled] = await db
+      .select({ title: conversations.title })
+      .from(conversations)
+      .where(eq(conversations.id, conv.id));
+    expect(titled?.title).toBe('salut');
+
+    // Crucially: NO agent_jobs row was created — chat is conversation, not a job.
+    const jobsAfter = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+    expect(jobsAfter.length).toBe(jobsBefore.length);
   });
 
   it('delivery guard: persistent plain-text on a Telegram job fails loud (telegram_not_delivered), nothing sent', async () => {

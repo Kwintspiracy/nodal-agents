@@ -67,6 +67,8 @@ async function insertCompletedJob(opts: {
   /** Optional `messages` JSONB — defaults to `[]`. Used to exercise the
    * fallback chain in `extractAssistantReply` (tool-call extraction). */
   messages?: unknown;
+  /** Channel to insert on — defaults to 'telegram'. */
+  channel?: string;
 }): Promise<string> {
   const createdAt = opts.minutesAgo ? new Date(Date.now() - opts.minutesAgo * 60_000) : new Date();
   const [row] = await db
@@ -74,7 +76,7 @@ async function insertCompletedJob(opts: {
     .values({
       entityId: seed.entityId,
       agentId: seed.agentId,
-      channel: 'telegram',
+      channel: opts.channel ?? 'telegram',
       task: opts.task,
       chatId: opts.chatId,
       status: opts.status ?? 'completed',

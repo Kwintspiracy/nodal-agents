@@ -33,6 +33,8 @@ import {
   agents,
   agentAssignments,
   agentJobs,
+  chatMessages,
+  conversations,
   connectors,
   credentials,
   approvalRequests,
@@ -5480,5 +5482,233 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
   } catch (err) {
     console.error('[setRootAgentAction]', err);
     return fail('db_error', 'Failed to save ROOT agent config');
+  }
+}
+
+// ─── In-app chat (V4 — conversation-first) ────────────────────────────────────
+// A conversation is NOT a job. Turns live in `chat_messages`, grouped under a
+// `conversations` row (the sidebar entries). Pure conversation never creates an
+// agent_jobs row. The runner (/api/chat) is the single writer of messages; it
+// persists both turns + bumps the conversation, and returns the reply.
+// Targets the entity's ROOT agent.
+
+export type ConversationView = {
+  id: string;
+  title: string;
+  preview: string;
+  updatedAt: Date | null;
+};
+export type ChatMessageView = { id: string; role: 'user' | 'assistant'; content: string };
+
+/** Resolve the entity's ROOT agent (id + name), or null when none is designated. */
+async function resolveRoot(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+): Promise<{ rootAgentId: string | null; rootName: string | null }> {
+  const [entity] = await db
+    .select({ rootAgentId: entities.rootAgentId })
+    .from(entities)
+    .where(eq(entities.id, entityId))
+    .limit(1);
+  const rootAgentId = entity?.rootAgentId ?? null;
+  if (!rootAgentId) return { rootAgentId: null, rootName: null };
+  const [root] = await db
+    .select({ name: agents.name })
+    .from(agents)
+    .where(and(eq(agents.id, rootAgentId), eq(agents.entityId, entityId)))
+    .limit(1);
+  return { rootAgentId, rootName: root?.name ?? null };
+}
+
+export async function listConversationsAction(): Promise<
+  ActionResult<{
+    rootAgentId: string | null;
+    rootName: string | null;
+    conversations: ConversationView[];
+  }>
+> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const { rootAgentId, rootName } = await resolveRoot(db, session.entityId);
+    if (!rootAgentId) return ok({ rootAgentId: null, rootName: null, conversations: [] });
+
+    const rows = await db
+      .select({
+        id: conversations.id,
+        title: conversations.title,
+        updatedAt: conversations.updatedAt,
+      })
+      .from(conversations)
+      .where(
+        and(eq(conversations.entityId, session.entityId), eq(conversations.agentId, rootAgentId)),
+      )
+      .orderBy(desc(conversations.updatedAt))
+      .limit(200);
+
+    // Per-conversation preview = the most recent message. One extra query over
+    // the listed conversations; take the first (newest) message per conversation.
+    const convIds = rows.map((r) => r.id);
+    const previewByConv = new Map<string, string>();
+    if (convIds.length > 0) {
+      const msgs = await db
+        .select({ conversationId: chatMessages.conversationId, content: chatMessages.content })
+        .from(chatMessages)
+        .where(inArray(chatMessages.conversationId, convIds))
+        .orderBy(desc(chatMessages.createdAt))
+        .limit(1000);
+      for (const m of msgs) {
+        if (m.conversationId && !previewByConv.has(m.conversationId)) {
+          previewByConv.set(m.conversationId, m.content);
+        }
+      }
+    }
+
+    const list: ConversationView[] = rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      preview: previewByConv.get(r.id) ?? '',
+      updatedAt: r.updatedAt,
+    }));
+    return ok({ rootAgentId, rootName, conversations: list });
+  } catch (err) {
+    console.error('[listConversationsAction]', err);
+    return fail('db_error', 'Failed to load conversations');
+  }
+}
+
+export async function createConversationAction(): Promise<ActionResult<{ id: string }>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const { rootAgentId } = await resolveRoot(db, session.entityId);
+    if (!rootAgentId) return fail('no_root_agent', 'Designate a ROOT agent in Settings first.');
+
+    const [row] = await db
+      .insert(conversations)
+      .values({ entityId: session.entityId, agentId: rootAgentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!row) return fail('db_error', 'Failed to create conversation');
+    revalidatePath('/chat');
+    return ok({ id: row.id });
+  } catch (err) {
+    console.error('[createConversationAction]', err);
+    return fail('db_error', 'Failed to create conversation');
+  }
+}
+
+export async function deleteConversationAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid conversation id');
+    }
+    const db = getDb();
+    await db
+      .delete(conversations)
+      .where(and(eq(conversations.id, id), eq(conversations.entityId, session.entityId)));
+    revalidatePath('/chat');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteConversationAction]', err);
+    return fail('db_error', 'Failed to delete conversation');
+  }
+}
+
+export async function listChatAction(
+  conversationId: string,
+): Promise<ActionResult<{ messages: ChatMessageView[] }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(conversationId).success) {
+      return fail('validation_failed', 'Invalid conversation id');
+    }
+    const db = getDb();
+    // Verify the conversation belongs to this entity before reading its messages.
+    const [conv] = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(eq(conversations.id, conversationId), eq(conversations.entityId, session.entityId)),
+      )
+      .limit(1);
+    if (!conv) return fail('not_found', 'Conversation not found');
+
+    const rows = await db
+      .select({ id: chatMessages.id, role: chatMessages.role, content: chatMessages.content })
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conversationId))
+      .orderBy(chatMessages.createdAt)
+      .limit(500);
+
+    const messages: ChatMessageView[] = rows.map((r) => ({
+      id: r.id,
+      role: r.role as 'user' | 'assistant',
+      content: r.content,
+    }));
+    return ok({ messages });
+  } catch (err) {
+    console.error('[listChatAction]', err);
+    return fail('db_error', 'Failed to load chat');
+  }
+}
+
+const SendChatMessageSchema = z.object({
+  conversationId: z.string().guid(),
+  message: z.string().min(1, 'Message is empty').max(10_000),
+});
+
+export async function sendChatMessageAction(
+  raw: unknown,
+): Promise<ActionResult<{ reply: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = SendChatMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const { rootAgentId } = await resolveRoot(db, session.entityId);
+    if (!rootAgentId) return fail('no_root_agent', 'Designate a ROOT agent in Settings first.');
+
+    if (!env.WORKER_SECRET) {
+      console.error('[sendChatMessageAction] WORKER_SECRET missing — cannot reach runner');
+      return fail('runner_unreachable', 'Chat backend not configured');
+    }
+
+    // The runner generates the reply AND persists both turns. Synchronous: we
+    // await the reply so the UI renders it immediately. No job is created.
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({
+          entityId: session.entityId,
+          agentId: rootAgentId,
+          conversationId: parsed.data.conversationId,
+          message: parsed.data.message,
+        }),
+      });
+    } catch (err) {
+      console.error('[sendChatMessageAction] runner unreachable:', err);
+      return fail('runner_unreachable', 'Could not reach the chat backend');
+    }
+
+    const data = (await res.json().catch(() => null)) as {
+      reply?: string;
+      error?: string;
+    } | null;
+    if (!res.ok || !data?.reply) {
+      return fail('chat_failed', data?.error ?? 'The agent did not reply');
+    }
+    revalidatePath('/chat');
+    return ok({ reply: data.reply });
+  } catch (err) {
+    console.error('[sendChatMessageAction]', err);
+    return fail('db_error', 'Failed to send message');
   }
 }

@@ -12,6 +12,7 @@ export const JOB_CHANNELS = [
   'task-board',
   'slack',
   'discord',
+  'dashboard',
 ] as const;
 export const JobChannelSchema = z.enum(JOB_CHANNELS);
 export type JobChannel = z.infer<typeof JobChannelSchema>;

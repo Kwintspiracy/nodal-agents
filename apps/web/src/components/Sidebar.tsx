@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   House,
+  ChatCircle,
   Graph,
   Sparkle,
   UsersThree,
@@ -53,6 +54,7 @@ const NAV: Group[] = [
     section: 'Overview',
     items: [
       { href: '/', label: 'Home', icon: House },
+      { href: '/chat', label: 'Chat', icon: ChatCircle },
       { href: '/jobs', label: 'Runs', icon: Graph },
       { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },
     ],

@@ -11,6 +11,7 @@ import { agentRoute } from './routes/agent.ts';
 import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
+import { chatRoute } from './routes/chat.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
@@ -82,6 +83,8 @@ export function createApp(
   app.post('/api/agent', (c) => agentRoute(c, deps, runnerEnv));
 
   app.post('/api/worker', (c) => workerRoute(c, deps, runnerEnv));
+
+  app.post('/api/chat', (c) => chatRoute(c, deps, runnerEnv));
 
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 

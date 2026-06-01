@@ -43,6 +43,16 @@ export interface JobContext {
 function buildJobContextBlock(ctx: JobContext): string {
   const lines = [`- origin: ${ctx.origin}`];
   if (ctx.telegramChatId) lines.push(`- telegram_chat_id: ${ctx.telegramChatId}`);
+  if (ctx.origin === 'dashboard') {
+    // In-app chat: the user reads your reply directly in the dashboard. Reply in
+    // plain text — there is no Telegram chat and no delivery tool on this surface.
+    // (Instruction to the LLM; it phrases the reply itself.)
+    lines.push(
+      '- surface: in-app dashboard chat — reply to the user directly, in plain text. ' +
+        'Do NOT call telegram_send_message or any delivery tool: the user reads your ' +
+        'text reply here.',
+    );
+  }
   if (ctx.notifyOnSuccess) {
     lines.push(
       '- notify_on_success: true — when this job finishes, send the user a short ' +

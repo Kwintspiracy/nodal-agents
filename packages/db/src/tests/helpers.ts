@@ -135,7 +135,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
       agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
       status text DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')),
-      channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord')),
+      channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard')),
       task text NOT NULL,
       original_task text,
       chat_id text,
@@ -466,6 +466,26 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (agent_id, label)
+    );
+
+    CREATE TABLE IF NOT EXISTS conversations (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      title text NOT NULL DEFAULT '',
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      conversation_id uuid REFERENCES conversations(id) ON DELETE CASCADE,
+      role text NOT NULL CHECK (role IN ('user','assistant')),
+      content text NOT NULL,
+      job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      created_at timestamptz DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS agent_budgets (
