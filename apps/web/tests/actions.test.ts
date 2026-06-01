@@ -1983,6 +1983,36 @@ describe('sendChatMessageAction', () => {
     expect(body['message']).toBe('Bonjour ROOT');
     fetchSpy.mockRestore();
   });
+
+  it('treats an empty reply (agent escalated without ack text) as success, not failure', async () => {
+    const rootId = 'aaaaaaaa-0000-0000-0000-000000000302';
+    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    // HTTP 200 with an empty reply — the agent escalated via run_task and wrote
+    // no acknowledgment; the dispatch card + refetch carry the info.
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ reply: '' }), { status: 200 }));
+
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'crée X' });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.reply).toBe('');
+    fetchSpy.mockRestore();
+  });
+
+  it('fails when the runner returns an HTTP error (e.g. empty_reply glitch → 400)', async () => {
+    const rootId = 'aaaaaaaa-0000-0000-0000-000000000303';
+    currentDb = makeDbMixed({ select: [{ rootAgentId: rootId }] }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ error: 'empty_reply' }), { status: 400 }));
+
+    const { sendChatMessageAction } = await import('../src/lib/actions.ts');
+    const r = await sendChatMessageAction({ conversationId: CHAT_CONV_ID, message: 'hello' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('chat_failed');
+    fetchSpy.mockRestore();
+  });
 });
 
 describe('listConversationsAction', () => {

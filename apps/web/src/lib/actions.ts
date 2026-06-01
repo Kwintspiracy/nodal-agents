@@ -5723,11 +5723,15 @@ export async function sendChatMessageAction(
       reply?: string;
       error?: string;
     } | null;
-    if (!res.ok || !data?.reply) {
+    // An empty reply is NOT a failure: when the agent escalates via run_task it
+    // may write no acknowledgment text (the dispatch card + job result carry the
+    // info, and the UI refetches messages to render them). Only an HTTP error
+    // (e.g. the runner's `empty_reply` glitch → 400) is a real failure.
+    if (!res.ok) {
       return fail('chat_failed', data?.error ?? 'The agent did not reply');
     }
     revalidatePath('/chat');
-    return ok({ reply: data.reply });
+    return ok({ reply: data?.reply ?? '' });
   } catch (err) {
     console.error('[sendChatMessageAction]', err);
     return fail('db_error', 'Failed to send message');
