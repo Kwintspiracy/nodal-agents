@@ -1096,18 +1096,34 @@ export async function executeJob(
         return { status: 'failed', error: 'delivery_spam_guard' };
       }
 
-      // e. Append assistant message (use text or build from tool calls)
+      // e. Append the assistant turn. Build it from the TYPED response accessors:
+      // the model's REASONING parts (response.reasoning — already shaped as
+      // message content, carrying the provider metadata a reasoning model needs
+      // to round-trip its chain-of-thought across tool calls), then the tool-call
+      // parts built from rawToolCalls. The tool calls come from rawToolCalls (NOT
+      // response.response.messages) on purpose: those are the exact calls we
+      // execute and produce a tool_result for below, so the tool_use ↔
+      // tool_result pairing can never drift. (A reasoning model on OpenRouter can
+      // surface a tool call in the response *message* that isn't in
+      // response.toolCalls; replaying that leaves an unmatched tool_use and fails
+      // message-structure validation — live regression: job 8fc974fb, MiniMax M3.)
+      const reasoningParts = response.reasoning ?? [];
       const assistantMsg: ModelMessage = {
         role: 'assistant',
         content:
           rawToolCalls.length > 0
-            ? rawToolCalls.map((tc) => ({
-                type: 'tool-call' as const,
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: tc.input as Record<string, unknown>,
-              }))
-            : response.text || '',
+            ? [
+                ...reasoningParts,
+                ...rawToolCalls.map((tc) => ({
+                  type: 'tool-call' as const,
+                  toolCallId: tc.toolCallId,
+                  toolName: tc.toolName,
+                  input: tc.input as Record<string, unknown>,
+                })),
+              ]
+            : reasoningParts.length > 0
+              ? [...reasoningParts, { type: 'text' as const, text: response.text || '' }]
+              : response.text || '',
       };
       messages = [...messages, assistantMsg];
 
@@ -1159,6 +1175,8 @@ export async function executeJob(
         if (emptyTurnRetries < MAX_EMPTY_TURN_RETRIES) {
           emptyTurnRetries += 1;
           trace('empty_turn_retry', { turn, attempt: emptyTurnRetries });
+          // Drop the empty assistant turn just appended so the retry re-sends a
+          // clean context.
           messages = messages.slice(0, -1);
           continue;
         }

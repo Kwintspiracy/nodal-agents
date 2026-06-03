@@ -13,6 +13,15 @@
 export interface ModelCapabilities {
   tools: boolean;
   forcedToolChoice: boolean;
+  /**
+   * The model emits a hidden chain-of-thought (a "reasoning model"). On
+   * OpenRouter these come back as `reasoning_details` and MUST be echoed back
+   * unmodified on the next turn for the model to continue reasoning across tool
+   * calls. When true, the OpenRouter provider is told to enable reasoning (so
+   * the details are returned) and the runner round-trips them via the assistant
+   * message it replays. Omit/false for non-reasoning models.
+   */
+  reasoning?: boolean;
 }
 
 export interface ModelCatalogEntry {
@@ -80,7 +89,9 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   ],
   // OpenRouter models are namespaced by sub-vendor (anthropic/, deepseek/, …).
   // The UI groups them by that vendor (see modelGroupLabel). Tested + working
-  // routes; all accept a forced tool_choice.
+  // routes. `forcedToolChoice` is per-model: most accept tool_choice:'required';
+  // MiniMax M3 does not (some of its OpenRouter endpoints reject the forced
+  // value), so it runs on 'auto' + the runtime floor.
   openrouter: [
     // Anthropic
     {
@@ -150,6 +161,16 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'Gemma 4 31B-IT',
       capabilities: { tools: true, forcedToolChoice: true },
     },
+    // MiniMax
+    {
+      modelId: 'minimax/minimax-m3',
+      label: 'MiniMax M3',
+      // A reasoning model. Some of its OpenRouter endpoints reject a FORCED
+      // tool_choice ('required') → we send 'auto' (forcedToolChoice:false).
+      // reasoning:true makes the provider return reasoning_details so the runner
+      // can round-trip them across tool-call turns.
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+    },
   ],
 };
 
@@ -167,6 +188,7 @@ const VENDOR_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   google: 'Google',
   deepseek: 'DeepSeek',
+  minimax: 'MiniMax',
   mistral: 'Mistral',
   meta: 'Meta',
   qwen: 'Qwen',

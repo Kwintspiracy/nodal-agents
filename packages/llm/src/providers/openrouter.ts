@@ -15,9 +15,10 @@
 // that is now normalised upstream by `tolerant-fetch.ts` at the fetch
 // boundary. No middleware needed for DeepSeek anymore.
 
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { wrapLanguageModel } from 'ai';
 import type { LanguageModel, LanguageModelMiddleware } from 'ai';
+import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_PRESETS } from './registry';
 import { ProviderConfigError } from '../errors';
@@ -66,16 +67,33 @@ export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
 
   const baseURL = config.baseURL ?? PROVIDER_PRESETS.openrouter.defaultBaseURL;
 
-  const provider = createOpenAICompatible({
-    name: 'openrouter',
-    baseURL,
+  // Official OpenRouter provider (not the generic openai-compatible adapter):
+  // it understands OpenRouter's unified reasoning format and preserves each
+  // model's `reasoning_details` in the assistant message's providerMetadata for
+  // a perfect round-trip across tool-call turns — the generic adapter only
+  // round-trips a flat reasoning string and drops the structured details +
+  // signatures that reasoning models (MiniMax M3, Gemini 3) require.
+  const provider = createOpenRouter({
     apiKey: config.apiKey,
+    baseURL,
+    // 'strict' is the documented mode for the first-party OpenRouter API
+    // ('compatible' is for 3rd-party proxies). We hit openrouter.ai directly.
+    compatibility: 'strict',
     // Normalise non-spec responses (e.g. DeepSeek V4 returning function.arguments
-    // as an object instead of a JSON string) before AI SDK's Zod schema sees them.
+    // as an object instead of a JSON string) before the SDK's Zod schema sees them.
     fetch: createTolerantFetch(),
   });
 
-  const base = provider(config.model);
+  // For reasoning models, explicitly enable reasoning so OpenRouter returns the
+  // `reasoning_details` (rather than excluding them). Non-reasoning models are
+  // unaffected. The runner then echoes those details back each turn via the
+  // assistant message it replays. `extraBody` sends the raw `reasoning` body
+  // param (the typed `reasoning` setting would also require max_tokens/effort).
+  const isReasoning = findModelCatalogEntry('openrouter', config.model)?.capabilities.reasoning;
+  const base = provider.chat(
+    config.model,
+    isReasoning ? { extraBody: { reasoning: { enabled: true } } } : undefined,
+  );
 
   const middleware = middlewareForFamily(detectAgenticFamily(config.model));
   if (middleware) {

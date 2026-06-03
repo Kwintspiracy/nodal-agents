@@ -560,6 +560,9 @@ importers:
       '@nodal-agents/shared':
         specifier: workspace:*
         version: link:../shared
+      '@openrouter/ai-sdk-provider':
+        specifier: ^2.9.0
+        version: 2.9.0(ai@6.0.177(zod@4.4.3))(zod@4.4.3)
       ai:
         specifier: ^6.0.177
         version: 6.0.177(zod@4.4.3)
@@ -2046,6 +2049,13 @@ packages:
   '@notionhq/client@2.3.0':
     resolution: {integrity: sha512-l7WqTCpQqC+HibkB9chghONQTYcxNQT0/rOJemBfmuKQRTu2vuV8B3yA395iKaUdDo7HI+0KvQaz9687Xskzkw==}
     engines: {node: '>=12'}
+
+  '@openrouter/ai-sdk-provider@2.9.0':
+    resolution: {integrity: sha512-Seva+NCa0WUQnJIUE5GzHsUv1WTIeyqwz0ELl2VtS6NP+eF+77yCXGFVOMbvoCM7QMjlnhv7931e89R+8pJdcQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      ai: ^6.0.0
+      zod: ^3.25.0 || ^4.0.0
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -7000,6 +7010,11 @@ snapshots:
       node-fetch: 2.7.0
     transitivePeerDependencies:
       - encoding
+
+  '@openrouter/ai-sdk-provider@2.9.0(ai@6.0.177(zod@4.4.3))(zod@4.4.3)':
+    dependencies:
+      ai: 6.0.177(zod@4.4.3)
+      zod: 4.4.3
 
   '@opentelemetry/api@1.9.0': {}
 

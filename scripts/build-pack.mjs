@@ -109,7 +109,7 @@ if (existsSync(migrationsSrc)) {
 // EXTERNALS array.
 const packPkg = {
   name: 'nodal-agents',
-  version: '0.4.2',
+  version: '0.4.3',
   description: 'Local-first AI agent platform with a web dashboard — install in one command.',
   license: 'MIT',
   repository: {
@@ -151,6 +151,7 @@ const packPkg = {
     '@ai-sdk/openai': '^3.0.63',
     '@ai-sdk/openai-compatible': '^2.0.47',
     '@ai-sdk/provider': '^3.0.10',
+    '@openrouter/ai-sdk-provider': '^2.9.0',
     'ollama-ai-provider-v2': '^3.5.0',
     googleapis: '^171.4.0',
     '@notionhq/client': '^2.3.0',

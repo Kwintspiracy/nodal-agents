@@ -16,12 +16,6 @@ connectors, and delegate to each other to get the job done.
 to install, runs on any machine with Node 22+ (Mac, PC, Linux), and works
 with **any LLM** — frontier or local, paid or free.
 
-> **Run the models others choke on.** DeepSeek V4 works out of the box —
-> including the cheap, fast OpenRouter routes — because the runtime quietly
-> handles its quirks (non-standard tool-call payloads) instead of failing.
-> Mix the right model per agent: a frontier model where judgment matters, a
-> near-free one where it doesn't.
-
 ---
 
 ## Why Nodal-Agents
@@ -29,7 +23,7 @@ with **any LLM** — frontier or local, paid or free.
 | | |
 | --- | --- |
 | 🏠 &nbsp;**Local-first** | Single binary, embedded Postgres, zero cloud dependency. Your conversations, memory, and credentials stay on your machine. |
-| 🔌 &nbsp;**Any model, per agent** | Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter, or any local model (LM Studio, Ollama). Setup is just an API key per provider — **each agent picks its own model**, so you can run Claude for the orchestrator and **DeepSeek V4** for the workers. The quirks of OSS frontier models (DeepSeek's non-spec tool args, Kimi/Qwen/GLM XML tool formats) are handled automatically. |
+| 🔌 &nbsp;**Any model, per agent** | Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter, or any local model (LM Studio, Ollama). Setup is just an API key per provider — **each agent picks its own model**, so you can run Claude for the orchestrator and **DeepSeek V4** for the workers. The quirks of OSS frontier models (DeepSeek's non-spec tool args, Kimi/Qwen/GLM XML tool formats, and round-tripping a reasoning model's chain-of-thought across tool calls so MiniMax M3 / DeepSeek / Gemini 3 don't degrade mid-task) are handled automatically. |
 | 🛟 &nbsp;**Provider failover** | Give an agent a backup key chain — if its provider 5xx's, times out, or hits quota mid-job, the runner fails over to the next one and keeps going (and fails loud only when the whole chain is down). |
 | 🧠 &nbsp;**Memory that compounds** | Persistent facts (entity-scoped, auto-injected into every job) and chat-thread continuity (your agent remembers what it said 30 seconds ago — and what it said yesterday). |
 | 🤝 &nbsp;**Orchestrators that finish** | Router and planner orchestrators delegate to specialist sub-agents, then resume on completion to wrap up the answer. |
@@ -90,7 +84,7 @@ When a newer version is available, `nodal-agents up` also prints a one-line
 notice:
 
 ```
-ℹ v0.4.2 available — run `nodal-agents update`
+ℹ v0.4.3 available — run `nodal-agents update`
 ```
 
 ### Build from source
@@ -218,7 +212,7 @@ pnpm deps:check   # runs locally and in CI before every release
 
 ## Status
 
-**Current release:** `0.4.2` on npm `latest`. Used daily by the
+**Current release:** `0.4.3` on npm `latest`. Used daily by the
 maintainer, stable enough for personal production. Pre-1.0 — breaking
 changes are still possible between minors.
 
@@ -227,7 +221,9 @@ changes are still possible between minors.
 - Multi-LLM, **per-agent model selection** — provider setup is just an API key
   (one per provider); each agent chooses its own model on top. Frontier and
   local providers, including **DeepSeek V4** (non-spec tool-call args normalized
-  automatically), plus native tool-call parsing for Kimi K2 / Qwen3-Coder / GLM
+  automatically) and **reasoning models like MiniMax M3** (their hidden
+  chain-of-thought is round-tripped across tool calls so they keep reasoning on
+  multi-turn tasks), plus native tool-call parsing for Kimi K2 / Qwen3-Coder / GLM
 - **Provider failover** — an opt-in ordered key chain per agent; on a 5xx /
   timeout / quota mid-job the runner fails over to the next key, and fails loud
   (`all_providers_failed`) only when the whole chain is exhausted

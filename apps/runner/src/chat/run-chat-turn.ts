@@ -38,6 +38,20 @@ const CHAT_TOOLS = {
   },
 };
 
+// Escalation-recovery nudge. A reasoning model (MiniMax M3) intermittently
+// NARRATES an action in text ("Je lance X…") without emitting the run_task tool
+// call — ~1 turn in 5 in practice. We cannot force tool_choice (MiniMax's
+// OpenRouter endpoints 404 on any forced value). So when the model produced text
+// but no run_task, we re-prompt ONCE with this reminder. Pure conversation is
+// unaffected: no action was committed, so the model calls nothing and we keep
+// the text reply. This is LLM-internal steering (never shown to the user).
+const ESCALATION_RECHECK =
+  'Re-read your previous reply. If it committed to performing an action — running, launching, ' +
+  'sending, fetching, creating, configuring, delegating, or any task or tool use — then your ' +
+  'text ALONE did nothing: call the run_task tool NOW with a clear, self-contained instruction. ' +
+  'If your reply was pure conversation, a question, or simply recalling a fact, do not call any ' +
+  'tool — the conversation is complete.';
+
 export type ChatTurnResult =
   | { ok: true; reply: string; spawnedJobId?: string }
   | { ok: false; error: string };
@@ -120,15 +134,57 @@ export async function runChatTurn(opts: {
   });
 
   // 4. Load recent history of THIS conversation (most recent N, chronological).
+  //    CRITICAL: an assistant turn that ESCALATED (has a jobId) is replayed WITH
+  //    its run_task tool call + a tool-result — not as a bare text ack. The chat
+  //    persists only the text reply, so a naive history shows the agent "just
+  //    acknowledging in prose"; a reasoning model (MiniMax M3) then reproduces
+  //    that pattern and narrates the next action instead of calling run_task
+  //    (measured: 2/6 escalation on a poisoned history vs 6/6 once escalations
+  //    are shown faithfully). Reconstructing the tool call repairs the few-shot
+  //    context so the escalation pattern stays visible.
   const rows = await db
-    .select({ role: chatMessages.role, content: chatMessages.content })
+    .select({
+      role: chatMessages.role,
+      content: chatMessages.content,
+      jobId: chatMessages.jobId,
+      jobTask: agentJobs.task,
+    })
     .from(chatMessages)
+    .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
     .where(eq(chatMessages.conversationId, conversationId))
     .orderBy(desc(chatMessages.createdAt))
     .limit(HISTORY_LIMIT);
-  const messages: ModelMessage[] = rows
-    .reverse()
-    .map((r) => ({ role: r.role as 'user' | 'assistant', content: r.content }));
+  const messages: ModelMessage[] = [];
+  for (const r of rows.reverse()) {
+    if (r.role === 'assistant' && r.jobId) {
+      const toolCallId = `hist-${r.jobId}`;
+      messages.push({
+        role: 'assistant',
+        content: [
+          ...(r.content ? [{ type: 'text' as const, text: r.content }] : []),
+          {
+            type: 'tool-call' as const,
+            toolCallId,
+            toolName: 'run_task',
+            input: { instruction: r.jobTask ?? '' },
+          },
+        ],
+      });
+      messages.push({
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result' as const,
+            toolCallId,
+            toolName: 'run_task',
+            output: { type: 'text' as const, value: 'Task dispatched.' },
+          },
+        ],
+      });
+    } else {
+      messages.push({ role: r.role as 'user' | 'assistant', content: r.content });
+    }
+  }
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call
   //    run_task to escalate an action into a real job. Guarded: some providers
@@ -145,8 +201,33 @@ export async function runChatTurn(opts: {
     });
     text = (response.text ?? '').trim();
     runTask = (response.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
-  } catch {
-    // Fall through — the tool-free retry below produces a plain-text reply.
+  } catch (err) {
+    // A provider may THROW when the model emits a tool call for a tool not in
+    // this set (a phantom built-in). Log it (don't swallow blind — fail loud,
+    // invariant 4) and fall through to the tool-free retry so conversation works.
+    console.warn(`[run-chat-turn] tools call failed (${agentRow.slug}):`, (err as Error).message);
+  }
+
+  // 5b. ESCALATION RECOVERY. The model produced a reply but NO run_task call. A
+  //     reasoning model (MiniMax M3) intermittently narrates an action without
+  //     calling the tool. Since tool_choice can't be forced (404 on MiniMax),
+  //     re-prompt ONCE: show it its own reply and have it either escalate or
+  //     confirm it was conversation. Recovers the ~1-in-5 narration misses.
+  if (!runTask && text) {
+    try {
+      const recheck = await llmClient.generateText({
+        system: systemPrompt,
+        messages: [
+          ...messages,
+          { role: 'assistant', content: text },
+          { role: 'user', content: ESCALATION_RECHECK },
+        ],
+        tools: CHAT_TOOLS,
+      });
+      runTask = (recheck.toolCalls ?? []).find((tc) => tc.toolName === 'run_task');
+    } catch {
+      // Keep the original text reply — recovery is best-effort.
+    }
   }
 
   // 6a. ESCALATION: the agent wants to act → spawn a real job (the unit of work).

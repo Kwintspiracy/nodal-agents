@@ -48,6 +48,7 @@ const EXTERNALS = [
   '@ai-sdk/openai',
   '@ai-sdk/openai-compatible',
   '@ai-sdk/provider',
+  '@openrouter/ai-sdk-provider',
   'ollama-ai-provider-v2',
   // Adapters — connectors
   'googleapis',

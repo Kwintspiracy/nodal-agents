@@ -75,22 +75,30 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
 function makeMockLlmClient(
   responses: Array<{
     text?: string;
+    reasoning?: string;
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
+  capturedPrompts?: unknown[],
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
   const mockModel = new MockLanguageModelV3({
     provider: 'mock',
     modelId: 'mock',
-    doGenerate: async () => {
+    doGenerate: async (options) => {
+      // Record the prompt each call receives so a test can assert what actually
+      // reached the provider (e.g. reasoning round-tripped from a prior turn).
+      if (capturedPrompts) capturedPrompts.push(options.prompt);
       const response = responses[callIndex] ?? responses[responses.length - 1]!;
       callIndex++;
 
       const content: Array<
         | { type: 'text'; text: string }
+        | { type: 'reasoning'; text: string }
         | { type: 'tool-call'; toolCallId: string; toolName: string; input: string }
       > = [];
+      // Reasoning part first — mirrors how a reasoning model streams: think, then act.
+      if (response.reasoning) content.push({ type: 'reasoning', text: response.reasoning });
       if (response.text) content.push({ type: 'text', text: response.text });
       if (response.toolCalls) {
         for (const tc of response.toolCalls) {
@@ -672,6 +680,110 @@ describe('executeJob', () => {
       .where(eq(chatMessages.conversationId, conv.id));
     const assistant = msgs.find((m) => m.role === 'assistant');
     expect(assistant?.jobId).toBe(spawnedJobId);
+  });
+
+  it('runChatTurn: a NARRATED action (text, no run_task) is recovered via a re-prompt → real job (regression for MiniMax escalation misses)', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    // Turn 1: the model NARRATES ("Je lance X") with NO tool call — the MiniMax
+    // slip (~1 in 5). The escalation-recovery re-prompt then yields run_task.
+    const llmClient = makeMockLlmClient([
+      { text: 'Je lance Displacer dans le Cortex.' },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-recheck',
+            toolName: 'run_task',
+            args: { instruction: 'Lancer Displacer dans le Cortex' },
+          },
+        ],
+      },
+    ]);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    const result = await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'envois Displacer dans le Cortex',
+    });
+
+    expect(result.ok).toBe(true);
+    const spawnedJobId = result.ok ? result.spawnedJobId : undefined;
+    // Recovered: a real job WAS created despite the first reply carrying no tool call.
+    expect(spawnedJobId).toBeTruthy();
+
+    const [job] = await db
+      .select()
+      .from(agentJobs)
+      .where(and(eq(agentJobs.id, spawnedJobId!), eq(agentJobs.channel, 'dashboard')));
+    expect(job).toBeDefined();
+    expect(job?.task).toBe('Lancer Displacer dans le Cortex');
+
+    // The agent's own narration is kept as the acknowledgment, linked to the job.
+    const msgs = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, conv.id));
+    const assistant = msgs.find((m) => m.role === 'assistant');
+    expect(assistant?.jobId).toBe(spawnedJobId);
+    expect(assistant?.content).toContain('Je lance Displacer');
+  });
+
+  it('runChatTurn: a prior ESCALATED turn is replayed to the LLM WITH its run_task call (un-poisons the history)', async () => {
+    // Root cause of the MiniMax "narrates but does nothing" bug: the chat
+    // persists only the text ack, so the history shows the agent "just
+    // acknowledging in prose" and the model reproduces that pattern (measured
+    // 2/6 escalation on a poisoned history vs 6/6 when escalations are shown).
+    // The history builder must replay an escalated turn WITH its run_task call.
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+
+    // Turn 1: the agent escalates → a real job + an assistant turn carrying jobId.
+    const client1 = makeMockLlmClient([
+      {
+        text: 'Je lance Displacer.',
+        toolCalls: [
+          {
+            toolCallId: 'tc-1',
+            toolName: 'run_task',
+            args: { instruction: 'HIST-INSTRUCTION-XYZ' },
+          },
+        ],
+      },
+    ]);
+    const r1 = await runChatTurn({
+      deps: makeDeps(client1),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'envois Displacer',
+    });
+    expect(r1.ok).toBe(true);
+
+    // Turn 2: the history sent to the LLM must REPLAY turn 1's run_task call
+    // (with its instruction), not a bare text ack.
+    const capturedPrompts: unknown[] = [];
+    const client2 = makeMockLlmClient([{ text: 'Et voilà.' }], capturedPrompts);
+    await runChatTurn({
+      deps: makeDeps(client2),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'encore',
+    });
+    expect(capturedPrompts.length).toBeGreaterThanOrEqual(1);
+    // The historical escalation (its run_task instruction) is in the prompt the
+    // model actually received — the few-shot escalation pattern is preserved.
+    expect(JSON.stringify(capturedPrompts[0])).toContain('HIST-INSTRUCTION-XYZ');
   });
 
   it('runChatTurn: a phantom tool-call (tool not on this surface) recovers via a tool-free retry — text reply, no job', async () => {
@@ -1283,6 +1395,113 @@ describe('executeJob', () => {
       ? (m2.content as Array<{ toolCallId?: string }>).map((b) => b.toolCallId)
       : [];
     expect(ids).toContain('tc-mem-a');
+  });
+
+  // ─── Reasoning round-trip (regression for the OpenRouter reasoning-amputation) ─
+  // A reasoning model (MiniMax M3, DeepSeek, Gemini 3 via OpenRouter) emits a
+  // hidden chain-of-thought that the provider returns as reasoning_details and
+  // REQUIRES echoed back unmodified on the next turn to keep reasoning across
+  // tool calls. The runner used to rebuild the assistant turn from tool calls
+  // ALONE (execute.ts step e), amputating the reasoning → the model degraded /
+  // looped on multi-turn tool tasks. The fix appends response.response.messages
+  // (which carry the reasoning parts) instead. This locks both halves: the
+  // reasoning is PERSISTED in the transcript AND actually re-sent to the LLM.
+  it('reasoning round-trip: a tool-call turn’s reasoning is persisted AND replayed to the next LLM call', async () => {
+    const job = await createTestJob(db, seed);
+
+    const capturedPrompts: unknown[] = [];
+    // Turn 1: the model reasons, then calls a tool. Turn 2: it answers.
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          reasoning: 'REASONING-MARKER: I must save the key fact before answering.',
+          toolCalls: [
+            {
+              toolCallId: 'tc-reason',
+              toolName: 'save_memory',
+              args: { fact: 'reasoned fact', category: 'context' },
+            },
+          ],
+        },
+        { text: 'All done after reasoning.' },
+      ],
+      capturedPrompts,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // (1) The reasoning is PRESERVED in the persisted transcript — the turn-1
+    //     assistant message carries a reasoning part, not a tool-calls-only
+    //     amputation. Messages: user(0), assistant(1), tool(2), assistant(3).
+    const rows = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const msgs = (rows[0]?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const asst1 = msgs[1];
+    expect(asst1?.role).toBe('assistant');
+    const asst1Parts = Array.isArray(asst1?.content)
+      ? (asst1!.content as Array<{ type: string; text?: string }>)
+      : [];
+    const reasoningPart = asst1Parts.find((p) => p.type === 'reasoning');
+    expect(reasoningPart?.text).toContain('REASONING-MARKER');
+    // The same turn still carries its tool call (pairing intact).
+    expect(asst1Parts.some((p) => p.type === 'tool-call')).toBe(true);
+
+    // (2) The SECOND LLM call actually RECEIVED that reasoning in its request
+    //     prompt — the round-trip the OpenRouter provider depends on. Asserting
+    //     the real request body (invariant 5), not a call count.
+    expect(capturedPrompts.length).toBe(2);
+    expect(JSON.stringify(capturedPrompts[1])).toContain('REASONING-MARKER');
+  });
+
+  it('reasoning + parallel tool calls across turns complete without unmatched_tool_use (regression for job 8fc974fb)', async () => {
+    // Live regression: Displacer on MiniMax M3 (job 8fc974fb) ran reasoning +
+    // parallel MCP tool calls over several turns and died on
+    // message_structure_invalid:unmatched_tool_use. The cause was rebuilding the
+    // assistant turn from the SDK's response messages, which can surface a tool
+    // call not in response.toolCalls → an assistant tool_use with no matching
+    // tool_result. The fix builds the assistant turn's tool calls from
+    // rawToolCalls (== what we execute), keeping reasoning. This locks it: a
+    // multi-turn flow with PARALLEL tool calls and reasoning must complete, with
+    // each turn's reasoning round-tripped.
+    const job = await createTestJob(db, seed);
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          reasoning: 'TURN1-REASON: gather both sources first.',
+          toolCalls: [
+            {
+              toolCallId: 'p1',
+              toolName: 'save_memory',
+              args: { fact: 'fact A', category: 'context' },
+            },
+            {
+              toolCallId: 'p2',
+              toolName: 'save_memory',
+              args: { fact: 'fact B', category: 'context' },
+            },
+          ],
+        },
+        {
+          reasoning: 'TURN2-REASON: now recall what I saved.',
+          toolCalls: [{ toolCallId: 'p3', toolName: 'query_memory', args: { query: 'facts' } }],
+        },
+        { text: 'Done — both facts handled.' },
+      ],
+      capturedPrompts,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    // Completes — NOT message_structure_invalid:unmatched_tool_use.
+    expect(result.status).toBe('completed');
+
+    // Each reasoning turn round-tripped into the next request (real body).
+    expect(capturedPrompts.length).toBe(3);
+    expect(JSON.stringify(capturedPrompts[1])).toContain('TURN1-REASON');
+    expect(JSON.stringify(capturedPrompts[2])).toContain('TURN2-REASON');
   });
 
   it('anti-loop: 51 tool_use blocks → tool_call_limit_exceeded', async () => {
