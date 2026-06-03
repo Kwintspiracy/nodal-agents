@@ -285,9 +285,14 @@ describe('job-with-adapter: Drive connector fully enabled (enabledOperations=nul
       {
         toolCalls: [
           {
+            // The mocked Drive call errors under this harness (googleapis uses
+            // its own HTTP transport, not the global fetch spy), so the honest
+            // terminal is 'blocked' — and Guard 3b (no-false-success) would
+            // correctly refuse a 'success' claim while drive_list_files is
+            // unresolved. This test only verifies wiring (the tool_calls row).
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'success' },
+            args: { status: 'blocked' },
           },
         ],
       },

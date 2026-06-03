@@ -8,6 +8,7 @@ import {
   integer,
   bigint,
   timestamp,
+  jsonb,
   index,
   check,
 } from 'drizzle-orm/pg-core';
@@ -25,6 +26,16 @@ export const agents = pgTable(
     personality: text('personality').notNull(),
     model: text('model').default('claude-sonnet-4-6-20260217'),
     llmKeyId: uuid('llm_key_id').references(() => entityLlmKeys.id, { onDelete: 'set null' }),
+    // Ordered LLM-key fallback chain (Guard 2). When the primary key
+    // (llmKeyId) exhausts retries / times out / hits quota mid-job, the runner
+    // fails over to these in order; all-down fails loud (`all_providers_failed`).
+    // Empty = no failover (default). Each link is a (keyId, model) pair so a
+    // fallback runs on a CHOSEN model (empty model ⇒ that provider's catalog
+    // default). FK integrity is enforced in the app layer; a deleted key is
+    // skipped at resolution time.
+    fallbackChain: jsonb('fallback_chain')
+      .$type<Array<{ keyId: string; model: string }>>()
+      .default(sql`'[]'::jsonb`),
     active: boolean('active').default(true),
     isDefault: boolean('is_default').default(false),
     role: text('role').default('agent'),

@@ -1,8 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { List, X } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+
+// useLayoutEffect runs synchronously after DOM mutation, BEFORE paint — so the
+// scroll lands before the user ever sees the top. SSR-safe alias (no window on
+// the server → fall back to useEffect to avoid the React warning).
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 import {
   listConversationsAction,
   createConversationAction,
@@ -79,16 +85,51 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
   const [search, setSearch] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [loadingThread, setLoadingThread] = useState(false);
+  // Mobile only: the conversation history is a slide-in drawer (on desktop it's
+  // a static right pane). Closed by default so it never covers the thread.
+  const [showHistory, setShowHistory] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Is the user at the bottom — i.e. "following" the live conversation? Drives
+  // whether content growth auto-scrolls. Scrolling up to read history turns it
+  // off; scrolling back to the bottom turns it on.
+  const followRef = useRef(true);
 
   // A reply is in flight whenever the latest persisted message is a user turn.
   const lastIsUser = messages.length > 0 && messages[messages.length - 1]!.role === 'user';
 
-  // ── Scroll to bottom whenever messages change ──────────────────────────────
+  const pinToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // Track follow state from the user's own scrolling.
+  const handleMessagesScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  // User action (open/switch thread, send a message) → follow + jump to bottom.
+  useIsoLayoutEffect(() => {
+    followRef.current = true;
+    pinToBottom();
+    const t = setTimeout(pinToBottom, 80); // catch the first async layout pass
+    return () => clearTimeout(t);
+  }, [messages, lastIsUser, loadingThread, pinToBottom]);
+
+  // Stay glued to the bottom as the DOM GROWS while following — dispatch cards
+  // fill in after their first poll (badges, sub-agent rows, result text), which
+  // is exactly what pushed a one-shot scroll to mid-thread. A MutationObserver
+  // fires on those content changes; we re-pin only when the user is following.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, lastIsUser]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const mo = new MutationObserver(() => {
+      if (followRef.current) el.scrollTop = el.scrollHeight;
+    });
+    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => mo.disconnect();
+  }, []);
 
   // ── Refresh conversations list ─────────────────────────────────────────────
   const refreshConversations = useCallback(async () => {
@@ -142,6 +183,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
 
   // ── Select a conversation ──────────────────────────────────────────────────
   async function selectConversation(id: string) {
+    setShowHistory(false); // close the mobile drawer on pick
     if (id === activeId) return;
     setActiveId(id);
     setMessages([]);
@@ -158,6 +200,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
     await refreshConversations();
     setMessages([]);
     setActiveId(r.data.id);
+    setShowHistory(false); // close the mobile drawer after creating
   }
 
   // ── Delete a conversation ──────────────────────────────────────────────────
@@ -231,11 +274,27 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+    <div className="relative flex h-full min-h-0 overflow-hidden rounded-xl border border-rule-2 bg-paper">
       {/* ── Thread (main, LEFT) ─────────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile-only header: title + button to open the history drawer. */}
+        <div className="flex items-center justify-between gap-2 border-b border-rule-2 px-3 py-2 lg:hidden">
+          <span className="truncate text-sm font-semibold text-ink">{rootName ?? 'Chat'}</span>
+          <button
+            type="button"
+            onClick={() => setShowHistory(true)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-rule px-2.5 py-1 text-xs font-medium text-ink-2 transition-colors hover:bg-hover"
+            aria-label="Show conversations"
+          >
+            <List size={14} /> History
+          </button>
+        </div>
         {/* Messages */}
-        <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
+        <div
+          ref={scrollRef}
+          onScroll={handleMessagesScroll}
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5"
+        >
           {loadingThread ? (
             <p className="py-8 text-center text-sm text-ink-4">Loading…</p>
           ) : messages.length === 0 && !lastIsUser ? (
@@ -305,11 +364,40 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
         </form>
       </div>
 
-      {/* ── Sidebar (RIGHT) ─────────────────────────────────────────────── */}
-      <aside className="flex w-[300px] shrink-0 flex-col border-l border-rule-2">
+      {/* Backdrop — mobile only, dims the thread when the history drawer is open. */}
+      {showHistory && (
+        <div
+          className="absolute inset-0 z-10 bg-black/40 lg:hidden"
+          onClick={() => setShowHistory(false)}
+          aria-hidden
+        />
+      )}
+
+      {/* ── Conversation history ──────────────────────────────────────────
+          Desktop (lg+): static right pane, always shown. Mobile: a plain
+          show/hide overlay — `hidden` (display:none) when closed so it can
+          NEVER cover the thread, an absolute overlay when open. No transforms
+          (which left it stuck visible). */}
+      <aside
+        className={`flex-col border-l border-rule-2 bg-paper lg:flex lg:static lg:z-auto lg:w-[300px] lg:max-w-none lg:shrink-0 lg:shadow-none ${
+          showHistory
+            ? 'absolute inset-y-0 right-0 z-20 flex w-[85%] max-w-[320px] shadow-xl'
+            : 'hidden'
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-rule-2 px-4 py-3">
-          <span className="text-sm font-semibold text-ink">Chat</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowHistory(false)}
+              className="text-ink-3 transition-colors hover:text-ink lg:hidden"
+              aria-label="Close conversations"
+            >
+              <X size={16} />
+            </button>
+            <span className="text-sm font-semibold text-ink">Chat</span>
+          </div>
           <button
             type="button"
             onClick={() => void handleNew()}

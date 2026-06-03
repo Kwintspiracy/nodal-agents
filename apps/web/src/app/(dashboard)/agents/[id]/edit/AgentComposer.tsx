@@ -32,12 +32,9 @@ import {
   type SkillRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import { MODEL_CATALOG, findModelCatalogEntry, groupModelCatalog } from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
-import {
-  detectModelProviders,
-  isModelCompatibleWithProvider,
-  type ProviderSlug,
-} from '@/lib/model-provider-detect.ts';
+import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
@@ -84,7 +81,11 @@ function dbRoleToUiRole(
 
 interface Props {
   agent: AgentEditRow;
+  /** Peers = every OTHER agent (sub-agent picker; excludes self). */
   peers: AgentRow[];
+  /** All agents in the entity, canonical order — drives the picker pills so
+   *  their order is stable and identical to the /agents page. */
+  allAgents: AgentRow[];
   llmKeys: LlmKeyUiRow[];
   connectors: AgentConnectorRow[];
   mcpServers: AgentMcpServerRow[];
@@ -95,6 +96,7 @@ interface Props {
 export default function AgentComposer({
   agent,
   peers,
+  allAgents,
   llmKeys,
   connectors,
   mcpServers,
@@ -115,6 +117,11 @@ export default function AgentComposer({
   const [role, setRole] = useState<AgentRole>(initialRole);
   const [subAgentIds, setSubAgentIds] = useState<string[]>(agent.subAgentIds);
   const [llmKeyId, setLlmKeyId] = useState<string>(initialLlmKeyId);
+  // Guard 2: ordered failover chain (in order) — each link is a (keyId, model)
+  // pair so a fallback runs on a chosen model.
+  const [fallbackChain, setFallbackChain] = useState<Array<{ keyId: string; model: string }>>(
+    agent.fallbackChain ?? [],
+  );
   const [model, setModel] = useState<string>(agent.model ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
   // Workspaces list — loaded asynchronously from the DB via server action.
@@ -133,15 +140,6 @@ export default function AgentComposer({
     () => llmKeys.find((k) => k.id === llmKeyId) ?? null,
     [llmKeys, llmKeyId],
   );
-  const detectedProviders = useMemo<Set<ProviderSlug>>(() => detectModelProviders(model), [model]);
-  const compatibleActiveKeys = useMemo(
-    () =>
-      activeKeys.filter((k) => isModelCompatibleWithProvider(model, k.provider as ProviderSlug)),
-    [activeKeys, model],
-  );
-  const coherenceOk = selectedKey
-    ? isModelCompatibleWithProvider(model, selectedKey.provider as ProviderSlug)
-    : true;
   const noLlmKeys = activeKeys.length === 0;
   const showSubAgents = role !== 'worker';
   const initial = (agent.name || agent.slug).slice(0, 1).toUpperCase();
@@ -164,46 +162,53 @@ export default function AgentComposer({
     role !== initialRole ||
     JSON.stringify([...subAgentIds].sort()) !== JSON.stringify([...agent.subAgentIds].sort()) ||
     llmKeyId !== initialLlmKeyId ||
+    JSON.stringify(fallbackChain) !== JSON.stringify(agent.fallbackChain ?? []) ||
     model !== (agent.model ?? '') ||
     avatarUrl !== (agent.avatarUrl ?? null);
 
   // ── handlers ─────────────────────────────────────────────────────────────
   function handleLlmKeyChange(id: string) {
     const newKey = llmKeys.find((row) => row.id === id);
-    const oldDefault = selectedKey?.defaultModel ?? null;
     setLlmKeyId(id);
-    if (newKey?.defaultModel && (!model || model === oldDefault)) {
-      setModel(newKey.defaultModel);
-    }
+    // Switching provider resets the model to that provider's default (or its
+    // first curated model). A model id only makes sense for its own provider —
+    // so we never keep a stale, mismatched model around.
+    const firstCurated = newKey ? (MODEL_CATALOG[newKey.provider]?.[0]?.modelId ?? '') : '';
+    setModel(firstCurated);
   }
 
   function handleModelChange(next: string) {
     setModel(next);
-    if (!selectedKey) return;
-    if (isModelCompatibleWithProvider(next, selectedKey.provider as ProviderSlug)) return;
-    const candidates = activeKeys.filter((k) =>
-      isModelCompatibleWithProvider(next, k.provider as ProviderSlug),
-    );
-    if (candidates.length === 1 && candidates[0]) {
-      setLlmKeyId(candidates[0].id);
-      toast.success(
-        `Switched provider to ${prettyProviderName(candidates[0].provider)} (matches ${next})`,
-      );
-    }
   }
 
   function toggleSubAgent(id: string) {
     setSubAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
+  // Append on select (failover priority = selection order), remove on deselect.
+  // A newly added fallback defaults to its provider's first catalog model.
+  function toggleFallback(id: string) {
+    setFallbackChain((prev) => {
+      if (prev.some((l) => l.keyId === id)) return prev.filter((l) => l.keyId !== id);
+      const key = llmKeys.find((k) => k.id === id);
+      const defaultModel = key ? (MODEL_CATALOG[key.provider]?.[0]?.modelId ?? '') : '';
+      return [...prev, { keyId: id, model: defaultModel }];
+    });
+  }
+
+  function setFallbackModel(id: string, model: string) {
+    setFallbackChain((prev) => prev.map((l) => (l.keyId === id ? { ...l, model } : l)));
+  }
+
   function handleSave() {
-    if (!coherenceOk || noLlmKeys || isPending || !dirty) return;
+    if (noLlmKeys || isPending || !dirty) return;
     const payload = {
       id: agent.id,
       name,
       personality,
       model,
       llmKeyId: llmKeyId || null,
+      fallbackChain: fallbackChain.filter((l) => l.keyId !== llmKeyId),
       role,
       subAgentIds: role === 'worker' ? [] : subAgentIds,
       avatarUrl,
@@ -225,6 +230,7 @@ export default function AgentComposer({
     setRole(initialRole);
     setSubAgentIds(agent.subAgentIds);
     setLlmKeyId(initialLlmKeyId);
+    setFallbackChain(agent.fallbackChain ?? []);
     setModel(agent.model ?? '');
     setAvatarUrl(agent.avatarUrl ?? null);
   }
@@ -234,10 +240,7 @@ export default function AgentComposer({
     <div className="space-y-6">
       <BackLink />
 
-      <AgentPicker
-        agents={[{ id: agent.id, name: agent.name, slug: agent.slug } as AgentRow, ...peers]}
-        activeId={agent.id}
-      />
+      <AgentPicker agents={allAgents} activeId={agent.id} />
 
       <HeroCard
         initial={initial}
@@ -316,12 +319,10 @@ export default function AgentComposer({
           subAgentIds={subAgentIds}
           peers={peers}
           llmKeyId={llmKeyId}
+          fallbackChain={fallbackChain}
           activeKeys={activeKeys}
           selectedKey={selectedKey}
           model={model}
-          coherenceOk={coherenceOk}
-          detectedProviders={detectedProviders}
-          compatibleActiveKeys={compatibleActiveKeys}
           noLlmKeys={noLlmKeys}
           workspaces={workspaces}
           workspacesLoaded={workspacesLoaded}
@@ -335,9 +336,10 @@ export default function AgentComposer({
           onChangePersonality={setPersonality}
           onChangeRole={setRole}
           onToggleSubAgent={toggleSubAgent}
+          onToggleFallback={toggleFallback}
+          onChangeFallbackModel={setFallbackModel}
           onChangeLlmKey={handleLlmKeyChange}
           onChangeModel={handleModelChange}
-          onSwitchKey={setLlmKeyId}
           onSave={handleSave}
           onReset={handleReset}
         />
@@ -919,12 +921,10 @@ function SettingsTab(props: {
   subAgentIds: string[];
   peers: AgentRow[];
   llmKeyId: string;
+  fallbackChain: Array<{ keyId: string; model: string }>;
   activeKeys: LlmKeyUiRow[];
   selectedKey: LlmKeyUiRow | null;
   model: string;
-  coherenceOk: boolean;
-  detectedProviders: Set<ProviderSlug>;
-  compatibleActiveKeys: LlmKeyUiRow[];
   noLlmKeys: boolean;
   workspaces: AgentWorkspaceRow[];
   workspacesLoaded: boolean;
@@ -938,9 +938,10 @@ function SettingsTab(props: {
   onChangePersonality: (v: string) => void;
   onChangeRole: (r: AgentRole) => void;
   onToggleSubAgent: (id: string) => void;
+  onToggleFallback: (id: string) => void;
+  onChangeFallbackModel: (id: string, model: string) => void;
   onChangeLlmKey: (id: string) => void;
   onChangeModel: (v: string) => void;
-  onSwitchKey: (id: string) => void;
   onSave: () => void;
   onReset: () => void;
 }) {
@@ -954,12 +955,10 @@ function SettingsTab(props: {
     subAgentIds,
     peers,
     llmKeyId,
+    fallbackChain,
     activeKeys,
     selectedKey,
     model,
-    coherenceOk,
-    detectedProviders,
-    compatibleActiveKeys,
     noLlmKeys,
     workspaces,
     workspacesLoaded,
@@ -973,12 +972,22 @@ function SettingsTab(props: {
     onChangePersonality,
     onChangeRole,
     onToggleSubAgent,
+    onToggleFallback,
+    onChangeFallbackModel,
     onChangeLlmKey,
     onChangeModel,
-    onSwitchKey,
     onSave,
     onReset,
   } = props;
+
+  // Candidate fallback keys = every active key except the current primary.
+  const otherKeys = activeKeys.filter((k) => k.id !== llmKeyId);
+
+  // Curated models for the selected key's provider (T2). The agent's model is a
+  // free string; the dropdown just helps pick a known-good id (capability flags
+  // live on the KEY, not here). Derive "custom" from whether `model` is curated.
+  const modelCatalog = selectedKey ? (MODEL_CATALOG[selectedKey.provider] ?? []) : [];
+  const modelInCatalog = !!findModelCatalogEntry(selectedKey?.provider ?? '', model);
 
   // ── Workspace management local state ─────────────────────────────────────
   const [wsLabel, setWsLabel] = useState('');
@@ -1203,56 +1212,131 @@ function SettingsTab(props: {
             )}
           </Field>
           <Field label="Model">
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => onChangeModel(e.target.value)}
-              placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
-              className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-            />
+            {modelCatalog.length > 0 && (
+              <select
+                value={modelInCatalog ? model : '__custom__'}
+                onChange={(e) =>
+                  onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
+                }
+                className="mb-2 w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+              >
+                {groupModelCatalog(modelCatalog).map(({ group, models }) =>
+                  group ? (
+                    <optgroup key={group} label={group}>
+                      {models.map((m) => (
+                        <option key={m.modelId} value={m.modelId}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : (
+                    models.map((m) => (
+                      <option key={m.modelId} value={m.modelId}>
+                        {m.label}
+                      </option>
+                    ))
+                  ),
+                )}
+                <option value="__custom__">Custom…</option>
+              </select>
+            )}
+            {(modelCatalog.length === 0 || !modelInCatalog) && (
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => onChangeModel(e.target.value)}
+                placeholder={
+                  MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                  'e.g. claude-haiku-4-5-20251001'
+                }
+                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              />
+            )}
           </Field>
         </div>
-        {!coherenceOk && selectedKey && (
-          <div
-            role="alert"
-            data-testid="model-provider-mismatch"
-            className="mt-3 space-y-1 rounded-lg border border-warn/30 bg-warn-bg px-3 py-2 text-[12px] text-warn"
-          >
-            <p>
-              <span className="font-semibold">Provider mismatch:</span>{' '}
-              <span className="font-mono">{model}</span> looks like it needs{' '}
-              <span className="font-semibold">
-                {Array.from(detectedProviders)
-                  .map((p) => prettyProviderName(p))
-                  .join(' or ')}
-              </span>
-              , but your selected key is{' '}
-              <span className="font-semibold">{prettyProviderName(selectedKey.provider)}</span>.
-            </p>
-            {compatibleActiveKeys.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                <span className="text-warn/80">Switch to:</span>
-                {compatibleActiveKeys.map((k) => (
-                  <button
-                    key={k.id}
-                    type="button"
-                    onClick={() => onSwitchKey(k.id)}
-                    className="rounded border border-warn/30 px-1.5 py-0.5 text-[11px] font-medium text-warn hover:bg-warn-bg"
-                  >
-                    {k.nickname ?? prettyProviderName(k.provider)} ({prettyProviderName(k.provider)}
-                    )
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p>
-                No compatible active key.{' '}
-                <Link href="/llm-providers" className="underline hover:text-warn">
-                  Add one
-                </Link>
-                .
-              </p>
-            )}
+        {!noLlmKeys && (
+          <div className="mt-3">
+            <Field label="Fallback providers (failover order)">
+              {otherKeys.length === 0 ? (
+                <p className="text-[12px] text-ink-4">
+                  Add another LLM key in{' '}
+                  <Link href="/llm-providers" className="underline">
+                    LLM providers
+                  </Link>{' '}
+                  to enable failover.
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  <p className="text-[12px] text-ink-4">
+                    If the primary is down (5xx / timeout / quota) mid-job, the runner fails over to
+                    these in order. Pick the model each fallback should run on.
+                  </p>
+                  {otherKeys.map((k) => {
+                    const order = fallbackChain.findIndex((l) => l.keyId === k.id);
+                    const checked = order !== -1;
+                    const fbCatalog = MODEL_CATALOG[k.provider] ?? [];
+                    const fbModel = checked ? (fallbackChain[order]?.model ?? '') : '';
+                    return (
+                      <div key={k.id} className="space-y-1.5">
+                        <label className="flex cursor-pointer items-center gap-2.5 select-none">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => onToggleFallback(k.id)}
+                            className="accent-ink"
+                          />
+                          <span className="text-[13px] text-ink-2">
+                            {(k.nickname ?? prettyProviderName(k.provider)) +
+                              ' (' +
+                              prettyProviderName(k.provider) +
+                              ')'}
+                          </span>
+                          {checked && (
+                            <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-[10px] font-medium text-ink-4">
+                              #{order + 1}
+                            </span>
+                          )}
+                        </label>
+                        {checked &&
+                          (fbCatalog.length > 0 ? (
+                            <select
+                              value={fbModel}
+                              onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 text-[12.5px] text-ink focus:border-ink-3 focus:outline-none"
+                            >
+                              {groupModelCatalog(fbCatalog).map(({ group, models }) =>
+                                group ? (
+                                  <optgroup key={group} label={group}>
+                                    {models.map((m) => (
+                                      <option key={m.modelId} value={m.modelId}>
+                                        {m.label}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                ) : (
+                                  models.map((m) => (
+                                    <option key={m.modelId} value={m.modelId}>
+                                      {m.label}
+                                    </option>
+                                  ))
+                                ),
+                              )}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={fbModel}
+                              onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
+                              placeholder="model id (e.g. llama-3.3-70b)"
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 font-mono text-[12px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                            />
+                          ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Field>
           </div>
         )}
       </SectionCard>
@@ -1464,14 +1548,8 @@ function SettingsTab(props: {
           <button
             type="button"
             onClick={onSave}
-            disabled={isPending || noLlmKeys || !coherenceOk || !dirty}
-            title={
-              !coherenceOk
-                ? 'Pick a key that matches the model first'
-                : !dirty
-                  ? 'No changes to save'
-                  : undefined
-            }
+            disabled={isPending || noLlmKeys || !dirty}
+            title={!dirty ? 'No changes to save' : undefined}
             className="rounded-lg bg-ink px-5 py-2 text-[13px] font-semibold text-canvas transition-colors hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? 'Saving…' : 'Save'}

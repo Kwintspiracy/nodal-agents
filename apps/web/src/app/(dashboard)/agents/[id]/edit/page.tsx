@@ -55,6 +55,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
     <AgentComposer
       agent={agent}
       peers={peers}
+      allAgents={peersResult.ok ? peersResult.data : []}
       llmKeys={llmKeys}
       connectors={connectors}
       mcpServers={mcpServers}

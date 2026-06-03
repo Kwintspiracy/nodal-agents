@@ -53,7 +53,6 @@ describe('migrateLlmKeysToEncrypted (Brique 26)', () => {
         apiKey: 'sk-ant-secret-99887766',
         apiKeyLast4: '',
         nickname: 'Legacy',
-        defaultModel: 'claude-haiku-4-5',
         isActive: true,
       })
       .returning();
@@ -83,7 +82,6 @@ describe('migrateLlmKeysToEncrypted (Brique 26)', () => {
         apiKey: 'sk-ant-secret-99887766',
         apiKeyLast4: '',
         nickname: 'Legacy',
-        defaultModel: 'claude-haiku-4-5',
         isActive: true,
       })
       .returning();
@@ -118,7 +116,6 @@ describe('migrateLlmKeysToEncrypted (Brique 26)', () => {
         apiKey: '',
         apiKeyLast4: '',
         nickname: 'No-key Ollama',
-        defaultModel: 'llama3.3:70b',
         isActive: true,
       })
       .returning();
@@ -148,7 +145,6 @@ describe('migrateLlmKeysToEncrypted (Brique 26)', () => {
         apiKey: 'sk-legacy-1234',
         apiKeyLast4: '',
         nickname: 'Legacy',
-        defaultModel: 'm',
         isActive: true,
       })
       .returning();
@@ -160,7 +156,6 @@ describe('migrateLlmKeysToEncrypted (Brique 26)', () => {
         apiKey: encrypt('sk-already-9999'),
         apiKeyLast4: '9999',
         nickname: 'Pre-encrypted',
-        defaultModel: 'm',
         isActive: true,
       })
       .returning();
@@ -172,7 +167,6 @@ describe('migrateLlmKeysToEncrypted (Brique 26)', () => {
         apiKey: '',
         apiKeyLast4: '',
         nickname: 'Empty',
-        defaultModel: 'm',
         isActive: true,
       })
       .returning();

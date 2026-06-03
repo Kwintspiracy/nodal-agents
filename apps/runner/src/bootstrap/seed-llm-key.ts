@@ -54,7 +54,6 @@ export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promi
       apiKeyLast4: last4(plaintextKey),
       baseUrl: env.LLM_BASE_URL ?? null,
       nickname: 'Default (env)',
-      defaultModel: env.LLM_MODEL,
       isActive: true,
     })
     .returning({ id: entityLlmKeys.id });

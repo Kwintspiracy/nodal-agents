@@ -47,6 +47,15 @@ export const DEFAULT_LIMITS: ChainLimits = {
   maxDelegationDepth: 3,
   maxTurns: 50, // matches Hermes Agent's per-subagent iteration budget; cumulative cap across resumes
   maxConsecutiveDeliveryTurns: 3,
+  // 1.5M total tokens: a loud backstop well above any legitimate single job
+  // (typical jobs sit in the tens of thousands) yet below the ~2.4M-token
+  // runaway that motivated it. Override per-deployment via MAX_TOTAL_TOKENS_PER_JOB.
+  maxTotalTokensPerJob: 1_500_000,
+  // 12 identical (toolName+input+output) turns in a row before declaring the job
+  // stuck. Deliberately conservative: a real poll completes (output changes) long
+  // before 12 identical reads, so this only catches genuinely degenerate loops —
+  // and maxTurns (50) is the ultimate backstop above it.
+  maxNoProgressRepeats: 12,
 };
 
 // ─── ChainCounters ────────────────────────────────────────────────────────────

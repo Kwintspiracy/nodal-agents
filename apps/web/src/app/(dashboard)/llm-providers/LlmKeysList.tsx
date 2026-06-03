@@ -19,6 +19,8 @@ export default function LlmKeysList({ initialRows }: Props) {
   const [formState, setFormState] = useState<FormState>({ kind: 'closed' });
   const rows = initialRows;
 
+  const configuredProviders = rows.map((r) => r.provider);
+
   function refresh() {
     startTransition(() => {
       router.refresh();
@@ -58,6 +60,7 @@ export default function LlmKeysList({ initialRows }: Props) {
       {formState.kind === 'create' && (
         <LlmKeyForm
           mode="create"
+          configuredProviders={configuredProviders}
           onDone={(action) => {
             setFormState({ kind: 'closed' });
             if (action === 'saved') refresh();

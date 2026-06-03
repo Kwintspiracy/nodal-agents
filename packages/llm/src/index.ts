@@ -11,11 +11,15 @@ export {
   RetryExhaustedError,
   ProviderConfigError,
   LLMTimeoutError,
+  AllProvidersFailedError,
 } from './errors';
 export type { MessageStructureErrorCode } from './errors';
 
 // Client factory
 export { createLlmClient } from './client';
+
+// Provider failover (opt-in chain: primary + fallbacks)
+export { createFailoverLlmClient } from './failover';
 
 // Message structure validation
 export { validateMessageStructure } from './message-structure';

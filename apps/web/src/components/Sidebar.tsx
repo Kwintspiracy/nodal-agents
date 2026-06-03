@@ -20,6 +20,7 @@ import {
   GearSix,
   List,
   X,
+  ArrowSquareOut,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
 import BrandMark from './ui/BrandMark';
@@ -35,6 +36,8 @@ type Item = {
   icon?: PhosphorIcon;
   dot?: 'agent' | 'skill' | 'conn';
   count?: number | string;
+  /** External link — rendered as a plain <a> (new tab) with its own styling. */
+  external?: boolean;
 };
 
 type Group = { section?: string; items: Item[] };
@@ -81,6 +84,7 @@ const NAV: Group[] = [
   {
     section: 'Workspace',
     items: [
+      { href: 'https://discord.gg/7UZsvZPgU', label: 'Join Discord', external: true },
       { href: '/billing', label: 'Billing', icon: CurrencyDollar },
       { href: '/settings', label: 'Settings', icon: GearSix },
     ],
@@ -144,24 +148,40 @@ export default function Sidebar({
           {NAV.map((group, gi) => (
             <div key={gi}>
               {group.section && <SidebarSection>{group.section}</SidebarSection>}
-              {group.items.map((it) => (
-                <SidebarLink
-                  key={it.href}
-                  href={it.href}
-                  label={it.label}
-                  icon={it.icon ? <it.icon size={14} /> : undefined}
-                  dot={it.dot}
-                  count={it.count}
-                  isActive={
-                    // The Home link must match exactly — every other route
-                    // starts with `/`, so the default startsWith logic would
-                    // mark Home as active everywhere.
-                    it.href === '/'
-                      ? pathname === '/'
-                      : pathname === it.href || pathname.startsWith(it.href + '/')
-                  }
-                />
-              ))}
+              {group.items.map((it) =>
+                it.external ? (
+                  // Discord — always Discord-blurple, external-link icon, new tab.
+                  <a
+                    key={it.href}
+                    href={it.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group mx-2 flex h-[30px] items-center gap-2.5 rounded-lg bg-[#5865F2] px-2.5 text-[12.5px] font-medium leading-none text-white transition-[filter] hover:brightness-110"
+                  >
+                    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                      <ArrowSquareOut size={14} weight="bold" />
+                    </span>
+                    <span className="flex-1 truncate">{it.label}</span>
+                  </a>
+                ) : (
+                  <SidebarLink
+                    key={it.href}
+                    href={it.href}
+                    label={it.label}
+                    icon={it.icon ? <it.icon size={14} /> : undefined}
+                    dot={it.dot}
+                    count={it.count}
+                    isActive={
+                      // The Home link must match exactly — every other route
+                      // starts with `/`, so the default startsWith logic would
+                      // mark Home as active everywhere.
+                      it.href === '/'
+                        ? pathname === '/'
+                        : pathname === it.href || pathname.startsWith(it.href + '/')
+                    }
+                  />
+                ),
+              )}
             </div>
           ))}
         </nav>

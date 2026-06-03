@@ -2,6 +2,7 @@
 // Wires all routes, middleware, and starts the HTTP server.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { serve } from '@hono/node-server';
 import { pathToFileURL } from 'url';
 import { parseEnv } from './env.ts';
@@ -50,7 +51,10 @@ export function createApp(
     }
   });
 
-  app.use('/api/approve', async (c, next) => {
+  const bearerOrSession = async (
+    c: Context,
+    next: () => Promise<void>,
+  ): Promise<Response | void> => {
     // Accept either:
     //   - a valid auth-provider session (for browser → runner direct calls), OR
     //   - the WORKER_SECRET bearer token (for web → runner cross-process
@@ -74,7 +78,9 @@ export function createApp(
       }
       throw err;
     }
-  });
+  };
+
+  app.use('/api/approve', bearerOrSession);
 
   // ── Routes ────────────────────────────────────────────────────────────────────
 

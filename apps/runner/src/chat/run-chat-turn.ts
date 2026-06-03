@@ -8,11 +8,10 @@
 // `agent_jobs` row) is a later increment.
 
 import { eq, and, desc } from '@nodal-agents/db';
-import { agents, entityLlmKeys, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
+import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
-import { createLlmClient } from '@nodal-agents/llm';
-import { decrypt } from '@nodal-agents/secrets';
+import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -83,26 +82,23 @@ export async function runChatTurn(opts: {
     await db.update(conversations).set({ title }).where(eq(conversations.id, conversationId));
   }
 
-  // 2. Resolve the per-agent LLM client (same resolution as executeJob).
-  const [keyRow] = await db
-    .select()
-    .from(entityLlmKeys)
-    .where(eq(entityLlmKeys.id, agentRow.llmKeyId))
-    .limit(1);
-  if (!keyRow || !keyRow.isActive) return { ok: false, error: 'agent_no_llm_configured' };
-
-  let llmClient: ReturnType<typeof createLlmClient>;
-  try {
-    const plaintextKey = keyRow.apiKey ? decrypt(keyRow.apiKey) : '';
-    llmClient = createLlmClient({
-      provider: keyRow.provider as Parameters<typeof createLlmClient>[0]['provider'],
-      model: agentRow.model ?? DEFAULT_MODEL,
-      apiKey: plaintextKey || undefined,
-      baseURL: keyRow.baseUrl ?? undefined,
-    });
-  } catch {
-    return { ok: false, error: 'llm_key_invalid' };
+  // 2. Resolve the per-agent LLM client + failover chain (shared with executeJob
+  //    via resolveAgentLlmClient so the chain logic can't drift — Guard 2).
+  const resolved = await resolveAgentLlmClient(db, {
+    llmKeyId: agentRow.llmKeyId,
+    fallbackChain: agentRow.fallbackChain ?? null,
+    model: agentRow.model ?? DEFAULT_MODEL,
+  });
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      error:
+        resolved.reason === 'agent_no_llm_configured'
+          ? 'agent_no_llm_configured'
+          : 'llm_key_invalid',
+    };
   }
+  const llmClient = resolved.client;
 
   // 3. System prompt — memory is AUTO-INJECTED here (recall is free). The
   //    origin:'dashboard' job-context steers the agent to reply in plain text.

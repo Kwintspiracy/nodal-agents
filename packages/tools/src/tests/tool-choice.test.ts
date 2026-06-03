@@ -86,4 +86,40 @@ describe('computeToolChoice', () => {
       expect(computeToolChoice(cfg)).not.toBe('none');
     }
   });
+
+  // ── Per-model forced-tool_choice gate (T2) ──────────────────────────────────
+  it("returns 'auto' when the model cannot accept a forced tool_choice", () => {
+    // Both cases that would normally force 'required' must yield 'auto' instead.
+    expect(
+      computeToolChoice({
+        isOrchestrator: true,
+        turn: 1,
+        hasAdapterTools: false,
+        modelSupportsForcedToolChoice: false,
+      }),
+    ).toBe('auto');
+    expect(
+      computeToolChoice({
+        isOrchestrator: false,
+        turn: 3,
+        hasAdapterTools: true,
+        modelSupportsForcedToolChoice: false,
+      }),
+    ).toBe('auto');
+  });
+
+  it("defaults to forcing 'required' when the flag is omitted (no regression)", () => {
+    expect(computeToolChoice({ isOrchestrator: true, turn: 1, hasAdapterTools: false })).toBe(
+      'required',
+    );
+    // Explicit true behaves the same as omitted.
+    expect(
+      computeToolChoice({
+        isOrchestrator: true,
+        turn: 1,
+        hasAdapterTools: false,
+        modelSupportsForcedToolChoice: true,
+      }),
+    ).toBe('required');
+  });
 });

@@ -25,6 +25,15 @@ export interface ToolChoiceConfig {
    * so they can always close the loop.
    */
   hasAdapterTools: boolean;
+
+  /**
+   * Per-model capability (T2): when `false`, the model/endpoint rejects
+   * `tool_choice: 'required'` (some OpenRouter routes), so we never
+   * force it — we return 'auto' and let the model decide. Defaults to `true`
+   * (force as before; the runtime tool_choice floor is the backstop if this
+   * guess is wrong).
+   */
+  modelSupportsForcedToolChoice?: boolean;
 }
 
 export type ToolChoice = 'required' | 'auto' | 'none';
@@ -42,7 +51,14 @@ export type ToolChoice = 'required' | 'auto' | 'none';
  * 'none' is kept in the type for future use but never returned here.
  */
 export function computeToolChoice(cfg: ToolChoiceConfig): ToolChoice {
-  const { isOrchestrator, turn, hasAdapterTools } = cfg;
+  const { isOrchestrator, turn, hasAdapterTools, modelSupportsForcedToolChoice = true } = cfg;
+
+  // Per-model gate: a model that rejects forced tool_choice can never be sent
+  // 'required' — fall back to 'auto' (the model decides). This avoids a guaranteed
+  // failed call; the runtime floor would otherwise relax it after one wasted try.
+  if (!modelSupportsForcedToolChoice) {
+    return 'auto';
+  }
 
   // Worker with adapter tools → always required (GPT drift prevention)
   if (hasAdapterTools && !isOrchestrator) {

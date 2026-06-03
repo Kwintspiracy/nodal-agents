@@ -2,12 +2,12 @@
 
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { GearSix } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import { deleteLlmKeyAction, type LlmKeyUiRow } from '@/lib/actions.ts';
+import { deleteLlmKeyAction, setLlmKeyActiveAction, type LlmKeyUiRow } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
-import StatusPill from '@/components/ui/StatusPill.tsx';
 
 interface Props {
   row: LlmKeyUiRow;
@@ -16,8 +16,10 @@ interface Props {
 }
 
 export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [togglingActive, startToggleTransition] = useTransition();
 
   function performDelete() {
     setConfirmOpen(false);
@@ -29,6 +31,17 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
       }
       toast.success('LLM provider removed');
       onDeleted();
+    });
+  }
+
+  function handleToggleActive() {
+    startToggleTransition(async () => {
+      const r = await setLlmKeyActiveAction(row.id, !row.isActive);
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      router.refresh();
     });
   }
 
@@ -58,19 +71,28 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
               </span>
             )}
           </div>
-          {row.defaultModel && (
-            <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-4 truncate">
-              {row.defaultModel}
-            </div>
-          )}
         </div>
 
-        {/* Status pill */}
-        {row.isActive ? (
-          <StatusPill variant="done" label="Active" />
-        ) : (
-          <StatusPill variant="idle" label="Disabled" />
-        )}
+        {/* Active toggle */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={row.isActive}
+          aria-label={row.isActive ? 'Deactivate provider' : 'Activate provider'}
+          onClick={handleToggleActive}
+          disabled={togglingActive || isPending}
+          className={[
+            'relative inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+            row.isActive ? 'border-ok/40 bg-ok/20' : 'border-rule-2 bg-canvas',
+          ].join(' ')}
+        >
+          <span
+            className={[
+              'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
+              row.isActive ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-4',
+            ].join(' ')}
+          />
+        </button>
       </div>
 
       {/* Detail row: base URL + API key indicator */}

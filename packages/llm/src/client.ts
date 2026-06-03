@@ -8,6 +8,7 @@ import { ProviderConfigError, LLMTimeoutError } from './errors';
 import { CAPABILITY_MATRIX } from './providers/registry';
 import { validateMessageStructure } from './message-structure';
 import { withRetry } from './retry';
+import { generateWithToolChoiceFloor } from './tool-choice-floor';
 
 import { buildAnthropicModel } from './providers/anthropic';
 import { buildOpenAIModel } from './providers/openai';
@@ -161,22 +162,31 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
 
   const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
-    return withRetry(
-      () =>
-        callWithTimeout(() =>
-          generateText({
-            ...args,
-            model,
-            // AI SDK native timeout via AbortSignal.timeout(). Survives middleware
-            // wrapping unlike a passed-in abortSignal which their internal retry
-            // can swallow.
-            timeout: LLM_TIMEOUT_MS,
-            // Disable AI SDK internal retry — we own retries via withRetry to
-            // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
-            maxRetries: 0,
-          } as Parameters<typeof generateText>[0]),
+    const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
+    // tool_choice floor: if the provider rejects a forced tool_choice value
+    // (some OpenRouter routes reject it), retry once with 'auto' — logged.
+    return generateWithToolChoiceFloor(
+      (override) =>
+        withRetry(
+          () =>
+            callWithTimeout(() =>
+              generateText({
+                ...args,
+                model,
+                ...(override ? { toolChoice: override } : {}),
+                // AI SDK native timeout via AbortSignal.timeout(). Survives
+                // middleware wrapping unlike a passed-in abortSignal which their
+                // internal retry can swallow.
+                timeout: LLM_TIMEOUT_MS,
+                // Disable AI SDK internal retry — we own retries via withRetry to
+                // preserve typed error handling (Quota/MessageStructure/LLMTimeout).
+                maxRetries: 0,
+              } as Parameters<typeof generateText>[0]),
+            ),
+          retryOpts,
         ),
-      retryOpts,
+      toolChoice,
+      `${config.provider}/${config.model}`,
     );
   };
 

@@ -81,7 +81,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       api_key_last4 text NOT NULL DEFAULT '',
       base_url text,
       nickname text,
-      default_model text,
       is_active boolean NOT NULL DEFAULT true,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
@@ -95,6 +94,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       personality text NOT NULL,
       model text DEFAULT 'claude-sonnet-4-6-20260217',
       llm_key_id uuid REFERENCES entity_llm_keys(id) ON DELETE SET NULL,
+      fallback_chain jsonb DEFAULT '[]'::jsonb,
       active boolean DEFAULT true,
       is_default boolean DEFAULT false,
       role text DEFAULT 'agent' CHECK (role IN ('agent','orchestrator','system')),
@@ -591,7 +591,6 @@ export async function seedMinimal(db: TestDb) {
       apiKey: '',
       baseUrl: 'http://localhost:11434',
       nickname: 'Test LLM Key',
-      defaultModel: 'mock',
       isActive: true,
     })
     .returning();

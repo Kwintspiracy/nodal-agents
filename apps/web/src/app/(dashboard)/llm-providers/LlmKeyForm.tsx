@@ -27,17 +27,6 @@ const BASE_URL_PRESETS: Record<LlmProvider, string> = {
   groq: 'https://api.groq.com/openai/v1',
 };
 
-const DEFAULT_MODEL_PRESETS: Record<LlmProvider, string> = {
-  anthropic: 'claude-haiku-4-5-20251001',
-  openai: 'gpt-5',
-  'openai-compatible': 'google/gemma-4-31b',
-  ollama: 'llama3.3:70b',
-  openrouter: 'anthropic/claude-3.5-sonnet',
-  google: 'gemini-2.0-flash',
-  mistral: 'mistral-large-latest',
-  groq: 'llama-3.3-70b-versatile',
-};
-
 const PROVIDER_OPTIONS: LlmProvider[] = [
   'anthropic',
   'openai',
@@ -51,6 +40,8 @@ const PROVIDER_OPTIONS: LlmProvider[] = [
 
 interface CreateProps {
   mode: 'create';
+  /** Providers that already have a key configured — excluded from the select. */
+  configuredProviders: string[];
   onDone: (action: 'saved' | 'cancelled') => void;
 }
 
@@ -78,13 +69,21 @@ export default function LlmKeyForm(props: Props) {
   const isEdit = props.mode === 'edit';
   const initial = isEdit ? props.initial : null;
 
-  const [provider, setProvider] = useState<LlmProvider>(
-    (initial?.provider as LlmProvider | undefined) ?? 'anthropic',
-  );
+  const initialProvider = (initial?.provider as LlmProvider | undefined) ?? 'anthropic';
+
+  // In create mode, filter out already-configured providers.
+  const availableProviders =
+    props.mode === 'create'
+      ? PROVIDER_OPTIONS.filter((p) => !props.configuredProviders.includes(p))
+      : PROVIDER_OPTIONS;
+
+  // Default to first available provider in create mode.
+  const defaultProvider: LlmProvider =
+    props.mode === 'create' ? (availableProviders[0] ?? 'anthropic') : initialProvider;
+
+  const [provider, setProvider] = useState<LlmProvider>(defaultProvider);
   const [baseUrl, setBaseUrl] = useState<string>(initial?.baseUrl ?? '');
   const [apiKey, setApiKey] = useState<string>('');
-  const [nickname, setNickname] = useState<string>(initial?.nickname ?? '');
-  const [defaultModel, setDefaultModel] = useState<string>(initial?.defaultModel ?? '');
   const [isActive, setIsActive] = useState<boolean>(initial?.isActive ?? true);
   const [testResult, setTestResult] = useState<TestResult>({ state: 'idle' });
   const [isPending, startTransition] = useTransition();
@@ -109,9 +108,6 @@ export default function LlmKeyForm(props: Props) {
     if (!baseUrl && BASE_URL_PRESETS[next]) {
       setBaseUrl(BASE_URL_PRESETS[next]);
     }
-    if (!defaultModel) {
-      setDefaultModel(DEFAULT_MODEL_PRESETS[next]);
-    }
     markStale();
   }
 
@@ -120,18 +116,20 @@ export default function LlmKeyForm(props: Props) {
     // In edit mode with no new key typed (and a saved key exists), pass keyId
     // so the server can look up the saved key without echoing it to the client.
     const useKeyId = isEdit && apiKey.length === 0 && initial?.id;
-    const r = await testLlmKeyAction({
+
+    const connResult = await testLlmKeyAction({
       provider,
       baseUrl: baseUrl || undefined,
       apiKey: apiKey || undefined,
-      model: defaultModel || undefined,
       ...(useKeyId ? { keyId: initial.id } : {}),
     });
-    if (r.ok) {
-      setTestResult({ state: 'pass', message: r.data.message });
-    } else {
-      setTestResult({ state: 'fail', message: r.message });
+
+    if (!connResult.ok) {
+      setTestResult({ state: 'fail', message: connResult.message });
+      return;
     }
+
+    setTestResult({ state: 'pass', message: connResult.data.message });
   }
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -150,8 +148,6 @@ export default function LlmKeyForm(props: Props) {
           provider,
           baseUrl: baseUrl || undefined,
           apiKey: apiKey || undefined,
-          nickname,
-          defaultModel,
           isActive,
         });
         if (!r.ok) {
@@ -165,8 +161,6 @@ export default function LlmKeyForm(props: Props) {
           provider,
           baseUrl: baseUrl || undefined,
           apiKey: apiKey || undefined,
-          nickname,
-          defaultModel,
           isActive,
         });
         if (!r.ok) {
@@ -191,34 +185,29 @@ export default function LlmKeyForm(props: Props) {
           <label className={labelCls} htmlFor="llm-provider">
             Provider
           </label>
-          <select
-            id="llm-provider"
-            value={provider}
-            onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
-            className={inputCls}
-          >
-            {PROVIDER_OPTIONS.map((p) => (
-              <option key={p} value={p}>
-                {prettyProviderName(p)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelCls} htmlFor="llm-nickname">
-            Nickname
-          </label>
-          <input
-            id="llm-nickname"
-            type="text"
-            required
-            value={nickname}
-            onChange={(e) => {
-              setNickname(e.target.value);
-            }}
-            placeholder={`${prettyProviderName(provider)} main`}
-            className={inputCls}
-          />
+          {isEdit ? (
+            // In edit mode the provider is fixed.
+            <div className={`${inputCls} cursor-not-allowed bg-hover text-ink-3`}>
+              {prettyProviderName(provider)}
+            </div>
+          ) : availableProviders.length === 0 ? (
+            <p className="text-[12.5px] text-warn">
+              All providers already configured. Edit an existing key instead.
+            </p>
+          ) : (
+            <select
+              id="llm-provider"
+              value={provider}
+              onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
+              className={inputCls}
+            >
+              {availableProviders.map((p) => (
+                <option key={p} value={p}>
+                  {prettyProviderName(p)}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
@@ -299,25 +288,6 @@ export default function LlmKeyForm(props: Props) {
             )}
           </div>
         )}
-      </div>
-
-      <div>
-        <label className={labelCls} htmlFor="llm-default-model">
-          Default model
-        </label>
-        <input
-          id="llm-default-model"
-          type="text"
-          required
-          value={defaultModel}
-          onChange={(e) => setDefaultModel(e.target.value)}
-          placeholder={DEFAULT_MODEL_PRESETS[provider]}
-          className={inputMonoCls}
-        />
-        <p className="mt-1.5 text-[11px] leading-[1.4] text-ink-4">
-          Agents reference this provider and pick their own model on top — this is just the
-          suggested default.
-        </p>
       </div>
 
       <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-ink-2">

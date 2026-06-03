@@ -346,6 +346,10 @@ export type AgentRow = {
   personality: string;
   model: string | null;
   llmKeyId: string | null;
+  // Ordered LLM-key failover chain (Guard 2): (keyId, model) pairs tried after
+  // the primary. Optional so list queries that don't select it stay valid; the
+  // edit loader (full row) populates it.
+  fallbackChain?: Array<{ keyId: string; model: string }> | null;
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
@@ -605,6 +609,12 @@ const UpdateAgentSchema = z.object({
   personality: z.string().min(1),
   model: z.string().min(1),
   llmKeyId: z.string().guid().nullable().optional(),
+  // Guard 2: ordered failover chain — (keyId, model) pairs tried after the
+  // primary. Primary is stripped out in the action body to keep it disjoint.
+  // An empty model ⇒ the runtime uses that provider's catalog default.
+  fallbackChain: z
+    .array(z.object({ keyId: z.string().guid(), model: z.string().max(200) }))
+    .default([]),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
   // Avatar — symmetric with create. Catalog validation in the action body.
@@ -638,7 +648,8 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (!isValidAvatarUrl(parsed.data.avatarUrl)) {
       return fail('validation_failed', 'Unknown avatar — pick one from the gallery');
     }
-    const { id, name, personality, model, llmKeyId, role, subAgentIds, avatarUrl } = parsed.data;
+    const { id, name, personality, model, llmKeyId, fallbackChain, role, subAgentIds, avatarUrl } =
+      parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
@@ -667,6 +678,9 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (avatarUrl !== undefined) {
       patch['avatarUrl'] = avatarUrl;
     }
+    // Failover chain — always rewritten from the form's full list. Strip the
+    // primary so it can't appear twice, and drop any link that equals it.
+    patch['fallbackChain'] = fallbackChain.filter((link) => link.keyId !== llmKeyId);
 
     await db.update(agents).set(patch).where(eq(agents.id, id));
 
@@ -4823,7 +4837,6 @@ export type LlmKeyUiRow = {
   provider: string;
   baseUrl: string | null;
   nickname: string | null;
-  defaultModel: string | null;
   isActive: boolean;
   /** True when an apiKey is stored. The actual key NEVER leaves the server. */
   hasApiKey: boolean;
@@ -4847,12 +4860,13 @@ const optionalBaseUrl = z
   .transform((v) => (v && v.length > 0 ? v : null))
   .pipe(z.string().url().nullable().or(z.null()));
 
+// An LLM provider key is now JUST credentials — provider + API key + base URL +
+// active. The model is chosen per-agent; capability comes from the code catalog.
 const CreateLlmKeySchema = z.object({
   provider: z.enum(PROVIDER_VALUES),
   baseUrl: optionalBaseUrl,
   apiKey: z.string().optional(),
-  nickname: z.string().min(1).max(120),
-  defaultModel: z.string().min(1).max(200),
+  nickname: z.string().max(120).nullish(),
   isActive: z.boolean().default(true),
 });
 
@@ -4862,8 +4876,7 @@ const UpdateLlmKeySchema = z.object({
   baseUrl: optionalBaseUrl,
   // apiKey absent → keep existing. Empty string also means "keep existing".
   apiKey: z.string().optional(),
-  nickname: z.string().min(1).max(120),
-  defaultModel: z.string().min(1).max(200),
+  nickname: z.string().max(120).nullish(),
   isActive: z.boolean(),
 });
 
@@ -4896,7 +4909,6 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         provider: entityLlmKeys.provider,
         baseUrl: entityLlmKeys.baseUrl,
         nickname: entityLlmKeys.nickname,
-        defaultModel: entityLlmKeys.defaultModel,
         isActive: entityLlmKeys.isActive,
         hasApiKey: sql<boolean>`(${entityLlmKeys.apiKey} <> '')`,
         apiKeyLast4: entityLlmKeys.apiKeyLast4,
@@ -4930,7 +4942,6 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         provider: r.provider,
         baseUrl: r.baseUrl,
         nickname: r.nickname,
-        defaultModel: r.defaultModel,
         isActive: r.isActive,
         hasApiKey: Boolean(r.hasApiKey),
         apiKeyLast4: r.apiKeyLast4 ? r.apiKeyLast4 : null,
@@ -4951,6 +4962,26 @@ export async function createLlmKeyAction(raw: unknown): Promise<ActionResult<{ i
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
+
+    // One key per provider per entity — a single key serves any number of
+    // models across agents, so duplicates add nothing but confusion.
+    const [dup] = await db
+      .select({ id: entityLlmKeys.id })
+      .from(entityLlmKeys)
+      .where(
+        and(
+          eq(entityLlmKeys.entityId, session.entityId),
+          eq(entityLlmKeys.provider, parsed.data.provider),
+        ),
+      )
+      .limit(1);
+    if (dup) {
+      return fail(
+        'provider_exists',
+        'This provider is already configured — edit the existing one.',
+      );
+    }
+
     const plaintextKey = parsed.data.apiKey ?? '';
     const [row] = await db
       .insert(entityLlmKeys)
@@ -4960,8 +4991,7 @@ export async function createLlmKeyAction(raw: unknown): Promise<ActionResult<{ i
         apiKey: encrypt(plaintextKey),
         apiKeyLast4: last4(plaintextKey),
         baseUrl: parsed.data.baseUrl,
-        nickname: parsed.data.nickname,
-        defaultModel: parsed.data.defaultModel,
+        nickname: parsed.data.nickname ?? null,
         isActive: parsed.data.isActive,
       })
       .returning({ id: entityLlmKeys.id });
@@ -4981,7 +5011,7 @@ export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<voi
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { id, provider, baseUrl, apiKey, nickname, defaultModel, isActive } = parsed.data;
+    const { id, provider, baseUrl, apiKey, nickname, isActive } = parsed.data;
     const db = getDb();
 
     const [existing] = await db
@@ -4996,8 +5026,7 @@ export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<voi
     const patch: Record<string, unknown> = {
       provider,
       baseUrl,
-      nickname,
-      defaultModel,
+      nickname: nickname ?? null,
       isActive,
       updatedAt: new Date(),
     };
@@ -5011,6 +5040,34 @@ export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<voi
     return ok(undefined);
   } catch (err) {
     console.error('[updateLlmKeyAction]', err);
+    return fail('db_error', 'Failed to update LLM provider');
+  }
+}
+
+/** Toggle a provider key active/inactive inline (the card switch). */
+export async function setLlmKeyActiveAction(
+  id: string,
+  active: boolean,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid LLM provider id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: entityLlmKeys.id })
+      .from(entityLlmKeys)
+      .where(and(eq(entityLlmKeys.id, id), eq(entityLlmKeys.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'LLM provider not found');
+    await db
+      .update(entityLlmKeys)
+      .set({ isActive: active, updatedAt: new Date() })
+      .where(eq(entityLlmKeys.id, id));
+    revalidatePath('/llm-providers');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setLlmKeyActiveAction]', err);
     return fail('db_error', 'Failed to update LLM provider');
   }
 }

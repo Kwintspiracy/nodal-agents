@@ -167,7 +167,6 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
       .where(eq(entityLlmKeys.entityId, entity.id));
     expect(keyRow).toBeDefined();
     expect(keyRow?.provider).toBe('openai-compatible');
-    expect(keyRow?.defaultModel).toBe('test-model');
     // Brique 26: the seeder must store ciphertext, not plaintext, and round-trip.
     expect(keyRow?.apiKey.startsWith('enc:v1:')).toBe(true);
     expect(decrypt(keyRow!.apiKey)).toBe('test-key');

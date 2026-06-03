@@ -96,6 +96,32 @@ export class RetryExhaustedError extends Error {
   }
 }
 
+// ─── AllProvidersFailedError ───────────────────────────────────────────────────
+
+/**
+ * Raised by the failover client when EVERY provider in the configured chain
+ * (primary + fallbacks) failed with a transient/availability error (5xx
+ * exhausted, timeout, or quota). This is the loud, opt-in failure surface:
+ * the user explicitly configured a fallback chain, so reaching this means the
+ * whole chain is down — not a silent smart fallback. The last underlying cause
+ * is summarised into the message so `agent_jobs.error` stays actionable.
+ */
+export class AllProvidersFailedError extends Error {
+  readonly code = 'all_providers_failed' as const;
+  readonly underlyingCause: unknown;
+
+  constructor(providerCount: number, underlyingCause: unknown) {
+    super(
+      `All ${providerCount} LLM providers failed; last: ${formatCauseSummary(underlyingCause)}`,
+    );
+    this.name = 'AllProvidersFailedError';
+    this.underlyingCause = underlyingCause;
+    if (underlyingCause instanceof Error) {
+      this.stack = `${this.stack}\nCaused by: ${underlyingCause.stack}`;
+    }
+  }
+}
+
 function formatCauseSummary(cause: unknown): string {
   if (cause instanceof Error) {
     const name = cause.name || 'Error';

@@ -2239,3 +2239,172 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
   });
 });
+
+// ─── Reliability guards (generic, channel-agnostic) ─────────────────────────
+// Guard 1a (token budget), Guard 1b (no-progress detector), Guard 3b
+// (no-false-success on unresolved tool failures). All assert on the real
+// agent_jobs row — status + error code — never on call counts.
+describe('reliability guards', () => {
+  // Build N responses each carrying a unique toolCallId so the saved transcript
+  // stays structurally valid (no duplicate tool ids), while toolName+input stay
+  // identical — the no-progress signature ignores the id.
+  function repeatToolCall(
+    toolName: string,
+    args: Record<string, unknown>,
+    n: number,
+  ): Array<{
+    toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+  }> {
+    return Array.from({ length: n }, (_v, i) => ({
+      toolCalls: [{ toolCallId: `tc-${toolName}-${i}`, toolName, args }],
+    }));
+  }
+
+  function withEnv(key: string, value: string, fn: () => Promise<void>): Promise<void> {
+    const prev = process.env[key];
+    process.env[key] = value;
+    return fn().finally(() => {
+      if (prev === undefined) delete process.env[key];
+      else process.env[key] = prev;
+    });
+  }
+
+  it('Guard 1a: fails token_budget_exceeded once cumulative tokens cross the ceiling', async () => {
+    const job = await createTestJob(db, seed);
+    // Budget 1 token: the first turn's 15 tokens trip it AFTER accumulation,
+    // BEFORE the completion path — so even a text-only turn fails loud.
+    await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '1', async () => {
+      const llmClient = makeMockLlmClient([{ text: 'thinking…' }]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') expect(result.error).toBe('token_budget_exceeded');
+    });
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('token_budget_exceeded');
+  });
+
+  it('Guard 1b: fails no_progress_detected when an identical tool call repeats', async () => {
+    const job = await createTestJob(db, seed);
+    // Same invalid save_memory every turn → identical invalid_input error output
+    // → identical signature. Threshold lowered to 3 so it trips on turn 3.
+    await withEnv('MAX_NO_PROGRESS_REPEATS', '3', async () => {
+      const llmClient = makeMockLlmClient(repeatToolCall('save_memory', {}, 5));
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') expect(result.error).toBe('no_progress_detected');
+    });
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('no_progress_detected');
+  });
+
+  it('Guard 1b: does NOT trip when each turn does distinct work (anti-false-positive)', async () => {
+    const job = await createTestJob(db, seed);
+    // Three DISTINCT valid saves (different facts → different outputs/signatures)
+    // then return_result. Even with the threshold at 3, no 3-in-a-row identical
+    // signature exists, so the job completes normally.
+    await withEnv('MAX_NO_PROGRESS_REPEATS', '3', async () => {
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'sm-a',
+              toolName: 'save_memory',
+              args: { fact: 'reliability alpha', category: 'context' },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              toolCallId: 'sm-b',
+              toolName: 'save_memory',
+              args: { fact: 'reliability beta', category: 'context' },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              toolCallId: 'sm-c',
+              toolName: 'save_memory',
+              args: { fact: 'reliability gamma', category: 'context' },
+            },
+          ],
+        },
+        {
+          toolCalls: [{ toolCallId: 'rr', toolName: 'return_result', args: { status: 'success' } }],
+        },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+    });
+
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('completed');
+  });
+
+  it('Guard 3b: refuses a false success when an earlier tool failure was never resolved', async () => {
+    const job = await createTestJob(db, seed);
+    // Turn 1: save_memory fails (invalid input) → unresolved failure tracked.
+    // Turns 2-4: return_result(status='success') while it stays unresolved →
+    // nudged twice, then failed loud. The agent never retried nor went blocked.
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'sm-bad', toolName: 'save_memory', args: {} }] },
+      {
+        toolCalls: [{ toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } }],
+      },
+      {
+        toolCalls: [{ toolCallId: 'rr-2', toolName: 'return_result', args: { status: 'success' } }],
+      },
+      {
+        toolCalls: [{ toolCallId: 'rr-3', toolName: 'return_result', args: { status: 'success' } }],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('unresolved_tool_failure');
+  });
+
+  it('Guard 3b: an honest return_result(status="blocked") after a failure passes through', async () => {
+    const job = await createTestJob(db, seed);
+    // Turn 1: save_memory fails. Turn 2: the agent is HONEST — status='blocked'.
+    // The guard must NOT fire; the job completes (blocked is a valid terminal).
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'sm-bad2', toolName: 'save_memory', args: {} }] },
+      {
+        toolCalls: [
+          { toolCallId: 'rr-blocked', toolName: 'return_result', args: { status: 'blocked' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('completed');
+    expect(row?.error).toBeNull();
+  });
+});

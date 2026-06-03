@@ -488,6 +488,55 @@ describe('createAgentAction — db path', () => {
   });
 });
 
+describe('updateAgentAction — failover chain (Guard 2)', () => {
+  it('persists the (keyId, model) fallback chain and strips the primary', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000010';
+    const primary = '11111111-1111-1111-1111-111111111111';
+    const fb = '22222222-2222-2222-2222-222222222222';
+    // select() returns the existing agent so the ownership check passes.
+    currentDb = makeDb([{ id: agentId }]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: agentId,
+      name: 'A',
+      personality: 'p',
+      model: 'gpt-4',
+      llmKeyId: primary,
+      // Primary deliberately included — the action must strip it so the chain
+      // stays disjoint, keeping the fallback's chosen model.
+      fallbackChain: [
+        { keyId: primary, model: 'gpt-4' },
+        { keyId: fb, model: 'deepseek/deepseek-v4-pro' },
+      ],
+      role: 'worker',
+      subAgentIds: [],
+    });
+    expect(r.ok).toBe(true);
+
+    // Inspect the real patch handed to .update(agents).set(patch).
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setCalls = updateSpy.mock.results
+      .flatMap((res) => (res.value as { set?: ReturnType<typeof vi.fn> }).set?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    const patch = setCalls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(patch?.['fallbackChain']).toEqual([{ keyId: fb, model: 'deepseek/deepseek-v4-pro' }]);
+  });
+
+  it('rejects a non-uuid keyId in the fallback chain', async () => {
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000010',
+      name: 'A',
+      personality: 'p',
+      model: 'gpt-4',
+      role: 'worker',
+      fallbackChain: [{ keyId: 'not-a-uuid', model: '' }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
 describe('listAgentsAction', () => {
   it('returns ok with array (may be empty)', async () => {
     currentDb = makeDb([]) as typeof currentDb;
@@ -3461,34 +3510,35 @@ describe('createLlmKeyAction — validation', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('rejects empty nickname', async () => {
+  it('accepts a missing nickname (optional) and stores null', async () => {
+    // select (dup check) returns [] → no existing provider; insert returns the id.
+    currentDb = makeDbMixed({
+      select: [],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000012' }],
+    }) as typeof currentDb;
     const { createLlmKeyAction } = await import('../src/lib/actions.ts');
-    const r = await createLlmKeyAction({
-      provider: 'anthropic',
-      nickname: '',
-      defaultModel: 'claude-haiku-4-5',
-    });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
+    const r = await createLlmKeyAction({ provider: 'anthropic' });
+    expect(r.ok).toBe(true);
+    // Persisted as null — the UI falls back to the provider name for display.
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesArg = (insertSpy.mock.results[0]?.value as { values: ReturnType<typeof vi.fn> })
+      ?.values?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+    expect(valuesArg?.['nickname']).toBeNull();
   });
 
-  it('rejects empty defaultModel', async () => {
+  it('rejects a provider that is already configured', async () => {
+    // The dup-check select returns an existing row → provider_exists.
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000099' }]) as typeof currentDb;
     const { createLlmKeyAction } = await import('../src/lib/actions.ts');
-    const r = await createLlmKeyAction({
-      provider: 'anthropic',
-      nickname: 'X',
-      defaultModel: '',
-    });
+    const r = await createLlmKeyAction({ provider: 'anthropic', apiKey: 'sk-x' });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('validation_failed');
+    if (!r.ok) expect(r.code).toBe('provider_exists');
   });
 
   it('rejects malformed baseUrl', async () => {
     const { createLlmKeyAction } = await import('../src/lib/actions.ts');
     const r = await createLlmKeyAction({
       provider: 'anthropic',
-      nickname: 'X',
-      defaultModel: 'm',
       baseUrl: 'not a url',
     });
     expect(r.ok).toBe(false);
@@ -3498,13 +3548,15 @@ describe('createLlmKeyAction — validation', () => {
 
 describe('createLlmKeyAction — db path', () => {
   it('returns ok with id on successful insert (apiKey encrypted at rest, last4 plaintext)', async () => {
-    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000011' }]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000011' }],
+    }) as typeof currentDb;
     const { createLlmKeyAction } = await import('../src/lib/actions.ts');
     const r = await createLlmKeyAction({
       provider: 'anthropic',
       apiKey: 'sk-ant-secret-1',
       nickname: 'Anthropic main',
-      defaultModel: 'claude-haiku-4-5-20251001',
       isActive: true,
     });
     expect(r.ok).toBe(true);
@@ -3524,13 +3576,15 @@ describe('createLlmKeyAction — db path', () => {
   });
 
   it('apiKey defaults to empty string when not provided (no encryption applied)', async () => {
-    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000012' }]) as typeof currentDb;
+    currentDb = makeDbMixed({
+      select: [],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000012' }],
+    }) as typeof currentDb;
     const { createLlmKeyAction } = await import('../src/lib/actions.ts');
     const r = await createLlmKeyAction({
       provider: 'ollama',
       baseUrl: 'http://localhost:11434',
       nickname: 'Local Ollama',
-      defaultModel: 'llama3.3:70b',
     });
     expect(r.ok).toBe(true);
     const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
@@ -3538,6 +3592,26 @@ describe('createLlmKeyAction — db path', () => {
       ?.values?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
     expect(valuesArg?.['apiKey']).toBe('');
     expect(valuesArg?.['apiKeyLast4']).toBe('');
+  });
+});
+
+describe('setLlmKeyActiveAction', () => {
+  it('flips is_active on an owned key', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000031' }]) as typeof currentDb;
+    const { setLlmKeyActiveAction } = await import('../src/lib/actions.ts');
+    const r = await setLlmKeyActiveAction('aaaaaaaa-0000-0000-0000-000000000031', false);
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const setArg = (updateSpy.mock.results[0]?.value as { set: ReturnType<typeof vi.fn> })?.set
+      ?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+    expect(setArg?.['isActive']).toBe(false);
+  });
+
+  it('rejects a bad uuid', async () => {
+    const { setLlmKeyActiveAction } = await import('../src/lib/actions.ts');
+    const r = await setLlmKeyActiveAction('not-uuid', true);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 });
 

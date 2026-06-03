@@ -16,7 +16,6 @@ import {
   approvalRequests,
   agentSkillAssignments,
   agentSkills,
-  entityLlmKeys,
   agentConnectorAssignments,
   connectors as connectorsTable,
   mcpServers as mcpServersTable,
@@ -31,10 +30,11 @@ import { createMcpTools, slugToPrefix, connectMcp } from '@nodal-agents/adapter-
 import {
   QuotaExhaustedError,
   MessageStructureError,
+  AllProvidersFailedError,
   validateMessageStructure,
-  createLlmClient,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
+import { resolveAgentLlmClient } from './resolve-llm.ts';
 import {
   computeToolWhitelist,
   computeToolChoice,
@@ -125,6 +125,23 @@ function truncateForContext(value: string): string {
   );
 }
 
+// Deterministic JSON: object keys sorted recursively so two semantically-equal
+// values serialize identically regardless of key order. Used by the no-progress
+// detector (Guard 1b) to compare a turn's tool-call signature across turns.
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      return Object.keys(val as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, k) => {
+          acc[k] = (val as Record<string, unknown>)[k];
+          return acc;
+        }, {});
+    }
+    return val;
+  });
+}
+
 // ─── JobStatus type (what we return) ─────────────────────────────────────────
 
 export type ExecuteJobResult =
@@ -158,6 +175,9 @@ export async function executeJob(
   // Definite assignment: llmClient is set unconditionally in the resolution
   // block below (or the function returns early with a failed status).
   let llmClient!: NodalLlmClient;
+  // Per-model capability of the primary key (T2): drives computeToolChoice so we
+  // don't force tool_choice:'required' on a model that rejects it.
+  let modelSupportsForcedToolChoice = true;
 
   // Wall-clock timer for total_duration_ms persistence. Captured at function
   // entry so it includes job/agent loading, not just the LLM loop.
@@ -272,37 +292,32 @@ export async function executeJob(
   }
 
   {
-    const [keyRow] = await db
-      .select()
-      .from(entityLlmKeys)
-      .where(eq(entityLlmKeys.id, agentRow.llmKeyId))
-      .limit(1);
-
-    if (!keyRow || !keyRow.isActive) {
-      await failJob(db, jobId as string, 'agent_no_llm_configured', runStats());
-      return { status: 'failed', error: 'agent_no_llm_configured' };
-    }
-
-    try {
-      // Decrypt the at-rest ciphertext (Brique 26). Throws on tamper / wrong
-      // master key — caught below and surfaced as llm_key_invalid (invariant 4).
-      const plaintextKey = keyRow.apiKey ? decrypt(keyRow.apiKey) : '';
-      llmClient = createLlmClient({
-        provider: keyRow.provider as Parameters<typeof createLlmClient>[0]['provider'],
+    // Resolve the agent's LLM client + failover chain (Guard 2). Shared with the
+    // chat path via resolveAgentLlmClient so the chain logic can't drift.
+    const resolved = await resolveAgentLlmClient(
+      db,
+      {
+        llmKeyId: agentRow.llmKeyId,
+        fallbackChain: agentRow.fallbackChain ?? null,
         model: agent.model,
-        apiKey: plaintextKey || undefined,
-        baseURL: keyRow.baseUrl ?? undefined,
-      });
-      trace('llm_client_from_key', {
-        keyId: keyRow.id,
-        provider: keyRow.provider,
-      });
-    } catch (err) {
-      // Bad provider config in the DB row — fail loud (invariant 4).
-      const errorCode = err instanceof Error ? err.message.slice(0, 200) : 'llm_key_invalid';
-      await failJob(db, jobId as string, `llm_key_invalid:${errorCode}`, runStats());
-      return { status: 'failed', error: `llm_key_invalid:${errorCode}` };
+      },
+      (info) => trace('fallback_key_skipped', info),
+    );
+    if (!resolved.ok) {
+      const code =
+        resolved.reason === 'agent_no_llm_configured'
+          ? 'agent_no_llm_configured'
+          : `llm_key_invalid:${resolved.detail}`;
+      await failJob(db, jobId as string, code, runStats());
+      return { status: 'failed', error: code };
     }
+    llmClient = resolved.client;
+    modelSupportsForcedToolChoice = resolved.primarySupportsForcedToolChoice;
+    trace('llm_client_from_key', {
+      provider: resolved.primaryProvider,
+      chainLength: resolved.chainLength,
+      forcedToolChoice: modelSupportsForcedToolChoice,
+    });
   }
 
   // ── 4. Load child agents ──────────────────────────────────────────────────────
@@ -931,6 +946,36 @@ export async function executeJob(
     await setJobStatus(db, jobId as string, 'awaiting_approval');
     return { status: 'awaiting_approval' };
   };
+
+  // ── Reliability guards (generic, channel-agnostic) ────────────────────────
+  // Guard 1a — per-job token budget. A loud backstop against runaway loops that
+  // stay under the turn cap (e.g. a faux-empty tool reply replayed every turn).
+  // Cumulative across resumes via the seeded inputTokens/outputTokens. Env
+  // override per-deployment; falls back to the calibrated default.
+  const maxTotalTokensPerJob = (() => {
+    const raw = process.env['MAX_TOTAL_TOKENS_PER_JOB'];
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_LIMITS.maxTotalTokensPerJob;
+  })();
+  // Guard 1b — no-progress detector. Sliding history of per-turn tool-call
+  // signatures (toolName+input+output). N identical in a row ⇒ the agent is
+  // stuck re-asking the same thing; fail loud. In-memory/intra-run. Threshold
+  // env-overridable per-deployment; falls back to the calibrated default.
+  const recentTurnSignatures: string[] = [];
+  const maxNoProgressRepeats = (() => {
+    const raw = process.env['MAX_NO_PROGRESS_REPEATS'];
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n >= 2 ? Math.floor(n) : DEFAULT_LIMITS.maxNoProgressRepeats;
+  })();
+  // Guard 3b — no-false-success. Tool names whose last outcome this run was a
+  // hard error and that were never since re-run successfully. If the agent
+  // signals return_result(status='success') while this set is non-empty, it is
+  // claiming a success that didn't happen (invariant #4) — defer/nudge, then
+  // fail loud. An honest return_result(status='blocked') is always allowed.
+  const unresolvedToolFailures = new Set<string>();
+  const MAX_UNRESOLVED_FAILURE_NUDGES = 2;
+  let unresolvedFailureNudges = 0;
+
   try {
     while (true) {
       turn += 1;
@@ -974,7 +1019,12 @@ export async function executeJob(
       validateMessageStructure(messages);
 
       // b. Tool choice
-      const toolChoice = computeToolChoice({ isOrchestrator, turn, hasAdapterTools });
+      const toolChoice = computeToolChoice({
+        isOrchestrator,
+        turn,
+        hasAdapterTools,
+        modelSupportsForcedToolChoice,
+      });
 
       // c. Convert tools to AI SDK format. For the skill-authoring meta-tools,
       // append the live workspace tool list so the model has the real tool names
@@ -1011,6 +1061,15 @@ export async function executeJob(
       const completionT = Number(usage?.outputTokens ?? 0);
       inputTokens += Number.isFinite(promptT) ? promptT : 0;
       outputTokens += Number.isFinite(completionT) ? completionT : 0;
+
+      // Guard 1a — token budget. Fail loud once the cumulative spend crosses the
+      // ceiling, BEFORE acting on this turn's output, so a runaway never bleeds
+      // the provider's credit dry. Agnostic: no per-agent knowledge.
+      if (inputTokens + outputTokens > maxTotalTokensPerJob) {
+        trace('token_budget_exceeded', { turn, inputTokens, outputTokens, maxTotalTokensPerJob });
+        await failJob(db, jobId as string, 'token_budget_exceeded', runStats());
+        return { status: 'failed', error: 'token_budget_exceeded' };
+      }
 
       const rawToolCalls = response.toolCalls ?? [];
       trace('llm_call_done', {
@@ -1417,6 +1476,16 @@ export async function executeJob(
           telegramDelivered = true;
         }
 
+        // Guard 3b — track unresolved hard tool failures across turns. A success
+        // clears any prior failure of the same tool (the agent retried and it
+        // worked); a fresh error marks it unresolved. (awaiting_approval was
+        // handled above with `continue`, so outcome here is success|error.)
+        if (toolResult.outcome === 'success') {
+          unresolvedToolFailures.delete(call.name);
+        } else {
+          unresolvedToolFailures.add(call.name);
+        }
+
         toolResultBlocks.push({
           type: 'tool-result',
           toolCallId: call.id,
@@ -1516,6 +1585,50 @@ export async function executeJob(
       // invariant (every tool_use has a matching tool_result).
       if (returnResultCall) {
         trace('return_result_branch', { turn });
+
+        // Guard 3b — refuse a false 'success'. If the agent signals success while
+        // a hard tool failure from an earlier turn was never resolved, it is
+        // claiming an action/delivery that never happened (invariant #4 — no
+        // silent fallback). Nudge it (bounded) to either retry the action to
+        // success or honestly return status='blocked'; once the budget is spent,
+        // fail loud. An honest status='blocked' passes straight through.
+        const rrStatus = (returnResultCall.input as { status?: string } | undefined)?.status;
+        if (rrStatus === 'success' && unresolvedToolFailures.size > 0) {
+          const stuck = [...unresolvedToolFailures];
+          if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
+            unresolvedFailureNudges += 1;
+            trace('unresolved_tool_failure_nudge', {
+              turn,
+              attempt: unresolvedFailureNudges,
+              stuck,
+            });
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: returnResultCall.toolCallId,
+              toolName: 'return_result',
+              output: toResultOutput({
+                error:
+                  'deferred: tu signales success mais ces actions ont échoué sans être corrigées (' +
+                  stuck.join(', ') +
+                  "). Réessaie l'action jusqu'à réussite, ou appelle return_result avec status='blocked'.",
+              }),
+            });
+            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [
+              ...messages,
+              {
+                role: 'user',
+                content:
+                  "[système] Ne déclare pas un succès qui n'a pas eu lieu. Une action a échoué et " +
+                  "n'a pas été corrigée. Corrige-la, ou termine honnêtement avec status='blocked'.",
+              } as ModelMessage,
+            ];
+            continue;
+          }
+          trace('unresolved_tool_failure', { turn, stuck });
+          await failJob(db, jobId as string, 'unresolved_tool_failure', runStats());
+          return { status: 'failed', error: 'unresolved_tool_failure' };
+        }
 
         // Resolve the task-board state up front: a run that created tasks
         // delivers asynchronously via the cron (deliverCompletedRoots), so the
@@ -1623,6 +1736,38 @@ export async function executeJob(
         messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
       }
 
+      // k-bis. Guard 1b — no-progress detector. Signature of THIS turn's work:
+      // each tool call's name + input + output, sorted+joined (order-independent).
+      // If the identical signature repeats maxNoProgressRepeats turns in a row,
+      // the agent is stuck (same call, same result) → fail loud. A real poll
+      // changes its output (RUNNING → SUCCEEDED) before the threshold, so it
+      // never trips; empty turns (no tool results) are ignored. Only reached on
+      // looping turns — terminal turns (return_result/delegation) return earlier.
+      const turnSignature = toolResultBlocks
+        .map((b) => {
+          const call = callsToProcess.find((c) => c.id === b.toolCallId);
+          const input = call ? stableStringify(call.input) : '';
+          const output =
+            b.output.type === 'text' ? b.output.value : stableStringify(b.output.value ?? null);
+          return `${b.toolName} ${input} ${output}`;
+        })
+        .sort()
+        .join('\n');
+      if (turnSignature !== '') {
+        recentTurnSignatures.push(turnSignature);
+        if (recentTurnSignatures.length > maxNoProgressRepeats) {
+          recentTurnSignatures.shift();
+        }
+        if (
+          recentTurnSignatures.length === maxNoProgressRepeats &&
+          recentTurnSignatures.every((s) => s === turnSignature)
+        ) {
+          trace('no_progress_detected', { turn, repeats: recentTurnSignatures.length });
+          await failJob(db, jobId as string, 'no_progress_detected', runStats());
+          return { status: 'failed', error: 'no_progress_detected' };
+        }
+      }
+
       // l. Persist the turn we just finished BEFORE the next LLM call. Without
       // this, a worker agent that runs many non-delegating turns (firecrawl +
       // save_memory + file_write + …) and then crashes on the next LLM call
@@ -1663,6 +1808,12 @@ export async function executeJob(
     if (err instanceof QuotaExhaustedError) {
       await failJob(db, jobId as string, 'quota_exhausted', runStats());
       return { status: 'failed', error: 'quota_exhausted' };
+    }
+
+    // Guard 2: the whole configured provider chain (primary + fallbacks) is down.
+    if (err instanceof AllProvidersFailedError) {
+      await failJob(db, jobId as string, err.code, runStats());
+      return { status: 'failed', error: err.code };
     }
 
     if (err instanceof MessageStructureError) {

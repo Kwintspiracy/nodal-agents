@@ -121,6 +121,25 @@ export interface ChainLimits {
    * fails the job loud. See execute.ts (`delivery_spam_guard`).
    */
   maxConsecutiveDeliveryTurns: number;
+  /**
+   * Hard ceiling on TOTAL tokens (input + output, cumulative across resumes)
+   * a single job may burn before the runner fails it loud (`token_budget_exceeded`).
+   * Agnostic backstop against runaway loops that stay under the turn cap — e.g.
+   * a job replaying a growing context every turn (live incident: an Airtable
+   * faux-empty loop burned ~2.4M tokens). Legitimate jobs sit far below this;
+   * override per-deployment via env MAX_TOTAL_TOKENS_PER_JOB. See execute.ts.
+   */
+  maxTotalTokensPerJob: number;
+  /**
+   * No-progress detector: if the SAME set of tool calls (toolName + input +
+   * output, all identical) repeats this many consecutive turns, the job is
+   * stuck (re-asking the same question, getting the same answer) and the runner
+   * fails it loud (`no_progress_detected`). Set conservatively high so a
+   * legitimate poll (which returns identical RUNNING reads then a DIFFERENT
+   * terminal read) finishing within a handful of turns never trips it; this is
+   * a backstop below maxTurns for genuinely degenerate loops. See execute.ts.
+   */
+  maxNoProgressRepeats: number;
 }
 
 // ─── ChildAgent (read from DB) ────────────────────────────────────────────────

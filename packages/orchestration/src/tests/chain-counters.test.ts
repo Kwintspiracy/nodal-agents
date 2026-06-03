@@ -55,6 +55,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 3,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
       c.bumpChain(); // 1
       try {
@@ -91,6 +93,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 3,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
       // Even with very tight limit, approval-resume never throws
       for (let i = 0; i < 100; i++) {
@@ -105,6 +109,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 3,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
 
       // Simulate: chain 1 → awaiting_approval → resume (no bump) → chain 2
@@ -132,6 +138,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 3,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
       c.bumpToolCall(); // 1
       c.bumpToolCall(); // 2
@@ -147,6 +155,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 3,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
       c.bumpToolCall();
       c.bumpToolCall();
@@ -169,6 +179,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 3,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
       c.bumpToolCall();
       c.bumpToolCall();
@@ -201,6 +213,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 3,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
       c.bumpDelegationDepth(); // 1
       c.bumpDelegationDepth(); // 2
@@ -216,6 +230,8 @@ describe('ChainCounters', () => {
         maxDelegationDepth: 2,
         maxTurns: 50,
         maxConsecutiveDeliveryTurns: 3,
+        maxTotalTokensPerJob: 1_500_000,
+        maxNoProgressRepeats: 12,
       });
       c.bumpDelegationDepth();
       c.bumpDelegationDepth();

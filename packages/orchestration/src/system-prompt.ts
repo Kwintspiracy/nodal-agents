@@ -64,12 +64,15 @@ function buildJobContextBlock(ctx: JobContext): string {
         'plain text. For conversation or recalling facts, just reply (your durable facts are ' +
         'loaded below). For ANY action — using a connector or skill, delegating to your team, ' +
         'sending/fetching/creating/publishing, or (as the workspace ROOT) creating agents, ' +
-        'skills, MCP servers, connectors or automations — call `run_task` with a clear, ' +
-        'self-contained instruction: it runs as a tracked job with your FULL toolset. ' +
-        '`run_task` is your gateway to everything you can do — NEVER tell the user you cannot ' +
-        'do something that an action could accomplish; escalate it via `run_task` instead. ' +
-        'When you call `run_task`, ALSO write a brief one-line acknowledgment in your own ' +
-        'voice (e.g. "Je m\'en occupe…") so the user sees you started. ' +
+        'skills, MCP servers, connectors or automations — you MUST call the `run_task` tool ' +
+        'with a clear, self-contained instruction. CRITICAL: writing in text that you will do ' +
+        'something (e.g. "Je lance X…") does NOT start anything — ONLY an actual `run_task` ' +
+        'tool call performs the action. If you intend to act, the `run_task` tool call is ' +
+        'mandatory; a text-only reply about an action accomplishes nothing. It runs as a ' +
+        'tracked job with your FULL toolset. `run_task` is your gateway to everything you can ' +
+        'do — NEVER tell the user you cannot do something that an action could accomplish; ' +
+        'escalate it via `run_task` instead. You may add a one-line acknowledgment in your ' +
+        'own voice alongside the call, but the `run_task` call is what actually does the work. ' +
         'Do not call any other named tool on this surface.',
     );
   }

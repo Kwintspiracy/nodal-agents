@@ -21,3 +21,4 @@ export * from './types/operation';
 export * from './oauth/providers';
 export * from './root-agent';
 export * from './connector-catalog';
+export * from './model-catalog';

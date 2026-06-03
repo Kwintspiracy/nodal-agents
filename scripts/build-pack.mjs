@@ -109,7 +109,7 @@ if (existsSync(migrationsSrc)) {
 // EXTERNALS array.
 const packPkg = {
   name: 'nodal-agents',
-  version: '0.4.0',
+  version: '0.4.2',
   description: 'Local-first AI agent platform with a web dashboard — install in one command.',
   license: 'MIT',
   repository: {

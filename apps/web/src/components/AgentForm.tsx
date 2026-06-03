@@ -11,13 +11,9 @@ import {
   type AgentEditRow,
   type LlmKeyUiRow,
 } from '@/lib/actions.ts';
+import { MODEL_CATALOG } from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import AvatarPicker from './AvatarPicker.tsx';
-import {
-  detectModelProviders,
-  isModelCompatibleWithProvider,
-  type ProviderSlug,
-} from '@/lib/model-provider-detect.ts';
 
 type AgentRole = 'worker' | 'router' | 'planner';
 
@@ -87,58 +83,17 @@ export default function AgentForm(props: Props) {
     [props.llmKeys, llmKeyId],
   );
 
-  // ── Model ↔ key coherence (Brique 34quinquies follow-up) ────────────────────
-  // Live bug: changing agent.model without changing agent.llmKeyId leaves the
-  // key pointing at the wrong provider — runtime fails silently. We detect the
-  // model's expected provider and (a) auto-switch when there's exactly one
-  // compatible active key, (b) block save with an inline banner otherwise.
-
-  const detectedProviders = useMemo<Set<ProviderSlug>>(() => detectModelProviders(model), [model]);
-
-  const compatibleActiveKeys = useMemo(
-    () =>
-      activeKeys.filter((k) => isModelCompatibleWithProvider(model, k.provider as ProviderSlug)),
-    [activeKeys, model],
-  );
-
-  const coherenceOk = selectedKey
-    ? isModelCompatibleWithProvider(model, selectedKey.provider as ProviderSlug)
-    : true;
-
   function handleLlmKeyChange(id: string) {
     const newKey = props.llmKeys.find((row) => row.id === id);
-    const oldDefaultModel = selectedKey?.defaultModel ?? null;
     setLlmKeyId(id);
-    // Auto-fill model with the new provider's defaultModel if (a) model is empty,
-    // OR (b) the current model exactly matches the previous provider's default
-    // (= user hadn't customized it, so switching providers can safely refresh).
-    // Preserves a user's hand-typed custom model across provider switches.
-    if (newKey?.defaultModel && (!model || model === oldDefaultModel)) {
-      setModel(newKey.defaultModel);
-    }
+    // Switching provider resets the model to that provider's first curated
+    // model — a model id only makes sense for its own provider (no stale,
+    // mismatched model).
+    setModel(MODEL_CATALOG[newKey?.provider ?? '']?.[0]?.modelId ?? '');
   }
 
   function handleModelChange(nextModel: string) {
     setModel(nextModel);
-    // Auto-switch the key if (a) the current key is incompatible AND
-    // (b) exactly one active key matches the new model. We never auto-switch
-    // when multiple keys match (avoid surprise) or when none match (let the
-    // user see the warning banner instead).
-    if (!selectedKey) return;
-    const currentlyCompatible = isModelCompatibleWithProvider(
-      nextModel,
-      selectedKey.provider as ProviderSlug,
-    );
-    if (currentlyCompatible) return;
-    const candidates = activeKeys.filter((k) =>
-      isModelCompatibleWithProvider(nextModel, k.provider as ProviderSlug),
-    );
-    if (candidates.length === 1 && candidates[0]) {
-      setLlmKeyId(candidates[0].id);
-      toast.success(
-        `Switched provider to ${prettyProviderName(candidates[0].provider)} (matches ${nextModel})`,
-      );
-    }
   }
 
   useEffect(() => {
@@ -217,50 +172,8 @@ export default function AgentForm(props: Props) {
   const showSubAgents = role !== 'worker';
   const noAgentsForPicker = agents.length === 0;
 
-  // ── Coherence banner (rendered under Model input in both edit + create) ────
-  const coherenceBanner =
-    !coherenceOk && selectedKey ? (
-      <div
-        role="alert"
-        data-testid="model-provider-mismatch"
-        className="mt-1 px-2 py-1.5 rounded border border-warn/30 bg-warn-bg text-[11px] text-warn space-y-1"
-      >
-        <p>
-          <span className="font-semibold">Provider mismatch:</span>{' '}
-          <span className="font-mono">{model}</span> looks like it needs{' '}
-          <span className="font-semibold">
-            {Array.from(detectedProviders)
-              .map((p) => prettyProviderName(p))
-              .join(' or ')}
-          </span>
-          , but your selected key is{' '}
-          <span className="font-semibold">{prettyProviderName(selectedKey.provider)}</span>.
-        </p>
-        {compatibleActiveKeys.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            <span className="text-warn/80">Switch to:</span>
-            {compatibleActiveKeys.map((k) => (
-              <button
-                key={k.id}
-                type="button"
-                onClick={() => setLlmKeyId(k.id)}
-                className="px-1.5 py-0.5 rounded border border-warn/30 text-warn hover:bg-warn-bg font-medium"
-              >
-                {k.nickname ?? prettyProviderName(k.provider)} ({prettyProviderName(k.provider)})
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p>
-            No compatible active key.{' '}
-            <a href="/settings" className="underline hover:text-warn">
-              Add one in Settings → LLM providers
-            </a>
-            .
-          </p>
-        )}
-      </div>
-    ) : null;
+  // Coherence banner removed — switching provider now just resets the model.
+  const coherenceBanner = null;
 
   // ─── Edit mode: form rendered inline (no modal/portal) ─────────────────────
 
@@ -360,7 +273,10 @@ export default function AgentForm(props: Props) {
               required
               value={model}
               onChange={(e) => handleModelChange(e.target.value)}
-              placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
+              placeholder={
+                MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                'e.g. claude-haiku-4-5-20251001'
+              }
               className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
             {coherenceBanner}
@@ -424,8 +340,7 @@ export default function AgentForm(props: Props) {
         <div className="flex gap-2 pt-1">
           <button
             type="submit"
-            disabled={isPending || noLlmKeys || !coherenceOk}
-            title={!coherenceOk ? 'Pick a key that matches the model first' : undefined}
+            disabled={isPending || noLlmKeys}
             className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isPending ? 'Saving…' : 'Save changes'}
@@ -553,7 +468,10 @@ export default function AgentForm(props: Props) {
                     required
                     value={model}
                     onChange={(e) => handleModelChange(e.target.value)}
-                    placeholder={selectedKey?.defaultModel ?? 'e.g. claude-haiku-4-5-20251001'}
+                    placeholder={
+                      MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                      'e.g. claude-haiku-4-5-20251001'
+                    }
                     className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                   />
                   {coherenceBanner}
@@ -614,8 +532,7 @@ export default function AgentForm(props: Props) {
               <div className="flex gap-2 pt-1">
                 <button
                   type="submit"
-                  disabled={isPending || noLlmKeys || !coherenceOk}
-                  title={!coherenceOk ? 'Pick a key that matches the model first' : undefined}
+                  disabled={isPending || noLlmKeys}
                   className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isPending ? 'Creating…' : 'Create agent'}

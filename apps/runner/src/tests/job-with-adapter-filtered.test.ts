@@ -289,7 +289,10 @@ describe('job-with-adapter-filtered: enabledOperations whitelist', () => {
       },
       {
         toolCalls: [
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          // Drive errors under this harness (googleapis bypasses the fetch spy),
+          // so 'blocked' is the honest terminal; Guard 3b would refuse a 'success'
+          // claim while drive_list_files is unresolved. Wiring test only.
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'blocked' } },
         ],
       },
     ]);
