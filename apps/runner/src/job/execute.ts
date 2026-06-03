@@ -24,7 +24,7 @@ import {
   entities as entitiesTable,
   getDecryptedCredentialById,
 } from '@nodal-agents/db';
-import { enabledMetaTools, parseRootGrants } from '@nodal-agents/shared';
+import { enabledMetaTools, parseRootGrants, modelContextWindow } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { createMcpTools, slugToPrefix, connectMcp } from '@nodal-agents/adapter-mcp';
 import {
@@ -125,6 +125,65 @@ function truncateForContext(value: string): string {
   );
 }
 
+const EVICTED_TOOL_RESULT_MARKER =
+  '[earlier tool result elided to fit the context window — re-run the tool if you need this data again]';
+
+/**
+ * Context compaction (Guard 1c). Replaces the OUTPUT of tool-result parts in all
+ * but the last `keepRecentToolMessages` tool messages with a short marker. Stale
+ * tool output is the dominant consumer of a long job's context (often 70%+); the
+ * agent has usually acted on it already, so evicting it shrinks every subsequent
+ * prompt — preventing context-window overflow and bounding cost — while keeping
+ * the recent turns intact. Structure-safe: toolCallId/toolName are preserved, so
+ * tool_use↔tool_result pairing (and message-structure validation) is unaffected.
+ * Returns the new array + the number of results evicted (0 ⇒ nothing changed).
+ */
+export function compactOldToolResults(
+  messages: readonly ModelMessage[],
+  keepRecentToolMessages: number,
+): { messages: ModelMessage[]; evicted: number } {
+  const toolMsgIdx: number[] = [];
+  messages.forEach((m, i) => {
+    if (m.role === 'tool') toolMsgIdx.push(i);
+  });
+  const evictCount = toolMsgIdx.length - keepRecentToolMessages;
+  if (evictCount <= 0) return { messages: [...messages], evicted: 0 };
+  const evictIdx = new Set(toolMsgIdx.slice(0, evictCount));
+  let evicted = 0;
+  const out = messages.map((m, i): ModelMessage => {
+    if (!evictIdx.has(i) || m.role !== 'tool' || !Array.isArray(m.content)) return m;
+    const content = m.content.map((p) => {
+      if (p.type !== 'tool-result') return p;
+      if (p.output.type === 'text' && p.output.value === EVICTED_TOOL_RESULT_MARKER) return p;
+      evicted += 1;
+      return { ...p, output: { type: 'text' as const, value: EVICTED_TOOL_RESULT_MARKER } };
+    });
+    return { ...m, content };
+  });
+  return { messages: out, evicted };
+}
+
+/**
+ * Build a diagnosable error string from an LLM/provider exception (B3). The AI
+ * SDK's APICallError surfaces only a generic "Provider returned error" in
+ * `.message`, but carries the REAL upstream detail (e.g. context_length_exceeded,
+ * a model-specific rejection) in `.responseBody` / `.data` / `.statusCode`. We
+ * splice those in so a failed job's `error` is actionable instead of opaque.
+ */
+export function describeLlmError(err: unknown): string {
+  if (!(err instanceof Error)) return 'unknown_error';
+  const e = err as { statusCode?: number; responseBody?: unknown; data?: unknown };
+  const body =
+    typeof e.responseBody === 'string' && e.responseBody.trim().length > 0 ? e.responseBody : '';
+  const dataStr = !body && e.data != null ? JSON.stringify(e.data) : '';
+  const detail = body || dataStr;
+  if (detail) {
+    const status = typeof e.statusCode === 'number' ? `${e.statusCode} ` : '';
+    return `${status}${err.message}: ${detail}`.slice(0, 400);
+  }
+  return err.message.slice(0, 200);
+}
+
 // Deterministic JSON: object keys sorted recursively so two semantically-equal
 // values serialize identically regardless of key order. Used by the no-progress
 // detector (Guard 1b) to compare a turn's tool-call signature across turns.
@@ -221,6 +280,14 @@ export async function executeJob(
     return { status: 'failed', error: 'chain_limit_exceeded' };
   }
 
+  // The job transcript, declared up-front so EVERY failure path (early validation
+  // failures AND the in-loop guards / catch) persists it via failJob — a failed
+  // job must be diagnosable, not opaque. Section 11 below refines it (thread
+  // history, fresh-task seeding); earlier failures persist what's loaded so far.
+  let messages: ModelMessage[] = Array.isArray(job.messages)
+    ? (job.messages as ModelMessage[])
+    : [];
+
   // Run-stats accumulators — declared before the first failJob call so all
   // failure paths persist tokens / turn / duration. Seeded from the row so
   // resumed jobs don't reset to 0. AI SDK v4 returns
@@ -247,7 +314,7 @@ export async function executeJob(
 
   // ── 3. Load agent ─────────────────────────────────────────────────────────────
   if (!job.agentId) {
-    await failJob(db, jobId as string, 'agent_not_found', runStats());
+    await failJob(db, jobId as string, 'agent_not_found', runStats(), messages);
     return { status: 'failed', error: 'agent_not_found' };
   }
 
@@ -255,7 +322,7 @@ export async function executeJob(
 
   const agentRow = agentRows[0];
   if (!agentRow || !agentRow.active) {
-    await failJob(db, jobId as string, 'agent_not_found', runStats());
+    await failJob(db, jobId as string, 'agent_not_found', runStats(), messages);
     return { status: 'failed', error: 'agent_not_found' };
   }
 
@@ -287,7 +354,7 @@ export async function executeJob(
   // The agent's `model` column wins over the key's defaultModel (the key's
   // defaultModel is just a UI suggestion).
   if (!agentRow.llmKeyId) {
-    await failJob(db, jobId as string, 'agent_no_llm_configured', runStats());
+    await failJob(db, jobId as string, 'agent_no_llm_configured', runStats(), messages);
     return { status: 'failed', error: 'agent_no_llm_configured' };
   }
 
@@ -308,7 +375,7 @@ export async function executeJob(
         resolved.reason === 'agent_no_llm_configured'
           ? 'agent_no_llm_configured'
           : `llm_key_invalid:${resolved.detail}`;
-      await failJob(db, jobId as string, code, runStats());
+      await failJob(db, jobId as string, code, runStats(), messages);
       return { status: 'failed', error: code };
     }
     llmClient = resolved.client;
@@ -389,7 +456,17 @@ export async function executeJob(
   // capabilityTools bypasses computeToolWhitelist's registry-based drift check
   // because the definition itself is passed, not just its name.
   const capabilityTools: AnyToolDef[] = [];
-  if (agentRow.telegramBotToken) {
+  // telegram_send_message is only offered when this job actually has a Telegram
+  // recipient to reach: a telegram job, a cron-notify opt-in, or a dashboard task
+  // sent "via Telegram" — all carry job.chatId. On a dashboard/api/internal job
+  // with no chatId there IS no chat, so offering it just lets the agent try →
+  // telegram_no_recipient → the no-false-success guard (Guard 3b) blocks the
+  // completion: a successful task wrongly reported as failed/blocked (live: jobs
+  // 2ddb15e3, 920fd89c — agent emailed fine, then tried a phantom Telegram
+  // confirmation). The user is on the dashboard; dashboard_publish is the path.
+  // Gate delivery tools on a resolvable recipient — channel-agnostic, the pattern
+  // every future outbound tool (whatsapp/slack) follows.
+  if (agentRow.telegramBotToken && job.chatId) {
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
   }
 
@@ -636,7 +713,7 @@ export async function executeJob(
     }
   } catch (err) {
     const errorCode = err instanceof Error ? err.message : 'whitelist_computation_failed';
-    await failJob(db, jobId as string, errorCode, runStats());
+    await failJob(db, jobId as string, errorCode, runStats(), messages);
     return { status: 'failed', error: errorCode };
   }
 
@@ -677,10 +754,7 @@ export async function executeJob(
   }
 
   // ── 11. Restore conversation ──────────────────────────────────────────────────
-  let messages: ModelMessage[] = Array.isArray(job.messages)
-    ? (job.messages as ModelMessage[])
-    : [];
-
+  // (`messages` is declared up-front near the top so every failure path persists it.)
   if (messages.length === 0) {
     messages = [{ role: 'user', content: job.task }];
   }
@@ -957,6 +1031,23 @@ export async function executeJob(
     const n = raw ? Number(raw) : NaN;
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_LIMITS.maxTotalTokensPerJob;
   })();
+  // Guard 1c — context compaction threshold. We evict OLD tool-result bodies
+  // before the model's context window overflows (a hard provider error no retry
+  // recovers). Trigger = a turn's prompt crossing a fraction of the window, OR an
+  // absolute floor so huge-window models don't re-send a giant stale history
+  // every turn. Both tunable per-deployment.
+  const compactionThreshold = (() => {
+    const ctxWindow = modelContextWindow(llmClient.config.provider, llmClient.config.model);
+    const fracRaw = Number(process.env['LLM_COMPACTION_FRACTION']);
+    const frac = Number.isFinite(fracRaw) && fracRaw > 0 && fracRaw < 1 ? fracRaw : 0.7;
+    const absRaw = Number(process.env['LLM_COMPACTION_TOKENS']);
+    const abs = Number.isFinite(absRaw) && absRaw > 0 ? absRaw : 120_000;
+    return Math.min(Math.floor(frac * ctxWindow), abs);
+  })();
+  const compactionKeepRecentToolMsgs = (() => {
+    const raw = Number(process.env['LLM_COMPACTION_KEEP_TURNS']);
+    return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 3;
+  })();
   // Guard 1b — no-progress detector. Sliding history of per-turn tool-call
   // signatures (toolName+input+output). N identical in a row ⇒ the agent is
   // stuck re-asking the same thing; fail loud. In-memory/intra-run. Threshold
@@ -1011,7 +1102,7 @@ export async function executeJob(
       // the LLM provider's credit balance runs out. Matches Hermes Agent's
       // per-run iteration budget.
       if (turn > DEFAULT_LIMITS.maxTurns) {
-        await failJob(db, jobId as string, 'turn_limit_exceeded', runStats());
+        await failJob(db, jobId as string, 'turn_limit_exceeded', runStats(), messages);
         return { status: 'failed', error: 'turn_limit_exceeded' };
       }
 
@@ -1067,8 +1158,25 @@ export async function executeJob(
       // the provider's credit dry. Agnostic: no per-agent knowledge.
       if (inputTokens + outputTokens > maxTotalTokensPerJob) {
         trace('token_budget_exceeded', { turn, inputTokens, outputTokens, maxTotalTokensPerJob });
-        await failJob(db, jobId as string, 'token_budget_exceeded', runStats());
+        await failJob(db, jobId as string, 'token_budget_exceeded', runStats(), messages);
         return { status: 'failed', error: 'token_budget_exceeded' };
+      }
+
+      // Guard 1c — compact when THIS turn's prompt crossed the threshold. Evicting
+      // OLD tool-result bodies (keeping the last N turns) shrinks every subsequent
+      // prompt, preventing window overflow and bounding cost. `promptT` is this
+      // turn's prompt size (not the cumulative budget above).
+      if (promptT > compactionThreshold) {
+        const ev = compactOldToolResults(messages, compactionKeepRecentToolMsgs);
+        if (ev.evicted > 0) {
+          messages = ev.messages;
+          trace('context_compacted', {
+            turn,
+            promptTokens: promptT,
+            threshold: compactionThreshold,
+            evictedToolResults: ev.evicted,
+          });
+        }
       }
 
       const rawToolCalls = response.toolCalls ?? [];
@@ -1092,7 +1200,7 @@ export async function executeJob(
       consecutiveDeliveryOnlyTurns = isDeliveryOnlyTurn ? consecutiveDeliveryOnlyTurns + 1 : 0;
       if (consecutiveDeliveryOnlyTurns > DEFAULT_LIMITS.maxConsecutiveDeliveryTurns) {
         trace('delivery_spam_guard', { turn, consecutiveDeliveryOnlyTurns });
-        await failJob(db, jobId as string, 'delivery_spam_guard', runStats());
+        await failJob(db, jobId as string, 'delivery_spam_guard', runStats(), messages);
         return { status: 'failed', error: 'delivery_spam_guard' };
       }
 
@@ -1162,7 +1270,7 @@ export async function executeJob(
               continue;
             }
             trace('telegram_not_delivered', { turn, via: 'text_branch' });
-            await failJob(db, jobId as string, 'telegram_not_delivered', runStats());
+            await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
             return { status: 'failed', error: 'telegram_not_delivered' };
           }
           await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
@@ -1180,8 +1288,11 @@ export async function executeJob(
           messages = messages.slice(0, -1);
           continue;
         }
-        // Retry budget exhausted — fail loud (invariant 4).
-        await failJob(db, jobId as string, 'no_tool_calls_no_text', runStats());
+        // Retry budget exhausted — drop the empty assistant turn we just
+        // appended so the persisted transcript ends cleanly, then fail loud
+        // (invariant 4). failJob now persists this transcript for diagnosis.
+        messages = messages.slice(0, -1);
+        await failJob(db, jobId as string, 'no_tool_calls_no_text', runStats(), messages);
         return { status: 'failed', error: 'no_tool_calls_no_text' };
       }
 
@@ -1249,7 +1360,13 @@ export async function executeJob(
 
         const toolDef = toolMap.get(call.name);
         if (!toolDef) {
-          await failJob(db, jobId as string, `whitelist_violation:${call.name}`, runStats());
+          await failJob(
+            db,
+            jobId as string,
+            `whitelist_violation:${call.name}`,
+            runStats(),
+            messages,
+          );
           return { status: 'failed', error: `whitelist_violation:${call.name}` };
         }
 
@@ -1644,7 +1761,7 @@ export async function executeJob(
             continue;
           }
           trace('unresolved_tool_failure', { turn, stuck });
-          await failJob(db, jobId as string, 'unresolved_tool_failure', runStats());
+          await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
           return { status: 'failed', error: 'unresolved_tool_failure' };
         }
 
@@ -1684,7 +1801,7 @@ export async function executeJob(
             continue;
           }
           trace('telegram_not_delivered', { turn, via: 'return_result_branch' });
-          await failJob(db, jobId as string, 'telegram_not_delivered', runStats());
+          await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
           return { status: 'failed', error: 'telegram_not_delivered' };
         }
 
@@ -1781,7 +1898,7 @@ export async function executeJob(
           recentTurnSignatures.every((s) => s === turnSignature)
         ) {
           trace('no_progress_detected', { turn, repeats: recentTurnSignatures.length });
-          await failJob(db, jobId as string, 'no_progress_detected', runStats());
+          await failJob(db, jobId as string, 'no_progress_detected', runStats(), messages);
           return { status: 'failed', error: 'no_progress_detected' };
         }
       }
@@ -1805,37 +1922,43 @@ export async function executeJob(
   } catch (err) {
     trace('catch', {
       errName: err instanceof Error ? err.name : 'unknown',
-      errMsg: err instanceof Error ? err.message.slice(0, 200) : String(err),
+      errMsg: describeLlmError(err),
     });
     // Typed errors — error codes only (invariant 2)
     if (err instanceof ToolCallLimitExceededError) {
-      await failJob(db, jobId as string, err.code, runStats());
+      await failJob(db, jobId as string, err.code, runStats(), messages);
       return { status: 'failed', error: err.code };
     }
 
     if (err instanceof ChainLimitExceededError) {
-      await failJob(db, jobId as string, err.code, runStats());
+      await failJob(db, jobId as string, err.code, runStats(), messages);
       return { status: 'failed', error: err.code };
     }
 
     if (err instanceof DelegationDepthExceededError) {
-      await failJob(db, jobId as string, err.code, runStats());
+      await failJob(db, jobId as string, err.code, runStats(), messages);
       return { status: 'failed', error: err.code };
     }
 
     if (err instanceof QuotaExhaustedError) {
-      await failJob(db, jobId as string, 'quota_exhausted', runStats());
+      await failJob(db, jobId as string, 'quota_exhausted', runStats(), messages);
       return { status: 'failed', error: 'quota_exhausted' };
     }
 
     // Guard 2: the whole configured provider chain (primary + fallbacks) is down.
     if (err instanceof AllProvidersFailedError) {
-      await failJob(db, jobId as string, err.code, runStats());
+      await failJob(db, jobId as string, err.code, runStats(), messages);
       return { status: 'failed', error: err.code };
     }
 
     if (err instanceof MessageStructureError) {
-      await failJob(db, jobId as string, `message_structure_invalid:${err.code}`, runStats());
+      await failJob(
+        db,
+        jobId as string,
+        `message_structure_invalid:${err.code}`,
+        runStats(),
+        messages,
+      );
       return { status: 'failed', error: `message_structure_invalid:${err.code}` };
     }
 
@@ -1847,14 +1970,15 @@ export async function executeJob(
       if (unavailableMatch) {
         const toolName = unavailableMatch[1] ?? 'unknown_tool';
         const code = `whitelist_violation:${toolName}`;
-        await failJob(db, jobId as string, code, runStats());
+        await failJob(db, jobId as string, code, runStats(), messages);
         return { status: 'failed', error: code };
       }
     }
 
-    // Invariant 3: never catch agent-specific exceptions. All errors fail loud.
-    const errorCode = err instanceof Error ? err.message.slice(0, 200) : 'unknown_error';
-    await failJob(db, jobId as string, errorCode, runStats());
+    // Invariant 3: never catch agent-specific exceptions. All errors fail loud —
+    // with the REAL provider detail (B3), not the SDK's opaque generic message.
+    const errorCode = describeLlmError(err);
+    await failJob(db, jobId as string, errorCode, runStats(), messages);
     return { status: 'failed', error: errorCode };
   } finally {
     // Close every per-job MCP transport, whatever the loop's exit path.

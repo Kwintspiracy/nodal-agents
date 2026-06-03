@@ -28,6 +28,12 @@ export interface ModelCatalogEntry {
   modelId: string;
   label: string;
   capabilities: ModelCapabilities;
+  /**
+   * The model's context window in tokens. The runner uses it to compact the
+   * conversation (evict old tool results) before it overflows. Omit for unknown
+   * — callers fall back to DEFAULT_CONTEXT_WINDOW.
+   */
+  contextWindow?: number;
   /** Optional endpoint override (e.g. a model's native Anthropic-compatible URL). */
   route?: { baseURL?: string };
 }
@@ -41,24 +47,33 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'claude-opus-4-8',
       label: 'Claude Opus 4.8',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 200_000,
     },
     {
       modelId: 'claude-sonnet-4-6',
       label: 'Claude Sonnet 4.6',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 200_000,
     },
     {
       modelId: 'claude-haiku-4-5-20251001',
       label: 'Claude Haiku 4.5',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 200_000,
     },
   ],
   openai: [
-    { modelId: 'gpt-5', label: 'GPT-5', capabilities: { tools: true, forcedToolChoice: true } },
+    {
+      modelId: 'gpt-5',
+      label: 'GPT-5',
+      capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 400_000,
+    },
     {
       modelId: 'gpt-5-mini',
       label: 'GPT-5 mini',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 400_000,
     },
   ],
   google: [
@@ -66,11 +81,13 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'gemini-2.0-flash',
       label: 'Gemini 2.0 Flash',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_048_576,
     },
     {
       modelId: 'gemini-2.5-pro',
       label: 'Gemini 2.5 Pro',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_048_576,
     },
   ],
   groq: [
@@ -78,6 +95,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'llama-3.3-70b-versatile',
       label: 'Llama 3.3 70B',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 131_072,
     },
   ],
   mistral: [
@@ -85,6 +103,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'mistral-large-latest',
       label: 'Mistral Large',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 131_072,
     },
   ],
   // OpenRouter models are namespaced by sub-vendor (anthropic/, deepseek/, …).
@@ -98,68 +117,81 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'anthropic/claude-haiku-4.5',
       label: 'Claude Haiku 4.5',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 200_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.7',
       label: 'Claude Opus 4.7',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.7-fast',
       label: 'Claude Opus 4.7 (fast)',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.8',
       label: 'Claude Opus 4.8',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.8-fast',
       label: 'Claude Opus 4.8 (fast)',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-sonnet-4.6',
       label: 'Claude Sonnet 4.6',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_000_000,
     },
     // DeepSeek
     {
       modelId: 'deepseek/deepseek-v3.2',
       label: 'DeepSeek V3.2',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 131_072,
     },
     {
       modelId: 'deepseek/deepseek-v4-flash',
       label: 'DeepSeek V4 Flash',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_048_576,
     },
     {
       modelId: 'deepseek/deepseek-v4-pro',
       label: 'DeepSeek V4 Pro',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_048_576,
     },
     // Google
     {
       modelId: 'google/gemini-3.1-flash-lite-preview',
       label: 'Gemini 3.1 Flash Lite (preview)',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_048_576,
     },
     {
       modelId: 'google/gemini-3.1-pro-preview',
       label: 'Gemini 3.1 Pro (preview)',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_048_576,
     },
     {
       modelId: 'google/gemini-3.5-flash',
       label: 'Gemini 3.5 Flash',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 1_048_576,
     },
     {
       modelId: 'google/gemma-4-31b-it',
       label: 'Gemma 4 31B-IT',
       capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 262_144,
     },
     // MiniMax
     {
@@ -170,6 +202,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // reasoning:true makes the provider return reasoning_details so the runner
       // can round-trip them across tool-call turns.
       capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      contextWindow: 1_048_576,
     },
   ],
 };
@@ -180,6 +213,22 @@ export function findModelCatalogEntry(
   modelId: string,
 ): ModelCatalogEntry | undefined {
   return MODEL_CATALOG[provider]?.find((e) => e.modelId === modelId);
+}
+
+/**
+ * Conservative fallback context window (tokens) for models with no catalogued
+ * value (custom / unknown). Small on purpose: compacting a bit early is cheap;
+ * overflowing is a hard failure.
+ */
+export const DEFAULT_CONTEXT_WINDOW = 128_000;
+
+/**
+ * The model's context window in tokens — the catalogued value, or the
+ * conservative default for custom/unknown models. The runner uses this to decide
+ * when to compact the conversation before the window overflows.
+ */
+export function modelContextWindow(provider: string, modelId: string): number {
+  return findModelCatalogEntry(provider, modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 }
 
 // Pretty names for the sub-vendor namespaces seen in OpenRouter model ids.

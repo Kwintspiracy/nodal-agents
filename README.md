@@ -84,7 +84,7 @@ When a newer version is available, `nodal-agents up` also prints a one-line
 notice:
 
 ```
-ℹ v0.4.3 available — run `nodal-agents update`
+ℹ v0.4.4 available — run `nodal-agents update`
 ```
 
 ### Build from source
@@ -212,7 +212,7 @@ pnpm deps:check   # runs locally and in CI before every release
 
 ## Status
 
-**Current release:** `0.4.3` on npm `latest`. Used daily by the
+**Current release:** `0.4.4` on npm `latest`. Used daily by the
 maintainer, stable enough for personal production. Pre-1.0 — breaking
 changes are still possible between minors.
 
@@ -228,9 +228,13 @@ changes are still possible between minors.
   timeout / quota mid-job the runner fails over to the next key, and fails loud
   (`all_providers_failed`) only when the whole chain is exhausted
 - **Reliability guards (generic, model-agnostic)** — per-job token budget +
-  no-progress detector (kill runaway loops), and a no-false-success guard that
+  no-progress detector (kill runaway loops), a no-false-success guard that
   refuses to complete a job as "success" when a tool action failed and was never
-  resolved (fail loud, never fake it)
+  resolved (fail loud, never fake it), and context compaction that evicts stale
+  tool output before the model's context window overflows
+- **Diagnosable failures** — every failed job persists its full transcript and
+  the real upstream provider error (not an opaque "provider returned error"), so
+  you can see exactly what the agent did and why it stopped
 - Persistent memory (sanitation, dedup, importance ranking, auto-injection,
   feedback loop)
 - Session-thread continuity on chat channels (Telegram today)

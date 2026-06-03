@@ -178,6 +178,7 @@ export async function failJob(
   jobId: string,
   errorCode: string,
   stats?: RunStats,
+  messages?: unknown[],
 ): Promise<void> {
   const now = new Date();
   await db
@@ -187,6 +188,10 @@ export async function failJob(
       error: errorCode,
       completedAt: now,
       updatedAt: now,
+      // Persist the transcript on failure (mirrors completeJob) so a failed job
+      // is DIAGNOSABLE, not opaque. The resume/guard failure paths used to lose
+      // it entirely. Omitted ⇒ the stored messages are left untouched.
+      ...(messages ? { messages } : {}),
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,

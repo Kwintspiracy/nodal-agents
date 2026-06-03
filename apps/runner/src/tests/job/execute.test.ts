@@ -76,6 +76,7 @@ function makeMockLlmClient(
   responses: Array<{
     text?: string;
     reasoning?: string;
+    promptTokens?: number;
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
   capturedPrompts?: unknown[],
@@ -118,7 +119,12 @@ function makeMockLlmClient(
           ? { unified: 'tool-calls' as const, raw: 'tool-calls' }
           : { unified: 'stop' as const, raw: 'stop' },
         usage: {
-          inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+          inputTokens: {
+            total: response.promptTokens ?? 10,
+            noCache: response.promptTokens ?? 10,
+            cacheRead: undefined,
+            cacheWrite: undefined,
+          },
           outputTokens: { total: 5, text: 5, reasoning: undefined },
         },
         warnings: [],
@@ -990,8 +996,9 @@ describe('executeJob', () => {
       .set({ telegramBotToken: 'fake-token' })
       .where(eq(agents.id, seed.agentId));
 
-    // channel: 'api', chatId: null → telegram_send_message throws telegram_no_recipient
-    // (no explicit chatId in LLM args, no job chatId fallback)
+    // An always-on tool that ERRORS (save_memory with invalid args) is the failing
+    // sibling — the guard is about an error next to return_result, not which tool.
+    // (Was telegram_send_message; that's now gated off channels with no recipient.)
     const [guardJob] = await db
       .insert(agentJobs)
       .values({
@@ -1007,13 +1014,12 @@ describe('executeJob', () => {
       .returning();
     if (!guardJob) throw new Error('Failed to create guard test job');
 
-    // Turn 1: [telegram_send_message (will throw telegram_no_recipient), return_result]
-    // Turn 2: [return_result with status='blocked'] — after seeing the error
-    // Brique 33: return_result is status-only, no text
+    // Turn 1: [save_memory (invalid args → errors), return_result(success)] — the
+    // sibling error must block finalization. Turn 2: [return_result(blocked)].
     const llmClient = makeMockLlmClient([
       {
         toolCalls: [
-          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'foo' } },
+          { toolCallId: 'tc-bad', toolName: 'save_memory', args: {} },
           {
             toolCallId: 'tc-rr',
             toolName: 'return_result',
@@ -1032,9 +1038,6 @@ describe('executeJob', () => {
       },
     ]);
 
-    // sendTelegramMessageMock is NOT mocked to throw here — the tool's own
-    // validation fires before the API call (chatId is null → telegram_no_recipient)
-    sendTelegramMessageMock.mockClear();
     const result = await executeJob(guardJob.id as JobId, makeDeps(llmClient), testEnv);
 
     // Job completes on turn 2, not turn 1
@@ -1595,6 +1598,54 @@ describe('executeJob', () => {
 
     expect(rows[0]?.status).toBe('failed');
     expect(rows[0]?.error).toBe('whitelist_violation:telegram_send_message');
+  });
+
+  it('channel-aware delivery: telegram_send_message is NOT offered on a dashboard job with no recipient (regression for jobs 2ddb15e3/920fd89c)', async () => {
+    // The agent HAS a bot token, but a dashboard job has no chatId → no Telegram
+    // recipient. The tool must not be offered: a phantom telegram_send_message
+    // fails (telegram_no_recipient) and trips the no-false-success guard on an
+    // otherwise-successful task (the live false-failure). dashboard_publish is
+    // the path on this channel.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        chatId: null,
+        task: 'Publish the result',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('failed to create dashboard test job');
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    // Not whitelisted (no recipient on this channel) → whitelist_violation, and
+    // the delivery function is never reached.
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('whitelist_violation:telegram_send_message');
+    }
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
   // ─── Brique 25: fail-loud on missing llmKeyId ──────────────────────────────
@@ -2505,6 +2556,86 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
     expect(row?.error).toBe('token_budget_exceeded');
+  });
+
+  it('Guard 1c: compacts old tool results once a turn crosses the context threshold', async () => {
+    const job = await createTestJob(db, seed);
+    // 'mock' model → DEFAULT_CONTEXT_WINDOW (128k) → threshold = min(0.7*128k, 120k)
+    // = 89_600. promptTokens 100k > threshold → compaction fires; keep last 3.
+    const sm = (i: number) => ({
+      promptTokens: 100_000,
+      toolCalls: [
+        {
+          toolCallId: `tc-${i}`,
+          toolName: 'save_memory',
+          args: { fact: `fact ${i}`, category: 'context' },
+        },
+      ],
+    });
+    const llmClient = makeMockLlmClient([
+      sm(1),
+      sm(2),
+      sm(3),
+      sm(4),
+      sm(5),
+      { promptTokens: 100_000, text: 'all done' },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // The persisted transcript has its OLD tool results evicted to a marker while
+    // the most recent stay intact — the real result, not a call count.
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const toolResults = msgs
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap(
+        (m) => m.content as Array<{ type: string; output?: { type: string; value: unknown } }>,
+      )
+      .filter((p) => p.type === 'tool-result');
+    const elided = toolResults.filter(
+      (p) => p.output?.type === 'text' && String(p.output.value).includes('elided'),
+    );
+    expect(elided.length).toBeGreaterThanOrEqual(1);
+    expect(elided.length).toBeLessThan(toolResults.length);
+  });
+
+  it('persists the transcript on a mid-turn failure so the failure is diagnosable', async () => {
+    // Regression for the lost-transcript bug (live: job 2ddb15e3 kept only 3
+    // messages). A whitelist_violation fails the job MID-iteration — before the
+    // end-of-loop saveCheckpoint — so the only thing that can persist the turn is
+    // failJob itself. The assistant turn (reasoning + the offending tool call)
+    // must survive so we can see WHAT the agent did.
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        reasoning: 'I will email them directly.',
+        toolCalls: [{ toolCallId: 'tc-evil', toolName: 'gmail_send', args: { to: 'x@y.z' } }],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') expect(result.error).toMatch(/whitelist_violation/);
+
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    // The failed job's transcript is persisted — not just the initial task. The
+    // turn's assistant message (with its offending tool call) is there.
+    const asst = msgs.find((m) => m.role === 'assistant');
+    expect(asst).toBeDefined();
+    const hasOffendingCall =
+      !!asst &&
+      Array.isArray(asst.content) &&
+      (asst.content as Array<{ type?: string; toolName?: string }>).some(
+        (p) => p.type === 'tool-call' && p.toolName === 'gmail_send',
+      );
+    expect(hasOffendingCall).toBe(true);
   });
 
   it('Guard 1b: fails no_progress_detected when an identical tool call repeats', async () => {
