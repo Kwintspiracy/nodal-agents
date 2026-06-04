@@ -34,3 +34,11 @@ export type { EmbeddingProviderConfig, EmbeddingClient } from './embeddings';
 
 // Provider registry (capability matrix + presets)
 export { CAPABILITY_MATRIX, PROVIDER_PRESETS } from './providers/registry';
+
+// Image generation (media — Phase 1)
+export {
+  buildImageModel,
+  generateImageWithProvider,
+  IMAGE_CAPABLE_PROVIDERS,
+} from './providers/image-models';
+export type { GeneratedImage } from './providers/image-models';

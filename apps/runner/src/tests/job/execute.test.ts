@@ -77,9 +77,12 @@ function makeMockLlmClient(
     text?: string;
     reasoning?: string;
     promptTokens?: number;
+    /** Cache-read subset of promptTokens — drives the public usage.cachedInputTokens. */
+    cachedTokens?: number;
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
   capturedPrompts?: unknown[],
+  configOverride?: { provider: string; model: string },
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -121,8 +124,8 @@ function makeMockLlmClient(
         usage: {
           inputTokens: {
             total: response.promptTokens ?? 10,
-            noCache: response.promptTokens ?? 10,
-            cacheRead: undefined,
+            noCache: (response.promptTokens ?? 10) - (response.cachedTokens ?? 0),
+            cacheRead: response.cachedTokens,
             cacheWrite: undefined,
           },
           outputTokens: { total: 5, text: 5, reasoning: undefined },
@@ -133,7 +136,10 @@ function makeMockLlmClient(
   });
 
   return {
-    config: { provider: 'anthropic', model: 'mock' },
+    config: (configOverride ?? {
+      provider: 'anthropic',
+      model: 'mock',
+    }) as RunnerDeps['llmClient']['config'],
     capabilities: {
       toolUse: true,
       promptCaching: false,
@@ -2558,6 +2564,59 @@ describe('reliability guards', () => {
     expect(row?.error).toBe('token_budget_exceeded');
   });
 
+  it('Guard 1a is CACHE-AWARE: a prompt-cached turn whose RAW input exceeds the budget still completes', async () => {
+    const job = await createTestJob(db, seed);
+    // Budget 500. One text turn with 1000 RAW input but 995 cache-read ⇒ 5
+    // EFFECTIVE input + 5 output = 10 ≪ 500. Under the old raw-token budget this
+    // would die (1000 > 500); cache-aware accounting lets it finish — exactly
+    // what makes a re-sent cached history survive (the JobHunter fix).
+    await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '500', async () => {
+      const llmClient = makeMockLlmClient([
+        { text: 'done', promptTokens: 1000, cachedTokens: 995 },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+    });
+
+    // Real DB row: raw input persisted as 1000, but the budgeted EFFECTIVE input
+    // is only the 5 non-cached tokens.
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        inputTokens: agentJobs.inputTokens,
+        effectiveInputTokens: agentJobs.effectiveInputTokens,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('completed');
+    expect(row?.error).toBeNull();
+    expect(row?.inputTokens).toBe(1000);
+    expect(row?.effectiveInputTokens).toBe(5);
+  });
+
+  it('Guard 1a still trips on FRESH tokens: same raw input, zero cache ⇒ token_budget_exceeded', async () => {
+    const job = await createTestJob(db, seed);
+    // Same 1000 raw input and same 500 budget as the cached test above, but
+    // cachedTokens=0 ⇒ effective input = 1000 > 500 ⇒ a genuine runaway still
+    // fails loud. Proves the relaxation is cache-conditional, not blanket.
+    await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '500', async () => {
+      const llmClient = makeMockLlmClient([
+        { text: 'spinning', promptTokens: 1000, cachedTokens: 0 },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') expect(result.error).toBe('token_budget_exceeded');
+    });
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('token_budget_exceeded');
+  });
+
   it('Guard 1c: compacts old tool results once a turn crosses the context threshold', async () => {
     const job = await createTestJob(db, seed);
     // 'mock' model → DEFAULT_CONTEXT_WINDOW (128k) → threshold = min(0.7*128k, 120k)
@@ -2601,6 +2660,82 @@ describe('reliability guards', () => {
     );
     expect(elided.length).toBeGreaterThanOrEqual(1);
     expect(elided.length).toBeLessThan(toolResults.length);
+  });
+
+  it('Guard 1c: does NOT compact a large-window model below its window-relative threshold', async () => {
+    const job = await createTestJob(db, seed);
+    // deepseek-v4-pro → 1M window → threshold 0.7×1M = 733K. A 150k prompt — which
+    // the OLD 120k absolute cap would have compacted every turn — must NOT trigger
+    // compaction. That premature eviction is exactly what busted the prompt cache
+    // (cacheRatio 0.9 → 0.08) and pushed JobHunter into token_budget_exceeded.
+    const sm = (i: number) => ({
+      promptTokens: 150_000,
+      toolCalls: [
+        {
+          toolCallId: `tc-${i}`,
+          toolName: 'save_memory',
+          args: { fact: `fact ${i}`, category: 'context' },
+        },
+      ],
+    });
+    const llmClient = makeMockLlmClient(
+      [sm(1), sm(2), sm(3), sm(4), { promptTokens: 150_000, text: 'all done' }],
+      undefined,
+      { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
+    );
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const elided = msgs
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap(
+        (m) => m.content as Array<{ type: string; output?: { type: string; value: unknown } }>,
+      )
+      .filter(
+        (p) =>
+          p.type === 'tool-result' &&
+          p.output?.type === 'text' &&
+          String(p.output.value).includes('elided'),
+      );
+    // 150k ≪ 733k threshold → no eviction at all on a 1M-window model.
+    expect(elided.length).toBe(0);
+  });
+
+  it('runs an all-reads turn via the parallel pre-pass — every read produces a result, none dropped', async () => {
+    const job = await createTestJob(db, seed);
+    // A turn of 3 independent read tools (file_list, riskLevel 'read', always-on).
+    // The parallel pre-pass executes them concurrently; the serial loop then
+    // consumes the cached results. The invariant: all 3 produce a tool-result
+    // (no [DEFERRED], no dropped/unmatched calls), then the job finishes cleanly.
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'r1', toolName: 'file_list', args: { path: 'a' } },
+          { toolCallId: 'r2', toolName: 'file_list', args: { path: 'b' } },
+          { toolCallId: 'r3', toolName: 'file_list', args: { path: 'c' } },
+        ],
+      },
+      { text: 'done' },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const toolResults = msgs
+      .filter((m) => m.role === 'tool' && Array.isArray(m.content))
+      .flatMap((m) => m.content as Array<{ type: string; toolName?: string; toolCallId?: string }>)
+      .filter((p) => p.type === 'tool-result' && p.toolName === 'file_list');
+    // All three calls executed and matched (one result per tool_use block).
+    expect(toolResults.map((p) => p.toolCallId).sort()).toEqual(['r1', 'r2', 'r3']);
   });
 
   it('persists the transcript on a mid-turn failure so the failure is diagnosable', async () => {

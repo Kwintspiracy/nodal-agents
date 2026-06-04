@@ -4,7 +4,11 @@
 import type { ToolDefinition } from '@nodal-agents/tools';
 import type { z } from 'zod';
 import { createApifyClient } from './client.ts';
-import { makeApifyRunActorTool, makeApifyGetRunTool } from './tools/actors.ts';
+import {
+  makeApifyWebBrowseTool,
+  makeApifyRunActorTool,
+  makeApifyGetRunTool,
+} from './tools/actors.ts';
 import { makeApifyListDatasetsTool, makeApifyGetDatasetItemsTool } from './tools/datasets.ts';
 
 /**
@@ -16,12 +20,13 @@ export type ApifyAdapterOptions = {
 };
 
 /**
- * Create all 4 Apify tools using the provided access token.
+ * Create all 5 Apify tools using the provided access token.
  * Returns a flat ToolDefinition[] ready to register in a ToolRegistry.
  *
- * Tool count: 4
+ * Tool count: 5
  * Write (1): apify_run_actor  (spawns a run and consumes Apify credits)
- * Read  (3): apify_get_run, apify_list_datasets, apify_get_dataset_items
+ * Read  (4): apify_web_browse (sync scrape/search), apify_get_run,
+ *            apify_list_datasets, apify_get_dataset_items
  */
 export function createApifyTools(
   opts: ApifyAdapterOptions,
@@ -33,13 +38,14 @@ export function createApifyTools(
   const client = createApifyClient(opts.accessToken);
 
   return [
-    // Write tools (1)
-    makeApifyRunActorTool(client),
-
-    // Read tools (3)
+    // Read tools (4) — apify_web_browse is the DEFAULT web tool (synchronous)
+    makeApifyWebBrowseTool(client),
     makeApifyGetRunTool(client),
     makeApifyListDatasetsTool(client),
     makeApifyGetDatasetItemsTool(client),
+
+    // Write tools (1)
+    makeApifyRunActorTool(client),
   ] as unknown as ToolDefinition<z.ZodTypeAny, unknown>[];
 }
 

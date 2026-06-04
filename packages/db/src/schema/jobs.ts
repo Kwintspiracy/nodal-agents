@@ -31,6 +31,15 @@ export const agentJobs = pgTable(
     totalDurationMs: integer('total_duration_ms').default(0),
     inputTokens: integer('input_tokens').default(0),
     outputTokens: integer('output_tokens').default(0),
+    /**
+     * Cumulative EFFECTIVE (non-cached) input tokens = Σ(inputTokens −
+     * cachedInputTokens) per turn. The token budget (Guard 1a) measures this,
+     * not raw input, so a job that re-sends a prompt-cached history (cheap, the
+     * bulk read from cache) is not penalised as if every re-send were fresh.
+     * Persisted alongside input_tokens so the budget stays cumulative across
+     * self-chain resumes.
+     */
+    effectiveInputTokens: integer('effective_input_tokens').default(0),
     delegationDepth: integer('delegation_depth').default(0),
     /**
      * The slug of the last delegated child that failed on this parent job.

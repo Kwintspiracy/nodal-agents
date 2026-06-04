@@ -64,6 +64,31 @@ describe('withRetry', () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  it('retries on "Invalid JSON response" EVEN with a 200 status (transient malformed body)', async () => {
+    // The exact shape that killed JobHunter baee450d: a corrupted body returned
+    // with statusCode 200, which the old logic treated as non-retryable.
+    const badBody = makeHttpError(200, 'Invalid JSON response');
+    const fn = vi.fn().mockRejectedValueOnce(badBody).mockResolvedValue('recovered');
+
+    const promise = withRetry(fn, { maxRetries: 3, baseDelayMs: 10 });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('recovered');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('honors the SDK isRetryable flag for a status we do not otherwise retry (409)', async () => {
+    const err = makeHttpError(409, 'Conflict') as Error & { isRetryable?: boolean };
+    err.isRetryable = true;
+    const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValue('ok');
+
+    const promise = withRetry(fn, { maxRetries: 3, baseDelayMs: 10 });
+    await vi.runAllTimersAsync();
+    await promise;
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
   it('does NOT retry on 400', async () => {
     const fn = vi.fn().mockRejectedValue(makeHttpError(400, 'Bad Request'));
     await expect(withRetry(fn, { maxRetries: 3 })).rejects.toMatchObject({ status: 400 });

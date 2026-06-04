@@ -4,7 +4,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { ApifyApiError } from '../../errors.ts';
-import { makeApifyRunActorTool, makeApifyGetRunTool } from '../../tools/actors.ts';
+import {
+  makeApifyWebBrowseTool,
+  makeApifyRunActorTool,
+  makeApifyGetRunTool,
+} from '../../tools/actors.ts';
 import type { ApifyClient } from '../../client.ts';
 import type { ToolContext } from '@nodal-agents/tools';
 
@@ -216,6 +220,125 @@ describe('makeApifyGetRunTool', () => {
     await expect(tool.execute({ runId: 'run-abc-123' }, ctx)).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof ApifyApiError && err.code === 'apify_not_found' && err.status === 404,
+    );
+  });
+});
+
+// ── apify_web_browse ──────────────────────────────────────────────────────────
+
+describe('makeApifyWebBrowseTool', () => {
+  // A client whose actor(...).call() and dataset(...).listItems() are mockable.
+  function makeBrowseClient(
+    items: unknown[],
+    overrides: { actorCall?: ReturnType<typeof vi.fn>; listItems?: ReturnType<typeof vi.fn> } = {},
+  ) {
+    const actorCall =
+      overrides.actorCall ??
+      vi.fn().mockResolvedValue({ id: 'run-1', defaultDatasetId: 'ds-1', status: 'SUCCEEDED' });
+    const listItems =
+      overrides.listItems ??
+      vi.fn().mockResolvedValue({ items, total: items.length, count: items.length, offset: 0 });
+    const actorFn = vi.fn().mockReturnValue({ call: actorCall });
+    const datasetFn = vi.fn().mockReturnValue({ listItems });
+    const client = { actor: actorFn, dataset: datasetFn } as unknown as ApifyClient;
+    return { client, actorFn, actorCall, datasetFn, listItems };
+  }
+
+  it('tool name is apify_web_browse and riskLevel is read', () => {
+    const { client } = makeBrowseClient([]);
+    const tool = makeApifyWebBrowseTool(client);
+    expect(tool.name).toBe('apify_web_browse');
+    expect(tool.riskLevel).toBe('read');
+  });
+
+  it('inputSchema requires a non-empty query; maxResults optional', () => {
+    const { client } = makeBrowseClient([]);
+    const tool = makeApifyWebBrowseTool(client);
+    expect(() => tool.inputSchema.parse({})).toThrow();
+    expect(() => tool.inputSchema.parse({ query: '' })).toThrow();
+    expect(() => tool.inputSchema.parse({ query: 'https://x.com' })).not.toThrow();
+    expect(() => tool.inputSchema.parse({ query: 'ux jobs', maxResults: 5 })).not.toThrow();
+  });
+
+  it('runs rag-web-browser then reads its dataset INLINE (one call, no poll handle)', async () => {
+    const { client, actorFn, actorCall, datasetFn, listItems } = makeBrowseClient([
+      { metadata: { url: 'https://a.com', title: 'A' }, markdown: '# A page' },
+    ]);
+    const tool = makeApifyWebBrowseTool(client);
+
+    const out = await tool.execute({ query: 'https://a.com' }, ctx);
+
+    // It targets rag-web-browser specifically, blocking-calls it, and reads the run's dataset.
+    expect(actorFn).toHaveBeenCalledWith('apify/rag-web-browser');
+    expect(actorCall).toHaveBeenCalledWith(
+      expect.objectContaining({ query: 'https://a.com', outputFormats: ['text'] }),
+    );
+    expect(datasetFn).toHaveBeenCalledWith('ds-1'); // the run's own dataset
+    expect(listItems).toHaveBeenCalled();
+    // Real result content, not a run handle.
+    expect(out).toEqual({
+      query: 'https://a.com',
+      count: 1,
+      results: [{ url: 'https://a.com', title: 'A', content: '# A page' }],
+    });
+  });
+
+  it('normalizes varied item shapes (searchResult / crawl / text fallback)', async () => {
+    const { client } = makeBrowseClient([
+      { searchResult: { url: 'https://s.com', title: 'S' }, text: 'plain text' },
+      { crawl: { loadedUrl: 'https://c.com' }, markdown: 'md body' },
+      { metadata: { url: 'https://empty.com' } }, // no content → filtered out
+    ]);
+    const tool = makeApifyWebBrowseTool(client);
+
+    const out = await tool.execute({ query: 'designer jobs', maxResults: 3 }, ctx);
+
+    expect(out.count).toBe(2); // the contentless item is dropped
+    expect(out.results).toEqual([
+      { url: 'https://s.com', title: 'S', content: 'plain text' },
+      { url: 'https://c.com', title: '', content: 'md body' },
+    ]);
+  });
+
+  it('defaults maxResults to 3 when omitted', async () => {
+    const { client, actorCall } = makeBrowseClient([]);
+    const tool = makeApifyWebBrowseTool(client);
+    await tool.execute({ query: 'jobs' }, ctx);
+    expect(actorCall).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 3 }));
+  });
+
+  it('requests text output (the proven format), not markdown', async () => {
+    const { client, actorCall } = makeBrowseClient([]);
+    const tool = makeApifyWebBrowseTool(client);
+    await tool.execute({ query: 'https://a.com' }, ctx);
+    expect(actorCall).toHaveBeenCalledWith(expect.objectContaining({ outputFormats: ['text'] }));
+  });
+
+  it('strips control characters from scraped content (keeps tab + newline)', async () => {
+    // Build a dirty string without typing literal control chars in source.
+    const NUL = String.fromCharCode(0);
+    const BEL = String.fromCharCode(7);
+    const TAB = String.fromCharCode(9);
+    const LF = String.fromCharCode(10);
+    const dirty = `clean${NUL}${BEL}text${TAB}kept${LF}line`;
+    const { client } = makeBrowseClient([
+      { metadata: { url: 'https://x.com', title: 'X' }, text: dirty },
+    ]);
+    const tool = makeApifyWebBrowseTool(client);
+
+    const out = await tool.execute({ query: 'https://x.com' }, ctx);
+
+    // NUL + BEL removed; tab + newline preserved → transport-safe content.
+    expect(out.results[0]?.content).toBe(`cleantext${TAB}kept${LF}line`);
+  });
+
+  it('wraps SDK errors into ApifyApiError', async () => {
+    const { client } = makeBrowseClient([], {
+      actorCall: vi.fn().mockRejectedValue({ statusCode: 403, message: 'forbidden' }),
+    });
+    const tool = makeApifyWebBrowseTool(client);
+    await expect(tool.execute({ query: 'x' }, ctx)).rejects.toSatisfy(
+      (err: unknown) => err instanceof ApifyApiError && err.status === 403,
     );
   });
 });

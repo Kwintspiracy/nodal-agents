@@ -11,6 +11,7 @@ import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
 
 import { buildAnthropicModel } from './providers/anthropic';
+import { withAnthropicPromptCaching } from './providers/anthropic-cache';
 import { buildOpenAIModel } from './providers/openai';
 import { buildOllamaModel } from './providers/ollama';
 import { buildOpenAICompatibleModel } from './providers/openai-compatible';
@@ -160,9 +161,19 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
     }
   };
 
+  // Anthropic does NOT auto-cache — opt it in by annotating cache_control
+  // breakpoints (system + sliding last message). Other providers either cache
+  // transparently (DeepSeek/OpenRouter) or don't support it; they pass through
+  // untouched. `cachingEnabled === false` is an explicit opt-out.
+  const cachingOn =
+    config.provider === 'anthropic' &&
+    capabilities.promptCaching &&
+    config.cachingEnabled !== false;
+
   const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
     const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
+    const prepared = cachingOn ? withAnthropicPromptCaching(args) : args;
     // tool_choice floor: if the provider rejects a forced tool_choice value
     // (some OpenRouter routes reject it), retry once with 'auto' — logged.
     return generateWithToolChoiceFloor(
@@ -171,7 +182,7 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
           () =>
             callWithTimeout(() =>
               generateText({
-                ...args,
+                ...prepared,
                 model,
                 ...(override ? { toolChoice: override } : {}),
                 // AI SDK native timeout via AbortSignal.timeout(). Survives

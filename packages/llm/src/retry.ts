@@ -52,12 +52,36 @@ function isRetryableError(err: unknown): boolean {
   // can take an actual decision — notify the user, switch model, give up.
   // Hermes' transport never retries on its stale timeout for the same reason.
   if (err instanceof LLMTimeoutError) return false;
+
+  const msg = errorMessage(err).toLowerCase();
+
+  // Malformed / unparseable provider response. The provider returned a body the
+  // SDK couldn't read as JSON (truncated stream, transient encoding glitch, or a
+  // non-JSON error page). Checked BEFORE the status gate because the status code
+  // is unreliable here — a 200 with a corrupted body is common, and the SDK then
+  // computes isRetryable=false. These are almost always transient at the
+  // transport layer, so a bounded retry clears them. Live trigger: JobHunter job
+  // baee450d (2026-06-04) died at turn 3 on a single such blip with no retry.
+  if (
+    msg.includes('invalid json response') ||
+    msg.includes('unexpected end of json') ||
+    msg.includes('unexpected token')
+  ) {
+    return true;
+  }
+
+  // Honor the AI SDK's own retryability verdict when it carries one. APICallError
+  // flags 408/409/429/5xx and provider-specific transient cases as retryable; we
+  // trust that signal rather than re-deriving it.
+  if (err instanceof Error && (err as { isRetryable?: unknown }).isRetryable === true) {
+    return true;
+  }
+
   const status = getStatusCode(err);
   if (status !== null) {
     return RETRYABLE_HTTP_STATUSES.has(status);
   }
   // Network errors (ECONNREFUSED, ETIMEDOUT, etc.) are retryable
-  const msg = errorMessage(err).toLowerCase();
   return (
     msg.includes('econnrefused') ||
     msg.includes('etimedout') ||

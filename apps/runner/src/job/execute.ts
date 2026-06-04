@@ -71,7 +71,14 @@ import type {
 } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
-import { failJob, completeJob, cancelJob, setJobStatus, saveCheckpoint } from './state.ts';
+import {
+  failJob,
+  completeJob,
+  cancelJob,
+  setJobStatus,
+  saveCheckpoint,
+  touchJob,
+} from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -274,6 +281,7 @@ export async function executeJob(
     await failJob(db, jobId as string, 'chain_limit_exceeded', {
       inputTokens: job.inputTokens ?? 0,
       outputTokens: job.outputTokens ?? 0,
+      effectiveInputTokens: job.effectiveInputTokens ?? job.inputTokens ?? 0,
       turn: job.turn ?? 0,
       totalDurationMs: 0,
     });
@@ -294,17 +302,24 @@ export async function executeJob(
   // `usage: { promptTokens, completionTokens, totalTokens }`.
   let inputTokens = job.inputTokens ?? 0;
   let outputTokens = job.outputTokens ?? 0;
+  // Cumulative EFFECTIVE (non-cached) input = Σ(inputTokens − cachedInputTokens).
+  // This is what Guard 1a's budget measures (see the main loop). Seeded from the
+  // persisted column so the budget stays cumulative across self-chain resumes;
+  // falls back to raw input for pre-0034 rows that never recorded it.
+  let effectiveInputTokens = job.effectiveInputTokens ?? job.inputTokens ?? 0;
   let turn = job.turn ?? 0;
   let toolsUsed: string[] = Array.isArray(job.toolsUsed) ? (job.toolsUsed as string[]) : [];
 
   const runStats = (): {
     inputTokens: number;
     outputTokens: number;
+    effectiveInputTokens: number;
     turn: number;
     totalDurationMs: number;
   } => ({
     inputTokens,
     outputTokens,
+    effectiveInputTokens,
     turn,
     totalDurationMs: Date.now() - startedAt,
   });
@@ -941,6 +956,7 @@ export async function executeJob(
         toolsUsed,
         inputTokens,
         outputTokens,
+        effectiveInputTokens,
       });
     }
 
@@ -1016,6 +1032,7 @@ export async function executeJob(
       toolsUsed,
       inputTokens,
       outputTokens,
+      effectiveInputTokens,
     });
     await setJobStatus(db, jobId as string, 'awaiting_approval');
     return { status: 'awaiting_approval' };
@@ -1033,20 +1050,45 @@ export async function executeJob(
   })();
   // Guard 1c — context compaction threshold. We evict OLD tool-result bodies
   // before the model's context window overflows (a hard provider error no retry
-  // recovers). Trigger = a turn's prompt crossing a fraction of the window, OR an
-  // absolute floor so huge-window models don't re-send a giant stale history
-  // every turn. Both tunable per-deployment.
+  // recovers). Trigger = a turn's prompt crossing a fraction of the window.
+  //
+  // This is a WINDOW guard, NOT a cost lever. Cost is owned by Guard 1a's
+  // cache-aware budget (effective = input − cached). Evicting mid-history mutates
+  // the prompt prefix, which BUSTS the provider's prompt-cache (Anthropic
+  // cache_read / DeepSeek cached_tokens) for every message from the eviction
+  // point onward — so the next turn re-pays those as FRESH tokens. Firing it
+  // earlier than necessary therefore turns a cheap cached job into an expensive
+  // uncached one.
+  //
+  // Hence the threshold is WINDOW-RELATIVE only. There is NO low absolute default
+  // cap: a previous 120K floor fired compaction on a 133K context for a 1M-window
+  // model (DeepSeek V4 Pro) that had 900K of headroom, collapsing the cache from
+  // 0.9 → 0.08 and pushing JobHunter into token_budget_exceeded. The abs cap is
+  // now an explicit opt-out only (LLM_COMPACTION_TOKENS) — unset means "guard the
+  // window, nothing else". Verified vs Hermes (per-tool payload caps + caching,
+  // no early compaction) and Cowork (no compaction while context fits the window).
   const compactionThreshold = (() => {
     const ctxWindow = modelContextWindow(llmClient.config.provider, llmClient.config.model);
     const fracRaw = Number(process.env['LLM_COMPACTION_FRACTION']);
     const frac = Number.isFinite(fracRaw) && fracRaw > 0 && fracRaw < 1 ? fracRaw : 0.7;
     const absRaw = Number(process.env['LLM_COMPACTION_TOKENS']);
-    const abs = Number.isFinite(absRaw) && absRaw > 0 ? absRaw : 120_000;
+    const abs = Number.isFinite(absRaw) && absRaw > 0 ? absRaw : Infinity;
     return Math.min(Math.floor(frac * ctxWindow), abs);
   })();
   const compactionKeepRecentToolMsgs = (() => {
     const raw = Number(process.env['LLM_COMPACTION_KEEP_TURNS']);
     return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 3;
+  })();
+  // Concurrency for a turn's independent READ tool calls. Our scrape/search tools
+  // are synchronous-blocking (the SDK waits for the actor run), so executing a
+  // batch serially makes one turn take minutes — long enough to trip the 5-min
+  // orphan-reset and to let the prompt cache go cold between turns. We run reads
+  // in concurrency-limited waves instead (what Cowork does: "4 in parallel").
+  // Reads are side-effect-free and approval-free, so order doesn't matter and
+  // parallelism is safe. Writes/delegation/return_result stay serial + ordered.
+  const toolConcurrency = (() => {
+    const raw = Number(process.env['LLM_TOOL_CONCURRENCY']);
+    return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 6;
   })();
   // Guard 1b — no-progress detector. Sliding history of per-turn tool-call
   // signatures (toolName+input+output). N identical in a row ⇒ the agent is
@@ -1130,6 +1172,10 @@ export async function executeJob(
       }
 
       // d. Call LLM
+      // Heartbeat before the (potentially ~300s) LLM call so a slow turn doesn't
+      // go stale and get reaped by the 5-min orphan-reset mid-flight.
+      await touchJob(db, jobId as string);
+
       trace('llm_call_start', { turn, msgCount: messages.length });
       const response = await llmClient.generateText({
         system: systemPrompt,
@@ -1150,14 +1196,35 @@ export async function executeJob(
       const usage = response.usage;
       const promptT = Number(usage?.inputTokens ?? 0);
       const completionT = Number(usage?.outputTokens ?? 0);
-      inputTokens += Number.isFinite(promptT) ? promptT : 0;
+      // Prompt-cached reads: the portion of this turn's input served from the
+      // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
+      // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
+      // `cachedInputTokens` as the cached subset — verified for @ai-sdk/anthropic
+      // and @openrouter/ai-sdk-provider. Effective (fresh) input = total − cached.
+      const cachedT = Number(usage?.cachedInputTokens ?? 0);
+      const promptTok = Number.isFinite(promptT) ? promptT : 0;
+      const effectiveT = Math.max(0, promptTok - (Number.isFinite(cachedT) ? cachedT : 0));
+      inputTokens += promptTok;
       outputTokens += Number.isFinite(completionT) ? completionT : 0;
+      effectiveInputTokens += effectiveT;
 
-      // Guard 1a — token budget. Fail loud once the cumulative spend crosses the
-      // ceiling, BEFORE acting on this turn's output, so a runaway never bleeds
-      // the provider's credit dry. Agnostic: no per-agent knowledge.
-      if (inputTokens + outputTokens > maxTotalTokensPerJob) {
-        trace('token_budget_exceeded', { turn, inputTokens, outputTokens, maxTotalTokensPerJob });
+      // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
+      // input + output, not raw input. A job that re-sends a prompt-cached
+      // history (the common long-running pattern: the growing transcript is read
+      // from cache each turn, ~10x cheaper) accrues budget at its real cost, so
+      // it no longer dies at the wall like an uncached runaway would. A genuine
+      // runaway (fresh tokens every turn) still trips. Fail loud BEFORE acting on
+      // this turn's output so a runaway never bleeds the provider's credit dry.
+      // Agnostic: no per-agent knowledge. Runaway coverage is unchanged —
+      // maxTurns + the no-progress detector remain the loop backstops.
+      if (effectiveInputTokens + outputTokens > maxTotalTokensPerJob) {
+        trace('token_budget_exceeded', {
+          turn,
+          effectiveInputTokens,
+          inputTokens,
+          outputTokens,
+          maxTotalTokensPerJob,
+        });
         await failJob(db, jobId as string, 'token_budget_exceeded', runStats(), messages);
         return { status: 'failed', error: 'token_budget_exceeded' };
       }
@@ -1184,7 +1251,13 @@ export async function executeJob(
         turn,
         toolCalls: rawToolCalls.map((tc) => tc.toolName),
         textLen: (response.text ?? '').length,
-        usage: { in: promptT, out: completionT },
+        usage: {
+          in: promptTok,
+          cached: cachedT,
+          effective: effectiveT,
+          cacheRatio: promptTok > 0 ? Number((cachedT / promptTok).toFixed(2)) : 0,
+          out: completionT,
+        },
       });
 
       // e-pré. Anti-spam guard (invariant 8). A "delivery-only" turn is one
@@ -1337,6 +1410,58 @@ export async function executeJob(
 
       let awaitingApproval = false;
 
+      // Parallel pre-pass: when EVERY tool call this turn is an independent READ
+      // (no delegation, no writes, no return_result), run them in
+      // concurrency-limited waves and cache the results. The serial loop below
+      // then consumes the cache instead of blocking on each call. This is the
+      // fix for sync-blocking scrape batches: a 19-read turn finishes in ~3 waves
+      // (~tens of seconds) instead of 19 serial ~25s calls (~8 min) — which kept
+      // the prompt cache cold and tripped the 5-min orphan-reset. Reads are
+      // side-effect-free and approval-free, so concurrency can't reorder state or
+      // skip an approval gate. Any write/delegation tool in the turn → serial path.
+      const sharedToolCtx = {
+        jobId: jobId as string,
+        agentId: agentRow.id,
+        entityId: job.entityId ?? '',
+        db,
+        jobChatId: job.chatId ?? null,
+        embeddingClient: deps.embeddingClient,
+        workspaces: agentWorkspacesList,
+        provisioning: TOOL_PROVISIONING,
+      };
+      const sharedToolOpts = {
+        approvalRules: approvalRuleList,
+        onApprovalRequired: async () => {},
+      };
+      const preExecuted = new Map<string, Awaited<ReturnType<typeof executeTool>>>();
+      const parallelizable =
+        callsToProcess.length > 1 &&
+        callsToProcess.every(
+          (c) => !c.name.startsWith('assign_') && toolMap.get(c.name)?.riskLevel === 'read',
+        );
+      if (parallelizable) {
+        // Cap at the per-turn tool budget so we never execute past the limit the
+        // serial loop would enforce.
+        const batch = callsToProcess.slice(0, DEFAULT_LIMITS.maxToolCallsPerTurn);
+        trace('parallel_tool_prepass', { turn, count: batch.length, concurrency: toolConcurrency });
+        for (let i = 0; i < batch.length; i += toolConcurrency) {
+          const wave = batch.slice(i, i + toolConcurrency);
+          const results = await Promise.all(
+            wave.map(async (c) => {
+              const def = toolMap.get(c.name);
+              if (!def) return { id: c.id, r: null };
+              return {
+                id: c.id,
+                r: await executeTool(def, c.input, sharedToolCtx, sharedToolOpts),
+              };
+            }),
+          );
+          for (const { id, r } of results) if (r) preExecuted.set(id, r);
+          // Heartbeat after each wave so a long batch isn't reaped as orphaned.
+          await touchJob(db, jobId as string);
+        }
+      }
+
       for (const call of callsToProcess) {
         // Bug A fix: if a prior tool in this turn needed approval, do NOT execute
         // subsequent tool calls. Inject a [DEFERRED] marker so every tool_use block
@@ -1452,6 +1577,7 @@ export async function executeJob(
                 toolsUsed,
                 inputTokens,
                 outputTokens,
+                effectiveInputTokens,
               });
 
               const jobShape = {
@@ -1570,24 +1696,11 @@ export async function executeJob(
         }
 
         // Non-delegation tool
-        const toolResult = await executeTool(
-          toolDef,
-          call.input,
-          {
-            jobId: jobId as string,
-            agentId: agentRow.id,
-            entityId: job.entityId ?? '',
-            db,
-            jobChatId: job.chatId ?? null,
-            embeddingClient: deps.embeddingClient,
-            workspaces: agentWorkspacesList,
-            provisioning: TOOL_PROVISIONING,
-          },
-          {
-            approvalRules: approvalRuleList,
-            onApprovalRequired: async () => {},
-          },
-        );
+        // Reuse the result if this read was already run in the parallel pre-pass;
+        // otherwise execute now (writes, single-tool turns, mixed turns).
+        const toolResult =
+          preExecuted.get(call.id) ??
+          (await executeTool(toolDef, call.input, sharedToolCtx, sharedToolOpts));
 
         if (toolResult.outcome === 'awaiting_approval') {
           const awaitingMarker = `[AWAITING_APPROVAL] tool_call_id=${call.id}`;
@@ -1838,6 +1951,7 @@ export async function executeJob(
             toolsUsed,
             inputTokens,
             outputTokens,
+            effectiveInputTokens,
             totalDurationMs: Date.now() - startedAt,
           });
           return { status: 'awaiting_tasks' };
@@ -1917,6 +2031,7 @@ export async function executeJob(
         toolsUsed,
         inputTokens,
         outputTokens,
+        effectiveInputTokens,
       });
     }
   } catch (err) {

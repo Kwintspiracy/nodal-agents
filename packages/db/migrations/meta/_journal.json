@@ -239,6 +239,13 @@
       "when": 1781300000000,
       "tag": "0033_agent_fallback_chain",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1781500000000,
+      "tag": "0035_agent_jobs_effective_input_tokens",
+      "breakpoints": true
     }
   ]
 }

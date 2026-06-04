@@ -21,6 +21,8 @@ import {
   uploadToWorkspaceAction,
   listWorkspaceFilesAction,
   deleteWorkspaceFileAction,
+  listAgentApprovalRulesAction,
+  setAgentApprovalRuleAction,
   type AgentRow,
   type AgentEditRow,
   type AgentWorkspaceRow,
@@ -30,6 +32,7 @@ import {
   type AgentMcpServerRow,
   type JobRow,
   type SkillRow,
+  type ApprovalRuleUiRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { MODEL_CATALOG, findModelCatalogEntry, groupModelCatalog } from '@nodal-agents/shared';
@@ -42,6 +45,7 @@ import EdAddButton from '@/components/ui/EdAddButton';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 import ConnectorsTabContent from './ConnectorsTabContent.tsx';
+import type { OperationDescriptor } from '@nodal-agents/shared';
 
 /**
  * AgentComposer — detail page for /agents/[id]/edit.
@@ -67,7 +71,7 @@ import ConnectorsTabContent from './ConnectorsTabContent.tsx';
  * Settings tab is where editing happens. Sticky save bar at the bottom.
  */
 
-type Tab = 'overview' | 'skills' | 'connectors' | 'runs' | 'settings';
+type Tab = 'overview' | 'skills' | 'connectors' | 'runs' | 'autonomy' | 'settings';
 type AgentRole = 'worker' | 'router' | 'planner';
 
 function dbRoleToUiRole(
@@ -306,6 +310,13 @@ export default function AgentComposer({
           jobs={jobs}
           agents={[{ id: agent.id, name: agent.name, slug: agent.slug } as AgentRow, ...peers]}
           agentId={agent.id}
+        />
+      )}
+      {tab === 'autonomy' && (
+        <AutonomyTab
+          agentId={agent.id}
+          connectors={connectors}
+          hasTelegramBot={!!agent.telegramBotToken}
         />
       )}
       {tab === 'settings' && (
@@ -562,6 +573,7 @@ function TabsBar({
     { id: 'skills', label: 'Skills', count: counts.skills },
     { id: 'connectors', label: 'Connectors', count: counts.connectors },
     { id: 'runs', label: 'Runs', count: counts.runs },
+    { id: 'autonomy', label: 'Autonomy' },
     { id: 'settings', label: 'Settings' },
   ];
   return (
@@ -906,6 +918,223 @@ function SkillsTab({ skills }: { skills: SkillRow[] }) {
         ))}
       </div>
     </SectionCard>
+  );
+}
+
+// ─── Autonomy tab — per-tool approval gate controls ───────────────────────────
+//
+// Gateable tools = write/destructive operations from the agent's assigned
+// connectors + telegram_send_message if a Telegram bot is configured.
+// Read-only tools (risk='read') are never gated — they're always autonomous and
+// are not shown to avoid clutter.
+//
+// The three-way control maps directly to approval_rules.action:
+//   Autonomous   → delete the rule (runtime default = auto_approve)
+//   Ask first    → action='require_approval'
+//   Block        → action='block'
+
+// Static: always-possible outward tool when a bot is configured.
+const TELEGRAM_SEND_OPERATION: OperationDescriptor = {
+  slug: 'telegram_send_message',
+  name: 'Send Telegram message',
+  risk: 'destructive',
+  requiresApproval: true,
+  description: 'Deliver a message to the user via the configured Telegram bot (irreversible).',
+};
+
+type ApprovalAction = 'auto_approve' | 'require_approval' | 'block';
+
+function AutonomyTab({
+  agentId,
+  connectors,
+  hasTelegramBot,
+}: {
+  agentId: string;
+  connectors: AgentConnectorRow[];
+  hasTelegramBot: boolean;
+}) {
+  const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState<Set<string>>(new Set());
+
+  // Load current rules on mount
+  useEffect(() => {
+    listAgentApprovalRulesAction(agentId).then((result) => {
+      if (result.ok) setRules(result.data);
+      setLoaded(true);
+    });
+  }, [agentId]);
+
+  // Build the list of gateable tools from assigned connectors (write+destructive)
+  // plus Telegram if a bot is wired.
+  const gateableTools = useMemo<OperationDescriptor[]>(() => {
+    const ops: OperationDescriptor[] = [];
+    for (const conn of connectors) {
+      if (!conn.assigned) continue;
+      for (const op of conn.availableOperations) {
+        if (op.risk === 'read') continue;
+        // If the connector has an enabledOperations whitelist, only show those.
+        if (conn.enabledOperations !== null && !conn.enabledOperations.includes(op.slug)) continue;
+        ops.push(op);
+      }
+    }
+    if (hasTelegramBot) {
+      ops.push(TELEGRAM_SEND_OPERATION);
+    }
+    return ops;
+  }, [connectors, hasTelegramBot]);
+
+  function ruleFor(toolName: string): ApprovalAction {
+    return (rules.find((r) => r.toolName === toolName)?.action) ?? 'auto_approve';
+  }
+
+  function handleChange(toolName: string, action: ApprovalAction) {
+    // Optimistic update
+    setRules((prev) => {
+      const without = prev.filter((r) => r.toolName !== toolName);
+      if (action === 'auto_approve') return without;
+      return [...without, { id: '', toolName, action }];
+    });
+
+    setSaving((prev) => new Set([...prev, toolName]));
+    void setAgentApprovalRuleAction({ agentId, toolName, action }).then((result) => {
+      setSaving((prev) => {
+        const next = new Set(prev);
+        next.delete(toolName);
+        return next;
+      });
+      if (!result.ok) {
+        toast.error(result.message);
+        // Reload from server on error
+        listAgentApprovalRulesAction(agentId).then((r) => {
+          if (r.ok) setRules(r.data);
+        });
+      }
+    });
+  }
+
+  if (!loaded) {
+    return (
+      <SectionCard>
+        <p className="text-[12.5px] text-ink-4">Loading…</p>
+      </SectionCard>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <SectionCard>
+        <SectionHead
+          label="Autonomy / Approvals"
+          hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Read-only tools are always autonomous and not shown."
+        />
+        {gateableTools.length === 0 ? (
+          <p className="text-[12.5px] text-ink-3">
+            No write or destructive tools are currently assigned to this agent. Assign a connector
+            (e.g. Gmail) or configure a Telegram bot to see its gateable tools here.
+          </p>
+        ) : (
+          <div
+            className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+            data-testid="autonomy-tool-list"
+          >
+            {gateableTools.map((op) => (
+              <AutonomyToolRow
+                key={op.slug}
+                op={op}
+                value={ruleFor(op.slug)}
+                saving={saving.has(op.slug)}
+                onChange={(action) => handleChange(op.slug, action)}
+              />
+            ))}
+          </div>
+        )}
+        <p className="mt-4 text-[11px] text-ink-4">
+          Default when no rule is set:{' '}
+          <span className="font-medium text-ink-3">Autonomous</span>. Rules take effect on the next
+          job — already-running jobs are not affected.
+        </p>
+      </SectionCard>
+    </div>
+  );
+}
+
+function AutonomyToolRow({
+  op,
+  value,
+  saving,
+  onChange,
+}: {
+  op: OperationDescriptor;
+  value: ApprovalAction;
+  saving: boolean;
+  onChange: (action: ApprovalAction) => void;
+}) {
+  const riskLabel: Record<string, string> = { write: 'write', destructive: 'irreversible' };
+
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+      {/* Tool identity */}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-medium text-ink">{op.name}</span>
+          <span
+            className={[
+              'inline-flex h-[18px] items-center rounded-full px-2 font-mono text-[9.5px] uppercase tracking-[0.1em]',
+              op.risk === 'destructive'
+                ? 'bg-err/10 text-err'
+                : 'bg-warn/10 text-warn',
+            ].join(' ')}
+          >
+            {riskLabel[op.risk] ?? op.risk}
+          </span>
+        </div>
+        {op.description && (
+          <p className="mt-0.5 text-[12px] leading-[1.4] text-ink-3">{op.description}</p>
+        )}
+        <code className="mt-1 block font-mono text-[10.5px] text-ink-4">{op.slug}</code>
+      </div>
+
+      {/* 3-way control */}
+      <div
+        className="flex shrink-0 overflow-hidden rounded-lg border border-rule-2"
+        role="group"
+        aria-label={`Approval policy for ${op.name}`}
+      >
+        {(
+          [
+            { action: 'auto_approve' as const, label: 'Autonomous' },
+            { action: 'require_approval' as const, label: 'Ask first' },
+            { action: 'block' as const, label: 'Block' },
+          ] as { action: ApprovalAction; label: string }[]
+        ).map(({ action, label }, idx) => {
+          const isActive = value === action;
+          const activeClass =
+            action === 'block'
+              ? 'bg-err/15 text-err border-err/30'
+              : action === 'require_approval'
+                ? 'bg-warn/15 text-warn border-warn/30'
+                : 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30';
+          return (
+            <button
+              key={action}
+              type="button"
+              disabled={saving}
+              onClick={() => onChange(action)}
+              data-testid={`autonomy-btn-${op.slug}-${action}`}
+              className={[
+                'relative h-[32px] px-3 text-[12px] font-medium transition-colors',
+                idx > 0 ? 'border-l border-rule-2' : '',
+                isActive ? activeClass : 'bg-canvas text-ink-3 hover:bg-hover hover:text-ink-2',
+                saving ? 'cursor-wait opacity-60' : '',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -17,7 +17,15 @@ export const APIFY_OPERATIONS: OperationDescriptor[] = [
       'Start an Apify actor run and wait for it to finish. Consumes Apify platform credits.',
   },
 
-  // ─── Read (3) ────────────────────────────────────────────────────────────────
+  // ─── Read (4) ────────────────────────────────────────────────────────────────
+  {
+    slug: 'apify_web_browse',
+    name: 'Web browse',
+    risk: 'read',
+    requiresApproval: false,
+    description:
+      'Scrape a web page or run a web search and get the content back in one synchronous call (no polling). Consumes a small amount of Apify credits.',
+  },
   {
     slug: 'apify_get_run',
     name: 'Get run',

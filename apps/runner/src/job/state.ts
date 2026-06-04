@@ -111,6 +111,8 @@ export async function claimJob(
 interface RunStats {
   inputTokens: number;
   outputTokens: number;
+  /** Cumulative effective (non-cached) input — what Guard 1a's budget measures. */
+  effectiveInputTokens?: number;
   turn: number;
   totalDurationMs?: number;
 }
@@ -157,6 +159,9 @@ export async function completeJob(
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
         turn: stats.turn,
+        ...(stats.effectiveInputTokens !== undefined && {
+          effectiveInputTokens: stats.effectiveInputTokens,
+        }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -196,6 +201,9 @@ export async function failJob(
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
         turn: stats.turn,
+        ...(stats.effectiveInputTokens !== undefined && {
+          effectiveInputTokens: stats.effectiveInputTokens,
+        }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -233,6 +241,9 @@ export async function cancelJob(
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
         turn: stats.turn,
+        ...(stats.effectiveInputTokens !== undefined && {
+          effectiveInputTokens: stats.effectiveInputTokens,
+        }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -253,6 +264,7 @@ export async function saveCheckpoint(
     toolsUsed: string[];
     inputTokens?: number;
     outputTokens?: number;
+    effectiveInputTokens?: number;
     totalDurationMs?: number;
   },
 ): Promise<void> {
@@ -266,9 +278,23 @@ export async function saveCheckpoint(
       updatedAt: new Date(),
       ...(checkpoint.inputTokens !== undefined && { inputTokens: checkpoint.inputTokens }),
       ...(checkpoint.outputTokens !== undefined && { outputTokens: checkpoint.outputTokens }),
+      ...(checkpoint.effectiveInputTokens !== undefined && {
+        effectiveInputTokens: checkpoint.effectiveInputTokens,
+      }),
       ...(checkpoint.totalDurationMs !== undefined && {
         totalDurationMs: checkpoint.totalDurationMs,
       }),
     })
     .where(eq(agentJobs.id, jobId));
+}
+
+/**
+ * Heartbeat: bump `updated_at` so the orphan-cleanup cron (resetOrphanedJobs,
+ * staleMinutes=5) does not reap a job that is actively working but slow — e.g. a
+ * turn running many blocking tool calls, or a long LLM call near the timeout.
+ * Cheap single-column UPDATE; safe to call repeatedly mid-turn. Mirrors the bump
+ * that reset-orphans itself does for legitimately-waiting delegation parents.
+ */
+export async function touchJob(db: AnyDrizzleDb, jobId: string): Promise<void> {
+  await db.update(agentJobs).set({ updatedAt: new Date() }).where(eq(agentJobs.id, jobId));
 }

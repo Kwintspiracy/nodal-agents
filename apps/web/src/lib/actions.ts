@@ -3340,6 +3340,148 @@ export async function resolveApprovalAction(
   }
 }
 
+// ─── Agent Approval Rule Actions ─────────────────────────────────────────────
+//
+// approval_rules is the runtime gate used by executeTool (_matchApprovalRule).
+// Each row: (entityId, agentId, toolName, action ∈ 'auto_approve'|'require_approval'|'block').
+// No rule → default is auto_approve (execute without gating).
+//
+// agents.requiresApproval (text[]) is a legacy column that is NOT read by the
+// runner gate — the runner exclusively uses approval_rules rows. It can be
+// treated as dead / not surfaced in UI.
+// agentSkillAssignments.approvalOverrides (jsonb) is similarly unused by the
+// current gate — the gate only reads approval_rules rows.
+
+export type ApprovalRuleUiRow = {
+  id: string;
+  toolName: string;
+  action: 'auto_approve' | 'require_approval' | 'block';
+};
+
+/**
+ * List all approval_rules rows scoped to this agent (entity-owned check).
+ * Returns only agent-scoped rows (agentId = agentId), not entity-wide wildcards.
+ */
+export async function listAgentApprovalRulesAction(
+  agentId: string,
+): Promise<ActionResult<ApprovalRuleUiRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+
+    // Verify agent belongs to this entity
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const rows = await db
+      .select({ id: approvalRules.id, toolName: approvalRules.toolName, action: approvalRules.action })
+      .from(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, session.entityId),
+          eq(approvalRules.agentId, agentId),
+        ),
+      );
+
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        toolName: r.toolName,
+        action: (r.action ?? 'auto_approve') as ApprovalRuleUiRow['action'],
+      })),
+    );
+  } catch (err) {
+    console.error('[listAgentApprovalRulesAction]', err);
+    return fail('db_error', 'Failed to load approval rules');
+  }
+}
+
+const SetApprovalRuleSchema = z.object({
+  agentId: z.string().guid(),
+  toolName: z.string().min(1).max(200),
+  // null = delete the rule (revert to default auto_approve)
+  action: z.enum(['auto_approve', 'require_approval', 'block']).nullable(),
+});
+
+/**
+ * Upsert or delete one approval_rules row for (entity, agent, toolName).
+ * action=null → DELETE the row (reverts to runtime default: auto_approve).
+ * action='auto_approve' → also deletes (no rule needed; default is already auto_approve).
+ * action='require_approval'|'block' → upsert.
+ *
+ * Ownership checked: agent must belong to the active entity.
+ */
+export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetApprovalRuleSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, toolName, action } = parsed.data;
+    const db = getDb();
+
+    // Verify agent ownership
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    if (action === null || action === 'auto_approve') {
+      // DELETE: no rule needed for the default behaviour
+      await db
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            eq(approvalRules.agentId, agentId),
+            eq(approvalRules.toolName, toolName),
+          ),
+        );
+    } else {
+      // UPSERT (insert or update the existing row)
+      const existing = await db
+        .select({ id: approvalRules.id })
+        .from(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            eq(approvalRules.agentId, agentId),
+            eq(approvalRules.toolName, toolName),
+          ),
+        )
+        .limit(1);
+
+      if (existing.length > 0 && existing[0]) {
+        await db
+          .update(approvalRules)
+          .set({ action, updatedAt: new Date() })
+          .where(eq(approvalRules.id, existing[0].id));
+      } else {
+        await db.insert(approvalRules).values({
+          entityId: session.entityId,
+          agentId,
+          toolName,
+          action,
+        });
+      }
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentApprovalRuleAction]', err);
+    return fail('db_error', 'Failed to save approval rule');
+  }
+}
+
 // ─── Skill Actions ────────────────────────────────────────────────────────────
 
 export type SkillRow = {
