@@ -241,10 +241,10 @@
       "breakpoints": true
     },
     {
-      "idx": 35,
+      "idx": 36,
       "version": "7",
-      "when": 1781500000000,
-      "tag": "0035_agent_jobs_effective_input_tokens",
+      "when": 1781600000000,
+      "tag": "0036_agent_jobs_effective_input_tokens",
       "breakpoints": true
     }
   ]
