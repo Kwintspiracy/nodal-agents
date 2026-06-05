@@ -3342,6 +3342,8 @@ export async function resolveApprovalAction(
 
 // ─── Skill Actions ────────────────────────────────────────────────────────────
 
+export type InstalledScript = { path: string; language: string };
+
 export type SkillRow = {
   id: string;
   name: string;
@@ -3356,6 +3358,11 @@ export type SkillRow = {
   description: string | null;
   active: boolean;
   requiredBuiltins: string[];
+  /** Community-install metadata (open Agent Skills / SKILL.md format).
+   *  isCommunity=false and null source/scripts for system + custom skills. */
+  isCommunity: boolean;
+  source: string | null;
+  installedScripts: InstalledScript[] | null;
   assignmentCount: number;
   /** Each agent currently assigned to this skill. Sized by assignmentCount
    *  but capped at the SQL layer at 8 names — the UI only renders an avatar
@@ -3381,6 +3388,9 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         description: agentSkills.description,
         active: agentSkills.active,
         requiredBuiltins: agentSkills.requiredBuiltins,
+        isCommunity: agentSkills.isCommunity,
+        source: agentSkills.source,
+        installedScripts: agentSkills.installedScripts,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
       })
@@ -3466,6 +3476,9 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         description: r.description,
         active: r.active ?? true,
         requiredBuiltins: (r.requiredBuiltins as string[] | null) ?? [],
+        isCommunity: r.isCommunity ?? false,
+        source: r.source,
+        installedScripts: (r.installedScripts as InstalledScript[] | null) ?? null,
         assignmentCount: tallyMap.get(r.id) ?? 0,
         assignedAgents: assignedBySkill.get(r.id) ?? [],
         createdAt: r.createdAt,
@@ -3534,6 +3547,106 @@ export async function deleteSkillAction(id: string): Promise<ActionResult<void>>
   } catch (err) {
     console.error('[deleteSkillAction]', err);
     return fail('db_error', 'Failed to delete skill');
+  }
+}
+
+const InstallCommunitySkillSchema = z.object({
+  source: z.string().min(1).max(2048),
+});
+
+export type CommunitySkillInstallResult = {
+  slug: string;
+  name: string;
+  description: string;
+  source: string;
+  installedScripts: InstalledScript[];
+  fileCount: number;
+  reinstalled: boolean;
+};
+
+/**
+ * Install a community skill (open Agent Skills / SKILL.md format) from a GitHub
+ * URL, "owner/repo", or a skills.sh path. Calls the runner's
+ * POST /api/skills/install and awaits the result synchronously. Never throws to
+ * the client — network/runner errors are returned as {ok:false, message}.
+ */
+export async function installCommunitySkillAction(
+  source: string,
+): Promise<ActionResult<CommunitySkillInstallResult>> {
+  try {
+    const session = await getSession();
+    const parsed = InstallCommunitySkillSchema.safeParse({ source });
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[installCommunitySkillAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/install`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ source: parsed.data.source, entityId: session.entityId }),
+      });
+    } catch (fetchErr) {
+      console.error('[installCommunitySkillAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as
+      | { ok: true; skill: CommunitySkillInstallResult }
+      | { ok: false; error: string; message: string };
+    if (!body.ok) {
+      return fail(body.error, body.message);
+    }
+    revalidatePath('/skills');
+    return ok(body.skill);
+  } catch (err) {
+    console.error('[installCommunitySkillAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
+/**
+ * Uninstall a community skill by slug via the runner's POST
+ * /api/skills/uninstall, then revalidate the skills route.
+ */
+export async function uninstallCommunitySkillAction(slug: string): Promise<ActionResult<void>> {
+  try {
+    if (!z.string().min(1).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid skill slug');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[uninstallCommunitySkillAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/uninstall`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ slug }),
+      });
+    } catch (fetchErr) {
+      console.error('[uninstallCommunitySkillAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as { ok: boolean; error?: string; message?: string };
+    if (!body.ok) {
+      return fail(body.error ?? 'uninstall_failed', body.message ?? 'Uninstall failed');
+    }
+    revalidatePath('/skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[uninstallCommunitySkillAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
   }
 }
 
@@ -3725,6 +3838,9 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
         description: agentSkills.description,
         active: agentSkills.active,
         requiredBuiltins: agentSkills.requiredBuiltins,
+        isCommunity: agentSkills.isCommunity,
+        source: agentSkills.source,
+        installedScripts: agentSkills.installedScripts,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
       })
@@ -3753,6 +3869,9 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       description: row.description,
       active: row.active ?? true,
       requiredBuiltins: (row.requiredBuiltins as string[] | null) ?? [],
+      isCommunity: row.isCommunity ?? false,
+      source: row.source,
+      installedScripts: (row.installedScripts as InstalledScript[] | null) ?? null,
       assignmentCount: 0,
       // The skill-detail view doesn't render the avatar stack; cheaper to
       // return [] here than to pay the join. List callers use listSkillsAction.

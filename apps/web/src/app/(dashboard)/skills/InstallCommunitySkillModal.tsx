@@ -1,0 +1,177 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import { Warning } from '@phosphor-icons/react';
+import { installCommunitySkillAction, type CommunitySkillInstallResult } from '@/lib/actions.ts';
+import Modal from '@/components/ui/Modal';
+
+type Props = {
+  open: boolean;
+  onClose: () => void;
+};
+
+/**
+ * InstallCommunitySkillModal — modal for installing a community skill
+ * (open Agent Skills / SKILL.md format) from GitHub, a direct URL, or a
+ * skills.sh path.
+ *
+ * Accepts: "owner/repo", a GitHub URL, or a "skills-sh/owner/repo/skill" path.
+ * Calls installCommunitySkillAction and renders a script-warning block when
+ * the installed skill bundles executable scripts (which the runtime does NOT run).
+ */
+export default function InstallCommunitySkillModal({ open, onClose }: Props) {
+  const router = useRouter();
+  const [source, setSource] = useState('');
+  const [isPending, startTransition] = useTransition();
+  const [successSkill, setSuccessSkill] = useState<CommunitySkillInstallResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  function handleClose() {
+    // Reset state when the modal is closed so re-opening starts fresh.
+    setSource('');
+    setSuccessSkill(null);
+    setErrorMessage(null);
+    onClose();
+  }
+
+  function handleInstall() {
+    if (!source.trim()) return;
+    setSuccessSkill(null);
+    setErrorMessage(null);
+
+    startTransition(async () => {
+      const result = await installCommunitySkillAction(source.trim());
+      if (!result.ok) {
+        setErrorMessage(result.message);
+        toast.error(result.message);
+        return;
+      }
+      setSuccessSkill(result.data);
+      toast.success(
+        result.data.reinstalled
+          ? `Skill "${result.data.name}" reinstalled`
+          : `Skill "${result.data.name}" installed`,
+      );
+      router.refresh();
+    });
+  }
+
+  return (
+    <Modal open={open} onClose={handleClose} title="Install community skill">
+      <div className="space-y-4">
+        {/* Static trust warning — always shown */}
+        <div className="flex gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-3">
+          <Warning size={16} weight="fill" className="mt-[1px] shrink-0 text-amber-400" />
+          <p className="text-[12.5px] leading-[1.5] text-amber-300">
+            Only install skills from sources you trust — a skill&apos;s instructions run with your
+            agent&apos;s tools.
+          </p>
+        </div>
+
+        {/* Source input */}
+        <div className="space-y-1.5">
+          <label htmlFor="skill-source" className="block text-[12px] font-medium text-ink-2">
+            Source
+          </label>
+          <input
+            id="skill-source"
+            type="text"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !isPending) handleInstall();
+            }}
+            placeholder="owner/repo, GitHub URL, or skills.sh path"
+            disabled={isPending}
+            className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-rule-2 focus:outline-none disabled:opacity-50"
+          />
+        </div>
+
+        {/* Error state */}
+        {errorMessage && !successSkill && (
+          <div className="rounded-lg border border-err/30 bg-err/10 px-3.5 py-3">
+            <p className="text-[12.5px] leading-[1.5] text-err">{errorMessage}</p>
+          </div>
+        )}
+
+        {/* Success state — show script warning if applicable */}
+        {successSkill && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-ok/30 bg-ok/10 px-3.5 py-3">
+              <p className="text-[12.5px] font-medium leading-[1.5] text-ok">
+                {successSkill.reinstalled ? 'Reinstalled' : 'Installed'}:{' '}
+                <span className="font-semibold">{successSkill.name}</span>
+              </p>
+              {successSkill.description && (
+                <p className="mt-1 text-[12px] leading-[1.4] text-ok/70">
+                  {successSkill.description}
+                </p>
+              )}
+            </div>
+
+            {/* Script warning — only rendered when the skill bundles scripts */}
+            {successSkill.installedScripts.length > 0 && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-3">
+                <div className="flex gap-2.5">
+                  <Warning size={15} weight="fill" className="mt-[1px] shrink-0 text-amber-400" />
+                  <div className="space-y-1.5">
+                    <p className="text-[12.5px] font-medium leading-[1.4] text-amber-300">
+                      This skill bundles executable scripts — they will not run.
+                    </p>
+                    <p className="text-[12px] leading-[1.4] text-amber-300/80">
+                      The runtime does not execute skill scripts. Knowledge-based features work;
+                      script-based features won&apos;t.
+                    </p>
+                    <ul className="mt-2 space-y-0.5">
+                      {successSkill.installedScripts.map((s) => (
+                        <li
+                          key={s.path}
+                          className="flex items-center gap-2 font-mono text-[11px] text-amber-300/70"
+                        >
+                          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] uppercase">
+                            {s.language}
+                          </span>
+                          <span className="truncate">{s.path}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleClose}
+            className="inline-flex h-[34px] items-center rounded-md border border-rule px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            {successSkill ? 'Close' : 'Cancel'}
+          </button>
+          {!successSkill && (
+            <button
+              type="button"
+              onClick={handleInstall}
+              disabled={isPending || !source.trim()}
+              className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-skill-vivid px-3.5 text-[13px] font-medium text-white transition-[filter] hover:brightness-[0.94] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isPending ? (
+                <>
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Installing…
+                </>
+              ) : (
+                'Install'
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}

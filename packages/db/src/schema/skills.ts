@@ -35,12 +35,24 @@ export const agentSkills = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    // ─── Community-installed skills (open Agent Skills / SKILL.md format) ───
+    // is_community = true for skills installed at runtime from an external
+    // source (vs system catalog or user-authored custom skills). source is the
+    // install origin (GitHub URL / skills.sh path). installed_scripts records
+    // the bundled scripts detected at install (.py/.sh/etc.) — surfaced to the
+    // user as a warning, since the runtime does NOT execute skill scripts.
+    isCommunity: boolean('is_community').notNull().default(false),
+    source: text('source'),
+    installedScripts: jsonb('installed_scripts').$type<
+      Array<{ path: string; language: string }>
+    >(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [
     index('idx_agent_skills_entity_id').on(table.entityId),
     index('idx_skills_active').on(table.active, table.slug),
+    index('idx_agent_skills_is_community').on(table.isCommunity),
   ],
 );
 
