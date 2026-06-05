@@ -13,6 +13,7 @@ import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
+import { installSkillRoute, uninstallSkillRoute } from './routes/skills.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
@@ -95,6 +96,11 @@ export function createApp(
   app.post('/api/approve', (c) => approveRoute(c, deps, runnerEnv));
 
   app.post('/api/cron', (c) => cronRoute(c, deps));
+
+  // Community skill install/uninstall (open Agent Skills format). Own
+  // WORKER_SECRET check inside the handlers (web → runner cross-process call).
+  app.post('/api/skills/install', (c) => installSkillRoute(c, deps, runnerEnv));
+  app.post('/api/skills/uninstall', (c) => uninstallSkillRoute(c, deps, runnerEnv));
 
   // ── 404 fallback ──────────────────────────────────────────────────────────────
   app.notFound((c) => c.json({ error: 'not_found' }, 404));

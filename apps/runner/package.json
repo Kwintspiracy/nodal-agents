@@ -26,7 +26,10 @@
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
     "cron-parser": "^5.5.0",
+    "fflate": "^0.8.3",
     "hono": "^4.12.18",
+    "tar": "^7.5.16",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

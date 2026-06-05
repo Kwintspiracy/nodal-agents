@@ -48,6 +48,21 @@ export interface ToolContext {
    */
   workspaces?: Array<{ label: string; path: string }>;
   /**
+   * Absolute path to the community-skill store root (e.g. `~/.nodalai/skills`),
+   * injected by the runner. Each installed skill's bundled files live under
+   * `<skillStoreDir>/<slug>/`. Absent in lightweight contexts → the
+   * `skill_file_*` tools fail loud (`skill_store_unavailable`) instead of
+   * reading from an unknown location.
+   */
+  skillStoreDir?: string;
+  /**
+   * Slugs of the skills assigned to this agent. The `skill_file_*` tools only
+   * allow reading the bundle of a skill the agent actually holds — an agent
+   * cannot read another skill's files. Loaded by the runner from
+   * agent_skill_assignments alongside requiredBuiltins.
+   */
+  assignedSkillSlugs?: string[];
+  /**
    * Infrastructure-provisioning capabilities for ROOT meta-tools that create
    * MCP servers (and, later, connectors). Injected by the runner, which owns
    * the MCP adapter and secret encryption — so packages/tools takes no

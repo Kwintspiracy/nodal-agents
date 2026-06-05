@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { DotsThree, PencilSimple, Plus, Trash } from '@phosphor-icons/react';
+import { DotsThree, PencilSimple, Plus, Trash, CloudX } from '@phosphor-icons/react';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
-import { deleteSkillAction } from '@/lib/actions.ts';
+import { deleteSkillAction, uninstallCommunitySkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
 import MonoCode from '@/components/ui/MonoCode';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
@@ -64,6 +64,7 @@ function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right'
 
 function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -77,12 +78,28 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
     });
   };
 
+  const performUninstall = () => {
+    setUninstallConfirmOpen(false);
+    startTransition(async () => {
+      const r = await uninstallCommunitySkillAction(skill.slug);
+      if (!r.ok) toast.error(r.message);
+      else toast.success(`Skill "${skill.name}" uninstalled`);
+    });
+  };
+
   return (
     <tr className="border-b border-rule-2 last:border-0 hover:bg-hover">
       <td className="px-[18px] py-4 align-middle">
         <div className="flex items-center gap-3">
           <div className="min-w-0">
-            <div className="text-[13.5px] font-medium leading-[1.2] text-ink">{skill.name}</div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[13.5px] font-medium leading-[1.2] text-ink">{skill.name}</span>
+              {skill.isCommunity && (
+                <span className="shrink-0 rounded bg-skill-vivid/15 px-1.5 py-0.5 font-mono text-[9.5px] font-medium uppercase tracking-[0.08em] text-skill-vivid">
+                  community
+                </span>
+              )}
+            </div>
             <div className="mt-0.5 text-[12px] leading-[1.3] text-ink-3">
               {skill.description ?? <span className="font-mono text-ink-4">{skill.slug}</span>}
             </div>
@@ -145,6 +162,20 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
                 <div className="absolute top-[calc(100%+4px)] right-0 z-20 min-w-[140px] rounded-[9px] border border-rule-2 bg-paper p-1 shadow-[0_12px_32px_rgba(0,0,0,0.10)]">
+                  {skill.isCommunity && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setUninstallConfirmOpen(true);
+                      }}
+                      disabled={isPending}
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-err transition-colors hover:bg-warn-bg disabled:opacity-40"
+                    >
+                      <CloudX size={13} />
+                      Uninstall
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -169,6 +200,14 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
           confirmLabel="Delete"
           onConfirm={performDelete}
           onCancel={() => setConfirmOpen(false)}
+        />
+        <ConfirmDialog
+          open={uninstallConfirmOpen}
+          title={`Uninstall community skill "${skill.name}"?`}
+          message="The skill and all its agent assignments will be removed. You can reinstall it at any time from the same source."
+          confirmLabel="Uninstall"
+          onConfirm={performUninstall}
+          onCancel={() => setUninstallConfirmOpen(false)}
         />
         <AssignSkillModal
           open={assignOpen}

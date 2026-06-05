@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Plus } from '@phosphor-icons/react';
+import { Plus, CloudArrowDown } from '@phosphor-icons/react';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import PageHeader from '@/components/ui/PageHeader';
 import PageTopBar from '@/components/ui/PageTopBar';
@@ -11,6 +11,7 @@ import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import SkillsAssignedTable from './SkillsAssignedTable.tsx';
 import SkillsLibraryGrid from './SkillsLibraryGrid.tsx';
+import InstallCommunitySkillModal from './InstallCommunitySkillModal.tsx';
 
 type Tab = 'assigned' | 'custom' | 'library';
 
@@ -46,6 +47,7 @@ export default function SkillsClient({ skills, agents }: Props) {
     assignedSkills.length > 0 ? 'assigned' : customSkills.length > 0 ? 'custom' : 'library';
   const [tab, setTab] = useState<Tab>(initialTab);
   const [query, setQuery] = useState('');
+  const [installModalOpen, setInstallModalOpen] = useState(false);
 
   const active =
     tab === 'assigned' ? assignedSkills : tab === 'custom' ? customSkills : librarySkills;
@@ -90,11 +92,22 @@ export default function SkillsClient({ skills, agents }: Props) {
           />
         }
         cta={
-          <PrimaryButton variant="coral" href="/skills/new">
-            <Plus size={13} weight="bold" />
-            Create skill
-          </PrimaryButton>
+          <div className="flex items-center gap-2">
+            <PrimaryButton variant="ink" onClick={() => setInstallModalOpen(true)}>
+              <CloudArrowDown size={13} weight="bold" />
+              Install skill
+            </PrimaryButton>
+            <PrimaryButton variant="coral" href="/skills/new">
+              <Plus size={13} weight="bold" />
+              Create skill
+            </PrimaryButton>
+          </div>
         }
+      />
+
+      <InstallCommunitySkillModal
+        open={installModalOpen}
+        onClose={() => setInstallModalOpen(false)}
       />
 
       <div className="pt-5">

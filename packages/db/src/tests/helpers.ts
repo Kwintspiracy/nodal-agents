@@ -309,6 +309,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       required_config jsonb DEFAULT '[]',
       operations jsonb DEFAULT '[]',
       required_builtins text[] NOT NULL DEFAULT '{}',
+      is_community boolean NOT NULL DEFAULT false,
+      source text,
+      installed_scripts jsonb,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );

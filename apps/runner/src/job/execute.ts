@@ -82,6 +82,7 @@ import {
 import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
+import { skillStoreDir } from '../skills/index.ts';
 
 // Per-result char budget for tool outputs entering the conversation. A single
 // tool (e.g. firecrawl_scrape returning a full web page) can otherwise inject
@@ -362,6 +363,18 @@ export async function executeJob(
     .where(eq(agentWorkspacesTable.agentId, agentRow.id))
     .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
   const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
+
+  // ── 3.6 Skill-file access context ─────────────────────────────────────────
+  // Slugs of skills assigned to this agent + the store root, so the
+  // skill_file_* builtins can read an installed (community) skill's bundled
+  // files — and only the bundles of skills this agent actually holds.
+  const assignedSkillRows = await db
+    .select({ slug: agentSkills.slug })
+    .from(agentSkillAssignments)
+    .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
+    .where(eq(agentSkillAssignments.agentId, agentRow.id));
+  const assignedSkillSlugs: string[] = assignedSkillRows.map((r) => r.slug);
+  const skillStore = skillStoreDir();
 
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
   // Agents MUST have an llmKeyId pointing at an active entity_llm_keys row.
@@ -873,6 +886,8 @@ export async function executeJob(
                 jobChatId: job.chatId ?? null,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
+                skillStoreDir: skillStore,
+                assignedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
               { approvalRules: [], onApprovalRequired: async () => {} },
@@ -1427,6 +1442,8 @@ export async function executeJob(
         jobChatId: job.chatId ?? null,
         embeddingClient: deps.embeddingClient,
         workspaces: agentWorkspacesList,
+        skillStoreDir: skillStore,
+        assignedSkillSlugs,
         provisioning: TOOL_PROVISIONING,
       };
       const sharedToolOpts = {
@@ -1555,6 +1572,8 @@ export async function executeJob(
                 jobChatId: job.chatId ?? null,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
+                skillStoreDir: skillStore,
+                assignedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },

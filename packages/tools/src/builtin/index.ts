@@ -18,6 +18,7 @@ import {
 } from './file-ops';
 import { OFFICE_TOOLS } from './office-ops';
 import { META_TOOLS } from './meta-ops';
+import { SKILL_TOOLS } from './skill-ops';
 
 export { returnResultTool } from './return-result';
 export { saveMemoryTool } from './save-memory';
@@ -38,6 +39,7 @@ export {
 export { OFFICE_TOOLS } from './office-ops';
 export { META_TOOLS } from './meta-ops';
 export { createSkillTool, assignSkillTool, createAgentTool } from './meta-ops';
+export { SKILL_TOOLS, skillFileReadTool, skillFileListTool, SkillFileError } from './skill-ops';
 
 /**
  * Register all built-in tools into the given registry.
@@ -69,6 +71,12 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // root agent designation + per-grant toggles in rootGrants. NOT always-on.
   // The runner unions these into alwaysOn only for the entity's root agent.
   for (const tool of META_TOOLS) {
+    registry.register(tool);
+  }
+  // Skill-file tools (skill_file_read, skill_file_list) — gated behind an
+  // installed community skill's requiredBuiltins, NOT always-on. The runner
+  // unions each assigned skill's requiredBuiltins into the whitelist.
+  for (const tool of SKILL_TOOLS) {
     registry.register(tool);
   }
 }
