@@ -57,6 +57,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
       c.bumpChain(); // 1
       try {
@@ -95,6 +101,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
       // Even with very tight limit, approval-resume never throws
       for (let i = 0; i < 100; i++) {
@@ -111,6 +123,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
 
       // Simulate: chain 1 → awaiting_approval → resume (no bump) → chain 2
@@ -140,6 +158,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
       c.bumpToolCall(); // 1
       c.bumpToolCall(); // 2
@@ -157,6 +181,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
       c.bumpToolCall();
       c.bumpToolCall();
@@ -181,6 +211,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
       c.bumpToolCall();
       c.bumpToolCall();
@@ -215,6 +251,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
       c.bumpDelegationDepth(); // 1
       c.bumpDelegationDepth(); // 2
@@ -232,6 +274,12 @@ describe('ChainCounters', () => {
         maxConsecutiveDeliveryTurns: 3,
         maxTotalTokensPerJob: 1_500_000,
         maxNoProgressRepeats: 12,
+        noDeliveryNudgeAt: 12,
+        sameToolStreakNudgeAt: 8,
+        maxNoDeliveryNudges: 2,
+        nudgeSpacing: 3,
+        noDeliveryFailAt: 20,
+        maxCostPerJobUsd: 2.0,
       });
       c.bumpDelegationDepth();
       c.bumpDelegationDepth();

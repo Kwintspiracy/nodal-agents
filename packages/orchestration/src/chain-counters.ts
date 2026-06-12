@@ -56,6 +56,51 @@ export const DEFAULT_LIMITS: ChainLimits = {
   // before 12 identical reads, so this only catches genuinely degenerate loops —
   // and maxTurns (50) is the ultimate backstop above it.
   maxNoProgressRepeats: 12,
+  // Guard 1d — no-delivery runaway detector. Keys on turns WITHOUT any delivery
+  // tool call or return_result (not on identical args, so it catches runaways
+  // where the agent varies queries but never delivers — the forensic pattern of
+  // jobs 0ff86a1f / ac31d982 / 394b13f4). Calibration against REAL job history:
+  //   - Median legit job ≈ 4 turns; 92% of legit jobs are ≤8 turns.
+  //   - The legit TAIL is long: most jobs deliver only on their FINAL turn, so a
+  //     legit COMPLETED job can reach a max non-delivery run of 47 turns. Runaways
+  //     don't separate from this on turns-without-delivery alone — they just burn
+  //     to the 50-turn cap. So turns-without-delivery is a NUDGE signal, NOT a
+  //     clean fail signal; the true cost-cap is the (future) dollar budget.
+  //   - noDeliveryNudgeAt=12: only ~8% of legit jobs exceed 12 non-delivery turns,
+  //     so the first nudge is well-targeted — it lands on long jobs that very
+  //     likely already have enough, without firing on the 92% short majority.
+  //   - sameToolStreakNudgeAt=8: 8 consecutive turns using the SAME single tool
+  //     with no delivery is a textbook scope-creep/empty-resource loop (jobs
+  //     0ff86a1f, 394b13f4). Fires sooner than noDeliveryNudgeAt for those cases.
+  //   - maxNoDeliveryNudges=2: two forced prompts before the hard fail.
+  //   - nudgeSpacing=3: minimum turns between nudges to avoid flooding.
+  //   - noDeliveryFailAt=40: hard fail after 40 turns without delivery (post-nudge
+  //     budget exhausted). The second-highest legit max non-delivery run is 38, so
+  //     40 spares all legit-ish completions and sits just below maxTurns=50. The
+  //     only job it catches early is c66f1db0 (run 47) — the known
+  //     MCP-empty-structuredContent 2.4M-token bug-burn. The nudge above is the
+  //     PRIMARY mechanism; this is just a clearer-error, slightly-earlier backstop
+  //     below the turn cap.
+  // All five overridable via env — see execute.ts.
+  noDeliveryNudgeAt: 12,
+  sameToolStreakNudgeAt: 8,
+  maxNoDeliveryNudges: 2,
+  nudgeSpacing: 3,
+  noDeliveryFailAt: 40,
+  // Guard 1e — real dollar cost cap per job.
+  //
+  // 2.0 is a deliberate starting point, not a calibrated ceiling: we now have
+  // the tooling to observe real $/job and will tighten it once data accumulates.
+  // Known data points from OpenRouter/DeepSeek jobs:
+  //   - Runaway burns (token-limit kills): $0.7–1.6
+  //   - Legit cheap-model jobs: ~$0.3
+  //   - Mid-range models (Gemini Flash, Llama 3.3): likely ~$0.5–1.0 per job
+  //
+  // This default spares all current legit jobs AND catches the known runaways.
+  // Per-agent cost caps (for expensive models like Claude Opus, GPT-4o) are a
+  // future follow-up — those cost more per job legitimately, so a global $2
+  // cap would need to be raised for them. Override via MAX_COST_PER_JOB_USD.
+  maxCostPerJobUsd: 2.0,
 };
 
 // ─── ChainCounters ────────────────────────────────────────────────────────────

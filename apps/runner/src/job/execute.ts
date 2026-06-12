@@ -116,6 +116,16 @@ const TOOL_PROVISIONING: ToolProvisioning = {
 // (whatsapp_send_message, slack_send_message, …).
 const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(['telegram_send_message']);
 
+// Guard 1d — delivery tools whose presence in a turn counts as "delivered" for
+// the no-delivery runaway detector. Superset of DELIVERY_TOOL_NAMES: also includes
+// `dashboard_publish` (the non-Telegram delivery path) and `return_result` itself.
+// Any tool call in this set resets turnsSinceDelivery to 0.
+const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'return_result',
+  'dashboard_publish',
+  'telegram_send_message',
+]);
+
 // Channels whose ONLY path to the user is a delivery tool call (telegram_send_message).
 // For these, a job that completes without ever delivering is a silent black hole —
 // the delivery guard re-prompts the agent before letting such a job finish. Other
@@ -283,6 +293,7 @@ export async function executeJob(
       inputTokens: job.inputTokens ?? 0,
       outputTokens: job.outputTokens ?? 0,
       effectiveInputTokens: job.effectiveInputTokens ?? job.inputTokens ?? 0,
+      totalCostUsd: job.totalCostUsd ?? 0,
       turn: job.turn ?? 0,
       totalDurationMs: 0,
     });
@@ -308,6 +319,10 @@ export async function executeJob(
   // persisted column so the budget stays cumulative across self-chain resumes;
   // falls back to raw input for pre-0034 rows that never recorded it.
   let effectiveInputTokens = job.effectiveInputTokens ?? job.inputTokens ?? 0;
+  // Cumulative real dollar cost billed by the provider (Guard 1e). Seeded from
+  // the persisted column so resumes add to the running total. Undefined stays
+  // undefined (providers that don't report cost never accumulate here).
+  let totalCostUsd = job.totalCostUsd ?? 0;
   let turn = job.turn ?? 0;
   let toolsUsed: string[] = Array.isArray(job.toolsUsed) ? (job.toolsUsed as string[]) : [];
 
@@ -315,12 +330,14 @@ export async function executeJob(
     inputTokens: number;
     outputTokens: number;
     effectiveInputTokens: number;
+    totalCostUsd: number;
     turn: number;
     totalDurationMs: number;
   } => ({
     inputTokens,
     outputTokens,
     effectiveInputTokens,
+    totalCostUsd,
     turn,
     totalDurationMs: Date.now() - startedAt,
   });
@@ -1063,6 +1080,16 @@ export async function executeJob(
     const n = raw ? Number(raw) : NaN;
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_LIMITS.maxTotalTokensPerJob;
   })();
+  // Guard 1e — real dollar cost cap. Fail loud before acting on a turn's output
+  // when the cumulative billed cost exceeds the cap. Provider-reported cost
+  // (OpenRouter: `usage.cost` via providerMetadata.openrouter.usage.cost) is the
+  // signal; for providers that don't report cost this guard never fires (cost
+  // stays 0) and Guard 1a (token budget) remains the backstop.
+  const maxCostPerJobUsd = (() => {
+    const raw = process.env['MAX_COST_PER_JOB_USD'];
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_LIMITS.maxCostPerJobUsd;
+  })();
   // Guard 1c — context compaction threshold. We evict OLD tool-result bodies
   // before the model's context window overflows (a hard provider error no retry
   // recovers). Trigger = a turn's prompt crossing a fraction of the window.
@@ -1115,6 +1142,37 @@ export async function executeJob(
     const n = raw ? Number(raw) : NaN;
     return Number.isFinite(n) && n >= 2 ? Math.floor(n) : DEFAULT_LIMITS.maxNoProgressRepeats;
   })();
+
+  // Guard 1d — no-delivery runaway detector. Keys on turns without any delivery
+  // or return_result call; also tracks same-tool streaks. In-memory/intra-run.
+  // Thresholds env-overridable per-deployment; fall back to calibrated defaults.
+  const noDeliveryNudgeAt = (() => {
+    const n = Number(process.env['NO_DELIVERY_NUDGE_AT']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LIMITS.noDeliveryNudgeAt;
+  })();
+  const sameToolStreakNudgeAt = (() => {
+    const n = Number(process.env['SAME_TOOL_STREAK_NUDGE_AT']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LIMITS.sameToolStreakNudgeAt;
+  })();
+  const maxNoDeliveryNudges = (() => {
+    const n = Number(process.env['MAX_NO_DELIVERY_NUDGES']);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_LIMITS.maxNoDeliveryNudges;
+  })();
+  const nudgeSpacing = (() => {
+    const n = Number(process.env['NO_DELIVERY_NUDGE_SPACING']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LIMITS.nudgeSpacing;
+  })();
+  const noDeliveryFailAt = (() => {
+    const n = Number(process.env['NO_DELIVERY_FAIL_AT']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_LIMITS.noDeliveryFailAt;
+  })();
+  // Per-run state for Guard 1d.
+  let turnsSinceDelivery = 0;
+  let sameToolStreak = 0;
+  let lastSingleToolName: string | null = null;
+  let noDeliveryNudgesIssued = 0;
+  let turnOfLastNudge = -Infinity;
+
   // Guard 3b — no-false-success. Tool names whose last outcome this run was a
   // hard error and that were never since re-run successfully. If the agent
   // signals return_result(status='success') while this set is non-empty, it is
@@ -1223,6 +1281,22 @@ export async function executeJob(
       outputTokens += Number.isFinite(completionT) ? completionT : 0;
       effectiveInputTokens += effectiveT;
 
+      // Accumulate real dollar cost for this call (Guard 1e).
+      // OpenRouter reports per-call cost in providerMetadata.openrouter.usage.cost
+      // when `usage:{include:true}` is passed (set unconditionally in
+      // buildOpenRouterModel). Other providers don't populate this path — the
+      // guard below simply won't fire for them (cost stays 0).
+      // Safe access: providerMetadata is Record<string, JSONObject>; we read
+      // through the chain and coerce to number, guarding NaN and negative values.
+      const rawCost = (
+        response.providerMetadata as
+          | Record<string, Record<string, Record<string, unknown>> | undefined>
+          | undefined
+      )?.['openrouter']?.['usage']?.['cost'];
+      const callCostUsd =
+        typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : 0;
+      totalCostUsd += callCostUsd;
+
       // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
       // input + output, not raw input. A job that re-sends a prompt-cached
       // history (the common long-running pattern: the growing transcript is read
@@ -1242,6 +1316,23 @@ export async function executeJob(
         });
         await failJob(db, jobId as string, 'token_budget_exceeded', runStats(), messages);
         return { status: 'failed', error: 'token_budget_exceeded' };
+      }
+
+      // Guard 1e — real dollar cost cap. Checked right after Guard 1a so both
+      // guards are evaluated before any of the turn's output is acted on.
+      // Fires only when the provider actually reported a non-zero cost (i.e.
+      // OpenRouter with usage:{include:true}); providers that don't report cost
+      // leave totalCostUsd at 0 and this guard never trips — Guard 1a is the
+      // fallback for those. Fail loud with cost details for observability.
+      if (totalCostUsd > maxCostPerJobUsd) {
+        trace('cost_budget_exceeded', {
+          turn,
+          totalCostUsd,
+          callCostUsd,
+          maxCostPerJobUsd,
+        });
+        await failJob(db, jobId as string, 'cost_budget_exceeded', runStats(), messages);
+        return { status: 'failed', error: 'cost_budget_exceeded' };
       }
 
       // Guard 1c — compact when THIS turn's prompt crossed the threshold. Evicting
@@ -1272,6 +1363,8 @@ export async function executeJob(
           effective: effectiveT,
           cacheRatio: promptTok > 0 ? Number((cachedT / promptTok).toFixed(2)) : 0,
           out: completionT,
+          costUsd: callCostUsd > 0 ? callCostUsd : undefined,
+          totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
         },
       });
 
@@ -2036,6 +2129,81 @@ export async function executeJob(
         }
       }
 
+      // k-ter. Guard 1d — no-delivery runaway detector. Update delivery/streak
+      // counters AFTER tool results are appended (k step) and AFTER Guard 1b
+      // has had its chance. This fires on genuine gathering turns only (a turn
+      // that reached here made ≥1 non-delegation tool call and did NOT return
+      // via return_result or delegation paths earlier in the loop).
+      //
+      // Delivery turn: any tool call in DELIVERY_OR_TERMINAL_TOOL_NAMES resets
+      // turnsSinceDelivery. (return_result would have exited via j-bis above, so
+      // only dashboard_publish / telegram_send_message can reset it here — but
+      // we keep return_result in the set for correctness against future paths.)
+      {
+        const thisToolNames = toolResultBlocks.map((b) => b.toolName);
+        const isDelivering = thisToolNames.some((n) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(n));
+        if (isDelivering || thisToolNames.length === 0) {
+          // Delivered or no tool calls (shouldn't reach here if no tools, but defensive).
+          turnsSinceDelivery = 0;
+          sameToolStreak = 0;
+          lastSingleToolName = null;
+        } else {
+          // Gathering turn.
+          turnsSinceDelivery += 1;
+          // Same-tool streak: all calls this turn must be the SAME single tool.
+          const uniqueNames = [...new Set(thisToolNames)];
+          if (uniqueNames.length === 1 && uniqueNames[0] === lastSingleToolName) {
+            sameToolStreak += 1;
+          } else if (uniqueNames.length === 1) {
+            sameToolStreak = 1;
+            lastSingleToolName = uniqueNames[0] ?? null;
+          } else {
+            // Multiple distinct tools this turn — streak broken.
+            sameToolStreak = 0;
+            lastSingleToolName = null;
+          }
+
+          // Should we fire? Two triggers (either threshold):
+          const nudgeTrigger =
+            turnsSinceDelivery >= noDeliveryNudgeAt || sameToolStreak >= sameToolStreakNudgeAt;
+          const nudgeCooldownPassed = turn - turnOfLastNudge >= nudgeSpacing;
+
+          if (nudgeTrigger) {
+            if (noDeliveryNudgesIssued < maxNoDeliveryNudges && nudgeCooldownPassed) {
+              noDeliveryNudgesIssued += 1;
+              turnOfLastNudge = turn;
+              const forcingMsg =
+                `[system] You have made ${turnsSinceDelivery} tool calls without delivering a result. ` +
+                `You very likely already have enough to answer. STOP gathering now: call your delivery tool ` +
+                `(e.g. dashboard_publish) AND return_result(status="success") in the same turn with your ` +
+                `best answer from what you have. If you genuinely cannot proceed, call ` +
+                `return_result(status="blocked") explaining what is missing. Do NOT call another gathering tool.`;
+              messages = [
+                ...messages,
+                { role: 'user', content: forcingMsg } as ModelMessage,
+              ];
+              trace('no_delivery_runaway_nudge', {
+                turn,
+                nudge: noDeliveryNudgesIssued,
+                turnsSinceDelivery,
+                sameToolStreak,
+              });
+            } else if (noDeliveryNudgesIssued >= maxNoDeliveryNudges && turnsSinceDelivery > noDeliveryFailAt) {
+              // Nudge budget exhausted AND still gathering past the fail threshold.
+              // Fail BEFORE the next LLM call so the (N+1)th gathering turn never runs.
+              trace('no_delivery_runaway_fail', {
+                turn,
+                turnsSinceDelivery,
+                sameToolStreak,
+                nudgesIssued: noDeliveryNudgesIssued,
+              });
+              await failJob(db, jobId as string, 'no_delivery_runaway', runStats(), messages);
+              return { status: 'failed', error: 'no_delivery_runaway' };
+            }
+          }
+        }
+      }
+
       // l. Persist the turn we just finished BEFORE the next LLM call. Without
       // this, a worker agent that runs many non-delegating turns (firecrawl +
       // save_memory + file_write + …) and then crashes on the next LLM call
@@ -2051,6 +2219,7 @@ export async function executeJob(
         inputTokens,
         outputTokens,
         effectiveInputTokens,
+        totalCostUsd,
       });
     }
   } catch (err) {

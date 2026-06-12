@@ -79,6 +79,12 @@ function makeMockLlmClient(
     promptTokens?: number;
     /** Cache-read subset of promptTokens — drives the public usage.cachedInputTokens. */
     cachedTokens?: number;
+    /**
+     * Simulated per-call billed cost in USD, as OpenRouter reports in
+     * `providerMetadata.openrouter.usage.cost`. Drives Guard 1e in execute.ts.
+     * When omitted, the mock returns no cost metadata (provider-silent path).
+     */
+    costUsd?: number;
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
   capturedPrompts?: unknown[],
@@ -116,6 +122,13 @@ function makeMockLlmClient(
       }
 
       const isToolCalls = (response.toolCalls?.length ?? 0) > 0;
+      // Simulate OpenRouter's providerMetadata.openrouter.usage.cost when the
+      // test response specifies a costUsd. This is the exact path execute.ts reads
+      // in Guard 1e: providerMetadata?.openrouter?.usage?.cost.
+      const providerMetadata =
+        response.costUsd !== undefined
+          ? { openrouter: { usage: { cost: response.costUsd } } }
+          : undefined;
       return {
         content,
         finishReason: isToolCalls
@@ -131,6 +144,7 @@ function makeMockLlmClient(
           outputTokens: { total: 5, text: 5, reasoning: undefined },
         },
         warnings: [],
+        ...(providerMetadata ? { providerMetadata } : {}),
       };
     },
   });
@@ -1779,48 +1793,73 @@ describe('executeJob', () => {
 
   // ─── Turn cap (invariant 8) ───────────────────────────────────────────────────
 
-  it('turn cap: job that loops forever fails with turn_limit_exceeded after DEFAULT_LIMITS.maxTurns turns', async () => {
+  it('turn cap: job that loops forever fails with turn_limit_exceeded after DEFAULT_LIMITS.maxTurns turns (Guard 1d disabled)', async () => {
     // Import DEFAULT_LIMITS to drive the assertion — the test must not hardcode 50.
     const { DEFAULT_LIMITS } = await import('@nodal-agents/orchestration');
 
-    const job = await createTestJob(db, seed);
+    // Guard 1d (no-delivery runaway detector) normally fires BEFORE the turn cap
+    // for a same-work-tool loop (that is its purpose: catch runaways early). To
+    // verify the turn cap (maxTurns=50) still works as a backstop, we disable
+    // Guard 1d by setting its thresholds to values higher than maxTurns so only
+    // the turn cap fires. This validates the guard is still in place for edge
+    // cases not caught by Guard 1d (e.g. extremely spaced out tool patterns).
+    const savedEnv = {
+      NO_DELIVERY_NUDGE_AT: process.env['NO_DELIVERY_NUDGE_AT'],
+      SAME_TOOL_STREAK_NUDGE_AT: process.env['SAME_TOOL_STREAK_NUDGE_AT'],
+      NO_DELIVERY_FAIL_AT: process.env['NO_DELIVERY_FAIL_AT'],
+    };
+    process.env['NO_DELIVERY_NUDGE_AT'] = '999';
+    process.env['SAME_TOOL_STREAK_NUDGE_AT'] = '999';
+    process.env['NO_DELIVERY_FAIL_AT'] = '999';
 
-    // LLM always returns save_memory (always-on, whitelisted) — never return_result.
-    // We need 51 distinct entries (one per turn) with unique toolCallIds so the
-    // message-structure validator doesn't reject duplicate_tool_use_id before the
-    // turn cap fires. The last response is reused for turns beyond the array length
-    // — so we generate DEFAULT_LIMITS.maxTurns + 1 entries, all unique.
-    const loopingLlmClient = makeMockLlmClient(
-      Array.from({ length: DEFAULT_LIMITS.maxTurns + 1 }, (_, i) => ({
-        toolCalls: [
-          {
-            toolCallId: `tc-loop-${i}`,
-            toolName: 'save_memory',
-            args: { fact: `loop ${i}`, category: 'context' },
-          },
-        ],
-      })),
-    );
+    try {
+      const job = await createTestJob(db, seed);
 
-    const result = await executeJob(job.id as JobId, makeDeps(loopingLlmClient), testEnv);
+      // LLM always returns save_memory (always-on, whitelisted) — never return_result.
+      // We need 51 distinct entries (one per turn) with unique toolCallIds so the
+      // message-structure validator doesn't reject duplicate_tool_use_id before the
+      // turn cap fires. The last response is reused for turns beyond the array length
+      // — so we generate DEFAULT_LIMITS.maxTurns + 1 entries, all unique.
+      const loopingLlmClient = makeMockLlmClient(
+        Array.from({ length: DEFAULT_LIMITS.maxTurns + 1 }, (_, i) => ({
+          toolCalls: [
+            {
+              toolCallId: `tc-loop-${i}`,
+              toolName: 'save_memory',
+              args: { fact: `loop ${i}`, category: 'context' },
+            },
+          ],
+        })),
+      );
 
-    // Return value assertion
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('turn_limit_exceeded');
+      const result = await executeJob(job.id as JobId, makeDeps(loopingLlmClient), testEnv);
+
+      // Return value assertion
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') {
+        expect(result.error).toBe('turn_limit_exceeded');
+      }
+
+      // Real DB row assertion — failJob must have persisted the error code
+      const rows = await db
+        .select({ status: agentJobs.status, error: agentJobs.error, turn: agentJobs.turn })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+
+      expect(rows[0]?.status).toBe('failed');
+      expect(rows[0]?.error).toBe('turn_limit_exceeded');
+      // The cap check fires AFTER `turn += 1`, so when `turn > maxTurns` (51 > 50), the
+      // persisted turn value is 51. The LLM was called exactly maxTurns (50) times.
+      expect(rows[0]?.turn).toBe(DEFAULT_LIMITS.maxTurns + 1);
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) {
+          delete process.env[k];
+        } else {
+          process.env[k] = v;
+        }
+      }
     }
-
-    // Real DB row assertion — failJob must have persisted the error code
-    const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error, turn: agentJobs.turn })
-      .from(agentJobs)
-      .where(eq(agentJobs.id, job.id));
-
-    expect(rows[0]?.status).toBe('failed');
-    expect(rows[0]?.error).toBe('turn_limit_exceeded');
-    // The cap check fires AFTER `turn += 1`, so when `turn > maxTurns` (51 > 50), the
-    // persisted turn value is 51. The LLM was called exactly maxTurns (50) times.
-    expect(rows[0]?.turn).toBe(DEFAULT_LIMITS.maxTurns + 1);
   });
 
   // ─── Tool-result truncation ───────────────────────────────────────────────────
@@ -2891,5 +2930,330 @@ describe('reliability guards', () => {
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('completed');
     expect(row?.error).toBeNull();
+  });
+
+  // ─── Guard 1d — no-delivery runaway detector ─────────────────────────────
+  // Regression for real failed jobs 0ff86a1f / ac31d982 / 394b13f4:
+  // the agent looped calling varying work-tool queries without ever delivering,
+  // running to the 50-turn wall. Guard 1b (no-progress) was defeated because args
+  // varied each turn. Guard 1d keys on turns-without-delivery and same-tool streak.
+
+  it('Guard 1d (no-delivery runaway): same work tool every turn → nudge injected, then no_delivery_runaway fail', async () => {
+    // Use short thresholds via env so the test doesn't need 12+ turns.
+    // sameToolStreakNudgeAt=3, maxNoDeliveryNudges=2, nudgeSpacing=1, noDeliveryFailAt=5
+    // Turn 1-3: save_memory (streak=3 → nudge 1 at turn 3)
+    // Turn 4-6: save_memory (streak continues, nudge 2 at turn 6 after spacing)
+    // Turn 7+: streak/delivery counter keeps climbing past noDeliveryFailAt=5 → fail
+    const savedEnv = {
+      SAME_TOOL_STREAK_NUDGE_AT: process.env['SAME_TOOL_STREAK_NUDGE_AT'],
+      MAX_NO_DELIVERY_NUDGES: process.env['MAX_NO_DELIVERY_NUDGES'],
+      NO_DELIVERY_NUDGE_SPACING: process.env['NO_DELIVERY_NUDGE_SPACING'],
+      NO_DELIVERY_FAIL_AT: process.env['NO_DELIVERY_FAIL_AT'],
+      NO_DELIVERY_NUDGE_AT: process.env['NO_DELIVERY_NUDGE_AT'],
+    };
+    process.env['SAME_TOOL_STREAK_NUDGE_AT'] = '3';
+    process.env['MAX_NO_DELIVERY_NUDGES'] = '2';
+    process.env['NO_DELIVERY_NUDGE_SPACING'] = '1';
+    process.env['NO_DELIVERY_FAIL_AT'] = '5';
+    process.env['NO_DELIVERY_NUDGE_AT'] = '99'; // disable noDeliveryNudgeAt trigger so only streak fires
+
+    try {
+      const job = await createTestJob(db, seed);
+
+      // Build enough turns: the mock repeats its last entry, so 20 entries is enough.
+      const saveTurn = (i: number) => ({
+        toolCalls: [
+          {
+            toolCallId: `sm-streak-${i}`,
+            toolName: 'save_memory',
+            args: { fact: `fact ${i}`, category: 'context', importance: 3 },
+          },
+        ],
+      });
+
+      // We never call return_result or dashboard_publish — it loops forever until the guard fires.
+      const llmClient = makeMockLlmClient(Array.from({ length: 20 }, (_, i) => saveTurn(i + 1)));
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      // (a) Job must fail with the dedicated error code before turn 50.
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') {
+        expect(result.error).toBe('no_delivery_runaway');
+      }
+
+      // (b) Assert the forcing control message actually appears in the persisted
+      // messages array (assert on real transcript, not call counts).
+      const [row] = await db
+        .select({ messages: agentJobs.messages, turn: agentJobs.turn, error: agentJobs.error })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+
+      expect(row?.error).toBe('no_delivery_runaway');
+      const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+      const nudgeMsg = msgs.find(
+        (m) =>
+          m.role === 'user' &&
+          typeof m.content === 'string' &&
+          m.content.includes('STOP gathering now'),
+      );
+      expect(nudgeMsg).toBeDefined();
+
+      // (c) It failed well before maxTurns=50 — guard fired at the expected turn.
+      // With sameToolStreakNudgeAt=3, maxNoDeliveryNudges=2, noDeliveryFailAt=5:
+      // first nudge at turn 3, second at turn 5 (spacing=1), fail at turn >5
+      // once delivery counter passes noDeliveryFailAt. Well before 50.
+      expect((row?.turn ?? 50)).toBeLessThan(30);
+    } finally {
+      // Restore env regardless of test outcome.
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) {
+          delete process.env[k];
+        } else {
+          process.env[k] = v;
+        }
+      }
+    }
+  });
+
+  it('Guard 1d (turnsSinceDelivery path): varying work tools without delivery → nudge then fail', async () => {
+    // Tests the noDeliveryNudgeAt path (not same-tool streak): each turn uses a
+    // DIFFERENT tool, varying the arg; Guard 1b (same signature) would NOT fire.
+    const savedEnv = {
+      NO_DELIVERY_NUDGE_AT: process.env['NO_DELIVERY_NUDGE_AT'],
+      MAX_NO_DELIVERY_NUDGES: process.env['MAX_NO_DELIVERY_NUDGES'],
+      NO_DELIVERY_NUDGE_SPACING: process.env['NO_DELIVERY_NUDGE_SPACING'],
+      NO_DELIVERY_FAIL_AT: process.env['NO_DELIVERY_FAIL_AT'],
+      SAME_TOOL_STREAK_NUDGE_AT: process.env['SAME_TOOL_STREAK_NUDGE_AT'],
+    };
+    process.env['NO_DELIVERY_NUDGE_AT'] = '3';
+    process.env['MAX_NO_DELIVERY_NUDGES'] = '2';
+    process.env['NO_DELIVERY_NUDGE_SPACING'] = '1';
+    process.env['NO_DELIVERY_FAIL_AT'] = '5';
+    process.env['SAME_TOOL_STREAK_NUDGE_AT'] = '99'; // disable streak path
+
+    try {
+      const job = await createTestJob(db, seed);
+
+      // Alternating save_memory / query_memory so args AND tool names vary (defeats Guard 1b).
+      const mixedTurns = Array.from({ length: 20 }, (_, i) => ({
+        toolCalls: [
+          {
+            toolCallId: `mixed-${i}`,
+            toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
+            args:
+              i % 2 === 0
+                ? { fact: `varying fact ${i}`, category: 'context', importance: 3 }
+                : { query: `varying query ${i}` },
+          },
+        ],
+      }));
+
+      const llmClient = makeMockLlmClient(mixedTurns);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') {
+        expect(result.error).toBe('no_delivery_runaway');
+      }
+
+      const [row] = await db
+        .select({ messages: agentJobs.messages, turn: agentJobs.turn })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+
+      // Nudge message in transcript.
+      const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+      const nudge = msgs.find(
+        (m) =>
+          m.role === 'user' &&
+          typeof m.content === 'string' &&
+          m.content.includes('STOP gathering now'),
+      );
+      expect(nudge).toBeDefined();
+      // Failed before turn 50.
+      expect((row?.turn ?? 50)).toBeLessThan(30);
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) {
+          delete process.env[k];
+        } else {
+          process.env[k] = v;
+        }
+      }
+    }
+  });
+
+  it('Guard 1d (false positive check): a normal job completes within threshold — no nudge injected', async () => {
+    // Control case: the agent does 2 work-tool turns then delivers + return_result.
+    // turnsSinceDelivery never hits the nudge threshold (NO_DELIVERY_NUDGE_AT=99
+    // in default env), so NO nudge is injected and the job completes normally.
+    const job = await createTestJob(db, seed);
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'fp-sm-1',
+            toolName: 'save_memory',
+            args: { fact: 'first fact', category: 'context', importance: 3 },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'fp-sm-2',
+            toolName: 'save_memory',
+            args: { fact: 'second fact', category: 'context', importance: 3 },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'fp-pub',
+            toolName: 'dashboard_publish',
+            args: { text: 'Research complete.' },
+          },
+          { toolCallId: 'fp-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Assert no nudge message appears in the persisted transcript.
+    const [row] = await db
+      .select({ messages: agentJobs.messages, turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const nudge = msgs.find(
+      (m) =>
+        m.role === 'user' &&
+        typeof m.content === 'string' &&
+        m.content.includes('STOP gathering now'),
+    );
+    expect(nudge).toBeUndefined();
+    // Completed in exactly 3 turns — no extra turns from nudges.
+    expect(row?.turn).toBe(3);
+  });
+
+  // ─── Guard 1e — real dollar cost cap ─────────────────────────────────────
+  // Regression coverage for the $0.7–1.6 runaway burns on OpenRouter/DeepSeek
+  // jobs that don't benefit from prompt caching (cached_tokens genuinely 0).
+  // The token budget (Guard 1a) was the only backstop — Guard 1e is the real
+  // dollar backstop that kicks in regardless of caching behaviour.
+
+  it('Guard 1e: fails cost_budget_exceeded when cumulative cost crosses the cap', async () => {
+    const job = await createTestJob(db, seed);
+    // Three save_memory turns each costing $0.80 → cumulative: $0.80, $1.60, $2.40.
+    // The job does NOT call return_result, so it continues until a guard fires.
+    // With cap $2.00, the THIRD turn (cumulative $2.40 > $2.00) must fail loud
+    // BEFORE acting on its output. Turns 1 ($0.80) and 2 ($1.60) are ≤ $2.00 → proceed.
+    await withEnv('MAX_COST_PER_JOB_USD', '2.0', async () => {
+      const llmClient = makeMockLlmClient([
+        {
+          costUsd: 0.8,
+          toolCalls: [
+            { toolCallId: 'tc-1', toolName: 'save_memory', args: { fact: 'a', category: 'context' } },
+          ],
+        },
+        {
+          costUsd: 0.8,
+          toolCalls: [
+            { toolCallId: 'tc-2', toolName: 'save_memory', args: { fact: 'b', category: 'context' } },
+          ],
+        },
+        {
+          costUsd: 0.8,
+          toolCalls: [
+            { toolCallId: 'tc-3', toolName: 'save_memory', args: { fact: 'c', category: 'context' } },
+          ],
+        },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('failed');
+      if (result.status === 'failed') expect(result.error).toBe('cost_budget_exceeded');
+    });
+
+    // The DB row reflects the loud failure with the accumulated cost persisted.
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        totalCostUsd: agentJobs.totalCostUsd,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('cost_budget_exceeded');
+    // The cumulative cost at failure is $2.40 (three $0.80 calls — the third
+    // turn's cost is accumulated before the guard fires and failJob persists it).
+    expect(row?.totalCostUsd).toBeCloseTo(2.4, 5);
+  });
+
+  it('Guard 1e: a job under budget completes normally and persists total_cost_usd as the sum', async () => {
+    const job = await createTestJob(db, seed);
+    // Two turns costing $0.30 and $0.20 → total $0.50, well under $2.00 cap.
+    // The job must complete and persist the real cost.
+    await withEnv('MAX_COST_PER_JOB_USD', '2.0', async () => {
+      const llmClient = makeMockLlmClient([
+        {
+          costUsd: 0.3,
+          toolCalls: [
+            { toolCallId: 'tc-sm', toolName: 'save_memory', args: { fact: 'x', category: 'context' } },
+          ],
+        },
+        {
+          costUsd: 0.2,
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+    });
+
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        totalCostUsd: agentJobs.totalCostUsd,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('completed');
+    expect(row?.error).toBeNull();
+    // total_cost_usd = $0.30 + $0.20 = $0.50 (the real sum of per-call costs).
+    expect(row?.totalCostUsd).toBeCloseTo(0.5, 5);
+  });
+
+  it('Guard 1e: a provider reporting no cost (costUsd undefined) never trips the cost guard — token budget governs', async () => {
+    const job = await createTestJob(db, seed);
+    // No costUsd on any response → totalCostUsd stays 0 → Guard 1e never fires.
+    // Token budget (Guard 1a) is still the backstop — a token-capped run fails
+    // with token_budget_exceeded, NOT cost_budget_exceeded.
+    await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '1', async () => {
+      // Very low cost cap too — but cost is 0 so it must NOT fire.
+      await withEnv('MAX_COST_PER_JOB_USD', '0.0001', async () => {
+        const llmClient = makeMockLlmClient([{ text: 'answer' }]); // no costUsd
+        const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+        expect(result.status).toBe('failed');
+        // Must be token budget, not cost budget.
+        if (result.status === 'failed') expect(result.error).toBe('token_budget_exceeded');
+      });
+    });
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, totalCostUsd: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('token_budget_exceeded'); // Guard 1a fired, not Guard 1e
+    expect(row?.totalCostUsd).toBe(0); // no cost reported → stays 0
   });
 });

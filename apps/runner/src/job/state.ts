@@ -113,6 +113,8 @@ interface RunStats {
   outputTokens: number;
   /** Cumulative effective (non-cached) input — what Guard 1a's budget measures. */
   effectiveInputTokens?: number;
+  /** Cumulative real dollar cost billed by the provider (Guard 1e). Undefined when the provider doesn't report cost. */
+  totalCostUsd?: number;
   turn: number;
   totalDurationMs?: number;
 }
@@ -162,6 +164,7 @@ export async function completeJob(
         ...(stats.effectiveInputTokens !== undefined && {
           effectiveInputTokens: stats.effectiveInputTokens,
         }),
+        ...(stats.totalCostUsd !== undefined && { totalCostUsd: stats.totalCostUsd }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -204,6 +207,7 @@ export async function failJob(
         ...(stats.effectiveInputTokens !== undefined && {
           effectiveInputTokens: stats.effectiveInputTokens,
         }),
+        ...(stats.totalCostUsd !== undefined && { totalCostUsd: stats.totalCostUsd }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -244,6 +248,7 @@ export async function cancelJob(
         ...(stats.effectiveInputTokens !== undefined && {
           effectiveInputTokens: stats.effectiveInputTokens,
         }),
+        ...(stats.totalCostUsd !== undefined && { totalCostUsd: stats.totalCostUsd }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -265,6 +270,7 @@ export async function saveCheckpoint(
     inputTokens?: number;
     outputTokens?: number;
     effectiveInputTokens?: number;
+    totalCostUsd?: number;
     totalDurationMs?: number;
   },
 ): Promise<void> {
@@ -281,6 +287,7 @@ export async function saveCheckpoint(
       ...(checkpoint.effectiveInputTokens !== undefined && {
         effectiveInputTokens: checkpoint.effectiveInputTokens,
       }),
+      ...(checkpoint.totalCostUsd !== undefined && { totalCostUsd: checkpoint.totalCostUsd }),
       ...(checkpoint.totalDurationMs !== undefined && {
         totalDurationMs: checkpoint.totalDurationMs,
       }),

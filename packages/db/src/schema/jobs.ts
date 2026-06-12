@@ -1,6 +1,6 @@
 // agent_jobs table
 
-import { pgTable, text, uuid, integer, jsonb, timestamp, index, check } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, integer, real, jsonb, timestamp, index, check } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -40,6 +40,19 @@ export const agentJobs = pgTable(
      * self-chain resumes.
      */
     effectiveInputTokens: integer('effective_input_tokens').default(0),
+    /**
+     * Cumulative real dollar cost billed to the provider across all turns of
+     * this job (sum of per-call costs reported by the provider). Populated only
+     * when the provider reports per-call cost (OpenRouter with
+     * `usage:{include:true}`); undefined/null for providers that don't report it
+     * (Anthropic, Ollama, etc.). Used by the cost-budget guard (Guard 1e) and
+     * for cost observability in the dashboard.
+     *
+     * Stored as a real/float because sub-cent values are common (e.g. $0.00056).
+     * Cumulative across self-chain / approval / delegation resumes, exactly like
+     * effectiveInputTokens.
+     */
+    totalCostUsd: real('total_cost_usd').default(0),
     delegationDepth: integer('delegation_depth').default(0),
     /**
      * The slug of the last delegated child that failed on this parent job.

@@ -140,6 +140,54 @@ export interface ChainLimits {
    * a backstop below maxTurns for genuinely degenerate loops. See execute.ts.
    */
   maxNoProgressRepeats: number;
+  /**
+   * Guard 1d — no-delivery runaway detector. After this many consecutive
+   * gathering turns with no delivery tool call or return_result, inject a
+   * forcing control message. Calibrated above the ≈10-turn legit ceiling.
+   * Override via env NO_DELIVERY_NUDGE_AT.
+   */
+  noDeliveryNudgeAt: number;
+  /**
+   * Guard 1d — same-tool streak. After this many consecutive turns whose
+   * tool calls are ALL the same single tool name (with no delivery), inject
+   * the forcing control message. Catches scope-creep / empty-resource loops.
+   * Override via env SAME_TOOL_STREAK_NUDGE_AT.
+   */
+  sameToolStreakNudgeAt: number;
+  /**
+   * Guard 1d — max nudges before failing. Once exhausted AND turnsSinceDelivery
+   * passes noDeliveryFailAt, the job fails loud with `no_delivery_runaway`.
+   * Override via env MAX_NO_DELIVERY_NUDGES.
+   */
+  maxNoDeliveryNudges: number;
+  /**
+   * Guard 1d — minimum turns between consecutive nudges (prevents nudge flooding
+   * on a fast model that ignores them). Override via env NO_DELIVERY_NUDGE_SPACING.
+   */
+  nudgeSpacing: number;
+  /**
+   * Guard 1d — hard fail threshold. When all nudge budget is spent AND
+   * turnsSinceDelivery climbs past this, fail the job loud BEFORE the next
+   * LLM call. Override via env NO_DELIVERY_FAIL_AT.
+   */
+  noDeliveryFailAt: number;
+  /**
+   * Guard 1e — real dollar cost cap. If the cumulative billed cost for this job
+   * (as reported by the provider) exceeds this value, the runner fails the job
+   * loud with `cost_budget_exceeded` BEFORE acting on the turn's output.
+   *
+   * This is a hard backstop for providers that return per-call cost
+   * (OpenRouter with `usage:{include:true}`). For providers that don't report
+   * cost, this guard never fires — the token budget (Guard 1a) remains the
+   * fallback. Override per-deployment via env MAX_COST_PER_JOB_USD.
+   *
+   * Default 2.0 is a conservative starting point calibrated against known
+   * runaway burns ($0.7–1.6 for cheap-model jobs hitting token caps) while
+   * allowing legitimate cheap-model jobs (~$0.3) and mid-range jobs well under
+   * budget. NOTE: expensive models (GPT-4o, Claude Opus) cost more per job —
+   * per-agent caps are the proper follow-up; this is a global backstop.
+   */
+  maxCostPerJobUsd: number;
 }
 
 // ─── ChildAgent (read from DB) ────────────────────────────────────────────────

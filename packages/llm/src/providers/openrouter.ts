@@ -89,11 +89,19 @@ export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
   // unaffected. The runner then echoes those details back each turn via the
   // assistant message it replays. `extraBody` sends the raw `reasoning` body
   // param (the typed `reasoning` setting would also require max_tokens/effort).
+  //
+  // `usage: { include: true }` opts into OpenRouter's per-call billing metadata.
+  // Without this flag the response may omit `usage.cost`; with it, cost is
+  // always present (even when 0) and lands in `providerMetadata.openrouter.usage`
+  // on the AI SDK response — read in execute.ts as the real dollar cost of this
+  // call. Generic: applies to every OpenRouter model; no model-specific logic.
   const isReasoning = findModelCatalogEntry('openrouter', config.model)?.capabilities.reasoning;
-  const base = provider.chat(
-    config.model,
-    isReasoning ? { extraBody: { reasoning: { enabled: true } } } : undefined,
-  );
+  const base = provider.chat(config.model, {
+    extraBody: {
+      usage: { include: true },
+      ...(isReasoning ? { reasoning: { enabled: true } } : {}),
+    },
+  });
 
   const middleware = middlewareForFamily(detectAgenticFamily(config.model));
   if (middleware) {
