@@ -8,6 +8,7 @@ import { executeJob } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import type { JobId } from '@nodal-agents/orchestration';
+import { isValidWorkerSecret } from '../lib/worker-secret.ts';
 
 // ─── Request schema ───────────────────────────────────────────────────────────
 
@@ -37,8 +38,7 @@ export async function workerRoute(
   const authHeader = c.req.header('Authorization') ?? '';
   const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
 
-  // Constant-time comparison
-  if (!timingSafeEqual(provided, workerSecret)) {
+  if (!isValidWorkerSecret(provided, workerSecret)) {
     return c.json({ error: 'invalid_worker_secret' }, 403);
   }
 
@@ -73,26 +73,3 @@ async function runJobBackground(
   }
 }
 
-// ─── Timing-safe string comparison ───────────────────────────────────────────
-
-/**
- * Timing-safe string comparison to prevent timing attacks.
- * Returns true iff a === b.
- */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    // Still do a full comparison to avoid length-based timing leak
-    let _diff = 0;
-    const padded = b.padEnd(a.length, '\0');
-    for (let i = 0; i < a.length; i++) {
-      _diff |= a.charCodeAt(i) ^ (padded.charCodeAt(i) ?? 0);
-    }
-    return false; // Length mismatch → always false
-  }
-
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= (a.charCodeAt(i) ?? 0) ^ (b.charCodeAt(i) ?? 0);
-  }
-  return diff === 0;
-}

@@ -100,6 +100,180 @@ describe('server boot', () => {
   });
 });
 
+// ─── requireRunnerAuth — local-auth mode ──────────────────────────────────────
+//
+// In local-auth mode every protected route must reject requests with no
+// bearer or a wrong bearer, and pass through to the handler when the correct
+// WORKER_SECRET is supplied.  We assert real HTTP status codes, not call counts.
+
+describe('requireRunnerAuth — local-auth mode', () => {
+  let localAuthApp: ReturnType<typeof createApp>;
+  const localAuthEnv: RunnerEnv = { ...testEnv, AUTH_MODE: 'local-auth' };
+
+  // Helper for a minimal valid POST to each route (body won't matter — the
+  // middleware fires before body parsing on auth failure)
+  const post = (app_: ReturnType<typeof createApp>, path: string, body: unknown, headers: Record<string, string> = {}) =>
+    app_.fetch(
+      new Request(`http://localhost${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  beforeAll(async () => {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const llmClient = createLlmClient({ provider: 'anthropic', model: 'test', apiKey: 'k' });
+    const embeddingClient = createEmbeddingClient({ provider: 'keyword' });
+    const deps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient,
+      registry,
+      // Null-session provider simulates local-auth (session cookie not shareable cross-process)
+      authProvider: { getSession: async () => null },
+      close: async () => {},
+    };
+    localAuthApp = createApp(deps, localAuthEnv);
+  });
+
+  // /api/chat — no auth → 401
+  it('POST /api/chat with no auth → 401', async () => {
+    const res = await post(localAuthApp, '/api/chat', {
+      entityId: '00000000-0000-0000-0000-000000000001',
+      agentId: '00000000-0000-0000-0000-000000000002',
+      conversationId: '00000000-0000-0000-0000-000000000003',
+      message: 'hello',
+    });
+    expect(res.status).toBe(401);
+  });
+
+  // /api/cron — no auth → 401
+  it('POST /api/cron with no auth → 401', async () => {
+    const res = await post(localAuthApp, '/api/cron', {});
+    expect(res.status).toBe(401);
+  });
+
+  // /api/agent — no auth → 401
+  it('POST /api/agent with no auth → 401', async () => {
+    const res = await post(localAuthApp, '/api/agent', { task: 'do something' });
+    expect(res.status).toBe(401);
+  });
+
+  // /api/approve — no auth → 401
+  it('POST /api/approve with no auth → 401', async () => {
+    const res = await post(localAuthApp, '/api/approve', {
+      approvalRequestId: '00000000-0000-0000-0000-000000000099',
+      decision: 'approve',
+    });
+    expect(res.status).toBe(401);
+  });
+
+  // Wrong bearer → 401 on all routes
+  it('POST /api/chat with wrong bearer → 401', async () => {
+    const res = await post(localAuthApp, '/api/chat', { message: 'x' }, { Authorization: 'Bearer wrong' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/cron with wrong bearer → 401', async () => {
+    const res = await post(localAuthApp, '/api/cron', {}, { Authorization: 'Bearer wrong' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/agent with wrong bearer → 401', async () => {
+    const res = await post(localAuthApp, '/api/agent', { task: 'x' }, { Authorization: 'Bearer wrong' });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/approve with wrong bearer → 401', async () => {
+    const res = await post(localAuthApp, '/api/approve', {}, { Authorization: 'Bearer wrong' });
+    expect(res.status).toBe(401);
+  });
+
+  // Correct WORKER_SECRET → reaches the route handler (not 401)
+  it('POST /api/cron with correct bearer → not 401 (reaches handler)', async () => {
+    const res = await post(localAuthApp, '/api/cron', {}, { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` });
+    // Handler returns 200 with cron tick result
+    expect(res.status).not.toBe(401);
+  });
+
+  it('POST /api/agent with correct bearer → not 401 (reaches handler, gets 400 or 202)', async () => {
+    const res = await post(localAuthApp, '/api/agent', { task: 'hello' }, { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` });
+    // 202 (job created) or 400 (invalid body) — either proves we passed the auth gate
+    expect(res.status).not.toBe(401);
+  });
+
+  it('POST /api/approve with correct bearer → not 401 (reaches handler, gets 404)', async () => {
+    const res = await post(
+      localAuthApp,
+      '/api/approve',
+      { approvalRequestId: '00000000-0000-0000-0000-000000000099', decision: 'approve' },
+      { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` },
+    );
+    // 404 = approval_not_found → middleware passed through
+    expect(res.status).not.toBe(401);
+  });
+
+  it('POST /api/chat with correct bearer → not 401 (reaches handler, gets 400 or 404)', async () => {
+    const res = await post(
+      localAuthApp,
+      '/api/chat',
+      {
+        entityId: '00000000-0000-0000-0000-000000000001',
+        agentId: '00000000-0000-0000-0000-000000000002',
+        conversationId: '00000000-0000-0000-0000-000000000003',
+        message: 'hello',
+      },
+      { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` },
+    );
+    // 400 (validation / agent_not_found) or 404 — middleware let us through
+    expect(res.status).not.toBe(401);
+  });
+});
+
+// ─── requireRunnerAuth — local-trust mode ────────────────────────────────────
+//
+// In local-trust mode all routes are accessible without any Authorization header.
+
+describe('requireRunnerAuth — local-trust mode (no auth required)', () => {
+  // The top-level `app` is created with AUTH_MODE='local-trust'
+
+  it('POST /api/cron with no auth → reaches handler (not 401)', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
+    expect(res.status).not.toBe(401);
+  });
+
+  it('POST /api/chat with no auth → reaches handler (not 401)', async () => {
+    const res = await app.fetch(
+      new Request('http://localhost/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityId: '00000000-0000-0000-0000-000000000001',
+          agentId: '00000000-0000-0000-0000-000000000002',
+          conversationId: '00000000-0000-0000-0000-000000000003',
+          message: 'hello',
+        }),
+      }),
+    );
+    expect(res.status).not.toBe(401);
+  });
+
+  it('POST /api/agent with no auth → reaches handler (not 401)', async () => {
+    const res = await app.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'hello' }),
+      }),
+    );
+    expect(res.status).not.toBe(401);
+  });
+});
+
+// ─── /api/approve auth — bearer fallback (legacy test, kept for regression) ──
+
 describe('/api/approve auth — bearer fallback (cross-process call from web)', () => {
   // Build a NEW app with AUTH_MODE='local-auth' and a provider that returns
   // null. Without the bearer fallback this would 401 every request — only

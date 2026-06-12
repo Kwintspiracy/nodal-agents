@@ -21,6 +21,7 @@ import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { AuthError } from '@nodal-agents/auth';
+import { isValidWorkerSecret } from './lib/worker-secret.ts';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
 
@@ -34,54 +35,65 @@ export function createApp(
 ): Hono {
   const app = new Hono();
 
-  // ── Auth middleware (applied to all routes except /api/worker and /api/health) ──
-  // /api/worker uses its own WORKER_SECRET check
-  // /api/health is always public (liveness probe)
-  app.use('/api/agent', async (c, next) => {
-    try {
-      const session = await deps.authProvider.getSession(c.req.raw);
-      if (!session && runnerEnv.AUTH_MODE !== 'local-trust') {
-        return c.json({ error: 'AUTH_REQUIRED' }, 401);
-      }
-      await next();
-    } catch (err) {
-      if (err instanceof AuthError) {
-        return c.json({ error: 'AUTH_REQUIRED' }, 401);
-      }
-      throw err;
-    }
-  });
-
-  const bearerOrSession = async (
-    c: Context,
-    next: () => Promise<void>,
-  ): Promise<Response | void> => {
-    // Accept either:
-    //   - a valid auth-provider session (for browser → runner direct calls), OR
-    //   - the WORKER_SECRET bearer token (for web → runner cross-process
-    //     calls; the web app and runner run in separate processes/ports so
-    //     session cookies aren't shared).
-    const auth = c.req.header('authorization') ?? '';
-    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-    if (bearer && runnerEnv.WORKER_SECRET && bearer === runnerEnv.WORKER_SECRET) {
+  // ── requireRunnerAuth ────────────────────────────────────────────────────────
+  //
+  // Unified auth gate for /api/agent, /api/chat, /api/approve, /api/cron.
+  //
+  // local-trust: pass through unconditionally (intentional single-user no-auth
+  //   mode for trusted local/dev use). NOTE: this mode does NOT change the
+  //   network bind — main() always binds to runnerEnv.BIND (0.0.0.0 in LAN
+  //   mode) in every mode. What closes the LAN exposure is the WORKER_SECRET
+  //   requirement enforced below for local-auth / bearer-token, not any
+  //   loopback binding.
+  //
+  // local-auth / bearer-token: require "Authorization: Bearer <WORKER_SECRET>".
+  //   The web already sends this on every runner call it makes (worker, approve,
+  //   chat, skills). The runner cannot validate better-auth session cookies
+  //   cross-process (separate port, separate session store), so WORKER_SECRET
+  //   is the runner's auth boundary; external /api/agent and /api/cron callers
+  //   must present it too.
+  //
+  // bearer-token mode additionally accepts a valid authProvider session so that
+  //   external API clients using BEARER_TOKEN keep working.
+  //
+  // /api/health and /api/worker stay public/self-authed respectively.
+  const requireRunnerAuth = async (c: Context, next: () => Promise<void>): Promise<Response | void> => {
+    // local-trust: no auth required (intentional single-user no-auth for trusted local/dev use)
+    if (runnerEnv.AUTH_MODE === 'local-trust') {
       await next();
       return;
     }
-    try {
-      const session = await deps.authProvider.getSession(c.req.raw);
-      if (!session && runnerEnv.AUTH_MODE !== 'local-trust') {
-        return c.json({ error: 'AUTH_REQUIRED' }, 401);
-      }
+
+    // All other modes: check WORKER_SECRET bearer first
+    const auth = c.req.header('authorization') ?? '';
+    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (bearer && runnerEnv.WORKER_SECRET && isValidWorkerSecret(bearer, runnerEnv.WORKER_SECRET)) {
       await next();
-    } catch (err) {
-      if (err instanceof AuthError) {
-        return c.json({ error: 'AUTH_REQUIRED' }, 401);
-      }
-      throw err;
+      return;
     }
+
+    // bearer-token mode: also accept a valid authProvider session (external API clients)
+    if (runnerEnv.AUTH_MODE === 'bearer-token') {
+      try {
+        const session = await deps.authProvider.getSession(c.req.raw);
+        if (session) {
+          await next();
+          return;
+        }
+      } catch (err) {
+        if (!(err instanceof AuthError)) {
+          throw err;
+        }
+      }
+    }
+
+    return c.json({ error: 'AUTH_REQUIRED' }, 401);
   };
 
-  app.use('/api/approve', bearerOrSession);
+  app.use('/api/agent', requireRunnerAuth);
+  app.use('/api/chat', requireRunnerAuth);
+  app.use('/api/approve', requireRunnerAuth);
+  app.use('/api/cron', requireRunnerAuth);
 
   // ── Routes ────────────────────────────────────────────────────────────────────
 

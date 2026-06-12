@@ -4,11 +4,11 @@
 //
 // Auth: WORKER_SECRET bearer token (web → runner cross-process call).
 
-import { timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
+import { isValidWorkerSecret } from '../lib/worker-secret.ts';
 import {
   installCommunitySkill,
   uninstallCommunitySkill,
@@ -33,9 +33,7 @@ function checkWorkerSecret(c: Context, runnerEnv: RunnerEnv): Response | null {
   if (!secret) return c.json({ error: 'server_misconfiguration' }, 500);
   const auth = c.req.header('Authorization') ?? '';
   const provided = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(secret);
-  if (a.length !== b.length || !cryptoTimingSafeEqual(a, b)) {
+  if (!isValidWorkerSecret(provided, secret)) {
     return c.json({ error: 'invalid_worker_secret' }, 403);
   }
   return null;
