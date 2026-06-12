@@ -323,6 +323,10 @@ export async function executeJob(
   // the persisted column so resumes add to the running total. Undefined stays
   // undefined (providers that don't report cost never accumulate here).
   let totalCostUsd = job.totalCostUsd ?? 0;
+  // Last non-empty upstream provider name reported by OpenRouter
+  // (providerMetadata.openrouter.provider). Updated on every call that carries
+  // the field; null when the provider has never reported it this run.
+  let servedProvider: string | null = job.servedProvider ?? null;
   let turn = job.turn ?? 0;
   let toolsUsed: string[] = Array.isArray(job.toolsUsed) ? (job.toolsUsed as string[]) : [];
 
@@ -331,6 +335,7 @@ export async function executeJob(
     outputTokens: number;
     effectiveInputTokens: number;
     totalCostUsd: number;
+    servedProvider: string | null;
     turn: number;
     totalDurationMs: number;
   } => ({
@@ -338,6 +343,7 @@ export async function executeJob(
     outputTokens,
     effectiveInputTokens,
     totalCostUsd,
+    servedProvider,
     turn,
     totalDurationMs: Date.now() - startedAt,
   });
@@ -989,6 +995,7 @@ export async function executeJob(
         inputTokens,
         outputTokens,
         effectiveInputTokens,
+        servedProvider,
       });
     }
 
@@ -1065,6 +1072,7 @@ export async function executeJob(
       inputTokens,
       outputTokens,
       effectiveInputTokens,
+      servedProvider,
     });
     await setJobStatus(db, jobId as string, 'awaiting_approval');
     return { status: 'awaiting_approval' };
@@ -1288,14 +1296,25 @@ export async function executeJob(
       // guard below simply won't fire for them (cost stays 0).
       // Safe access: providerMetadata is Record<string, JSONObject>; we read
       // through the chain and coerce to number, guarding NaN and negative values.
-      const rawCost = (
-        response.providerMetadata as
-          | Record<string, Record<string, Record<string, unknown>> | undefined>
-          | undefined
-      )?.['openrouter']?.['usage']?.['cost'];
+      // orMeta: the openrouter sub-object from providerMetadata. Typed as
+      // Record<string, unknown> so all child accesses are safe regardless of the
+      // upstream's payload shape.
+      const orMeta = (
+        response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
+      )?.['openrouter'] as Record<string, unknown> | undefined;
+      const rawCost = (orMeta?.['usage'] as Record<string, unknown> | undefined)?.['cost'];
       const callCostUsd =
         typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : 0;
       totalCostUsd += callCostUsd;
+      // Capture the upstream provider name (P0-B: served-upstream observability).
+      // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
+      // actually served the request (e.g. 'DeepSeek', 'Anthropic'). We keep the
+      // last non-empty value across the job so the DB row reflects which upstream
+      // handled the bulk of the work.
+      const rawProvider = orMeta?.['provider'];
+      if (typeof rawProvider === 'string' && rawProvider.length > 0) {
+        servedProvider = rawProvider;
+      }
 
       // Guard 1a — token budget, CACHE-AWARE. We charge EFFECTIVE (non-cached)
       // input + output, not raw input. A job that re-sends a prompt-cached
@@ -1366,6 +1385,7 @@ export async function executeJob(
           costUsd: callCostUsd > 0 ? callCostUsd : undefined,
           totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
         },
+        ...(servedProvider ? { servedProvider } : {}),
       });
 
       // e-pré. Anti-spam guard (invariant 8). A "delivery-only" turn is one
@@ -1690,6 +1710,7 @@ export async function executeJob(
                 inputTokens,
                 outputTokens,
                 effectiveInputTokens,
+                servedProvider,
               });
 
               const jobShape = {
@@ -2064,6 +2085,7 @@ export async function executeJob(
             inputTokens,
             outputTokens,
             effectiveInputTokens,
+            servedProvider,
             totalDurationMs: Date.now() - startedAt,
           });
           return { status: 'awaiting_tasks' };
@@ -2220,6 +2242,7 @@ export async function executeJob(
         outputTokens,
         effectiveInputTokens,
         totalCostUsd,
+        servedProvider,
       });
     }
   } catch (err) {

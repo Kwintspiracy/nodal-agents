@@ -60,6 +60,23 @@ function middlewareForFamily(family: ModelFamily): LanguageModelMiddleware | nul
   }
 }
 
+/**
+ * Build the extraBody for an OpenRouter model request. Pure function — no
+ * side effects, exported for unit testing.
+ *
+ * @internal
+ */
+export function buildOpenRouterExtraBody(modelId: string): Record<string, unknown> {
+  const entry = findModelCatalogEntry('openrouter', modelId);
+  const isReasoning = entry?.capabilities.reasoning;
+  const providerOrder = entry?.providerOrder;
+  return {
+    usage: { include: true },
+    ...(isReasoning ? { reasoning: { enabled: true } } : {}),
+    ...(providerOrder ? { provider: { order: providerOrder, allow_fallbacks: true } } : {}),
+  };
+}
+
 export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
   if (!config.apiKey) {
     throw new ProviderConfigError('openrouter provider requires an apiKey');
@@ -95,12 +112,15 @@ export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
   // always present (even when 0) and lands in `providerMetadata.openrouter.usage`
   // on the AI SDK response — read in execute.ts as the real dollar cost of this
   // call. Generic: applies to every OpenRouter model; no model-specific logic.
-  const isReasoning = findModelCatalogEntry('openrouter', config.model)?.capabilities.reasoning;
+  //
+  // `provider.order` pins the preferred upstream provider(s) for routing. When
+  // set in the catalog (`providerOrder`), we forward it to OpenRouter so it
+  // tries those upstreams first. `allow_fallbacks: true` means OpenRouter can
+  // still route elsewhere if the preferred upstream is unavailable — we never
+  // hard-fail on a routing preference. Generic: reads only catalog data, no
+  // model-name branch.
   const base = provider.chat(config.model, {
-    extraBody: {
-      usage: { include: true },
-      ...(isReasoning ? { reasoning: { enabled: true } } : {}),
-    },
+    extraBody: buildOpenRouterExtraBody(config.model),
   });
 
   const middleware = middlewareForFamily(detectAgenticFamily(config.model));

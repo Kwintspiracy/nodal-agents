@@ -85,6 +85,12 @@ function makeMockLlmClient(
      * When omitted, the mock returns no cost metadata (provider-silent path).
      */
     costUsd?: number;
+    /**
+     * Simulated upstream provider name as OpenRouter reports in
+     * `providerMetadata.openrouter.provider`. Drives served-upstream observability
+     * (P0-B) in execute.ts. When omitted the field is absent from providerMetadata.
+     */
+    providerName?: string;
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
   capturedPrompts?: unknown[],
@@ -125,10 +131,16 @@ function makeMockLlmClient(
       // Simulate OpenRouter's providerMetadata.openrouter.usage.cost when the
       // test response specifies a costUsd. This is the exact path execute.ts reads
       // in Guard 1e: providerMetadata?.openrouter?.usage?.cost.
-      const providerMetadata =
-        response.costUsd !== undefined
-          ? { openrouter: { usage: { cost: response.costUsd } } }
-          : undefined;
+      // Also simulate providerMetadata.openrouter.provider (upstream name, P0-B).
+      const hasMeta = response.costUsd !== undefined || response.providerName !== undefined;
+      const providerMetadata = hasMeta
+        ? {
+            openrouter: {
+              ...(response.costUsd !== undefined ? { usage: { cost: response.costUsd } } : {}),
+              ...(response.providerName !== undefined ? { provider: response.providerName } : {}),
+            },
+          }
+        : undefined;
       return {
         content,
         finishReason: isToolCalls
@@ -3255,5 +3267,68 @@ describe('reliability guards', () => {
     expect(row?.status).toBe('failed');
     expect(row?.error).toBe('token_budget_exceeded'); // Guard 1a fired, not Guard 1e
     expect(row?.totalCostUsd).toBe(0); // no cost reported → stays 0
+  });
+
+  // ─── P0-B: served-upstream observability ──────────────────────────────────
+
+  it('P0-B: served_provider is persisted on the DB row when OpenRouter reports an upstream provider', async () => {
+    // When OpenRouter returns providerMetadata.openrouter.provider (e.g. 'TestUpstream'),
+    // execute.ts must capture the last non-empty value and persist it on the
+    // agent_jobs row via completeJob. This is the real DB assertion — not a call count.
+    const job = await createTestJob(db, seed);
+
+    const llmClient = makeMockLlmClient([
+      {
+        costUsd: 0.01,
+        providerName: 'TestUpstream',
+        toolCalls: [
+          {
+            toolCallId: 'tc-rr',
+            toolName: 'return_result',
+            args: { status: 'success' },
+          },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const [row] = await db
+      .select({ servedProvider: agentJobs.servedProvider })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(row?.servedProvider).toBe('TestUpstream');
+  });
+
+  it('P0-B: served_provider is null when the provider reports no upstream identity', async () => {
+    // When the response carries no providerMetadata.openrouter.provider, the column
+    // must remain null — we never hallucinate a value.
+    const job = await createTestJob(db, seed);
+
+    const llmClient = makeMockLlmClient([
+      {
+        // costUsd present (Guard 1e path exercised) but no providerName
+        costUsd: 0.01,
+        toolCalls: [
+          {
+            toolCallId: 'tc-rr',
+            toolName: 'return_result',
+            args: { status: 'success' },
+          },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const [row] = await db
+      .select({ servedProvider: agentJobs.servedProvider })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(row?.servedProvider).toBeNull();
   });
 });

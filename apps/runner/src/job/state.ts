@@ -115,6 +115,8 @@ interface RunStats {
   effectiveInputTokens?: number;
   /** Cumulative real dollar cost billed by the provider (Guard 1e). Undefined when the provider doesn't report cost. */
   totalCostUsd?: number;
+  /** The upstream provider that last served an LLM call for this job (from providerMetadata.openrouter.provider). Null when not reported. */
+  servedProvider?: string | null;
   turn: number;
   totalDurationMs?: number;
 }
@@ -165,6 +167,7 @@ export async function completeJob(
           effectiveInputTokens: stats.effectiveInputTokens,
         }),
         ...(stats.totalCostUsd !== undefined && { totalCostUsd: stats.totalCostUsd }),
+        ...(stats.servedProvider !== undefined && { servedProvider: stats.servedProvider }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -208,6 +211,7 @@ export async function failJob(
           effectiveInputTokens: stats.effectiveInputTokens,
         }),
         ...(stats.totalCostUsd !== undefined && { totalCostUsd: stats.totalCostUsd }),
+        ...(stats.servedProvider !== undefined && { servedProvider: stats.servedProvider }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -249,6 +253,7 @@ export async function cancelJob(
           effectiveInputTokens: stats.effectiveInputTokens,
         }),
         ...(stats.totalCostUsd !== undefined && { totalCostUsd: stats.totalCostUsd }),
+        ...(stats.servedProvider !== undefined && { servedProvider: stats.servedProvider }),
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
@@ -271,6 +276,7 @@ export async function saveCheckpoint(
     outputTokens?: number;
     effectiveInputTokens?: number;
     totalCostUsd?: number;
+    servedProvider?: string | null;
     totalDurationMs?: number;
   },
 ): Promise<void> {
@@ -288,6 +294,7 @@ export async function saveCheckpoint(
         effectiveInputTokens: checkpoint.effectiveInputTokens,
       }),
       ...(checkpoint.totalCostUsd !== undefined && { totalCostUsd: checkpoint.totalCostUsd }),
+      ...(checkpoint.servedProvider !== undefined && { servedProvider: checkpoint.servedProvider }),
       ...(checkpoint.totalDurationMs !== undefined && {
         totalDurationMs: checkpoint.totalDurationMs,
       }),

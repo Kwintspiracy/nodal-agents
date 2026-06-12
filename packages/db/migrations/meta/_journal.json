@@ -260,6 +260,13 @@
       "when": 1781700000000,
       "tag": "0037_agent_jobs_total_cost_usd",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1781800000000,
+      "tag": "0038_agent_jobs_served_provider",
+      "breakpoints": true
     }
   ]
 }

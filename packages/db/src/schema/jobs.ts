@@ -53,6 +53,15 @@ export const agentJobs = pgTable(
      * effectiveInputTokens.
      */
     totalCostUsd: real('total_cost_usd').default(0),
+    /**
+     * The upstream provider that actually served the last LLM call for this job
+     * (e.g. 'DeepSeek' when an OpenRouter job was routed to the DeepSeek
+     * upstream via provider-order preference). Populated from
+     * `providerMetadata.openrouter.provider` on each LLM call; only the last
+     * non-empty value is stored. NULL for providers that don't report upstream
+     * identity (Anthropic, Ollama, etc.) or when the field was absent.
+     */
+    servedProvider: text('served_provider'),
     delegationDepth: integer('delegation_depth').default(0),
     /**
      * The slug of the last delegated child that failed on this parent job.

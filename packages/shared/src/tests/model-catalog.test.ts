@@ -1,7 +1,8 @@
-// model-catalog.test.ts — context-window lookup (drives runtime compaction).
+// model-catalog.test.ts — context-window lookup (drives runtime compaction)
+// and providerOrder routing preference (P0-C, Part 2).
 
 import { describe, it, expect } from 'vitest';
-import { modelContextWindow, DEFAULT_CONTEXT_WINDOW, MODEL_CATALOG } from '../model-catalog';
+import { modelContextWindow, DEFAULT_CONTEXT_WINDOW, MODEL_CATALOG, findModelCatalogEntry } from '../model-catalog';
 
 describe('modelContextWindow', () => {
   it('returns the catalogued window for known models', () => {
@@ -23,5 +24,33 @@ describe('modelContextWindow', () => {
         expect(e.contextWindow, `${provider}/${e.modelId}`).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+// ─── providerOrder routing preference (P0-C / Part 2) ────────────────────────
+
+describe('providerOrder', () => {
+  it('deepseek/deepseek-v4-pro has providerOrder: ["deepseek"]', () => {
+    const entry = findModelCatalogEntry('openrouter', 'deepseek/deepseek-v4-pro');
+    expect(entry).toBeDefined();
+    expect(entry?.providerOrder).toEqual(['deepseek']);
+  });
+
+  it('deepseek/deepseek-v4-flash has providerOrder: ["deepseek"]', () => {
+    const entry = findModelCatalogEntry('openrouter', 'deepseek/deepseek-v4-flash');
+    expect(entry).toBeDefined();
+    expect(entry?.providerOrder).toEqual(['deepseek']);
+  });
+
+  it('non-DeepSeek entries have no providerOrder (anthropic/claude-sonnet-4.6)', () => {
+    const entry = findModelCatalogEntry('openrouter', 'anthropic/claude-sonnet-4.6');
+    expect(entry).toBeDefined();
+    expect(entry?.providerOrder).toBeUndefined();
+  });
+
+  it('deepseek/deepseek-v3.2 (older model) has no providerOrder', () => {
+    const entry = findModelCatalogEntry('openrouter', 'deepseek/deepseek-v3.2');
+    expect(entry).toBeDefined();
+    expect(entry?.providerOrder).toBeUndefined();
   });
 });

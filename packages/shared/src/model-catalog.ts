@@ -36,6 +36,15 @@ export interface ModelCatalogEntry {
   contextWindow?: number;
   /** Optional endpoint override (e.g. a model's native Anthropic-compatible URL). */
   route?: { baseURL?: string };
+  /**
+   * Preferred upstream provider order for OpenRouter routing. When set,
+   * `buildOpenRouterModel` adds `provider: { order, allow_fallbacks: true }` to
+   * the extraBody so OpenRouter tries these upstreams in order before falling back
+   * to its default routing. Omit for models where default routing is fine.
+   * Example: `['deepseek']` pins a DeepSeek model to DeepSeek's own upstream
+   * (lower latency, lower cost) while still allowing fallback.
+   */
+  providerOrder?: string[];
 }
 
 // Keyed by provider slug (matches entity_llm_keys.provider). Providers not
@@ -161,12 +170,14 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       label: 'DeepSeek V4 Flash',
       capabilities: { tools: true, forcedToolChoice: true },
       contextWindow: 1_048_576,
+      providerOrder: ['deepseek'],
     },
     {
       modelId: 'deepseek/deepseek-v4-pro',
       label: 'DeepSeek V4 Pro',
       capabilities: { tools: true, forcedToolChoice: true },
       contextWindow: 1_048_576,
+      providerOrder: ['deepseek'],
     },
     // Google
     {
