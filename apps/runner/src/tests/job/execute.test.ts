@@ -3331,4 +3331,216 @@ describe('reliability guards', () => {
 
     expect(row?.servedProvider).toBeNull();
   });
+
+  // ─── F1 regression: double-execution / zombie-execution guards ────────────
+
+  // Test 1 — Atomic claim: two concurrent executeJob calls on the same pending
+  // job. Exactly one should complete; the other should return already_handled.
+  // The mock LLM completes in one turn (return_result). This asserts the DB row
+  // ends up 'completed' exactly once and the losing caller returns already_handled.
+  it('F1/Leg1: two concurrent executeJob calls — one completes, other already_handled', async () => {
+    const job = await createTestJob(db, seed);
+
+    // Both callers use a mock that resolves in one turn.
+    const llmA = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-a', toolName: 'return_result', args: { status: 'success', text: 'done' } },
+        ],
+      },
+    ]);
+    const llmB = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-b', toolName: 'return_result', args: { status: 'success', text: 'done' } },
+        ],
+      },
+    ]);
+
+    // Run both concurrently on the same jobId.
+    const [resultA, resultB] = await Promise.all([
+      executeJob(job.id as JobId, makeDeps(llmA), testEnv),
+      executeJob(job.id as JobId, makeDeps(llmB), testEnv),
+    ]);
+
+    const statuses = [resultA.status, resultB.status].sort();
+    // Exactly one 'completed' and one 'already_handled'.
+    expect(statuses).toEqual(['already_handled', 'completed']);
+
+    // DB row is 'completed' exactly once (not 'processing' or double-written).
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('completed');
+  });
+
+  // Test 2 — Reap-during-loop (zombie): a job enters the loop; between turns the
+  // orphan reaper flips the row to 'failed'. The top-of-turn check (Leg 2) must
+  // detect this and stop. The conditional writer (Leg 3) ensures completeJob does
+  // NOT overwrite the 'failed' row.
+  //
+  // Strategy: use a 2-call mock where the first call does a real tool call, and
+  // the second call would return return_result. Between the two calls we flip the
+  // DB row to 'failed'. We verify the loop exits before making the second LLM
+  // call and the row stays 'failed'.
+  it('F1/Leg2+3: orphan reaper flips row to failed mid-loop — loop stops, row stays failed', async () => {
+    const job = await createTestJob(db, seed);
+
+    // Track LLM call count to verify the loop stopped early.
+    let llmCallCount = 0;
+
+    // We build a custom mock where the first call returns a save_memory tool call,
+    // and the second call returns return_result. Between the two we flip the DB.
+    // We hijack the mock by pre-staging the flip via a vi.fn side effect.
+    const reaperFlippedJobId = job.id;
+
+    const responsesWithReap = [
+      // Turn 1: a real tool call (save_memory, which is an always-on builtin)
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-sm',
+            toolName: 'save_memory',
+            args: { key: 'test', value: 'test-value' },
+          },
+        ],
+      },
+      // Turn 2: return_result — but we'll flip the DB before this is called.
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success', text: 'done' } },
+        ],
+      },
+    ];
+
+    let callIndex = 0;
+    const mockModel = new MockLanguageModelV3({
+      provider: 'mock',
+      modelId: 'mock',
+      doGenerate: async (_options) => {
+        const response = responsesWithReap[callIndex] ?? responsesWithReap[responsesWithReap.length - 1]!;
+        llmCallCount++;
+        callIndex++;
+
+        // After the first LLM call result is returned, simulate the orphan reaper
+        // flipping the row to 'failed'. We do this by directly updating the DB
+        // row DURING the second call (i.e., before we return turn-2's response).
+        if (callIndex === 2) {
+          // This is the second call — flip the row BEFORE returning, simulating
+          // a reaper that ran between turns.
+          await db
+            .update(agentJobs)
+            .set({ status: 'failed', error: 'orphan_job_reset' })
+            .where(eq(agentJobs.id, reaperFlippedJobId));
+        }
+
+        const content: Array<{ type: 'tool-call'; toolCallId: string; toolName: string; input: string }> = [];
+        if (response.toolCalls) {
+          for (const tc of response.toolCalls) {
+            content.push({
+              type: 'tool-call' as const,
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
+              input: JSON.stringify(tc.args),
+            });
+          }
+        }
+        return {
+          content,
+          finishReason: { unified: 'tool-calls' as const, raw: 'tool-calls' },
+          usage: {
+            inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        };
+      },
+    });
+
+    const mockLlmClient: RunnerDeps['llmClient'] = {
+      config: { provider: 'anthropic', model: 'mock' } as RunnerDeps['llmClient']['config'],
+      capabilities: {
+        toolUse: true,
+        promptCaching: false,
+        vision: false,
+        structuredOutputs: false,
+        streaming: false,
+      },
+      generateText: (args) =>
+        generateText({ ...args, model: mockModel } as Parameters<typeof generateText>[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
+      streamText: () => { throw new Error('not supported'); },
+      generateObject: () => { throw new Error('not supported'); },
+    };
+
+    setActiveLlmClient(mockLlmClient);
+    const result = await executeJob(job.id as JobId, makeDeps(mockLlmClient), testEnv);
+
+    // The loop must have exited due to terminal_observed_mid_loop (Leg 2).
+    expect(result.status).toBe('already_handled');
+
+    // The LLM was called exactly once (turn 1: save_memory). Turn 2's call is
+    // what flips the DB; after that, the top-of-turn check on turn 2 (BEFORE
+    // calling LLM for that turn's actual generation) should stop the loop.
+    // Note: the mock flips the DB DURING the second LLM call, so llmCallCount
+    // will be 2 (the flip happens inside doGenerate). The key assertion is that
+    // the loop didn't proceed to a THIRD call.
+    expect(llmCallCount).toBeLessThanOrEqual(2);
+
+    // Most importantly: the DB row must still be 'failed' — completeJob's
+    // conditional WHERE (Leg 3) must NOT have overwritten it.
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('orphan_job_reset');
+  });
+
+  // Test 4 — Legitimate resume: the atomic claimJob (Leg 1) must NOT block a
+  // job that was reset to 'pending' by an external writer (approval/delegation
+  // resume path). We simulate this by: running a job to completion, then manually
+  // resetting it to 'pending' and re-executing — verifying the second run can
+  // claim it and complete again. This is the critical invariant: pending→processing
+  // must always succeed on a genuine 'pending' row.
+  it('F1/Leg1: job reset to pending by external writer is claimable and completes', async () => {
+    const job = await createTestJob(db, seed);
+
+    // First run: completes normally.
+    const llmFirst = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-1', toolName: 'return_result', args: { status: 'success', text: 'first run' } },
+        ],
+      },
+    ]);
+    const resultFirst = await executeJob(job.id as JobId, makeDeps(llmFirst), testEnv);
+    expect(resultFirst.status).toBe('completed');
+
+    // Simulate the approval resume path: flip the row back to 'pending'.
+    // (In production this is done by approve.ts + resumeDelegated.)
+    await db
+      .update(agentJobs)
+      .set({ status: 'pending' })
+      .where(eq(agentJobs.id, job.id));
+
+    // Second run on the same job (now pending again): claimJob succeeds and the
+    // job completes normally.
+    const llmSecond = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-2', toolName: 'return_result', args: { status: 'success', text: 'second run' } },
+        ],
+      },
+    ]);
+    const resultSecond = await executeJob(job.id as JobId, makeDeps(llmSecond), testEnv);
+    expect(resultSecond.status).toBe('completed');
+
+    // DB row is 'completed'.
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('completed');
+  });
 });

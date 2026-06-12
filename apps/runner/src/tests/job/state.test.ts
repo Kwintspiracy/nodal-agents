@@ -26,6 +26,23 @@ beforeAll(async () => {
   seed = await seedMinimal(db);
 });
 
+/** Insert a fresh agent_jobs row and return its id. Used by Leg-3 tests that
+ * need isolated rows so they don't corrupt the shared seed.jobId. */
+async function insertFreshJob(status: string): Promise<string> {
+  const [row] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'api',
+      task: 'test task',
+      status,
+    })
+    .returning({ id: agentJobs.id });
+  if (!row) throw new Error('Failed to insert fresh job');
+  return row.id;
+}
+
 describe('assertTransition', () => {
   it('allows pending → processing', () => {
     expect(() => assertTransition('job-1', 'pending', 'processing')).not.toThrow();
@@ -108,7 +125,7 @@ describe('DB state helpers', () => {
     // Reset to pending
     await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, seed.jobId));
 
-    const claimed = await claimJob(db as Parameters<typeof claimJob>[0], seed.jobId, 'worker-1');
+    const claimed = await claimJob(db as Parameters<typeof claimJob>[0], seed.jobId);
 
     expect(claimed).toBe(true);
 
@@ -143,6 +160,9 @@ describe('DB state helpers', () => {
   });
 
   it('completeJob persists messages JSONB when provided (Brique 28 regression)', async () => {
+    // Reset to processing so the conditional writer (Leg 3) allows the write.
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, seed.jobId));
+
     // Single-turn jobs that complete via return_result used to leave the
     // messages array stuck at its initial [user]-only state. The runner had
     // the assistant turn in memory but completeJob never wrote it. Result:
@@ -191,6 +211,9 @@ describe('DB state helpers', () => {
   });
 
   it('failJob sets status to failed with error code AND completedAt', async () => {
+    // Reset to processing so the conditional writer (Leg 3) allows the write.
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, seed.jobId));
+
     const before = Date.now();
     await failJob(db as Parameters<typeof failJob>[0], seed.jobId, 'chain_limit_exceeded');
     const after = Date.now();
@@ -254,6 +277,100 @@ describe('DB state helpers', () => {
     expect(rows[0]?.messages).toEqual(transcript);
     expect(rows[0]?.inputTokens).toBe(42);
     expect(rows[0]?.turn).toBe(3);
+  });
+
+  // F1 regression — Leg 1: claimJob returns false (and does NOT touch the row)
+  // when the job is not in 'pending' state. Uses a fresh row so it doesn't
+  // contaminate seed.jobId for subsequent tests.
+  it('Leg 1: claimJob returns false when job is not pending (already processing)', async () => {
+    const jobId = await insertFreshJob('processing');
+
+    const claimed = await claimJob(db as Parameters<typeof claimJob>[0], jobId);
+
+    expect(claimed).toBe(false);
+
+    // Row must still be 'processing' — the call must not have written anything.
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.status).toBe('processing');
+  });
+
+  // F1 regression — Leg 3: completeJob returns false (no write) when row is
+  // already terminal; returns true (writes) when row is 'processing'.
+  it('Leg 3: completeJob returns true when processing, false when already terminal', async () => {
+    const jobId = await insertFreshJob('processing');
+
+    const wrote = await completeJob(
+      db as Parameters<typeof completeJob>[0],
+      jobId,
+      'completed result',
+      ['return_result'],
+    );
+    expect(wrote).toBe(true);
+
+    // Row is now 'completed' — calling again must return false (no overwrite).
+    const again = await completeJob(
+      db as Parameters<typeof completeJob>[0],
+      jobId,
+      'overwrite attempt',
+      [],
+    );
+    expect(again).toBe(false);
+
+    // The row must still hold the FIRST completed result, not the overwrite.
+    const [row] = await db
+      .select({ status: agentJobs.status, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.status).toBe('completed');
+    expect(row?.result).toBe('completed result');
+  });
+
+  // F1 regression — Leg 3: failJob returns false (no write) when row is already
+  // terminal (e.g. orphan reaper already marked it failed).
+  it('Leg 3: failJob returns false and does NOT overwrite when row is already terminal', async () => {
+    // Insert a row already in 'failed' (simulating what the orphan reaper does).
+    const jobId = await insertFreshJob('failed');
+    await db
+      .update(agentJobs)
+      .set({ error: 'orphan_job_reset' })
+      .where(eq(agentJobs.id, jobId));
+
+    const wrote = await failJob(
+      db as Parameters<typeof failJob>[0],
+      jobId,
+      'zombie_attempt',
+    );
+    expect(wrote).toBe(false);
+
+    // Error code must still be the reaper's, not 'zombie_attempt'.
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('orphan_job_reset');
+  });
+
+  // F1 regression — Leg 3: failJob returns true when row is 'processing'.
+  it('Leg 3: failJob returns true and writes when row is processing', async () => {
+    const jobId = await insertFreshJob('processing');
+
+    const wrote = await failJob(
+      db as Parameters<typeof failJob>[0],
+      jobId,
+      'test_failure_code',
+    );
+    expect(wrote).toBe(true);
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('test_failure_code');
   });
 
   it('saveCheckpoint persists messages, turn, chainCount', async () => {

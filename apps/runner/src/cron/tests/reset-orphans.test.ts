@@ -214,6 +214,34 @@ describe('resetOrphanedJobs', () => {
     expect(row?.error).toBe('orphan_job_reset');
   });
 
+  // F1 regression — Leg 4: orphan reap must stamp completedAt so the row
+  // is treated as terminal by dashboards / "in-flight" filters.
+  it('Leg 4: reap sets completedAt on orphaned processing job', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const job = await createJob({ status: 'processing', updatedAt: staleDate });
+
+    const before = Date.now();
+    await resetOrphanedJobs(db, 5);
+    const after = Date.now();
+
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        completedAt: agentJobs.completedAt,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('orphan_job_reset');
+    // completedAt must be non-null and within the test window.
+    expect(row?.completedAt).not.toBeNull();
+    const ts = row?.completedAt?.getTime() ?? 0;
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
+  });
+
   it('marks a stale awaiting_delegation job as failed', async () => {
     const staleDate = new Date(Date.now() - 10 * 60 * 1000);
     const job = await createJob({ status: 'awaiting_delegation', updatedAt: staleDate });

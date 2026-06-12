@@ -1,7 +1,7 @@
 // job/state.ts — JobState machine: transitions and typed state values
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
-import { eq } from '@nodal-agents/db';
+import { and, eq, notInArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
@@ -87,13 +87,19 @@ export async function setJobStatus(
 }
 
 /**
- * Mark a job as processing. Stores workerId and workerStartedAt.
- * Returns false if the job is not in a runnable state (concurrent claim check).
+ * Atomic claim: flip status pending → processing in a single UPDATE WHERE id=$1
+ * AND status='pending'. Returns true iff exactly one row was updated — i.e. this
+ * caller won the race. Returns false when the row is missing, already processing,
+ * or in any other non-pending state (concurrent claim, orphan reaper already
+ * acted, etc.).
+ *
+ * Only 'pending' is a valid entry point. All legitimate resume paths
+ * (approval, delegation, self-chain) reset the row to 'pending' before calling
+ * executeJob, so the WHERE status='pending' predicate never blocks a real resume.
  */
 export async function claimJob(
   db: AnyDrizzleDb,
   jobId: string,
-  _workerId: string,
 ): Promise<boolean> {
   const rows = await db
     .update(agentJobs)
@@ -101,10 +107,9 @@ export async function claimJob(
       status: 'processing',
       updatedAt: new Date(),
     })
-    .where(eq(agentJobs.id, jobId))
-    .returning({ id: agentJobs.id, status: agentJobs.status });
+    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
+    .returning({ id: agentJobs.id });
 
-  // If no row was updated (concurrent claim), return false
   return rows.length > 0 && rows[0]?.id === jobId;
 }
 
@@ -121,6 +126,10 @@ interface RunStats {
   totalDurationMs?: number;
 }
 
+// Terminal statuses — a row already in one of these must not be overwritten by
+// completeJob / failJob (Leg 3: conditional terminal writers).
+const TERMINAL_STATUSES: JobStatus[] = ['completed', 'failed', 'cancelled'];
+
 /**
  * Mark a job as completed. Sets result, completedAt, and clears error.
  * Persists per-turn accumulated token counts and final turn when provided.
@@ -135,6 +144,10 @@ interface RunStats {
  * agent_jobs.result column. This preserves any value written earlier by
  * dashboard_publish (or any other delivery tool side-effect). Only a non-empty
  * result (e.g. from the no-tool-calls text branch) replaces the stored value.
+ *
+ * Conditional write (Leg 3): only applies when the row is NOT already in a
+ * terminal state. Returns true if the write landed, false if the row was already
+ * terminal (race lost — e.g. orphan reaper already marked it failed).
  */
 export async function completeJob(
   db: AnyDrizzleDb,
@@ -143,8 +156,8 @@ export async function completeJob(
   toolsUsed: string[] = [],
   stats?: RunStats,
   messages?: unknown[],
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(agentJobs)
     .set({
       status: 'completed',
@@ -171,7 +184,10 @@ export async function completeJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(eq(agentJobs.id, jobId));
+    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .returning({ id: agentJobs.id });
+
+  return rows.length > 0 && rows[0]?.id === jobId;
 }
 
 /**
@@ -183,6 +199,11 @@ export async function completeJob(
  * `completed_at IS NULL` to mean "still in flight". Without this set on
  * failure, failed jobs leaked into "in-flight" queries and never appeared in
  * "recent" / "delivered" listings.
+ *
+ * Conditional write (Leg 3): only applies when the row is NOT already in a
+ * terminal state. Returns true if the write landed, false if the row was already
+ * terminal (race lost — e.g. orphan reaper already marked it failed before this
+ * call arrived).
  */
 export async function failJob(
   db: AnyDrizzleDb,
@@ -190,9 +211,9 @@ export async function failJob(
   errorCode: string,
   stats?: RunStats,
   messages?: unknown[],
-): Promise<void> {
+): Promise<boolean> {
   const now = new Date();
-  await db
+  const rows = await db
     .update(agentJobs)
     .set({
       status: 'failed',
@@ -215,7 +236,10 @@ export async function failJob(
         ...(stats.totalDurationMs !== undefined && { totalDurationMs: stats.totalDurationMs }),
       }),
     })
-    .where(eq(agentJobs.id, jobId));
+    .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
+    .returning({ id: agentJobs.id });
+
+  return rows.length > 0 && rows[0]?.id === jobId;
 }
 
 /**

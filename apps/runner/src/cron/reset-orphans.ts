@@ -187,12 +187,14 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
   }
 
   if (toReset.length > 0) {
+    const now = new Date();
     await db
       .update(agentJobs)
       .set({
         status: 'failed',
         error: 'orphan_job_reset',
-        updatedAt: new Date(),
+        completedAt: now,
+        updatedAt: now,
       })
       .where(inArray(agentJobs.id, toReset));
   }

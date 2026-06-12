@@ -78,6 +78,7 @@ import {
   setJobStatus,
   saveCheckpoint,
   touchJob,
+  claimJob,
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
@@ -279,8 +280,14 @@ export async function executeJob(
     return { status: 'failed', error: 'job_not_found' };
   }
 
-  const currentStatus = job.status ?? 'pending';
-  if (!['pending', 'processing'].includes(currentStatus)) {
+  // Leg 1 — Atomic claim (pending → processing, WHERE status='pending').
+  // Only 'pending' is a valid entry point. All legitimate resume paths
+  // (approval, delegation, self-chain) reset to 'pending' before calling
+  // executeJob, so this predicate never blocks a real resume. A second
+  // concurrent caller or a post-reap duplicate gets false → already_handled.
+  const claimed = await claimJob(db, jobId as string);
+  if (!claimed) {
+    trace('claim_lost', { status: job.status ?? 'unknown' });
     return { status: 'already_handled' };
   }
 
@@ -348,10 +355,8 @@ export async function executeJob(
     totalDurationMs: Date.now() - startedAt,
   });
 
-  // ── 2. Transition to processing ───────────────────────────────────────────────
-  await setJobStatus(db, jobId as string, 'processing');
-
   // ── 3. Load agent ─────────────────────────────────────────────────────────────
+  // (Leg 1: status was atomically set to 'processing' by claimJob above.)
   if (!job.agentId) {
     await failJob(db, jobId as string, 'agent_not_found', runStats(), messages);
     return { status: 'failed', error: 'agent_not_found' };
@@ -1195,28 +1200,34 @@ export async function executeJob(
       turn += 1;
       counters.resetTurnToolCalls();
 
-      // Cooperative cancellation check.
+      // Leg 2 — Top-of-turn terminal check (primary zombie-stopper).
       //
-      // The dashboard's `cancelJobAction` (apps/web/src/lib/actions.ts) only
-      // flips the `status` column to 'cancelled'; it never kills processes.
-      // We observe that flip here, at the start of every turn, so the LLM
-      // loop bails out cleanly between turns. The in-flight LLM call from
-      // the PREVIOUS turn (if any) finishes naturally — we don't abort
-      // mid-stream because half-aborted provider calls tend to leave half-
-      // written DB rows and confused tool side-effects.
+      // Checks DB status BEFORE every LLM call. If the row has been set to ANY
+      // terminal status by an external writer (orphan reaper, cancellation,
+      // another concurrent runner), we stop immediately without calling
+      // completeJob/failJob — the row is already terminal and we must not race
+      // to overwrite it. `cancelJob` is still called for 'cancelled' so it
+      // persists the partial transcript + stats.
       //
-      // Worst case the user waits one extra LLM turn after clicking cancel;
-      // in practice that's a few seconds. Fine for an MVP — if we ever need
-      // sub-second cancellation we'll wire AbortController through the LLM
-      // client instead, but that's a bigger refactor.
+      // Previously this only checked for 'cancelled'. The extension to 'failed'
+      // and 'completed' is the fix for the zombie-execution bug (F1): the orphan
+      // reaper can flip a slow job to 'failed' while the original loop is still
+      // running; without this check the loop would continue and completeJob would
+      // later overwrite 'failed' → 'completed'. The conditional writers (Leg 3)
+      // are a second line of defence; this check is the primary stopper.
       const [statusRow] = await db
         .select({ status: agentJobs.status })
         .from(agentJobs)
         .where(eq(agentJobs.id, jobId as string));
-      if (statusRow?.status === 'cancelled') {
+      const currentTurnStatus = statusRow?.status;
+      if (currentTurnStatus === 'cancelled') {
         trace('cancellation_observed', { turn });
         await cancelJob(db, jobId as string, runStats(), messages);
         return { status: 'cancelled' };
+      }
+      if (currentTurnStatus === 'failed' || currentTurnStatus === 'completed') {
+        trace('terminal_observed_mid_loop', { turn, status: currentTurnStatus });
+        return { status: 'already_handled' };
       }
 
       // Invariant 8: hard turn cap. `turn` is cumulative across resumes (it's
@@ -1258,12 +1269,25 @@ export async function executeJob(
       await touchJob(db, jobId as string);
 
       trace('llm_call_start', { turn, msgCount: messages.length });
-      const response = await llmClient.generateText({
-        system: systemPrompt,
-        messages,
-        tools: aiSdkTools,
-        toolChoice,
-      });
+      // Leg 5 — Heartbeat during LLM call. The pre-call touchJob above covers
+      // the moment we start; this interval covers long in-progress calls (e.g.
+      // reasoning models that think for 2–5 min). 60s is well inside the 5-min
+      // orphan-reset window. The interval is cleared in a finally block so it
+      // never leaks past this turn regardless of success/error.
+      const hbInterval = setInterval(() => {
+        void touchJob(db, jobId as string).catch(() => {});
+      }, 60_000);
+      let response: Awaited<ReturnType<typeof llmClient.generateText>>;
+      try {
+        response = await llmClient.generateText({
+          system: systemPrompt,
+          messages,
+          tools: aiSdkTools,
+          toolChoice,
+        });
+      } finally {
+        clearInterval(hbInterval);
+      }
 
       // Accumulate token usage. Some providers may return undefined/NaN for
       // either field — coerce to 0 so we never persist NaN. Local providers
@@ -1474,7 +1498,10 @@ export async function executeJob(
             await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
             return { status: 'failed', error: 'telegram_not_delivered' };
           }
-          await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
+          const completedText = await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
+          if (!completedText) {
+            trace('terminal_write_lost_race', { turn, writer: 'completeJob_text', jobId });
+          }
           return { status: 'completed', result: textContent };
         }
         // No text AND no tool calls — an empty LLM turn. Transient (the model
@@ -2092,7 +2119,10 @@ export async function executeJob(
         }
 
         trace('completeJob_call', { turn, toolsUsed, stats: runStats() });
-        await completeJob(db, jobId as string, finalResult, toolsUsed, runStats(), messages);
+        const completed = await completeJob(db, jobId as string, finalResult, toolsUsed, runStats(), messages);
+        if (!completed) {
+          trace('terminal_write_lost_race', { turn, writer: 'completeJob', jobId });
+        }
 
         // Re-fetch agent_jobs.result so the caller (the parent in a router
         // delegation flow) receives the text written by dashboard_publish /
