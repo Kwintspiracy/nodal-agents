@@ -3,7 +3,7 @@
 // Takes a db instance + entityId + already-validated input; returns a
 // discriminated result or throws on unexpected errors.
 
-import { eq, and, or, inArray } from 'drizzle-orm';
+import { eq, and, or, inArray, sql } from 'drizzle-orm';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agents } from '../schema/agents.ts';
 import { agentSkills, agentSkillAssignments } from '../schema/skills.ts';
@@ -170,4 +170,28 @@ export async function assignSkillRepo(
   });
 
   return { ok: true };
+}
+
+// ─── touchSkillsLastUsed ──────────────────────────────────────────────────────
+
+/**
+ * Fire-and-forget: bump `last_used_at = now()` on the given skill IDs.
+ *
+ * Called after skills are injected into a job's system prompt (learning-loop
+ * Phase A). The caller MUST NOT await this — it is intentionally non-blocking
+ * so skill injection never adds latency to job start.
+ *
+ * Only `packages/db` may import drizzle-orm — this function is the DB boundary.
+ * Callers in `packages/orchestration` import and call this via the re-export
+ * from `@nodal-agents/db`.
+ */
+export async function touchSkillsLastUsed(
+  db: AnyDrizzleDb,
+  skillIds: string[],
+): Promise<void> {
+  if (skillIds.length === 0) return;
+  await db
+    .update(agentSkills)
+    .set({ lastUsedAt: sql`now()` })
+    .where(inArray(agentSkills.id, skillIds));
 }

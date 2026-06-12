@@ -10,7 +10,7 @@
 // skill content was silently dropped. End-to-end skill behavior never worked.
 
 import { eq } from '@nodal-agents/db';
-import { agentSkillAssignments, agentSkills, agentWorkspaces } from '@nodal-agents/db';
+import { agentSkillAssignments, agentSkills, agentWorkspaces, touchSkillsLastUsed } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
@@ -192,12 +192,23 @@ export async function buildSystemPrompt(
   //    leaving the actual instructions silently dropped — skills were decorative.)
   const skillRows = await db
     .select({
+      skillId: agentSkills.id,
       skillName: agentSkills.name,
       skillContent: agentSkills.content,
     })
     .from(agentSkillAssignments)
     .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
     .where(eq(agentSkillAssignments.agentId, agent.id as string));
+
+  // 3a. Learning-loop Phase A — bump last_used_at for all injected skills.
+  //     Fire-and-forget: never awaited so skill injection adds zero latency.
+  //     The catch keeps any transient DB error from surfacing to the caller.
+  if (skillRows.length > 0) {
+    touchSkillsLastUsed(
+      db,
+      skillRows.map((r) => r.skillId),
+    ).catch(console.error);
+  }
 
   // 3.5. Workspace list — loaded from agent_workspaces (Volet 5). Data-driven
   //      from DB so the LLM knows which workspaces exist + how to prefix paths.

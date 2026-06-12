@@ -3,6 +3,30 @@
 import { z } from 'zod';
 import { OperationRiskLevelSchema } from '../enums';
 
+// ─── Skill provenance (learning-loop Phase A) ─────────────────────────────────
+
+/** Who created this skill. 'agent' = written/patched by an agent autonomously. */
+export type SkillCreatedBy = 'user' | 'system' | 'agent';
+
+/** Lifecycle state of a skill. No hard-delete path — skills are archived only. */
+export type SkillState = 'active' | 'stale' | 'archived';
+
+/**
+ * Returns true when the skill was created or patched by an agent autonomously
+ * (createdBy === 'agent'). Used to gate agent self-patch operations.
+ */
+export function isAgentCurated(skill: { createdBy: SkillCreatedBy }): boolean {
+  return skill.createdBy === 'agent';
+}
+
+/**
+ * Returns true when the skill is user- or system-owned and must NOT be
+ * silently overwritten by agent self-patch operations without explicit approval.
+ */
+export function isProtectedSkill(skill: { createdBy: SkillCreatedBy }): boolean {
+  return skill.createdBy === 'user' || skill.createdBy === 'system';
+}
+
 // ─── Skill operation item (embedded in operations JSONB column) ────────────────
 
 export const SkillOperationSchema = z

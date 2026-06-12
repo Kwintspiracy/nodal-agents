@@ -46,6 +46,17 @@ export const agentSkills = pgTable(
     installedScripts: jsonb('installed_scripts').$type<
       Array<{ path: string; language: string }>
     >(),
+    // ─── Learning-loop columns (Phase A) ─────────────────────────────────────
+    // createdBy: provenance — 'user' (default) | 'system' | 'agent'
+    // state: lifecycle — 'active' (default) | 'stale' | 'archived'
+    // lastUsedAt: fire-and-forget timestamp bumped each job, NULL = never used
+    // patchCount: agent-authored patches applied so far
+    // archivedAt: when the skill moved to state='archived' (NULL while active)
+    createdBy: text('created_by').notNull().default('user'),
+    state: text('state').notNull().default('active'),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    patchCount: integer('patch_count').notNull().default(0),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },

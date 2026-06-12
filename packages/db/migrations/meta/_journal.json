@@ -267,6 +267,13 @@
       "when": 1781800000000,
       "tag": "0038_agent_jobs_served_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1781900000000,
+      "tag": "0039_agent_skills_learning_loop",
+      "breakpoints": true
     }
   ]
 }

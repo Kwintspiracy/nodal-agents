@@ -314,6 +314,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       is_community boolean NOT NULL DEFAULT false,
       source text,
       installed_scripts jsonb,
+      created_by text NOT NULL DEFAULT 'user',
+      state text NOT NULL DEFAULT 'active',
+      last_used_at timestamptz,
+      patch_count integer NOT NULL DEFAULT 0,
+      archived_at timestamptz,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );

@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills } from '@nodal-agents/db';
+import { agents, agentAssignments, agentSkillAssignments, agentSkills, eq } from '@nodal-agents/db';
 import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
@@ -482,5 +482,100 @@ describe('buildSystemPrompt — persistent memory auto-injection', () => {
     expect(prompt).toContain('live-fact-always-shown');
     expect(prompt).not.toContain('archived-secret-never-shown');
     expect(prompt).not.toContain('expired-secret-never-shown');
+  });
+});
+
+// ─── Learning-loop Phase A — last_used_at touch ───────────────────────────────
+
+describe('buildSystemPrompt — last_used_at learning loop', () => {
+  it('bumps last_used_at on all injected skills after buildSystemPrompt resolves', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP LastUsed Agent',
+        slug: `test-sp-lastused-${Date.now()}`,
+        personality: 'You track skill usage.',
+        role: 'agent',
+      })
+      .returning();
+
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        entityId,
+        name: `LastUsed Skill ${Date.now()}`,
+        slug: `lastused-skill-${Date.now()}`,
+        content: 'Use this skill to track usage.',
+      })
+      .returning();
+
+    await db.insert(agentSkillAssignments).values({
+      entityId,
+      agentId: agentRow!.id,
+      skillId: skill!.id,
+    });
+
+    // Confirm last_used_at starts NULL
+    const [before] = await db
+      .select({ lastUsedAt: agentSkills.lastUsedAt })
+      .from(agentSkills)
+      .where(eq(agentSkills.id, skill!.id));
+    expect(before!.lastUsedAt).toBeNull();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    await buildSystemPrompt(agent, db);
+
+    // The fire-and-forget promise is already in the microtask queue after await
+    // buildSystemPrompt(). Yield once to let it settle before reading back.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const [after] = await db
+      .select({ lastUsedAt: agentSkills.lastUsedAt })
+      .from(agentSkills)
+      .where(eq(agentSkills.id, skill!.id));
+
+    // last_used_at must be a real Date now — not null
+    expect(after!.lastUsedAt).not.toBeNull();
+    expect(after!.lastUsedAt).toBeInstanceOf(Date);
+  });
+
+  it('does NOT touch last_used_at when the agent has no assigned skills', async () => {
+    const { entityId } = await seedContext(db);
+
+    // A free-standing skill with no assignment
+    const [skill] = await db
+      .insert(agentSkills)
+      .values({
+        entityId,
+        name: `Unassigned Skill ${Date.now()}`,
+        slug: `unassigned-skill-${Date.now()}`,
+        content: 'Never used by this agent.',
+      })
+      .returning();
+
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP NoSkills Agent',
+        slug: `test-sp-noskills-${Date.now()}`,
+        personality: 'You have no skills.',
+        role: 'agent',
+      })
+      .returning();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    await buildSystemPrompt(agent, db);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The unassigned skill should remain untouched
+    const [after] = await db
+      .select({ lastUsedAt: agentSkills.lastUsedAt })
+      .from(agentSkills)
+      .where(eq(agentSkills.id, skill!.id));
+
+    expect(after!.lastUsedAt).toBeNull();
   });
 });
