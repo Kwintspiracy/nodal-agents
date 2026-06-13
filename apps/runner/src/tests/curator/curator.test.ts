@@ -1,19 +1,19 @@
-// curator.test.ts — Tier-2 CURATOR (learning-loop Phase C).
+﻿// curator.test.ts â€” Tier-2 CURATOR (learning-loop Phase C).
 //
 // All assertions on real DB state (agent_skills rows, entities rows).
 // The LLM consolidation model is mocked via the same createLlmClient interception
 // pattern as reflection.test.ts.
 //
 // Coverage:
-//   1. transitionSkillLifecycle: agent skill with old last_used_at → active→stale→archived
-//   2. transitionSkillLifecycle: stale agent skill recently used → reactivated
-//   3. transitionSkillLifecycle: USER skill with old timestamp → UNCHANGED
-//   4. archiveAgentSkill: agent skill → archived (state + archived_at set)
-//   5. archiveAgentSkill: user skill → refused (row unchanged)
+//   1. transitionSkillLifecycle: agent skill with old last_used_at â†’ activeâ†’staleâ†’archived
+//   2. transitionSkillLifecycle: stale agent skill recently used â†’ reactivated
+//   3. transitionSkillLifecycle: USER skill with old timestamp â†’ UNCHANGED
+//   4. archiveAgentSkill: agent skill â†’ archived (state + archived_at set)
+//   5. archiveAgentSkill: user skill â†’ refused (row unchanged)
 //   6. runCuratorTick: deterministic transitions always run (REFLECTION_ENABLED=false)
 //   7. runCuratorTick: LLM consolidation SKIPPED when REFLECTION_ENABLED=false
-//   8. runCuratorTick: first-run-deferred (last_curator_run_at NULL → set to now, no LLM)
-//   9. runCuratorTick: mock LLM archives two narrow + creates umbrella → assert state
+//   8. runCuratorTick: first-run-deferred (last_curator_run_at NULL â†’ set to now, no LLM)
+//   9. runCuratorTick: mock LLM archives two narrow + creates umbrella â†’ assert state
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -35,12 +35,18 @@ import type { RunnerDeps } from '../../deps.ts';
 import { _resetEnvCache } from '../../env.ts';
 import { runCuratorTick } from '../../cron/run-curator.ts';
 
-// ── createLlmClient interception (same as reflection.test) ────────────────────
-const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+// â”€â”€ createLlmClient interception (same as reflection.test) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const { getActiveLlmClient, setActiveLlmClient, recordLlmArgs, getLastLlmConfig, resetLastLlmConfig } = vi.hoisted(() => {
   let _active: RunnerDeps['llmClient'] | null = null;
+  // Captures the ProviderConfig passed to createLlmClient so tests can assert
+  // which model flowed through the resolution path (for REFLECTION_MODEL tests).
+  let _lastConfig: { provider: string; model: string } | null = null;
   return {
     getActiveLlmClient: () => _active,
     setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => { _active = c; },
+    recordLlmArgs: (cfg: { provider: string; model: string }) => { _lastConfig = cfg; },
+    getLastLlmConfig: () => _lastConfig,
+    resetLastLlmConfig: () => { _lastConfig = null; },
   };
 });
 
@@ -49,7 +55,10 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
   return {
     ...actual,
-    createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
+    createLlmClient: (...args: Parameters<typeof actual.createLlmClient>) => {
+      // Record the config (provider + model) so REFLECTION_MODEL tests can
+      // assert the override reached the resolution layer.
+      recordLlmArgs({ provider: args[0].provider, model: args[0].model });
       const active = getActiveLlmClient();
       if (!active) throw new Error('curator.test: no active LLM client set');
       return active;
@@ -57,7 +66,7 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
   };
 });
 
-// ── Scripted mock LLM ──────────────────────────────────────────────────────────
+// â”€â”€ Scripted mock LLM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 type ScriptedTurn = {
   text?: string;
   toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
@@ -115,7 +124,7 @@ function makeScriptedClient(turns: ScriptedTurn[]): RunnerDeps['llmClient'] {
   };
 }
 
-// ── Test fixtures ──────────────────────────────────────────────────────────────
+// â”€â”€ Test fixtures â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let db: TestDb;
 let seed: Awaited<ReturnType<typeof seedMinimal>>;
 
@@ -148,6 +157,7 @@ function makeCuratorEnv(overrides: {
   reflectionEnabled?: string;
   curatorMinSkills?: number;
   curatorIntervalDays?: number;
+  reflectionModel?: string;
 } = {}): Parameters<typeof runCuratorTick>[2] {
   return {
     DATABASE_URL: 'test://local',
@@ -162,11 +172,13 @@ function makeCuratorEnv(overrides: {
     REFLECTION_MIN_TURNS: 3,
     REFLECTION_MAX_PER_HOUR: 6,
     REFLECTION_MAX_TURNS: 3,
+    REFLECTION_MODEL: overrides.reflectionModel,
     CURATOR_STALE_DAYS: 30,
     CURATOR_ARCHIVE_DAYS: 90,
     CURATOR_MIN_SKILLS: overrides.curatorMinSkills ?? 5,
     CURATOR_INTERVAL_DAYS: overrides.curatorIntervalDays ?? 7,
     CURATOR_MAX_TURNS: 4,
+  RETENTION_DAYS: 0,
   } as Parameters<typeof runCuratorTick>[2];
 }
 
@@ -180,6 +192,7 @@ afterAll(() => {
   setActiveLlmClient(null);
   delete process.env['DATABASE_URL'];
   delete process.env['REFLECTION_ENABLED'];
+  delete process.env['REFLECTION_MODEL'];
   delete process.env['CURATOR_STALE_DAYS'];
   delete process.env['CURATOR_ARCHIVE_DAYS'];
   delete process.env['CURATOR_MIN_SKILLS'];
@@ -205,9 +218,9 @@ beforeEach(async () => {
   await db.update(entities).set({ reflectionEnabled: true }).where(eq(entities.id, seed.entityId));
 });
 
-// ── 1. Lifecycle: active→stale→archived ────────────────────────────────────────
-describe('curator — transitionSkillLifecycle: active→stale→archived', () => {
-  it('transitions an agent skill: active→stale after staleDays, then stale→archived after archiveDays', async () => {
+// â”€â”€ 1. Lifecycle: activeâ†’staleâ†’archived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” transitionSkillLifecycle: activeâ†’staleâ†’archived', () => {
+  it('transitions an agent skill: activeâ†’stale after staleDays, then staleâ†’archived after archiveDays', async () => {
     const ts = Date.now();
     const [skill] = await db
       .insert(agentSkills)
@@ -244,8 +257,8 @@ describe('curator — transitionSkillLifecycle: active→stale→archived', () =
   });
 });
 
-// ── 2. Lifecycle: reactivation ─────────────────────────────────────────────────
-describe('curator — transitionSkillLifecycle: reactivation', () => {
+// â”€â”€ 2. Lifecycle: reactivation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” transitionSkillLifecycle: reactivation', () => {
   it('reactivates a stale agent skill that was recently used', async () => {
     const ts = Date.now();
     const [skill] = await db
@@ -273,8 +286,8 @@ describe('curator — transitionSkillLifecycle: reactivation', () => {
   });
 });
 
-// ── 3. Lifecycle: USER skills NEVER touched ────────────────────────────────────
-describe('curator — transitionSkillLifecycle: user skills unchanged', () => {
+// â”€â”€ 3. Lifecycle: USER skills NEVER touched â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” transitionSkillLifecycle: user skills unchanged', () => {
   it('does NOT transition a user-owned skill even if it has an old timestamp', async () => {
     const ts = Date.now();
     const [skill] = await db
@@ -302,8 +315,8 @@ describe('curator — transitionSkillLifecycle: user skills unchanged', () => {
   });
 });
 
-// ── 4. archiveAgentSkill: agent skill → archived ───────────────────────────────
-describe('curator — archiveAgentSkill: agent skill soft-archived', () => {
+// â”€â”€ 4. archiveAgentSkill: agent skill â†’ archived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” archiveAgentSkill: agent skill soft-archived', () => {
   it('sets state=archived and archived_at on an agent-authored skill', async () => {
     const ts = Date.now();
     const [skill] = await db
@@ -328,8 +341,8 @@ describe('curator — archiveAgentSkill: agent skill soft-archived', () => {
   });
 });
 
-// ── 5. archiveAgentSkill: user skill → refused ────────────────────────────────
-describe('curator — archiveAgentSkill: user skill refused', () => {
+// â”€â”€ 5. archiveAgentSkill: user skill â†’ refused â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” archiveAgentSkill: user skill refused', () => {
   it('returns { error: not_agent_skill } and leaves the row unchanged', async () => {
     const ts = Date.now();
     const [skill] = await db
@@ -356,8 +369,8 @@ describe('curator — archiveAgentSkill: user skill refused', () => {
   });
 });
 
-// ── 6+7. runCuratorTick: deterministic transitions always run; LLM skipped when disabled ──
-describe('curator — runCuratorTick: deterministic transitions run, LLM skipped when disabled', () => {
+// â”€â”€ 6+7. runCuratorTick: deterministic transitions always run; LLM skipped when disabled â”€â”€
+describe('curator â€” runCuratorTick: deterministic transitions run, LLM skipped when disabled', () => {
   it('returns lifecycle counts even when REFLECTION_ENABLED=false (no LLM)', async () => {
     const ts = Date.now();
     // Seed an agent skill that should go stale
@@ -379,7 +392,7 @@ describe('curator — runCuratorTick: deterministic transitions run, LLM skipped
     const result = await runCuratorTick(db, deps, makeCuratorEnv({ reflectionEnabled: 'false' }));
 
     expect(result.staled).toBeGreaterThanOrEqual(1);
-    // LLM consolidation disabled → must be 0
+    // LLM consolidation disabled â†’ must be 0
     expect(result.consolidationRan).toBe(0);
     expect(result.consolidationDeferred).toBe(0);
 
@@ -388,8 +401,8 @@ describe('curator — runCuratorTick: deterministic transitions run, LLM skipped
   });
 });
 
-// ── 8. First-run-deferred ──────────────────────────────────────────────────────
-describe('curator — runCuratorTick: first-run-deferred', () => {
+// â”€â”€ 8. First-run-deferred â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” runCuratorTick: first-run-deferred', () => {
   it('when last_curator_run_at IS NULL, stamps now and skips LLM (no consolidation this tick)', async () => {
     const ts = Date.now();
     // Need >= CURATOR_MIN_SKILLS=2 (use 3 for test speed) agent active skills
@@ -450,8 +463,8 @@ describe('curator — runCuratorTick: first-run-deferred', () => {
   });
 });
 
-// ── 9. Mock LLM consolidation ─────────────────────────────────────────────────
-describe('curator — runCuratorTick: mock LLM consolidation', () => {
+// â”€â”€ 9. Mock LLM consolidation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” runCuratorTick: mock LLM consolidation', () => {
   it('mock LLM archives 2 narrow + creates 1 umbrella; user skill in set is untouched', async () => {
     const ts = Date.now();
 
@@ -524,7 +537,7 @@ describe('curator — runCuratorTick: mock LLM consolidation', () => {
             },
           ],
         },
-        // Turn 2: no-op → stop
+        // Turn 2: no-op â†’ stop
         {},
       ]),
     );
@@ -558,11 +571,11 @@ describe('curator — runCuratorTick: mock LLM consolidation', () => {
   });
 });
 
-// ── 11. Regression: REFLECTION_ENABLED='' (unset/empty = per-entity decides) ───
+// â”€â”€ 11. Regression: REFLECTION_ENABLED='' (unset/empty = per-entity decides) â”€â”€â”€
 // This test FAILS against the old run-curator.ts where the gate was
-// `REFLECTION_ENABLED !== 'true'` (empty string !== 'true' → early return → deferred 0).
-// After the fix (`=== 'false'`), empty string passes the gate → per-entity decides → deferred 1.
-describe('curator — runCuratorTick: REFLECTION_ENABLED empty (unset) passes gate when entity opt-in = true', () => {
+// `REFLECTION_ENABLED !== 'true'` (empty string !== 'true' â†’ early return â†’ deferred 0).
+// After the fix (`=== 'false'`), empty string passes the gate â†’ per-entity decides â†’ deferred 1.
+describe('curator â€” runCuratorTick: REFLECTION_ENABLED empty (unset) passes gate when entity opt-in = true', () => {
   it('first-run-deferred === 1 when REFLECTION_ENABLED is empty string and entity.reflection_enabled=true', async () => {
     const ts = Date.now();
 
@@ -579,12 +592,12 @@ describe('curator — runCuratorTick: REFLECTION_ENABLED empty (unset) passes ga
     }
 
     // beforeEach already sets reflection_enabled=true and lastCuratorRunAt to
-    // whatever the entity has — explicitly NULL it so first-run-deferred fires.
+    // whatever the entity has â€” explicitly NULL it so first-run-deferred fires.
     await db.update(entities).set({ lastCuratorRunAt: null }).where(eq(entities.id, seed.entityId));
 
-    // Pass REFLECTION_ENABLED: '' (empty string — the new default when env is unset).
-    // Old gate: '' !== 'true' → early-return → consolidationDeferred=0  (BUG)
-    // New gate: '' === 'false' is false → proceeds → deferred=1          (FIXED)
+    // Pass REFLECTION_ENABLED: '' (empty string â€” the new default when env is unset).
+    // Old gate: '' !== 'true' â†’ early-return â†’ consolidationDeferred=0  (BUG)
+    // New gate: '' === 'false' is false â†’ proceeds â†’ deferred=1          (FIXED)
     const result = await runCuratorTick(
       db,
       makeNoopDeps(),
@@ -603,8 +616,8 @@ describe('curator — runCuratorTick: REFLECTION_ENABLED empty (unset) passes ga
   });
 });
 
-// ── 10. Curator: only processes entities with reflection_enabled=true ──────────
-describe('curator — runCuratorTick: only reflection_enabled entities get LLM consolidation', () => {
+// â”€â”€ 10. Curator: only processes entities with reflection_enabled=true â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('curator â€” runCuratorTick: only reflection_enabled entities get LLM consolidation', () => {
   it('skips LLM consolidation for entity with reflection_enabled=false', async () => {
     const ts = Date.now();
 
@@ -647,8 +660,89 @@ describe('curator — runCuratorTick: only reflection_enabled entities get LLM c
       makeCuratorEnv({ reflectionEnabled: 'true', curatorMinSkills: 2, curatorIntervalDays: 7 }),
     );
 
-    // Entity has reflection_enabled=false → LLM consolidation must NOT run for it
+    // Entity has reflection_enabled=false â†’ LLM consolidation must NOT run for it
     expect(llmCallCount).toBe(0);
     expect(result.consolidationRan).toBe(0);
+  });
+});
+
+// â”€â”€ 12. REFLECTION_MODEL override in curator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Asserts the model override flows from env (via makeCuratorEnv) all the way to
+// createLlmClient inside runCuratorConsolidation. We capture the ProviderConfig
+// via recordLlmArgs in the mock (defined at the top of this file).
+describe('curator â€” REFLECTION_MODEL override', () => {
+  it('when REFLECTION_MODEL is set, createLlmClient receives the override model (not the agent model)', async () => {
+    const ts = Date.now();
+    resetLastLlmConfig();
+
+    // Seed >= CURATOR_MIN_SKILLS=2 agent-created ACTIVE skills
+    for (let i = 0; i < 3; i++) {
+      await db.insert(agentSkills).values({
+        entityId: seed.entityId,
+        slug: `override-model-curator-${ts}-${i}`,
+        name: `Override Model Curator ${ts} ${i}`,
+        content: 'agent skill for override-model test',
+        createdBy: 'agent',
+        state: 'active',
+      });
+    }
+
+    // Set last_curator_run_at to 8 days ago so consolidation runs (not deferred)
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await db.update(entities).set({ lastCuratorRunAt: eightDaysAgo }).where(eq(entities.id, seed.entityId));
+
+    // Script: no-op pass (no tool calls) so we only need to assert the model arg.
+    const deps = makeDeps(makeScriptedClient([{}]));
+
+    await runCuratorTick(
+      db,
+      deps,
+      makeCuratorEnv({
+        reflectionEnabled: 'true',
+        curatorMinSkills: 2,
+        curatorIntervalDays: 7,
+        reflectionModel: 'openai/gpt-4o-mini',
+      }),
+    );
+
+    // (a) The override model reached createLlmClient.
+    const captured = getLastLlmConfig();
+    expect(captured).not.toBeNull();
+    expect(captured!.model).toBe('openai/gpt-4o-mini');
+  });
+
+  it('when REFLECTION_MODEL is NOT set, createLlmClient receives the agent\'s own model', async () => {
+    const ts = Date.now();
+    resetLastLlmConfig();
+
+    // Seed >= CURATOR_MIN_SKILLS=2 agent-created ACTIVE skills
+    for (let i = 0; i < 3; i++) {
+      await db.insert(agentSkills).values({
+        entityId: seed.entityId,
+        slug: `no-override-curator-${ts}-${i}`,
+        name: `No Override Curator ${ts} ${i}`,
+        content: 'agent skill for no-override test',
+        createdBy: 'agent',
+        state: 'active',
+      });
+    }
+
+    // Set last_curator_run_at to 8 days ago so consolidation runs
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await db.update(entities).set({ lastCuratorRunAt: eightDaysAgo }).where(eq(entities.id, seed.entityId));
+
+    const deps = makeDeps(makeScriptedClient([{}]));
+
+    await runCuratorTick(
+      db,
+      deps,
+      // reflectionModel omitted â†’ undefined â†’ agent's own model
+      makeCuratorEnv({ reflectionEnabled: 'true', curatorMinSkills: 2, curatorIntervalDays: 7 }),
+    );
+
+    // The agent's own model flows through (not the override value).
+    const captured = getLastLlmConfig();
+    expect(captured).not.toBeNull();
+    expect(captured!.model).not.toBe('openai/gpt-4o-mini');
   });
 });

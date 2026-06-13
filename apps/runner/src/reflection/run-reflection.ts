@@ -132,11 +132,16 @@ function renderSkillsBlock(
  * Run the reflection pass for one completed job. Assumes the caller
  * (maybeRunReflection) has already verified all gates. `maxTurns` bounds the
  * reflection loop itself.
+ *
+ * `reflectionModel` — when set, overrides the model used for this pass while
+ * keeping the agent's LLM key. Unset ⇒ uses the agent's configured model
+ * (current behavior, byte-for-byte identical).
  */
 export async function runReflection(
   db: AnyDrizzleDb,
   job: AgentJobRow,
   maxTurns: number,
+  reflectionModel?: string,
 ): Promise<ReflectionResult> {
   if (!job.agentId || !job.entityId) return { outcome: 'skipped', created: 0, patched: 0, turns: 0 };
   const entityId = job.entityId;
@@ -160,11 +165,16 @@ export async function runReflection(
     .where(eq(agentSkillAssignments.agentId, agentId));
 
   // ── Resolve the agent's LLM client (same path as the work loop) ───────────
-  const resolved = await resolveAgentLlmClient(db, {
-    llmKeyId: agentRow.llmKeyId,
-    fallbackChain: agentRow.fallbackChain ?? null,
-    model: agentRow.model ?? '',
-  });
+  // When reflectionModel is set, keep the agent's key but override the model so
+  // the housekeeping pass runs on a known-good model (e.g. an OpenRouter key
+  // pointing at a cheap/reliable model) instead of the agent's own model.
+  // When unset, args are byte-for-byte the pre-override behavior.
+  const resolved = await resolveAgentLlmClient(
+    db,
+    reflectionModel !== undefined
+      ? { llmKeyId: agentRow.llmKeyId, fallbackChain: null, model: reflectionModel }
+      : { llmKeyId: agentRow.llmKeyId, fallbackChain: agentRow.fallbackChain ?? null, model: agentRow.model ?? '' },
+  );
   if (!resolved.ok) {
     console.warn(`${REFLECTION_TRACE} no LLM for agent ${agentRow.slug}: ${resolved.reason}`);
     return { outcome: 'skipped', created: 0, patched: 0, turns: 0 };

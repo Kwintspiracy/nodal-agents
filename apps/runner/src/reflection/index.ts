@@ -91,5 +91,5 @@ export async function maybeRunReflection(
   // errors (gate-blocked jobs stay silent by design).
   console.warn('[reflection] eligible', { jobId: job.id, entityId: job.entityId });
 
-  await runReflection(db, job, e.REFLECTION_MAX_TURNS);
+  await runReflection(db, job, e.REFLECTION_MAX_TURNS, e.REFLECTION_MODEL);
 }

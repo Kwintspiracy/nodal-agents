@@ -35,13 +35,17 @@ import { _resetReflectionThrottle } from '../../reflection/throttle.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
 // ── createLlmClient interception (mirrors root-meta-tools.test) ────────────────
-const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+const { getActiveLlmClient, setActiveLlmClient, recordLlmArgs, getLastLlmConfig, resetLastLlmConfig } = vi.hoisted(() => {
   let _active: RunnerDeps['llmClient'] | null = null;
+  // Captures the ProviderConfig passed to createLlmClient so tests can assert
+  // which model flowed through the resolution path.
+  let _lastConfig: { provider: string; model: string } | null = null;
   return {
     getActiveLlmClient: () => _active,
-    setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => {
-      _active = c;
-    },
+    setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => { _active = c; },
+    recordLlmArgs: (cfg: { provider: string; model: string }) => { _lastConfig = cfg; },
+    getLastLlmConfig: () => _lastConfig,
+    resetLastLlmConfig: () => { _lastConfig = null; },
   };
 });
 
@@ -50,7 +54,10 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
   return {
     ...actual,
-    createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
+    createLlmClient: (...args: Parameters<typeof actual.createLlmClient>) => {
+      // Record the config (provider + model) so REFLECTION_MODEL tests can
+      // assert the override reached the resolution layer.
+      recordLlmArgs({ provider: args[0].provider, model: args[0].model });
       const active = getActiveLlmClient();
       if (!active) throw new Error('reflection.test: no active LLM client set');
       return active;
@@ -207,6 +214,7 @@ afterAll(() => {
   delete process.env['REFLECTION_MIN_TURNS'];
   delete process.env['REFLECTION_MAX_PER_HOUR'];
   delete process.env['REFLECTION_MAX_TURNS'];
+  delete process.env['REFLECTION_MODEL'];
   _resetEnvCache();
 });
 
@@ -900,5 +908,105 @@ describe('reflection — gate: per-entity flag', () => {
       .where(eq(agentSkills.slug, 'unset-env-skill'));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.createdBy).toBe('agent');
+  });
+});
+
+// ── 12. REFLECTION_MODEL override ──────────────────────────────────────────────
+// Asserts the model override flows all the way from env → resolveAgentLlmClient
+// → createLlmClient. We capture the ProviderConfig that createLlmClient receives
+// via the recordLlmArgs() hook in the mock (defined at the top of this file).
+describe('reflection — REFLECTION_MODEL override', () => {
+  it('when REFLECTION_MODEL is set, createLlmClient is called with the override model (not the agent model)', async () => {
+    process.env['REFLECTION_MODEL'] = 'openai/gpt-4o-mini';
+    _resetEnvCache();
+    resetLastLlmConfig();
+
+    const deps = makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r1',
+              toolName: 'create_skill',
+              args: {
+                slug: 'override-model-skill',
+                name: 'Override Model Skill',
+                content: 'Created via override model.',
+              },
+            },
+          ],
+        },
+        {},
+      ]),
+    );
+
+    const job = await insertCompletedJob();
+    await maybeRunReflection(deps, db as RunnerDeps['db'], {
+      ...job,
+      status: 'completed',
+    } as Parameters<typeof maybeRunReflection>[2]);
+
+    // (a) The override model reached createLlmClient.
+    const captured = getLastLlmConfig();
+    expect(captured).not.toBeNull();
+    expect(captured!.model).toBe('openai/gpt-4o-mini');
+
+    // (b) The skill was actually written (the pass ran, not just resolved).
+    const rows = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'override-model-skill'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.createdBy).toBe('agent');
+
+    // Cleanup
+    delete process.env['REFLECTION_MODEL'];
+    _resetEnvCache();
+  });
+
+  it('when REFLECTION_MODEL is NOT set, createLlmClient is called with the agent\'s own model', async () => {
+    // Ensure REFLECTION_MODEL is absent (beforeEach + _resetEnvCache handles REFLECTION_ENABLED).
+    delete process.env['REFLECTION_MODEL'];
+    _resetEnvCache();
+    resetLastLlmConfig();
+
+    const deps = makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r1',
+              toolName: 'create_skill',
+              args: {
+                slug: 'agent-model-skill',
+                name: 'Agent Model Skill',
+                content: 'Created via agent own model (no override).',
+              },
+            },
+          ],
+        },
+        {},
+      ]),
+    );
+
+    const job = await insertCompletedJob();
+    await maybeRunReflection(deps, db as RunnerDeps['db'], {
+      ...job,
+      status: 'completed',
+    } as Parameters<typeof maybeRunReflection>[2]);
+
+    // The agent's model from seedMinimal (defaults to the DB column default).
+    // We assert it is NOT the override value, confirming the fallback path is taken.
+    const captured = getLastLlmConfig();
+    expect(captured).not.toBeNull();
+    // The override was not set — the agent's seeded model flows through.
+    expect(captured!.model).not.toBe('openai/gpt-4o-mini');
+
+    // Skill still created (pass ran correctly on agent's model).
+    const rows = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'agent-model-skill'));
+    expect(rows).toHaveLength(1);
   });
 });

@@ -20,6 +20,8 @@ import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
 import { runCuratorTick } from './run-curator.ts';
+import { pruneOldJobs } from '@nodal-agents/db';
+import { env } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
@@ -40,6 +42,8 @@ export interface CronTickResult {
   curatorReactivated: number;
   curatorConsolidationDeferred: number;
   curatorConsolidationRan: number;
+  retentionJobsDeleted: number;
+  retentionToolCallsDeleted: number;
 }
 
 // ─── runCronTick ──────────────────────────────────────────────────────────────
@@ -94,6 +98,36 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   const rootsDelivered = await deliverCompletedRoots(deps.db);
   const curatorResult = await runCuratorTick(deps.db, deps);
 
+  // ─── Retention phase (OFF by default, opt-in via RETENTION_DAYS > 0) ─────────
+  // Prune terminal jobs older than RETENTION_DAYS days. Runs LAST so it never
+  // interferes with in-flight jobs that completed earlier in this same tick.
+  // Errors are caught and logged — a retention failure must never crash the tick.
+  let retentionJobsDeleted = 0;
+  let retentionToolCallsDeleted = 0;
+  // Read RETENTION_DAYS defensively: the env proxy calls parseEnv(), which throws
+  // when DATABASE_URL is absent (test envs that never set process.env). Mirror
+  // resolveCuratorEnv's fallback — an unresolvable env means retention stays OFF.
+  let retentionDays = 0;
+  try {
+    retentionDays = env.RETENTION_DAYS;
+  } catch {
+    retentionDays = 0;
+  }
+  if (retentionDays > 0) {
+    try {
+      const pruned = await pruneOldJobs(deps.db, retentionDays);
+      retentionJobsDeleted = pruned.jobsDeleted;
+      retentionToolCallsDeleted = pruned.toolCallsDeleted;
+      if (pruned.jobsDeleted > 0) {
+        console.log(
+          `[retention] pruned ${pruned.jobsDeleted} jobs / ${pruned.toolCallsDeleted} tool_calls (older than ${retentionDays}d)`,
+        );
+      }
+    } catch (err) {
+      console.error('[retention] pruneOldJobs failed (tick continues):', err);
+    }
+  }
+
   return {
     orphanJobsReset,
     pendingRecovered,
@@ -108,5 +142,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     curatorReactivated: curatorResult.reactivated,
     curatorConsolidationDeferred: curatorResult.consolidationDeferred,
     curatorConsolidationRan: curatorResult.consolidationRan,
+    retentionJobsDeleted,
+    retentionToolCallsDeleted,
   };
 }

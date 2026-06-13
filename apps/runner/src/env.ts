@@ -90,6 +90,23 @@ const envSchema = z.object({
   CURATOR_MIN_SKILLS: z.coerce.number().default(5),
   CURATOR_INTERVAL_DAYS: z.coerce.number().default(7),
   CURATOR_MAX_TURNS: z.coerce.number().default(4),
+  // Optional. When set, the reflection + curator passes use THIS model id instead of
+  // the agent's model — resolved against the agent's existing LLM key (ideal for an
+  // OpenRouter key where one key serves many models; point the cheap/reliable
+  // housekeeping passes at a known-good model). Unset ⇒ inherit the agent's model
+  // (current behavior).
+  REFLECTION_MODEL: z.string().optional(),
+
+  // ─── DB retention (OFF by default — opt-in, never surprise data loss) ─────────
+  // RETENTION_DAYS controls how many days of terminal job history to keep.
+  //   0 (default) = disabled — nothing is ever deleted automatically.
+  //   N > 0       = agent_jobs rows with status ∈ {completed, failed, cancelled}
+  //                 AND completed_at < now() - N days are pruned each cron tick.
+  //                 tool_calls and approval_requests are deleted via ON DELETE CASCADE.
+  //
+  // Set this ONLY if you explicitly want to cap DB growth. Deleting job history is
+  // irreversible. Start with a large value (e.g. 90) and reduce over time.
+  RETENTION_DAYS: z.coerce.number().default(0),
 });
 
 export type RunnerEnv = z.infer<typeof envSchema>;

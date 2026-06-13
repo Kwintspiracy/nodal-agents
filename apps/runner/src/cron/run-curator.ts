@@ -53,6 +53,7 @@ const SAFE_LIFECYCLE_DEFAULTS = {
   CURATOR_INTERVAL_DAYS: 7,
   CURATOR_MAX_TURNS: 4,
   REFLECTION_ENABLED: 'false',
+  REFLECTION_MODEL: undefined,
 } as const;
 
 type CuratorEnvSlice = Pick<
@@ -63,6 +64,7 @@ type CuratorEnvSlice = Pick<
   | 'CURATOR_INTERVAL_DAYS'
   | 'CURATOR_MAX_TURNS'
   | 'REFLECTION_ENABLED'
+  | 'REFLECTION_MODEL'
 >;
 
 /**
@@ -85,6 +87,7 @@ function resolveCuratorEnv(runnerEnv?: RunnerEnv): CuratorEnvSlice {
       CURATOR_INTERVAL_DAYS: globalEnv.CURATOR_INTERVAL_DAYS,
       CURATOR_MAX_TURNS: globalEnv.CURATOR_MAX_TURNS,
       REFLECTION_ENABLED: globalEnv.REFLECTION_ENABLED,
+      REFLECTION_MODEL: globalEnv.REFLECTION_MODEL,
     };
   } catch {
     return SAFE_LIFECYCLE_DEFAULTS;
@@ -182,7 +185,7 @@ export async function runCuratorTick(
 
     // Due — run consolidation
     try {
-      await runCuratorConsolidation(db, candidate.entityId, e.CURATOR_MAX_TURNS);
+      await runCuratorConsolidation(db, candidate.entityId, e.CURATOR_MAX_TURNS, e.REFLECTION_MODEL);
     } catch (err) {
       console.warn(`${CURATOR_TRACE} consolidation failed for entity ${candidate.entityId}`, err);
     }

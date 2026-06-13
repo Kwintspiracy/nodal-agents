@@ -42,6 +42,7 @@ const testEnv: RunnerEnv = {
   CURATOR_MIN_SKILLS: 5,
   CURATOR_INTERVAL_DAYS: 7,
   CURATOR_MAX_TURNS: 4,
+  RETENTION_DAYS: 0,
 };
 
 beforeAll(async () => {

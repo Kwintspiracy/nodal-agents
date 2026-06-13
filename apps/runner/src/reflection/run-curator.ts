@@ -12,8 +12,9 @@
 //
 // Fail-closed: any error propagates to the caller (runCuratorTick wraps in try/catch).
 //
-// TODO(fast-follow): allow a dedicated cheap curator LLM key per entity so the
-// consolidation pass doesn't consume the primary agent's key budget.
+// Use REFLECTION_MODEL (env) to point the consolidation pass at a dedicated
+// cheap/reliable model (e.g. an OpenRouter key that serves many models) without
+// touching the agent's primary key budget. Unset ⇒ inherits the agent's model.
 
 import {
   eq,
@@ -107,11 +108,17 @@ function renderCandidateList(
  *
  * Resolves the LLM client from the entity's root agent or any active agent
  * with a configured key. If no client can be resolved, skips silently.
+ *
+ * `reflectionModel` — when set, keeps the agent's LLM key but overrides the
+ * model string so the consolidation pass runs on a chosen model (e.g. a
+ * cheap/reliable model via an OpenRouter key). Unset ⇒ uses the agent's own
+ * model (current behavior, byte-for-byte identical).
  */
 export async function runCuratorConsolidation(
   db: AnyDrizzleDb,
   entityId: string,
   maxTurns: number,
+  reflectionModel?: string,
 ): Promise<CuratorConsolidationResult> {
   // ── Load agent-created ACTIVE skills ────────────────────────────────────────
   const candidateSkills = await db
@@ -137,7 +144,10 @@ export async function runCuratorConsolidation(
   }
 
   // ── Resolve LLM client: root agent first, then any active agent with a key ──
-  // TODO(fast-follow): dedicated cheap curator model per entity.
+  // When reflectionModel is set, keep the agent's key but override the model so
+  // the consolidation pass runs on a dedicated cheap/reliable model (e.g. an
+  // OpenRouter key serving many models). When unset, args are byte-for-byte the
+  // pre-override behavior.
   const agentRows = await db
     .select({
       id: agents.id,
@@ -155,11 +165,16 @@ export async function runCuratorConsolidation(
 
   let resolvedClient: Awaited<ReturnType<typeof resolveAgentLlmClient>> | undefined;
   for (const ag of agentRows) {
-    const r = await resolveAgentLlmClient(db, {
-      llmKeyId: ag.llmKeyId,
-      fallbackChain: (ag.fallbackChain as readonly { keyId: string; model: string }[] | null) ?? null,
-      model: ag.model ?? '',
-    });
+    const r = await resolveAgentLlmClient(
+      db,
+      reflectionModel !== undefined
+        ? { llmKeyId: ag.llmKeyId, fallbackChain: null, model: reflectionModel }
+        : {
+            llmKeyId: ag.llmKeyId,
+            fallbackChain: (ag.fallbackChain as readonly { keyId: string; model: string }[] | null) ?? null,
+            model: ag.model ?? '',
+          },
+    );
     if (r.ok) {
       resolvedClient = r;
       break;
