@@ -3,7 +3,7 @@
 // Takes a db instance + entityId + already-validated input; returns a
 // discriminated result or throws on unexpected errors.
 
-import { eq, and, or, inArray, sql } from 'drizzle-orm';
+import { eq, and, or, inArray, sql, type SQL } from 'drizzle-orm';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agents } from '../schema/agents.ts';
 import { agentSkills, agentSkillAssignments } from '../schema/skills.ts';
@@ -15,6 +15,12 @@ export interface CreateSkillInput {
   name: string;
   content: string;
   description: string | null | undefined;
+  /**
+   * Provenance of this skill (learning-loop). Maps to agent_skills.created_by.
+   * Omitted ⇒ the column default ('user'). The Tier-1 reflection pass passes
+   * 'agent' so agent-authored skills are distinguishable from user/system ones.
+   */
+  createdBy?: 'user' | 'system' | 'agent';
 }
 
 export type CreateSkillResult = { id: string } | { error: 'slug_taken' };
@@ -39,6 +45,8 @@ export async function createSkillRepo(
         defaultContent: input.content,
         description: input.description ?? null,
         active: true,
+        // Omit when undefined so the column default ('user') applies.
+        ...(input.createdBy !== undefined ? { createdBy: input.createdBy } : {}),
       })
       .returning({ id: agentSkills.id });
     if (!row) throw new Error('Insert returned no row');
@@ -68,6 +76,14 @@ export interface UpdateSkillPatch {
   description?: string | null;
   content?: string;
   active?: boolean;
+  /**
+   * Provenance of this patch (learning-loop). When set to 'agent' (the Tier-1
+   * reflection pass), the row's created_by is updated to 'agent' AND patch_count
+   * is incremented atomically — so an agent-patched skill is distinguishable
+   * and its accumulated self-patches are countable. Omitted ⇒ neither column is
+   * touched (a normal user/dashboard edit leaves provenance + patch_count as-is).
+   */
+  createdBy?: 'user' | 'system' | 'agent';
 }
 
 export type UpdateSkillResult = { ok: true } | { error: 'not_found' };
@@ -90,13 +106,23 @@ export async function updateSkillRepo(
     .where(and(eq(agentSkills.id, skillId), eq(agentSkills.entityId, entityId)));
   if (!existing) return { error: 'not_found' };
 
-  const set: Partial<typeof agentSkills.$inferInsert> = { updatedAt: new Date() };
+  // Each column may take either a literal value or a SQL expression (used for the
+  // atomic patch_count increment below) — match drizzle's update-set shape.
+  const set: { [K in keyof typeof agentSkills.$inferInsert]?: (typeof agentSkills.$inferInsert)[K] | SQL } =
+    { updatedAt: new Date() };
   if (patch.name !== undefined) set.name = patch.name;
   if (patch.description !== undefined) set.description = patch.description;
   if (patch.active !== undefined) set.active = patch.active;
   if (patch.content !== undefined) {
     set.content = patch.content;
     set.contentOverridden = true;
+  }
+  // Agent-authored patch (reflection): stamp provenance + bump the self-patch
+  // counter atomically. Only on createdBy:'agent' — a plain user edit must not
+  // silently reclassify a user/system skill or inflate patch_count.
+  if (patch.createdBy === 'agent') {
+    set.createdBy = 'agent';
+    set.patchCount = sql`${agentSkills.patchCount} + 1`;
   }
 
   await db.update(agentSkills).set(set).where(eq(agentSkills.id, skillId));

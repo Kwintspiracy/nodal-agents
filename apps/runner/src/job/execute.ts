@@ -84,6 +84,7 @@ import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
+import { maybeRunReflection } from '../reflection/index.ts';
 
 // Per-result char budget for tool outputs entering the conversation. A single
 // tool (e.g. firecrawl_scrape returning a full web page) can otherwise inject
@@ -1501,6 +1502,18 @@ export async function executeJob(
           const completedText = await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
           if (!completedText) {
             trace('terminal_write_lost_race', { turn, writer: 'completeJob_text', jobId });
+          } else {
+            // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
+            // or delay the job response — gates + throttle live inside the hook.
+            // Snapshot carries the FINAL state (in-memory `job` is still
+            // pre-completion). Only runs when completeJob won the terminal write.
+            void maybeRunReflection(deps, db, {
+              ...job,
+              status: 'completed',
+              turn,
+              toolsUsed,
+              messages,
+            }, _runnerEnv).catch((e) => console.warn('[reflection]', e));
           }
           return { status: 'completed', result: textContent };
         }
@@ -2122,6 +2135,18 @@ export async function executeJob(
         const completed = await completeJob(db, jobId as string, finalResult, toolsUsed, runStats(), messages);
         if (!completed) {
           trace('terminal_write_lost_race', { turn, writer: 'completeJob', jobId });
+        } else {
+          // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
+          // or delay the job response — gates + throttle live inside the hook.
+          // Snapshot carries the FINAL state (the in-memory `job` row is still
+          // pre-completion). Only runs when completeJob won the terminal write.
+          void maybeRunReflection(deps, db, {
+            ...job,
+            status: 'completed',
+            turn,
+            toolsUsed,
+            messages,
+          }, _runnerEnv).catch((e) => console.warn('[reflection]', e));
         }
 
         // Re-fetch agent_jobs.result so the caller (the parent in a router

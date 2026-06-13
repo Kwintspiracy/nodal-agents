@@ -48,6 +48,18 @@ const envSchema = z.object({
   BIND: z.string().default('127.0.0.1'),
   APP_URL: z.string().default('http://localhost:3001'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
+  // Learning-loop — Tier-1 "reflection" pass (Phase B). After a substantial
+  // completed job, a cheap LLM call reads the transcript and may create/patch
+  // the agent's own skills. Ships OFF by default: set REFLECTION_ENABLED='true'
+  // to opt in. The other knobs gate WHICH jobs qualify and bound the pass.
+  REFLECTION_ENABLED: z.string().default('false'),
+  // Minimum job turns before a completed job is "substantial" enough to reflect on.
+  REFLECTION_MIN_TURNS: z.coerce.number().default(3),
+  // Per-entity rolling-hour cap on reflection passes (rate limit / cost guard).
+  REFLECTION_MAX_PER_HOUR: z.coerce.number().default(6),
+  // Max LLM turns inside a single reflection pass (the reflection loop itself).
+  REFLECTION_MAX_TURNS: z.coerce.number().default(3),
 });
 
 export type RunnerEnv = z.infer<typeof envSchema>;

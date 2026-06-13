@@ -225,6 +225,10 @@ const testEnv: RunnerEnv = {
   BIND: '127.0.0.1',
   APP_URL: 'http://localhost:3099',
   NODE_ENV: 'test',
+  REFLECTION_ENABLED: 'false',
+  REFLECTION_MIN_TURNS: 3,
+  REFLECTION_MAX_PER_HOUR: 6,
+  REFLECTION_MAX_TURNS: 3,
 };
 
 beforeAll(async () => {
