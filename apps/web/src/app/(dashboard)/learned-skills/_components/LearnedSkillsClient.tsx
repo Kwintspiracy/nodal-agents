@@ -127,8 +127,8 @@ export default function LearnedSkillsClient({ skills, reflectionEnabled: initial
       <div className="mb-6 rounded-2xl border border-rule-2 bg-paper p-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-[13px] font-medium text-ink">Agent learning</p>
-            <p className="mt-0.5 text-[12px] leading-[1.5] text-ink-3">
+            <p id="agent-learning-label" className="text-[13px] font-medium text-ink">Agent learning</p>
+            <p id="agent-learning-desc" className="mt-0.5 text-[12px] leading-[1.5] text-ink-3">
               When on, your agents save reusable techniques as skills after substantial tasks. You
               can review and undo everything here.
             </p>
@@ -136,6 +136,8 @@ export default function LearnedSkillsClient({ skills, reflectionEnabled: initial
           <button
             type="button"
             role="switch"
+            aria-labelledby="agent-learning-label"
+            aria-describedby="agent-learning-desc"
             aria-checked={enabled}
             onClick={handleToggle}
             disabled={isPending}
