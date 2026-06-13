@@ -45,7 +45,10 @@ export interface InstallSkillResult {
 /** Default builtins granted to every installed skill: read its own bundle. */
 const INSTALLED_SKILL_BUILTINS = ['skill_file_read', 'skill_file_list'];
 
-function buildContent(slug: string, body: string, scripts: DetectedScript[]): string {
+/** Hard cap on the assembled skill content stored in the DB / injected into LLM context. */
+export const MAX_SKILL_CONTENT_BYTES = 512 * 1024; // 512 KB
+
+export function buildContent(slug: string, body: string, scripts: DetectedScript[]): string {
   const scriptNote = scripts.length
     ? `This skill bundles ${scripts.length} script file(s) (${scripts
         .map((s) => s.path)
@@ -178,6 +181,12 @@ export async function installCommunitySkill(
     });
 
     const content = buildContent(slug, body, scripts);
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    if (contentBytes > MAX_SKILL_CONTENT_BYTES) {
+      throw new SkillInstallError(
+        `Skill content too large (${contentBytes} bytes, max ${MAX_SKILL_CONTENT_BYTES / 1024}KB) — trim SKILL.md.`,
+      );
+    }
     const installedScripts = scripts.length ? scripts : null;
 
     if (existing) {
