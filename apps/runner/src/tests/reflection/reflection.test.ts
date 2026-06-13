@@ -210,7 +210,7 @@ afterAll(() => {
   _resetEnvCache();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   _resetReflectionThrottle();
   // maybeRunReflection reads the validated `env` proxy (over process.env), so the
   // required vars must be present for parseEnv to succeed. Other runner tests
@@ -223,6 +223,12 @@ beforeEach(() => {
   process.env['REFLECTION_MAX_PER_HOUR'] = '6';
   process.env['REFLECTION_MAX_TURNS'] = '3';
   _resetEnvCache();
+
+  // Phase D: Gate 5b requires per-entity opt-in. Reset to enabled before each test
+  // so existing gate-passing tests continue to work. Gate-disabled tests override
+  // this to false after the reset (see test 11).
+  const { entities: entitiesTable, eq: eqFn } = await import('@nodal-agents/db');
+  await db.update(entitiesTable).set({ reflectionEnabled: true }).where(eqFn(entitiesTable.id, seed.entityId));
 });
 
 // ── 1. Happy path create ────────────────────────────────────────────────────────
@@ -762,5 +768,137 @@ describe('reflection — non-blocking', () => {
     );
     expect(reflectionStarted).toBe(true);
     expect(reflectionFinished).toBe(true);
+  });
+});
+
+// ── 11. Gate: per-entity reflection_enabled flag ─────────────────────────────
+describe('reflection — gate: per-entity flag', () => {
+  it('skips when entity.reflection_enabled = false even if REFLECTION_ENABLED env is not false', async () => {
+    // beforeEach sets reflectionEnabled=true on the entity; disable it here to
+    // test that Gate 5b blocks when the entity hasn't opted in.
+    const { entities: entitiesTable2, eq: eqFn2 } = await import('@nodal-agents/db');
+    await db.update(entitiesTable2).set({ reflectionEnabled: false }).where(eqFn2(entitiesTable2.id, seed.entityId));
+
+    // The env has REFLECTION_ENABLED='true' (set in beforeEach) so only
+    // the per-entity flag should block the pass.
+    process.env['REFLECTION_ENABLED'] = 'true';
+    _resetEnvCache();
+
+    const before = (await skillsForAgentCreatedBy('agent')).length;
+    const deps = makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r1',
+              toolName: 'create_skill',
+              args: { slug: 'entity-flag-blocked', name: 'Blocked', content: 'x' },
+            },
+          ],
+        },
+      ]),
+    );
+    const job = await insertCompletedJob();
+    await maybeRunReflection(deps, db as RunnerDeps['db'], {
+      ...job,
+      status: 'completed',
+    } as Parameters<typeof maybeRunReflection>[2]);
+
+    const after = await skillsForAgentCreatedBy('agent');
+    expect(after.length).toBe(before);
+
+    const sneaked = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'entity-flag-blocked'));
+    expect(sneaked).toHaveLength(0);
+  });
+
+  it('runs when entity.reflection_enabled = true', async () => {
+    // Enable reflection on the entity
+    const { entities: entitiesTable, eq: eqFn } = await import('@nodal-agents/db');
+    await (db as Parameters<typeof maybeRunReflection>[1])
+      .update(entitiesTable)
+      .set({ reflectionEnabled: true })
+      .where(eqFn(entitiesTable.id, seed.entityId));
+
+    const deps = makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r1',
+              toolName: 'create_skill',
+              args: { slug: 'entity-flag-allowed', name: 'Allowed', content: 'durable technique' },
+            },
+          ],
+        },
+        {},
+      ]),
+    );
+    const job = await insertCompletedJob();
+    await maybeRunReflection(deps, db as RunnerDeps['db'], {
+      ...job,
+      status: 'completed',
+    } as Parameters<typeof maybeRunReflection>[2]);
+
+    const rows = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'entity-flag-allowed'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.createdBy).toBe('agent');
+
+    // Cleanup: disable for other tests
+    await (db as Parameters<typeof maybeRunReflection>[1])
+      .update(entitiesTable)
+      .set({ reflectionEnabled: false })
+      .where(eqFn(entitiesTable.id, seed.entityId));
+  });
+
+  // ── 11b. Regression: REFLECTION_ENABLED UNSET (production default) ───────────
+  // This test FAILS against the old env.ts where REFLECTION_ENABLED defaults
+  // to 'false' (which globally kills reflection regardless of entity flag).
+  // After the fix (default=''), unset env → per-entity flag decides → pass runs.
+  it('runs when REFLECTION_ENABLED env is UNSET (default) and entity.reflection_enabled = true', async () => {
+    // Remove the env var entirely — this is the production-default path.
+    // beforeEach sets reflectionEnabled=true on the entity, but be explicit.
+    delete process.env['REFLECTION_ENABLED'];
+    _resetEnvCache();
+
+    const { entities: entitiesTable3, eq: eqFn3 } = await import('@nodal-agents/db');
+    await db.update(entitiesTable3).set({ reflectionEnabled: true }).where(eqFn3(entitiesTable3.id, seed.entityId));
+
+    const deps = makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r1',
+              toolName: 'create_skill',
+              args: {
+                slug: 'unset-env-skill',
+                name: 'Unset Env Skill',
+                content: 'Skill created when REFLECTION_ENABLED env is unset.',
+              },
+            },
+          ],
+        },
+        {}, // 2nd turn: no tool call → stop
+      ]),
+    );
+    const job = await insertCompletedJob();
+    await maybeRunReflection(deps, db as RunnerDeps['db'], {
+      ...job,
+      status: 'completed',
+    } as Parameters<typeof maybeRunReflection>[2]);
+
+    // The skill MUST be persisted — unset env + entity opt-in = reflection runs.
+    const rows = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'unset-env-skill'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.createdBy).toBe('agent');
   });
 });

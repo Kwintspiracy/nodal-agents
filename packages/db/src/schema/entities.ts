@@ -5,6 +5,7 @@ import {
   text,
   uuid,
   jsonb,
+  boolean,
   timestamp,
   uniqueIndex,
   index,
@@ -47,6 +48,7 @@ export const entities = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
     lastCuratorRunAt: timestamp('last_curator_run_at', { withTimezone: true }),
+    reflectionEnabled: boolean('reflection_enabled').notNull().default(false),
   },
   (table) => [
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),

@@ -7,7 +7,8 @@
 //   No LLM involved. Cheap SQL. Runs unconditionally every tick.
 //
 // Phase 2 (gated): LLM consolidation pass via runCuratorConsolidation.
-//   Gated by REFLECTION_ENABLED === 'true' (same flag as Phase B Tier-1).
+//   Gated by the global kill-switch (REFLECTION_ENABLED !== 'false') AND the
+//   per-entity reflection_enabled=true (enforced by the candidate query join).
 //   Per-entity: runs only when the entity has >= CURATOR_MIN_SKILLS agent-created
 //   ACTIVE skills AND the consolidation cadence allows it:
 //     - last_curator_run_at IS NULL → first-run-deferred: stamp now(), skip LLM
@@ -111,7 +112,9 @@ export async function runCuratorTick(
   });
 
   // ── Phase 2: LLM consolidation (gated) ────────────────────────────────────
-  if (e.REFLECTION_ENABLED !== 'true') {
+  // Global kill-switch: explicit 'false' disables LLM consolidation entirely.
+  // Empty string (unset) or 'true' both allow per-entity flag to decide.
+  if (e.REFLECTION_ENABLED === 'false') {
     return {
       staled: lifecycle.staled,
       archived: lifecycle.archived,
@@ -127,16 +130,19 @@ export async function runCuratorTick(
 
   // Find entities with >= CURATOR_MIN_SKILLS agent-created ACTIVE skills
   // that are either (a) never run (NULL) or (b) overdue for consolidation.
+  // Only entities with reflection_enabled=true are eligible for LLM consolidation.
   const candidateEntities = await db
     .select({
       entityId: agentSkills.entityId,
       activeSkillCount: count(agentSkills.id),
     })
     .from(agentSkills)
+    .innerJoin(entities, eq(entities.id, agentSkills.entityId))
     .where(
       and(
         eq(agentSkills.createdBy, 'agent'),
         eq(agentSkills.state, 'active'),
+        eq(entities.reflectionEnabled, true),
       ),
     )
     .groupBy(agentSkills.entityId)

@@ -9,6 +9,7 @@ import {
   Sparkle,
   UsersThree,
   BookOpenText,
+  Lightbulb,
   Plug,
   PlugsConnected,
   Key,
@@ -67,6 +68,7 @@ const NAV: Group[] = [
     items: [
       { href: '/agents', label: 'Agents', icon: UsersThree, dot: 'agent' },
       { href: '/skills', label: 'Skills', icon: BookOpenText, dot: 'skill' },
+      { href: '/learned-skills', label: 'Learned Skills', icon: Lightbulb },
       { href: '/connectors', label: 'API Connectors', icon: Plug, dot: 'conn' },
       { href: '/mcp', label: 'MCP Connectors', icon: PlugsConnected, dot: 'conn' },
       { href: '/credentials', label: 'Credentials', icon: Key },

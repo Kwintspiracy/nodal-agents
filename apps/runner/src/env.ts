@@ -51,9 +51,20 @@ const envSchema = z.object({
 
   // Learning-loop — Tier-1 "reflection" pass (Phase B). After a substantial
   // completed job, a cheap LLM call reads the transcript and may create/patch
-  // the agent's own skills. Ships OFF by default: set REFLECTION_ENABLED='true'
-  // to opt in. The other knobs gate WHICH jobs qualify and bound the pass.
-  REFLECTION_ENABLED: z.string().default('false'),
+  // the agent's own skills.
+  //
+  // Kill-switch semantics (this env var is a GLOBAL kill, not an opt-in):
+  //   REFLECTION_ENABLED='false'  → global kill: disables ALL reflection AND
+  //                                  curator-consolidation for every entity.
+  //   REFLECTION_ENABLED=''       → per-entity decides (production default when
+  //       (unset)                    the var is absent from the environment).
+  //   REFLECTION_ENABLED='true'   → per-entity decides (same as unset; accepted
+  //                                  so existing test/docs that set 'true' pass).
+  //
+  // The feature ships OFF because entities.reflection_enabled defaults false.
+  // Enable reflection per entity via the dashboard toggle — NOT via this env var.
+  // The other knobs gate WHICH jobs qualify and bound the pass.
+  REFLECTION_ENABLED: z.string().default(''),
   // Minimum job turns before a completed job is "substantial" enough to reflect on.
   REFLECTION_MIN_TURNS: z.coerce.number().default(3),
   // Per-entity rolling-hour cap on reflection passes (rate limit / cost guard).
@@ -64,8 +75,9 @@ const envSchema = z.object({
   // ─── Learning-loop — Tier-2 "curator" pass (Phase C). ────────────────────────
   // The deterministic lifecycle transitions (active→stale→archived) ALWAYS run
   // per cron tick (they are cheap SQL, no LLM). The LLM consolidation pass is
-  // gated by REFLECTION_ENABLED (same flag as Phase B — both are LLM cost items).
-  // Ships OFF by default: set REFLECTION_ENABLED='true' to enable the LLM pass.
+  // gated by the global kill-switch (REFLECTION_ENABLED !== 'false') AND by the
+  // per-entity reflection_enabled=true flag (enforced via the candidate query join).
+  // Ships OFF by default because entities.reflection_enabled defaults false.
   //
   // CURATOR_STALE_DAYS:      days before an agent skill transitions active→stale.
   // CURATOR_ARCHIVE_DAYS:    days before a stale agent skill transitions→archived.

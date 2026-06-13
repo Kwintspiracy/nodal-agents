@@ -5,10 +5,13 @@
 // not pass returns silently without an LLM call) and, when every gate passes,
 // reserves a per-entity throttle slot and runs the reflection pass.
 //
-// This pass is OFF by default (REFLECTION_ENABLED !== 'true') and must NEVER
-// block or delay the job response — the caller invokes it with `void … .catch`.
+// This pass is OFF by default because entities.reflection_enabled defaults false
+// (enable per entity via the dashboard, not via env). REFLECTION_ENABLED='false'
+// is the global kill-switch that disables ALL entities regardless of their flag.
+// Must NEVER block or delay the job response — caller invokes with `void … .catch`.
 
 import type { AnyDrizzleDb, AgentJobRow } from '@nodal-agents/db';
+import { eq, entities } from '@nodal-agents/db';
 import { env as globalEnv, type RunnerEnv } from '../env.ts';
 import type { RunnerDeps } from '../deps.ts';
 import { tryReserveReflectionSlot } from './throttle.ts';
@@ -28,7 +31,10 @@ const EXCLUDED_CHANNELS: ReadonlySet<string> = new Set(['chat', 'reflection']);
  * Run a reflection pass for a just-completed job IF it qualifies. All gates are
  * fail-closed: a job that does not pass every gate returns silently (no LLM
  * call, no DB write). Gates:
- *   - REFLECTION_ENABLED === 'true'              (feature flag; OFF by default)
+ *   - REFLECTION_ENABLED !== 'false'              (global kill-switch; OFF by default
+ *                                                 because entities.reflection_enabled
+ *                                                 defaults false — enable per entity
+ *                                                 via the dashboard)
  *   - job.status === 'completed'                 (only successful runs)
  *   - job.channel ∉ {chat, reflection}           (no interactive / no recursion)
  *   - job.turn >= REFLECTION_MIN_TURNS           (substantial job only)
@@ -49,8 +55,8 @@ export async function maybeRunReflection(
   // call in tests that supply a testEnv but haven't set process.env).
   const e = runnerEnv ?? globalEnv;
 
-  // Gate 1 — feature flag (OFF by default). Cheapest check first.
-  if (e.REFLECTION_ENABLED !== 'true') return;
+  // Gate 1a — global kill-switch: explicit 'false' disables every entity regardless of per-entity flag.
+  if (e.REFLECTION_ENABLED === 'false') return;
 
   // Gate 2 — only completed jobs.
   if (job.status !== 'completed') return;
@@ -67,6 +73,14 @@ export async function maybeRunReflection(
 
   // Gate 5 — must have a valid owner to scope the pass to.
   if (!job.entityId || !job.agentId) return;
+
+  // Gate 5b — per-entity opt-in flag: skip if the entity hasn't enabled reflection.
+  const [entityRow] = await db
+    .select({ reflectionEnabled: entities.reflectionEnabled })
+    .from(entities)
+    .where(eq(entities.id, job.entityId))
+    .limit(1);
+  if (!entityRow?.reflectionEnabled) return;
 
   // Gate 6 — per-entity rolling-hour throttle. Check-and-reserve in one step so
   // back-to-back completions can't slip past the cap.

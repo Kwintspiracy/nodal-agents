@@ -188,7 +188,7 @@ afterAll(() => {
   _resetEnvCache();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   process.env['DATABASE_URL'] = 'test://local';
   process.env['REFLECTION_ENABLED'] = 'false';
   process.env['CURATOR_STALE_DAYS'] = '30';
@@ -197,6 +197,12 @@ beforeEach(() => {
   process.env['CURATOR_INTERVAL_DAYS'] = '7';
   process.env['CURATOR_MAX_TURNS'] = '4';
   _resetEnvCache();
+
+  // Phase D: runCuratorTick Phase 2 filters by entities.reflection_enabled=true.
+  // Reset the test entity to enabled=true before each test so tests 8+9 (which
+  // pass reflectionEnabled='true' in makeCuratorEnv) find a candidate entity.
+  // Test 10 overrides this to false explicitly.
+  await db.update(entities).set({ reflectionEnabled: true }).where(eq(entities.id, seed.entityId));
 });
 
 // ── 1. Lifecycle: active→stale→archived ────────────────────────────────────────
@@ -549,5 +555,100 @@ describe('curator — runCuratorTick: mock LLM consolidation', () => {
     const [rUser] = await db.select().from(agentSkills).where(eq(agentSkills.id, userSkill.id));
     expect(rUser!.state).toBe('active');
     expect(rUser!.createdBy).toBe('user');
+  });
+});
+
+// ── 11. Regression: REFLECTION_ENABLED='' (unset/empty = per-entity decides) ───
+// This test FAILS against the old run-curator.ts where the gate was
+// `REFLECTION_ENABLED !== 'true'` (empty string !== 'true' → early return → deferred 0).
+// After the fix (`=== 'false'`), empty string passes the gate → per-entity decides → deferred 1.
+describe('curator — runCuratorTick: REFLECTION_ENABLED empty (unset) passes gate when entity opt-in = true', () => {
+  it('first-run-deferred === 1 when REFLECTION_ENABLED is empty string and entity.reflection_enabled=true', async () => {
+    const ts = Date.now();
+
+    // Seed >= CURATOR_MIN_SKILLS=2 agent-created ACTIVE skills
+    for (let i = 0; i < 3; i++) {
+      await db.insert(agentSkills).values({
+        entityId: seed.entityId,
+        slug: `regression-empty-env-${ts}-${i}`,
+        name: `Regression Empty Env ${ts} ${i}`,
+        content: 'agent skill for empty-env regression',
+        createdBy: 'agent',
+        state: 'active',
+      });
+    }
+
+    // beforeEach already sets reflection_enabled=true and lastCuratorRunAt to
+    // whatever the entity has — explicitly NULL it so first-run-deferred fires.
+    await db.update(entities).set({ lastCuratorRunAt: null }).where(eq(entities.id, seed.entityId));
+
+    // Pass REFLECTION_ENABLED: '' (empty string — the new default when env is unset).
+    // Old gate: '' !== 'true' → early-return → consolidationDeferred=0  (BUG)
+    // New gate: '' === 'false' is false → proceeds → deferred=1          (FIXED)
+    const result = await runCuratorTick(
+      db,
+      makeNoopDeps(),
+      makeCuratorEnv({ reflectionEnabled: '', curatorMinSkills: 2, curatorIntervalDays: 7 }),
+    );
+
+    expect(result.consolidationDeferred).toBeGreaterThanOrEqual(1);
+    expect(result.consolidationRan).toBe(0); // first-run-deferred: LLM not yet called
+
+    // last_curator_run_at was stamped (confirms deferral path executed)
+    const [entityRow] = await db
+      .select({ lastCuratorRunAt: entities.lastCuratorRunAt })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    expect(entityRow!.lastCuratorRunAt).not.toBeNull();
+  });
+});
+
+// ── 10. Curator: only processes entities with reflection_enabled=true ──────────
+describe('curator — runCuratorTick: only reflection_enabled entities get LLM consolidation', () => {
+  it('skips LLM consolidation for entity with reflection_enabled=false', async () => {
+    const ts = Date.now();
+
+    // Ensure entity has reflection_enabled=false
+    await db
+      .update(entities)
+      .set({ reflectionEnabled: false })
+      .where(eq(entities.id, seed.entityId));
+
+    // Seed enough active agent skills
+    for (let i = 0; i < 3; i++) {
+      await db.insert(agentSkills).values({
+        entityId: seed.entityId,
+        slug: `curator-disabled-${ts}-${i}`,
+        name: `Curator Disabled ${ts} ${i}`,
+        content: 'agent skill',
+        createdBy: 'agent',
+        state: 'active',
+      });
+    }
+
+    // Set last_curator_run_at to 8 days ago to trigger consolidation if enabled
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await db.update(entities).set({ lastCuratorRunAt: eightDaysAgo }).where(eq(entities.id, seed.entityId));
+
+    let llmCallCount = 0;
+    const baseClient = makeScriptedClient([{}]);
+    const wrappedClient: RunnerDeps['llmClient'] = {
+      ...baseClient,
+      generateText: (...args) => {
+        llmCallCount += 1;
+        return baseClient.generateText(...args);
+      },
+    };
+    const deps = makeDeps(wrappedClient);
+
+    const result = await runCuratorTick(
+      db,
+      deps,
+      makeCuratorEnv({ reflectionEnabled: 'true', curatorMinSkills: 2, curatorIntervalDays: 7 }),
+    );
+
+    // Entity has reflection_enabled=false → LLM consolidation must NOT run for it
+    expect(llmCallCount).toBe(0);
+    expect(result.consolidationRan).toBe(0);
   });
 });
