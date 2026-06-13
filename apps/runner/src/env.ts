@@ -60,6 +60,24 @@ const envSchema = z.object({
   REFLECTION_MAX_PER_HOUR: z.coerce.number().default(6),
   // Max LLM turns inside a single reflection pass (the reflection loop itself).
   REFLECTION_MAX_TURNS: z.coerce.number().default(3),
+
+  // ─── Learning-loop — Tier-2 "curator" pass (Phase C). ────────────────────────
+  // The deterministic lifecycle transitions (active→stale→archived) ALWAYS run
+  // per cron tick (they are cheap SQL, no LLM). The LLM consolidation pass is
+  // gated by REFLECTION_ENABLED (same flag as Phase B — both are LLM cost items).
+  // Ships OFF by default: set REFLECTION_ENABLED='true' to enable the LLM pass.
+  //
+  // CURATOR_STALE_DAYS:      days before an agent skill transitions active→stale.
+  // CURATOR_ARCHIVE_DAYS:    days before a stale agent skill transitions→archived.
+  // CURATOR_MIN_SKILLS:      min agent-created ACTIVE skills per entity to trigger
+  //                          LLM consolidation (consolidation is pointless below 5).
+  // CURATOR_INTERVAL_DAYS:   min days between LLM consolidation passes per entity.
+  // CURATOR_MAX_TURNS:       max LLM turns inside a single consolidation pass.
+  CURATOR_STALE_DAYS: z.coerce.number().default(30),
+  CURATOR_ARCHIVE_DAYS: z.coerce.number().default(90),
+  CURATOR_MIN_SKILLS: z.coerce.number().default(5),
+  CURATOR_INTERVAL_DAYS: z.coerce.number().default(7),
+  CURATOR_MAX_TURNS: z.coerce.number().default(4),
 });
 
 export type RunnerEnv = z.infer<typeof envSchema>;

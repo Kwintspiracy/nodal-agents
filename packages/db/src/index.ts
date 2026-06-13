@@ -18,7 +18,7 @@ export type { DecryptedCredential, OauthPayload, Db } from './queries/credential
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export { createAgentRepo } from './repos/agents.ts';
 export type { CreateAgentInput, CreateAgentResult } from './repos/agents.ts';
-export { createSkillRepo, updateSkillRepo, assignSkillRepo, touchSkillsLastUsed } from './repos/skills.ts';
+export { createSkillRepo, updateSkillRepo, assignSkillRepo, touchSkillsLastUsed, transitionSkillLifecycle, archiveAgentSkill } from './repos/skills.ts';
 export type {
   CreateSkillInput,
   CreateSkillResult,
@@ -26,6 +26,9 @@ export type {
   UpdateSkillResult,
   AssignSkillInput,
   AssignSkillResult,
+  LifecycleThresholds,
+  LifecycleResult,
+  ArchiveAgentSkillResult,
 } from './repos/skills.ts';
 
 // Re-export commonly used Drizzle query helpers so that other packages

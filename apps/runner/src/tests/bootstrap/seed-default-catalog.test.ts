@@ -1,4 +1,4 @@
-// seed-default-catalog.test.ts — regression for system-skill seeding: every
+﻿// seed-default-catalog.test.ts — regression for system-skill seeding: every
 // install gets the same system skills out of the box, and user overrides are
 // preserved on subsequent boots. Agents are NOT seeded — every agent is
 // created by the user.
@@ -32,6 +32,11 @@ const env: RunnerEnv = {
   REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
+  CURATOR_STALE_DAYS: 30,
+  CURATOR_ARCHIVE_DAYS: 90,
+  CURATOR_MIN_SKILLS: 5,
+  CURATOR_INTERVAL_DAYS: 7,
+  CURATOR_MAX_TURNS: 4,
 };
 
 async function seedSingleEntityFixture(db: TestDb) {

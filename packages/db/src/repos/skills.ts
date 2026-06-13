@@ -221,3 +221,115 @@ export async function touchSkillsLastUsed(
     .set({ lastUsedAt: sql`now()` })
     .where(inArray(agentSkills.id, skillIds));
 }
+
+// ─── transitionSkillLifecycle ─────────────────────────────────────────────────
+
+export interface LifecycleThresholds {
+  /** Days of inactivity before active → stale. Default 30. */
+  staleDays: number;
+  /** Days of inactivity (from stale) before stale → archived. Default 90. */
+  archiveDays: number;
+}
+
+export interface LifecycleResult {
+  staled: number;
+  archived: number;
+  reactivated: number;
+}
+
+/**
+ * Bulk deterministic lifecycle transitions — ONLY for agent-authored skills.
+ * User/system skills are NEVER touched (no lifecycle path for them).
+ *
+ * active → stale:      state='active'  AND coalesce(last_used_at, created_at) < now - staleDays
+ * stale  → archived:   state='stale'   AND coalesce(last_used_at, created_at) < now - archiveDays
+ * stale  → active:     state='stale'   AND last_used_at >= now - staleDays  (reactivation)
+ *
+ * Returns counts of each transition applied.
+ */
+export async function transitionSkillLifecycle(
+  db: AnyDrizzleDb,
+  thresholds: LifecycleThresholds,
+): Promise<LifecycleResult> {
+  const now = new Date();
+  const staleAt = new Date(now.getTime() - thresholds.staleDays * 24 * 60 * 60 * 1000);
+  const archiveAt = new Date(now.getTime() - thresholds.archiveDays * 24 * 60 * 60 * 1000);
+
+  // active → stale
+  const staledRows = await db
+    .update(agentSkills)
+    .set({ state: 'stale', updatedAt: now })
+    .where(
+      and(
+        eq(agentSkills.createdBy, 'agent'),
+        eq(agentSkills.state, 'active'),
+        sql`coalesce(${agentSkills.lastUsedAt}, ${agentSkills.createdAt}) < ${staleAt}`,
+      ),
+    )
+    .returning({ id: agentSkills.id });
+
+  // stale → archived
+  const archivedRows = await db
+    .update(agentSkills)
+    .set({ state: 'archived', archivedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(agentSkills.createdBy, 'agent'),
+        eq(agentSkills.state, 'stale'),
+        sql`coalesce(${agentSkills.lastUsedAt}, ${agentSkills.createdAt}) < ${archiveAt}`,
+      ),
+    )
+    .returning({ id: agentSkills.id });
+
+  // stale → active (reactivation: recently used)
+  const reactivatedRows = await db
+    .update(agentSkills)
+    .set({ state: 'active', updatedAt: now })
+    .where(
+      and(
+        eq(agentSkills.createdBy, 'agent'),
+        eq(agentSkills.state, 'stale'),
+        sql`${agentSkills.lastUsedAt} >= ${staleAt}`,
+      ),
+    )
+    .returning({ id: agentSkills.id });
+
+  return {
+    staled: staledRows.length,
+    archived: archivedRows.length,
+    reactivated: reactivatedRows.length,
+  };
+}
+
+// ─── archiveAgentSkill ────────────────────────────────────────────────────────
+
+export type ArchiveAgentSkillResult = { ok: true } | { error: 'not_agent_skill' | 'not_found' };
+
+/**
+ * Soft-archive a single agent-authored skill. Refuses to archive user/system
+ * skills (created_by != 'agent') — returns { error: 'not_agent_skill' }.
+ * Returns { error: 'not_found' } if the skill doesn't exist or belongs to a
+ * different entity. Idempotent: archiving an already-archived skill is ok.
+ */
+export async function archiveAgentSkill(
+  db: AnyDrizzleDb,
+  entityId: string,
+  skillId: string,
+): Promise<ArchiveAgentSkillResult> {
+  // Fetch first to check provenance
+  const [row] = await db
+    .select({ id: agentSkills.id, createdBy: agentSkills.createdBy })
+    .from(agentSkills)
+    .where(and(eq(agentSkills.id, skillId), eq(agentSkills.entityId, entityId)))
+    .limit(1);
+
+  if (!row) return { error: 'not_found' };
+  if (row.createdBy !== 'agent') return { error: 'not_agent_skill' };
+
+  await db
+    .update(agentSkills)
+    .set({ state: 'archived', archivedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(agentSkills.id, skillId), eq(agentSkills.entityId, entityId)));
+
+  return { ok: true };
+}

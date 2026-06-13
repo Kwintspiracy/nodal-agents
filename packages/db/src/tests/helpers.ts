@@ -61,7 +61,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       root_agent_id uuid,
       root_grants jsonb NOT NULL DEFAULT '{}',
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now()
+      updated_at timestamptz DEFAULT now(),
+      last_curator_run_at timestamptz
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (

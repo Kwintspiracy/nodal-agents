@@ -19,6 +19,7 @@ import { unblockReadyTasks } from './unblock-ready.ts';
 import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
+import { runCuratorTick } from './run-curator.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 import type { RunnerDeps } from '../deps.ts';
@@ -34,6 +35,11 @@ export interface CronTickResult {
   tasksExecuted: number;
   schedulesFired: number;
   rootsDelivered: number;
+  curatorStaled: number;
+  curatorArchived: number;
+  curatorReactivated: number;
+  curatorConsolidationDeferred: number;
+  curatorConsolidationRan: number;
 }
 
 // ─── runCronTick ──────────────────────────────────────────────────────────────
@@ -86,6 +92,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   const tasksExecuted = await executeReadyTasks(deps.db, deps, maxTasksPerTick);
   const schedulesFired = await runScheduleTick(deps.db, deps, maxTasksPerTick);
   const rootsDelivered = await deliverCompletedRoots(deps.db);
+  const curatorResult = await runCuratorTick(deps.db, deps);
 
   return {
     orphanJobsReset,
@@ -96,5 +103,10 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     tasksExecuted,
     schedulesFired,
     rootsDelivered,
+    curatorStaled: curatorResult.staled,
+    curatorArchived: curatorResult.archived,
+    curatorReactivated: curatorResult.reactivated,
+    curatorConsolidationDeferred: curatorResult.consolidationDeferred,
+    curatorConsolidationRan: curatorResult.consolidationRan,
   };
 }

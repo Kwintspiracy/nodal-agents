@@ -1,4 +1,4 @@
-// execute.test.ts — full E2E job loop with mocked LLM, asserts each transition
+﻿// execute.test.ts — full E2E job loop with mocked LLM, asserts each transition
 // Tests:
 //   - pending → processing → completed on return_result
 //   - anti-loop: 51 tool_use blocks → tool_call_limit_exceeded
@@ -229,6 +229,11 @@ const testEnv: RunnerEnv = {
   REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
+  CURATOR_STALE_DAYS: 30,
+  CURATOR_ARCHIVE_DAYS: 90,
+  CURATOR_MIN_SKILLS: 5,
+  CURATOR_INTERVAL_DAYS: 7,
+  CURATOR_MAX_TURNS: 4,
 };
 
 beforeAll(async () => {

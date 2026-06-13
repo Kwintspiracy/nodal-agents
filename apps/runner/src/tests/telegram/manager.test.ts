@@ -1,4 +1,4 @@
-// manager.test.ts — startTelegramManager spawns one poller per agent with a
+﻿// manager.test.ts — startTelegramManager spawns one poller per agent with a
 // bot token, restarts a poller on token change, and cleans up on stop.
 //
 // We mock fetch so the pollers immediately return [] (no updates), but the
@@ -35,6 +35,11 @@ const testEnv: RunnerEnv = {
   REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
+  CURATOR_STALE_DAYS: 30,
+  CURATOR_ARCHIVE_DAYS: 90,
+  CURATOR_MIN_SKILLS: 5,
+  CURATOR_INTERVAL_DAYS: 7,
+  CURATOR_MAX_TURNS: 4,
 };
 
 function makeDeps(db: TestDb): RunnerDeps {

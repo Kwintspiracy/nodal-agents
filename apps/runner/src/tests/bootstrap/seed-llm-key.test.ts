@@ -1,4 +1,4 @@
-// seed-llm-key.test.ts — Brique 25 seeder guard logic
+﻿// seed-llm-key.test.ts — Brique 25 seeder guard logic
 //
 // Tests:
 //   1. local-auth single-user → seeds correctly (the case Quentin hit)
@@ -53,6 +53,11 @@ function makeEnv(
     REFLECTION_MIN_TURNS: 3,
     REFLECTION_MAX_PER_HOUR: 6,
     REFLECTION_MAX_TURNS: 3,
+  CURATOR_STALE_DAYS: 30,
+  CURATOR_ARCHIVE_DAYS: 90,
+  CURATOR_MIN_SKILLS: 5,
+  CURATOR_INTERVAL_DAYS: 7,
+  CURATOR_MAX_TURNS: 4,
   };
 }
 

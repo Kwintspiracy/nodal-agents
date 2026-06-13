@@ -1,4 +1,4 @@
-// delegation-parallel-tools.test.ts — regression for the unmatched_tool_use bug
+﻿// delegation-parallel-tools.test.ts — regression for the unmatched_tool_use bug
 // reproduced live on jobs 24c8802d-... and ac64d2ef-... (2026-05-16).
 //
 // Bug: when an orchestrator LLM emits [assign_<child>, save_memory] in the
@@ -156,6 +156,11 @@ const testEnv: RunnerEnv = {
   REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
+  CURATOR_STALE_DAYS: 30,
+  CURATOR_ARCHIVE_DAYS: 90,
+  CURATOR_MIN_SKILLS: 5,
+  CURATOR_INTERVAL_DAYS: 7,
+  CURATOR_MAX_TURNS: 4,
 };
 
 beforeAll(async () => {

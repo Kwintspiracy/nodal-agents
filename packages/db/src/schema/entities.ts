@@ -46,6 +46,7 @@ export const entities = pgTable(
       .default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+    lastCuratorRunAt: timestamp('last_curator_run_at', { withTimezone: true }),
   },
   (table) => [
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),

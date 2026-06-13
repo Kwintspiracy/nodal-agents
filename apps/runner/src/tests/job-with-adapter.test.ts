@@ -1,4 +1,4 @@
-// job-with-adapter.test.ts — integration test for connector adapter tool injection
+﻿// job-with-adapter.test.ts — integration test for connector adapter tool injection
 //
 // Tests:
 //  - Agent assigned to Google Drive connector executes a job.
@@ -158,6 +158,11 @@ const testEnv: RunnerEnv = {
   REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
+  CURATOR_STALE_DAYS: 30,
+  CURATOR_ARCHIVE_DAYS: 90,
+  CURATOR_MIN_SKILLS: 5,
+  CURATOR_INTERVAL_DAYS: 7,
+  CURATOR_MAX_TURNS: 4,
 };
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
