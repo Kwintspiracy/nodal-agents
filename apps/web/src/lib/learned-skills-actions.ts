@@ -9,9 +9,13 @@ import {
   or,
   desc,
   sql,
+  inArray,
   agentSkills,
+  agentSkillAssignments,
+  agents,
   entities,
   archiveAgentSkill,
+  assignSkillRepo,
 } from '@nodal-agents/db';
 import { getDb, applyActiveEntity, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
@@ -31,6 +35,9 @@ export type LearnedSkillRow = {
   archivedAt: Date | null;
   createdAt: Date | null;
   updatedAt: Date | null;
+  assignedAgentNames: string[];
+  createdByAgentId: string | null;
+  createdByAgentName: string | null;
 };
 
 export type ActionResult<T = void> =
@@ -121,6 +128,7 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
         archivedAt: agentSkills.archivedAt,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
+        createdByAgentId: agentSkills.createdByAgentId,
       })
       .from(agentSkills)
       .where(
@@ -133,6 +141,45 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
         sql`${agentSkills.lastUsedAt} DESC NULLS LAST`,
         desc(agentSkills.createdAt),
       );
+
+    // Fetch assigned agent names for all returned skills
+    const skillIds = rows.map((r) => r.id);
+    const assignedAgentNamesMap = new Map<string, string[]>();
+    if (skillIds.length > 0) {
+      const assignments = await db
+        .select({ skillId: agentSkillAssignments.skillId, agentName: agents.name })
+        .from(agentSkillAssignments)
+        .innerJoin(agents, eq(agents.id, agentSkillAssignments.agentId))
+        .where(
+          and(
+            eq(agentSkillAssignments.entityId, session.entityId),
+            inArray(agentSkillAssignments.skillId, skillIds),
+          ),
+        );
+      for (const a of assignments) {
+        const existing = assignedAgentNamesMap.get(a.skillId) ?? [];
+        existing.push(a.agentName);
+        assignedAgentNamesMap.set(a.skillId, existing);
+      }
+    }
+
+    // Fetch createdByAgentName for skills with a non-null createdByAgentId
+    const createdByAgentIds = [...new Set(rows.map((r) => r.createdByAgentId).filter((id): id is string => id !== null))];
+    const createdByAgentNameMap = new Map<string, string>();
+    if (createdByAgentIds.length > 0) {
+      const createdByAgents = await db
+        .select({ id: agents.id, name: agents.name })
+        .from(agents)
+        .where(
+          and(
+            eq(agents.entityId, session.entityId),
+            inArray(agents.id, createdByAgentIds),
+          ),
+        );
+      for (const a of createdByAgents) {
+        createdByAgentNameMap.set(a.id, a.name);
+      }
+    }
 
     return ok(
       rows.map((r) => ({
@@ -147,6 +194,9 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
         archivedAt: r.archivedAt,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
+        createdByAgentId: r.createdByAgentId,
+        assignedAgentNames: assignedAgentNamesMap.get(r.id) ?? [],
+        createdByAgentName: r.createdByAgentId ? (createdByAgentNameMap.get(r.createdByAgentId) ?? null) : null,
       })),
     );
   } catch (err) {
@@ -247,5 +297,98 @@ export async function deleteLearnedSkillAction(skillId: string): Promise<ActionR
   } catch (err) {
     console.error('[deleteLearnedSkillAction]', err);
     return fail('db_error', 'Failed to delete skill');
+  }
+}
+
+// ─── getSkillAssignmentModeAction ─────────────────────────────────────────────
+
+export async function getSkillAssignmentModeAction(): Promise<ActionResult<'auto' | 'approval'>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [row] = await db
+      .select({ skillAssignmentMode: entities.skillAssignmentMode })
+      .from(entities)
+      .where(eq(entities.id, session.entityId))
+      .limit(1);
+    if (!row) return fail('not_found', 'Entity not found');
+    return ok((row.skillAssignmentMode ?? 'approval') as 'auto' | 'approval');
+  } catch (err) {
+    console.error('[getSkillAssignmentModeAction]', err);
+    return fail('db_error', 'Failed to load assignment mode');
+  }
+}
+
+// ─── setSkillAssignmentModeAction ─────────────────────────────────────────────
+
+export async function setSkillAssignmentModeAction(mode: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = z.enum(['auto', 'approval']).safeParse(mode);
+    if (!parsed.success) return fail('validation_failed', 'mode must be "auto" or "approval"');
+    const db = getDb();
+    await db
+      .update(entities)
+      .set({ skillAssignmentMode: parsed.data, updatedAt: new Date() })
+      .where(eq(entities.id, session.entityId));
+    revalidatePath('/learned-skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setSkillAssignmentModeAction]', err);
+    return fail('db_error', 'Failed to update assignment mode');
+  }
+}
+
+// ─── listAssignableAgentsAction ───────────────────────────────────────────────
+
+export async function listAssignableAgentsAction(): Promise<ActionResult<{ id: string; name: string; slug: string }[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select({ id: agents.id, name: agents.name, slug: agents.slug })
+      .from(agents)
+      .where(and(eq(agents.entityId, session.entityId), eq(agents.active, true)))
+      .orderBy(agents.position, agents.name);
+    return ok(rows);
+  } catch (err) {
+    console.error('[listAssignableAgentsAction]', err);
+    return fail('db_error', 'Failed to load agents');
+  }
+}
+
+// ─── assignLearnedSkillAction ─────────────────────────────────────────────────
+
+export async function assignLearnedSkillAction(skillId: unknown, agentId: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsedSkill = z.string().uuid().safeParse(skillId);
+    const parsedAgent = z.string().uuid().safeParse(agentId);
+    if (!parsedSkill.success) return fail('validation_failed', 'Invalid skill id');
+    if (!parsedAgent.success) return fail('validation_failed', 'Invalid agent id');
+
+    const db = getDb();
+    const [row] = await db
+      .select({ id: agentSkills.id, createdBy: agentSkills.createdBy })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, parsedSkill.data), eq(agentSkills.entityId, session.entityId)))
+      .limit(1);
+    if (!row) return fail('not_found', 'Skill not found');
+    if (row.createdBy !== 'agent') return fail('forbidden', 'Only agent-authored skills can be assigned here');
+
+    const result = await assignSkillRepo(db, session.entityId, { skillId: parsedSkill.data, agentId: parsedAgent.data }, []);
+    if ('error' in result) {
+      if (result.error === 'already_assigned') {
+        revalidatePath('/learned-skills');
+        return ok(undefined); // idempotent
+      }
+      if (result.error === 'agent_not_found') return fail('not_found', 'Agent not found');
+      if (result.error === 'skill_not_found') return fail('not_found', 'Skill not found');
+    }
+    revalidatePath('/learned-skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[assignLearnedSkillAction]', err);
+    return fail('db_error', 'Failed to assign skill');
   }
 }

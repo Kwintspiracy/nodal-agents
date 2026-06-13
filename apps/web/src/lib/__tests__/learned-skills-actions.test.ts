@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq, agentSkills, entities } from '@nodal-agents/db';
+import { eq, and, agentSkills, agentSkillAssignments, entities } from '@nodal-agents/db';
 
 // Mock the server.ts module to inject our test DB
 let testDb: TestDb;
@@ -243,5 +243,135 @@ describe('deleteLearnedSkillAction — created_by guard', () => {
       .from(agentSkills)
       .where(eq(agentSkills.id, skill.id));
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe('getSkillAssignmentModeAction', () => {
+  it('returns "approval" by default (entity column default)', async () => {
+    const { getSkillAssignmentModeAction } = await import('../learned-skills-actions.ts');
+    const result = await getSkillAssignmentModeAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok');
+    expect(result.data).toBe('approval');
+  });
+});
+
+describe('setSkillAssignmentModeAction', () => {
+  it('persists "auto" to the entity row', async () => {
+    const { setSkillAssignmentModeAction } = await import('../learned-skills-actions.ts');
+    const result = await setSkillAssignmentModeAction('auto');
+    expect(result.ok).toBe(true);
+
+    const [row] = await testDb
+      .select({ skillAssignmentMode: entities.skillAssignmentMode })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    expect(row!.skillAssignmentMode).toBe('auto');
+  });
+
+  it('persists "approval" to the entity row', async () => {
+    const { setSkillAssignmentModeAction } = await import('../learned-skills-actions.ts');
+    const result = await setSkillAssignmentModeAction('approval');
+    expect(result.ok).toBe(true);
+
+    const [row] = await testDb
+      .select({ skillAssignmentMode: entities.skillAssignmentMode })
+      .from(entities)
+      .where(eq(entities.id, seed.entityId));
+    expect(row!.skillAssignmentMode).toBe('approval');
+  });
+
+  it('rejects an invalid mode value', async () => {
+    const { setSkillAssignmentModeAction } = await import('../learned-skills-actions.ts');
+    const result = await setSkillAssignmentModeAction('invalid');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected fail');
+    expect(result.code).toBe('validation_failed');
+  });
+});
+
+describe('assignLearnedSkillAction', () => {
+  it('assigns an agent-authored skill and creates the assignment row', async () => {
+    const { assignLearnedSkillAction } = await import('../learned-skills-actions.ts');
+
+    // Seed an agent-authored skill
+    const [skill] = await testDb
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        slug: `assign-agent-skill-${Date.now()}`,
+        name: `Assign Agent Skill ${Date.now()}`,
+        content: 'agent authored content',
+        createdBy: 'agent',
+        state: 'active',
+      })
+      .returning();
+    if (!skill) throw new Error('Failed to seed skill');
+
+    const result = await assignLearnedSkillAction(skill.id, seed.agentId);
+    expect(result.ok).toBe(true);
+
+    // Verify the assignment row was created
+    const assignments = await testDb
+      .select({ id: agentSkillAssignments.id })
+      .from(agentSkillAssignments)
+      .where(
+        and(
+          eq(agentSkillAssignments.skillId, skill.id),
+          eq(agentSkillAssignments.agentId, seed.agentId),
+        ),
+      );
+    expect(assignments).toHaveLength(1);
+  });
+
+  it('refuses to assign a user-authored skill (forbidden)', async () => {
+    const { assignLearnedSkillAction } = await import('../learned-skills-actions.ts');
+
+    const [skill] = await testDb
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        slug: `assign-user-skill-${Date.now()}`,
+        name: `Assign User Skill ${Date.now()}`,
+        content: 'user authored content',
+        createdBy: 'user',
+        state: 'active',
+      })
+      .returning();
+    if (!skill) throw new Error('Failed to seed skill');
+
+    const result = await assignLearnedSkillAction(skill.id, seed.agentId);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected fail');
+    expect(result.code).toBe('forbidden');
+
+    // No assignment row created
+    const assignments = await testDb
+      .select({ id: agentSkillAssignments.id })
+      .from(agentSkillAssignments)
+      .where(eq(agentSkillAssignments.skillId, skill.id));
+    expect(assignments).toHaveLength(0);
+  });
+
+  it('refuses to assign a system-authored skill (forbidden)', async () => {
+    const { assignLearnedSkillAction } = await import('../learned-skills-actions.ts');
+
+    const [skill] = await testDb
+      .insert(agentSkills)
+      .values({
+        entityId: seed.entityId,
+        slug: `assign-system-skill-${Date.now()}`,
+        name: `Assign System Skill ${Date.now()}`,
+        content: 'system authored content',
+        createdBy: 'system',
+        state: 'active',
+      })
+      .returning();
+    if (!skill) throw new Error('Failed to seed skill');
+
+    const result = await assignLearnedSkillAction(skill.id, seed.agentId);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected fail');
+    expect(result.code).toBe('forbidden');
   });
 });

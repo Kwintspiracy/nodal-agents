@@ -1,25 +1,39 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useCallback } from 'react';
 import { toast } from 'sonner';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import Modal from '@/components/ui/Modal.tsx';
+import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
 import {
   setReflectionEnabledAction,
   archiveLearnedSkillAction,
   restoreLearnedSkillAction,
   deleteLearnedSkillAction,
+  setSkillAssignmentModeAction,
+  assignLearnedSkillAction,
 } from '@/lib/learned-skills-actions.ts';
 import type { LearnedSkillRow } from '@/lib/learned-skills-actions.ts';
+
+type AssignableAgent = { id: string; name: string; slug: string };
 
 type Props = {
   skills: LearnedSkillRow[];
   reflectionEnabled: boolean;
+  assignmentMode: 'auto' | 'approval';
+  assignableAgents: AssignableAgent[];
 };
 
 type DialogState =
   | { type: 'archive'; skillId: string; skillName: string }
   | { type: 'delete'; skillId: string; skillName: string }
   | null;
+
+type AssignModalState = {
+  skillId: string;
+  skillName: string;
+  defaultAgentId: string | null;
+} | null;
 
 function StateBadge({ state }: { state: string }) {
   if (state === 'active') {
@@ -43,24 +57,46 @@ function StateBadge({ state }: { state: string }) {
   );
 }
 
-export default function LearnedSkillsClient({ skills, reflectionEnabled: initialEnabled }: Props) {
+export default function LearnedSkillsClient({
+  skills,
+  reflectionEnabled: initialEnabled,
+  assignmentMode: initialMode,
+  assignableAgents,
+}: Props) {
   const [enabled, setEnabled] = useState(initialEnabled);
+  const [mode, setMode] = useState<'auto' | 'approval'>(initialMode);
   const [isPending, startTransition] = useTransition();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [localSkills, setLocalSkills] = useState<LearnedSkillRow[]>(skills);
+  const [assignModal, setAssignModal] = useState<AssignModalState>(null);
+  const [assigningAgentId, setAssigningAgentId] = useState<string>('');
 
   function handleToggle() {
     const next = !enabled;
-    // Optimistic UI
     setEnabled(next);
     startTransition(async () => {
       const result = await setReflectionEnabledAction(next);
       if (!result.ok) {
-        setEnabled(!next); // revert
+        setEnabled(!next);
         toast.error(result.message);
       } else {
         toast.success(next ? 'Agent learning enabled' : 'Agent learning disabled');
+      }
+    });
+  }
+
+  function handleModeChange(next: 'auto' | 'approval') {
+    if (next === mode) return;
+    const prev = mode;
+    setMode(next);
+    startTransition(async () => {
+      const result = await setSkillAssignmentModeAction(next);
+      if (!result.ok) {
+        setMode(prev);
+        toast.error(result.message);
+      } else {
+        toast.success(next === 'auto' ? 'Skills auto-assigned to authoring agent' : 'Skills require your approval before assignment');
       }
     });
   }
@@ -111,6 +147,41 @@ export default function LearnedSkillsClient({ skills, reflectionEnabled: initial
     });
   }
 
+  const openAssignModal = useCallback((skill: LearnedSkillRow) => {
+    const defaultAgentId = skill.createdByAgentId ?? null;
+    setAssigningAgentId(defaultAgentId ?? (assignableAgents[0]?.id ?? ''));
+    setAssignModal({ skillId: skill.id, skillName: skill.name, defaultAgentId });
+  }, [assignableAgents]);
+
+  function handleAssignConfirm() {
+    if (!assignModal || !assigningAgentId) return;
+    const { skillId, skillName } = assignModal;
+    setAssignModal(null);
+
+    startTransition(async () => {
+      const result = await assignLearnedSkillAction(skillId, assigningAgentId);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      const agent = assignableAgents.find((a) => a.id === assigningAgentId);
+      const agentName = agent?.name ?? 'agent';
+      toast.success(`"${skillName}" assigned to ${agentName}`);
+      setLocalSkills((prev) =>
+        prev.map((s) =>
+          s.id === skillId
+            ? {
+                ...s,
+                assignedAgentNames: s.assignedAgentNames.includes(agentName)
+                  ? s.assignedAgentNames
+                  : [...s.assignedAgentNames, agentName],
+              }
+            : s,
+        ),
+      );
+    });
+  }
+
   return (
     <div className="pb-10">
       {/* Header */}
@@ -124,7 +195,7 @@ export default function LearnedSkillsClient({ skills, reflectionEnabled: initial
       </div>
 
       {/* Reflection toggle section */}
-      <div className="mb-6 rounded-2xl border border-rule-2 bg-paper p-5">
+      <div className="mb-4 rounded-2xl border border-rule-2 bg-paper p-5">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p id="agent-learning-label" className="text-[13px] font-medium text-ink">Agent learning</p>
@@ -151,6 +222,30 @@ export default function LearnedSkillsClient({ skills, reflectionEnabled: initial
               }`}
             />
           </button>
+        </div>
+      </div>
+
+      {/* Assignment mode section */}
+      <div className="mb-6 rounded-2xl border border-rule-2 bg-paper p-5">
+        <p id="assign-mode-label" className="mb-1 text-[13px] font-medium text-ink">
+          When an agent learns a new skill
+        </p>
+        <p id="assign-mode-desc" className="mb-4 text-[12px] leading-[1.5] text-ink-3">
+          Control whether new agent-authored skills are instantly assigned back to the agent, or held for your review first.
+        </p>
+        <div role="radiogroup" aria-labelledby="assign-mode-label" aria-describedby="assign-mode-desc">
+          <OptionRadio
+            active={mode === 'auto'}
+            onClick={() => handleModeChange('auto')}
+            name="Auto-assign to the agent"
+            description="The skill is immediately available to the agent that authored it."
+          />
+          <OptionRadio
+            active={mode === 'approval'}
+            onClick={() => handleModeChange('approval')}
+            name="Require my approval"
+            description="New skills are created unassigned — you assign them manually from this page."
+          />
         </div>
       </div>
 
@@ -187,9 +282,26 @@ export default function LearnedSkillsClient({ skills, reflectionEnabled: initial
                   {skill.description && (
                     <p className="mt-0.5 text-[12px] text-ink-3 truncate">{skill.description}</p>
                   )}
+                  {/* Assignment line */}
+                  <p className="mt-0.5 text-[11px] text-ink-3">
+                    {skill.assignedAgentNames.length > 0
+                      ? `Assigned to ${skill.assignedAgentNames.join(', ')}`
+                      : 'Not assigned'}
+                  </p>
                 </button>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  {/* Assign button — only for unassigned skills */}
+                  {skill.assignedAgentNames.length === 0 && assignableAgents.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => openAssignModal(skill)}
+                      disabled={isPending}
+                      className="px-2.5 py-1 text-[12px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
+                    >
+                      Assign
+                    </button>
+                  )}
                   {skill.state === 'archived' ? (
                     <button
                       type="button"
@@ -254,6 +366,58 @@ export default function LearnedSkillsClient({ skills, reflectionEnabled: initial
         onConfirm={handleConfirm}
         onCancel={() => setDialog(null)}
       />
+
+      {/* Assign modal */}
+      <Modal
+        open={assignModal !== null}
+        onClose={() => setAssignModal(null)}
+        title={assignModal ? `Assign "${assignModal.skillName}"` : undefined}
+      >
+        {assignModal && (
+          <div className="space-y-4">
+            <p className="text-[12px] text-ink-3">
+              Select an agent to assign this skill to.
+            </p>
+            <div>
+              <label
+                htmlFor="assign-agent-select"
+                className="mb-1.5 block text-[12px] font-medium text-ink"
+              >
+                Agent
+              </label>
+              <select
+                id="assign-agent-select"
+                value={assigningAgentId}
+                onChange={(e) => setAssigningAgentId(e.target.value)}
+                className="w-full rounded-lg border border-rule-2 bg-canvas px-3 py-2 text-[13px] text-ink focus:border-conn-vivid focus:outline-none"
+              >
+                {assignableAgents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAssignModal(null)}
+                className="px-3 py-1.5 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAssignConfirm}
+                disabled={!assigningAgentId || isPending}
+                className="px-3 py-1.5 text-[13px] font-medium text-white bg-conn-vivid rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                Assign
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
