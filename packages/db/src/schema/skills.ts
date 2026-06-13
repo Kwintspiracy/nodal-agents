@@ -53,6 +53,11 @@ export const agentSkills = pgTable(
     // patchCount: agent-authored patches applied so far
     // archivedAt: when the skill moved to state='archived' (NULL while active)
     createdBy: text('created_by').notNull().default('user'),
+    // Which agent authored this skill (populated by the Tier-1 reflection pass).
+    // NULL for user/system skills and curator umbrella skills (created_by_agent_id=null).
+    createdByAgentId: uuid('created_by_agent_id').references(() => agents.id, {
+      onDelete: 'set null',
+    }),
     state: text('state').notNull().default('active'),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     patchCount: integer('patch_count').notNull().default(0),

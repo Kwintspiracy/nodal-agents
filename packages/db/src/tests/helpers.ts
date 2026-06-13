@@ -63,7 +63,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
       last_curator_run_at timestamptz,
-      reflection_enabled boolean NOT NULL DEFAULT false
+      reflection_enabled boolean NOT NULL DEFAULT false,
+      skill_assignment_mode text NOT NULL DEFAULT 'approval'
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (
@@ -317,6 +318,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       source text,
       installed_scripts jsonb,
       created_by text NOT NULL DEFAULT 'user',
+      created_by_agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
       state text NOT NULL DEFAULT 'active',
       last_used_at timestamptz,
       patch_count integer NOT NULL DEFAULT 0,

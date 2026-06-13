@@ -295,6 +295,13 @@
       "when": 1782200000000,
       "tag": "0042_drop_agent_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1782300000000,
+      "tag": "0043_skill_assignment",
+      "breakpoints": true
     }
   ]
 }

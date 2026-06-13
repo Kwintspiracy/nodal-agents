@@ -49,6 +49,12 @@ export const entities = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
     lastCuratorRunAt: timestamp('last_curator_run_at', { withTimezone: true }),
     reflectionEnabled: boolean('reflection_enabled').notNull().default(false),
+    // Controls whether agent-authored skills are auto-assigned to the authoring
+    // agent ('auto') or queued for the entity owner to approve ('approval').
+    skillAssignmentMode: text('skill_assignment_mode')
+      .notNull()
+      .default('approval')
+      .$type<'auto' | 'approval'>(),
   },
   (table) => [
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),

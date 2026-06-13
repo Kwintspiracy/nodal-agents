@@ -19,8 +19,10 @@ import {
   agents,
   agentSkills,
   agentSkillAssignments,
+  entities,
   createSkillRepo,
   updateSkillRepo,
+  assignSkillRepo,
   type AnyDrizzleDb,
   type AgentJobRow,
 } from '@nodal-agents/db';
@@ -153,6 +155,16 @@ export async function runReflection(
     return { outcome: 'skipped', created: 0, patched: 0, turns: 0 };
   }
 
+  // ── Load entity skill_assignment_mode ─────────────────────────────────────
+  // Determines whether agent-authored skills are auto-assigned to the authoring
+  // agent ('auto') or queued for owner approval ('approval', the safe default).
+  const [entityRow] = await db
+    .select({ skillAssignmentMode: entities.skillAssignmentMode })
+    .from(entities)
+    .where(eq(entities.id, entityId))
+    .limit(1);
+  const skillAssignmentMode: 'auto' | 'approval' = entityRow?.skillAssignmentMode ?? 'approval';
+
   // ── Load the agent's currently-assigned skills ────────────────────────────
   const assignedSkills = await db
     .select({
@@ -268,12 +280,34 @@ export async function runReflection(
             content: parsed.data.content,
             description: parsed.data.description,
             createdBy: 'agent',
+            createdByAgentId: agentId,
           });
           if ('error' in res) {
             outcomeText = `error: slug "${parsed.data.slug}" already taken`;
           } else {
             created += 1;
-            outcomeText = `created skill ${parsed.data.slug}`;
+            // Auto-assign the new skill to the authoring agent when mode='auto'.
+            // On failure (agent_not_found / already_assigned), log and continue —
+            // the skill exists and the entity owner can always assign manually.
+            if (skillAssignmentMode === 'auto') {
+              const assignRes = await assignSkillRepo(
+                db,
+                entityId,
+                { skillId: res.id, agentId },
+                [],
+              );
+              if ('error' in assignRes && assignRes.error !== 'already_assigned') {
+                console.warn(`${REFLECTION_TRACE} auto-assign failed`, {
+                  slug: parsed.data.slug,
+                  error: assignRes.error,
+                });
+              }
+              outcomeText = `created skill ${parsed.data.slug} (auto-assigned to agent)`;
+              console.warn(`${REFLECTION_TRACE} auto-assigned ${parsed.data.slug}`);
+            } else {
+              outcomeText = `created skill ${parsed.data.slug} (pending approval)`;
+              console.warn(`${REFLECTION_TRACE} ${parsed.data.slug} pending approval`);
+            }
           }
         }
       } else if (tc.toolName === 'update_skill') {

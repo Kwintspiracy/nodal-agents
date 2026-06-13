@@ -262,12 +262,15 @@ export async function runCuratorConsolidation(
         if (!parsed.success) {
           outcomeText = `error: invalid_input: ${parsed.error.message}`;
         } else {
+          // TODO(follow-up): in 'auto' mode, inherit the archived skills' assignments
+          // so consolidation never strips capability.
           const res = await createSkillRepo(db, entityId, {
             slug: parsed.data.slug,
             name: parsed.data.name,
             content: parsed.data.content,
             description: parsed.data.description,
             createdBy: 'agent',
+            createdByAgentId: null,
           });
           if ('error' in res) {
             outcomeText = `error: slug "${parsed.data.slug}" already taken`;

@@ -21,6 +21,12 @@ export interface CreateSkillInput {
    * 'agent' so agent-authored skills are distinguishable from user/system ones.
    */
   createdBy?: 'user' | 'system' | 'agent';
+  /**
+   * The agent that authored this skill during a reflection pass.
+   * Populated by the Tier-1 reflection pass when creating agent-authored skills.
+   * Omitted / null ⇒ column stays NULL (user/system/curator skills).
+   */
+  createdByAgentId?: string | null;
 }
 
 export type CreateSkillResult = { id: string } | { error: 'slug_taken' };
@@ -47,6 +53,10 @@ export async function createSkillRepo(
         active: true,
         // Omit when undefined so the column default ('user') applies.
         ...(input.createdBy !== undefined ? { createdBy: input.createdBy } : {}),
+        // Omit when undefined/null — curator umbrella skills leave this NULL explicitly.
+        ...(input.createdByAgentId !== undefined && input.createdByAgentId !== null
+          ? { createdByAgentId: input.createdByAgentId }
+          : {}),
       })
       .returning({ id: agentSkills.id });
     if (!row) throw new Error('Insert returned no row');

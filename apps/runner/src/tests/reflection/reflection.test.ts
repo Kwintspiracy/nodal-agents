@@ -911,7 +911,136 @@ describe('reflection — gate: per-entity flag', () => {
   });
 });
 
-// ── 12. REFLECTION_MODEL override ──────────────────────────────────────────────
+// ── 12. skill_assignment_mode='auto' ───────────────────────────────────────────
+describe('reflection — skill_assignment_mode=auto', () => {
+  it('auto-assigns the new skill to the authoring agent and stamps created_by_agent_id', async () => {
+    // Set the entity to auto-assign mode so new reflection skills are immediately
+    // wired to the agent without owner approval.
+    const { entities: entitiesTable, eq: eqFn } = await import('@nodal-agents/db');
+    await db
+      .update(entitiesTable)
+      .set({ skillAssignmentMode: 'auto' })
+      .where(eqFn(entitiesTable.id, seed.entityId));
+
+    const deps = makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r1',
+              toolName: 'create_skill',
+              args: {
+                slug: 'auto-assign-skill',
+                name: 'Auto Assign Skill',
+                content: 'Durable technique created in auto-assign mode.',
+                description: 'Auto-assigned on creation.',
+              },
+            },
+          ],
+        },
+        {}, // 2nd turn: no tool call → stop
+      ]),
+    );
+    const job = await insertCompletedJob();
+
+    await maybeRunReflection(deps, db as RunnerDeps['db'], {
+      ...job,
+      status: 'completed',
+    } as Parameters<typeof maybeRunReflection>[2]);
+
+    // (1) The skill row has created_by_agent_id set to the authoring agent.
+    const [skillRow] = await db
+      .select()
+      .from(agentSkills)
+      .where(
+        and(eq(agentSkills.slug, 'auto-assign-skill'), eq(agentSkills.entityId, seed.entityId)),
+      );
+    expect(skillRow).toBeDefined();
+    expect(skillRow!.createdBy).toBe('agent');
+    expect(skillRow!.createdByAgentId).toBe(seed.agentId);
+
+    // (2) An agent_skill_assignments row links the skill to the agent.
+    const [assignRow] = await db
+      .select()
+      .from(agentSkillAssignments)
+      .where(
+        and(
+          eq(agentSkillAssignments.skillId, skillRow!.id),
+          eq(agentSkillAssignments.agentId, seed.agentId),
+        ),
+      );
+    expect(assignRow).toBeDefined();
+
+    // Cleanup: reset mode to 'approval' so other tests are not affected.
+    await db
+      .update(entitiesTable)
+      .set({ skillAssignmentMode: 'approval' })
+      .where(eqFn(entitiesTable.id, seed.entityId));
+  });
+});
+
+// ── 13. skill_assignment_mode='approval' ────────────────────────────────────────
+describe('reflection — skill_assignment_mode=approval', () => {
+  it('stamps created_by_agent_id but does NOT auto-assign when mode is approval', async () => {
+    // 'approval' is the default set in beforeEach — but be explicit.
+    const { entities: entitiesTable, eq: eqFn } = await import('@nodal-agents/db');
+    await db
+      .update(entitiesTable)
+      .set({ skillAssignmentMode: 'approval' })
+      .where(eqFn(entitiesTable.id, seed.entityId));
+
+    const deps = makeDeps(
+      makeScriptedClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'r1',
+              toolName: 'create_skill',
+              args: {
+                slug: 'approval-mode-skill',
+                name: 'Approval Mode Skill',
+                content: 'Durable technique pending owner approval.',
+                description: 'Queued for approval.',
+              },
+            },
+          ],
+        },
+        {}, // 2nd turn: no tool call → stop
+      ]),
+    );
+    const job = await insertCompletedJob();
+
+    await maybeRunReflection(deps, db as RunnerDeps['db'], {
+      ...job,
+      status: 'completed',
+    } as Parameters<typeof maybeRunReflection>[2]);
+
+    // The skill exists with provenance and authoring-agent stamped.
+    const [skillRow] = await db
+      .select()
+      .from(agentSkills)
+      .where(
+        and(eq(agentSkills.slug, 'approval-mode-skill'), eq(agentSkills.entityId, seed.entityId)),
+      );
+    expect(skillRow).toBeDefined();
+    expect(skillRow!.createdBy).toBe('agent');
+    expect(skillRow!.createdByAgentId).toBe(seed.agentId);
+
+    // NO assignment row — the skill is pending owner approval.
+    const assignRows = await db
+      .select()
+      .from(agentSkillAssignments)
+      .where(
+        and(
+          eq(agentSkillAssignments.skillId, skillRow!.id),
+          eq(agentSkillAssignments.agentId, seed.agentId),
+        ),
+      );
+    expect(assignRows).toHaveLength(0);
+  });
+});
+
+// ── 14. REFLECTION_MODEL override ──────────────────────────────────────────────
 // Asserts the model override flows all the way from env → resolveAgentLlmClient
 // → createLlmClient. We capture the ProviderConfig that createLlmClient receives
 // via the recordLlmArgs() hook in the mock (defined at the top of this file).
