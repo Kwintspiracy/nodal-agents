@@ -29,8 +29,16 @@ export async function searchMemories(
   let embedding: number[] | null = null;
   try {
     embedding = await embeddingClient.embed(query);
-  } catch {
-    // Graceful degradation to keyword search
+  } catch (err) {
+    // Search keeps working via keyword fallback so in-flight jobs are not
+    // killed, but the misconfiguration is logged loudly (invariant #4).
+    // The write path (crud.ts createMemory) does NOT silence errors — new
+    // memories will still fail fast and surface the root cause there.
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[memory/search] Embedding call failed — degrading to keyword search. ` +
+        `Semantic search is DISABLED until this is fixed. Cause: ${message}`,
+    );
     embedding = null;
   }
 

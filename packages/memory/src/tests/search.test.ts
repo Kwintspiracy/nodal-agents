@@ -1,6 +1,6 @@
 // search.test.ts — similarity + keyword + hybrid + empty + skill-filter regression
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi, afterEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { EmbeddingClient } from '@nodal-agents/llm';
 import { createMemory } from '../crud';
@@ -230,6 +230,10 @@ describe('searchMemories — access tracking', () => {
 // ─── Vector search tests ───────────────────────────────────────────────────────
 
 describe('searchMemories — vector search', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('falls back to keyword when embedding provider throws', async () => {
     const throwingClient: EmbeddingClient = {
       embed: async () => {
@@ -246,6 +250,37 @@ describe('searchMemories — vector search', () => {
 
     // Keyword fallback should still find results
     expect(Array.isArray(results)).toBe(true);
+  });
+
+  it('logs a loud console.warn naming the cause when embedding throws (dimension mismatch)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const dimMismatchClient: EmbeddingClient = {
+      embed: async () => {
+        throw new Error(
+          "Embedding model 'mxbai-embed-large' (ollama) produced 1024 dims but the DB expects 1536. " +
+            'Configure a 1536-dim model or set EMBEDDING_PROVIDER=keyword.',
+        );
+      },
+      dimensions: 1024,
+    };
+
+    // searchMemories must NOT throw — keyword fallback keeps the job alive
+    const results = await searchMemories(db, dimMismatchClient, {
+      query: 'notion',
+      entityId: seed.entityId,
+    });
+
+    expect(Array.isArray(results)).toBe(true);
+
+    // A loud warn MUST have been emitted
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const [warnMsg] = warnSpy.mock.calls[0] as [string];
+    expect(warnMsg).toContain('Embedding call failed');
+    expect(warnMsg).toContain('degrading to keyword search');
+    // The root cause (thrown message) must be surfaced
+    expect(warnMsg).toContain('1024');
+    expect(warnMsg).toContain('1536');
   });
 
   it('falls back to keyword when the query embeds but no rows have embeddings', async () => {

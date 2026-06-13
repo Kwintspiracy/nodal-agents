@@ -66,15 +66,12 @@ export async function createMemory(
   }
 
   // Generate the semantic embedding when an embedding client is supplied.
-  // Failure degrades gracefully to no embedding — keyword search still works,
-  // and a later backfill can fill the gap. The runner always passes a client.
+  // Keyword provider returns null intentionally — no embedding stored (valid).
+  // Real provider errors (including dimension mismatches) propagate loudly so
+  // misconfiguration is never silently swallowed (invariant #4).
   let embedding: number[] | null = null;
   if (embeddingClient) {
-    try {
-      embedding = await embeddingClient.embed(parsed.fact);
-    } catch {
-      embedding = null;
-    }
+    embedding = await embeddingClient.embed(parsed.fact);
   }
 
   const rows = await db
