@@ -72,5 +72,10 @@ export async function maybeRunReflection(
   // back-to-back completions can't slip past the cap.
   if (!tryReserveReflectionSlot(job.entityId, e.REFLECTION_MAX_PER_HOUR)) return;
 
+  // Observability: all gates passed AND a throttle slot was reserved — the pass
+  // is eligible and about to run. Visible even if runReflection later no-ops or
+  // errors (gate-blocked jobs stay silent by design).
+  console.warn('[reflection] eligible', { jobId: job.id, entityId: job.entityId });
+
   await runReflection(db, job, e.REFLECTION_MAX_TURNS);
 }

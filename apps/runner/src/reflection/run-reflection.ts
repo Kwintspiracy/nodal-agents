@@ -203,6 +203,10 @@ export async function runReflection(
   let patched = 0;
   let turns = 0;
 
+  // Observability: the pass fired (gates + throttle already passed upstream).
+  // Lets the runner log distinguish "ran → no-op" from "never ran".
+  console.warn(`${REFLECTION_TRACE} start`, { agentSlug: agentRow.slug, jobId: job.id });
+
   for (let turn = 0; turn < maxTurns; turn += 1) {
     turns = turn + 1;
     const response = await llmClient.generateText({
@@ -338,5 +342,14 @@ export async function runReflection(
         : patched > 0
           ? 'patched'
           : 'no-op';
+  // Observability: the pass completed — what (if anything) it changed.
+  console.warn(`${REFLECTION_TRACE} done`, {
+    jobId: job.id,
+    agentSlug: agentRow.slug,
+    outcome,
+    created,
+    patched,
+    turns,
+  });
   return { outcome, created, patched, turns };
 }
