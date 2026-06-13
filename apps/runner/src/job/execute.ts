@@ -2187,7 +2187,7 @@ export async function executeJob(
           const input = call ? stableStringify(call.input) : '';
           const output =
             b.output.type === 'text' ? b.output.value : stableStringify(b.output.value ?? null);
-          return `${b.toolName} ${input} ${output}`;
+          return `${b.toolName}\x00${input}\x00${output}`;
         })
         .sort()
         .join('\n');
