@@ -126,7 +126,7 @@ describe('POST /api/agent', () => {
       new Request('http://localhost/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'x'.repeat(10001) }),
+        body: JSON.stringify({ task: 'x'.repeat(200_001) }),
       }),
     );
     expect(res.status).toBe(400);

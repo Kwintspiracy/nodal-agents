@@ -13,7 +13,7 @@ import type { RunnerEnv } from '../env.ts';
 // ─── Request schema ───────────────────────────────────────────────────────────
 
 export const AgentRequestSchema = z.object({
-  task: z.string().min(1).max(10000),
+  task: z.string().min(1).max(200_000), // generous: large pasted tasks / skill content
   agentSlug: z.string().optional(),
   channel: z
     .enum(['telegram', 'api', 'whatsapp', 'internal', 'cron', 'task-board', 'slack', 'discord'])

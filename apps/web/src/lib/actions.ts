@@ -5994,7 +5994,8 @@ export async function listChatAction(
 
 const SendChatMessageSchema = z.object({
   conversationId: z.string().guid(),
-  message: z.string().min(1, 'Message is empty').max(10_000),
+  // Generous cap: users paste large skills/personalities into chat (skills run 18K+ chars).
+  message: z.string().min(1, 'Message is empty').max(200_000),
 });
 
 export async function sendChatMessageAction(

@@ -17,7 +17,8 @@ const ChatRequestSchema = z.object({
   entityId: z.string().guid(),
   agentId: z.string().guid(),
   conversationId: z.string().guid(),
-  message: z.string().min(1).max(10000),
+  // Generous cap (matches the web SendChatMessageSchema): large pasted skills/personalities.
+  message: z.string().min(1).max(200_000),
 });
 
 export async function chatRoute(
