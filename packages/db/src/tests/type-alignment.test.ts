@@ -25,7 +25,6 @@ import type {
   AgentSkillAssignmentRow,
   AgentScheduleRow,
   EntityLlmKeyRow,
-  AgentRunRow,
   WebhookTriggerRow,
   UserProfileRow,
   UserRow,
@@ -364,28 +363,6 @@ type EntityLlmKeyKeysOk = HasKeys<
 >;
 const _entityLlmKeyKeysOk: EntityLlmKeyKeysOk = true;
 void _entityLlmKeyKeysOk;
-
-// ── agent_runs ────────────────────────────────────────────────────────────────
-type AgentRunKeysOk = HasKeys<
-  AgentRunRow,
-  [
-    'id',
-    'entityId',
-    'agentId',
-    'task',
-    'result',
-    'success',
-    'toolsUsed',
-    'tokensUsed',
-    'inputTokens',
-    'outputTokens',
-    'durationMs',
-    'keySource',
-    'createdAt',
-  ]
->;
-const _agentRunKeysOk: AgentRunKeysOk = true;
-void _agentRunKeysOk;
 
 // ── webhook_triggers ──────────────────────────────────────────────────────────
 type WebhookTriggerKeysOk = HasKeys<

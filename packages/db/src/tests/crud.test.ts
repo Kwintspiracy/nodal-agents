@@ -391,27 +391,6 @@ describe('CRUD: entity_llm_keys', () => {
   });
 });
 
-describe('CRUD: agent_runs', () => {
-  it('insert + select', async () => {
-    const [r] = await db
-      .insert(schema.agentRuns)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        task: 'CRUD run task',
-        result: 'Completed',
-        success: true,
-        tokensUsed: 500,
-        keySource: 'entity',
-      })
-      .returning();
-    expect(r?.id).toBeTruthy();
-
-    const found = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, r!.id));
-    expect(found[0]?.keySource).toBe('entity');
-  });
-});
-
 describe('CRUD: mcp_servers + mcp_connections', () => {
   it('insert + select + delete', async () => {
     const [ms] = await db

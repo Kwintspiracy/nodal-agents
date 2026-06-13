@@ -90,11 +90,6 @@ export const SCHEDULE_LAST_STATUSES = ['success', 'failed', 'no_action'] as cons
 export const ScheduleLastStatusSchema = z.enum(SCHEDULE_LAST_STATUSES);
 export type ScheduleLastStatus = z.infer<typeof ScheduleLastStatusSchema>;
 
-// agent_runs.key_source CHECK constraint
-export const RUN_KEY_SOURCES = ['entity', 'operator'] as const;
-export const RunKeySourceSchema = z.enum(RUN_KEY_SOURCES);
-export type RunKeySource = z.infer<typeof RunKeySourceSchema>;
-
 // entity_members.role CHECK constraint
 export const ENTITY_MEMBER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
 export const EntityMemberRoleSchema = z.enum(ENTITY_MEMBER_ROLES);

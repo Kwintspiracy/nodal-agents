@@ -373,22 +373,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       updated_at timestamptz DEFAULT now()
     );
 
-    CREATE TABLE IF NOT EXISTS agent_runs (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
-      agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
-      task text NOT NULL,
-      result text,
-      success boolean DEFAULT true,
-      tools_used text[] DEFAULT '{}',
-      tokens_used integer,
-      input_tokens integer,
-      output_tokens integer,
-      duration_ms integer,
-      key_source text CHECK (key_source IN ('entity','operator') OR key_source IS NULL),
-      created_at timestamptz DEFAULT now()
-    );
-
     CREATE TABLE IF NOT EXISTS mcp_servers (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,

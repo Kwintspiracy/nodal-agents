@@ -16,7 +16,6 @@ import {
   MEMORY_LAYERS,
   SCHEDULE_TYPES,
   SCHEDULE_LAST_STATUSES,
-  RUN_KEY_SOURCES,
   ENTITY_MEMBER_ROLES,
   ENTITY_INDUSTRIES,
   OPERATION_RISK_LEVELS,
@@ -37,7 +36,6 @@ import {
   MemoryLayerSchema,
   ScheduleTypeSchema,
   ScheduleLastStatusSchema,
-  RunKeySourceSchema,
   EntityMemberRoleSchema,
   EntityIndustrySchema,
   OperationRiskLevelSchema,
@@ -79,7 +77,6 @@ testEnum('MemorySource', MEMORY_SOURCES, MemorySourceSchema);
 testEnum('MemoryLayer', MEMORY_LAYERS, MemoryLayerSchema);
 testEnum('ScheduleType', SCHEDULE_TYPES, ScheduleTypeSchema);
 testEnum('ScheduleLastStatus', SCHEDULE_LAST_STATUSES, ScheduleLastStatusSchema);
-testEnum('RunKeySource', RUN_KEY_SOURCES, RunKeySourceSchema);
 testEnum('EntityMemberRole', ENTITY_MEMBER_ROLES, EntityMemberRoleSchema);
 testEnum('EntityIndustry', ENTITY_INDUSTRIES, EntityIndustrySchema);
 testEnum('OperationRiskLevel', OPERATION_RISK_LEVELS, OperationRiskLevelSchema);
@@ -223,12 +220,5 @@ describe('DB constraint: mcp_servers transport_check', () => {
   it('matches exactly the 2 DB transport values', () => {
     const dbTransports = ['http', 'stdio'];
     expect([...MCP_TRANSPORTS].sort()).toEqual(dbTransports.sort());
-  });
-});
-
-describe('DB constraint: agent_runs key_source_check', () => {
-  it('matches exactly the 2 DB key sources', () => {
-    const dbSources = ['entity', 'operator'];
-    expect([...RUN_KEY_SOURCES].sort()).toEqual(dbSources.sort());
   });
 });

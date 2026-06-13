@@ -288,6 +288,13 @@
       "when": 1782100000000,
       "tag": "0041_reflection_enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1782200000000,
+      "tag": "0042_drop_agent_runs",
+      "breakpoints": true
     }
   ]
 }

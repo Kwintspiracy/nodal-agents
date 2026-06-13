@@ -18,7 +18,6 @@ import {
   AgentSkillSchema,
   AgentScheduleSchema,
   EntityLlmKeySchema,
-  AgentRunSchema,
 } from '../index';
 
 const now = '2026-04-26T10:00:00.000Z';
@@ -414,26 +413,5 @@ describe('EntityLlmKeySchema round-trip', () => {
       updated_at: now,
     };
     expect(EntityLlmKeySchema.parse(raw)).toEqual(raw);
-  });
-});
-
-describe('AgentRunSchema round-trip', () => {
-  it('parses a successful run', () => {
-    const raw = {
-      id: uuid,
-      entity_id: uuid2,
-      agent_id: uuid3,
-      task: 'Write a summary',
-      result: 'Summary complete.',
-      success: true,
-      tools_used: ['notion_search'],
-      tokens_used: 1500,
-      input_tokens: 1000,
-      output_tokens: 500,
-      duration_ms: 3200,
-      key_source: 'entity' as const,
-      created_at: now,
-    };
-    expect(AgentRunSchema.parse(raw)).toEqual(raw);
   });
 });

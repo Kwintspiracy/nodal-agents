@@ -32,7 +32,6 @@ const expectedTables = [
   'agent_skill_assignments',
   'agent_schedules',
   'entity_llm_keys',
-  'agent_runs',
   'mcp_servers',
   'agent_mcp_servers',
   'mcp_connections',

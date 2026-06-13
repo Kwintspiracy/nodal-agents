@@ -49,6 +49,3 @@ export type PluginId = z.infer<typeof PluginIdSchema>;
 
 export const LlmKeyIdSchema = z.string().guid().brand<'LlmKeyId'>();
 export type LlmKeyId = z.infer<typeof LlmKeyIdSchema>;
-
-export const AgentRunIdSchema = z.string().guid().brand<'AgentRunId'>();
-export type AgentRunId = z.infer<typeof AgentRunIdSchema>;

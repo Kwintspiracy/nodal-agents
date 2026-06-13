@@ -188,17 +188,6 @@ describe('CHECK constraints', () => {
     ).rejects.toThrow();
   });
 
-  it('agent_runs: rejects invalid key_source', async () => {
-    await expect(
-      db.insert(schema.agentRuns).values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        task: 'test',
-        keySource: 'thirdparty',
-      }),
-    ).rejects.toThrow();
-  });
-
   it('entity_members: rejects invalid role', async () => {
     const [extraUser] = await db
       .insert(schema.users)
@@ -337,7 +326,7 @@ describe('FK cascades', () => {
     expect(gone.length).toBe(0);
   });
 
-  it('deleting agent cascades through jobs, runs, memory, tasks (both FKs), approval_requests', async () => {
+  it('deleting agent cascades through jobs, memory, tasks (both FKs), approval_requests', async () => {
     // Live bug 2026-05-20 — clicking Delete on an agent surfaced a FK violation
     // toast. Five FK refs to agents.id were ON DELETE NO ACTION; migration 0013
     // flipped them all to CASCADE. Insert one dependent row in each table for a
@@ -359,14 +348,6 @@ describe('FK cascades', () => {
         agentId: a!.id,
         channel: 'api',
         task: 'sweep job',
-      })
-      .returning();
-    const [r] = await db
-      .insert(schema.agentRuns)
-      .values({
-        entityId: seed.entityId,
-        agentId: a!.id,
-        task: 'sweep run',
       })
       .returning();
     const [m] = await db
@@ -410,9 +391,6 @@ describe('FK cascades', () => {
 
     expect(
       await db.select().from(schema.agentJobs).where(eq(schema.agentJobs.id, j!.id)),
-    ).toHaveLength(0);
-    expect(
-      await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, r!.id)),
     ).toHaveLength(0);
     expect(
       await db.select().from(schema.agentMemory).where(eq(schema.agentMemory.id, m!.id)),
