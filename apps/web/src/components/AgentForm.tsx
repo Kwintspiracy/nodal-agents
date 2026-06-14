@@ -7,11 +7,12 @@ import { toast } from 'sonner';
 import {
   createAgentAction,
   updateAgentAction,
+  listKeyModelsAction,
   type AgentRow,
   type AgentEditRow,
   type LlmKeyUiRow,
 } from '@/lib/actions.ts';
-import { MODEL_CATALOG } from '@nodal-agents/shared';
+import { MODEL_CATALOG, findModelCatalogEntry, groupModelCatalog } from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import AvatarPicker from './AvatarPicker.tsx';
 
@@ -77,6 +78,8 @@ export default function AgentForm(props: Props) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(
     isEdit ? (props.initial.avatarUrl ?? null) : null,
   );
+  const [liveModelsCache, setLiveModelsCache] = useState<Record<string, string[]>>({});
+  const [liveModelsLoading, setLiveModelsLoading] = useState(false);
 
   const selectedKey = useMemo(
     () => props.llmKeys.find((k) => k.id === llmKeyId) ?? null,
@@ -90,6 +93,14 @@ export default function AgentForm(props: Props) {
     // model — a model id only makes sense for its own provider (no stale,
     // mismatched model).
     setModel(MODEL_CATALOG[newKey?.provider ?? '']?.[0]?.modelId ?? '');
+    // Prefetch live models for this key if not yet cached.
+    if (id && liveModelsCache[id] === undefined) {
+      setLiveModelsLoading(true);
+      listKeyModelsAction(id).then((res) => {
+        setLiveModelsCache((prev) => ({ ...prev, [id]: res.ok ? res.data : [] }));
+        setLiveModelsLoading(false);
+      });
+    }
   }
 
   function handleModelChange(nextModel: string) {
@@ -104,6 +115,17 @@ export default function AgentForm(props: Props) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, isEdit]);
+
+  // Prefetch live model list for the initially-selected key.
+  useEffect(() => {
+    if (!llmKeyId || liveModelsCache[llmKeyId] !== undefined) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLiveModelsLoading(true);
+    listKeyModelsAction(llmKeyId).then((res) => {
+      setLiveModelsCache((prev) => ({ ...prev, [llmKeyId]: res.ok ? res.data : [] }));
+      setLiveModelsLoading(false);
+    });
+  }, [llmKeyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -174,6 +196,14 @@ export default function AgentForm(props: Props) {
 
   // Coherence banner removed — switching provider now just resets the model.
   const coherenceBanner = null;
+
+  // Derived: merged catalog + live model list.
+  const modelCatalog = selectedKey ? (MODEL_CATALOG[selectedKey.provider] ?? []) : [];
+  const liveModelIds: string[] = selectedKey ? (liveModelsCache[selectedKey.id] ?? []) : [];
+  const catalogModelIds = new Set(modelCatalog.map((m) => m.modelId));
+  const extraLiveIds = liveModelIds.filter((id) => !catalogModelIds.has(id));
+  const modelInCatalog = !!findModelCatalogEntry(selectedKey?.provider ?? '', model);
+  const modelInDropdown = modelInCatalog || liveModelIds.includes(model);
 
   // ─── Edit mode: form rendered inline (no modal/portal) ─────────────────────
 
@@ -264,21 +294,62 @@ export default function AgentForm(props: Props) {
           </div>
           <div>
             <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
-              Model
+              {liveModelsLoading && selectedKey?.id !== undefined && liveModelsCache[selectedKey.id] === undefined ? 'Model (loading…)' : 'Model'}
             </label>
-            <input
-              id="agent-model"
-              name="model"
-              type="text"
-              required
-              value={model}
-              onChange={(e) => handleModelChange(e.target.value)}
-              placeholder={
-                MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
-                'e.g. claude-haiku-4-5-20251001'
-              }
-              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-            />
+            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+              <select
+                id="agent-model"
+                value={modelInDropdown ? model : '__custom__'}
+                onChange={(e) =>
+                  handleModelChange(e.target.value === '__custom__' ? '' : e.target.value)
+                }
+                required={modelInDropdown}
+                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none mb-2"
+              >
+                {groupModelCatalog(modelCatalog).map(({ group, models }) =>
+                  group ? (
+                    <optgroup key={group} label={group}>
+                      {models.map((m) => (
+                        <option key={m.modelId} value={m.modelId}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : (
+                    models.map((m) => (
+                      <option key={m.modelId} value={m.modelId}>
+                        {m.label}
+                      </option>
+                    ))
+                  ),
+                )}
+                {extraLiveIds.length > 0 && (
+                  <optgroup label="Live from provider">
+                    {extraLiveIds.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <option value="__custom__">Custom…</option>
+              </select>
+            )}
+            {!modelInDropdown && (
+              <input
+                id="agent-model"
+                name="model"
+                type="text"
+                required
+                value={model}
+                onChange={(e) => handleModelChange(e.target.value)}
+                placeholder={
+                  MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                  'e.g. claude-haiku-4-5-20251001'
+                }
+                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+              />
+            )}
             {coherenceBanner}
           </div>
         </div>
@@ -459,21 +530,62 @@ export default function AgentForm(props: Props) {
                 </div>
                 <div>
                   <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
-                    Model
+                    {liveModelsLoading && selectedKey?.id !== undefined && liveModelsCache[selectedKey.id] === undefined ? 'Model (loading…)' : 'Model'}
                   </label>
-                  <input
-                    id="agent-model"
-                    name="model"
-                    type="text"
-                    required
-                    value={model}
-                    onChange={(e) => handleModelChange(e.target.value)}
-                    placeholder={
-                      MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
-                      'e.g. claude-haiku-4-5-20251001'
-                    }
-                    className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-                  />
+                  {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                    <select
+                      id="agent-model"
+                      value={modelInDropdown ? model : '__custom__'}
+                      onChange={(e) =>
+                        handleModelChange(e.target.value === '__custom__' ? '' : e.target.value)
+                      }
+                      required={modelInDropdown}
+                      className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none mb-2"
+                    >
+                      {groupModelCatalog(modelCatalog).map(({ group, models }) =>
+                        group ? (
+                          <optgroup key={group} label={group}>
+                            {models.map((m) => (
+                              <option key={m.modelId} value={m.modelId}>
+                                {m.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : (
+                          models.map((m) => (
+                            <option key={m.modelId} value={m.modelId}>
+                              {m.label}
+                            </option>
+                          ))
+                        ),
+                      )}
+                      {extraLiveIds.length > 0 && (
+                        <optgroup label="Live from provider">
+                          {extraLiveIds.map((id) => (
+                            <option key={id} value={id}>
+                              {id}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      <option value="__custom__">Custom…</option>
+                    </select>
+                  )}
+                  {!modelInDropdown && (
+                    <input
+                      id="agent-model"
+                      name="model"
+                      type="text"
+                      required
+                      value={model}
+                      onChange={(e) => handleModelChange(e.target.value)}
+                      placeholder={
+                        MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                        'e.g. claude-haiku-4-5-20251001'
+                      }
+                      className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    />
+                  )}
                   {coherenceBanner}
                 </div>
               </div>

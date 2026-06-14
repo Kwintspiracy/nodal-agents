@@ -16,6 +16,7 @@ import {
 import {
   updateAgentAction,
   listAgentWorkspacesAction,
+  listKeyModelsAction,
   addAgentWorkspaceAction,
   removeAgentWorkspaceAction,
   uploadToWorkspaceAction,
@@ -128,6 +129,10 @@ export default function AgentComposer({
   );
   const [model, setModel] = useState<string>(agent.model ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
+  // Live model ids fetched from the provider's /models endpoint — keyed by keyId
+  // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
+  const [liveModelsCache, setLiveModelsCache] = useState<Record<string, string[]>>({});
+  const [liveModelsLoading, setLiveModelsLoading] = useState(false);
   // Workspaces list — loaded asynchronously from the DB via server action.
   const [workspaces, setWorkspaces] = useState<AgentWorkspaceRow[]>([]);
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
@@ -138,6 +143,18 @@ export default function AgentComposer({
       setWorkspacesLoaded(true);
     });
   }, [agent.id]);
+
+  // Prefetch live model list for the initially-selected key.
+  useEffect(() => {
+    if (!llmKeyId) return;
+    if (liveModelsCache[llmKeyId] !== undefined) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLiveModelsLoading(true);
+    listKeyModelsAction(llmKeyId).then((res) => {
+      setLiveModelsCache((prev) => ({ ...prev, [llmKeyId]: res.ok ? res.data : [] }));
+      setLiveModelsLoading(false);
+    });
+  }, [llmKeyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── derived ──────────────────────────────────────────────────────────────
   const selectedKey = useMemo(
@@ -179,6 +196,14 @@ export default function AgentComposer({
     // so we never keep a stale, mismatched model around.
     const firstCurated = newKey ? (MODEL_CATALOG[newKey.provider]?.[0]?.modelId ?? '') : '';
     setModel(firstCurated);
+    // Prefetch live models for this key if not yet cached.
+    if (id && liveModelsCache[id] === undefined) {
+      setLiveModelsLoading(true);
+      listKeyModelsAction(id).then((res) => {
+        setLiveModelsCache((prev) => ({ ...prev, [id]: res.ok ? res.data : [] }));
+        setLiveModelsLoading(false);
+      });
+    }
   }
 
   function handleModelChange(next: string) {
@@ -353,6 +378,8 @@ export default function AgentComposer({
           onChangeModel={handleModelChange}
           onSave={handleSave}
           onReset={handleReset}
+          liveModelsCache={liveModelsCache}
+          liveModelsLoading={liveModelsLoading}
         />
       )}
     </div>
@@ -1173,6 +1200,8 @@ function SettingsTab(props: {
   onChangeModel: (v: string) => void;
   onSave: () => void;
   onReset: () => void;
+  liveModelsCache: Record<string, string[]>;
+  liveModelsLoading: boolean;
 }) {
   const {
     name,
@@ -1207,6 +1236,8 @@ function SettingsTab(props: {
     onChangeModel,
     onSave,
     onReset,
+    liveModelsCache,
+    liveModelsLoading,
   } = props;
 
   // Candidate fallback keys = every active key except the current primary.
@@ -1217,6 +1248,16 @@ function SettingsTab(props: {
   // live on the KEY, not here). Derive "custom" from whether `model` is curated.
   const modelCatalog = selectedKey ? (MODEL_CATALOG[selectedKey.provider] ?? []) : [];
   const modelInCatalog = !!findModelCatalogEntry(selectedKey?.provider ?? '', model);
+
+  // Live model ids from the provider's /models endpoint for this key.
+  const liveModelIds: string[] = selectedKey ? (liveModelsCache[selectedKey.id] ?? []) : [];
+
+  // Union: catalog first, then extra live ids not already in catalog.
+  const catalogModelIds = new Set(modelCatalog.map((m) => m.modelId));
+  const extraLiveIds = liveModelIds.filter((id) => !catalogModelIds.has(id));
+
+  // The model is "in the dropdown" if it matches a catalog entry OR a live id.
+  const modelInDropdown = modelInCatalog || liveModelIds.includes(model);
 
   // ── Workspace management local state ─────────────────────────────────────
   const [wsLabel, setWsLabel] = useState('');
@@ -1440,10 +1481,10 @@ function SettingsTab(props: {
               </select>
             )}
           </Field>
-          <Field label="Model">
-            {modelCatalog.length > 0 && (
+          <Field label={liveModelsLoading && selectedKey?.id !== undefined && liveModelsCache[selectedKey.id] === undefined ? 'Model (loading…)' : 'Model'}>
+            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
               <select
-                value={modelInCatalog ? model : '__custom__'}
+                value={modelInDropdown ? model : '__custom__'}
                 onChange={(e) =>
                   onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
                 }
@@ -1466,10 +1507,19 @@ function SettingsTab(props: {
                     ))
                   ),
                 )}
+                {extraLiveIds.length > 0 && (
+                  <optgroup label="Live from provider">
+                    {extraLiveIds.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 <option value="__custom__">Custom…</option>
               </select>
             )}
-            {(modelCatalog.length === 0 || !modelInCatalog) && (
+            {!modelInDropdown && (
               <input
                 type="text"
                 value={model}

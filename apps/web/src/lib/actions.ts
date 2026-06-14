@@ -5357,6 +5357,87 @@ export async function deleteLlmKeyAction(id: string): Promise<ActionResult<void>
   }
 }
 
+const PROVIDER_TEST_CONFIG: Record<
+  LlmProvider,
+  {
+    canonicalBase: string | null;
+    path: string;
+    auth: 'bearer' | 'x-api-key' | 'query' | 'none';
+  }
+> = {
+  anthropic: {
+    canonicalBase: 'https://api.anthropic.com/v1',
+    path: '/models',
+    auth: 'x-api-key',
+  },
+  openai: { canonicalBase: 'https://api.openai.com/v1', path: '/models', auth: 'bearer' },
+  openrouter: {
+    canonicalBase: 'https://openrouter.ai/api/v1',
+    path: '/auth/key',
+    auth: 'bearer',
+  },
+  google: {
+    canonicalBase: 'https://generativelanguage.googleapis.com/v1beta',
+    path: '/models',
+    auth: 'query',
+  },
+  mistral: { canonicalBase: 'https://api.mistral.ai/v1', path: '/models', auth: 'bearer' },
+  groq: { canonicalBase: 'https://api.groq.com/openai/v1', path: '/models', auth: 'bearer' },
+  'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
+  ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
+  deepseek: { canonicalBase: 'https://api.deepseek.com', path: '/models', auth: 'bearer' },
+  minimax: { canonicalBase: 'https://api.minimax.io/anthropic', path: '/v1/models', auth: 'bearer' },
+};
+
+/**
+ * Probe the provider's /models endpoint and return a list of model IDs.
+ * Returns [] on any error (auth failure, network, parse) — never throws.
+ * OpenRouter's test path (/auth/key) does not return a model list; skip it.
+ */
+async function fetchProviderModelIds(
+  provider: LlmProvider,
+  effectiveBase: string,
+  apiKey: string | undefined,
+): Promise<string[]> {
+  try {
+    const cfg = PROVIDER_TEST_CONFIG[provider];
+
+    // OpenRouter's validated path is /auth/key — not a model list endpoint.
+    if (provider === 'openrouter') return [];
+
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    let url = `${effectiveBase}${cfg.path}`;
+
+    if (cfg.auth === 'bearer' && apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    if (cfg.auth === 'x-api-key' && apiKey) {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    }
+    if (cfg.auth === 'query') {
+      url = `${url}?key=${encodeURIComponent(apiKey ?? '')}`;
+    }
+
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as Record<string, unknown>;
+    const arr = data['data'] ?? data['models'];
+    if (!Array.isArray(arr)) return [];
+
+    const ids = arr
+      .map((m: unknown) => {
+        const item = m as Record<string, unknown>;
+        const id = item['id'] ?? item['name'];
+        return typeof id === 'string' ? id : null;
+      })
+      .filter((id): id is string => id !== null && id.length > 0);
+
+    return [...new Set(ids)];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Test connectivity to an LLM provider before saving.
  * Hits the provider's `list models` (or equivalent) endpoint with the supplied
@@ -5407,41 +5488,6 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
     // The validation path is always the auth-required endpoint for that
     // provider — `/models` is public on OpenRouter so we hit `/auth/key`
     // there instead, which 401s on a bad key.
-    const PROVIDER_TEST_CONFIG: Record<
-      typeof provider,
-      {
-        canonicalBase: string | null;
-        path: string;
-        auth: 'bearer' | 'x-api-key' | 'query' | 'none';
-      }
-    > = {
-      anthropic: {
-        canonicalBase: 'https://api.anthropic.com/v1',
-        path: '/models',
-        auth: 'x-api-key',
-      },
-      openai: { canonicalBase: 'https://api.openai.com/v1', path: '/models', auth: 'bearer' },
-      openrouter: {
-        canonicalBase: 'https://openrouter.ai/api/v1',
-        path: '/auth/key',
-        auth: 'bearer',
-      },
-      google: {
-        canonicalBase: 'https://generativelanguage.googleapis.com/v1beta',
-        path: '/models',
-        auth: 'query',
-      },
-      mistral: { canonicalBase: 'https://api.mistral.ai/v1', path: '/models', auth: 'bearer' },
-      groq: { canonicalBase: 'https://api.groq.com/openai/v1', path: '/models', auth: 'bearer' },
-      'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
-      ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
-      deepseek: { canonicalBase: 'https://api.deepseek.com', path: '/models', auth: 'bearer' },
-      // MiniMax native (Anthropic-compat, Bearer). The models-list path on the
-      // /anthropic endpoint isn't confirmed live — Test may be inconclusive even
-      // with a valid key; the key still saves and works at runtime.
-      minimax: { canonicalBase: 'https://api.minimax.io/anthropic', path: '/v1/models', auth: 'bearer' },
-    };
-
     const cfg = PROVIDER_TEST_CONFIG[provider];
     // Resolve the effective base: user-provided wins, else canonical.
     // openai-compatible and ollama require a user-provided baseUrl.
@@ -5494,6 +5540,44 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     return fail('connection_failed', redactKey(msg, apiKey));
+  }
+}
+
+/**
+ * Probe the provider's /models endpoint for a saved LLM key and return the
+ * list of model IDs. Ownership-checked (key must belong to the calling entity).
+ * Always returns ok([]) on probe errors — never hard-fails on connectivity.
+ */
+export async function listKeyModelsAction(keyId: string): Promise<ActionResult<string[]>> {
+  try {
+    if (!z.string().guid().safeParse(keyId).success) {
+      return fail('validation_failed', 'Invalid key id');
+    }
+    const session = await getSession();
+    const db = getDb();
+    const [saved] = await db
+      .select({
+        provider: entityLlmKeys.provider,
+        apiKey: entityLlmKeys.apiKey,
+        baseUrl: entityLlmKeys.baseUrl,
+      })
+      .from(entityLlmKeys)
+      .where(
+        and(eq(entityLlmKeys.id, keyId), eq(entityLlmKeys.entityId, session.entityId)),
+      );
+    if (!saved) return fail('not_found', 'LLM key not found');
+
+    const provider = saved.provider as LlmProvider;
+    const decryptedKey = saved.apiKey && saved.apiKey.length > 0 ? decrypt(saved.apiKey) : undefined;
+
+    const cfg = PROVIDER_TEST_CONFIG[provider];
+    const effectiveBase = (saved.baseUrl ?? '').replace(/\/$/, '') || cfg?.canonicalBase;
+    if (!effectiveBase) return ok([]);
+
+    const modelIds = await fetchProviderModelIds(provider, effectiveBase, decryptedKey);
+    return ok(modelIds);
+  } catch {
+    return ok([]);
   }
 }
 
