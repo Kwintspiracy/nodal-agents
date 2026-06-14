@@ -933,10 +933,11 @@ describe('executeJob', () => {
     expect(flat).not.toContain('Task dispatched');
   });
 
-  it('runChatTurn: a completed escalation with an EMPTY result surfaces the delegated child output (compiled)', async () => {
-    // Live forensic case: a Conciergus delegation job completed but its own
-    // result column was empty (it delegated and never re-published), while the
-    // child held the real report. The history must still surface the CONTENT.
+  it('runChatTurn: a completed escalation surfaces the delegated child output (completeJob fills the parent, chat reflects it)', async () => {
+    // Live forensic case end-to-end: a Conciergus delegation job finishes
+    // without re-publishing a summary (own result empty) while the child holds
+    // the real report. completeJob fills the parent from the child (the root
+    // fix), and the chat history then carries that CONTENT to the orchestrator.
     const [conv] = await db
       .insert(conversations)
       .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'seq2' })
@@ -948,11 +949,10 @@ describe('executeJob', () => {
       .values({
         entityId: seed.entityId,
         agentId: seed.agentId,
-        status: 'completed',
+        status: 'processing',
         channel: 'dashboard',
         task: 'Assign work to the sub-agent',
-        result: '', // empty — the parent never re-published a summary
-        completedAt: new Date(),
+        result: '', // the parent never re-published a summary of its own
       })
       .returning({ id: agentJobs.id });
     if (!parent) throw new Error('failed to create parent job');
@@ -967,6 +967,10 @@ describe('executeJob', () => {
       result: 'CHILD-OUTPUT: did the thing.',
       completedAt: new Date(),
     });
+    // The real fix: completing the parent with no result of its own fills it
+    // from the child, so the parent's `result` column carries the content.
+    const { completeJob } = await import('../../job/state.ts');
+    await completeJob(db as Parameters<typeof completeJob>[0], parent.id, '');
     await db.insert(chatMessages).values([
       {
         entityId: seed.entityId,

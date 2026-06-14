@@ -9,7 +9,6 @@
 
 import { eq, and, desc } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
-import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
@@ -58,60 +57,27 @@ export type ChatTurnResult =
   | { ok: false; error: string };
 
 /**
- * Compile the delegated sub-agents' outcomes for a chat-escalated job, so the
- * orchestrator can SEE what its prior dispatch produced — not just that it was
- * sent. Used when the escalated job's own result column is empty (e.g. it
- * delegated and didn't re-publish a summary). LLM-facing text: explicit status
- * markers are fine (this never reaches the user).
- */
-async function compileDispatchChildren(db: AnyDrizzleDb, parentJobId: string): Promise<string> {
-  const kids = await db
-    .select({
-      name: agents.name,
-      slug: agents.slug,
-      status: agentJobs.status,
-      result: agentJobs.result,
-      error: agentJobs.error,
-    })
-    .from(agentJobs)
-    .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-    .where(eq(agentJobs.parentJobId, parentJobId))
-    .orderBy(agentJobs.createdAt);
-  if (kids.length === 0) return '';
-  return kids
-    .map((k) => {
-      const who = k.name ?? k.slug ?? 'agent';
-      const body = (k.result ?? '').trim();
-      if (k.status === 'completed') return `[${who}] ${body || '(completed, no output)'}`;
-      if (k.status === 'failed') return `[${who}] FAILED: ${body || k.error || 'unknown error'}`;
-      return `[${who}] ${k.status ?? 'pending'}`;
-    })
-    .join('\n');
-}
-
-/**
  * Build the run_task tool-result for a PRIOR chat escalation, reflecting the
  * job's REAL outcome at read time. This replaces a static "Task dispatched."
  * that left the orchestrator permanently blind to completion: it could never
  * tell a finished delegation from a still-running one, so it re-launched tasks
  * and looped on sequential work (live: the Conciergus Cortex sequence). Now it
- * sees the signal (done / running / failed) AND the content (the job's result,
- * or the compiled children when the job's own result is empty).
+ * sees the signal (done / running / failed) AND the content. Pure: the job's
+ * `result` is the single source of truth — `completeJob`/`failJob` already fill
+ * it from the delegated children when the parent didn't re-publish, so there is
+ * nothing to recompile here.
  */
-async function buildDispatchOutput(
-  db: AnyDrizzleDb,
-  jobId: string,
+function buildDispatchOutput(
   status: string | null,
   result: string | null,
   error: string | null,
-): Promise<string> {
+): string {
   const r = (result ?? '').trim();
   if (status === 'completed') {
-    return `Completed.\n${r || (await compileDispatchChildren(db, jobId)) || '(no textual output was recorded)'}`;
+    return `Completed.\n${r || '(no textual output was recorded)'}`;
   }
   if (status === 'failed') {
-    const detail = r || (await compileDispatchChildren(db, jobId)) || error || 'unknown error';
-    return `FAILED — report this to the user with the reason; do not silently retry.\n${detail}`;
+    return `FAILED — report this to the user with the reason; do not silently retry.\n${r || error || 'unknown error'}`;
   }
   if (status === 'cancelled') return 'Cancelled by the user.';
   // pending / processing / awaiting_approval / awaiting_delegation
@@ -239,13 +205,7 @@ export async function runChatTurn(opts: {
       // the orchestrator knows whether a prior delegation is done / running /
       // failed and what it produced — never a static "dispatched" that hides
       // completion and drives re-dispatch loops on sequential work.
-      const outcome = await buildDispatchOutput(
-        db,
-        r.jobId,
-        r.jobStatus,
-        r.jobResult,
-        r.jobError,
-      );
+      const outcome = buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError);
       messages.push({
         role: 'tool',
         content: [

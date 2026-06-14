@@ -2,7 +2,7 @@
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
 import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
-import { agentJobs } from '@nodal-agents/db';
+import { agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
@@ -145,6 +145,62 @@ function genericFailExplanation(errorCode: string): string {
 }
 
 /**
+ * Compile the results of a job's delegated children (sub-agent jobs) into one
+ * user-facing string. A delegating parent that hands work to sub-agents and then
+ * finalizes WITHOUT re-publishing a summary leaves its own `result` empty even
+ * though the real content lives on the children — so the dashboard, the chat
+ * poll, and the orchestrator's next turn all see nothing. This surfaces that
+ * content. Returns '' when the job delegated to no children.
+ */
+async function compileChildResults(db: AnyDrizzleDb, parentJobId: string): Promise<string> {
+  const kids = await db
+    .select({
+      name: agents.name,
+      slug: agents.slug,
+      status: agentJobs.status,
+      result: agentJobs.result,
+      error: agentJobs.error,
+    })
+    .from(agentJobs)
+    .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+    .where(eq(agentJobs.parentJobId, parentJobId))
+    .orderBy(agentJobs.createdAt);
+  if (kids.length === 0) return '';
+  return kids
+    .map((k) => {
+      const who = k.name ?? k.slug ?? 'Agent';
+      const tag = k.status === 'completed' ? '' : ` [${k.status ?? 'pending'}]`;
+      const body =
+        (k.result ?? '').trim() ||
+        (k.status === 'failed' ? (k.error ?? '(failed, no detail)') : '(no output)');
+      return `## ${who}${tag}\n${body}`;
+    })
+    .join('\n\n---\n\n');
+}
+
+/**
+ * After a job reaches a terminal state, guarantee its user-facing `result` is not
+ * an empty delegation: if the result is still blank but the job delegated to
+ * children, fill it with their compiled output. Preserves any existing non-empty
+ * result (a partial delivery the parent did publish). No-op for non-delegating
+ * jobs (no children → nothing to compile).
+ */
+async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): Promise<void> {
+  const [row] = await db
+    .select({ result: agentJobs.result })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  if ((row?.result ?? '').trim().length > 0) return;
+  const compiled = await compileChildResults(db, jobId);
+  if (!compiled) return;
+  await db
+    .update(agentJobs)
+    .set({ result: compiled, updatedAt: new Date() })
+    .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+}
+
+/**
  * Mark a job as completed. Sets result, completedAt, and clears error.
  * Persists per-turn accumulated token counts and final turn when provided.
  *
@@ -201,7 +257,14 @@ export async function completeJob(
     .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
     .returning({ id: agentJobs.id });
 
-  return rows.length > 0 && rows[0]?.id === jobId;
+  const landed = rows.length > 0 && rows[0]?.id === jobId;
+  // A delegating parent that finished without re-publishing leaves `result`
+  // empty while the content lives on its children — surface it so the result is
+  // never a blank delegation. Only when WE won the terminal write, and only when
+  // no fresh text was written this call (a non-empty `result` is already content;
+  // an empty one may still hold an earlier dashboard_publish, so it's checked).
+  if (landed && result.length === 0) await fillResultFromChildrenIfEmpty(db, jobId);
+  return landed;
 }
 
 /**
@@ -268,11 +331,12 @@ export async function failJob(
   // Explanation backstop — only when WE won the terminal write (don't clobber a
   // result owned by whoever already finalized the row). Fills `result` only if
   // it is still empty, preserving any partial delivery from earlier in the job.
+  // Precedence: the caller's explicit reason → the delegated children's output
+  // (a failed parent that delegated) → a generic error-code notice.
   if (landed) {
-    const explanation =
-      userMessage && userMessage.trim().length > 0
-        ? userMessage.trim()
-        : genericFailExplanation(errorCode);
+    let explanation = userMessage?.trim() ?? '';
+    if (!explanation) explanation = await compileChildResults(db, jobId);
+    if (!explanation) explanation = genericFailExplanation(errorCode);
     await db
       .update(agentJobs)
       .set({ result: explanation, updatedAt: new Date() })

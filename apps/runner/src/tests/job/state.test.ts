@@ -291,6 +291,73 @@ describe('DB state helpers', () => {
     expect(row?.result).toBe('partial delivery from dashboard_publish');
   });
 
+  it('completeJob: a delegating parent with an empty result is filled from its children', async () => {
+    const parentId = await insertFreshJob('processing');
+    // A completed child carries the real output; the parent delegated to it.
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parentId,
+      channel: 'internal',
+      task: 'sub',
+      status: 'completed',
+      result: 'CHILD-REPORT: did the work.',
+    });
+    // Parent completes with NO result of its own (return_result, no re-publish).
+    await completeJob(db as Parameters<typeof completeJob>[0], parentId, '');
+
+    const [row] = await db
+      .select({ status: agentJobs.status, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    expect(row?.status).toBe('completed');
+    // The child's content is surfaced — never a blank delegation.
+    expect(row?.result).toContain('CHILD-REPORT');
+  });
+
+  it('completeJob: a parent that DID publish keeps its own result (children not compiled over it)', async () => {
+    const parentId = await insertFreshJob('processing');
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parentId,
+      channel: 'internal',
+      task: 'sub',
+      status: 'completed',
+      result: 'CHILD-REPORT',
+    });
+    await completeJob(db as Parameters<typeof completeJob>[0], parentId, 'PARENT-SUMMARY: all done.');
+
+    const [row] = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    expect(row?.result).toBe('PARENT-SUMMARY: all done.');
+  });
+
+  it('failJob backstop: a failed delegating parent surfaces its children over the generic notice', async () => {
+    const parentId = await insertFreshJob('processing');
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parentId,
+      channel: 'internal',
+      task: 'sub',
+      status: 'failed',
+      error: 'agent_blocked',
+      result: 'CHILD-BLOCKED: missing the cogni-cortex credential.',
+    });
+    await failJob(db as Parameters<typeof failJob>[0], parentId, 'agent_blocked');
+
+    const [row] = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentId));
+    // The child's reason wins over the generic error-code notice.
+    expect(row?.result).toContain('CHILD-BLOCKED');
+    expect(row?.result).not.toContain('could not be completed');
+  });
+
   it('cancelJob stamps completedAt + persists messages WITHOUT touching status', async () => {
     // The status column is flipped to 'cancelled' by `cancelJobAction`
     // (web), not by this helper — the helper only finalises the row.
