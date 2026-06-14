@@ -8,7 +8,11 @@ import {
   LLMTimeoutError,
 } from './errors';
 
-const RETRYABLE_HTTP_STATUSES = new Set([429, 500, 502, 503]);
+// 429 = transient rate-limit (billing 429 is caught before this set, see isQuotaError)
+// 500/502/503 = upstream server errors (transient)
+// 408 = Request Timeout (transport/gateway timeout — transient, different from our AbortSignal timeout)
+// 529 = Overloaded (Anthropic/MiniMax native — transient capacity pressure, not a quota)
+const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 529]);
 
 /**
  * Determines if an error is a billing/quota-exhausted 429 vs a transient
@@ -81,12 +85,16 @@ function isRetryableError(err: unknown): boolean {
   if (status !== null) {
     return RETRYABLE_HTTP_STATUSES.has(status);
   }
-  // Network errors (ECONNREFUSED, ETIMEDOUT, etc.) are retryable
+  // Network errors (ECONNREFUSED, ETIMEDOUT, etc.) are retryable.
+  // 'socket hang up' and 'econnreset' cover dropped native connections
+  // common on DeepSeek/MiniMax direct endpoints under load.
   return (
     msg.includes('econnrefused') ||
     msg.includes('etimedout') ||
     msg.includes('network') ||
-    msg.includes('fetch failed')
+    msg.includes('fetch failed') ||
+    msg.includes('socket hang up') ||
+    msg.includes('econnreset')
   );
 }
 
