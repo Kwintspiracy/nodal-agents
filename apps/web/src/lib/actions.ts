@@ -4654,6 +4654,57 @@ export async function createScheduleAction(raw: unknown): Promise<ActionResult<{
   }
 }
 
+/**
+ * Duplicate an automation. The copy carries the same agent, schedule, task, and
+ * notify setting, but is created PAUSED (active=false) and named "<name> (copy)".
+ * Paused-by-default so a duplicate never double-fires the original by surprise —
+ * the user reviews/edits the copy and enables it when ready. Runtime state
+ * (last run / status / next run) is NOT carried over: it's a fresh schedule.
+ */
+export async function duplicateScheduleAction(id: string): Promise<ActionResult<{ id: string }>> {
+  try {
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid schedule id');
+    }
+    const session = await getSession();
+    const db = getDb();
+    const [src] = await db
+      .select({
+        agentId: agentSchedules.agentId,
+        type: agentSchedules.type,
+        name: agentSchedules.name,
+        cronExpr: agentSchedules.cronExpr,
+        task: agentSchedules.task,
+        notifyOnSuccess: agentSchedules.notifyOnSuccess,
+      })
+      .from(agentSchedules)
+      .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
+    if (!src) return fail('not_found', 'Schedule not found');
+
+    const [row] = await db
+      .insert(agentSchedules)
+      .values({
+        entityId: session.entityId,
+        agentId: src.agentId,
+        type: src.type ?? 'cron',
+        name: `${src.name} (copy)`,
+        cronExpr: src.cronExpr,
+        task: src.task,
+        active: false, // paused — review + enable when ready, never double-fire
+        nextRun: null,
+        notifyOnSuccess: src.notifyOnSuccess ?? false,
+      })
+      .returning({ id: agentSchedules.id });
+    if (!row) return fail('db_error', 'Insert returned no row');
+
+    revalidatePath('/automations');
+    return ok({ id: row.id });
+  } catch (err) {
+    console.error('[duplicateScheduleAction]', err);
+    return fail('db_error', 'Failed to duplicate schedule');
+  }
+}
+
 const UpdateScheduleSchema = z.object({
   id: z.string().guid(),
   agentId: z.string().guid('Pick an agent'),

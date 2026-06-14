@@ -1812,6 +1812,56 @@ describe('createScheduleAction', () => {
   });
 });
 
+describe('duplicateScheduleAction', () => {
+  it('rejects a non-uuid id', async () => {
+    const { duplicateScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await duplicateScheduleAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when the source schedule does not exist', async () => {
+    currentDb = makeDbMixed({ select: [], insert: [] }) as typeof currentDb;
+    const { duplicateScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await duplicateScheduleAction('aaaaaaaa-0000-0000-0000-000000000200');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('copies the config, names it "(copy)", and creates it PAUSED with no runtime state', async () => {
+    currentDb = makeDbMixed({
+      select: [
+        {
+          agentId: 'aaaaaaaa-0000-0000-0000-000000000201',
+          type: 'cron',
+          name: 'Daily digest',
+          cronExpr: '0 9 * * *',
+          task: 'Summarize the day',
+          notifyOnSuccess: true,
+        },
+      ],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000202' }],
+    }) as typeof currentDb;
+    const { duplicateScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await duplicateScheduleAction('aaaaaaaa-0000-0000-0000-000000000203');
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    // Config is copied verbatim…
+    expect(values?.['agentId']).toBe('aaaaaaaa-0000-0000-0000-000000000201');
+    expect(values?.['cronExpr']).toBe('0 9 * * *');
+    expect(values?.['task']).toBe('Summarize the day');
+    expect(values?.['notifyOnSuccess']).toBe(true);
+    // …with a "(copy)" name…
+    expect(values?.['name']).toBe('Daily digest (copy)');
+    // …and the safety behavior: paused, no carried-over next run.
+    expect(values?.['active']).toBe(false);
+    expect(values?.['nextRun']).toBeNull();
+  });
+});
+
 describe('toggleScheduleAction', () => {
   it('rejects non-uuid', async () => {
     const { toggleScheduleAction } = await import('../src/lib/actions.ts');

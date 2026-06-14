@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   toggleScheduleAction,
   deleteScheduleAction,
+  duplicateScheduleAction,
   runScheduleNowAction,
   type AgentRow,
   type ScheduleRow as ScheduleRowData,
@@ -46,6 +47,14 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
       const r = await runScheduleNowAction(s.id);
       if (!r.ok) toast.error(r.message);
       else toast.success(`Running "${s.name}" now`);
+    });
+  }
+
+  function handleDuplicate() {
+    startTransition(async () => {
+      const r = await duplicateScheduleAction(s.id);
+      if (!r.ok) toast.error(r.message);
+      else toast.success(`Duplicated "${s.name}" — paused; enable it when ready`);
     });
   }
 
@@ -125,6 +134,15 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
             className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
           >
             Edit
+          </button>
+          <button
+            type="button"
+            onClick={handleDuplicate}
+            disabled={isPending}
+            title="Create a paused copy of this automation"
+            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
+          >
+            Duplicate
           </button>
           <button
             type="button"
