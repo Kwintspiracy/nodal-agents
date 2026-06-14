@@ -266,6 +266,24 @@ export function describeUnavailableTool(badName: string, available: readonly str
   );
 }
 
+// ─── shortBlockReason ─────────────────────────────────────────────────────────
+
+/** Fallback when a blocked agent gave no reason at all. */
+export const BLOCK_NO_REASON = 'Blocked — the agent stopped without giving a reason.';
+
+/**
+ * Condense a blocked agent's reason into a SHORT one-liner for the job's `error`
+ * column — the first sentence, capped — so the UI surfaces a readable "why" at a
+ * glance instead of the opaque code 'agent_blocked'. The full reason stays in the
+ * job's `result`. Pure — unit-tested.
+ */
+export function shortBlockReason(reason: string): string {
+  const r = reason.trim();
+  if (!r) return BLOCK_NO_REASON;
+  const firstSentence = r.split(/(?<=[.!?])\s/)[0] ?? r;
+  return firstSentence.length > 240 ? firstSentence.slice(0, 239).trimEnd() + '…' : firstSentence;
+}
+
 // ─── executeJob ───────────────────────────────────────────────────────────────
 
 /**
@@ -2191,10 +2209,15 @@ export async function executeJob(
           messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
           toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
 
-          await failJob(db, jobId as string, 'agent_blocked', runStats(), messages, reason);
+          // The error column carries a SHORT human reason (first sentence) so the
+          // UI shows a readable "why" instead of the opaque code; the full reason
+          // lives in result (failJob fills it when no delivery tool already did).
+          const errorMessage = shortBlockReason(reason);
+          const resultMessage = reason || BLOCK_NO_REASON;
+          await failJob(db, jobId as string, errorMessage, runStats(), messages, resultMessage);
           trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
           // Carry the reason so a delegating parent can relay WHY we stopped.
-          return { status: 'failed', error: 'agent_blocked', result: reason || undefined };
+          return { status: 'failed', error: errorMessage, result: resultMessage };
         }
 
         if (rrStatus === 'success' && unresolvedToolFailures.size > 0) {

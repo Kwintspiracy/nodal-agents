@@ -394,9 +394,9 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
 
     const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
 
-    // The regression guard: the parent finalizes via an HONEST block
-    // (error='agent_blocked'), NOT via message_structure_invalid:unmatched_tool_use.
-    // A self-declared block is a 'failed' terminal carrying the agent's reason.
+    // The regression guard: the parent finalizes via an HONEST block (the error
+    // column carries the agent's short reason), NOT via
+    // message_structure_invalid:unmatched_tool_use.
     expect(result.status).toBe('failed');
 
     const [parentRow] = await db
@@ -404,7 +404,7 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId));
     expect(parentRow?.status).toBe('failed');
-    expect(parentRow?.error).toBe('agent_blocked');
+    expect(parentRow?.error).toBe('Cannot retry the same specialist at the cap');
 
     const messages = (parentRow?.messages ?? []) as Array<{
       role: string;

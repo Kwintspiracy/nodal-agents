@@ -26,7 +26,12 @@ import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { executeJob, describeUnavailableTool } from '../../job/execute.ts';
+import {
+  executeJob,
+  describeUnavailableTool,
+  shortBlockReason,
+  BLOCK_NO_REASON,
+} from '../../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── Module-level mock registry ───────────────────────────────────────────────
@@ -301,6 +306,34 @@ describe('describeUnavailableTool', () => {
     const msg = describeUnavailableTool('frobnicate', ['get_feed', 'return_result']);
     expect(msg).not.toContain('Did you mean');
     expect(msg).toContain('get_feed, return_result');
+  });
+});
+
+describe('shortBlockReason', () => {
+  it('takes the first sentence of a multi-sentence reason (for the Error column)', () => {
+    expect(
+      shortBlockReason(
+        'Énergie à 4 — insuffisant pour poster (coût 10) ou commenter (coût 5). La consigne dit post ou comment.',
+      ),
+    ).toBe('Énergie à 4 — insuffisant pour poster (coût 10) ou commenter (coût 5).');
+  });
+
+  it('returns a one-phrase reason unchanged', () => {
+    expect(shortBlockReason('Could not save the memory, stopping')).toBe(
+      'Could not save the memory, stopping',
+    );
+  });
+
+  it('caps an over-long first sentence with an ellipsis', () => {
+    const long = 'x'.repeat(300);
+    const out = shortBlockReason(long);
+    expect(out.length).toBeLessThanOrEqual(240);
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  it('falls back to a readable message when the reason is empty', () => {
+    expect(shortBlockReason('')).toBe(BLOCK_NO_REASON);
+    expect(shortBlockReason('   ')).toBe(BLOCK_NO_REASON);
   });
 });
 
@@ -3131,8 +3164,10 @@ describe('reliability guards', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
-    // NOT unresolved_tool_failure — the honest block is its own terminal.
-    expect(row?.error).toBe('agent_blocked');
+    // NOT unresolved_tool_failure — the honest block is its own terminal. The
+    // error column carries the agent's SHORT reason (readable), not a code; the
+    // full reason is in result.
+    expect(row?.error).toBe('Could not save the memory, stopping');
     expect(row?.result).toBe('Could not save the memory, stopping');
   });
 
@@ -3174,11 +3209,10 @@ describe('reliability guards', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
-    expect(row?.error).toBe('agent_blocked');
-    // The backstop explanation is non-empty and names the machine reason — the
-    // user sees something actionable rather than silence.
-    expect(row?.result).toBeTruthy();
-    expect(row?.result).toContain('agent_blocked');
+    // No reason given → a readable fallback in BOTH error and result, never a
+    // bare code, never silence.
+    expect(row?.error).toBe('Blocked — the agent stopped without giving a reason.');
+    expect(row?.result).toBe('Blocked — the agent stopped without giving a reason.');
     // Two nudges (turns 1 & 2) before finalizing on turn 3.
     expect(row?.turn).toBe(3);
   });
