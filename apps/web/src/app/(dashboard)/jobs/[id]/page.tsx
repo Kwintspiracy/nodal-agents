@@ -100,37 +100,30 @@ export default async function JobDetailPage({ params }: Props) {
         ) : (
           <div className="space-y-4">
             <StatusBadge status={job.status ?? 'pending'} />
-            {job.result ? (
-              // The result carries the human-facing outcome / reason — show it
-              // first and prominently. For a failed/blocked job this IS the
-              // explanation; the machine error code is a small secondary tag, so
-              // "agent_blocked" never eclipses the actual reason.
+            {/* Result (the human-facing reason — now always populated for a
+                blocked/failed run thanks to the reason-on-block fix) AND the
+                Error both stay fully visible: the reason explains WHAT happened,
+                the error carries the description/code. Neither hides the other. */}
+            {job.result && (
               <div>
                 <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider mb-1">
-                  {job.status === 'failed' ? 'Result / reason' : 'Result'}
+                  Result
                 </p>
                 <pre className="text-sm text-ink-2 whitespace-pre-wrap bg-canvas rounded-lg p-4 border border-rule-2 max-h-80 overflow-auto">
                   {job.result}
                 </pre>
-                {job.error && (
-                  <p className="mt-1.5 text-[11px] text-ink-4">
-                    Error code: <span className="font-mono">{job.error}</span>
-                  </p>
-                )}
               </div>
-            ) : job.error ? (
-              // No result text — older runs predate the reason-on-block fix, so
-              // the error code is the only explanation we have. Surface it as
-              // such rather than leaving the run looking unexplained.
+            )}
+            {job.error && (
               <div>
                 <p className="text-xs text-err font-semibold uppercase tracking-wider mb-1">
-                  Why it stopped
+                  Error
                 </p>
                 <pre className="text-sm text-err whitespace-pre-wrap bg-warn-bg rounded-lg p-4 border border-err/30">
                   {job.error}
                 </pre>
               </div>
-            ) : null}
+            )}
           </div>
         )}
 
