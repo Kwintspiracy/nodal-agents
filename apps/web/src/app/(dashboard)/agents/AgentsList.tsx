@@ -75,7 +75,37 @@ interface Props {
 }
 
 export default function AgentsList({ initialGroups, initialActivity }: Props) {
-  const [groups, setGroups] = useState<AgentGroup[]>(initialGroups);
+  // Stable content signature of the server prop. Changes whenever the set of
+  // agent IDs changes (delete, add, or a reorder server-round-trip completes).
+  const serverGroupsKey = useMemo(
+    () =>
+      initialGroups
+        .flatMap((g) => [g.orchestrator?.id ?? '', ...g.workers.map((w) => w.id)])
+        .join('|'),
+    [initialGroups],
+  );
+
+  // getDerivedStateFromProps pattern: store both the displayed list AND the last
+  // server key we derived it from inside a single state object. When the server
+  // key changes (router.refresh() landed new initialGroups), we reset displayed
+  // to null (= use initialGroups directly) — all in render, no effect, no ref.
+  const [{ displayed, seenKey }, setGroupsState] = useState<{
+    displayed: AgentGroup[] | null;
+    seenKey: string;
+  }>({ displayed: null, seenKey: serverGroupsKey });
+
+  // If the server delivered new data since last render, derive updated state
+  // immediately (during render). React allows setState calls during render when
+  // they are guarded by a condition on a prop/derived value changing — this is
+  // the documented getDerivedStateFromProps equivalent for function components.
+  if (seenKey !== serverGroupsKey) {
+    setGroupsState({ displayed: null, seenKey: serverGroupsKey });
+  }
+
+  // The list every render uses: optimistic override while a reorder is in
+  // flight; server data the rest of the time (including right after a delete).
+  const groups = (seenKey === serverGroupsKey ? displayed : null) ?? initialGroups;
+
   const [activity, setActivity] = useState<ActiveAgentRow[]>(initialActivity);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -141,12 +171,12 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
 
   function submitReorder(next: AgentGroup[]) {
     const previous = groups;
-    setGroups(next);
+    setGroupsState((s) => ({ ...s, displayed: next }));
     startTransition(async () => {
       const r = await reorderAgentsAction(flatten(next));
       if (!r.ok) {
         toast.error(r.message);
-        setGroups(previous);
+        setGroupsState((s) => ({ ...s, displayed: previous }));
         return;
       }
       router.refresh();
