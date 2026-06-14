@@ -61,7 +61,8 @@ function mapRole(role: 'worker' | 'router' | 'planner'): {
 export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgentOutput> = {
   name: 'create_agent',
   description:
-    'Create a new agent in this entity. ' +
+    'Create a NEW agent in this entity (auto-assigned to you). ' +
+    'If the agent ALREADY EXISTS, use attach_agent instead — do not recreate it. ' +
     'role can be "worker" (standard), "router" (delegates to sub-agents by task type), or "planner" (plans and coordinates sub-agents). ' +
     'Optionally provide subAgentSlugs to wire up sub-agents immediately (router/planner roles). ' +
     'Fails with a clear error if the slug is already taken or a subAgentSlug is not found.',

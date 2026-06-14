@@ -6,6 +6,7 @@ export { createSkillTool } from './create-skill';
 export { updateSkillTool } from './update-skill';
 export { assignSkillTool } from './assign-skill';
 export { createAgentTool } from './create-agent';
+export { attachAgentTool } from './attach-agent';
 export { createMcpTool } from './create-mcp';
 export { createConnectorTool } from './create-connector';
 
@@ -13,6 +14,7 @@ import { createSkillTool } from './create-skill';
 import { updateSkillTool } from './update-skill';
 import { assignSkillTool } from './assign-skill';
 import { createAgentTool } from './create-agent';
+import { attachAgentTool } from './attach-agent';
 import { createMcpTool } from './create-mcp';
 import { createConnectorTool } from './create-connector';
 import type { ToolDefinition } from '../../types';
@@ -23,6 +25,7 @@ export const META_TOOLS: ToolDefinition<z.ZodTypeAny, unknown>[] = [
   updateSkillTool,
   assignSkillTool,
   createAgentTool,
+  attachAgentTool,
   createMcpTool,
   createConnectorTool,
 ];

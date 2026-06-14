@@ -20,8 +20,10 @@ import { createSkillTool } from './create-skill';
 import { updateSkillTool } from './update-skill';
 import { assignSkillTool } from './assign-skill';
 import { createAgentTool } from './create-agent';
+import { attachAgentTool } from './attach-agent';
 import { createMcpTool } from './create-mcp';
 import { createConnectorTool } from './create-connector';
+import { createAgentRepo } from '@nodal-agents/db';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string };
@@ -743,5 +745,130 @@ describe('create_connector', () => {
       .from(connectors)
       .where(and(eq(connectors.entityId, seed.entityId), eq(connectors.slug, 'gmail')));
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ─── attach_agent ─────────────────────────────────────────────────────────────
+// All target workers are created via createAgentRepo (bypassing create_agent
+// tool) so there is no pre-existing assignment row created by create_agent's
+// assignToOrchestratorId path. This keeps the tests isolated.
+
+describe('attach_agent', () => {
+  it('inserts a real agent_assignments row when resolved by slug', async () => {
+    const ctx = makeCtx();
+
+    // Create a target agent directly (no auto-assignment)
+    const worker = await createAgentRepo(db as unknown as Parameters<typeof createAgentRepo>[0], seed.entityId, {
+      slug: 'attach-target-worker',
+      name: 'Attach Target Worker',
+      personality: 'p',
+      model: 'm',
+      llmKeyId: null,
+      role: 'agent',
+      orchestratorMode: null,
+      avatarUrl: null,
+      subAgentIds: [],
+    });
+    if (!('id' in worker)) throw new Error('worker creation failed');
+    const targetId = worker.id;
+
+    const result = await attachAgentTool.execute({ agentSlug: 'attach-target-worker' }, ctx);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.message).toContain('Attach Target Worker');
+    expect(result.message).toContain('sub-agent');
+
+    // Assert real agent_assignments row: ctx.agentId → targetId
+    const assignments = await db
+      .select()
+      .from(agentAssignments)
+      .where(
+        and(
+          eq(agentAssignments.orchestratorId, ctx.agentId),
+          eq(agentAssignments.subAgentId, targetId),
+        ),
+      );
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.entityId).toBe(seed.entityId);
+  });
+
+  it('resolves the target by NAME (ilike)', async () => {
+    const ctx = makeCtx();
+
+    const worker = await createAgentRepo(db as unknown as Parameters<typeof createAgentRepo>[0], seed.entityId, {
+      slug: 'attach-byname-worker',
+      name: 'Attach ByName Worker',
+      personality: 'p',
+      model: 'm',
+      llmKeyId: null,
+      role: 'agent',
+      orchestratorMode: null,
+      avatarUrl: null,
+      subAgentIds: [],
+    });
+    if (!('id' in worker)) throw new Error('worker creation failed');
+    const targetId = worker.id;
+
+    // Pass the name (lowercased) instead of slug
+    const result = await attachAgentTool.execute({ agentSlug: 'attach byname worker' }, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+
+    const assignments = await db
+      .select()
+      .from(agentAssignments)
+      .where(
+        and(
+          eq(agentAssignments.orchestratorId, ctx.agentId),
+          eq(agentAssignments.subAgentId, targetId),
+        ),
+      );
+    expect(assignments).toHaveLength(1);
+  });
+
+  it('is idempotent: calling twice yields exactly one assignment row', async () => {
+    const ctx = makeCtx();
+
+    const worker = await createAgentRepo(db as unknown as Parameters<typeof createAgentRepo>[0], seed.entityId, {
+      slug: 'attach-idem-worker',
+      name: 'Attach Idempotent Worker',
+      personality: 'p',
+      model: 'm',
+      llmKeyId: null,
+      role: 'agent',
+      orchestratorMode: null,
+      avatarUrl: null,
+      subAgentIds: [],
+    });
+    if (!('id' in worker)) throw new Error('worker creation failed');
+    const targetId = worker.id;
+
+    const first = await attachAgentTool.execute({ agentSlug: 'attach-idem-worker' }, ctx);
+    expect(first.ok).toBe(true);
+
+    const second = await attachAgentTool.execute({ agentSlug: 'attach-idem-worker' }, ctx);
+    expect(second.ok).toBe(true);
+
+    // Still exactly one row
+    const assignments = await db
+      .select()
+      .from(agentAssignments)
+      .where(
+        and(
+          eq(agentAssignments.orchestratorId, ctx.agentId),
+          eq(agentAssignments.subAgentId, targetId),
+        ),
+      );
+    expect(assignments).toHaveLength(1);
+  });
+
+  it('returns ok:false with actionable error when agent slug does not exist', async () => {
+    const ctx = makeCtx();
+    const result = await attachAgentTool.execute({ agentSlug: 'no-such-agent-xyz-attach' }, ctx);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ok:false');
+    expect(result.error).toContain('no-such-agent-xyz-attach');
+    expect(result.error.toLowerCase()).toContain('create_agent');
   });
 });

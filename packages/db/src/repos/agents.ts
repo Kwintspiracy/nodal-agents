@@ -3,7 +3,7 @@
 // Takes a db instance + entityId + already-validated input; returns a
 // discriminated result or throws on unexpected errors.
 
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, or, ilike, inArray } from 'drizzle-orm';
 import { INITIAL_AUTO_ROOT_GRANTS } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 import { agents, agentAssignments } from '../schema/agents.ts';
@@ -175,4 +175,66 @@ export async function createAgentRepo(
   }
 
   return { id: row.id };
+}
+
+// ─── attachAgentToOrchestrator ────────────────────────────────────────────────
+
+export type AttachAgentResult =
+  | { ok: true; subAgentId: string; subAgentName: string }
+  | { error: 'agent_not_found' | 'cannot_attach_self' };
+
+/**
+ * Assign an EXISTING agent as a sub-agent of an orchestrator (the ROOT caller).
+ *
+ * Resolves the target by slug OR name (case-insensitive ilike) within the
+ * entity. Returns `{ error: 'agent_not_found' }` if no match. Returns
+ * `{ error: 'cannot_attach_self' }` if the target resolves to the caller.
+ * Idempotent: a SELECT guard ensures at most one assignment row per pair.
+ */
+export async function attachAgentToOrchestrator(
+  db: AnyDrizzleDb,
+  entityId: string,
+  orchestratorId: string,
+  agentSlugOrName: string,
+): Promise<AttachAgentResult> {
+  const [targetRow] = await db
+    .select({ id: agents.id, name: agents.name })
+    .from(agents)
+    .where(
+      and(
+        eq(agents.entityId, entityId),
+        or(eq(agents.slug, agentSlugOrName), ilike(agents.name, agentSlugOrName)),
+      ),
+    )
+    .limit(1);
+
+  if (!targetRow) {
+    return { error: 'agent_not_found' };
+  }
+
+  if (targetRow.id === orchestratorId) {
+    return { error: 'cannot_attach_self' };
+  }
+
+  // Idempotent: skip if the assignment row already exists.
+  const existing = await db
+    .select({ id: agentAssignments.id })
+    .from(agentAssignments)
+    .where(
+      and(
+        eq(agentAssignments.orchestratorId, orchestratorId),
+        eq(agentAssignments.subAgentId, targetRow.id),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length === 0) {
+    await db.insert(agentAssignments).values({
+      orchestratorId,
+      subAgentId: targetRow.id,
+      entityId,
+    });
+  }
+
+  return { ok: true, subAgentId: targetRow.id, subAgentName: targetRow.name };
 }

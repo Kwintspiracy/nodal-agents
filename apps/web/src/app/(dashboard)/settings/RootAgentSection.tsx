@@ -137,6 +137,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
                   {(
                     [
                       { key: 'createAgent', label: 'Create agents' },
+                      { key: 'attachAgent', label: 'Attach agents (assign existing as sub-agent)' },
                       { key: 'createSkill', label: 'Create skills' },
                       { key: 'updateSkill', label: 'Update skills' },
                       { key: 'assignSkill', label: 'Assign skills' },

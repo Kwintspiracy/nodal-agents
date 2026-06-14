@@ -5700,6 +5700,7 @@ export async function getRootConfigAction(): Promise<
 const SetRootGrantsSchema = z.object({
   grants: z.object({
     createAgent: z.boolean(),
+    attachAgent: z.boolean(),
     createSkill: z.boolean(),
     updateSkill: z.boolean(),
     assignSkill: z.boolean(),

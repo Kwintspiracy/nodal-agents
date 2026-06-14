@@ -13,6 +13,7 @@ const AutonomyLevelSchema = z.enum(['propose_confirm', 'destructive_gate', 'full
 
 export interface RootGrants {
   createAgent: boolean;
+  attachAgent: boolean;
   createSkill: boolean;
   updateSkill: boolean;
   assignSkill: boolean;
@@ -23,6 +24,7 @@ export interface RootGrants {
 
 const RootGrantsSchema = z.object({
   createAgent: z.boolean(),
+  attachAgent: z.boolean(),
   createSkill: z.boolean(),
   updateSkill: z.boolean(),
   assignSkill: z.boolean(),
@@ -35,6 +37,7 @@ const RootGrantsSchema = z.object({
 
 export const DEFAULT_ROOT_GRANTS: RootGrants = {
   createAgent: true,
+  attachAgent: true,
   createSkill: true,
   updateSkill: true,
   assignSkill: true,
@@ -60,6 +63,7 @@ export const DEFAULT_ROOT_GRANTS: RootGrants = {
  */
 export const INITIAL_AUTO_ROOT_GRANTS: RootGrants = {
   createAgent: false,
+  attachAgent: false,
   createSkill: false,
   updateSkill: false,
   assignSkill: false,
@@ -73,6 +77,7 @@ export const INITIAL_AUTO_ROOT_GRANTS: RootGrants = {
 /** Meta-tool name per grant key. */
 export const META_TOOL_BY_GRANT = {
   createAgent: 'create_agent',
+  attachAgent: 'attach_agent',
   createSkill: 'create_skill',
   updateSkill: 'update_skill',
   assignSkill: 'attach_skill',
@@ -82,6 +87,7 @@ export const META_TOOL_BY_GRANT = {
 
 export const META_TOOL_NAMES = [
   'create_agent',
+  'attach_agent',
   'create_skill',
   'update_skill',
   'attach_skill',
@@ -111,6 +117,13 @@ export function parseRootGrants(raw: unknown): RootGrants {
 
   const createAgent =
     typeof src['createAgent'] === 'boolean' ? src['createAgent'] : DEFAULT_ROOT_GRANTS.createAgent;
+  // attachAgent: when absent from a stored object (a ROOT configured before this
+  // grant existed), fall back to the default (TRUE), mirroring createAgent and the
+  // other benign roster/skill grants. Assigning an EXISTING agent as a sub-agent is
+  // additive + reversible — not a new risk surface like create_mcp/create_connector
+  // (which stay opt-in-false), so existing ROOTs get it automatically.
+  const attachAgent =
+    typeof src['attachAgent'] === 'boolean' ? src['attachAgent'] : DEFAULT_ROOT_GRANTS.attachAgent;
   const createSkill =
     typeof src['createSkill'] === 'boolean' ? src['createSkill'] : DEFAULT_ROOT_GRANTS.createSkill;
   const updateSkill =
@@ -129,6 +142,7 @@ export function parseRootGrants(raw: unknown): RootGrants {
 
   return {
     createAgent,
+    attachAgent,
     createSkill,
     updateSkill,
     assignSkill,

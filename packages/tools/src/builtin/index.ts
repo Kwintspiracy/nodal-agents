@@ -38,7 +38,7 @@ export {
 } from './file-ops';
 export { OFFICE_TOOLS } from './office-ops';
 export { META_TOOLS } from './meta-ops';
-export { createSkillTool, assignSkillTool, createAgentTool } from './meta-ops';
+export { createSkillTool, assignSkillTool, createAgentTool, attachAgentTool } from './meta-ops';
 export { SKILL_TOOLS, skillFileReadTool, skillFileListTool, SkillFileError } from './skill-ops';
 
 /**
