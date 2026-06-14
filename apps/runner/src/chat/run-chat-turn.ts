@@ -9,6 +9,7 @@
 
 import { eq, and, desc } from '@nodal-agents/db';
 import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db';
+import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
@@ -55,6 +56,67 @@ const ESCALATION_RECHECK =
 export type ChatTurnResult =
   | { ok: true; reply: string; spawnedJobId?: string }
   | { ok: false; error: string };
+
+/**
+ * Compile the delegated sub-agents' outcomes for a chat-escalated job, so the
+ * orchestrator can SEE what its prior dispatch produced — not just that it was
+ * sent. Used when the escalated job's own result column is empty (e.g. it
+ * delegated and didn't re-publish a summary). LLM-facing text: explicit status
+ * markers are fine (this never reaches the user).
+ */
+async function compileDispatchChildren(db: AnyDrizzleDb, parentJobId: string): Promise<string> {
+  const kids = await db
+    .select({
+      name: agents.name,
+      slug: agents.slug,
+      status: agentJobs.status,
+      result: agentJobs.result,
+      error: agentJobs.error,
+    })
+    .from(agentJobs)
+    .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+    .where(eq(agentJobs.parentJobId, parentJobId))
+    .orderBy(agentJobs.createdAt);
+  if (kids.length === 0) return '';
+  return kids
+    .map((k) => {
+      const who = k.name ?? k.slug ?? 'agent';
+      const body = (k.result ?? '').trim();
+      if (k.status === 'completed') return `[${who}] ${body || '(completed, no output)'}`;
+      if (k.status === 'failed') return `[${who}] FAILED: ${body || k.error || 'unknown error'}`;
+      return `[${who}] ${k.status ?? 'pending'}`;
+    })
+    .join('\n');
+}
+
+/**
+ * Build the run_task tool-result for a PRIOR chat escalation, reflecting the
+ * job's REAL outcome at read time. This replaces a static "Task dispatched."
+ * that left the orchestrator permanently blind to completion: it could never
+ * tell a finished delegation from a still-running one, so it re-launched tasks
+ * and looped on sequential work (live: the Conciergus Cortex sequence). Now it
+ * sees the signal (done / running / failed) AND the content (the job's result,
+ * or the compiled children when the job's own result is empty).
+ */
+async function buildDispatchOutput(
+  db: AnyDrizzleDb,
+  jobId: string,
+  status: string | null,
+  result: string | null,
+  error: string | null,
+): Promise<string> {
+  const r = (result ?? '').trim();
+  if (status === 'completed') {
+    return `Completed.\n${r || (await compileDispatchChildren(db, jobId)) || '(no textual output was recorded)'}`;
+  }
+  if (status === 'failed') {
+    const detail = r || (await compileDispatchChildren(db, jobId)) || error || 'unknown error';
+    return `FAILED — report this to the user with the reason; do not silently retry.\n${detail}`;
+  }
+  if (status === 'cancelled') return 'Cancelled by the user.';
+  // pending / processing / awaiting_approval / awaiting_delegation
+  return 'Still running — no result yet. Do NOT dispatch it again; wait for it to finish.';
+}
 
 export async function runChatTurn(opts: {
   deps: RunnerDeps;
@@ -148,6 +210,9 @@ export async function runChatTurn(opts: {
       content: chatMessages.content,
       jobId: chatMessages.jobId,
       jobTask: agentJobs.task,
+      jobStatus: agentJobs.status,
+      jobResult: agentJobs.result,
+      jobError: agentJobs.error,
     })
     .from(chatMessages)
     .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
@@ -170,6 +235,17 @@ export async function runChatTurn(opts: {
           },
         ],
       });
+      // The tool-result reflects the dispatched job's REAL current outcome, so
+      // the orchestrator knows whether a prior delegation is done / running /
+      // failed and what it produced — never a static "dispatched" that hides
+      // completion and drives re-dispatch loops on sequential work.
+      const outcome = await buildDispatchOutput(
+        db,
+        r.jobId,
+        r.jobStatus,
+        r.jobResult,
+        r.jobError,
+      );
       messages.push({
         role: 'tool',
         content: [
@@ -177,7 +253,7 @@ export async function runChatTurn(opts: {
             type: 'tool-result' as const,
             toolCallId,
             toolName: 'run_task',
-            output: { type: 'text' as const, value: 'Task dispatched.' },
+            output: { type: 'text' as const, value: outcome },
           },
         ],
       });

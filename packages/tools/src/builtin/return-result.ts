@@ -31,9 +31,10 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'to wait for tool results before signaling completion — splitting into separate turns ' +
     'doubles input token cost (the full conversation replays) for no benefit. ' +
     'Use status="blocked" if you cannot proceed after 2 attempts. When you set status="blocked" ' +
-    'you MUST also set `reason` to a clear, user-facing explanation of what blocked you and what ' +
-    'the user can do next (e.g. "Missing the Notion API key — add it under Connectors, then retry."). ' +
-    'The user sees this reason verbatim, so write it for them, not for yourself.',
+    'you MUST also set `reason` to a clear, user-facing explanation: name the SPECIFIC thing that ' +
+    'blocked YOU on THIS task — the exact tool, credential, or input that failed and its actual ' +
+    'error — and the concrete next step the user can take. Write it from scratch for this ' +
+    'situation; never copy a generic example. The user sees this reason verbatim.',
   inputSchema: ReturnResultInputSchema,
   riskLevel: 'write',
   execute: async (input, _ctx) => {

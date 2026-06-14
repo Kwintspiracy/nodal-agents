@@ -871,6 +871,137 @@ describe('executeJob', () => {
     expect(JSON.stringify(capturedPrompts[0])).toContain('HIST-INSTRUCTION-XYZ');
   });
 
+  it('runChatTurn: a prior escalation is replayed with the job\'s REAL outcome (completion + content), not a static "dispatched"', async () => {
+    // The bug Quentin hit: the run_task tool-result was hardcoded "Task
+    // dispatched." forever, so the orchestrator could never tell a finished
+    // delegation from a pending one — it looped on sequential work and never saw
+    // what a dispatched agent produced (live: the Conciergus Cortex sequence).
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'seq' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    // A prior escalation whose job COMPLETED with a real result.
+    const [priorJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'completed',
+        channel: 'dashboard',
+        task: 'Run Displacer in the Cortex',
+        result: 'DISPLACER-REPORT: read 20 posts, 3 comments, energy 31.',
+        completedAt: new Date(),
+      })
+      .returning({ id: agentJobs.id });
+    if (!priorJob) throw new Error('failed to create prior job');
+    await db.insert(chatMessages).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: 'launch Displacer',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'assistant',
+        content: 'On it.',
+        jobId: priorJob.id,
+      },
+    ]);
+
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient([{ text: 'Displacer is done.' }], capturedPrompts);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'did Displacer finish?',
+    });
+
+    const flat = JSON.stringify(capturedPrompts);
+    // The orchestrator now SEES the completion signal AND the content…
+    expect(flat).toContain('Completed');
+    expect(flat).toContain('DISPLACER-REPORT');
+    // …and the blind static placeholder is gone.
+    expect(flat).not.toContain('Task dispatched');
+  });
+
+  it('runChatTurn: a completed escalation with an EMPTY result surfaces the delegated child output (compiled)', async () => {
+    // Live forensic case: a Conciergus delegation job completed but its own
+    // result column was empty (it delegated and never re-published), while the
+    // child held the real report. The history must still surface the CONTENT.
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'seq2' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    const [parent] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        status: 'completed',
+        channel: 'dashboard',
+        task: 'Assign work to the sub-agent',
+        result: '', // empty — the parent never re-published a summary
+        completedAt: new Date(),
+      })
+      .returning({ id: agentJobs.id });
+    if (!parent) throw new Error('failed to create parent job');
+    // The delegated child carries the actual output.
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      parentJobId: parent.id,
+      status: 'completed',
+      channel: 'internal',
+      task: 'sub task',
+      result: 'CHILD-OUTPUT: did the thing.',
+      completedAt: new Date(),
+    });
+    await db.insert(chatMessages).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: 'go',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'assistant',
+        content: 'Dispatched.',
+        jobId: parent.id,
+      },
+    ]);
+
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient([{ text: 'ok' }], capturedPrompts);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'and now?',
+    });
+
+    const flat = JSON.stringify(capturedPrompts);
+    // The child's content is surfaced even though the parent result was empty.
+    expect(flat).toContain('CHILD-OUTPUT');
+    expect(flat).not.toContain('Task dispatched');
+  });
+
   it('runChatTurn: a phantom tool-call (tool not on this surface) recovers via a tool-free retry — text reply, no job', async () => {
     const [conv] = await db
       .insert(conversations)
