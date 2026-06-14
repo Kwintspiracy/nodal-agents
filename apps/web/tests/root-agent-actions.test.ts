@@ -148,6 +148,7 @@ async function setRoot(orchId: string | null) {
 
 const ALL_ON = {
   createAgent: true,
+  attachAgent: true,
   createSkill: true,
   updateSkill: true,
   assignSkill: true,
@@ -268,9 +269,10 @@ describe('setRootAgentAction — write paths', () => {
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
 
     const rules = await metaRules();
-    expect(rules.length).toBe(6);
+    expect(rules.length).toBe(7);
     const toolNames = rules.map((r) => r.toolName).sort();
     expect(toolNames).toEqual([
+      'attach_agent',
       'attach_skill',
       'create_agent',
       'create_connector',
@@ -290,6 +292,7 @@ describe('setRootAgentAction — write paths', () => {
     await setRootAgentAction({
       grants: {
         createAgent: true,
+        attachAgent: false,
         createSkill: false,
         updateSkill: false,
         assignSkill: false,
@@ -309,6 +312,7 @@ describe('setRootAgentAction — write paths', () => {
     await setRootAgentAction({
       grants: {
         createAgent: false,
+        attachAgent: false,
         createSkill: false,
         updateSkill: false,
         assignSkill: false,
@@ -344,7 +348,7 @@ describe('setRootAgentAction — write paths', () => {
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
 
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
-    expect((await metaRules()).length).toBe(6);
+    expect((await metaRules()).length).toBe(7);
 
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'fully_autonomous' } });
     expect((await metaRules()).length).toBe(0);
