@@ -23,6 +23,12 @@ export interface CreateAgentInput {
   orchestratorMode: 'router' | 'planner' | null;
   avatarUrl: string | null | undefined;
   subAgentIds: string[];
+  /**
+   * If set, assign the newly-created agent as a sub-agent of this orchestrator
+   * — i.e. the ROOT that created it. Idempotent: skipped if the row already
+   * exists (e.g. Brique F already wired a new orchestrator under the same ROOT).
+   */
+  assignToOrchestratorId?: string;
 }
 
 export type CreateAgentResult = { id: string } | { error: 'slug_taken' };
@@ -134,6 +140,34 @@ export async function createAgentRepo(
       // Subsequent orchestrator → forced as a sub-agent of the ROOT.
       await db.insert(agentAssignments).values({
         orchestratorId: ent.rootAgentId,
+        subAgentId: row.id,
+        entityId,
+      });
+    }
+  }
+
+  // ─── Auto-assign under caller (ROOT creates sub-agent) ──────────────────────
+  // When a ROOT uses the create_agent meta-tool, it passes its own id as
+  // assignToOrchestratorId so the new agent is immediately visible in its team
+  // block and can receive delegations. The insert is guarded by a SELECT first
+  // because: (a) the table has no unique constraint in production, so a duplicate
+  // row would silently create a second link; (b) Brique F above may have already
+  // inserted the row when a new orchestrator is created under the same ROOT.
+  if (input.assignToOrchestratorId && input.assignToOrchestratorId !== row.id) {
+    const existing = await db
+      .select({ id: agentAssignments.id })
+      .from(agentAssignments)
+      .where(
+        and(
+          eq(agentAssignments.orchestratorId, input.assignToOrchestratorId),
+          eq(agentAssignments.subAgentId, row.id),
+        ),
+      )
+      .limit(1);
+
+    if (existing.length === 0) {
+      await db.insert(agentAssignments).values({
+        orchestratorId: input.assignToOrchestratorId,
         subAgentId: row.id,
         entityId,
       });

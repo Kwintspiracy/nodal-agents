@@ -110,4 +110,70 @@ describe('createAgentRepo — ROOT = origin orchestrator', () => {
       );
     expect(assignments.length).toBe(1);
   });
+
+  // ─── assignToOrchestratorId ────────────────────────────────────────────────
+
+  it('worker created with assignToOrchestratorId gets an assignment row under that orchestrator', async () => {
+    const rootId = (await rootOf())!;
+    expect(rootId).toBeTruthy();
+
+    const r = await createAgentRepo(db, entityId, {
+      ...worker('assigned-worker', 'Assigned Worker'),
+      assignToOrchestratorId: rootId,
+    });
+    const workerId = 'id' in r ? r.id : '';
+    expect(workerId).toBeTruthy();
+
+    // A real agent_assignments row must exist linking ROOT → worker.
+    const assignments = await db
+      .select()
+      .from(schema.agentAssignments)
+      .where(
+        and(
+          eq(schema.agentAssignments.orchestratorId, rootId),
+          eq(schema.agentAssignments.subAgentId, workerId),
+        ),
+      );
+    expect(assignments.length).toBe(1);
+    expect(assignments[0]!.entityId).toBe(entityId);
+  });
+
+  it('worker created WITHOUT assignToOrchestratorId has no assignment row (current behaviour preserved)', async () => {
+    const r = await createAgentRepo(db, entityId, worker('unassigned-worker', 'Unassigned Worker'));
+    const workerId = 'id' in r ? r.id : '';
+    expect(workerId).toBeTruthy();
+
+    // No assignment row should exist for this worker under any orchestrator.
+    const assignments = await db
+      .select()
+      .from(schema.agentAssignments)
+      .where(eq(schema.agentAssignments.subAgentId, workerId));
+    expect(assignments.length).toBe(0);
+  });
+
+  it('assignToOrchestratorId is idempotent: orchestrator created with same ROOT id yields exactly ONE assignment row', async () => {
+    const rootId = (await rootOf())!;
+    expect(rootId).toBeTruthy();
+
+    // Create a new orchestrator passing assignToOrchestratorId = ROOT id.
+    // Brique F ALSO inserts a ROOT→new-orch assignment, so two paths converge.
+    const r = await createAgentRepo(db, entityId, {
+      ...orch('orch-idempotent', 'Orch Idempotent'),
+      assignToOrchestratorId: rootId,
+    });
+    const orchId = 'id' in r ? r.id : '';
+    expect(orchId).toBeTruthy();
+
+    // Must be exactly ONE assignment row, not two.
+    const assignments = await db
+      .select()
+      .from(schema.agentAssignments)
+      .where(
+        and(
+          eq(schema.agentAssignments.orchestratorId, rootId),
+          eq(schema.agentAssignments.subAgentId, orchId),
+        ),
+      );
+    expect(assignments.length).toBe(1);
+  });
 });

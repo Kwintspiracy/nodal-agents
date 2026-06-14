@@ -102,6 +102,7 @@ export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgen
         orchestratorMode,
         avatarUrl: null,
         subAgentIds,
+        assignToOrchestratorId: ctx.agentId,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -123,7 +124,7 @@ export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgen
 
     return {
       ok: true,
-      message: `Created agent "${input.name}" (${input.slug}), role ${input.role}, id ${result.id}`,
+      message: `Created agent "${input.name}" (${input.slug}), role ${input.role}, id ${result.id} — assigned to your team; you can delegate to it now.`,
     };
   },
 };

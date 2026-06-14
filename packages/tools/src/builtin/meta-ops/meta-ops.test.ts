@@ -7,6 +7,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import {
   agentSkills,
   agentSkillAssignments,
+  agentAssignments,
   agents,
   mcpServers,
   connectors,
@@ -519,6 +520,45 @@ describe('create_agent', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     expect(result.message).toMatch(/id [0-9a-f-]{36}/);
+  });
+
+  it('creates ROOT→worker assignment row: ctx.agentId is the caller and must appear as orchestratorId', async () => {
+    const ctx = makeCtx();
+    const result = await createAgentTool.execute(
+      {
+        slug: 'meta-worker-assigned',
+        name: 'Meta Worker Assigned',
+        personality: 'A worker created by ROOT.',
+        model: 'claude-sonnet-4-6-20260217',
+        role: 'worker',
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.message).toContain('assigned to your team');
+
+    // Fetch the newly created agent's id from the DB
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.slug, 'meta-worker-assigned'), eq(agents.entityId, seed.entityId)));
+    expect(agentRow).toBeDefined();
+    const newAgentId = agentRow!.id;
+
+    // Assert the real agent_assignments row exists: ROOT (ctx.agentId) → new worker
+    const assignments = await db
+      .select()
+      .from(agentAssignments)
+      .where(
+        and(
+          eq(agentAssignments.orchestratorId, ctx.agentId),
+          eq(agentAssignments.subAgentId, newAgentId),
+        ),
+      );
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.entityId).toBe(seed.entityId);
   });
 });
 
