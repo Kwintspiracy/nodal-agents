@@ -5089,6 +5089,8 @@ const PROVIDER_VALUES = [
   'google',
   'mistral',
   'groq',
+  'deepseek',
+  'minimax',
 ] as const;
 
 export type LlmProvider = (typeof PROVIDER_VALUES)[number];
@@ -5433,6 +5435,11 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
       groq: { canonicalBase: 'https://api.groq.com/openai/v1', path: '/models', auth: 'bearer' },
       'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
       ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
+      deepseek: { canonicalBase: 'https://api.deepseek.com', path: '/models', auth: 'bearer' },
+      // MiniMax native (Anthropic-compat, Bearer). The models-list path on the
+      // /anthropic endpoint isn't confirmed live — Test may be inconclusive even
+      // with a valid key; the key still saves and works at runtime.
+      minimax: { canonicalBase: 'https://api.minimax.io/anthropic', path: '/v1/models', auth: 'bearer' },
     };
 
     const cfg = PROVIDER_TEST_CONFIG[provider];

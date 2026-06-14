@@ -20,6 +20,10 @@ export function prettyProviderName(slug: string): string {
       return 'Mistral';
     case 'groq':
       return 'Groq';
+    case 'deepseek':
+      return 'DeepSeek';
+    case 'minimax':
+      return 'MiniMax';
     default:
       return slug;
   }

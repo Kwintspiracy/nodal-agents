@@ -25,6 +25,8 @@ const BASE_URL_PRESETS: Record<LlmProvider, string> = {
   google: 'https://generativelanguage.googleapis.com/v1beta',
   mistral: 'https://api.mistral.ai/v1',
   groq: 'https://api.groq.com/openai/v1',
+  deepseek: 'https://api.deepseek.com/v1',
+  minimax: 'https://api.minimax.io/anthropic',
 };
 
 const PROVIDER_OPTIONS: LlmProvider[] = [
@@ -36,6 +38,8 @@ const PROVIDER_OPTIONS: LlmProvider[] = [
   'google',
   'mistral',
   'groq',
+  'deepseek',
+  'minimax',
 ];
 
 interface CreateProps {
