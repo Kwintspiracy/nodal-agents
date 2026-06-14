@@ -47,7 +47,7 @@ describe('env', () => {
   it('exports validated env object', async () => {
     const { env } = await import('../src/lib/env.ts');
     expect(env.AUTH_MODE).toBe('local-trust');
-    expect(env.RUNNER_URL).toBe('http://localhost:3001');
+    expect(env.RUNNER_URL).toBe('http://127.0.0.1:3001');
   });
 
   it('NEXT_PUBLIC_AUTH_MODE defaults to local-trust when not set', async () => {

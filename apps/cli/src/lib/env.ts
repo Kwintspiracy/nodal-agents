@@ -63,7 +63,9 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
 
   const env: Record<string, string> = {
     DATABASE_URL: databaseUrl,
-    RUNNER_URL: `http://localhost:${config.ports.runner}`,
+    // 127.0.0.1, not localhost: on Windows localhost prefers IPv6 (::1), letting a
+    // foreign IPv6 server on the runner port silently steal the web→runner traffic.
+    RUNNER_URL: `http://127.0.0.1:${config.ports.runner}`,
     AUTH_MODE: authMode,
     // Expose auth mode to the client so login/page.tsx can render the right form.
     NEXT_PUBLIC_AUTH_MODE: authMode,

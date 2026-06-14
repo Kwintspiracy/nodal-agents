@@ -2,7 +2,10 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  RUNNER_URL: z.string().url().default('http://localhost:3001'),
+  // Internal same-host call: 127.0.0.1 (explicit IPv4), NOT localhost. On Windows
+  // `localhost` resolves to IPv6 (::1) first, so a foreign IPv6 dev server bound to
+  // :3001 (e.g. another project) would silently hijack the runner's traffic.
+  RUNNER_URL: z.string().url().default('http://127.0.0.1:3001'),
   AUTH_MODE: z.enum(['local-trust', 'local-auth', 'bearer-token']).default('local-trust'),
   // NEXT_PUBLIC_AUTH_MODE mirrors AUTH_MODE and is safe to read client-side.
   // Must be set explicitly by the CLI (buildEnvForWeb) so the login page can
