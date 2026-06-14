@@ -77,22 +77,35 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   ],
 
   // ─── Native MiniMax (api.minimax.io/anthropic) ───────────────────────────────
-  // MiniMax model IDs on their native Anthropic-compatible endpoint.
-  // NOTE: As of June 2026, MiniMax's latest production model on their native
-  // endpoint is MiniMax-M1. MiniMax-M2 was announced but its exact API model id
-  // may differ — use MiniMax-M1 until confirmed. Context window: MiniMax docs
-  // list 1M tokens for M-series; 200K is a conservative safe value.
-  // forcedToolChoice: false — MiniMax historically rejects tool_choice:'any' with
-  // a 400/404, consistent with what we observed via OpenRouter (minimax/minimax-m3).
+  // Current MiniMax text models, from the official docs
+  // (platform.minimax.io/docs/api-reference/text-chat — June 2026). The M2/M3
+  // line supersedes M1, which is no longer listed, so it's dropped here. The
+  // full lineup also includes M2.1/M2.5 and `-highspeed` variants — use the
+  // model picker's "Custom…" field for those; this is the curated short list.
+  // forcedToolChoice:false across the M-series — the MiniMax endpoint rejects a
+  // forced tool_choice with a 400/404 (observed on M3 via OpenRouter); the
+  // runtime completion floor covers it. Context windows are docs-sourced where
+  // available, else a conservative 200K until a live probe confirms.
   minimax: [
     {
-      modelId: 'MiniMax-M1',
-      label: 'MiniMax M1',
-      // Reasoning model — MiniMax M-series emits chain-of-thought.
-      // forcedToolChoice:false — the MiniMax endpoint rejects forced tool_choice.
+      modelId: 'MiniMax-M3',
+      label: 'MiniMax M3',
+      // Newest flagship — a reasoning model (adaptive `thinking`), 1M context.
       capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
-      // MiniMax docs advertise 1M context; 200K is the conservative catalogued
-      // value until confirmed with a live probe. Update when validated.
+      contextWindow: 1_048_576,
+    },
+    {
+      modelId: 'MiniMax-M2.7',
+      label: 'MiniMax M2.7',
+      // Latest M2-series — non-reasoning per MiniMax docs.
+      capabilities: { tools: true, forcedToolChoice: false },
+      contextWindow: 200_000,
+    },
+    {
+      modelId: 'MiniMax-M2',
+      label: 'MiniMax M2',
+      // Stable previous-generation baseline — non-reasoning.
+      capabilities: { tools: true, forcedToolChoice: false },
       contextWindow: 200_000,
     },
   ],

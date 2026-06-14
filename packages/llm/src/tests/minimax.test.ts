@@ -19,7 +19,7 @@ describe('buildMiniMaxModel', () => {
   it('constructs a LanguageModel object without throwing', () => {
     const model = buildMiniMaxModel({
       provider: 'minimax',
-      model: 'MiniMax-M1',
+      model: 'MiniMax-M3',
       apiKey: 'mm-test-key',
     });
     expect(model).toBeDefined();
@@ -30,7 +30,7 @@ describe('buildMiniMaxModel', () => {
     expect(() =>
       buildMiniMaxModel({
         provider: 'minimax',
-        model: 'MiniMax-M1',
+        model: 'MiniMax-M3',
       }),
     ).toThrow(ProviderConfigError);
   });
@@ -39,7 +39,7 @@ describe('buildMiniMaxModel', () => {
     // Should not throw — the baseURL is accepted and forwarded to createAnthropic
     const model = buildMiniMaxModel({
       provider: 'minimax',
-      model: 'MiniMax-M1',
+      model: 'MiniMax-M3',
       apiKey: 'mm-test-key',
       baseURL: 'https://api.minimax.io/anthropic',
     });
@@ -53,7 +53,7 @@ describe('createLlmClient minimax dispatch', () => {
   it('routes provider:minimax to a client with minimax capabilities', () => {
     const client = createLlmClient({
       provider: 'minimax',
-      model: 'MiniMax-M1',
+      model: 'MiniMax-M3',
       apiKey: 'mm-test',
     });
     expect(client.config.provider).toBe('minimax');
@@ -63,7 +63,7 @@ describe('createLlmClient minimax dispatch', () => {
   it('exposes the standard client methods', () => {
     const client = createLlmClient({
       provider: 'minimax',
-      model: 'MiniMax-M1',
+      model: 'MiniMax-M3',
       apiKey: 'mm-test',
     });
     expect(typeof client.generateText).toBe('function');
@@ -126,7 +126,7 @@ describe('MiniMax fetch wrapper behaviour', () => {
         'anthropic-beta': 'fine-grained-tool-streaming,context-1m,tools-2024-04-04',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ model: 'MiniMax-M1', messages: [] }),
+      body: JSON.stringify({ model: 'MiniMax-M3', messages: [] }),
     });
 
     expect(capturedHeaders).toBeDefined();
