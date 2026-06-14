@@ -41,8 +41,7 @@ import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
-import EdRow, { IcBtn } from '@/components/ui/EdRow';
-import EdAddButton from '@/components/ui/EdAddButton';
+import EdRow from '@/components/ui/EdRow';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 import ConnectorsTabContent from './ConnectorsTabContent.tsx';
@@ -363,7 +362,6 @@ export default function AgentComposer({
           workspaces={workspaces}
           workspacesLoaded={workspacesLoaded}
           onWorkspacesChange={setWorkspaces}
-          mcpServers={mcpServers}
           agentId={agent.id}
           dirty={dirty}
           isPending={isPending}
@@ -1185,7 +1183,6 @@ function SettingsTab(props: {
   workspaces: AgentWorkspaceRow[];
   workspacesLoaded: boolean;
   onWorkspacesChange: (ws: AgentWorkspaceRow[]) => void;
-  mcpServers: AgentMcpServerRow[];
   agentId: string;
   dirty: boolean;
   isPending: boolean;
@@ -1221,7 +1218,6 @@ function SettingsTab(props: {
     workspaces,
     workspacesLoaded,
     onWorkspacesChange,
-    mcpServers,
     agentId,
     dirty,
     isPending,

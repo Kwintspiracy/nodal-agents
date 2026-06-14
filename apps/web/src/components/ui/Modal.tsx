@@ -25,7 +25,6 @@ export default function Modal({ open, onClose, title, children, className = '' }
   // SSR-safe portal gate — createPortal needs document, which is only present
   // after hydration. Setting state in this effect is intentional (same pattern
   // as ConfirmDialog).
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
