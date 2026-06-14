@@ -241,6 +241,31 @@ export type ExecuteJobResult =
 
 type AnyToolDef = ToolDefinition<z.ZodTypeAny, unknown>;
 
+// ─── describeUnavailableTool ──────────────────────────────────────────────────
+
+/**
+ * Build the corrective message fed back to a model that called a tool not in
+ * its whitelist. Lists the available tools and, when the bad name looks like a
+ * truncated/abbreviated form of a real one (the classic "dropped the MCP
+ * prefix" slip), surfaces a "did you mean" hint so the model can self-correct.
+ * Pure — unit-tested in isolation.
+ */
+export function describeUnavailableTool(badName: string, available: readonly string[]): string {
+  const lower = badName.toLowerCase();
+  const suggestions = available.filter((t) => {
+    const tl = t.toLowerCase();
+    return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
+  });
+  const hint = suggestions.length
+    ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?`
+    : '';
+  return (
+    `The tool "${badName}" is not available to you.${hint} ` +
+    `Your available tools are: ${available.join(', ')}. ` +
+    `Use one of those EXACT names — do not invent, abbreviate, or drop prefixes from tool names.`
+  );
+}
+
 // ─── executeJob ───────────────────────────────────────────────────────────────
 
 /**
@@ -1207,6 +1232,15 @@ export async function executeJob(
   const MAX_BLOCKED_REASON_NUDGES = 2;
   let blockedReasonNudges = 0;
 
+  // A model that calls a tool not in its whitelist gets a bounded chance to
+  // self-correct: the mistake is fed back WITH the available tool names (and a
+  // "did you mean" hint), so the model can retry with a valid name instead of
+  // the job being hard-killed on one hallucinated/abbreviated tool name. Generic
+  // — benefits every model, most of all the ones that drop MCP prefixes
+  // (minimax/deepseek). After the budget, fail loud (invariant #4 / #8).
+  const MAX_UNAVAILABLE_TOOL_NUDGES = 3;
+  let unavailableToolNudges = 0;
+
   try {
     while (true) {
       turn += 1;
@@ -1297,6 +1331,30 @@ export async function executeJob(
           tools: aiSdkTools,
           toolChoice,
         });
+      } catch (genErr) {
+        // Recoverable: the model named a tool that isn't in its whitelist, so
+        // the AI SDK rejected the whole turn before returning. Rather than
+        // hard-killing an otherwise-productive job on one bad tool name, feed
+        // the mistake back (with the available names + a "did you mean" hint)
+        // and retry — bounded. The bad assistant turn was never committed to
+        // `messages`, so injecting a corrective user message keeps it valid.
+        const badTool =
+          genErr instanceof Error
+            ? genErr.message.match(/Model tried to call unavailable tool ['"`]([^'"`]+)['"`]/i)?.[1]
+            : undefined;
+        if (badTool && unavailableToolNudges < MAX_UNAVAILABLE_TOOL_NUDGES) {
+          unavailableToolNudges += 1;
+          trace('unavailable_tool_nudge', { turn, badTool, attempt: unavailableToolNudges, via: 'sdk' });
+          messages = [
+            ...messages,
+            {
+              role: 'user',
+              content: '[système] ' + describeUnavailableTool(badTool, [...toolMap.keys()]),
+            } as ModelMessage,
+          ];
+          continue;
+        }
+        throw genErr; // not this error, or budget spent → outer catch fails loud
       } finally {
         clearInterval(hbInterval);
       }
@@ -1666,12 +1724,36 @@ export async function executeJob(
 
         const toolDef = toolMap.get(call.name);
         if (!toolDef) {
+          // Recoverable (mirrors the deferred-approval pattern above): feed the
+          // unavailable-tool mistake back as THIS call's tool-result so the
+          // message-structure invariant holds (every tool_use gets a
+          // tool_result) and the model can retry with a valid name. Bounded;
+          // after the budget, fail loud (invariant #4 / #8).
+          if (unavailableToolNudges < MAX_UNAVAILABLE_TOOL_NUDGES) {
+            unavailableToolNudges += 1;
+            trace('unavailable_tool_nudge', {
+              turn,
+              badTool: call.name,
+              attempt: unavailableToolNudges,
+              via: 'toolMap',
+            });
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: call.id,
+              toolName: call.name,
+              output: toResultOutput({
+                error: describeUnavailableTool(call.name, [...toolMap.keys()]),
+              }),
+            });
+            continue;
+          }
           await failJob(
             db,
             jobId as string,
             `whitelist_violation:${call.name}`,
             runStats(),
             messages,
+            `L'agent a appelé à répétition un outil indisponible (${call.name}).`,
           );
           return { status: 'failed', error: `whitelist_violation:${call.name}` };
         }
@@ -2444,7 +2526,11 @@ export async function executeJob(
       return { status: 'failed', error: `message_structure_invalid:${err.code}` };
     }
 
-    // AI SDK throws when model calls a tool not in the allowed list — map to whitelist_violation
+    // AI SDK throws when the model calls a tool not in the allowed list. The
+    // in-loop handler around generateText gives the model up to
+    // MAX_UNAVAILABLE_TOOL_NUDGES bounded chances to self-correct first; reaching
+    // here means that budget was spent (or the error surfaced past the loop), so
+    // we fail loud — now with a user-facing explanation, not just the code.
     if (err instanceof Error) {
       const unavailableMatch = err.message.match(
         /Model tried to call unavailable tool ['"`]([^'"`]+)['"`]/i,
@@ -2452,7 +2538,14 @@ export async function executeJob(
       if (unavailableMatch) {
         const toolName = unavailableMatch[1] ?? 'unknown_tool';
         const code = `whitelist_violation:${toolName}`;
-        await failJob(db, jobId as string, code, runStats(), messages);
+        await failJob(
+          db,
+          jobId as string,
+          code,
+          runStats(),
+          messages,
+          `L'agent a appelé à répétition un outil indisponible (${toolName}).`,
+        );
         return { status: 'failed', error: code };
       }
     }

