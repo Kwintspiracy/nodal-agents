@@ -1,7 +1,12 @@
 // @nodal-agents/llm — MiniMax native transport provider
 //
-// MiniMax exposes an Anthropic Messages-compatible endpoint at:
-//   https://api.minimax.io/anthropic
+// MiniMax exposes an Anthropic Messages-compatible endpoint. The messages route
+// is `https://api.minimax.io/anthropic/v1/messages` (the `/v1` matters — the
+// `/anthropic` root alone 404s; probed live: `/anthropic/messages`→404,
+// `/anthropic/v1/messages`→401). @ai-sdk/anthropic POSTs to `${baseURL}/messages`
+// (its default baseURL already includes `/v1`), so the baseURL we hand it MUST
+// end in `/v1`. Saved keys store the `/anthropic` root (so the connection test
+// can hit `/anthropic/v1/models`), hence we normalize here.
 //
 // We use @ai-sdk/anthropic's createAnthropic with a custom baseURL.
 //
@@ -71,6 +76,20 @@ function createMiniMaxFetch(
   };
 }
 
+// ─── baseURL normalization ────────────────────────────────────────────────────
+
+/**
+ * Ensure the MiniMax anthropic baseURL ends in `/v1`, since @ai-sdk/anthropic
+ * appends `/messages` to it. Saved keys store the `/anthropic` root (the
+ * connection test adds `/v1/models` itself), which would make the SDK POST to
+ * `/anthropic/messages` → 404. Idempotent: a baseURL already ending in `/v1` is
+ * left as-is. Trailing slashes are stripped first.
+ */
+export function normalizeMiniMaxBaseURL(raw: string): string {
+  const trimmed = raw.replace(/\/+$/, '');
+  return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
 // ─── Provider builder ──────────────────────────────────────────────────────────
 
 export function buildMiniMaxModel(config: ProviderConfig): LanguageModel {
@@ -78,7 +97,9 @@ export function buildMiniMaxModel(config: ProviderConfig): LanguageModel {
     throw new ProviderConfigError('minimax provider requires an apiKey');
   }
 
-  const baseURL = config.baseURL ?? PROVIDER_PRESETS.minimax.defaultBaseURL;
+  const baseURL = normalizeMiniMaxBaseURL(
+    config.baseURL ?? PROVIDER_PRESETS.minimax.defaultBaseURL,
+  );
 
   const provider = createAnthropic({
     // The SDK sends x-api-key using this value; the fetch wrapper swaps it to

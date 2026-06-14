@@ -8,10 +8,37 @@
 //    tested by intercepting the actual fetch before any network call is made).
 
 import { describe, it, expect, vi } from 'vitest';
-import { buildMiniMaxModel } from '../providers/minimax';
+import { buildMiniMaxModel, normalizeMiniMaxBaseURL } from '../providers/minimax';
 import { createLlmClient } from '../client';
 import { CAPABILITY_MATRIX } from '../providers/registry';
 import { ProviderConfigError } from '../errors';
+
+// ─── normalizeMiniMaxBaseURL ──────────────────────────────────────────────────
+
+describe('normalizeMiniMaxBaseURL', () => {
+  it('appends /v1 to the /anthropic root (the live 404 fix)', () => {
+    // The SDK POSTs to `${baseURL}/messages`; without /v1 it hits
+    // /anthropic/messages → 404 (proven live). With /v1 → /anthropic/v1/messages.
+    expect(normalizeMiniMaxBaseURL('https://api.minimax.io/anthropic')).toBe(
+      'https://api.minimax.io/anthropic/v1',
+    );
+  });
+
+  it('leaves a baseURL already ending in /v1 unchanged (idempotent)', () => {
+    expect(normalizeMiniMaxBaseURL('https://api.minimax.io/anthropic/v1')).toBe(
+      'https://api.minimax.io/anthropic/v1',
+    );
+  });
+
+  it('strips trailing slashes before normalizing', () => {
+    expect(normalizeMiniMaxBaseURL('https://api.minimax.io/anthropic/')).toBe(
+      'https://api.minimax.io/anthropic/v1',
+    );
+    expect(normalizeMiniMaxBaseURL('https://api.minimax.io/anthropic/v1/')).toBe(
+      'https://api.minimax.io/anthropic/v1',
+    );
+  });
+});
 
 // ─── buildMiniMaxModel ────────────────────────────────────────────────────────
 
