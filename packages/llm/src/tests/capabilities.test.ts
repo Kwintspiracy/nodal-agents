@@ -13,6 +13,8 @@ const PROVIDERS: ProviderName[] = [
   'mistral',
   'groq',
   'openrouter',
+  'deepseek',
+  'minimax',
 ];
 
 const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [

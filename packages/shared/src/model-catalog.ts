@@ -51,6 +51,51 @@ export interface ModelCatalogEntry {
 // listed (or local: openai-compatible / ollama) → no curated models, the form
 // falls back to free-text + Custom + Test.
 export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
+  // ─── Native DeepSeek (api.deepseek.com) ─────────────────────────────────────
+  // Model IDs verified against DeepSeek API docs (June 2026).
+  // Context windows from DeepSeek's documentation: both deepseek-chat and
+  // deepseek-reasoner support 64K output / 128K context.
+  deepseek: [
+    {
+      modelId: 'deepseek-chat',
+      label: 'DeepSeek Chat (V3)',
+      // deepseek-chat is the production alias for DeepSeek V3. Standard tool
+      // calling with forced tool_choice supported.
+      capabilities: { tools: true, forcedToolChoice: true },
+      contextWindow: 128_000,
+    },
+    {
+      modelId: 'deepseek-reasoner',
+      label: 'DeepSeek Reasoner (R1)',
+      // DeepSeek R1 — a reasoning/thinking model. Requires `thinking: {type: 'enabled'}`
+      // in the request (the deepseek.ts provider sets this automatically when
+      // reasoning:true). Also requires reasoning_content to be echoed back on
+      // assistant messages with tool_calls (the deepseek fetch shim handles this).
+      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
+      contextWindow: 128_000,
+    },
+  ],
+
+  // ─── Native MiniMax (api.minimax.io/anthropic) ───────────────────────────────
+  // MiniMax model IDs on their native Anthropic-compatible endpoint.
+  // NOTE: As of June 2026, MiniMax's latest production model on their native
+  // endpoint is MiniMax-M1. MiniMax-M2 was announced but its exact API model id
+  // may differ — use MiniMax-M1 until confirmed. Context window: MiniMax docs
+  // list 1M tokens for M-series; 200K is a conservative safe value.
+  // forcedToolChoice: false — MiniMax historically rejects tool_choice:'any' with
+  // a 400/404, consistent with what we observed via OpenRouter (minimax/minimax-m3).
+  minimax: [
+    {
+      modelId: 'MiniMax-M1',
+      label: 'MiniMax M1',
+      // Reasoning model — MiniMax M-series emits chain-of-thought.
+      // forcedToolChoice:false — the MiniMax endpoint rejects forced tool_choice.
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      // MiniMax docs advertise 1M context; 200K is the conservative catalogued
+      // value until confirmed with a live probe. Update when validated.
+      contextWindow: 200_000,
+    },
+  ],
   anthropic: [
     {
       modelId: 'claude-opus-4-8',

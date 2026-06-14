@@ -19,6 +19,8 @@ import { buildGoogleModel } from './providers/google';
 import { buildMistralModel } from './providers/mistral';
 import { buildGroqModel } from './providers/groq';
 import { buildOpenRouterModel } from './providers/openrouter';
+import { buildDeepSeekModel } from './providers/deepseek';
+import { buildMiniMaxModel } from './providers/minimax';
 
 // ─── Timeout config ───────────────────────────────────────────────────────────
 
@@ -102,6 +104,10 @@ function buildModel(config: ProviderConfig): LanguageModel {
       return buildGroqModel(config);
     case 'openrouter':
       return buildOpenRouterModel(config);
+    case 'deepseek':
+      return buildDeepSeekModel(config);
+    case 'minimax':
+      return buildMiniMaxModel(config);
     default: {
       // TypeScript exhaustiveness check
       const _exhaustive: never = config.provider;

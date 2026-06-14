@@ -12,7 +12,9 @@ export type ProviderName =
   | 'google'
   | 'mistral'
   | 'groq'
-  | 'openrouter';
+  | 'openrouter'
+  | 'deepseek'
+  | 'minimax';
 
 /**
  * All supported provider names as a runtime array.
@@ -27,6 +29,8 @@ export const PROVIDER_NAMES: ProviderName[] = [
   'mistral',
   'groq',
   'openrouter',
+  'deepseek',
+  'minimax',
 ];
 
 // ─── Capability flags ──────────────────────────────────────────────────────────

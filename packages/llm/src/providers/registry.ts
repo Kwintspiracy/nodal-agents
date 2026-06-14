@@ -34,6 +34,17 @@ export const PROVIDER_PRESETS = {
     defaultBaseURL: 'https://openrouter.ai/api/v1',
     defaultModel: 'anthropic/claude-3.5-sonnet',
   },
+  deepseek: {
+    defaultBaseURL: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+  },
+  minimax: {
+    // MiniMax's Anthropic Messages-compatible endpoint (native protocol, no proxy).
+    // Model ids verified against MiniMax docs (June 2026): MiniMax-M2 is the
+    // current production model; MiniMax-M3 is available in preview.
+    defaultBaseURL: 'https://api.minimax.io/anthropic',
+    defaultModel: 'MiniMax-M1',
+  },
 } as const;
 
 // ─── Capability matrix ─────────────────────────────────────────────────────────
@@ -103,6 +114,20 @@ export const CAPABILITY_MATRIX: Record<ProviderName, ProviderCapabilities> = {
     toolUse: true,
     promptCaching: false, // depends on underlying model; conservative default
     vision: false, // depends on underlying model; conservative default
+    structuredOutputs: false,
+    streaming: true,
+  },
+  deepseek: {
+    toolUse: true,
+    promptCaching: false, // DeepSeek does not support Anthropic-style cache_control headers
+    vision: false, // deepseek-chat and deepseek-reasoner are text-only
+    structuredOutputs: false,
+    streaming: true,
+  },
+  minimax: {
+    toolUse: true,
+    promptCaching: false, // MiniMax's Anthropic endpoint does not support cache_control
+    vision: false, // conservative default; MiniMax-M1/M2 are primarily text models
     structuredOutputs: false,
     streaming: true,
   },

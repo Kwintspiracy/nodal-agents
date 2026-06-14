@@ -22,6 +22,8 @@ const envSchema = z.object({
       'mistral',
       'groq',
       'openrouter',
+      'deepseek',
+      'minimax',
     ])
     .optional(),
   LLM_MODEL: z.string().optional(),
