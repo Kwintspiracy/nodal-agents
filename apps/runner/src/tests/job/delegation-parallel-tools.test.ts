@@ -386,7 +386,7 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
           {
             toolCallId: 'tc-rr-blocked',
             toolName: 'return_result',
-            args: { status: 'blocked' },
+            args: { status: 'blocked', reason: 'Cannot retry the same specialist at the cap' },
           },
         ],
       },
@@ -394,16 +394,17 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
 
     const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
 
-    // Parent reaches completion (blocked status), not failed via
-    // message_structure_invalid:unmatched_tool_use.
-    expect(result.status).toBe('completed');
+    // The regression guard: the parent finalizes via an HONEST block
+    // (error='agent_blocked'), NOT via message_structure_invalid:unmatched_tool_use.
+    // A self-declared block is a 'failed' terminal carrying the agent's reason.
+    expect(result.status).toBe('failed');
 
     const [parentRow] = await db
       .select({ messages: agentJobs.messages, status: agentJobs.status, error: agentJobs.error })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId));
-    expect(parentRow?.status).toBe('completed');
-    expect(parentRow?.error).toBeNull();
+    expect(parentRow?.status).toBe('failed');
+    expect(parentRow?.error).toBe('agent_blocked');
 
     const messages = (parentRow?.messages ?? []) as Array<{
       role: string;

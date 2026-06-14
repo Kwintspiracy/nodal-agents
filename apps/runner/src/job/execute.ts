@@ -225,7 +225,12 @@ function stableStringify(value: unknown): string {
 
 export type ExecuteJobResult =
   | { status: 'completed'; result: string }
-  | { status: 'failed'; error: string }
+  // `result` carries a user-facing explanation when one exists (e.g. a blocked
+  // agent's reason). It lets a delegating parent relay WHY a child stopped,
+  // not just the machine error code — never leave the user without an
+  // explanation. The job row's own result column is filled independently by
+  // failJob, so direct (non-delegated) surfaces don't depend on this.
+  | { status: 'failed'; error: string; result?: string }
   | { status: 'cancelled' }
   | { status: 'awaiting_approval' }
   | { status: 'awaiting_delegation' }
@@ -1196,6 +1201,12 @@ export async function executeJob(
   const MAX_UNRESOLVED_FAILURE_NUDGES = 2;
   let unresolvedFailureNudges = 0;
 
+  // A return_result(status='blocked') MUST carry a user-facing reason. If the
+  // agent omits it, nudge (bounded) for one before finalizing — never leave the
+  // user without an explanation (invariant #4 / explicit product requirement).
+  const MAX_BLOCKED_REASON_NUDGES = 2;
+  let blockedReasonNudges = 0;
+
   try {
     while (true) {
       turn += 1;
@@ -1803,7 +1814,10 @@ export async function executeJob(
               const childOutcome = await executeJob(delegation.childJobId, deps, _runnerEnv);
 
               if (childOutcome.status === 'failed') {
-                const childErr = childOutcome.error || 'unknown';
+                // Prefer the child's user-facing reason (e.g. an agent_blocked
+                // explanation) over the bare error code, so the parent can relay
+                // WHY the child stopped — not just that it did.
+                const childErr = childOutcome.result || childOutcome.error || 'unknown';
                 // Surface the failure as a tool_result so the parent's LLM can
                 // react (notify the user via telegram_send_message, try another
                 // sub-agent, return_result{status:'blocked'}, etc.) instead of
@@ -2014,6 +2028,93 @@ export async function executeJob(
         // success or honestly return status='blocked'; once the budget is spent,
         // fail loud. An honest status='blocked' passes straight through.
         const rrStatus = (returnResultCall.input as { status?: string } | undefined)?.status;
+
+        // ── status='blocked' — honest, explained termination ──────────────────
+        // A blocked task must NEVER leave the user without an explanation. We
+        // (1) require a reason — nudging the agent if it omitted one; (2) for a
+        // tool-delivery channel, make the agent deliver that reason via its
+        // channel tool so the user actually receives it; (3) finalize as
+        // 'failed' (error='agent_blocked') with the reason persisted to the
+        // user-facing result — never a fake 'completed'.
+        if (rrStatus === 'blocked') {
+          const reason = (
+            (returnResultCall.input as { reason?: string } | undefined)?.reason ?? ''
+          ).trim();
+
+          // L1 — no reason: nudge (bounded) for a concrete, user-facing one.
+          if (reason === '' && blockedReasonNudges < MAX_BLOCKED_REASON_NUDGES) {
+            blockedReasonNudges += 1;
+            trace('blocked_reason_nudge', { turn, attempt: blockedReasonNudges });
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: returnResultCall.toolCallId,
+              toolName: 'return_result',
+              output: toResultOutput({
+                error:
+                  "deferred: status='blocked' exige un champ `reason`. Rappelle return_result " +
+                  "avec une raison concrète et actionnable expliquant ce qui te bloque et ce que " +
+                  "l'utilisateur peut faire — il la verra telle quelle.",
+              }),
+            });
+            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [
+              ...messages,
+              {
+                role: 'user',
+                content:
+                  "[système] Tu t'es déclaré bloqué sans raison. Donne une raison concrète dans " +
+                  '`reason` (ce qui bloque + ce que l’utilisateur peut faire).',
+              } as ModelMessage,
+            ];
+            continue;
+          }
+
+          // L2-delivery — on a tool-delivery channel, the user only sees what the
+          // agent sends. If the reason wasn't delivered, nudge (bounded, shared
+          // budget) the agent to send it via its channel tool before we finalize.
+          if (
+            reason !== '' &&
+            requiresToolDelivery &&
+            !telegramDelivered &&
+            telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES
+          ) {
+            telegramRedeliveryNudges += 1;
+            trace('blocked_delivery_nudge', { turn, attempt: telegramRedeliveryNudges });
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: returnResultCall.toolCallId,
+              toolName: 'return_result',
+              output: toResultOutput({
+                error:
+                  "deferred: tu es bloqué mais l'utilisateur n'a rien reçu. Envoie d'abord ta " +
+                  'raison via ton outil de livraison (telegram_send_message), puis rappelle ' +
+                  "return_result avec status='blocked'.",
+              }),
+            });
+            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+            messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
+            continue;
+          }
+
+          // Finalize. Synthetic tool-result keeps the message-structure invariant.
+          // failJob writes the user-facing result: the agent's reason when present,
+          // else a generic backstop (L3) — never silence, never a fake 'completed'.
+          trace('return_result_blocked', { turn, hasReason: reason !== '' });
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: returnResultCall.toolCallId,
+            toolName: 'return_result',
+            output: toResultOutput({ acknowledged: true }),
+          });
+          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+          toolsUsed = [...new Set([...toolsUsed, 'return_result'])];
+
+          await failJob(db, jobId as string, 'agent_blocked', runStats(), messages, reason);
+          trace('exit_blocked_via_return_result', { hasReason: reason !== '' });
+          // Carry the reason so a delegating parent can relay WHY we stopped.
+          return { status: 'failed', error: 'agent_blocked', result: reason || undefined };
+        }
+
         if (rrStatus === 'success' && unresolvedToolFailures.size > 0) {
           const stuck = [...unresolvedToolFailures];
           if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {

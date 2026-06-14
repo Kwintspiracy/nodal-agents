@@ -237,6 +237,60 @@ describe('DB state helpers', () => {
     expect(completedAtMs).toBeLessThanOrEqual(after);
   });
 
+  it('failJob backstop: fills an empty result with a generic explanation naming the error code', async () => {
+    const jobId = await insertFreshJob('processing');
+    await failJob(db as Parameters<typeof failJob>[0], jobId, 'token_budget_exceeded');
+
+    const [row] = await db
+      .select({ result: agentJobs.result, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+
+    // Never silent: a non-empty, error-code-bearing explanation is surfaced.
+    expect(row?.error).toBe('token_budget_exceeded');
+    expect(row?.result).toBeTruthy();
+    expect(row?.result).toContain('token_budget_exceeded');
+  });
+
+  it('failJob backstop: persists the supplied userMessage verbatim as the user-facing result', async () => {
+    const jobId = await insertFreshJob('processing');
+    const reason = 'Missing the Notion API key — add it under Connectors, then retry.';
+    await failJob(
+      db as Parameters<typeof failJob>[0],
+      jobId,
+      'agent_blocked',
+      undefined,
+      undefined,
+      reason,
+    );
+
+    const [row] = await db
+      .select({ result: agentJobs.result, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+
+    expect(row?.error).toBe('agent_blocked');
+    expect(row?.result).toBe(reason);
+  });
+
+  it('failJob backstop: preserves an existing non-empty result (partial delivery not clobbered)', async () => {
+    const jobId = await insertFreshJob('processing');
+    await db
+      .update(agentJobs)
+      .set({ result: 'partial delivery from dashboard_publish' })
+      .where(eq(agentJobs.id, jobId));
+
+    await failJob(db as Parameters<typeof failJob>[0], jobId, 'unresolved_tool_failure');
+
+    const [row] = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+
+    // The partial content the agent already delivered must survive the failure.
+    expect(row?.result).toBe('partial delivery from dashboard_publish');
+  });
+
   it('cancelJob stamps completedAt + persists messages WITHOUT touching status', async () => {
     // The status column is flipped to 'cancelled' by `cancelJobAction`
     // (web), not by this helper — the helper only finalises the row.

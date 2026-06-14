@@ -300,16 +300,18 @@ describe('job-with-adapter: Drive connector fully enabled (enabledOperations=nul
             // terminal is 'blocked' — and Guard 3b (no-false-success) would
             // correctly refuse a 'success' claim while drive_list_files is
             // unresolved. This test only verifies wiring (the tool_calls row).
+            // A blocked result must carry a reason; it finalizes as 'failed'
+            // (error='agent_blocked') with the reason surfaced to the user.
             toolCallId: 'tc-rr',
             toolName: 'return_result',
-            args: { status: 'blocked' },
+            args: { status: 'blocked', reason: 'Drive call failed under this harness' },
           },
         ],
       },
     ]);
 
     const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
-    expect(result.status).toBe('completed');
+    expect(result.status).toBe('failed');
 
     // Primary assertion: tool_calls table must have a row for drive_list_files.
     // This proves the adapter was instantiated and the tool was available to the LLM.

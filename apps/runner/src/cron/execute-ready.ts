@@ -200,7 +200,9 @@ export async function executeReadyTasks(
         .update(agentTasks)
         .set({
           status: 'blocked', // blocked = needs attention, can be retried
-          result: result.error,
+          // Prefer the user-facing reason (e.g. agent_blocked) over the bare
+          // error code so the compiled task result explains WHY it stopped.
+          result: result.result ?? result.error,
           updatedAt: new Date(),
         })
         .where(eq(agentTasks.id, exec.taskId));

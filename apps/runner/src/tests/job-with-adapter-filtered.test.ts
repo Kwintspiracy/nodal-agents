@@ -301,14 +301,19 @@ describe('job-with-adapter-filtered: enabledOperations whitelist', () => {
         toolCalls: [
           // Drive errors under this harness (googleapis bypasses the fetch spy),
           // so 'blocked' is the honest terminal; Guard 3b would refuse a 'success'
-          // claim while drive_list_files is unresolved. Wiring test only.
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'blocked' } },
+          // claim while drive_list_files is unresolved. Wiring test only. A
+          // blocked result carries a reason and finalizes as 'failed'.
+          {
+            toolCallId: 'tc-rr',
+            toolName: 'return_result',
+            args: { status: 'blocked', reason: 'Drive call failed under this harness' },
+          },
         ],
       },
     ]);
 
     const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
-    expect(result.status).toBe('completed');
+    expect(result.status).toBe('failed');
 
     // drive_list_files was called — the tool was available (whitelisted)
     const tcRows = await db

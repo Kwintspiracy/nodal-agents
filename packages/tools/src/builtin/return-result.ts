@@ -8,6 +8,13 @@ import type { ToolDefinition } from '../types';
 
 export const ReturnResultInputSchema = z.object({
   status: z.enum(['success', 'blocked']),
+  // When status='blocked', `reason` MUST explain WHY the agent is blocked and
+  // what the user can do about it. Kept optional at the schema level so a
+  // blocked call without a reason still parses and reaches the runner, which
+  // nudges the agent for one (bounded) rather than failing the tool-parse
+  // opaquely. The runner enforces non-empty on blocked and surfaces it to the
+  // user — a blocked task must never leave the user without an explanation.
+  reason: z.string().optional(),
 });
 
 export type ReturnResultInput = z.infer<typeof ReturnResultInputSchema>;
@@ -23,7 +30,10 @@ export const returnResultTool: ToolDefinition<typeof ReturnResultInputSchema, Re
     'failures automatically (defers finalization if a sibling tool errors), so there is no need ' +
     'to wait for tool results before signaling completion — splitting into separate turns ' +
     'doubles input token cost (the full conversation replays) for no benefit. ' +
-    'Use status="blocked" if you cannot proceed after 2 attempts.',
+    'Use status="blocked" if you cannot proceed after 2 attempts. When you set status="blocked" ' +
+    'you MUST also set `reason` to a clear, user-facing explanation of what blocked you and what ' +
+    'the user can do next (e.g. "Missing the Notion API key — add it under Connectors, then retry."). ' +
+    'The user sees this reason verbatim, so write it for them, not for yourself.',
   inputSchema: ReturnResultInputSchema,
   riskLevel: 'write',
   execute: async (input, _ctx) => {

@@ -1,7 +1,7 @@
 // job/state.ts — JobState machine: transitions and typed state values
 // All transitions are explicit. Invalid transitions throw JobStateError.
 
-import { and, eq, notInArray } from '@nodal-agents/db';
+import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
@@ -131,6 +131,20 @@ interface RunStats {
 const TERMINAL_STATUSES: JobStatus[] = ['completed', 'failed', 'cancelled'];
 
 /**
+ * Generic, user-facing explanation for a failure that carried no other message.
+ *
+ * Invariant #2 exception (no hardcoded user-facing text in the runner): this is
+ * the deliberate, minimal exception that invariant #4 (no silent failures)
+ * demands and that the product explicitly requires — a job must NEVER leave the
+ * user without an explanation after a fail/block. The machine `errorCode` stays
+ * in agent_jobs.error for diagnostics; this string is the last-resort prose the
+ * user reads when neither the agent nor a delivery tool left anything.
+ */
+function genericFailExplanation(errorCode: string): string {
+  return `⚠️ The task could not be completed (${errorCode}) and no explanation was provided.`;
+}
+
+/**
  * Mark a job as completed. Sets result, completedAt, and clears error.
  * Persists per-turn accumulated token counts and final turn when provided.
  *
@@ -204,6 +218,15 @@ export async function completeJob(
  * terminal state. Returns true if the write landed, false if the row was already
  * terminal (race lost — e.g. orphan reaper already marked it failed before this
  * call arrived).
+ *
+ * Explanation backstop (invariant #4 — no silent failures): after the status
+ * write lands, guarantee the user-facing `result` column is non-empty. When the
+ * caller supplies `userMessage` (e.g. a blocked agent's reason) it is used
+ * verbatim; otherwise a generic, error-code-derived system notice is written.
+ * Filled ONLY when `result` is currently empty, so a partial delivery written
+ * earlier in the job (e.g. dashboard_publish) is preserved. This anchors the
+ * rule "never leave the user without an explanation after a fail/block" for
+ * EVERY fail path (return_result blocked, guards, transport death, orphan reap).
  */
 export async function failJob(
   db: AnyDrizzleDb,
@@ -211,6 +234,7 @@ export async function failJob(
   errorCode: string,
   stats?: RunStats,
   messages?: unknown[],
+  userMessage?: string,
 ): Promise<boolean> {
   const now = new Date();
   const rows = await db
@@ -239,7 +263,28 @@ export async function failJob(
     .where(and(eq(agentJobs.id, jobId), notInArray(agentJobs.status, TERMINAL_STATUSES)))
     .returning({ id: agentJobs.id });
 
-  return rows.length > 0 && rows[0]?.id === jobId;
+  const landed = rows.length > 0 && rows[0]?.id === jobId;
+
+  // Explanation backstop — only when WE won the terminal write (don't clobber a
+  // result owned by whoever already finalized the row). Fills `result` only if
+  // it is still empty, preserving any partial delivery from earlier in the job.
+  if (landed) {
+    const explanation =
+      userMessage && userMessage.trim().length > 0
+        ? userMessage.trim()
+        : genericFailExplanation(errorCode);
+    await db
+      .update(agentJobs)
+      .set({ result: explanation, updatedAt: new Date() })
+      .where(
+        and(
+          eq(agentJobs.id, jobId),
+          or(isNull(agentJobs.result), eq(agentJobs.result, '')),
+        ),
+      );
+  }
+
+  return landed;
 }
 
 /**

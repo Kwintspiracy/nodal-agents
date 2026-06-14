@@ -1074,7 +1074,7 @@ describe('executeJob', () => {
           {
             toolCallId: 'tc-rr2',
             toolName: 'return_result',
-            args: { status: 'blocked' },
+            args: { status: 'blocked', reason: 'save_memory failed, cannot proceed' },
           },
         ],
       },
@@ -1082,19 +1082,20 @@ describe('executeJob', () => {
 
     const result = await executeJob(guardJob.id as JobId, makeDeps(llmClient), testEnv);
 
-    // Job completes on turn 2, not turn 1
-    expect(result.status).toBe('completed');
+    // Job finalizes on turn 2, not turn 1. The honest block ends it as 'failed'.
+    expect(result.status).toBe('failed');
 
     const rows = await db
       .select({ status: agentJobs.status, result: agentJobs.result, turn: agentJobs.turn })
       .from(agentJobs)
       .where(eq(agentJobs.id, guardJob.id));
 
-    // LLM was called twice (turn === 2, not 1)
+    // LLM was called twice (turn === 2, not 1) — the invariant under test: the
+    // sibling tool error forced a second turn before finalization.
     expect(rows[0]?.turn).toBe(2);
-    // Brique 33: result is empty because no dashboard_publish was called.
-    // Guard still forced a second turn — that is the invariant being tested here.
-    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.status).toBe('failed');
+    // The block reason is surfaced to the user via the result column.
+    expect(rows[0]?.result).toBe('save_memory failed, cannot proceed');
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
@@ -2507,7 +2508,11 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
       },
       {
         toolCalls: [
-          { toolCallId: 'tc-rr-c', toolName: 'return_result', args: { status: 'blocked' } },
+          {
+            toolCallId: 'tc-rr-c',
+            toolName: 'return_result',
+            args: { status: 'blocked', reason: 'Memory save was rejected, cannot continue' },
+          },
         ],
       },
     ]);
@@ -2538,7 +2543,7 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
 
     // Resume.
     const resumeResult = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
-    expect(resumeResult.status).toBe('completed');
+    expect(resumeResult.status).toBe('failed');
 
     // save_memory.execute() must NOT have run — no agent_memory row for the fact.
     const memAfter = await approvalDb
@@ -2931,27 +2936,82 @@ describe('reliability guards', () => {
     expect(row?.error).toBe('unresolved_tool_failure');
   });
 
-  it('Guard 3b: an honest return_result(status="blocked") after a failure passes through', async () => {
+  it('Guard 3b: an honest return_result(status="blocked") after a failure finalizes as agent_blocked', async () => {
     const job = await createTestJob(db, seed);
     // Turn 1: save_memory fails. Turn 2: the agent is HONEST — status='blocked'.
-    // The guard must NOT fire; the job completes (blocked is a valid terminal).
+    // Guard 3b must NOT convert this into unresolved_tool_failure: an honest block
+    // passes through to its own terminal — 'failed' with error='agent_blocked',
+    // carrying the agent's reason (never a false success, never silence).
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'sm-bad2', toolName: 'save_memory', args: {} }] },
       {
         toolCalls: [
-          { toolCallId: 'rr-blocked', toolName: 'return_result', args: { status: 'blocked' } },
+          {
+            toolCallId: 'rr-blocked',
+            toolName: 'return_result',
+            args: { status: 'blocked', reason: 'Could not save the memory, stopping' },
+          },
         ],
       },
     ]);
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('completed');
+    expect(result.status).toBe('failed');
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    expect(row?.status).toBe('completed');
-    expect(row?.error).toBeNull();
+    expect(row?.status).toBe('failed');
+    // NOT unresolved_tool_failure — the honest block is its own terminal.
+    expect(row?.error).toBe('agent_blocked');
+    expect(row?.result).toBe('Could not save the memory, stopping');
+  });
+
+  it('return_result(status="blocked") with NO reason → nudged, then finalizes with a generic explanation (never completed, never silent)', async () => {
+    const job = await createTestJob(db, seed);
+    // The agent declares itself blocked but gives no reason on every turn. The
+    // runner nudges (MAX_BLOCKED_REASON_NUDGES=2) for a user-facing reason, then
+    // finalizes honestly with a generic backstop — the user is NEVER left
+    // without an explanation, and the job is NEVER a fake 'completed'.
+    // Distinct tool-call ids per turn (real LLMs never reuse an id; reusing one
+    // would trip the duplicate_tool_use message-structure guard).
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'rr-nr-1', toolName: 'return_result', args: { status: 'blocked' } },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'rr-nr-2', toolName: 'return_result', args: { status: 'blocked' } },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'rr-nr-3', toolName: 'return_result', args: { status: 'blocked' } },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('failed');
+
+    const [row] = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        result: agentJobs.result,
+        turn: agentJobs.turn,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toBe('agent_blocked');
+    // The backstop explanation is non-empty and names the machine reason — the
+    // user sees something actionable rather than silence.
+    expect(row?.result).toBeTruthy();
+    expect(row?.result).toContain('agent_blocked');
+    // Two nudges (turns 1 & 2) before finalizing on turn 3.
+    expect(row?.turn).toBe(3);
   });
 
   // ─── Guard 1d — no-delivery runaway detector ─────────────────────────────
