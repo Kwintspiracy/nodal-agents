@@ -1278,13 +1278,20 @@ function CommandExecutionSection({
           onClick={() => handleToggle(!yoloEnabled)}
           className={[
             'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
-            yoloEnabled ? 'border-err/40 bg-err/20' : 'border-rule-2 bg-canvas',
+            // Dormant (rule exists but workspace Yolo is off): show it in the ON
+            // position but neutral grey, not active red — it's inert at runtime.
+            isDormant
+              ? 'border-ink-4/40 bg-ink-4/20'
+              : yoloEnabled
+                ? 'border-err/40 bg-err/20'
+                : 'border-rule-2 bg-canvas',
           ].join(' ')}
         >
           <span
             className={[
               'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
-              yoloEnabled ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3',
+              yoloEnabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
+              isDormant ? 'bg-ink-4' : yoloEnabled ? 'bg-err' : 'bg-ink-3',
             ].join(' ')}
           />
         </button>
