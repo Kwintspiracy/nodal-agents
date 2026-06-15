@@ -23,7 +23,7 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agents, agentAssignments, agentMemory } from '@nodal-agents/db';
+import { agentJobs, agents, agentAssignments, agentMemory, agentTasks } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -481,5 +481,118 @@ describe('delegation + parallel tool calls — message-structure integrity', () 
 
     const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
     expect(result.status).toBe('completed');
+  });
+});
+
+// ─── Phase 3: unified orchestrator ─────────────────────────────────────────────
+
+describe('unified orchestrator — one orchestrator drives BOTH delegation styles', () => {
+  it('PHASE 3: a router-configured orchestrator that calls create_task fans out to the task board (awaiting_tasks)', async () => {
+    // The seed orchestrator is role=orchestrator, orchestratorMode='router' (set
+    // in beforeAll). Pre-Phase-3 it received ONLY assign_* tools, so a create_task
+    // call would trip AI_NoSuchToolError. Phase 3 hands every orchestrator BOTH
+    // toolsets and lets the model choose per request. Here it chooses the planner
+    // path: create_task → the job suspends into the task board instead of
+    // completing inline (the cron's deliverCompletedRoots owns the final state).
+    const jobId = await createOrchestratorJob();
+
+    const [childRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, childAgentId));
+    if (!childRow) throw new Error('child agent missing');
+
+    const llmClient = makeMockLlmClient([
+      // Turn 1: create one task assigned to the worker by its slug (the planner
+      // handle the unified team block now advertises for every child).
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-create-task',
+            toolName: 'create_task',
+            args: { title: 'Do the parallelizable thing', assigned_to: childRow.slug },
+          },
+        ],
+      },
+      // Turn 2: acknowledge — the task board takes over from here.
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-ack', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+
+    // The router-configured orchestrator suspended into the planner flow — it did
+    // NOT complete inline. That proves create_task was BOTH available and honored.
+    expect(result.status).toBe('awaiting_tasks');
+
+    // A real task row exists, rooted at this job and assigned to the worker by id.
+    const taskRows = await db
+      .select({
+        id: agentTasks.id,
+        rootJobId: agentTasks.rootJobId,
+        assignedAgentId: agentTasks.assignedAgentId,
+        status: agentTasks.status,
+        title: agentTasks.title,
+      })
+      .from(agentTasks)
+      .where(eq(agentTasks.rootJobId, jobId));
+    expect(taskRows).toHaveLength(1);
+    expect(taskRows[0]?.assignedAgentId).toBe(childAgentId);
+    expect(taskRows[0]?.status).toBe('todo');
+    expect(taskRows[0]?.title).toBe('Do the parallelizable thing');
+
+    // The job stays non-terminal (processing) so the cron can finalize it — it
+    // must NOT be completed/failed here.
+    const [jobRow] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    expect(jobRow?.status).toBe('processing');
+  });
+
+  it('PHASE 3: the same orchestrator still drives the router path (assign_<child> suspends into delegation)', async () => {
+    // Counterpart to the create_task test: the unified orchestrator, given an
+    // assign_<child> call instead, takes the in-line router path and completes
+    // after the child returns — proving BOTH styles work from one orchestrator
+    // without a mode flag gating the toolset.
+    const jobId = await createOrchestratorJob();
+
+    const [childRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, childAgentId));
+    if (!childRow) throw new Error('child agent missing');
+    const assignToolName = `assign_${childRow.slug.replace(/-/g, '_')}`;
+
+    const llmClient = makeMockLlmClient([
+      // Parent turn 1: a single in-line delegation.
+      { toolCalls: [{ toolCallId: 'tc-assign-u', toolName: assignToolName, args: { task: 'go' } }] },
+      // Child turn 1: publish + return so it completes synchronously.
+      {
+        toolCalls: [
+          { toolCallId: 'tc-pub-u', toolName: 'dashboard_publish', args: { text: 'done' } },
+          { toolCallId: 'tc-rr-child-u', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      // Parent turn 2: finalize after the delegation result is injected.
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-parent-u', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(jobId as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // No task-board rows were created — this job took the router path, not planner.
+    const taskRows = await db
+      .select({ id: agentTasks.id })
+      .from(agentTasks)
+      .where(eq(agentTasks.rootJobId, jobId));
+    expect(taskRows).toHaveLength(0);
   });
 });

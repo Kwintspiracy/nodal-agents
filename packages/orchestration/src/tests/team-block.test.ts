@@ -133,19 +133,27 @@ describe('buildTeamBlock', () => {
     expect(block2).not.toContain('Original instruction');
   });
 
-  it('generates assign_* tool references for router mode', async () => {
+  it('exposes BOTH delegation styles for a team with sub-orchestrators, leaning router', async () => {
+    // Unified orchestrator (Phase 3): a team WITH sub-orchestrators auto-detects
+    // `router`, but the block must still offer create_task fan-out — the model
+    // picks per request. Only the soft "default lean" reflects the detected mode.
     const { entityId } = await seedContext(db);
     const subOrch = await seedAgent(db, entityId, `test-sub-orch-${Date.now()}`, 'orchestrator');
     const orch = await seedAgent(db, entityId, `test-orch-router-${Date.now()}`, 'orchestrator');
     await assignChild(db, orch.id, subOrch.id, entityId);
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    // Router mode: should reference assign_* tools
-    expect(block).toContain('assign_');
-    expect(block).toContain('router orchestrator');
+    const toolSlug = subOrch.slug.replace(/-/g, '_');
+    // Both styles offered regardless of detected mode.
+    expect(block).toContain(`assign_${toolSlug}`); // in-line delegation tool for the child
+    expect(block).toContain('create_task'); // parallel fan-out also offered
+    // Soft lean reflects the auto-detected router default (has sub-orchestrators).
+    expect(block).toContain('includes sub-orchestrators');
   });
 
-  it('generates assigned_to references for planner mode', async () => {
+  it('exposes BOTH delegation styles for a workers-only team, leaning planner', async () => {
+    // Unified orchestrator (Phase 3): a workers-only team auto-detects `planner`,
+    // but the in-line assign_* tool must ALSO be present for single/sequential work.
     const { entityId } = await seedContext(db);
     const orch = await seedAgent(
       db,
@@ -158,8 +166,13 @@ describe('buildTeamBlock', () => {
     await assignChild(db, orch.id, w.id, entityId);
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    expect(block).toContain('assigned_to');
-    expect(block).toContain('planning orchestrator');
+    const toolSlug = w.slug.replace(/-/g, '_');
+    // Both styles offered regardless of detected mode.
+    expect(block).toContain('create_task'); // parallel fan-out
+    expect(block).toContain('assigned_to'); // task handle reference for the board
+    expect(block).toContain(`assign_${toolSlug}`); // in-line tool ALSO available
+    // Soft lean reflects the auto-detected planner default (workers only).
+    expect(block).toContain('independent workers');
   });
 
   it('includes skill names from DB in team block', async () => {

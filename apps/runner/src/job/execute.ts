@@ -10,7 +10,6 @@ import { eq, and, isNull } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
-  agentAssignments,
   agentTasks,
   approvalRules,
   approvalRequests,
@@ -47,7 +46,6 @@ import type { ToolDefinition, ApprovalRule, ToolProvisioning } from '@nodal-agen
 import {
   ChainCounters,
   DEFAULT_LIMITS,
-  detectOrchestratorMode,
   generateAssignTools,
   generateTaskTools,
   handleDelegation,
@@ -65,7 +63,6 @@ import type {
   AgentId,
   JobId,
   EntityId,
-  OrchestratorMode,
   Agent,
   JobContext,
 } from '@nodal-agents/orchestration';
@@ -492,26 +489,14 @@ export async function executeJob(
     });
   }
 
-  // ── 4. Load child agents ──────────────────────────────────────────────────────
-  const childRows = await db
-    .select({ id: agents.id, slug: agents.slug, role: agents.role })
-    .from(agentAssignments)
-    .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
-    .where(and(eq(agentAssignments.orchestratorId, agentRow.id), eq(agents.active, true)));
-
-  const children = childRows.map((r) => ({
-    id: r.id as AgentId,
-    name: r.slug,
-    slug: r.slug,
-    role: (r.role ?? 'agent') as 'agent' | 'orchestrator' | 'system',
-    description: r.slug,
-  }));
-
-  // ── 5. Detect orchestrator mode ───────────────────────────────────────────────
-  const orchestratorMode: OrchestratorMode = detectOrchestratorMode(agent, children);
+  // ── 4. Orchestrator? ──────────────────────────────────────────────────────────
+  // A unified orchestrator receives BOTH delegation toolsets (assign_* + create_task)
+  // and picks the style per request — so the runner no longer pre-detects a single
+  // router/planner mode here. The child list and mode detection live in the team
+  // block (orchestration/team-block.ts), which builds the prompt guidance from DB.
   const isOrchestrator = agent.role === 'orchestrator';
 
-  // ── 6. Build system prompt ────────────────────────────────────────────────────
+  // ── 5. Build system prompt ────────────────────────────────────────────────────
   // Build jobContext from job columns — the runner exposes data, the agent
   // personality decides what to do with it (invariant #1: data-driven behavior).
   // `agent_jobs.chat_id` carries the explicit Telegram-delivery intent: each
@@ -540,7 +525,7 @@ export async function executeJob(
       .where(eq(agentJobs.id, jobId as string));
   }
 
-  // ── 7. Build tool set ─────────────────────────────────────────────────────────
+  // ── 6. Build tool set ─────────────────────────────────────────────────────────
   let toolDefs: AnyToolDef[];
 
   // Always-on built-ins (excluding return_result, which is handled per-branch
@@ -606,32 +591,26 @@ export async function executeJob(
       .filter((t): t is AnyToolDef => t !== undefined);
 
     if (isOrchestrator) {
-      if (orchestratorMode === 'router') {
-        const assignTools = (await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[];
-        const returnResult = registry.get('return_result');
-        toolDefs = returnResult
-          ? [...assignTools, ...memoryBuiltins, returnResult, ...metaToolDefs, ...capabilityTools]
-          : [...assignTools, ...memoryBuiltins, ...metaToolDefs, ...capabilityTools];
-      } else {
-        const [createTaskTool, listTasksTool] = generateTaskTools(agent.id, db);
-        const returnResult = registry.get('return_result');
-        toolDefs = returnResult
-          ? [
-              createTaskTool as unknown as AnyToolDef,
-              listTasksTool as unknown as AnyToolDef,
-              ...memoryBuiltins,
-              returnResult,
-              ...metaToolDefs,
-              ...capabilityTools,
-            ]
-          : [
-              createTaskTool as unknown as AnyToolDef,
-              listTasksTool as unknown as AnyToolDef,
-              ...memoryBuiltins,
-              ...metaToolDefs,
-              ...capabilityTools,
-            ];
-      }
+      // Unified orchestrator: expose BOTH delegation styles and let the model
+      // pick per request. assign_* (router) for a SINGLE or reactive/dependent
+      // delegation where it needs a result before deciding the next step;
+      // create_task (planner) for INDEPENDENT parallel fan-out (the task board
+      // runs them concurrently and compiles). A job commits to its first style
+      // — once it has created tasks, the assign_ block below defers, so the two
+      // completion models never run on the same job. `orchestratorMode` is now a
+      // soft preference surfaced in the prompt, not a hard XOR on the toolset.
+      const assignTools = (await generateAssignTools(agent.id, db)) as unknown as AnyToolDef[];
+      const [createTaskTool, listTasksTool] = generateTaskTools(agent.id, db);
+      const returnResult = registry.get('return_result');
+      toolDefs = [
+        ...assignTools,
+        createTaskTool as unknown as AnyToolDef,
+        listTasksTool as unknown as AnyToolDef,
+        ...memoryBuiltins,
+        ...(returnResult ? [returnResult] : []),
+        ...metaToolDefs,
+        ...capabilityTools,
+      ];
     } else {
       // Worker: whitelist from skill assignments + always-on tools + capability tools
       // Join to agent_skills to retrieve requiredBuiltins for each assigned skill.
@@ -1798,6 +1777,41 @@ export async function executeJob(
 
         if (call.name.startsWith('assign_')) {
           const childSlug = call.name.replace(/^assign_/, '').replace(/_/g, '-');
+
+          // Unified-orchestrator commit guard. A job that already fanned out via
+          // create_task is a PLANNER job — its completion runs through the task
+          // board (awaiting_tasks → deliverCompletedRoots). Honoring an assign_
+          // here would ALSO suspend it into the router's awaiting_delegation,
+          // colliding the two completion models on one row. Defer the assign_
+          // (and flush its deferred siblings so every tool_use stays matched) so
+          // the job keeps the delegation style it committed to first. Within a
+          // turn this fires because create_task is processed before the assign_;
+          // across turns because the tasks persist.
+          const [committedToTasks] = await db
+            .select({ id: agentTasks.id })
+            .from(agentTasks)
+            .where(eq(agentTasks.rootJobId, jobId as string))
+            .limit(1);
+          if (committedToTasks) {
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: call.id,
+              toolName: call.name,
+              output: toResultOutput({
+                error:
+                  'deferred: this job already delegates via the task board (create_task). Do NOT also assign_ — let the tasks run and compile, or add more parallel work with create_task. Mixing both delegation styles on one job is not allowed.',
+              }),
+            });
+            for (const sr of sideToolResults) {
+              toolResultBlocks.push({
+                type: 'tool-result',
+                toolCallId: sr.tool_use_id,
+                toolName: sr.toolName,
+                output: toResultOutput({ error: sr.content }),
+              });
+            }
+            continue;
+          }
 
           // Per-slug naive-retry block. `resumeDelegated` set
           // `last_failed_delegation_slug` to the slug of the last failed child;

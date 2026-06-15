@@ -194,56 +194,64 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     return `\n  Tools: ${parts.join('; ')}`;
   }
 
+  // Unified orchestrator: every orchestrator receives BOTH delegation toolsets at
+  // runtime (assign_* for in-line/sequential delegation, create_task for parallel
+  // fan-out — see apps/runner/src/job/execute.ts tool selection). So the prompt
+  // presents BOTH styles and lets the model pick per request, rather than a hard
+  // router/planner XOR. `mode` (auto-detected from child roles, or pinned by the
+  // operator) is surfaced only as a soft default lean — never as an exclusive
+  // instruction. The runtime enforces "one style per job": once create_task has
+  // run, the assign_* path defers (execute.ts commit guard), so the two completion
+  // models never collide on the same job.
+  const defaultLean =
+    mode === 'router'
+      ? 'Default lean: this team includes sub-orchestrators, so in-line `assign_*` ' +
+        'delegation is usually the right call — reach for `create_task` only when you ' +
+        'have genuinely independent work to run in parallel.'
+      : 'Default lean: this team is independent workers, so `create_task` parallel ' +
+        'fan-out is usually the right call for multi-part work — use `assign_*` when a ' +
+        'single agent can handle the whole request or when steps depend on each other.';
+
   // Build lines array (all data from DB — no hardcoded names)
   const lines: string[] = [];
-
-  if (mode === 'router') {
-    lines.push('## Your team\n');
+  lines.push('## Your team\n');
+  lines.push(
+    'You orchestrate the agents below. You have TWO ways to delegate — choose the one ' +
+      'that fits the request:\n',
+  );
+  lines.push(
+    '- **`assign_<agent>` — one delegation, in-line.** Hand the request (or a single ' +
+      'step of it) to ONE agent and get its result back before continuing. Use this for a ' +
+      'single delegation, or when the next step depends on this one’s result (reactive / ' +
+      'sequential work). Only one assignment per turn; after the agent returns, either ' +
+      'finish with `return_result` or assign the next step. Do NOT delegate again unless ' +
+      'the request needs another step.',
+  );
+  lines.push(
+    '- **`create_task` — parallel fan-out.** Create several INDEPENDENT tasks at once, ' +
+      'each `assigned_to` an agent by its handle. They run concurrently in the background ' +
+      'and their results are compiled and delivered automatically once all finish. Use ' +
+      'this when the pieces of work do not depend on each other and can run in parallel. ' +
+      'Use `depends_on` to order tasks that must run in sequence within the board. After ' +
+      'creating the tasks, end your turn with a brief `return_result` acknowledgment — the ' +
+      'task board runs them, so do NOT call `list_tasks` to wait (only use it to fetch a ' +
+      'task ID for a `depends_on` reference).\n',
+  );
+  lines.push(
+    'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
+  );
+  lines.push('Your agents:');
+  for (const row of childRows) {
+    const { subAgentId, agentName, agentSlug, agentRole, instructions } = row;
+    const toolSlug = agentSlug.replace(/-/g, '_');
+    const skills = skillMap.get(subAgentId) ?? [];
+    const skillsTag = skills.length > 0 ? `\n  Skills: ${skills.join(', ')}` : '';
+    const connectorsTag = formatConnectorsTag(subAgentId);
+    const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
+    const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
     lines.push(
-      'You are a **router orchestrator**. Route requests to the right sub-agent using their `assign_*` tool.\n',
-    );
-    for (const row of childRows) {
-      const { subAgentId, agentName, agentSlug, agentRole, instructions } = row;
-      const toolSlug = agentSlug.replace(/-/g, '_');
-      const skills = skillMap.get(subAgentId) ?? [];
-      const skillsTag = skills.length > 0 ? `\n  Skills: ${skills.join(', ')}` : '';
-      const connectorsTag = formatConnectorsTag(subAgentId);
-      const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
-      const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
-      lines.push(
-        `- **${agentName}**${roleTag} — use \`assign_${toolSlug}\` to assign work${skillsTag}${connectorsTag}${instrTag}`,
-      );
-    }
-    // Flow control: without this the router-mode LLM keeps re-delegating after
-    // the child returns instead of finishing the request, exhausting the chain
-    // limit. Generic instruction for the router role — not agent-specific.
-    lines.push(
-      "\nAfter a sub-agent returns its result, call `return_result` with the final answer for the user. Do NOT delegate again unless the user's request explicitly requires another agent.",
-    );
-  } else {
-    // planner
-    lines.push('## Your team\n');
-    lines.push(
-      'You are a **planning orchestrator**. Create tasks using `create_task` and assign them to agents.\n',
-    );
-    for (const row of childRows) {
-      const { subAgentId, agentName, agentSlug, agentRole, instructions } = row;
-      const skills = skillMap.get(subAgentId) ?? [];
-      const skillsTag = skills.length > 0 ? `\n  Skills: ${skills.join(', ')}` : '';
-      const connectorsTag = formatConnectorsTag(subAgentId);
-      const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
-      const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
-      lines.push(
-        `- **${agentName}**${roleTag} (assigned_to: \`${agentSlug}\`)${skillsTag}${connectorsTag}${instrTag}`,
-      );
-    }
-    // Flow control: planner tasks are executed asynchronously by the cron;
-    // the orchestrator must NOT poll list_tasks waiting for them. Without this
-    // line, gemma-3-27b-class models call list_tasks every turn until they
-    // hit a tool-call limit. After creating tasks the orchestrator's job ends,
-    // and `deliverCompletedRoots` compiles + delivers the final result later.
-    lines.push(
-      "\nAfter creating the tasks you need (one or more `create_task` calls), call `return_result` with a brief acknowledgment. Tasks run asynchronously in the background — do NOT call `list_tasks` to wait for them. Only use `list_tasks` if you need a previously created task's ID to set up a `depends_on` reference for the next task.",
+      `- **${agentName}**${roleTag} — assign tool \`assign_${toolSlug}\`, task handle ` +
+        `\`${agentSlug}\`${skillsTag}${connectorsTag}${instrTag}`,
     );
   }
 
