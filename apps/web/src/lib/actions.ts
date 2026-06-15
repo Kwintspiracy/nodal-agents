@@ -3511,28 +3511,26 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
     }
     const { agentId, enabled } = parsed.data;
 
-    if (enabled) {
-      // Gate: local-trust always allowed; otherwise the entity owner must have
-      // opted into lan_command_yolo AND the caller must be that owner.
-      if (env.AUTH_MODE !== 'local-trust') {
-        const db = getDb();
-        const [entityRow] = await db
-          .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
-          .from(entities)
-          .where(eq(entities.id, session.entityId));
-        if (!entityRow) return fail('not_found', 'Workspace not found');
-        if (!entityRow.lanCommandYolo) {
-          return fail(
-            'forbidden',
-            'Yolo mode is not enabled for this workspace. The workspace owner can enable it in Settings → Command execution.',
-          );
-        }
-        if (entityRow.userId !== session.userId) {
-          return fail(
-            'forbidden',
-            'Only the workspace owner can enable Yolo mode.',
-          );
-        }
+    // Gate (non-local-trust only): only the workspace owner may change a
+    // per-agent Yolo rule — in EITHER direction. Disabling is the safe direction
+    // (it only removes auto-approval) but a non-owner flipping it off would
+    // disrupt the owner's automations, so we owner-gate both. Enabling
+    // additionally requires the workspace opt-in (lan_command_yolo).
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change command auto-run.');
+      }
+      if (enabled && !entityRow.lanCommandYolo) {
+        return fail(
+          'forbidden',
+          'Yolo mode is not enabled for this workspace. Enable it in Settings → Command execution first.',
+        );
       }
     }
 

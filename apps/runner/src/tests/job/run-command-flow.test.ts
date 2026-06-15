@@ -29,6 +29,7 @@ import {
   agentSkills,
   agentSkillAssignments,
   agentWorkspaces,
+  entities,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -430,6 +431,131 @@ describe('run_command — E2E runner integration', () => {
     } finally {
       // Always clean up the rule so it doesn't bleed into other tests.
       await db.delete(approvalRules).where(eq(approvalRules.id, ruleRow.id));
+    }
+  });
+
+  // ── Test 3: LAN MASTER-SWITCH ───────────────────────────────────────────────
+  // In non-local-trust (LAN / multi-user) mode the workspace opt-in
+  // (entities.lan_command_yolo) is authoritative at RUNTIME: an auto_approve rule
+  // for run_command is honored ONLY when the workspace has opted in. With the
+  // switch off, run_command is forced back to approval even though the rule row
+  // still exists — closing the gap where turning the workspace switch off left
+  // stale per-agent Yolo rules live.
+  const lanEnv: RunnerEnv = { ...testEnv, AUTH_MODE: 'local-auth' };
+
+  it('LAN GATE (workspace Yolo OFF): auto_approve rule is overridden → job suspends for approval', async () => {
+    const MARKER3 = `rc-marker-${Date.now()}-langate-off`;
+    const COMMAND3 = `node -e "process.stdout.write('${MARKER3}')"`;
+
+    // Workspace has NOT opted in (the master switch is off).
+    await db.update(entities).set({ lanCommandYolo: false }).where(eq(entities.id, seed.entityId));
+
+    // An auto_approve rule EXISTS (e.g. created earlier while the switch was on).
+    const [ruleRow] = await db
+      .insert(approvalRules)
+      .values({
+        entityId: seed.entityId,
+        agentId: null,
+        toolName: 'run_command',
+        action: 'auto_approve',
+      })
+      .returning();
+    if (!ruleRow) throw new Error('Failed to insert auto_approve rule');
+
+    try {
+      const job = await createJob();
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [{ toolCallId: 'tc-rc-3', toolName: 'run_command', args: { command: COMMAND3 } }],
+        },
+        {
+          toolCalls: [{ toolCallId: 'tc-rr-3', toolName: 'return_result', args: { status: 'success' } }],
+        },
+      ]);
+
+      // local-auth + workspace Yolo OFF → the runtime gate forces approval despite
+      // the auto_approve rule, so the job must SUSPEND (not auto-run to completion).
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
+      expect(result.status).toBe('awaiting_approval');
+
+      // CORE: a pending approval row exists for run_command with the exact command
+      // — proof the auto_approve rule was overridden at execution time.
+      const approvals = await db
+        .select()
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job.id));
+      const pending = approvals.find((r) => r.toolName === 'run_command' && r.status === 'pending');
+      expect(pending).toBeDefined();
+      expect((pending!.toolInput as { command: string }).command).toBe(COMMAND3);
+      // It never executed, so executedAt was never stamped.
+      expect(pending!.executedAt).toBeNull();
+    } finally {
+      await db.delete(approvalRules).where(eq(approvalRules.id, ruleRow.id));
+    }
+  });
+
+  it('LAN GATE (workspace Yolo ON): auto_approve rule is honored → command runs inline', async () => {
+    const MARKER4 = `rc-marker-${Date.now()}-langate-on`;
+    const COMMAND4 = `node -e "process.stdout.write('${MARKER4}')"`;
+
+    // Workspace HAS opted in (the master switch is on).
+    await db.update(entities).set({ lanCommandYolo: true }).where(eq(entities.id, seed.entityId));
+
+    const [ruleRow] = await db
+      .insert(approvalRules)
+      .values({
+        entityId: seed.entityId,
+        agentId: null,
+        toolName: 'run_command',
+        action: 'auto_approve',
+      })
+      .returning();
+    if (!ruleRow) throw new Error('Failed to insert auto_approve rule');
+
+    try {
+      const job = await createJob();
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [{ toolCallId: 'tc-rc-4', toolName: 'run_command', args: { command: COMMAND4 } }],
+        },
+        {
+          toolCalls: [{ toolCallId: 'tc-rr-4', toolName: 'return_result', args: { status: 'success' } }],
+        },
+      ]);
+
+      // local-auth + workspace Yolo ON → the rule is honored → runs inline.
+      const result = await executeJob(job.id as JobId, makeDeps(llmClient), lanEnv);
+      expect(result.status).toBe('completed');
+
+      const pendingApprovals = await db
+        .select()
+        .from(approvalRequests)
+        .where(eq(approvalRequests.jobId, job.id));
+      expect(pendingApprovals.find((r) => r.status === 'pending')).toBeUndefined();
+
+      // CORE: the real spawned stdout MARKER4 reached the agent.
+      const jobRow = await db
+        .select({ messages: agentJobs.messages })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      const messages = jobRow[0]?.messages as Array<{ role: string; content: unknown }>;
+      let found = false;
+      for (const msg of messages) {
+        if (msg.role !== 'tool') continue;
+        for (const block of msg.content as Array<Record<string, unknown>>) {
+          if (block['type'] !== 'tool-result') continue;
+          const output = block['output'] as { type: string; value: unknown } | undefined;
+          const rawValue =
+            output?.type === 'text' ? output.value : JSON.stringify(output?.value ?? null);
+          const valueStr = typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue);
+          if (block['toolName'] === 'run_command' && valueStr.includes(MARKER4)) found = true;
+        }
+      }
+      expect(found).toBe(true);
+    } finally {
+      await db.delete(approvalRules).where(eq(approvalRules.id, ruleRow.id));
+      // Reset the switch so it doesn't bleed into other tests.
+      await db.update(entities).set({ lanCommandYolo: false }).where(eq(entities.id, seed.entityId));
     }
   });
 });

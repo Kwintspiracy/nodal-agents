@@ -1160,6 +1160,17 @@ function CommandExecutionSection({
     (r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve',
   );
 
+  // ENABLING is gated by yoloAllowed. DISABLING an existing rule must always be
+  // possible for anyone who can manage this workspace (local-trust, or the owner)
+  // — otherwise turning the workspace switch off would strand a now-dormant rule
+  // that can't be cleared. So the toggle is interactive when Yolo is allowed, or
+  // when a rule already exists and the user is permitted to clear it.
+  const canManage = isLocalTrust || isOwner;
+  const canToggle = yoloAllowed || (yoloEnabled && canManage);
+  // A rule exists but Yolo is not allowed here → it is dormant: the runtime
+  // master-switch (workspace lan_command_yolo) downgrades it to require-approval.
+  const isDormant = yoloEnabled && !yoloAllowed;
+
   function applyOptimistic(enabled: boolean) {
     onRulesChange(
       enabled
@@ -1224,7 +1235,21 @@ function CommandExecutionSection({
             When on, this agent runs any shell command immediately with no approval gate. Commands
             are still logged. Only enable for agents you fully trust.
           </p>
-          {!yoloAllowed && !isLocalTrust && !lanCommandYolo && (
+          {isDormant && canManage && (
+            <p className="mt-2 text-[11.5px] text-warn">
+              This agent&apos;s Yolo is <b className="font-semibold">dormant</b> — workspace Yolo is
+              off, so its commands still require approval. Turn it off here to clear it, or re-enable
+              Yolo in{' '}
+              <a
+                href="/settings"
+                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+              >
+                Settings → Command execution
+              </a>
+              .
+            </p>
+          )}
+          {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
             <p className="mt-2 text-[11.5px] text-ink-4">
               Yolo is off for this workspace. The owner can enable it in{' '}
               <a
@@ -1249,11 +1274,11 @@ function CommandExecutionSection({
           type="button"
           role="switch"
           aria-checked={yoloEnabled}
-          disabled={saving || !yoloAllowed}
+          disabled={saving || !canToggle}
           onClick={() => handleToggle(!yoloEnabled)}
           className={[
             'relative mt-0.5 h-[22px] w-[40px] shrink-0 rounded-full border transition-colors',
-            saving || !yoloAllowed ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+            saving || !canToggle ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
             yoloEnabled
               ? 'border-err/40 bg-err/20'
               : 'border-rule-2 bg-canvas',
