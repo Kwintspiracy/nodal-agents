@@ -83,7 +83,7 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     'Use it to install dependencies, run scripts, build steps, CLIs, etc. Compound commands ' +
     '(joined with && or newlines) run as a single call. By DEFAULT every command requires human ' +
     'approval before it runs; the user can enable an auto-run ("Yolo") mode per agent. A non-zero ' +
-    'exit code is returned to you (not an error) — read stderr and adapt.',
+    'exit code is returned to you (not an error) — read stderr and adapt. Once a command succeeds and gives you the output you need, STOP and deliver your answer with return_result (or dashboard_publish) — do NOT call run_command again for the same goal (re-running it just re-prompts the user for approval).',
   inputSchema: runCommandSchema,
   riskLevel: 'destructive',
   defaultApproval: 'require_approval',

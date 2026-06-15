@@ -26,11 +26,12 @@ This skill unlocks the \`run_command\` tool, which runs a shell command in the a
 
 ### Discipline
 
-1. **Batch multi-step work into ONE call.** A compound command (\`npm install && node download_font.js && node draw_text.js\`) runs as a single \`run_command\` — and, in approval mode, is **one approval** instead of three. Prefer this over three separate calls.
-2. **A non-zero exit code is data, not a crash.** It is returned to you with stderr — read it, fix the cause, and retry a corrected command. Do not silently repeat the same failing command.
-3. **Stay in the workspace.** Read/write files with the \`file_*\` tools and target the workspace; \`cwd\` cannot point outside it.
-4. **Non-interactive only.** Commands that wait for input (a \`y/n\` prompt, a password) will hang until the timeout. Use non-interactive flags (e.g. \`npm install --yes\`, \`--no-input\`).
-5. **Output is capped** (~100k characters per stream). If you need full output of a verbose command, redirect it to a file in the workspace and read it back with \`file_read\`.
+1. **Run, then finish.** As soon as a command gives you the output you need, STOP — deliver the result to the user with \`return_result\` (or \`dashboard_publish\`) and end your turn. A successful command (exit 0) is DONE; re-running it, or running another just to "double-check", only re-prompts the user for approval and goes nowhere. Run another command ONLY if the task genuinely requires a different one.
+2. **Batch multi-step work into ONE call.** A compound command (\`npm install && node download_font.js && node draw_text.js\`) runs as a single \`run_command\` — and, in approval mode, is **one approval** instead of three. Prefer this over three separate calls.
+3. **A non-zero exit code is data, not a crash.** It is returned to you with stderr — read it, fix the cause, and retry a corrected command. Do not silently repeat the same failing command.
+4. **Stay in the workspace.** Read/write files with the \`file_*\` tools and target the workspace; \`cwd\` cannot point outside it.
+5. **Non-interactive only.** Commands that wait for input (a \`y/n\` prompt, a password) will hang until the timeout. Use non-interactive flags (e.g. \`npm install --yes\`, \`--no-input\`).
+6. **Output is capped** (~100k characters per stream). If you need full output of a verbose command, redirect it to a file in the workspace and read it back with \`file_read\`.
 
 ### Approval vs Yolo
 
