@@ -28,7 +28,10 @@ import { InvalidInputError } from './errors';
  *   - rule action 'require_approval' → insert approval_requests row, call
  *     onApprovalRequired, return { outcome: 'awaiting_approval' }.
  *   - rule action 'block' → return { outcome: 'error', error: 'blocked' }.
- *   - rule action 'auto_approve' or no matching rule → execute normally.
+ *   - rule action 'auto_approve' → execute normally.
+ *   - no matching rule → fall back to the tool's `defaultApproval`: execute for
+ *     ordinary tools, or suspend for approval for safe-by-default tools
+ *     (run_command). A per-agent auto_approve rule overrides this ("Yolo").
  *
  * Rule matching: tool-specific rules take precedence over wildcard.
  * Agent-scoped rules take precedence over entity-scoped rules.
@@ -59,8 +62,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 
   // ── 2. Approval gate ───────────────────────────────────────────────────────
   const matchedRule = _matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
+  // An explicit rule always wins. With no matching rule, fall back to the tool's
+  // own default posture: undefined for ordinary tools (→ execute, the historical
+  // default), 'require_approval' for safe-by-default tools like run_command. So a
+  // per-agent `auto_approve` rule (the "Yolo" toggle) is exactly what lets
+  // run_command run without a human in the loop.
+  const effectiveAction = matchedRule?.action ?? tool.defaultApproval;
 
-  if (matchedRule?.action === 'block') {
+  if (effectiveAction === 'block') {
     const result: ToolExecutionResult = { outcome: 'error', error: 'blocked' };
     await _writeToolCall(
       ctx,
@@ -72,7 +81,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     return result;
   }
 
-  if (matchedRule?.action === 'require_approval') {
+  if (effectiveAction === 'require_approval') {
     // Insert approval_requests row
     const [row] = await ctx.db
       .insert(approvalRequests)

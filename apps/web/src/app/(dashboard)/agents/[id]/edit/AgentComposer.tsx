@@ -24,6 +24,7 @@ import {
   deleteWorkspaceFileAction,
   listAgentApprovalRulesAction,
   setAgentApprovalRuleAction,
+  setRunCommandYoloAction,
   type AgentRow,
   type AgentEditRow,
   type AgentWorkspaceRow,
@@ -341,6 +342,7 @@ export default function AgentComposer({
           agentId={agent.id}
           connectors={connectors}
           hasTelegramBot={!!agent.telegramBotToken}
+          attachedSkills={attachedSkills}
         />
       )}
       {tab === 'settings' && (
@@ -973,10 +975,12 @@ function AutonomyTab({
   agentId,
   connectors,
   hasTelegramBot,
+  attachedSkills,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
   hasTelegramBot: boolean;
+  attachedSkills: SkillRow[];
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1080,7 +1084,166 @@ function AutonomyTab({
           job — already-running jobs are not affected.
         </p>
       </SectionCard>
+
+      <CommandExecutionSection
+        agentId={agentId}
+        attachedSkills={attachedSkills}
+        rules={rules}
+        onRulesChange={setRules}
+      />
     </div>
+  );
+}
+
+// ─── Command execution section ────────────────────────────────────────────────
+//
+// Visible only when the agent has the `command-execution` skill assigned.
+// run_command declares defaultApproval:'require_approval', so absence of a rule
+// means every command pauses for human approval. "Yolo mode" = an explicit
+// auto_approve row that bypasses that default.
+//
+// The toggle is disabled (greyed out) when NOT in local-trust mode: on a shared
+// or LAN install, commands always require approval regardless of this setting.
+// The server action also enforces this check independently.
+
+const COMMAND_EXECUTION_SKILL_SLUG = 'command-execution';
+const RUN_COMMAND_TOOL = 'run_command';
+
+function CommandExecutionSection({
+  agentId,
+  attachedSkills,
+  rules,
+  onRulesChange,
+}: {
+  agentId: string;
+  attachedSkills: SkillRow[];
+  rules: ApprovalRuleUiRow[];
+  onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
+}) {
+  const hasSkill = attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG);
+
+  // Read auth mode client-side from NEXT_PUBLIC_AUTH_MODE (set by the CLI;
+  // mirrors AUTH_MODE and is safe to read in client components).
+  const isLocalTrust =
+    (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const yoloEnabled = rules.some(
+    (r) => r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve',
+  );
+
+  function applyOptimistic(enabled: boolean) {
+    onRulesChange(
+      enabled
+        ? [
+            ...rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
+            { id: '', toolName: RUN_COMMAND_TOOL, action: 'auto_approve' as const },
+          ]
+        : rules.filter((r) => r.toolName !== RUN_COMMAND_TOOL),
+    );
+  }
+
+  function handleToggle(next: boolean) {
+    if (next) {
+      // Enable: show warning confirm first
+      setConfirmOpen(true);
+    } else {
+      // Disable: no confirm needed
+      void doSet(false);
+    }
+  }
+
+  async function doSet(enabled: boolean) {
+    setSaving(true);
+    applyOptimistic(enabled);
+    const result = await setRunCommandYoloAction({ agentId, enabled });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      // Revert optimistic update
+      applyOptimistic(!enabled);
+    } else {
+      toast.success(
+        enabled
+          ? 'Yolo mode enabled — commands run without approval.'
+          : 'Yolo mode disabled — commands require approval again.',
+      );
+    }
+  }
+
+  if (!hasSkill) {
+    return null;
+  }
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Command execution"
+        hint="Controls whether shell commands (run_command) require human approval before running. By default, every command pauses for your approval."
+      />
+
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-medium text-ink">
+              Auto-run commands without approval (Yolo)
+            </span>
+            <span className="inline-flex h-[18px] items-center rounded-full bg-err/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-err">
+              irreversible
+            </span>
+          </div>
+          <p className="mt-1 text-[12px] leading-[1.4] text-ink-3">
+            When on, this agent runs any shell command immediately with no approval gate. Commands
+            are still logged. Only enable for agents you fully trust.
+          </p>
+          {!isLocalTrust && (
+            <p className="mt-2 text-[11.5px] text-ink-4">
+              Yolo is only available in single-user local mode. On a shared/LAN install, commands
+              always require approval.
+            </p>
+          )}
+        </div>
+
+        {/* Toggle */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={yoloEnabled}
+          disabled={saving || !isLocalTrust}
+          onClick={() => handleToggle(!yoloEnabled)}
+          className={[
+            'relative mt-0.5 h-[22px] w-[40px] shrink-0 rounded-full border transition-colors',
+            saving || !isLocalTrust ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+            yoloEnabled
+              ? 'border-err/40 bg-err/20'
+              : 'border-rule-2 bg-canvas',
+          ].join(' ')}
+        >
+          <span
+            className={[
+              'absolute top-[3px] h-[14px] w-[14px] rounded-full transition-transform',
+              yoloEnabled ? 'translate-x-[19px] bg-err' : 'translate-x-[3px] bg-ink-3',
+            ].join(' ')}
+          />
+        </button>
+      </div>
+
+      {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Enable Yolo mode?"
+        message="Yolo mode lets this agent run ANY shell command on this machine with no approval. Only enable for an agent you fully trust. The command is still logged."
+        confirmLabel="Enable Yolo"
+        destructive
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void doSet(true);
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </SectionCard>
   );
 }
 

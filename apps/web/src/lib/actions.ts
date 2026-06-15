@@ -3482,6 +3482,77 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
   }
 }
 
+// ─── Command execution (run_command) yolo action ─────────────────────────────
+//
+// run_command declares defaultApproval:'require_approval', meaning the ABSENCE
+// of an approval_rules row means every execution pauses for human approval.
+// "Yolo mode" is an explicit auto_approve row — the opposite of every other tool.
+//
+// enabled=true  → upsert an auto_approve row (delete-then-insert avoids dupes)
+// enabled=false → delete the row (reverts to safe default: require_approval)
+//
+// Server-enforces that yolo is only settable in local-trust mode. The UI also
+// disables the toggle for non-local-trust, but the server is the real gate.
+
+const SetRunCommandYoloSchema = z.object({
+  agentId: z.string().guid(),
+  enabled: z.boolean(),
+});
+
+export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetRunCommandYoloSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, enabled } = parsed.data;
+
+    // Enforce local-trust mode server-side — do not rely on disabled UI.
+    if (env.AUTH_MODE !== 'local-trust') {
+      return fail(
+        'forbidden',
+        'Yolo mode is only available in single-user local mode. On a shared/LAN install, commands always require approval.',
+      );
+    }
+
+    const db = getDb();
+
+    // Verify agent belongs to active entity
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Always delete the existing row first to avoid duplicates (no unique constraint)
+    await db
+      .delete(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, session.entityId),
+          eq(approvalRules.agentId, agentId),
+          eq(approvalRules.toolName, 'run_command'),
+        ),
+      );
+
+    if (enabled) {
+      await db.insert(approvalRules).values({
+        entityId: session.entityId,
+        agentId,
+        toolName: 'run_command',
+        action: 'auto_approve',
+      });
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setRunCommandYoloAction]', err);
+    return fail('db_error', 'Failed to save command execution setting');
+  }
+}
+
 // ─── Skill Actions ────────────────────────────────────────────────────────────
 
 export type InstalledScript = { path: string; language: string };

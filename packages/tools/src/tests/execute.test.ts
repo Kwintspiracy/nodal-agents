@@ -331,4 +331,95 @@ describe('executeTool', () => {
     // Agent-scoped auto_approve should win
     expect(result.outcome).toBe('success');
   });
+
+  // ── Safe-by-default: tool.defaultApproval = 'require_approval' ───────────────
+  // run_command opts into this so it suspends for approval when NO rule matches,
+  // instead of inheriting the global no-rule→execute default (unsafe for a
+  // shell-execution tool). A per-agent auto_approve rule ("Yolo") overrides it.
+
+  it('suspends for approval when defaultApproval=require_approval and NO rule matches', async () => {
+    const tool = makeSimpleTool({
+      name: 'safe_default_tool',
+      riskLevel: 'destructive',
+      defaultApproval: 'require_approval',
+    });
+
+    const captured: ApprovalGateRequest[] = [];
+    const result = await executeTool(
+      tool,
+      { value: 'rm -rf /' },
+      makeCtx(),
+      makeOpts([], async (req) => {
+        captured.push(req);
+      }),
+    );
+
+    expect(result.outcome).toBe('awaiting_approval');
+    expect(captured).toHaveLength(1);
+
+    // Real DB row, status pending, exact input preserved (the human reviews it).
+    const id = result.outcome === 'awaiting_approval' ? result.approvalRequestId : null;
+    const rows = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id!));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.toolName).toBe('safe_default_tool');
+    expect(rows[0]!.status).toBe('pending');
+    expect((rows[0]!.toolInput as { value?: string })?.value).toBe('rm -rf /');
+  });
+
+  it('an auto_approve rule (Yolo) overrides defaultApproval=require_approval → executes', async () => {
+    const tool = makeSimpleTool({
+      name: 'yolo_tool',
+      riskLevel: 'destructive',
+      defaultApproval: 'require_approval',
+    });
+
+    const yoloRule: ApprovalRule = {
+      id: 'yolo-rule',
+      toolName: 'yolo_tool',
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+
+    const captured: ApprovalGateRequest[] = [];
+    const result = await executeTool(
+      tool,
+      { value: 'ok' },
+      makeCtx(),
+      makeOpts([yoloRule], async (req) => {
+        captured.push(req);
+      }),
+    );
+
+    expect(result.outcome).toBe('success');
+    if (result.outcome === 'success') expect(result.output).toBe('result:ok');
+    expect(captured).toHaveLength(0); // no approval was requested
+  });
+
+  it('a block rule still wins over defaultApproval=require_approval', async () => {
+    const tool = makeSimpleTool({
+      name: 'safe_default_blocked',
+      riskLevel: 'destructive',
+      defaultApproval: 'require_approval',
+    });
+
+    const blockRule: ApprovalRule = {
+      id: 'sd-block',
+      toolName: 'safe_default_blocked',
+      action: 'block',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+
+    const result = await executeTool(tool, { value: 'x' }, makeCtx(), makeOpts([blockRule]));
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') expect(result.error).toBe('blocked');
+  });
+
+  it('REGRESSION: a tool WITHOUT defaultApproval and no rule still executes (default unchanged)', async () => {
+    const tool = makeSimpleTool({ name: 'ordinary_tool', riskLevel: 'destructive' });
+    // destructive risk, but no defaultApproval and no rule → historical behavior: execute.
+    const result = await executeTool(tool, { value: 'q' }, makeCtx(), makeOpts([]));
+    expect(result.outcome).toBe('success');
+  });
 });
