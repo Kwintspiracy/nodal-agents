@@ -123,20 +123,24 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       await stopOrphanPostgres();
       if (isPidAlive(pgOrphan.pid)) {
         try {
-          if (process.platform === 'win32') {
-            await execa('taskkill', ['/T', '/F', '/PID', String(pgOrphan.pid)], { reject: false });
-          } else {
-            process.kill(pgOrphan.pid, 'SIGKILL');
-          }
+          // Kill the postmaster DIRECTLY — NOT `taskkill /T`. Walking the
+          // postgres backend tree with /T HANGS on Windows (proven live: it
+          // timed out, leaving the orphan alive and `up` aborting on the throw
+          // below). TerminateProcess on the postmaster pid is instant; its
+          // backends detect the dead postmaster and self-exit, releasing the
+          // SHM. `process.kill(pid,'SIGKILL')` is TerminateProcess on Windows
+          // (same as `Stop-Process -Force`, which is what actually worked) and
+          // SIGKILL on Unix.
+          process.kill(pgOrphan.pid, 'SIGKILL');
         } catch {
-          /* best-effort */
+          /* best-effort — already gone */
         }
         await waitForPidDead(pgOrphan.pid, 5000);
       }
       if (isPidAlive(pgOrphan.pid)) {
         const killCmd =
           process.platform === 'win32'
-            ? `taskkill /T /F /PID ${pgOrphan.pid}`
+            ? `powershell Stop-Process -Id ${pgOrphan.pid} -Force`
             : `kill -9 ${pgOrphan.pid}`;
         throw new Error(
           `An orphaned Postgres (pid ${pgOrphan.pid}) is still running and holds the ` +
