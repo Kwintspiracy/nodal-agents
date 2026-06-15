@@ -106,15 +106,14 @@ export default function LanCommandYoloSection({ initial }: Props) {
         disabled={isDisabled}
         onClick={handleToggle}
         className={[
-          'relative mt-0.5 h-[22px] w-[40px] shrink-0 rounded-full border transition-colors',
-          isDisabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+          'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
           enabled ? 'border-err/40 bg-err/20' : 'border-rule-2 bg-canvas',
         ].join(' ')}
       >
         <span
           className={[
-            'absolute top-[3px] h-[14px] w-[14px] rounded-full transition-transform',
-            enabled ? 'translate-x-[19px] bg-err' : 'translate-x-[3px] bg-ink-3',
+            'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
+            enabled ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3',
           ].join(' ')}
         />
       </button>
