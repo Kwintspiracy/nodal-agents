@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
-import { Bell, Plus } from '@phosphor-icons/react/dist/ssr';
+import { Plus } from '@phosphor-icons/react/dist/ssr';
 import SearchBox from './SearchBox';
-import IconButton from './IconButton';
 import ThemeToggle from './ThemeToggle';
 import PrimaryButton from './PrimaryButton';
+import NotificationsBell from '@/components/NotificationsBell';
 
 type Props = {
   /** Optional breadcrumb / contextual content rendered at the left of the bar.
@@ -51,9 +51,7 @@ export default function Topbar({
       {left}
       <div className="flex-1" />
       {showSearch && <SearchBox className="hidden md:flex" />}
-      <IconButton aria-label="Notifications" title="Notifications" badge>
-        <Bell size={15} />
-      </IconButton>
+      <NotificationsBell />
       <ThemeToggle />
       {showPrimary && (
         <PrimaryButton

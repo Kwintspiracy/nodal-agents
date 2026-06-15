@@ -29,6 +29,7 @@ import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
 import LiveCard from './ui/LiveCard';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
+import { useApprovals } from './ApprovalsProvider';
 import type { WorkspaceRow } from '@/lib/actions';
 
 type Item = {
@@ -102,6 +103,8 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const { pending } = useApprovals();
+  const pendingCount = pending.length;
 
   // Close mobile drawer on route change.
   useEffect(() => {
@@ -172,7 +175,12 @@ export default function Sidebar({
                     label={it.label}
                     icon={it.icon ? <it.icon size={14} /> : undefined}
                     dot={it.dot}
-                    count={it.count}
+                    count={it.href === '/approvals' ? undefined : it.count}
+                    pill={
+                      it.href === '/approvals' && pendingCount > 0
+                        ? pendingCount
+                        : undefined
+                    }
                     isActive={
                       // The Home link must match exactly — every other route
                       // starts with `/`, so the default startsWith logic would

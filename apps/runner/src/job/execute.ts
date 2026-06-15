@@ -79,6 +79,7 @@ import {
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
+import { env } from '../env.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
@@ -289,7 +290,7 @@ export function shortBlockReason(reason: string): string {
 export async function executeJob(
   jobId: JobId,
   deps: RunnerDeps,
-  _runnerEnv?: RunnerEnv,
+  runnerEnv?: RunnerEnv,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
@@ -807,13 +808,54 @@ export async function executeJob(
     .from(approvalRules)
     .where(eq(approvalRules.entityId, job.entityId ?? ''));
 
-  const approvalRuleList: ApprovalRule[] = ruleRows.map((r) => ({
+  let approvalRuleList: ApprovalRule[] = ruleRows.map((r) => ({
     id: r.id,
     toolName: r.toolName,
     action: (r.action ?? 'auto_approve') as ApprovalRule['action'],
     agentId: r.agentId,
     entityId: r.entityId,
   }));
+
+  // ── 8b. Workspace Yolo master-switch for run_command ──────────────────────────
+  // run_command is RCE-by-design; auto-approving it in a non-local-trust (LAN /
+  // multi-user) install is gated behind an explicit, owner-controlled workspace
+  // opt-in (entities.lan_command_yolo). The web layer gates *creating* a per-agent
+  // auto_approve rule, but rule creation is NOT the security boundary — EXECUTION
+  // is. So we enforce the same gate here, authoritatively: when the workspace has
+  // not opted in, run_command can never auto-approve, no matter what rules exist.
+  //   (a) drop any run_command auto_approve rule, and
+  //   (b) if no run_command-specific rule then remains, inject a require_approval
+  //       rule so a blanket wildcard ('*') auto_approve can't sweep it in either.
+  // Nothing is deleted from the DB — re-enabling the workspace switch reactivates
+  // the rules. In local-trust mode (single-user loopback) the switch is N/A.
+  //
+  // AUTH_MODE source: the passed runnerEnv when present (worker/chat routes +
+  // tests), else the module env (cron paths call executeJob without it; module
+  // env reads process.env, set by the CLI). Either way it is process-global.
+  const authMode = runnerEnv?.AUTH_MODE ?? env.AUTH_MODE;
+  if (authMode !== 'local-trust') {
+    const RUN_COMMAND_TOOL = 'run_command';
+    const [yoloEntityRow] = await db
+      .select({ lanCommandYolo: entitiesTable.lanCommandYolo })
+      .from(entitiesTable)
+      .where(eq(entitiesTable.id, job.entityId ?? ''))
+      .limit(1);
+    if (!yoloEntityRow?.lanCommandYolo) {
+      approvalRuleList = approvalRuleList.filter(
+        (r) => !(r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve'),
+      );
+      const hasRunCommandRule = approvalRuleList.some((r) => r.toolName === RUN_COMMAND_TOOL);
+      if (!hasRunCommandRule) {
+        approvalRuleList.push({
+          id: 'lan-yolo-gate',
+          toolName: RUN_COMMAND_TOOL,
+          action: 'require_approval',
+          agentId: agentRow.id,
+          entityId: job.entityId ?? '',
+        });
+      }
+    }
+  }
 
   // ── 9. Initialize ChainCounters ───────────────────────────────────────────────
   const counters = new ChainCounters(DEFAULT_LIMITS);
@@ -922,8 +964,10 @@ export async function executeJob(
         let replacementOutput: ToolResultOutput;
 
         if (req.status === 'approved') {
-          // Execute the tool with empty approvalRules so it bypasses the gate
-          // (the human already approved; re-gating would create an infinite loop).
+          // Execute the approved tool, bypassing the gate — the human already
+          // reviewed and approved this exact call. The bypass is expressed via a
+          // synthetic auto_approve rule below (NOT an empty rules array: that would
+          // re-fire the tool's own defaultApproval and loop forever for run_command).
           const toolDef = toolMap.get(req.toolName);
           if (!toolDef) {
             // Tool no longer in whitelist — treat as error and mark executed.
@@ -931,6 +975,20 @@ export async function executeJob(
               error: `approved_tool_not_found:${req.toolName}`,
             });
           } else {
+            // Synthesize an explicit auto_approve rule for this tool so that
+            // tools with defaultApproval:'require_approval' (e.g. run_command)
+            // bypass their own gate during the resume-execution step. The human
+            // already reviewed and approved this exact call — re-gating on the
+            // tool's default posture would produce an infinite approval loop.
+            const resumeApprovalRules: ApprovalRule[] = [
+              {
+                id: 'resume-bypass',
+                entityId: job.entityId ?? '',
+                agentId: null,
+                toolName: req.toolName,
+                action: 'auto_approve',
+              },
+            ];
             const execResult = await executeTool(
               toolDef,
               req.toolInput,
@@ -946,15 +1004,15 @@ export async function executeJob(
                 assignedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
-              { approvalRules: [], onApprovalRequired: async () => {} },
+              { approvalRules: resumeApprovalRules, onApprovalRequired: async () => {} },
             );
             if (execResult.outcome === 'success') {
               replacementOutput = toResultOutput(execResult.output);
             } else if (execResult.outcome === 'error') {
               replacementOutput = toResultOutput({ error: execResult.error });
             } else {
-              // outcome === 'awaiting_approval' should never occur because we
-              // passed approvalRules: [] — but handle defensively.
+              // outcome === 'awaiting_approval' should never occur — we passed a
+              // synthetic auto_approve rule that overrides any defaultApproval.
               replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
             }
           }
@@ -1579,7 +1637,7 @@ export async function executeJob(
               turn,
               toolsUsed,
               messages,
-            }, _runnerEnv).catch((e) => console.warn('[reflection]', e));
+            }, runnerEnv).catch((e) => console.warn('[reflection]', e));
           }
           return { status: 'completed', result: textContent };
         }
@@ -1945,7 +2003,7 @@ export async function executeJob(
               // no queue, no orphaned children, no separate delivery cron.
               // The recursion is bounded by DelegationDepthExceededError
               // (max 3) thrown from bumpDelegationDepth above.
-              const childOutcome = await executeJob(delegation.childJobId, deps, _runnerEnv);
+              const childOutcome = await executeJob(delegation.childJobId, deps, runnerEnv);
 
               if (childOutcome.status === 'failed') {
                 // Prefer the child's user-facing reason (e.g. an agent_blocked
@@ -1969,7 +2027,7 @@ export async function executeJob(
                   { error: childErr },
                   db,
                 );
-                return executeJob(jobId, deps, _runnerEnv);
+                return executeJob(jobId, deps, runnerEnv);
               }
 
               if (childOutcome.status === 'cancelled') {
@@ -2008,7 +2066,7 @@ export async function executeJob(
               // status back to 'pending' so we can re-enter executeJob.
               await resumeDelegated(jobId as JobId, delegation.childJobId, childOutcome.result, db);
 
-              return executeJob(jobId, deps, _runnerEnv);
+              return executeJob(jobId, deps, runnerEnv);
             }
             throw err;
           }
@@ -2386,7 +2444,7 @@ export async function executeJob(
             turn,
             toolsUsed,
             messages,
-          }, _runnerEnv).catch((e) => console.warn('[reflection]', e));
+          }, runnerEnv).catch((e) => console.warn('[reflection]', e));
         }
 
         // Re-fetch agent_jobs.result so the caller (the parent in a router

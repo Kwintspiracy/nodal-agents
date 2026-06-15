@@ -19,6 +19,7 @@ import {
 import { OFFICE_TOOLS } from './office-ops';
 import { META_TOOLS } from './meta-ops';
 import { SKILL_TOOLS } from './skill-ops';
+import { runCommandTool } from './run-command';
 
 export { returnResultTool } from './return-result';
 export { saveMemoryTool } from './save-memory';
@@ -40,6 +41,8 @@ export { OFFICE_TOOLS } from './office-ops';
 export { META_TOOLS } from './meta-ops';
 export { createSkillTool, assignSkillTool, createAgentTool, attachAgentTool } from './meta-ops';
 export { SKILL_TOOLS, skillFileReadTool, skillFileListTool, SkillFileError } from './skill-ops';
+export { runCommandTool } from './run-command';
+export type { RunCommandInput, RunCommandOutput } from './run-command';
 
 /**
  * Register all built-in tools into the given registry.
@@ -79,6 +82,10 @@ export function registerBuiltins(registry: ToolRegistry): void {
   for (const tool of SKILL_TOOLS) {
     registry.register(tool);
   }
+  // run_command — gated behind the "command-execution" skill via requiredBuiltins,
+  // NOT always-on. Safe-by-default (defaultApproval='require_approval'); a
+  // per-agent auto_approve rule ("Yolo") overrides the human-in-the-loop gate.
+  registry.register(runCommandTool);
 }
 
 /**

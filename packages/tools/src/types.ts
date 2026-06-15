@@ -122,6 +122,17 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
   description: string;
   inputSchema: TInput;
   riskLevel: OperationRiskLevel;
+  /**
+   * Approval posture when NO approval rule matches this tool. Absent (the norm)
+   * means "execute" — the historical default. A tool sets this to
+   * 'require_approval' to be SAFE-BY-DEFAULT: it suspends for human approval
+   * unless an explicit `auto_approve` rule (e.g. a per-agent "Yolo" toggle)
+   * overrides it. Used by `run_command`, which is far too dangerous to inherit
+   * the global no-rule→execute default. This is per-tool opt-in, NOT a blanket
+   * default-deny on every destructive tool (that broader posture is a separate,
+   * deferred product decision).
+   */
+  defaultApproval?: 'require_approval';
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
 }
 

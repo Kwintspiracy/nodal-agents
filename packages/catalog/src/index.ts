@@ -24,8 +24,10 @@ import { verifyBeforeDoneSkill } from './skills/verify-before-done';
 import { citationDisciplineSkill } from './skills/citation-discipline';
 import { safeToolUseSkill } from './skills/safe-tool-use';
 import { officeEditingSkill } from './skills/office-editing';
+import { commandExecutionSkill } from './skills/command-execution';
 
 export { officeEditingSkill } from './skills/office-editing';
+export { commandExecutionSkill } from './skills/command-execution';
 
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
@@ -39,6 +41,7 @@ export const systemSkills: SystemSkill[] = [
   citationDisciplineSkill,
   safeToolUseSkill,
   officeEditingSkill,
+  commandExecutionSkill,
 ];
 
 /**

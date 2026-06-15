@@ -64,7 +64,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       updated_at timestamptz DEFAULT now(),
       last_curator_run_at timestamptz,
       reflection_enabled boolean NOT NULL DEFAULT false,
-      skill_assignment_mode text NOT NULL DEFAULT 'approval'
+      skill_assignment_mode text NOT NULL DEFAULT 'approval',
+      lan_command_yolo boolean NOT NULL DEFAULT false
     );
 
     CREATE TABLE IF NOT EXISTS entity_members (

@@ -3482,6 +3482,168 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
   }
 }
 
+// ─── Command execution (run_command) yolo action ─────────────────────────────
+//
+// run_command declares defaultApproval:'require_approval', meaning the ABSENCE
+// of an approval_rules row means every execution pauses for human approval.
+// "Yolo mode" is an explicit auto_approve row — the opposite of every other tool.
+//
+// enabled=true  → upsert an auto_approve row (delete-then-insert avoids dupes)
+// enabled=false → delete the row (reverts to safe default: require_approval)
+//
+// Server-enforces the Yolo gate. Two paths allow enabling:
+//   1. local-trust mode (single-user loopback — no auth at all).
+//   2. The active entity's owner has opted in via `entities.lan_command_yolo = true`
+//      AND the calling user is that entity's owner (entities.userId).
+// Disabling (enabled=false) is always permitted — it only removes permissions.
+
+const SetRunCommandYoloSchema = z.object({
+  agentId: z.string().guid(),
+  enabled: z.boolean(),
+});
+
+export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetRunCommandYoloSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, enabled } = parsed.data;
+
+    // Gate (non-local-trust only): only the workspace owner may change a
+    // per-agent Yolo rule — in EITHER direction. Disabling is the safe direction
+    // (it only removes auto-approval) but a non-owner flipping it off would
+    // disrupt the owner's automations, so we owner-gate both. Enabling
+    // additionally requires the workspace opt-in (lan_command_yolo).
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change command auto-run.');
+      }
+      if (enabled && !entityRow.lanCommandYolo) {
+        return fail(
+          'forbidden',
+          'Yolo mode is not enabled for this workspace. Enable it in Settings → Command execution first.',
+        );
+      }
+    }
+
+    const db = getDb();
+
+    // Verify agent belongs to active entity
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Always delete the existing row first to avoid duplicates (no unique constraint)
+    await db
+      .delete(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, session.entityId),
+          eq(approvalRules.agentId, agentId),
+          eq(approvalRules.toolName, 'run_command'),
+        ),
+      );
+
+    if (enabled) {
+      await db.insert(approvalRules).values({
+        entityId: session.entityId,
+        agentId,
+        toolName: 'run_command',
+        action: 'auto_approve',
+      });
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setRunCommandYoloAction]', err);
+    return fail('db_error', 'Failed to save command execution setting');
+  }
+}
+
+// ─── LAN Command Yolo (workspace setting) ────────────────────────────────────
+//
+// When AUTH_MODE is not 'local-trust' (i.e. the install is local-auth or
+// bearer-token — multi-user or LAN), the workspace OWNER can opt in to
+// allowing Yolo mode for their workspace's agents. This is a deliberate
+// security relaxation: the owner is making a conscious decision that they
+// trust the agents in this workspace to auto-run shell commands.
+//
+// Only the entity owner (entities.userId === session.userId) may toggle this.
+
+export type LanCommandYoloView = {
+  lanCommandYolo: boolean;
+  isOwner: boolean;
+};
+
+export async function getLanCommandYoloAction(): Promise<ActionResult<LanCommandYoloView>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [entityRow] = await db
+      .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    return ok({
+      lanCommandYolo: entityRow.lanCommandYolo,
+      isOwner: entityRow.userId === session.userId,
+    });
+  } catch (err) {
+    console.error('[getLanCommandYoloAction]', err);
+    return fail('db_error', 'Failed to load LAN command yolo setting');
+  }
+}
+
+const SetLanCommandYoloSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export async function setLanCommandYoloAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetLanCommandYoloSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { enabled } = parsed.data;
+
+    const db = getDb();
+
+    // Verify the caller is the workspace owner.
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can change this setting.');
+    }
+
+    await db
+      .update(entities)
+      .set({ lanCommandYolo: enabled })
+      .where(eq(entities.id, session.entityId));
+
+    revalidatePath('/settings');
+    revalidatePath('/agents');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setLanCommandYoloAction]', err);
+    return fail('db_error', 'Failed to save LAN command yolo setting');
+  }
+}
+
 // ─── Skill Actions ────────────────────────────────────────────────────────────
 
 export type InstalledScript = { path: string; language: string };
