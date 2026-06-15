@@ -109,7 +109,7 @@ if (existsSync(migrationsSrc)) {
 // EXTERNALS array.
 const packPkg = {
   name: 'nodal-agents',
-  version: '0.5.0',
+  version: '0.5.2',
   description: 'Local-first AI agent platform with a web dashboard — install in one command.',
   license: 'MIT',
   repository: {
@@ -200,5 +200,5 @@ console.log('  cli.js   ', sizeMB(resolve(packDir, 'cli.js')));
 console.log('  runner.js', sizeMB(resolve(packDir, 'runner.js')));
 console.log('  web/server.js', sizeMB(resolve(packDir, 'web/server.js')));
 console.log('\nNext steps:');
-console.log('  cd pack && npm pack       # produce nodal-agents-0.5.0.tgz');
+console.log('  cd pack && npm pack       # produce nodal-agents-0.5.2.tgz');
 console.log('  cd pack && npm install -g . # local install test');

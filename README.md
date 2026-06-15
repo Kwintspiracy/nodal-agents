@@ -215,7 +215,7 @@ pnpm deps:check   # runs locally and in CI before every release
 
 ## Status
 
-**Current release:** `0.5.0` on npm `latest`. Used daily by the
+**Current release:** `0.5.2` on npm `latest`. Used daily by the
 maintainer, stable enough for personal production. Pre-1.0 — breaking
 changes are still possible between minors.
 
@@ -270,6 +270,14 @@ changes are still possible between minors.
 - ROOT agent — your first orchestrator automatically becomes the workspace ROOT (the single top-level agent; later orchestrators slot under it). It can create *and update* skills, create agents and assign them, and create MCP servers + API connectors — each gated by per-grant toggles + an autonomy/approval level (powers start off, opt in per grant). Provisioning verifies before it writes (an MCP server is connected and its tools listed first); skill authoring is grounded in the workspace's real tools (a linter rejects skills referencing tools the agent doesn't have)
 - Office file editing — Excel in-place edit, Word/PowerPoint create, in the agent workspace (office-editing skill)
 - Multiple filesystem folders per agent (sandboxed `file_*` tools)
+- **Shell execution** — agents can run shell commands in their workspace
+  (`run_command`: install deps, run scripts, build steps) via an opt-in
+  `command-execution` skill. Safe-by-default: every command pauses for your
+  approval, with an optional per-agent auto-run ("Yolo"). On a shared / LAN
+  install auto-run is gated behind an explicit workspace-owner opt-in and
+  **enforced at execution time** — flip the workspace switch off and even an
+  already-trusted agent drops back to requiring approval. A live bell surfaces
+  pending approvals from anywhere in the dashboard
 - Telegram delivery (long-poll, group filters, multi-agent routing,
   delegation gracefulness) — exactly-once delivery contract: anti-spam guard
   against runaway message loops + a guard that re-prompts (then fails loud)
