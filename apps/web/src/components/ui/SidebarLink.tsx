@@ -15,6 +15,9 @@ type Props = {
   dot?: DotVariant;
   /** Tiny right-aligned mono count, e.g. number of skills installed. */
   count?: number | string;
+  /** Coral attention pill — renders a rounded badge with the given count
+   *  using the error/attention colour token. Used for Approvals. */
+  pill?: number;
   /** Override active matching — defaults to "pathname equals href or starts
    *  with href + '/'", which is the right behaviour for nested routes. */
   isActive?: boolean;
@@ -31,7 +34,7 @@ const DOT_BG: Record<DotVariant, string> = {
  * The active state uses paper-coloured background so it always reads as
  * raised regardless of theme; the design specifies a small drop shadow.
  */
-export default function SidebarLink({ href, label, icon, dot, count, isActive }: Props) {
+export default function SidebarLink({ href, label, icon, dot, count, pill, isActive }: Props) {
   const pathname = usePathname();
   const active = isActive ?? (pathname === href || pathname.startsWith(href + '/'));
 
@@ -54,8 +57,14 @@ export default function SidebarLink({ href, label, icon, dot, count, isActive }:
         </span>
       )}
       <span className="flex-1 truncate">{label}</span>
-      {count !== undefined && (
-        <span className="font-mono text-[10px] tracking-[0.02em] text-ink-4">{count}</span>
+      {pill !== undefined ? (
+        <span className="rounded-full bg-err/12 px-1.5 text-[10px] font-medium text-err">
+          {pill > 99 ? '99+' : pill}
+        </span>
+      ) : (
+        count !== undefined && (
+          <span className="font-mono text-[10px] tracking-[0.02em] text-ink-4">{count}</span>
+        )
       )}
     </Link>
   );
