@@ -109,7 +109,7 @@ if (existsSync(migrationsSrc)) {
 // EXTERNALS array.
 const packPkg = {
   name: 'nodal-agents',
-  version: '0.4.4',
+  version: '0.5.0',
   description: 'Local-first AI agent platform with a web dashboard — install in one command.',
   license: 'MIT',
   repository: {
@@ -145,6 +145,7 @@ const packPkg = {
     'better-auth': '^1.6.10',
     ai: '^6.0.177',
     '@ai-sdk/anthropic': '^3.0.76',
+    '@ai-sdk/deepseek': '^2.0.38',
     '@ai-sdk/google': '^3.0.72',
     '@ai-sdk/groq': '^3.0.39',
     '@ai-sdk/mistral': '^3.0.36',
@@ -164,6 +165,9 @@ const packPkg = {
     docx: '^9.7.1',
     pptxgenjs: '^4.0.1',
     officeparser: '^7.1.0',
+    // ── Community-skill install (fetch + unpack SKILL.md archives)
+    tar: '^7.5.16',
+    fflate: '^0.8.3',
     // pdfjs-dist (transitive of pdf-parse) tries to require @napi-rs/canvas
     // optionally for canvas-based PDF rendering. Without it, SSR pages
     // that import the adapter tree crash with `ReferenceError: DOMMatrix
@@ -196,5 +200,5 @@ console.log('  cli.js   ', sizeMB(resolve(packDir, 'cli.js')));
 console.log('  runner.js', sizeMB(resolve(packDir, 'runner.js')));
 console.log('  web/server.js', sizeMB(resolve(packDir, 'web/server.js')));
 console.log('\nNext steps:');
-console.log('  cd pack && npm pack       # produce nodal-agents-0.1.0.tgz');
+console.log('  cd pack && npm pack       # produce nodal-agents-0.5.0.tgz');
 console.log('  cd pack && npm install -g . # local install test');

@@ -23,11 +23,13 @@ with **any LLM** — frontier or local, paid or free.
 | | |
 | --- | --- |
 | 🏠 &nbsp;**Local-first** | Single binary, embedded Postgres, zero cloud dependency. Your conversations, memory, and credentials stay on your machine. |
-| 🔌 &nbsp;**Any model, per agent** | Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter, or any local model (LM Studio, Ollama). Setup is just an API key per provider — **each agent picks its own model**, so you can run Claude for the orchestrator and **DeepSeek V4** for the workers. The quirks of OSS frontier models (DeepSeek's non-spec tool args, Kimi/Qwen/GLM XML tool formats, and round-tripping a reasoning model's chain-of-thought across tool calls so MiniMax M3 / DeepSeek / Gemini 3 don't degrade mid-task) are handled automatically. |
+| 🔌 &nbsp;**Any model, per agent** | Anthropic, OpenAI, Google, Groq, Mistral, OpenRouter, **native DeepSeek** (`api.deepseek.com`) and **native MiniMax** (`api.minimax.io`), or any local model (LM Studio, Ollama). Setup is just an API key per provider — **each agent picks its own model**, so you can run Claude for the orchestrator and **DeepSeek V4** for the workers. The quirks of OSS frontier models (DeepSeek's non-spec tool args, Kimi/Qwen/GLM XML tool formats, and round-tripping a reasoning model's chain-of-thought across tool calls so MiniMax M3 / DeepSeek / Gemini 3 don't degrade mid-task) are handled automatically. |
 | 🛟 &nbsp;**Provider failover** | Give an agent a backup key chain — if its provider 5xx's, times out, or hits quota mid-job, the runner fails over to the next one and keeps going (and fails loud only when the whole chain is down). |
 | 🧠 &nbsp;**Memory that compounds** | Persistent facts (entity-scoped, auto-injected into every job) and chat-thread continuity (your agent remembers what it said 30 seconds ago — and what it said yesterday). |
-| 🤝 &nbsp;**Orchestrators that finish** | Router and planner orchestrators delegate to specialist sub-agents, then resume on completion to wrap up the answer. |
-| 🛡️ &nbsp;**Agents that don't lie, loop, or die** | Generic runtime guards: a per-job token budget and a no-progress detector kill runaway loops; a no-false-success guard refuses to report "done" when an action actually failed (fail loud, never fake it); turn/chain/delegation caps bound everything. |
+| 🤝 &nbsp;**Orchestrators that finish** | Every orchestrator picks the delegation style per request — route to one specialist and resume on its result, or fan out independent work to many sub-agents in parallel and compile their results — then wraps up the answer. |
+| 🌱 &nbsp;**Self-improving agents** | Opt-in learning loop: after a substantial job, an agent reflects on the transcript and writes itself a reusable skill; a weekly curator consolidates and prunes them. Every learned skill is reviewable, assignable, and revocable from the dashboard (off by default, per workspace). |
+| 📥 &nbsp;**Install any community skill** | Point it at any open `SKILL.md` — a GitHub repo, a skills.sh slug, or a ClawHub package — and it fetches, unpacks, and installs it as a first-class skill. Pure HTTPS fetch with SSRF allow-listing and zip-slip guards; bundled scripts are flagged, never executed. |
+| 🛡️ &nbsp;**Agents that don't lie, loop, or die** | Generic runtime guards: a per-job **real-dollar cost cap** (from the provider's actual billed cost) and a no-progress detector kill runaway loops; a no-false-success guard refuses to report "done" when an action actually failed; an atomic job claim prevents the same job running twice; and every failed or blocked job hands you a short, specific reason — never a silent stop. Turn/chain/delegation caps bound everything. |
 | 🔧 &nbsp;**Multi-instance connectors** | Gmail perso *and* Gmail boulot on the same install. OAuth *and* API-key supported. Active list + Marketplace UI in the dashboard. |
 | 🗂️ &nbsp;**Workspaces** | Multiple isolated workspaces on one install (personal vs work) — each with its own agents, skills, connectors, jobs and memory. Switch from the sidebar. |
 | 🤖 &nbsp;**Self-extending (ROOT agent)** | Designate an orchestrator as ROOT and let it create skills/agents and assign them on your behalf — gated by per-grant toggles and an autonomy level (propose-confirm → fully-autonomous). |
@@ -84,7 +86,7 @@ When a newer version is available, `nodal-agents up` also prints a one-line
 notice:
 
 ```
-ℹ v0.4.4 available — run `nodal-agents update`
+ℹ v0.5.1 available — run `nodal-agents update`
 ```
 
 ### Build from source
@@ -144,7 +146,8 @@ Delegations create child jobs that resume the parent on completion.
 | `/connectors` | Active connector instances + Marketplace (multi-instance, OAuth or API-key). |
 | `/mcp` | Active MCP servers + Marketplace — HTTP & stdio, a growing catalogue, plus add/edit your own custom servers. |
 | `/memories` | Persistent facts per entity — search, edit, archive. |
-| `/skills` | Assigned / Custom / Built-in Library tabs — reusable instructions appended to an agent's prompt; create your own or customise built-ins. |
+| `/skills` | Assigned / Custom / Built-in Library tabs — reusable instructions appended to an agent's prompt; create your own, customise built-ins, or install any community `SKILL.md` from GitHub / skills.sh / ClawHub. |
+| `/learned-skills` | Skills the agents wrote themselves (learning loop) — review, assign, archive, restore; toggle reflection + auto-assign per workspace. |
 | `/logs` | Tool-call audit — input/output JSON per call, filterable by tool name. |
 | `/approvals` | Human-in-the-loop gates for risky tools (and the ROOT agent's meta-tools under propose-confirm). |
 | `/automations` | Cron-scheduled agent triggers. |
@@ -212,7 +215,7 @@ pnpm deps:check   # runs locally and in CI before every release
 
 ## Status
 
-**Current release:** `0.4.4` on npm `latest`. Used daily by the
+**Current release:** `0.5.0` on npm `latest`. Used daily by the
 maintainer, stable enough for personal production. Pre-1.0 — breaking
 changes are still possible between minors.
 
@@ -220,26 +223,45 @@ changes are still possible between minors.
 
 - Multi-LLM, **per-agent model selection** — provider setup is just an API key
   (one per provider); each agent chooses its own model on top. Frontier and
-  local providers, including **DeepSeek V4** (non-spec tool-call args normalized
-  automatically) and **reasoning models like MiniMax M3** (their hidden
-  chain-of-thought is round-tripped across tool calls so they keep reasoning on
-  multi-turn tasks), plus native tool-call parsing for Kimi K2 / Qwen3-Coder / GLM
+  local providers, plus **native DeepSeek** (`api.deepseek.com`) and **native
+  MiniMax** (`api.minimax.io`) endpoints alongside OpenRouter — pick the route
+  per key. **DeepSeek V4** non-spec tool-call args are normalized automatically
+  and **reasoning models like MiniMax M3** have their hidden chain-of-thought
+  round-tripped across tool calls so they keep reasoning on multi-turn tasks,
+  plus native tool-call parsing for Kimi K2 / Qwen3-Coder / GLM
 - **Provider failover** — an opt-in ordered key chain per agent; on a 5xx /
   timeout / quota mid-job the runner fails over to the next key, and fails loud
   (`all_providers_failed`) only when the whole chain is exhausted
-- **Reliability guards (generic, model-agnostic)** — per-job token budget +
-  no-progress detector (kill runaway loops), a no-false-success guard that
-  refuses to complete a job as "success" when a tool action failed and was never
-  resolved (fail loud, never fake it), and context compaction that evicts stale
-  tool output before the model's context window overflows
-- **Diagnosable failures** — every failed job persists its full transcript and
-  the real upstream provider error (not an opaque "provider returned error"), so
-  you can see exactly what the agent did and why it stopped
+- **Reliability guards (generic, model-agnostic)** — a per-job **real-dollar
+  cost cap** (read from the provider's actually-billed cost, `cost_budget_exceeded`)
+  + token budget + no-progress / no-delivery detectors (kill runaway loops), an
+  **atomic job claim** so the same job never executes twice, a no-false-success
+  guard that refuses to complete a job as "success" when a tool action failed and
+  was never resolved (fail loud, never fake it), a **recoverable** path for a
+  mis-named tool call (a bounded "did you mean…" nudge, not an instant kill), and
+  context compaction that evicts stale tool output before the context window overflows
+- **Never a silent stop** — every failed *or blocked* job hands the user a short,
+  specific reason (in the agent's own words when it blocks), propagated up through
+  delegation; a blocked job is honestly `failed`, never a fake "completed"
+- **Diagnosable failures** — every failed job persists its full transcript, the
+  real upstream provider error (not an opaque "provider returned error"), and the
+  actual upstream that served each turn, so you can see exactly what the agent did
+  and why it stopped
+- **Self-improving agents (opt-in learning loop)** — after a substantial job, an
+  agent reflects on its transcript and writes itself a reusable skill (sandboxed
+  provenance); a weekly curator consolidates and prunes them. Review, assign,
+  archive or revoke every learned skill from `/learned-skills` (off by default,
+  per workspace; auto-assign or require approval)
+- **Install any community skill** — fetch any open `SKILL.md` from a GitHub repo,
+  a skills.sh slug, or a ClawHub package and install it as a first-class skill
+  (pure HTTPS, SSRF allow-list, zip-slip guard; bundled scripts flagged, never run)
 - Persistent memory (sanitation, dedup, importance ranking, auto-injection,
   feedback loop)
 - Session-thread continuity on chat channels (Telegram today)
-- Orchestrator (router + planner) with delegation chains that resume the
-  parent on completion
+- **Unified orchestrator** — every orchestrator gets both delegation styles and
+  picks per request: route to one specialist and resume on its result (router),
+  or fan out independent tasks to a parallel task board that compiles + delivers
+  the combined result (planner). One commits to a single style per job
 - Multi-instance connectors with OAuth (Gmail, Drive, Sheets, Docs, Notion,
   Airtable) and API-key (Notion, Airtable, Apify, Firecrawl, Tavily)
 - MCP catalog — Streamable HTTP *and* stdio (local subprocess) servers, API-key auth; a growing catalogue (Stripe, n8n, Supabase, Airtable, Notion…) with a "test pending" badge on entries not yet verified live, plus add *and edit* your own custom HTTP/stdio servers from the dashboard
@@ -254,8 +276,11 @@ changes are still possible between minors.
   rather than completing a job without ever replying
 - Approval gates for risky tools (execute-the-approved-action on resume) — on a chat channel, the agent sends a heads-up before the job pauses so the user knows an approval is waiting
 - Cron scheduling — trigger any automation out-of-band ("Run now") + opt-in Telegram confirmation when a scheduled job succeeds
+- Duplicate any automation in one click; opt-in retention to purge old terminal jobs
 - `nodal-agents update` — one-command upgrade + boot version notice
-- Encryption at rest for LLM keys + MCP keys
+- Encryption at rest for LLM keys + MCP keys; in LAN / multi-user modes the
+  runner requires a shared `WORKER_SECRET` on every mutating route (no
+  unauthenticated job/LLM spend from other devices on the network)
 - Embedded Postgres distribution via npm (no external DB to install)
 
 ### On the roadmap (genuine, not vaporware)

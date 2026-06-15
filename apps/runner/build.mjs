@@ -42,6 +42,7 @@ const EXTERNALS = [
   // LLM (Vercel AI SDK + providers)
   'ai',
   '@ai-sdk/anthropic',
+  '@ai-sdk/deepseek',
   '@ai-sdk/google',
   '@ai-sdk/groq',
   '@ai-sdk/mistral',
@@ -64,6 +65,9 @@ const EXTERNALS = [
   'docx',
   'pptxgenjs',
   'officeparser',
+  // Community-skill install (fetch + unpack SKILL.md archives)
+  'tar',
+  'fflate',
 ];
 
 // esbuild's external matches the literal import string. Deep imports
