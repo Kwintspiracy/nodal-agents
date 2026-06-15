@@ -144,33 +144,50 @@ function runInShell(command: string, cwd: string, timeoutMs: number): Promise<Ru
       stderr = append(stderr, c);
     });
 
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
     const killTree = (): void => {
-      if (!child.pid) return;
-      if (isWindows) {
-        // /T = kill the whole tree (cmd.exe → node → grandchildren). /F = force.
-        // Fire-and-forget; the 'close' event fires once the tree is gone.
-        spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-      } else {
-        // Negative pid targets the process group created by detached:true.
-        try {
-          process.kill(-child.pid, 'SIGKILL');
-        } catch {
-          /* already dead */
+      if (child.pid) {
+        if (isWindows) {
+          // /T = kill the whole tree (cmd.exe → node → grandchildren). /F = force.
+          try {
+            spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+          } catch {
+            /* taskkill unavailable — fall through to child.kill below */
+          }
+        } else {
+          // Negative pid targets the process group created by detached:true.
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {
+            /* already dead */
+          }
         }
       }
+      // Backstop: also SIGKILL the direct child handle.
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already dead */
+      }
     };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree();
-    }, timeoutMs);
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
       resolve({ exitCode, stdout, stderr, timedOut, truncated, cwd });
     };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree();
+      // Guarantee resolution even if 'close' never fires: a stubborn grandchild
+      // can keep a stdio pipe open after the tree-kill, which would otherwise
+      // hang the job forever. The kill was already issued — resolve best-effort.
+      graceTimer = setTimeout(() => finish(null), 3000);
+    }, timeoutMs);
 
     child.on('error', (err: Error) => {
       // spawn failure (shell missing, cwd vanished, …). Return it as a failed

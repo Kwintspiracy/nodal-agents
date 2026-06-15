@@ -22,7 +22,16 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await rm(workspaceDir, { recursive: true, force: true });
+  // Best-effort: on Windows a just-killed process can briefly hold the dir
+  // handle, so retry a few times rather than failing the suite on EBUSY.
+  for (let i = 0; i < 5; i++) {
+    try {
+      await rm(workspaceDir, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
 });
 
 // run_command.execute only reads ctx.workspaces — db is never touched.

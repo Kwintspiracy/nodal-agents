@@ -922,8 +922,10 @@ export async function executeJob(
         let replacementOutput: ToolResultOutput;
 
         if (req.status === 'approved') {
-          // Execute the tool with empty approvalRules so it bypasses the gate
-          // (the human already approved; re-gating would create an infinite loop).
+          // Execute the approved tool, bypassing the gate — the human already
+          // reviewed and approved this exact call. The bypass is expressed via a
+          // synthetic auto_approve rule below (NOT an empty rules array: that would
+          // re-fire the tool's own defaultApproval and loop forever for run_command).
           const toolDef = toolMap.get(req.toolName);
           if (!toolDef) {
             // Tool no longer in whitelist — treat as error and mark executed.
@@ -931,6 +933,20 @@ export async function executeJob(
               error: `approved_tool_not_found:${req.toolName}`,
             });
           } else {
+            // Synthesize an explicit auto_approve rule for this tool so that
+            // tools with defaultApproval:'require_approval' (e.g. run_command)
+            // bypass their own gate during the resume-execution step. The human
+            // already reviewed and approved this exact call — re-gating on the
+            // tool's default posture would produce an infinite approval loop.
+            const resumeApprovalRules: ApprovalRule[] = [
+              {
+                id: 'resume-bypass',
+                entityId: job.entityId ?? '',
+                agentId: null,
+                toolName: req.toolName,
+                action: 'auto_approve',
+              },
+            ];
             const execResult = await executeTool(
               toolDef,
               req.toolInput,
@@ -946,15 +962,15 @@ export async function executeJob(
                 assignedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
-              { approvalRules: [], onApprovalRequired: async () => {} },
+              { approvalRules: resumeApprovalRules, onApprovalRequired: async () => {} },
             );
             if (execResult.outcome === 'success') {
               replacementOutput = toResultOutput(execResult.output);
             } else if (execResult.outcome === 'error') {
               replacementOutput = toResultOutput({ error: execResult.error });
             } else {
-              // outcome === 'awaiting_approval' should never occur because we
-              // passed approvalRules: [] — but handle defensively.
+              // outcome === 'awaiting_approval' should never occur — we passed a
+              // synthetic auto_approve rule that overrides any defaultApproval.
               replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
             }
           }
