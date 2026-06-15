@@ -302,6 +302,13 @@
       "when": 1782300000000,
       "tag": "0043_skill_assignment",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1782400000000,
+      "tag": "0044_entities_lan_command_yolo",
+      "breakpoints": true
     }
   ]
 }

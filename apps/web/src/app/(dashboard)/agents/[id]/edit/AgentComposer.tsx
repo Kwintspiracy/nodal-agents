@@ -96,6 +96,10 @@ interface Props {
   mcpServers: AgentMcpServerRow[];
   jobs: JobRow[];
   attachedSkills: SkillRow[];
+  /** Whether the workspace owner has opted in to Yolo in non-local-trust mode. */
+  lanCommandYolo?: boolean;
+  /** Whether the current user is the workspace owner. */
+  isOwner?: boolean;
 }
 
 export default function AgentComposer({
@@ -107,6 +111,8 @@ export default function AgentComposer({
   mcpServers,
   jobs,
   attachedSkills,
+  lanCommandYolo = false,
+  isOwner = false,
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -343,6 +349,8 @@ export default function AgentComposer({
           connectors={connectors}
           hasTelegramBot={!!agent.telegramBotToken}
           attachedSkills={attachedSkills}
+          lanCommandYolo={lanCommandYolo}
+          isOwner={isOwner}
         />
       )}
       {tab === 'settings' && (
@@ -976,11 +984,15 @@ function AutonomyTab({
   connectors,
   hasTelegramBot,
   attachedSkills,
+  lanCommandYolo,
+  isOwner,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
   hasTelegramBot: boolean;
   attachedSkills: SkillRow[];
+  lanCommandYolo: boolean;
+  isOwner: boolean;
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1090,6 +1102,8 @@ function AutonomyTab({
         attachedSkills={attachedSkills}
         rules={rules}
         onRulesChange={setRules}
+        lanCommandYolo={lanCommandYolo}
+        isOwner={isOwner}
       />
     </div>
   );
@@ -1114,11 +1128,17 @@ function CommandExecutionSection({
   attachedSkills,
   rules,
   onRulesChange,
+  lanCommandYolo,
+  isOwner,
 }: {
   agentId: string;
   attachedSkills: SkillRow[];
   rules: ApprovalRuleUiRow[];
   onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
+  /** Whether the workspace owner has opted into Yolo in non-local-trust mode. */
+  lanCommandYolo: boolean;
+  /** Whether the current user is the workspace owner. */
+  isOwner: boolean;
 }) {
   const hasSkill = attachedSkills.some((s) => s.slug === COMMAND_EXECUTION_SKILL_SLUG);
 
@@ -1126,6 +1146,12 @@ function CommandExecutionSection({
   // mirrors AUTH_MODE and is safe to read in client components).
   const isLocalTrust =
     (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+
+  // The toggle is enabled when:
+  //   - local-trust mode (single-user loopback — no auth; classic behaviour), OR
+  //   - The workspace owner has explicitly opted in via lanCommandYolo AND the
+  //     current user is that owner.
+  const yoloAllowed = isLocalTrust || (lanCommandYolo && isOwner);
 
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -1198,10 +1224,22 @@ function CommandExecutionSection({
             When on, this agent runs any shell command immediately with no approval gate. Commands
             are still logged. Only enable for agents you fully trust.
           </p>
-          {!isLocalTrust && (
+          {!yoloAllowed && !isLocalTrust && !lanCommandYolo && (
             <p className="mt-2 text-[11.5px] text-ink-4">
-              Yolo is only available in single-user local mode. On a shared/LAN install, commands
-              always require approval.
+              Yolo is off for this workspace. The owner can enable it in{' '}
+              <a
+                href="/settings"
+                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+              >
+                Settings → Command execution
+              </a>
+              , or switch to loopback mode.
+            </p>
+          )}
+          {!yoloAllowed && lanCommandYolo && !isOwner && (
+            <p className="mt-2 text-[11.5px] text-ink-4">
+              The workspace owner has enabled Yolo for this workspace, but only the owner can toggle
+              it per agent.
             </p>
           )}
         </div>
@@ -1211,11 +1249,11 @@ function CommandExecutionSection({
           type="button"
           role="switch"
           aria-checked={yoloEnabled}
-          disabled={saving || !isLocalTrust}
+          disabled={saving || !yoloAllowed}
           onClick={() => handleToggle(!yoloEnabled)}
           className={[
             'relative mt-0.5 h-[22px] w-[40px] shrink-0 rounded-full border transition-colors',
-            saving || !isLocalTrust ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+            saving || !yoloAllowed ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
             yoloEnabled
               ? 'border-err/40 bg-err/20'
               : 'border-rule-2 bg-canvas',

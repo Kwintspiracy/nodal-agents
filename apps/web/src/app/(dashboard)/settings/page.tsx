@@ -5,6 +5,7 @@ import {
   listWorkspacesAction,
   getRootConfigAction,
   listAgentsAction,
+  getLanCommandYoloAction,
   type WorkspaceRow,
 } from '@/lib/actions.ts';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
@@ -12,6 +13,7 @@ import SecurityForm from './SecurityForm.tsx';
 import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
+import LanCommandYoloSection from './LanCommandYoloSection.tsx';
 import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -22,15 +24,23 @@ import { CheckOk } from '@/components/ui/CheckOk.tsx';
 export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
-  const [result, securityResult, networkResult, wsResult, rootConfigResult, agentsResult] =
-    await Promise.all([
-      getSettingsAction(),
-      getSecuritySettingsAction(),
-      getNetworkSettingsAction(),
-      listWorkspacesAction(),
-      getRootConfigAction(),
-      listAgentsAction(),
-    ]);
+  const [
+    result,
+    securityResult,
+    networkResult,
+    wsResult,
+    rootConfigResult,
+    agentsResult,
+    lanYoloResult,
+  ] = await Promise.all([
+    getSettingsAction(),
+    getSecuritySettingsAction(),
+    getNetworkSettingsAction(),
+    listWorkspacesAction(),
+    getRootConfigAction(),
+    listAgentsAction(),
+    getLanCommandYoloAction(),
+  ]);
   const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
   if (!result.ok) {
@@ -94,6 +104,15 @@ export default async function SettingsPage() {
       {networkResult.ok && (
         <SetBlock label="Network" lede="Control which devices can reach the dashboard.">
           <NetworkForm initial={networkResult.data} />
+        </SetBlock>
+      )}
+
+      {lanYoloResult.ok && s.authMode !== 'local-trust' && (
+        <SetBlock
+          label="Command execution (LAN)"
+          lede="In multi-user / LAN mode, shell commands always require approval by default. The workspace owner can opt in to allow Yolo (auto-run) mode per agent."
+        >
+          <LanCommandYoloSection initial={lanYoloResult.data} />
         </SetBlock>
       )}
 

@@ -55,6 +55,11 @@ export const entities = pgTable(
       .notNull()
       .default('approval')
       .$type<'auto' | 'approval'>(),
+    // Allows the workspace OWNER to opt into Yolo (auto-approve run_command)
+    // even in non-local-trust (LAN/local-auth) mode. Off by default: in
+    // local-auth mode, commands always require approval unless the owner
+    // explicitly opts in here.
+    lanCommandYolo: boolean('lan_command_yolo').notNull().default(false),
   },
   (table) => [
     uniqueIndex('entities_mcp_token_idx').on(table.mcpToken),

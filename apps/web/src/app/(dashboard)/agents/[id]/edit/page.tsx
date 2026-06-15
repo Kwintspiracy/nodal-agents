@@ -7,6 +7,7 @@ import {
   listAgentMcpServersAction,
   listJobsAction,
   listSkillsAction,
+  getLanCommandYoloAction,
 } from '@/lib/actions.ts';
 import AgentComposer from './AgentComposer.tsx';
 
@@ -34,12 +35,14 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const peers = peersResult.ok ? peersResult.data.filter((a) => a.id !== id) : [];
 
   // Per-agent data — fetched after the agent is confirmed to exist.
-  const [connectorsResult, mcpServersResult, jobsResult, skillsResult] = await Promise.all([
-    listAgentConnectorsAction(agent.id),
-    listAgentMcpServersAction(agent.id),
-    listJobsAction({ limit: 100 }),
-    listSkillsAction(),
-  ]);
+  const [connectorsResult, mcpServersResult, jobsResult, skillsResult, lanYoloResult] =
+    await Promise.all([
+      listAgentConnectorsAction(agent.id),
+      listAgentMcpServersAction(agent.id),
+      listJobsAction({ limit: 100 }),
+      listSkillsAction(),
+      getLanCommandYoloAction(),
+    ]);
   const connectors = connectorsResult.ok ? connectorsResult.data : [];
   const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
   // Filter jobs to this agent client-side — `listJobsAction` is global at the
@@ -51,6 +54,9 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
     s.assignedAgents.some((a) => a.id === agent.id),
   );
 
+  const lanCommandYolo = lanYoloResult.ok ? lanYoloResult.data.lanCommandYolo : false;
+  const isOwner = lanYoloResult.ok ? lanYoloResult.data.isOwner : false;
+
   return (
     <AgentComposer
       agent={agent}
@@ -61,6 +67,8 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       mcpServers={mcpServers}
       jobs={jobs}
       attachedSkills={attachedSkills}
+      lanCommandYolo={lanCommandYolo}
+      isOwner={isOwner}
     />
   );
 }
