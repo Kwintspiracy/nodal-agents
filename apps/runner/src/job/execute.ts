@@ -1663,6 +1663,26 @@ export async function executeJob(
         output: ToolResultOutput;
       }> = [];
 
+      // A model can emit return_result MORE than once in a turn (minimax does).
+      // Only the first (returnResultCall) finalizes the job; the rest are stripped
+      // from the for-loop above, so without a synthetic result their tool_use
+      // blocks are left unmatched → message_structure_invalid:unmatched_tool_use
+      // on the next turn (live: job 777d2730 emitted return_result x2, 1 result).
+      // Seed an "ignored duplicate" result for each extra so every tool_use is
+      // matched whichever exit path the return_result branch takes.
+      for (const tc of rawToolCalls) {
+        if (tc.toolName === 'return_result' && tc.toolCallId !== returnResultCall?.toolCallId) {
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: tc.toolCallId,
+            toolName: 'return_result',
+            output: toResultOutput({
+              error: 'ignored: duplicate return_result in the same turn — only the first is honored',
+            }),
+          });
+        }
+      }
+
       let awaitingApproval = false;
 
       // Parallel pre-pass: when EVERY tool call this turn is an independent READ

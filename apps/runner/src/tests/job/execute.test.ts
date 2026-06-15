@@ -3217,6 +3217,39 @@ describe('reliability guards', () => {
     expect(row?.turn).toBe(3);
   });
 
+  it('two return_result in one turn (first deferred) → no unmatched_tool_use; finalizes cleanly', async () => {
+    // Reproduces job 777d2730: minimax emitted return_result TWICE in a turn.
+    // The first is deferred (a sibling tool failed), the second was stripped
+    // from the loop with NO tool_result → message_structure_invalid:
+    // unmatched_tool_use on the next turn. Both tool_use blocks must be matched.
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'sm-bad', toolName: 'save_memory', args: {} }, // invalid → errors
+          { toolCallId: 'rr-a', toolName: 'return_result', args: { status: 'success' } },
+          { toolCallId: 'rr-b', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'rr-final',
+            toolName: 'return_result',
+            args: { status: 'blocked', reason: 'save_memory failed, stopping' },
+          },
+        ],
+      },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    // It reaches turn 2 and finalizes honestly — NOT message_structure_invalid.
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).not.toMatch(/message_structure_invalid/);
+      expect(result.error).toBe('save_memory failed, stopping');
+    }
+  });
+
   // ─── Guard 1d — no-delivery runaway detector ─────────────────────────────
   // Regression for real failed jobs 0ff86a1f / ac31d982 / 394b13f4:
   // the agent looped calling varying work-tool queries without ever delivering,
