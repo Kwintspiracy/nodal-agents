@@ -7,6 +7,7 @@ import { and, asc, desc, eq, inArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { executeJob } from '../job/execute.ts';
+import type { ExecuteJobResult } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
@@ -168,64 +169,70 @@ export async function executeReadyTasks(
 
   if (executions.length === 0) return 0;
 
-  // Execute all jobs concurrently
-  const results = await Promise.allSettled(
+  // Run each task's job concurrently AND mark THAT task the moment ITS job
+  // finishes — inside its own thunk, NOT after the whole batch. This is the
+  // primary fix for the duplication bug: previously the task stayed
+  // `in_progress` until the slowest sibling finished `Promise.allSettled`, and
+  // the orphan reaper (resetOrphanedTasks Case B) re-ran any task whose job was
+  // already terminal — re-executing completed work (live: Java posted to the
+  // Cortex 3x because its task lingered in_progress ~12 min behind a slow
+  // Sputnik). Marking per-job closes that window entirely.
+  await Promise.allSettled(
     executions.map(async (exec) => {
-      const result = await executeJob(exec.jobId as JobId, deps);
-      return { exec, result };
+      try {
+        const result = await executeJob(exec.jobId as JobId, deps);
+        await markTaskFromResult(db, exec.taskId, result);
+      } catch {
+        // executeJob threw — the job is already marked failed by its internal
+        // handler. Mirror onto the task NOW so it never lingers in_progress.
+        await db
+          .update(agentTasks)
+          .set({ status: 'blocked', result: 'job execution error', updatedAt: new Date() })
+          .where(eq(agentTasks.id, exec.taskId));
+      }
     }),
   );
 
-  // Update task status based on job outcome
-  for (const settled of results) {
-    if (settled.status === 'rejected') {
-      // executeJob itself threw — the job is already marked failed by the internal
-      // error handler. The task will be reset by the next orphan-reset tick.
-      continue;
-    }
-
-    const { exec, result } = settled.value;
-
-    if (result.status === 'completed') {
-      await db
-        .update(agentTasks)
-        .set({
-          status: 'done',
-          result: result.result,
-          updatedAt: new Date(),
-        })
-        .where(eq(agentTasks.id, exec.taskId));
-    } else if (result.status === 'failed') {
-      await db
-        .update(agentTasks)
-        .set({
-          status: 'blocked', // blocked = needs attention, can be retried
-          // Prefer the user-facing reason (e.g. agent_blocked) over the bare
-          // error code so the compiled task result explains WHY it stopped.
-          result: result.result ?? result.error,
-          updatedAt: new Date(),
-        })
-        .where(eq(agentTasks.id, exec.taskId));
-    } else if (result.status === 'awaiting_approval') {
-      // Leave in_progress — the approve endpoint will complete it
-    } else if (result.status === 'awaiting_delegation') {
-      // Leave in_progress — the delegation resume will complete it
-    } else if (result.status === 'cancelled') {
-      // User cancelled the job mid-flight via the dashboard. Mirror that on
-      // the parent task so it doesn't sit forever as `in_progress`.
-      await db
-        .update(agentTasks)
-        .set({
-          status: 'blocked',
-          result: 'cancelled by user',
-          updatedAt: new Date(),
-        })
-        .where(eq(agentTasks.id, exec.taskId));
-    }
-    // 'already_handled' — status already correct, no-op
-  }
-
   return executions.length;
+}
+
+// ─── markTaskFromResult ───────────────────────────────────────────────────────
+
+/**
+ * Mirror a finished job's outcome onto its task — promptly, the instant the job
+ * returns. Terminal outcomes finalize the task (done / blocked); suspended
+ * outcomes (approval / delegation / nested tasks) leave it `in_progress` because
+ * a resume elsewhere will finish it.
+ */
+async function markTaskFromResult(
+  db: AnyDrizzleDb,
+  taskId: string,
+  result: ExecuteJobResult,
+): Promise<void> {
+  if (result.status === 'completed') {
+    await db
+      .update(agentTasks)
+      .set({ status: 'done', result: result.result, updatedAt: new Date() })
+      .where(eq(agentTasks.id, taskId));
+  } else if (result.status === 'failed') {
+    await db
+      .update(agentTasks)
+      .set({
+        // Prefer the user-facing reason (e.g. a blocked agent's reason) over the
+        // bare error code so the compiled task result explains WHY it stopped.
+        status: 'blocked',
+        result: result.result ?? result.error,
+        updatedAt: new Date(),
+      })
+      .where(eq(agentTasks.id, taskId));
+  } else if (result.status === 'cancelled') {
+    await db
+      .update(agentTasks)
+      .set({ status: 'blocked', result: 'cancelled by user', updatedAt: new Date() })
+      .where(eq(agentTasks.id, taskId));
+  }
+  // awaiting_approval / awaiting_delegation / awaiting_tasks / already_handled:
+  // leave the task in_progress — a resume path will finalize it later.
 }
 
 // ─── buildTaskText ────────────────────────────────────────────────────────────

@@ -20,11 +20,15 @@ import type { AnyDrizzleDb } from '@nodal-agents/db';
  * (status → in_progress) and the job creation step. Without this reset those
  * tasks would be stuck forever.
  *
- * Also resets tasks whose linked job has already reached a terminal state
- * (completed / failed / cancelled) — the task board cron will re-evaluate
- * and either mark them done or re-run them.
+ * Also FINALIZES tasks whose linked job has already reached a terminal state
+ * (completed / failed / cancelled) but were never marked — mirrors the job
+ * outcome onto the task (done / blocked). It must NEVER reset such a task to
+ * `todo`: re-running a task whose job already completed re-executes successful
+ * work (live: the same agent posted to the Cortex 3x). With the per-job marking
+ * in executeReadyTasks this is now a rare safety net (genuine crash between job
+ * finish and task mark), not the common path.
  *
- * @returns count of tasks reset
+ * @returns count of tasks reset/finalized
  */
 export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Promise<number> {
   const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000);
@@ -47,58 +51,43 @@ export async function resetOrphanedTasks(db: AnyDrizzleDb, staleMinutes = 5): Pr
     )
     .returning({ id: agentTasks.id });
 
-  // Case B: in_progress where the linked job is in a terminal state
-  // (job completed/failed/cancelled but task was never marked done — stale claim)
-  // We do this with a subquery approach: find tasks in_progress whose job is terminal.
-  //
-  // Drizzle doesn't support a direct "WHERE job_id IN (SELECT id FROM agent_jobs WHERE status IN (...))"
-  // in an UPDATE without raw SQL, so we select first, then update.
-  const terminalJobRows = await db
-    .select({ taskId: agentTasks.id })
+  // Case B: in_progress tasks whose linked job has already reached a terminal
+  // state but were never marked. Mirror the job outcome onto the task — done if
+  // the job completed, blocked if it failed/cancelled — NEVER reset to 'todo'
+  // (which re-runs already-completed work). Pull the job status + result in one
+  // join, then finalize each terminal one with a conditional UPDATE.
+  const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'cancelled'];
+  const inProgressTasks = await db
+    .select({
+      taskId: agentTasks.id,
+      jobStatus: agentJobs.status,
+      jobResult: agentJobs.result,
+      jobError: agentJobs.error,
+    })
     .from(agentTasks)
     .innerJoin(agentJobs, eq(agentTasks.jobId, agentJobs.id))
-    .where(
-      and(
-        eq(agentTasks.status, 'in_progress'),
-        // Job reached a terminal state — task was never cleaned up
-        // We use a workaround: select tasks whose job is not in active states
-      ),
-    );
-
-  // Re-check: filter only those whose job is in terminal state
-  const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'cancelled'];
-  const terminalTaskIds: string[] = [];
-
-  for (const row of terminalJobRows) {
-    const jobRows = await db
-      .select({ status: agentJobs.status })
-      .from(agentJobs)
-      .innerJoin(agentTasks, eq(agentJobs.id, agentTasks.jobId))
-      .where(and(eq(agentTasks.id, row.taskId), eq(agentTasks.status, 'in_progress')))
-      .limit(1);
-
-    const jobStatus = jobRows[0]?.status;
-    if (jobStatus && TERMINAL_JOB_STATUSES.includes(jobStatus)) {
-      terminalTaskIds.push(row.taskId);
-    }
-  }
+    .where(eq(agentTasks.status, 'in_progress'));
 
   let caseBCount = 0;
-  if (terminalTaskIds.length > 0) {
-    // Reset each one atomically (conditional update to avoid race)
-    for (const taskId of terminalTaskIds) {
-      const updated = await db
-        .update(agentTasks)
-        .set({
-          status: 'todo',
-          lockedBy: null,
-          lockedAt: null,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(agentTasks.id, taskId), eq(agentTasks.status, 'in_progress')))
-        .returning({ id: agentTasks.id });
-      caseBCount += updated.length;
-    }
+  for (const t of inProgressTasks) {
+    if (!t.jobStatus || !TERMINAL_JOB_STATUSES.includes(t.jobStatus)) continue;
+    const taskStatus = t.jobStatus === 'completed' ? 'done' : 'blocked';
+    const taskResult =
+      t.jobStatus === 'completed'
+        ? (t.jobResult ?? '')
+        : (t.jobResult ?? t.jobError ?? 'job ended without a result');
+    const updated = await db
+      .update(agentTasks)
+      .set({
+        status: taskStatus,
+        result: taskResult,
+        lockedBy: null,
+        lockedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(agentTasks.id, t.taskId), eq(agentTasks.status, 'in_progress')))
+      .returning({ id: agentTasks.id });
+    caseBCount += updated.length;
   }
 
   return caseA.length + caseBCount;
@@ -179,6 +168,28 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
         }
       }
     }
+
+    // A planner orchestrator that fanned out via create_task sits in
+    // `processing` while its task board runs — and gets NO heartbeat once it
+    // hands off. If it still has outstanding (non-terminal) tasks rooted at it,
+    // it is legitimately waiting, NOT orphaned. Reaping it here would be fatal:
+    // the reap stamps completed_at, and deliverCompletedRoots (gated on
+    // completed_at IS NULL) would then skip the fan-in forever, leaving the
+    // parent stuck `failed`. Bump instead — same as the awaiting_delegation
+    // guard. (Live: parent 7aa6ad96 reaped at the 5-min mark while its 4 tasks
+    // still ran.)
+    const [outstandingTask] = await db
+      .select({ id: agentTasks.id })
+      .from(agentTasks)
+      .where(
+        and(eq(agentTasks.rootJobId, c.id), inArray(agentTasks.status, ['todo', 'in_progress'])),
+      )
+      .limit(1);
+    if (outstandingTask) {
+      toBump.push(c.id);
+      continue;
+    }
+
     toReset.push(c.id);
   }
 

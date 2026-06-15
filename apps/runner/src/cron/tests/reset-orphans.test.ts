@@ -32,6 +32,7 @@ async function createTask(overrides: {
   lockedAt?: Date | null;
   lockedBy?: string | null;
   jobId?: string | null;
+  rootJobId?: string | null;
 }) {
   const rows = await db
     .insert(agentTasks)
@@ -44,6 +45,7 @@ async function createTask(overrides: {
       lockedAt: overrides.lockedAt ?? null,
       lockedBy: overrides.lockedBy ?? null,
       jobId: overrides.jobId ?? null,
+      rootJobId: overrides.rootJobId ?? null,
     })
     .returning();
   return rows[0]!;
@@ -109,8 +111,8 @@ describe('resetOrphanedTasks', () => {
     expect(updated[0]?.status).toBe('todo');
   });
 
-  it('resets an in_progress task whose linked job is completed', async () => {
-    // Create a completed job
+  it('FINALIZES (not re-runs) an in_progress task whose linked job completed', async () => {
+    // A completed job carrying a result.
     const completedJobRows = await db
       .insert(agentJobs)
       .values({
@@ -119,6 +121,7 @@ describe('resetOrphanedTasks', () => {
         channel: 'task-board',
         task: 'parent task',
         status: 'completed',
+        result: 'the agent did the work',
       })
       .returning();
     const completedJob = completedJobRows[0]!;
@@ -131,24 +134,53 @@ describe('resetOrphanedTasks', () => {
       jobId: completedJob.id,
     });
 
-    // Task is in_progress but job is done — orphaned
-    // Note: this is Case B (terminal job). The task has a job_id but it's completed.
-    // Our implementation handles Case B through terminal job detection.
     await resetOrphanedTasks(db, 5);
 
     const updated = await db
-      .select({ status: agentTasks.status })
+      .select({ status: agentTasks.status, result: agentTasks.result })
       .from(agentTasks)
       .where(eq(agentTasks.id, task.id));
 
-    // Either reset to todo OR left in_progress (case B may not trigger for completed job
-    // since the task's lockedAt is stale). In any case, the stale lock path (Case A)
-    // should handle it because lockedAt is old AND job_id is set but locked_at is stale.
-    // The spec says: "in_progress with no job_id OR in_progress with terminal job"
-    // Case A (no job_id + stale) is the primary path. Case B is additional.
-    // This task has a job_id, so we test Case B specifically.
-    // Since the task HAS a job_id, Case A won't trigger. Case B should trigger.
-    expect(updated[0]?.status).toBe('todo');
+    // Case B mirrors the job outcome onto the task — done, with the job's result.
+    // It must NEVER reset to 'todo' (that would re-run already-completed work,
+    // the live duplication bug where the same agent posted to the Cortex 3x).
+    expect(updated[0]?.status).toBe('done');
+    expect(updated[0]?.status).not.toBe('todo');
+    expect(updated[0]?.result).toBe('the agent did the work');
+  });
+
+  it('blocks (not re-runs) an in_progress task whose linked job failed', async () => {
+    const failedJobRows = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'task-board',
+        task: 'parent task',
+        status: 'failed',
+        result: 'Énergie à 4 — insuffisant pour poster',
+        error: 'agent_blocked',
+      })
+      .returning();
+    const failedJob = failedJobRows[0]!;
+
+    const task = await createTask({
+      status: 'in_progress',
+      lockedAt: new Date(Date.now() - 10 * 60 * 1000),
+      lockedBy: 'worker-old',
+      jobId: failedJob.id,
+    });
+
+    await resetOrphanedTasks(db, 5);
+
+    const [updated] = await db
+      .select({ status: agentTasks.status, result: agentTasks.result })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, task.id));
+
+    expect(updated?.status).toBe('blocked');
+    expect(updated?.status).not.toBe('todo');
+    expect(updated?.result).toBe('Énergie à 4 — insuffisant pour poster');
   });
 
   it('does not touch todo tasks', async () => {
@@ -354,6 +386,44 @@ describe('resetOrphanedJobs', () => {
     expect(parentAfter?.status).toBe('awaiting_delegation');
     // And updated_at should have been bumped past the cutoff so next tick re-evaluates.
     expect(parentAfter?.updatedAt?.getTime() ?? 0).toBeGreaterThan(staleDate.getTime());
+  });
+
+  it('does NOT reset a processing planner parent that still has outstanding tasks', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    // A planner orchestrator, stale in `processing`, that fanned out tasks and
+    // gets no heartbeat while waiting. An outstanding task means it's
+    // legitimately waiting — reaping it would seal the fan-in dead.
+    const parent = await createJob({ status: 'processing', updatedAt: staleDate });
+    await createTask({ status: 'in_progress', rootJobId: parent.id });
+
+    await resetOrphanedJobs(db, 5);
+
+    const [after] = await db
+      .select({ status: agentJobs.status, updatedAt: agentJobs.updatedAt, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+    expect(after?.status).toBe('processing');
+    expect(after?.error).toBeNull();
+    // Bumped so the next tick re-evaluates without re-querying every time.
+    expect(after?.updatedAt?.getTime() ?? 0).toBeGreaterThan(staleDate.getTime());
+  });
+
+  it('DOES reset a stale processing job once none of its tasks are outstanding', async () => {
+    const staleDate = new Date(Date.now() - 10 * 60 * 1000);
+    const parent = await createJob({ status: 'processing', updatedAt: staleDate });
+    // All tasks terminal — nothing left to wait for. (In production
+    // deliverCompletedRoots completes the parent first; in isolation the reaper
+    // is the fallback for a genuinely stuck row.)
+    await createTask({ status: 'done', rootJobId: parent.id });
+
+    await resetOrphanedJobs(db, 5);
+
+    const [after] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parent.id));
+    expect(after?.status).toBe('failed');
+    expect(after?.error).toBe('orphan_job_reset');
   });
 
   it('DOES NOT touch pending jobs (those are recovered, not failed — see findPendingJobsToRecover)', async () => {
