@@ -27,6 +27,30 @@ import { runReflection } from './run-reflection.ts';
 // never reflect on itself, even though no current code path creates one).
 const EXCLUDED_CHANNELS: ReadonlySet<string> = new Set(['chat', 'reflection']);
 
+// Fallbacks for the optional REFLECTION_MIN_TOOL_ITERS / REFLECTION_MAX_NEW_SKILLS_PER_PASS
+// env knobs (kept optional so RunnerEnv test fixtures need no change).
+const DEFAULT_MIN_TOOL_ITERS = 10;
+const DEFAULT_MAX_NEW_SKILLS_PER_PASS = 2;
+
+/**
+ * Count tool-call iterations in a job transcript — the complexity signal that
+ * gates reflection. A heartbeat/cron run with only a couple of tool calls is not
+ * worth reflecting on, even if it spanned several LLM turns. Counts every
+ * tool-call part across the persisted ModelMessage[] transcript.
+ */
+function countToolIterations(messages: unknown): number {
+  if (!Array.isArray(messages)) return 0;
+  let n = 0;
+  for (const msg of messages) {
+    const content = (msg as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if ((part as { type?: unknown }).type === 'tool-call') n += 1;
+    }
+  }
+  return n;
+}
+
 /**
  * Run a reflection pass for a just-completed job IF it qualifies. All gates are
  * fail-closed: a job that does not pass every gate returns silently (no LLM
@@ -37,8 +61,7 @@ const EXCLUDED_CHANNELS: ReadonlySet<string> = new Set(['chat', 'reflection']);
  *                                                 via the dashboard)
  *   - job.status === 'completed'                 (only successful runs)
  *   - job.channel ∉ {chat, reflection}           (no interactive / no recursion)
- *   - job.turn >= REFLECTION_MIN_TURNS           (substantial job only)
- *   - job.toolsUsed is non-empty                 (the agent actually did work)
+ *   - ≥ REFLECTION_MIN_TOOL_ITERS tool calls     (substantial job — complexity gate)
  *   - per-entity throttle slot available         (≤ REFLECTION_MAX_PER_HOUR/h)
  *
  * Reads config from `runnerEnv` when provided (used by tests and recursive job
@@ -65,11 +88,12 @@ export async function maybeRunReflection(
   const channel = job.channel ?? '';
   if (EXCLUDED_CHANNELS.has(channel)) return;
 
-  // Gate 4 — substantial job: enough turns AND the agent used at least one tool.
-  const turn = job.turn ?? 0;
-  const toolsUsed = Array.isArray(job.toolsUsed) ? job.toolsUsed : [];
-  if (turn < e.REFLECTION_MIN_TURNS) return;
-  if (toolsUsed.length === 0) return;
+  // Gate 4 — substantial job: the agent did real tool work. We count tool-call
+  // iterations in the transcript (a complexity gate, like Hermes' ≥N tool-iters)
+  // rather than LLM turns — a short cron/heartbeat run with few tool calls is not
+  // a learning opportunity, even if it took several turns.
+  if (countToolIterations(job.messages) < (e.REFLECTION_MIN_TOOL_ITERS ?? DEFAULT_MIN_TOOL_ITERS))
+    return;
 
   // Gate 5 — must have a valid owner to scope the pass to.
   if (!job.entityId || !job.agentId) return;
@@ -91,5 +115,11 @@ export async function maybeRunReflection(
   // errors (gate-blocked jobs stay silent by design).
   console.warn('[reflection] eligible', { jobId: job.id, entityId: job.entityId });
 
-  await runReflection(db, job, e.REFLECTION_MAX_TURNS, e.REFLECTION_MODEL);
+  await runReflection(
+    db,
+    job,
+    e.REFLECTION_MAX_TURNS,
+    e.REFLECTION_MAX_NEW_SKILLS_PER_PASS ?? DEFAULT_MAX_NEW_SKILLS_PER_PASS,
+    e.REFLECTION_MODEL,
+  );
 }

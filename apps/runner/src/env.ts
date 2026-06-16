@@ -73,6 +73,15 @@ const envSchema = z.object({
   REFLECTION_MAX_PER_HOUR: z.coerce.number().default(6),
   // Max LLM turns inside a single reflection pass (the reflection loop itself).
   REFLECTION_MAX_TURNS: z.coerce.number().default(3),
+  // Complexity gate: min tool-call iterations in a completed job before it is
+  // "substantial" enough to reflect on (replaces the old turn-count gate — a
+  // cron/heartbeat run with few tool calls is not a learning opportunity).
+  // Optional so existing RunnerEnv test fixtures need no change; the reflection
+  // gate falls back to a constant when unset. ~10 (Hermes-like).
+  REFLECTION_MIN_TOOL_ITERS: z.coerce.number().optional(),
+  // Hard cap on NEW skills the reflection pass may create in a single run; excess
+  // lessons are steered into patches of existing skills. Optional → constant fallback.
+  REFLECTION_MAX_NEW_SKILLS_PER_PASS: z.coerce.number().optional(),
 
   // ─── Learning-loop — Tier-2 "curator" pass (Phase C). ────────────────────────
   // The deterministic lifecycle transitions (active→stale→archived) ALWAYS run
