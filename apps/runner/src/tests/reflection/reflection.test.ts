@@ -212,6 +212,7 @@ afterAll(() => {
   delete process.env['DATABASE_URL'];
   delete process.env['REFLECTION_ENABLED'];
   delete process.env['REFLECTION_MIN_TURNS'];
+  delete process.env['REFLECTION_MIN_TOOL_ITERS'];
   delete process.env['REFLECTION_MAX_PER_HOUR'];
   delete process.env['REFLECTION_MAX_TURNS'];
   delete process.env['REFLECTION_MODEL'];
@@ -228,6 +229,11 @@ beforeEach(async () => {
   // Default env for the gate-passing tests; individual tests override + reset.
   process.env['REFLECTION_ENABLED'] = 'true';
   process.env['REFLECTION_MIN_TURNS'] = '3';
+  // Gate 4 was changed from turn-count to tool-call-iteration count. Set
+  // REFLECTION_MIN_TOOL_ITERS=1 so the single-tool-call job in insertCompletedJob
+  // passes the complexity gate in every existing test. Tests that want to exercise
+  // the gate itself set their own value and reset here clears it for the next test.
+  process.env['REFLECTION_MIN_TOOL_ITERS'] = '1';
   process.env['REFLECTION_MAX_PER_HOUR'] = '6';
   process.env['REFLECTION_MAX_TURNS'] = '3';
   _resetEnvCache();
@@ -433,9 +439,17 @@ describe('reflection — gate: disabled', () => {
   });
 });
 
-// ── 4. Gate: trivial job (turn < MIN) ───────────────────────────────────────────
+// ── 4. Gate: trivial job (tool-call iterations < REFLECTION_MIN_TOOL_ITERS) ──────
+// Gate 4 was changed from turn-count / toolsUsed to tool-call iteration count
+// (countToolIterations over job.messages). A heartbeat/cron run with few tool
+// calls does not warrant reflection even if it ran many LLM turns.
 describe('reflection — gate: trivial job', () => {
-  it('skips when job.turn is below REFLECTION_MIN_TURNS', async () => {
+  it('skips when tool-call iterations in messages are below REFLECTION_MIN_TOOL_ITERS', async () => {
+    // Set the threshold to 5. The job from insertCompletedJob has exactly 1
+    // tool-call part in messages — well below 5 → gate must block.
+    process.env['REFLECTION_MIN_TOOL_ITERS'] = '5';
+    _resetEnvCache();
+
     const deps = makeDeps(
       makeScriptedClient([
         {
@@ -449,18 +463,24 @@ describe('reflection — gate: trivial job', () => {
         },
       ]),
     );
-    const job = await insertCompletedJob({ turn: 1 });
+    // insertCompletedJob embeds 1 tool-call in messages (web_browse) → 1 iteration.
+    const job = await insertCompletedJob();
     await maybeRunReflection(deps, db as RunnerDeps['db'], {
       ...job,
       status: 'completed',
-      turn: 1,
     } as Parameters<typeof maybeRunReflection>[2]);
 
     const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'trivial-skill'));
     expect(rows).toHaveLength(0);
+
+    // Cleanup: restore threshold to 1 so subsequent tests are not affected.
+    process.env['REFLECTION_MIN_TOOL_ITERS'] = '1';
+    _resetEnvCache();
   });
 
-  it('skips when toolsUsed is empty even if turn is high', async () => {
+  it('skips when messages contain zero tool-call parts (no-tool-call transcript)', async () => {
+    // A job whose messages have NO tool-call parts at all — e.g. a pure text
+    // exchange. countToolIterations returns 0 → 0 < 1 → gate blocks.
     const deps = makeDeps(
       makeScriptedClient([
         {
@@ -474,12 +494,20 @@ describe('reflection — gate: trivial job', () => {
         },
       ]),
     );
+    // Override threshold to 1 (from beforeEach) — 0 < 1 → gate blocks.
+    // No need to change env; beforeEach already set REFLECTION_MIN_TOOL_ITERS=1.
     const job = await insertCompletedJob({ turn: 9, toolsUsed: [] });
+    // Patch messages to have NO tool-call parts.
     await maybeRunReflection(deps, db as RunnerDeps['db'], {
       ...job,
       status: 'completed',
       turn: 9,
       toolsUsed: [],
+      messages: [
+        // Plain text exchange — zero tool-call parts.
+        { role: 'user', content: 'What time is it?' },
+        { role: 'assistant', content: [{ type: 'text', text: 'It is noon.' }] },
+      ],
     } as Parameters<typeof maybeRunReflection>[2]);
 
     const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'no-tools-skill'));

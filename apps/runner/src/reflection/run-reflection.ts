@@ -15,10 +15,10 @@ import {
   eq,
   and,
   or,
+  ne,
   ilike,
   agents,
   agentSkills,
-  agentSkillAssignments,
   entities,
   createSkillRepo,
   updateSkillRepo,
@@ -60,6 +60,10 @@ const UpdateSkillArgs = z.object({
   description: z.string().optional(),
   content: z.string().min(1).optional(),
   active: z.boolean().optional(),
+});
+
+const SkillViewArgs = z.object({
+  slug: z.string().min(1),
 });
 
 interface ReflectionResult {
@@ -120,13 +124,26 @@ function renderTranscript(task: string, messages: readonly ModelMessage[]): stri
   return lines.join('\n');
 }
 
-/** Render the agent's assigned skills as a compact slug/name/description block. */
+/**
+ * Render the ENTITY-WIDE skill library, provenance-marked so the model knows
+ * which skills it may patch ([agent]) vs which already govern an area and must
+ * not be duplicated ([user]/[system]).
+ */
 function renderSkillsBlock(
-  skills: ReadonlyArray<{ slug: string; name: string; description: string | null }>,
+  skills: ReadonlyArray<{
+    slug: string;
+    name: string;
+    description: string | null;
+    createdBy: string;
+  }>,
 ): string {
-  if (skills.length === 0) return '(none assigned yet)';
+  if (skills.length === 0) return '(library is empty)';
   return skills
-    .map((s) => `- ${s.slug} — ${s.name}${s.description ? `: ${s.description}` : ''}`)
+    .map((s) => {
+      const mark =
+        s.createdBy === 'agent' ? '[agent]' : s.createdBy === 'user' ? '[user]' : '[system]';
+      return `- ${mark} ${s.slug} — ${s.name}${s.description ? `: ${s.description}` : ''}`;
+    })
     .join('\n');
 }
 
@@ -143,6 +160,7 @@ export async function runReflection(
   db: AnyDrizzleDb,
   job: AgentJobRow,
   maxTurns: number,
+  maxNewSkills: number,
   reflectionModel?: string,
 ): Promise<ReflectionResult> {
   if (!job.agentId || !job.entityId) return { outcome: 'skipped', created: 0, patched: 0, turns: 0 };
@@ -165,16 +183,21 @@ export async function runReflection(
     .limit(1);
   const skillAssignmentMode: 'auto' | 'approval' = entityRow?.skillAssignmentMode ?? 'approval';
 
-  // ── Load the agent's currently-assigned skills ────────────────────────────
-  const assignedSkills = await db
+  // ── Load the ENTITY-WIDE skill library (cross-agent) ──────────────────────
+  // The reflection sees ALL of the workspace's skills, not just this agent's
+  // assigned ones, so it can PATCH a skill another agent authored instead of
+  // forking a near-duplicate (the cross-agent convergence fix). Archived skills
+  // are excluded — dormant, shouldn't invite re-creation. Provenance is carried
+  // through so the prompt marks which are patchable ([agent]) vs protected.
+  const librarySkills = await db
     .select({
       slug: agentSkills.slug,
       name: agentSkills.name,
       description: agentSkills.description,
+      createdBy: agentSkills.createdBy,
     })
-    .from(agentSkillAssignments)
-    .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
-    .where(eq(agentSkillAssignments.agentId, agentId));
+    .from(agentSkills)
+    .where(and(eq(agentSkills.entityId, entityId), ne(agentSkills.state, 'archived')));
 
   // ── Resolve the agent's LLM client (same path as the work loop) ───────────
   // When reflectionModel is set, keep the agent's key but override the model so
@@ -194,7 +217,7 @@ export async function runReflection(
   const llmClient = resolved.client;
 
   // ── Build the prompt + transcript ─────────────────────────────────────────
-  const systemPrompt = buildReflectionSystemPrompt(agentRow.name, renderSkillsBlock(assignedSkills));
+  const systemPrompt = buildReflectionSystemPrompt(agentRow.name, renderSkillsBlock(librarySkills));
   const transcriptMsgs: ModelMessage[] = Array.isArray(job.messages)
     ? (job.messages as ModelMessage[])
     : [];
@@ -207,17 +230,25 @@ export async function runReflection(
   // inputSchema}. We execute the calls ourselves against the repos with
   // provenance created_by='agent' (and patch_count bump on update).
   const tools: Record<string, { description: string; inputSchema: z.ZodTypeAny }> = {
-    create_skill: {
+    skill_view: {
       description:
-        'Author a NEW durable skill for this agent. slug is lowercase alphanumeric + hyphens. ' +
-        'Use only when the lesson does not fit an existing skill.',
-      inputSchema: CreateSkillArgs,
+        'Read the full content of an existing skill in this workspace (by slug). Use it to ' +
+        'inspect a candidate umbrella before patching it.',
+      inputSchema: SkillViewArgs,
     },
     update_skill: {
       description:
-        'Patch an EXISTING skill of this agent (identify by slug or name). Prefer this over ' +
-        'creating a near-duplicate. Provide at least one field to change.',
+        'PATCH an existing AGENT-authored skill (by slug) — your DEFAULT action. Extend its ' +
+        'content with a new labeled section, add a pitfall, or broaden it. Prefer this over ' +
+        'creating a near-duplicate, INCLUDING patching a skill another agent authored.',
       inputSchema: UpdateSkillArgs,
+    },
+    create_skill: {
+      description:
+        'Author a NEW class-level umbrella skill. LAST RESORT — only when no existing skill ' +
+        'covers the class. slug is lowercase alphanumeric + hyphens; the name must be ' +
+        'class-level, not a one-session/tool-specific artifact.',
+      inputSchema: CreateSkillArgs,
     },
   };
 
@@ -269,10 +300,28 @@ export async function runReflection(
     }> = [];
     for (const tc of toolCalls) {
       let outcomeText: string;
-      if (tc.toolName === 'create_skill') {
+      if (tc.toolName === 'skill_view') {
+        const parsed = SkillViewArgs.safeParse(tc.input);
+        if (!parsed.success) {
+          outcomeText = `error: invalid_input: ${parsed.error.message}`;
+        } else {
+          const [row] = await db
+            .select({ name: agentSkills.name, content: agentSkills.content })
+            .from(agentSkills)
+            .where(and(eq(agentSkills.entityId, entityId), eq(agentSkills.slug, parsed.data.slug)))
+            .limit(1);
+          outcomeText = row
+            ? `# ${row.name}\n\n${compactToolResult(row.content)}`
+            : `error: skill "${parsed.data.slug}" not found`;
+        }
+      } else if (tc.toolName === 'create_skill') {
         const parsed = CreateSkillArgs.safeParse(tc.input);
         if (!parsed.success) {
           outcomeText = `error: invalid_input: ${parsed.error.message}`;
+        } else if (created >= maxNewSkills) {
+          // Hard per-pass cap: once the model has created its budget of new
+          // umbrellas, steer remaining lessons into patches of existing skills.
+          outcomeText = `error: new-skill cap (${maxNewSkills}) reached for this pass — PATCH an existing skill with update_skill instead of creating another.`;
         } else {
           const res = await createSkillRepo(db, entityId, {
             slug: parsed.data.slug,
