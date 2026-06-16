@@ -1,0 +1,64 @@
+---
+title: Automations
+description: Schedule an agent to run a task on a recurring cron schedule, with optional Telegram notifications.
+---
+
+An automation is a named cron schedule that fires an agent on a recurring basis. The agent receives a fixed task prompt each time — useful for daily reports, monitoring jobs, regular data pulls, or anything you'd otherwise remember to trigger manually.
+
+## Prerequisites
+
+- At least one agent configured. See [Create an agent](/docs/guides/create-an-agent).
+- If you want Telegram notifications: the agent must have a Telegram bot configured and you must have DM'd the bot at least once (so the runner has your chat ID).
+
+## Create an automation
+
+1. Go to **Automations** in the left navigation.
+2. Click **+ New schedule**.
+3. Fill in:
+   - **Agent** — which agent runs this automation.
+   - **Name** — a human label for the schedule (e.g. "Daily standup").
+   - **Cron expression** — standard 5-field cron (minute hour day-of-month month day-of-week). The default is `0 9 * * *` (every day at 09:00). A visual cron builder is provided.
+   - **Task instructions** — the exact prompt the agent receives each time the schedule fires. Treat this like a detailed task description.
+   - **Notify me on Telegram when it succeeds** — when checked, the agent sends a short confirmation to your Telegram chat after each successful run. Requires the agent to have a Telegram bot token and a recorded chat ID.
+4. Click **Create schedule**. The automation starts active immediately.
+
+## Common cron expressions
+
+```
+0 9 * * 1-5     Weekdays at 09:00
+0 */6 * * *     Every 6 hours
+30 8 * * 1      Every Monday at 08:30
+0 0 1 * *       First of every month at midnight
+*/15 * * * *    Every 15 minutes
+```
+
+## Manage an automation
+
+Each schedule row shows the next scheduled run, last run time, and last status (success / failed / no\_action). Available actions:
+
+- **Run now** — fires the automation immediately, outside the schedule. Useful for testing.
+- **Edit** — change the name, agent, cron expression, task, or notification setting.
+- **Duplicate** — creates a paused copy of the schedule. Enable it when ready.
+- **Pause / Enable** — toggle the schedule on or off without deleting it.
+- **Delete** — removes the schedule. Past job runs are kept for audit.
+
+## How the runner fires schedules
+
+The runner's cron ticker evaluates due schedules every minute. For each due schedule it:
+
+1. Atomically claims the row (concurrent ticks cannot double-fire).
+2. Inserts a job with `channel = 'cron'` and advances `next_run` using the cron expression.
+3. Executes the job inline.
+4. Updates `last_status` with the outcome.
+
+A bad cron expression causes the schedule to be marked `failed` and its `next_run` is pushed one year out — edit and save to fix it.
+
+## Telegram notifications
+
+Notification delivery is per-agent: the agent uses its own Telegram bot token. A schedule with **Notify me** enabled but assigned to an agent with no bot token shows a warning in the form. The notification is sent only on a successful (`completed`) run, not on failure or when the agent takes no action.
+
+## Notes
+
+- Automations run up to 5 concurrently per tick. If more than 5 are due simultaneously, the remaining ones fire on the next tick.
+- A running automation counts against the same job limits as manual chat jobs.
+- Pausing a schedule does not affect any job already in flight.

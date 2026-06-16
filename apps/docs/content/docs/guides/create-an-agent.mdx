@@ -1,0 +1,58 @@
+---
+title: Create an agent
+description: Build and configure an agent in the Nodal-Agents dashboard from scratch.
+---
+
+An agent is the basic unit of work: a name, a system prompt that shapes its behaviour, a model, and an optional set of skills, connectors, and MCP servers. Every agent you create can be chatted with directly, wired to Telegram, or scheduled to run on a cron.
+
+## Prerequisites
+
+- Nodal-Agents running (`nodal-agents up`). See [Getting Started](/docs/getting-started).
+- At least one LLM provider configured in **LLM Providers**. See [Connect a model](/docs/guides/connect-a-model).
+
+## Create the agent
+
+1. Open the dashboard at `http://localhost:3000` and go to **Agents**.
+2. Click **New agent** (or the `+` button in the header).
+3. Fill in the **Name** — this is what you and other agents call it.
+4. Write a **Personality / system prompt** — tell it what it is, what it knows, how it should respond, and what it should not do. Be specific: vague prompts produce vague agents.
+5. Under **Role**, choose one of:
+   - **Worker** — runs tasks directly; has no sub-agents.
+   - **Router (orchestrator)** — delegates every task to exactly one specialist sub-agent.
+   - **Planner (orchestrator)** — fans out independent sub-tasks to multiple sub-agents in parallel and compiles the result.
+6. If the role is Router or Planner, pick the **sub-agents** this agent can delegate to.
+7. Select the **LLM provider key** and a **model** from the dropdown. The dropdown shows models from the selected provider's live endpoint.
+8. Optionally set a **fallback chain** — ordered list of alternative (provider, model) pairs the runner tries if the primary fails.
+9. Click **Save**.
+
+## Assign skills and connectors
+
+After saving, you land on the agent's detail page. Use the tabs:
+
+- **Skills** — attach reusable skill definitions. See the [Skills reference](/docs/reference/skills).
+- **Connectors** — assign OAuth or API-key connectors (Gmail, Drive, Notion, Airtable, etc.) and MCP servers.
+- **Autonomy** — set per-tool approval rules for write and destructive operations. Options per tool: **Autonomous** (run immediately), **Ask first** (pause for your approval), or **Block**.
+
+## Connect to Telegram
+
+Go to **Agents → `<agent name>` → Telegram** and paste a bot token from [@BotFather](https://t.me/BotFather). DM the bot once — the runner records your chat ID so it can send you confirmations and notify you on automation success.
+
+## Chat with the agent
+
+Select the agent in the **Chat** sidebar and type a task. The agent runs immediately. You can follow progress in **Jobs**.
+
+## Agent roles at a glance
+
+| Role | Delegates? | Use when |
+|------|-----------|----------|
+| Worker | No | The agent does the work itself |
+| Router | Yes — to one sub-agent | You need specialist routing |
+| Planner | Yes — to many in parallel | You need fan-out and synthesis |
+
+## Notes
+
+- A worker agent with no skills assigned still has access to the built-in memory and workspace tools.
+- Changing the model mid-session does not affect jobs already in flight.
+- Deleting an agent also deletes its associated jobs, schedules, and memory.
+
+The first orchestrator you create becomes this workspace's [ROOT agent](/docs/guides/root-agent) automatically.

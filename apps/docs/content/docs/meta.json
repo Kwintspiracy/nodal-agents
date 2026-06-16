@@ -1,4 +1,14 @@
 {
   "title": "Nodal-Agents",
-  "pages": ["index", "getting-started", "---Reference---", "reference"]
+  "pages": [
+    "index",
+    "getting-started",
+    "self-hosting",
+    "---Concepts---",
+    "concepts",
+    "---Guides---",
+    "guides",
+    "---Reference---",
+    "reference"
+  ]
 }

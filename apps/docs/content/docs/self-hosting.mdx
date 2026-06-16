@@ -1,0 +1,159 @@
+---
+title: Self-hosting
+description: Run Nodal-Agents on your machine or a server — ports, data directory, auth modes, and update procedure.
+---
+
+Nodal-Agents is self-hosted by design. The npm package bundles everything: an embedded Postgres, migrations, the AI runner, and the dashboard. No cloud account needed.
+
+## Install
+
+Requires **Node 22+**.
+
+```bash
+npm install -g nodal-agents
+nodal-agents up
+```
+
+The first run launches an interactive setup wizard that asks for:
+
+1. **LLM provider** — pick a local model (Ollama, LM Studio, Jan.ai, llama.cpp, vLLM) or a remote one (Anthropic, OpenAI, OpenRouter). You can add more providers later in the dashboard.
+2. **Network mode** — loopback (localhost only, no auth) or LAN (accessible on your network, requires sign-up).
+
+Config is saved to `~/.nodalai/config.json`. Run `nodal-agents init` at any time to re-run the wizard.
+
+## Ports
+
+Default ports (configurable in `~/.nodalai/config.json`):
+
+| Service | Default port |
+|---------|-------------|
+| Dashboard (web) | 3000 |
+| Runner (API) | 3001 |
+| Embedded Postgres | 25432 |
+
+If a configured port is occupied on startup, `nodal-agents up` automatically rotates to the next free port and saves the new value to config. The dashboard opens at the resolved URL.
+
+## Data directory
+
+All persistent data lives at `~/.nodalai/`:
+
+```
+~/.nodalai/
+  config.json      # CLI configuration (ports, auth mode, worker secret)
+  pg-data/         # Embedded Postgres data files
+  pids/            # PID files for runner + web (used by `down`)
+  logs/            # Runner and web log files
+```
+
+To wipe everything and start fresh:
+
+```bash
+nodal-agents down
+rm -rf ~/.nodalai
+```
+
+Your LLM provider keys, agents, jobs, and memory are all in `pg-data/`.
+
+## Start and stop
+
+```bash
+nodal-agents up      # start Postgres, runner (:3001), and dashboard (:3000)
+nodal-agents down    # stop all services gracefully
+```
+
+`nodal-agents up` auto-cleans orphaned processes from a previous crashed session before starting. Postgres is always stopped gracefully (via `pg_ctl stop`) to avoid leaving shared-memory blocks that would block the next start.
+
+Set `NODALAI_NO_BROWSER=1` to prevent the browser from opening automatically — useful on headless servers.
+
+## Network modes
+
+### Loopback (default)
+
+Services bind to `127.0.0.1`. No authentication is required — the dashboard is accessible only from the same machine. This is the recommended mode for single-user local use.
+
+### LAN mode
+
+Services bind to `0.0.0.0`, making the dashboard accessible to other devices on your network. LAN mode **requires sign-up**: the first person to visit `http://<your-ip>:3000/login` creates an account and becomes the admin.
+
+To switch to LAN mode, run the init wizard and select **LAN** when prompted:
+
+```bash
+nodal-agents init
+nodal-agents down && nodal-agents up
+```
+
+Or edit `~/.nodalai/config.json` directly and set `"bind": "lan"`, then restart.
+
+### Auth override
+
+You can enable email+password auth on a loopback install without switching to full LAN mode. In `~/.nodalai/config.json`:
+
+```json
+{
+  "bind": "loopback",
+  "auth": { "mode": "local-auth" }
+}
+```
+
+Restart for the change to take effect. The dashboard shows a login page at `/login`.
+
+## Update
+
+```bash
+nodal-agents update
+```
+
+This command:
+
+1. Fetches the latest version from the npm registry.
+2. If already up to date, prints a notice and exits.
+3. Otherwise, stops the running stack (`nodal-agents down`), installs `nodal-agents@latest` globally, and restarts the stack in the background.
+
+Your data in `~/.nodalai/pg-data/` is never touched by the update.
+
+To update without auto-restarting:
+
+```bash
+nodal-agents update --no-restart
+# then manually:
+nodal-agents up
+```
+
+If the npm registry is unreachable, the command exits with a clear message and a manual fallback:
+
+```bash
+npm install -g nodal-agents@latest && nodal-agents up
+```
+
+## Headless / server install
+
+For a server with no interactive TTY, use the non-interactive init flag before starting:
+
+```bash
+nodal-agents init --non-interactive
+nodal-agents up
+```
+
+The non-interactive init writes sensible defaults: LAN bind, `local-auth` mode, no LLM preset (finish LLM config in the dashboard after first login).
+
+## Logs
+
+Logs are written to `~/.nodalai/logs/`. Use the **Logs** page in the dashboard or the CLI:
+
+```bash
+nodal-agents logs
+```
+
+## Troubleshooting
+
+**Port already in use** — `nodal-agents up` rotates to a free port automatically. Check the startup output for the resolved URL.
+
+**Orphaned Postgres on Windows** — if `nodal-agents down` was skipped and you see a "pre-existing shared memory block" error, run:
+
+```bash
+nodal-agents down
+```
+
+If that fails, the startup output includes the exact `Stop-Process` or `kill` command to clear the orphan.
+
+**Cannot reach npm registry during update** — run the manual fallback shown in the update output. No data is lost.

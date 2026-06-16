@@ -1,0 +1,87 @@
+---
+title: Learning loop
+description: How agents automatically write and refine reusable skills after a substantial job.
+---
+
+The learning loop is an **opt-in** feature that lets agents improve themselves over
+time. After a qualifying job completes, a lightweight reflection pass reviews the
+transcript and either patches an existing skill or, as a last resort, creates a new
+one. A separate curator periodically consolidates the growing skill library.
+
+The feature is off by default and must be enabled per entity in the dashboard
+(**Settings → Entity**). There is also a global kill-switch (`REFLECTION_ENABLED=false`)
+that disables it for every entity regardless of their flag.
+
+## Tier 1 — Reflection
+
+The reflection pass fires **fire-and-forget** after a job reaches `completed`
+status. It never blocks the job response.
+
+### Gates (all must pass)
+
+1. Global kill-switch not set to `false`.
+2. Job status is `completed` (failed/blocked jobs are skipped).
+3. Job channel is not `chat` or `reflection` (no interactive turns, no recursion).
+4. The transcript contains at least `REFLECTION_MIN_TOOL_ITERS` tool-call iterations
+   (default: 10). Short heartbeat or cron runs are not worth reflecting on.
+5. The entity has `reflection_enabled = true`.
+6. A per-entity rolling-hour throttle slot is available (`REFLECTION_MAX_PER_HOUR`).
+
+### What the pass does
+
+The reflection model receives a compacted version of the transcript (tool-result
+bodies are truncated to ~2 000 chars each) and sees the **entity-wide skill
+library** — not just the skills assigned to this one agent. Every skill is marked
+with its provenance: `[agent]`, `[user]`, or `[system]`.
+
+The model has three tools:
+
+- `skill_view` — read the full content of an existing skill before patching it
+- `update_skill` — patch an existing agent-authored skill (**the default action**)
+- `create_skill` — author a new skill (**last resort only**)
+
+**Patch-first by design.** The system prompt instructs the model to extend an
+existing umbrella skill before creating anything new. A cap (`REFLECTION_MAX_NEW_SKILLS_PER_PASS`,
+default: 2) limits new skills per pass; once hit, the model is steered to patch
+instead. The model can only patch skills with `created_by = 'agent'` — user- and
+system-authored skills are provenance-sandboxed and cannot be modified.
+
+**Anti-lesson filter.** The prompt includes an explicit filter that blocks the model
+from persisting environment failures, negative tool claims, transient errors that
+resolved on retry, and one-off task narratives. Only durable, reusable techniques
+are written. A no-op pass (no tool call) is the correct and common outcome.
+
+When the entity's `skill_assignment_mode` is `auto`, newly created skills are
+automatically assigned to the authoring agent. With the default `approval` mode they
+are queued for the entity owner to review.
+
+## Tier 2 — Curator
+
+The curator is a separate periodic pass that keeps the skill library from growing
+unbounded. It operates on the entity's agent-authored, active skills and looks for
+clusters of narrow, overlapping skills that would be better served by a single
+broader umbrella.
+
+When it finds a genuine cluster, it:
+
+1. Creates an umbrella skill (via `create_skill`).
+2. Archives each narrow skill the umbrella replaces (via `archive_skill`).
+
+Archiving is the maximum destructive action — nothing is deleted, and the entity
+owner can recover archived skills. The curator refuses to archive user- or
+system-authored skills. A no-op pass is correct and common when the library is
+already well-structured.
+
+## Viewing learned skills
+
+The dashboard's **Learned Skills** page (`/learned-skills`) lists all skills with
+`created_by = 'agent'` for your entity, showing patch counts and last-used dates.
+You can review, edit, approve, or archive them from there.
+
+## Related pages
+
+- [Skills](/docs/concepts/skills) — the broader skills system the learning loop
+  writes into
+- [Skills reference](/docs/reference/skills) — catalog of built-in skills
+- [Memory](/docs/concepts/memory) — the complementary system for persisting facts
+  (not skills) across jobs

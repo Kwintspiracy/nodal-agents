@@ -8,11 +8,18 @@
  * ships — change a skill in the catalog, the docs regenerate. This is the
  * "dynamic" half of the documentation.
  *
+ * Pages are written as `.md` (NOT `.mdx`): the skill content is arbitrary
+ * Markdown authored for LLM prompts and contains `{ }` (JSON examples) and
+ * `<placeholder>` tokens that would break the MDX compiler. In `.md` mode MDX
+ * expression/JSX parsing is off (`{` is literal), and we escape `<` outside code
+ * spans so `<step>` renders as text instead of being eaten as an HTML tag. The
+ * result is the skill rendered as real formatted docs — headings, tables, lists.
+ *
  * Output (content/docs/reference/, gitignored — regenerated each build):
  *   reference/meta.json           — Reference section nav
  *   reference/index.mdx           — Reference landing page
  *   reference/skills/meta.json    — Skills sub-section nav (one entry per skill)
- *   reference/skills/<slug>.mdx   — one page per system skill
+ *   reference/skills/<slug>.md    — one page per system skill
  *
  * Connectors + MCP will be added here once their catalogs are lifted into a
  * shared package (they currently live inside apps/web).
@@ -33,6 +40,18 @@ mkdirSync(skillsDir, { recursive: true });
 /** One-line, frontmatter-safe (JSON-quoted = valid YAML double-quoted scalar). */
 const fm = (v: string): string => JSON.stringify(v.replace(/\s+/g, ' ').trim());
 
+/**
+ * Neutralise raw `<tag>` tokens that CommonMark would parse as HTML (swallowing
+ * the following text), but ONLY outside code spans/fences — inside code, `<` is
+ * already literal and must be left untouched. Splitting on a capturing group
+ * keeps the code segments at odd indices.
+ */
+const escapeAnglesOutsideCode = (md: string): string =>
+  md
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((seg, i) => (i % 2 === 1 ? seg : seg.replace(/</g, '&lt;')))
+    .join('');
+
 // ── Reference landing + nav ────────────────────────────────────────────────────
 writeFileSync(
   join(refDir, 'meta.json'),
@@ -51,7 +70,9 @@ never drift from what your install actually contains.
 ## Skills
 
 The [system skills](/docs/reference/skills) shipped with every install — the
-reusable capabilities you can assign to any agent.
+reusable capabilities you can assign to any agent. Each page shows what the
+skill does, which tools it unlocks, and the exact guidance it injects into the
+agent's system prompt.
 `,
 );
 
@@ -62,30 +83,26 @@ for (const skill of systemSkills) {
 
   const unlocks =
     skill.requiredBuiltins && skill.requiredBuiltins.length > 0
-      ? `\n**Unlocks tools:** ${skill.requiredBuiltins.map((b) => '`' + b + '`').join(', ')}\n`
+      ? `\n**Unlocks tools:** ${skill.requiredBuiltins.map((b) => '`' + b + '`').join(', ')}`
       : '';
 
-  // The skill body is arbitrary Markdown — render it inside a 4-backtick fence so
-  // its `{`, `<`, or 3-backtick fences can't break MDX parsing.
   const page = `---
 title: ${fm(skill.name)}
 description: ${fm(skill.description)}
 ---
 
-{/* AUTO-GENERATED from @nodal-agents/catalog — edit the catalog, not this file. */}
-
 ${skill.description}
 
-- **Slug:** \`${skill.slug}\`${unlocks}
-## What the agent is told
+**Slug:** \`${skill.slug}\`${unlocks}
 
-The exact guidance this skill injects into an agent's system prompt:
+> The rest of this page is the exact guidance this skill injects into an agent's
+> system prompt — assign the skill and the agent is told the following.
 
-\`\`\`\`md
-${skill.content.trim()}
-\`\`\`\`
+---
+
+${escapeAnglesOutsideCode(skill.content.trim())}
 `;
-  writeFileSync(join(skillsDir, `${skill.slug}.mdx`), page);
+  writeFileSync(join(skillsDir, `${skill.slug}.md`), page);
 }
 
 writeFileSync(

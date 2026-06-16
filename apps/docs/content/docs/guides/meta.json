@@ -1,0 +1,11 @@
+{
+  "title": "Guides",
+  "pages": [
+    "create-an-agent",
+    "connect-a-model",
+    "telegram",
+    "automations",
+    "shell-commands",
+    "root-agent"
+  ]
+}

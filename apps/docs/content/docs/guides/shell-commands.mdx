@@ -1,0 +1,98 @@
+---
+title: Shell commands
+description: Let an agent run shell commands in its workspace — with a human-in-the-loop approval gate by default.
+---
+
+The `command-execution` skill unlocks the `run_command` built-in tool, which
+runs a shell command in the agent's workspace and returns stdout, stderr, and the
+exit code. Use it for installing dependencies, running scripts, build steps, or
+any CLI tool.
+
+**Every command requires your approval by default.** The agent proposes the
+command; you approve or reject it in the dashboard before it runs. Nothing
+executes without passing that gate (or the Yolo exception below).
+
+## Enable shell commands for an agent
+
+1. Go to **Skills** in the dashboard and find **Command execution** in the
+   built-in library (or your assigned skills list).
+2. Assign it to the agent.
+3. That's it. The agent can now call `run_command`. On its next job it will
+   pause for your approval before running any command.
+
+## How approval works
+
+When the agent calls `run_command`, the runner creates an approval request and
+suspends the job. You see the exact command in the dashboard and approve or
+reject it. If you approve, the runner executes the command and the job resumes
+with the output. If you reject, the agent receives an error and can try a
+different approach.
+
+On a Telegram-bound agent, the agent gets a bounded number of turns to tell you
+via chat that it is waiting — so you are not left wondering why it went quiet.
+
+## Yolo mode — auto-run without approval
+
+Yolo mode skips the per-command approval gate. The agent runs commands
+immediately. Commands are still logged.
+
+### Local-trust mode (single-user loopback)
+
+If you run Nodal-Agents on `localhost` with no auth (`AUTH_MODE=local-trust`,
+the default), Yolo is available immediately on each agent:
+
+1. Open the agent's edit page and go to the **Autonomy** tab.
+2. Toggle **Auto-run commands without approval (Yolo)** on.
+3. Save. Commands now run without asking.
+
+### LAN / multi-user mode
+
+When Nodal-Agents runs in `local-auth` or `bearer-token` mode (shared or LAN
+install), an extra workspace-level gate applies:
+
+1. The workspace **owner** must enable the master switch first: **Settings →
+   Allow command auto-run (Yolo) in LAN / multi-user mode**.
+2. After that, the owner can toggle Yolo per agent on the **Autonomy** tab.
+
+The runtime enforces this master-switch on every job — it is not just a UI
+guard. Even if a per-agent auto-approve rule exists in the database, the runner
+strips it at execution time when the workspace has not opted in. Disabling the
+workspace switch makes all agent Yolo rules dormant instantly.
+
+Only the workspace owner can change the workspace-level switch.
+
+## Command environment
+
+- Shell: `cmd.exe` on Windows, `/bin/sh` on Unix. Shell features (`&&`, `|`,
+  quoting) work.
+- Working directory: the agent's workspace root. Pass a workspace-relative
+  `cwd` to run somewhere else inside the workspace — the path cannot point
+  outside it.
+- Default timeout: 300 seconds. Pass `timeout_seconds` to override. On timeout
+  the command and its child processes are killed.
+- Output cap: approximately 100 000 characters per stream. For verbose commands,
+  redirect output to a file in the workspace and read it back with the file
+  tools.
+- Non-interactive only: commands that wait for input will hang until the
+  timeout. Use non-interactive flags (e.g. `npm install --yes`,
+  `--no-input`).
+
+## Tips
+
+**Batch multi-step work into one call.** A compound command like
+`npm install && node build.js && node run.js` is one `run_command` call — and in
+approval mode, one approval instead of three.
+
+**A non-zero exit code is data.** The exit code and stderr are returned to the
+agent; it can read them, correct the command, and retry. A failing command does
+not crash the job.
+
+**Stop when done.** Once the command gives the agent what it needs, it should
+deliver the result with `return_result` and end the turn. Re-running or
+double-checking wastes approvals and adds latency.
+
+## Related
+
+- [Skills reference: command-execution](/docs/reference/skills/command-execution)
+- [Concepts: Agents](/docs/concepts/agents)
+- [Concepts: Connectors & MCP](/docs/concepts/connectors-and-mcp)

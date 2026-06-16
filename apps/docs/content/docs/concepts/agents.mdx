@@ -1,0 +1,59 @@
+---
+title: Agents
+description: What an agent is, how it's configured, and how a job runs.
+---
+
+An agent is a named, persistent AI persona you create in the dashboard. The
+catalog ships skills and connectors — no agents. Every agent comes from you.
+
+## Configuration
+
+Each agent has:
+
+- **Name, slug, and avatar** — used in the UI and as the delegation handle for orchestrators.
+- **System prompt / personality** — the Markdown text injected at the top of every job.
+- **Model** — any provider key you've configured; each agent picks its own model independently.
+- **Assigned skills** — a set of [skills](/docs/concepts/skills) that inject additional guidance and unlock gated built-in tools.
+- **Connectors** — OAuth or API-key integrations (Gmail, Notion, Airtable…) whose tools become available in the job.
+- **MCP servers** — HTTP or stdio MCP servers whose discovered tools are namespaced and injected per job.
+- **Workspaces** — one or more filesystem paths the agent can read and write via the built-in file tools.
+- **Telegram binding** — an optional bot token that wires the agent to a Telegram bot for inbound messages and outbound delivery.
+- **Role** — `agent` (worker) or `orchestrator`. See [Orchestrators](/docs/concepts/orchestrators).
+
+## How a job runs
+
+A job is one unit of work: a user message, a cron tick, an API call, or an
+inbound Telegram message. The runner loads the agent's full configuration from
+the database, builds the tool whitelist and system prompt for that job, and
+enters the LLM loop.
+
+**Tool whitelist is computed per job.** There are no default tools. The runner
+unions the always-on builtins (`return_result`, memory tools) with every tool
+unlocked by the agent's assigned skills (`requiredBuiltins`), its connector
+adapters, and its MCP servers. An agent that has no skills assigned gets only
+the always-on set. This is enforced as an invariant — a tool not in the
+whitelist is never offered to the model.
+
+## Anti-loop guards
+
+The runner enforces hard limits on every job to prevent runaway spending:
+
+| Guard | Limit |
+|---|---|
+| Max turns per job | 50 |
+| Max tool calls per turn | 50 |
+| Max self-chain resumes | 15 |
+| Max delegation depth | 3 |
+| Max total tokens per job | 1,500,000 |
+| Max cost per job | $2.00 |
+
+When any limit is exceeded the job fails immediately with a clear error code —
+no silent fallback.
+
+## Autonomy
+
+An agent's tool calls that carry real-world side-effects (like `run_command`)
+can require human approval before execution. You configure approval rules
+per-agent or per-tool in the dashboard. Agents that need no approval on any
+tool are "fully autonomous"; others pause at each gated call and resume once
+you approve or reject it from the dashboard.

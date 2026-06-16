@@ -1,0 +1,90 @@
+---
+title: Models & providers
+description: How Nodal-Agents connects to LLM providers and lets each agent pick its own model.
+---
+
+Setup is **one API key per provider**. After you add a key under **LLM Providers**
+in the dashboard, every agent on that entity can use any model from that provider
+without needing its own credential.
+
+## Supported providers
+
+| Provider | Type | Notes |
+|---|---|---|
+| Anthropic | Cloud | Prompt caching supported |
+| OpenAI | Cloud | Structured outputs supported |
+| Google | Cloud | Vision + structured outputs |
+| Mistral | Cloud | |
+| Groq | Cloud | |
+| DeepSeek | Cloud (native) | Direct endpoint at `api.deepseek.com` |
+| MiniMax | Cloud (native) | Anthropic-compatible endpoint at `api.minimax.io/anthropic` |
+| OpenRouter | Aggregator | Routes to many upstream models under one key |
+| Ollama | Local | Default base URL `http://localhost:11434` |
+| LM Studio | Local | Default base URL `http://localhost:1234/v1` |
+| Jan AI | Local | Default base URL `http://localhost:1337/v1` |
+| llama.cpp | Local | Default base URL `http://localhost:8080/v1` |
+| vLLM | Local | Default base URL `http://localhost:8000/v1` |
+
+Local providers use the OpenAI-compatible API. You can override the base URL for
+any provider when you add the key.
+
+## Per-agent model selection
+
+Each agent independently picks its model from the providers you have configured.
+The dashboard agent editor shows a curated dropdown of known-good models for each
+provider, plus a **Custom** field for any model ID not in the list.
+
+The curated catalog (`packages/shared/src/model-catalog.ts`) records, for each
+model, its context window in tokens and capability flags. The runner uses the
+context window to decide when to compact the conversation before the window would
+overflow. For a custom or unlisted model, the runner falls back to a conservative
+128 000-token default.
+
+## Reasoning models
+
+Some models emit a hidden chain-of-thought (a "reasoning" or "thinking" step).
+Nodal-Agents handles the round-trip automatically so reasoning persists across
+tool-call turns:
+
+- **DeepSeek Reasoner (R1)** — the runner injects `thinking: { type: "enabled" }`
+  into the request body and pads any empty `reasoning_content` on assistant
+  messages back to the API (the API returns HTTP 400 without it). Both transforms
+  are applied only to requests that reach `api.deepseek.com`.
+- **OpenRouter reasoning models** — the provider is configured to return
+  `reasoning_details`; the runner replays them on every subsequent assistant
+  message.
+- **MiniMax M3** — catalogued with the `reasoning` flag; handled through the
+  MiniMax Anthropic-compatible endpoint.
+
+The `reasoning` capability flag in the model catalog gates these behaviours.
+Non-reasoning models are unaffected.
+
+## Capabilities by provider
+
+| Provider | Tool use | Prompt caching | Vision | Structured outputs |
+|---|---|---|---|---|
+| Anthropic | Yes | Yes | Yes | No (tool-based) |
+| OpenAI | Yes | No | Yes | Yes |
+| Google | Yes | No | Yes | Yes |
+| Mistral | Yes | No | No | Yes |
+| Groq | Yes | No | No | Yes |
+| DeepSeek | Yes | No | No | No |
+| MiniMax | Yes | No | No | No |
+| OpenRouter | Yes | No | No | No |
+| Ollama | Yes | No | No | Yes |
+
+Capabilities marked "No" are conservative defaults — individual models on a provider
+may differ from the table above.
+
+## Fallback chains
+
+Each agent can be configured with a fallback chain: an ordered list of alternative
+key-and-model pairs the runner tries if the primary provider returns a 5xx error.
+Failover is automatic and transparent to the rest of the job.
+
+## Related pages
+
+- [Getting started](/docs/getting-started) — how to add your first provider key
+- [Agents](/docs/concepts/agents) — where the per-agent model selection lives
+- [Connect a model](/docs/guides/connect-a-model) — step-by-step guide for each
+  provider type

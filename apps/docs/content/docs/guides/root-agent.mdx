@@ -1,0 +1,68 @@
+---
+title: ROOT agent
+description: Designate your first orchestrator as the workspace ROOT and grant it meta-tools to manage itself.
+---
+
+The ROOT agent is the single top-level orchestrator in your workspace. It has access to **meta-tools** — `create_agent`, `create_skill`, `update_skill`, `attach_skill`, `attach_agent`, `create_mcp`, and `create_connector` — that let it extend the workspace on your behalf: writing new skills, creating agents, and wiring them together, all from within a chat or automation.
+
+## How ROOT designation works
+
+You do not pick the ROOT manually. The **first orchestrator agent you create** in a workspace is automatically designated ROOT. Go to **Settings → ROOT agent** to see which agent that is and configure its powers.
+
+If you have not created an orchestrator yet, the Settings block shows an empty state with a link to **Agents** to create one.
+
+## Configure the ROOT's powers
+
+ROOT powers are **all off by default** on a freshly auto-designated agent. Go to **Settings → ROOT agent** to opt in:
+
+### Allowed actions
+
+Toggle each meta-tool grant independently:
+
+| Grant | Meta-tool unlocked |
+|-------|-------------------|
+| Create agents | `create_agent` |
+| Attach agents | `attach_agent` |
+| Create skills | `create_skill` |
+| Update skills | `update_skill` |
+| Assign skills | `attach_skill` |
+| Create MCP servers | `create_mcp` |
+| Create connectors | `create_connector` |
+
+Only enabled grants appear as tools in the ROOT agent's system context. Disabling a grant removes the tool immediately on the next job.
+
+### Autonomy level
+
+Controls whether the ROOT's meta-tool calls require your approval:
+
+| Level | Behaviour |
+|-------|-----------|
+| **Propose and confirm** | Every meta-tool call is queued in the Approvals queue — the ROOT waits for your go-ahead before executing. |
+| **Autonomous, gate destructive** | Non-destructive meta-tools execute automatically. Destructive ones (none exist yet in the current toolset) would still require approval. |
+| **Fully autonomous** | All enabled meta-tools execute without any approval step. Use only for an agent you fully trust. |
+
+The default is **Propose and confirm**.
+
+## Save
+
+Click **Save** after adjusting grants and autonomy. Changes take effect on the next job — already-running jobs are not affected.
+
+## Approvals queue
+
+When the ROOT runs in **Propose and confirm** mode, each meta-tool call appears as a pending approval in **Jobs → Approvals**. You can approve or reject each call individually. The ROOT resumes immediately after approval.
+
+## Example: a self-extending orchestrator
+
+With `create_skill` and `attach_skill` enabled in **Propose and confirm** mode:
+
+1. You chat with the ROOT: "Create a skill that can fetch the current Bitcoin price and assign it to the Market-Watcher agent."
+2. The ROOT proposes a `create_skill` call — you approve.
+3. The ROOT proposes an `attach_skill` call — you approve.
+4. Market-Watcher now has the skill and can use it immediately.
+
+## Notes
+
+- There is exactly one ROOT per workspace. The auto-designation cannot be changed — the ROOT is always the first orchestrator created.
+- The ROOT receives meta-tools in addition to any skills you assign to it manually on the agent's **Skills** tab.
+- Revoking all grants does not delete the ROOT designation — the agent remains structurally ROOT (top of the hierarchy, primary chat target) but holds no meta-tools until you re-enable them.
+- The learning loop (when enabled) runs reflection post-job and writes skills with `created_by = 'agent'`. The ROOT curator consolidates these independently of the meta-tool grants.

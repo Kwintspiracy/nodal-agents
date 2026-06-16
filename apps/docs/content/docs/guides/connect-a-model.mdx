@@ -1,0 +1,65 @@
+---
+title: Connect a model
+description: Add an LLM provider key in the dashboard so your agents can use any model.
+---
+
+Nodal-Agents is multi-provider: you add one key per provider, then each agent independently picks which provider and model to use. You can mix Anthropic, OpenAI, and a local Ollama instance across different agents in the same workspace.
+
+## Supported providers
+
+| Provider | Notes |
+|----------|-------|
+| Anthropic | API key required |
+| OpenAI | API key required |
+| Google | API key required |
+| Mistral | API key required |
+| Groq | API key required |
+| DeepSeek | API key required (native endpoint, reasoning round-trip supported) |
+| MiniMax | API key required (native endpoint) |
+| OpenRouter | API key required — gives access to hundreds of models via one key |
+| Ollama | No API key; requires a base URL (default `http://localhost:11434`) |
+| OpenAI-compatible | Any OpenAI-compatible local or remote endpoint; base URL required |
+
+## Add a provider
+
+1. In the dashboard go to **LLM Providers**.
+2. Click **Add provider**.
+3. Select your **Provider** from the dropdown. Already-configured providers are greyed out.
+4. Set the **Base URL**. Cloud providers pre-fill a canonical URL — leave it blank to use the default. Local providers (Ollama, OpenAI-compatible) require a URL.
+5. Paste your **API key**. For local models with no key, leave the field empty.
+6. Click **Test connection**. The dashboard sends a live request to the provider and reports pass or fail inline. **Save** is blocked until the test passes (or you are editing an existing key without changing it).
+7. Click **Add provider**. The key is stored encrypted in the embedded database.
+
+## Local models (Ollama, LM Studio, Jan.ai, llama.cpp, vLLM)
+
+Start your local server first, then add it as an **Ollama** or **OpenAI-compatible** provider. The base URLs the init wizard uses as defaults:
+
+```
+Ollama          http://localhost:11434
+LM Studio       http://localhost:1234/v1
+Jan.ai          http://localhost:1337/v1
+llama.cpp       http://localhost:8080/v1
+vLLM            http://localhost:8000/v1
+```
+
+The dashboard fetches the live model list from the provider's `/v1/models` endpoint when you open the model picker on an agent — so new models appear automatically once loaded into your server.
+
+## Assign a model to an agent
+
+Provider keys are shared across the workspace. Each agent picks:
+
+1. **LLM provider key** — which configured provider to use.
+2. **Model** — fetched live from that provider's endpoint, with a curated list as fallback.
+3. **Fallback chain** (optional) — ordered list of `(provider key, model)` pairs tried in sequence if the primary provider returns a non-retryable error.
+
+Change these in **Agents → `<agent>` → Settings**.
+
+## Update or replace a key
+
+Go to **LLM Providers**, find the row, and click **Edit**. The API key is masked after saving — click **Replace** to enter a new one. Saving without touching the key field keeps the existing key unchanged.
+
+## Notes
+
+- Disabling a provider key (uncheck **Active**) prevents agents from using it without deleting it — useful for temporary key rotation.
+- Each agent's model selection is independent. An orchestrator can use Claude while its worker sub-agents use a local Ollama model.
+- The runner reads LLM config from the database at job start, so a key change takes effect on the next job with no restart needed.

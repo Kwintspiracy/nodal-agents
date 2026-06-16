@@ -1,0 +1,82 @@
+---
+title: Telegram
+description: Bind a Telegram bot to an agent so it receives and replies to messages.
+---
+
+Each agent can be wired to a dedicated Telegram bot. When bound, the agent
+receives inbound messages as jobs and sends replies back to the same chat.
+
+The binding is per-agent and per-bot: one bot token, one agent. You can have
+multiple agents each with their own bot.
+
+## Prerequisites
+
+- A Telegram bot token. Create one with
+  [@BotFather](https://t.me/botfather) on Telegram (`/newbot`).
+
+## Set up the bot
+
+1. Open the agent's edit page in the dashboard.
+2. Go to the **Settings** tab and paste the bot token into the
+   **Telegram bot token** field.
+3. Save the agent. The runner picks up the new token within 30 seconds and
+   starts long-polling for updates automatically. No restart needed.
+
+That's it — send a message to the bot and the agent responds.
+
+## How incoming messages become jobs
+
+The runner maintains one long-polling loop per configured bot. Each incoming
+Telegram update is turned into an `agent_jobs` row inside a database transaction
+that also advances the offset cursor. A crash mid-update does not drop the
+message or create a duplicate job.
+
+In **private chats** every message triggers a job.
+
+In **group chats** the bot only responds when clearly addressed:
+
+- `/ask <agent-slug> <text>` — routes to a different agent in the same workspace
+- `/agents` or `/start` — reserved commands
+- `@bot_username <text>` — mention with the bot's username
+- A reply to a previous bot message
+
+Any other group message is silently ignored, so the bot does not respond to
+every line of a group conversation.
+
+## Delivery guard — no phantom sends
+
+`telegram_send_message` is only available to a job that has a resolvable
+recipient: a job that arrived via Telegram (carrying the sender's chat ID), a
+cron automation with "notify on success" enabled and a known chat, or a
+dashboard task sent "via Telegram."
+
+On a plain dashboard, API, or internal job there is no chat recipient, so the
+tool is not offered at all. This prevents the agent from attempting a Telegram
+send on a job that has nowhere to deliver — which would otherwise produce a
+`telegram_no_recipient` error and cause the job to fail.
+
+## Approval heads-up on Telegram
+
+When a job is paused waiting for your approval of a tool call, the agent gets
+up to a bounded number of turns to tell you — in its own voice, via
+`telegram_send_message` — what it launched and that it is waiting. Once it has
+delivered that message (or the budget is spent), the job suspends. You resolve
+the approval from the dashboard; the job then resumes and executes the approved
+action.
+
+## Group chat tip
+
+If you want to address a specific agent in a group, use:
+
+```
+/ask <agent-slug> your question here
+```
+
+This routes the message to the named agent even if the group's bot belongs to a
+different one.
+
+## Related
+
+- [Skills reference: telegram-responder](/docs/reference/skills/telegram-responder) — system prompt guidance for Telegram-bound agents
+- [Concepts: Agents](/docs/concepts/agents)
+- [Concepts: Connectors & MCP](/docs/concepts/connectors-and-mcp)

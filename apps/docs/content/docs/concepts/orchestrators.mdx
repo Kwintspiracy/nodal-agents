@@ -1,0 +1,64 @@
+---
+title: Orchestrators
+description: How orchestrators delegate work to child agents and compile results.
+---
+
+An orchestrator is an agent whose `role` is set to `orchestrator`. It doesn't
+do the work itself — it breaks a request down and hands pieces to specialist
+child agents, then compiles the result.
+
+## Two delegation styles
+
+Every orchestrator gets both delegation toolsets at runtime. It picks the style
+that fits the request; the runtime ensures only one style runs per job.
+
+### Inline delegation — `assign_<agent>`
+
+The orchestrator calls `assign_<slug>` to hand a task to one child agent and
+waits for its result before continuing. Use this for sequential work, or when
+the next step depends on what the previous one found.
+
+- Only one assignment per turn.
+- After the child returns, either call `return_result` to finish or assign the
+  next step.
+
+### Parallel fan-out — `create_task`
+
+The orchestrator calls `create_task` once (or several times in the same turn)
+to create independent tasks, each with an `assigned_to` set to a child's slug.
+Tasks run concurrently. After creating them the orchestrator ends its turn with
+a brief `return_result` acknowledgment — the task board runs everything in the
+background and compiles the answers automatically.
+
+Use `depends_on` inside `create_task` to sequence tasks that must run in a
+specific order within the same board.
+
+## Team block
+
+The orchestrator's system prompt includes a `## Your team` section built
+entirely from the database at job time: child agent names, slugs, assigned
+skills, connectors, and MCP tool inventories. No metadata is hardcoded in the
+runner — if you change a child's skills in the dashboard the team block updates
+on the next job.
+
+## Soft mode lean
+
+An orchestrator's `orchestratorMode` column (`router` or `planner`) is a soft
+default preference surfaced in the prompt, not a hard restriction on the
+toolset:
+
+- **Router lean** — the team includes sub-orchestrators; inline `assign_*`
+  delegation is usually the right call.
+- **Planner lean** — the team is independent workers; `create_task` parallel
+  fan-out is usually the right call for multi-part work.
+
+The model chooses freely; the lean is guidance, not enforcement.
+
+## Delegation limits
+
+Delegation depth is capped at 3 levels (parent → child → grandchild). A
+child that tries to delegate further fails loud. The overall chain-resume
+limit (15 per job) also applies — a long sequential workflow that needs more
+than 15 child completions will be killed before it finishes.
+
+See [Agents](/docs/concepts/agents) for the full guard table.

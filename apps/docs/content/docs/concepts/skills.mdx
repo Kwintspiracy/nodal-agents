@@ -1,0 +1,70 @@
+---
+title: Skills
+description: How skills add guidance and unlock tools for an agent.
+---
+
+A skill is a reusable capability you assign to an agent. Each skill has two
+effects that fire together at job time:
+
+1. **Prompt injection** — the skill's Markdown body is appended to the agent's
+   system prompt, giving it instructions, discipline rules, or domain knowledge.
+2. **Tool gating** — a skill's `requiredBuiltins` list unlocks specific
+   built-in tools for any agent that holds it. An agent without the skill never
+   sees those tools, regardless of what's registered in the runner.
+
+These two effects are always coupled: you can't get the tools without the
+guidance, and you can't get the guidance without the assignment.
+
+## Kinds of skills
+
+| Kind | Created by | Notes |
+|---|---|---|
+| **System** | Ships with the product | 12 skills seeded at boot from the catalog (e.g. `office-editing`, `command-execution`, `task-planning`). |
+| **Custom** | You, in the dashboard | Freeform Markdown; you control the content and `requiredBuiltins`. |
+| **Community** | Installed at runtime | Fetched from any open `SKILL.md` on GitHub, skills.sh, or ClawHub. Stored in `~/.nodalai/skills/`. |
+| **Learned** | An agent, after a substantial job | Created by the opt-in reflection loop; `created_by = 'agent'` in the DB. |
+
+## System skills
+
+The 12 system skills ship in `@nodal-agents/catalog` and are upserted into
+every install at boot. They cover:
+
+`citation-discipline`, `claude-html-design`, `command-execution`,
+`language-mirror`, `markdown-output`, `obsidian`, `office-editing`,
+`research-scope-discipline`, `safe-tool-use`, `task-planning`,
+`telegram-responder`, `verify-before-done`
+
+See the [Skills reference](/docs/reference/skills) for the full content of each
+system skill.
+
+## Community skills
+
+Install any project that publishes a `SKILL.md` (the open Agent Skills format)
+from the **Skills → Community** tab in the dashboard. You paste a GitHub URL,
+an `owner/repo` shorthand, or a skills.sh path. The runner fetches and extracts
+the repository, locates the `SKILL.md`, validates its frontmatter, and writes
+the skill into the database with `is_community = true` and the source URL
+recorded.
+
+If the skill bundle includes script files (`.py`, `.sh`, etc.) a warning is
+shown — the runner does **not** execute bundled scripts.
+
+Community skills automatically receive `skill_file_read` and `skill_file_list`
+so the agent can inspect the skill's own bundled files.
+
+## The learning loop
+
+When the reflection loop is enabled (opt-in per entity in the dashboard), the
+runner runs a Tier-1 reflection pass after any qualifying completed job — one
+that used at least 10 tool calls and did not come from a `chat` or `reflection`
+channel. The reflection agent reads the transcript and either creates a new
+skill or patches an existing one. These learned skills carry `created_by =
+'agent'` and are visible in **Skills → Learned** in the dashboard.
+
+A weekly curator pass (Tier-2) consolidates and prunes learned skills across
+the entity.
+
+## Assigning skills
+
+Assign a skill to an agent from the agent's **Skills** tab in the dashboard.
+The change takes effect on the next job — no restart required.

@@ -1,0 +1,138 @@
+---
+title: Connectors & MCP
+description: How integrations reach your agents — OAuth/API-key connectors and MCP servers over HTTP or stdio.
+---
+
+Nodal-Agents gives agents access to external services through two complementary
+mechanisms: **Connectors** and **MCP servers**. Both are assigned per agent;
+neither changes the runner's generic architecture — the agent's tool whitelist is
+computed from its assigned integrations at job-start time.
+
+## Connectors
+
+A connector is a first-party integration backed by a dedicated adapter in the
+runner. The connector catalog lists every integration the runner knows how to talk
+to. Adding a connector from the catalog guarantees the adapter ships with it — no
+connector is exposed without a working implementation.
+
+### Auth types
+
+| Auth type | How you connect |
+|-----------|----------------|
+| **OAuth 2** | Click "Connect" in the dashboard; an OAuth flow authorizes the integration. One Google credential backs Drive, Gmail, Sheets, and Docs simultaneously. |
+| **API key** | Paste a key or Personal Access Token. |
+
+### Available connectors
+
+The current catalog (from `packages/shared/src/connector-catalog.ts`):
+
+| Name | Auth |
+|------|------|
+| Notion | API key |
+| Notion (OAuth) | OAuth 2 |
+| Google Drive | OAuth 2 |
+| Gmail | OAuth 2 |
+| Google Sheets | OAuth 2 |
+| Google Docs | OAuth 2 |
+| Airtable (OAuth) | OAuth 2 |
+| Airtable | API key (Personal Access Token) |
+| Apify | API key |
+| Firecrawl | API key |
+| Tavily | API key |
+
+### Assign a connector to an agent
+
+1. Go to **Connectors** in the dashboard and connect the integration (OAuth flow
+   or paste a key).
+2. Open the target agent's edit page and go to the **Connectors** tab.
+3. Enable the integration. Its tools become available on the agent's next job.
+
+Credentials are fetched from the database at execution time — they are never
+baked into a job at enqueue time.
+
+---
+
+## MCP servers
+
+MCP (Model Context Protocol) servers expose tools that the runner discovers at
+job-start and injects into the agent's whitelist. Tools are namespaced with the
+server's slug to avoid collisions: a server with slug `stripe` exposes tools like
+`stripe__retrieve_balance`.
+
+### Transports
+
+Nodal-Agents supports two transports:
+
+**HTTP (Streamable HTTP)** — a hosted server reachable over HTTPS. The runner
+connects, authenticates (header, query-param, or Bearer token), and calls
+`tools/list`. Examples: Stripe, Airtable (hosted), Cogni Cortex, Composio.
+
+**stdio** — a local subprocess spawned by the runner on first use. The runner
+executes the command (typically `npx -y <package>`) and communicates via
+stdin/stdout. The subprocess is torn down after the job. Examples: Filesystem,
+Git, GitHub, PostgreSQL, Playwright.
+
+For stdio servers that use `npx`, the package is downloaded on first use
+(requires network; expect 5–30 s latency on the initial connection; subsequent
+runs use the npx cache).
+
+### Auth
+
+HTTP servers authenticate with a static key. How the key is injected depends on
+the server:
+
+- **`header`** — sent as a named request header (e.g. `x-api-key: <key>`)
+- **`bearer`** — sent as `Authorization: Bearer <key>`
+- **`query`** — appended to the URL as a query parameter
+
+stdio servers use environment variables instead of HTTP auth. Env var values are
+encrypted at rest.
+
+### Tool risk levels
+
+The runner maps MCP tool annotations to its own risk model:
+
+| MCP annotation | Risk level |
+|----------------|-----------|
+| `readOnlyHint: true` | `read` (autonomous, no approval gate) |
+| `destructiveHint: true` | `destructive` |
+| no annotation | `write` (conservative default — passes through the approval gate) |
+
+### Adding an MCP server
+
+**From the catalog:**
+
+1. Go to **MCP** in the dashboard.
+2. Pick a server from the library (verified or pending badge) and click
+   **Connect**.
+3. Fill in the URL (if required), API key, and any env vars shown.
+4. Open the target agent's edit page → **Connectors** tab → enable the MCP
+   server.
+
+**Custom HTTP server:**
+
+Select "Custom MCP (HTTP)" in the catalog. Provide a short slug (becomes the
+tool-name prefix), the server URL, and auth details.
+
+**Custom stdio server:**
+
+Select "Custom MCP (stdio)". Provide a slug, the executable command (e.g.
+`npx`), args, and any required env vars. The runner spawns it with your
+permissions — only connect servers you trust.
+
+### Catalog status badges
+
+- **Verified** — tested end-to-end against a live server.
+- **Test pending** — shipped but not yet live-verified. Connection parameters
+  may need adjustment.
+
+---
+
+## How tools reach the agent
+
+At job-start the runner fetches the agent's assigned connectors and MCP servers
+from the database, opens connections, calls `tools/list` on each MCP server, and
+builds the complete tool whitelist for that job. The agent only sees tools it has
+access to — there are no implicit defaults.
+
+See [Agents](/docs/concepts/agents) for the full picture of how a job runs.

@@ -1,0 +1,73 @@
+---
+title: Memory
+description: How agents store, recall, and automatically use persistent facts across jobs.
+---
+
+Agents accumulate facts in a persistent `agent_memory` table. These facts survive
+across sessions, restarts, and model swaps — whenever a job runs, relevant memories
+are already waiting in the system prompt before the first LLM call.
+
+## What a memory contains
+
+Each record holds a `fact` (plain text), a `category`, an `importance` score
+(1–5), optional `skill_tags`, and timestamps for creation and last access.
+
+The four categories are:
+
+| Category | Intended use |
+|---|---|
+| `preference` | How the user or agent prefers to work |
+| `context` | Background facts about the entity or domain |
+| `outcome` | Results of past tasks worth remembering |
+| `learned_rule` | Discovered rules, constraints, or patterns |
+
+Facts can also carry an optional `valid_to` expiry and an `archived` flag so
+stale knowledge is never injected silently.
+
+## Auto-injection into every job
+
+Before a job starts, the runner selects memories from the entity-wide pool and
+injects them as a frozen block inside the agent's system prompt. No tool call is
+needed — the agent already has context.
+
+Selection works in two stages:
+
+1. **Candidate fetch** — the top 50 non-archived, non-expired memories for the
+   entity, ordered by `importance DESC`, `last_accessed_at DESC`.
+2. **Budget pack** — a greedy selector fits as many as possible under a character
+   budget derived from `agents.memoryTokenBudget`. High-importance facts are
+   packed first; a single oversized fact is skipped rather than truncated.
+
+Memory is **entity-scoped**, not agent-scoped — every agent in the same entity
+sees the same pool. This matches the `query_memory` tool's behaviour: knowledge
+follows the user across agents, not the individual agent.
+
+## Searching memories during a job
+
+Agents can call `query_memory` explicitly when they need to dig deeper. The search
+is hybrid:
+
+- **Vector (semantic)** — the query is embedded and matched by cosine similarity
+  against stored embeddings (threshold: 0.5 by default). Falls back to keyword if
+  the embedding call fails or returns no results.
+- **Keyword (ILIKE)** — splits the query into words and matches against the `fact`
+  text. Used as a fallback and available independently without an embedding client.
+
+Both paths update `last_accessed_at` on every returned row, which feeds back into
+the injection ranking for future jobs.
+
+## Writing memories
+
+Agents write memories with `save_memory`. Duplicate detection runs on a normalized
+hash of the fact text — an identical (non-archived) fact already in the store is
+rejected before it reaches the DB, so the pool stays clean.
+
+Content is sanitized before storage to guard against injection payloads being
+embedded into the entity-wide pool.
+
+## Related pages
+
+- [Agents](/docs/concepts/agents) — how agents are configured, including the memory
+  budget field
+- [Learning loop](/docs/concepts/learning-loop) — the related feature that writes
+  reusable *skills* (not facts) after a job completes
