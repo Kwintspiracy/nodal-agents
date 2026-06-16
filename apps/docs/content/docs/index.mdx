@@ -3,39 +3,62 @@ title: Nodal-Agents
 description: A local-first, self-hostable multi-agent AI platform with a web dashboard — install in one command.
 ---
 
-**Nodal-Agents** is a local-first, self-hostable multi-agent AI platform with a web
-dashboard. You install it with one command; it runs entirely on your machine
-(embedded Postgres, no cloud), and you build a team of AI agents that use any LLM,
-remember across sessions, talk to your tools, and improve over time.
+**Build a team of AI agents that run entirely on your machine.** Any model, persistent memory, your own tools — installed with one command. No cloud account, no lock-in.
 
-New here? **[Get started →](/docs/getting-started)**
+<Cards>
+  <Card title="🚀 Get started" href="/docs/getting-started" description="Install and run your first agent in two minutes." />
+  <Card title="🧩 Core concepts" href="/docs/concepts/agents" description="Agents, orchestrators, skills, memory, the learning loop." />
+  <Card title="📦 Self-hosting" href="/docs/self-hosting" description="Ports, data, auth modes, updates." />
+  <Card title="🛠️ Skills reference" href="/docs/reference/skills" description="Every capability you can assign — generated from the catalog." />
+</Cards>
+
+## Install
+
+<Tabs items={['Install', 'Update']}>
+
+<Tab value="Install">
+
+```bash
+npm install -g nodal-agents
+nodal-agents up
+```
+
+Opens the dashboard on `localhost:3000` with an embedded Postgres — no external database, no Redis, no config files to edit.
+
+</Tab>
+
+<Tab value="Update">
+
+```bash
+nodal-agents update
+```
+
+Stops the stack, installs `nodal-agents@latest`, and restarts. Your data is preserved.
+
+</Tab>
+
+</Tabs>
+
+<Callout type="info">
+Requires **Node 22+**. Everything — conversations, memory, credentials — stays in `~/.nodalai/` on your machine.
+</Callout>
 
 ## What you get
 
-- **Local-first** — single command, embedded Postgres; your conversations, memory and credentials stay on your machine.
-- **Any model, per agent** — Anthropic, OpenAI, Google, Groq, Mistral, native DeepSeek & MiniMax, OpenRouter, or local (LM Studio / Ollama). Setup is one key per provider; each agent then picks its own model.
-- **Orchestrators that finish** — every orchestrator routes to one specialist and resumes on its result, or fans out independent work to many sub-agents in parallel and compiles the answer.
-- **Memory that compounds** — persistent facts auto-injected into every job, plus chat-thread continuity across sessions.
-- **Self-improving agents** — an opt-in learning loop: after a substantial job an agent reflects on the transcript and writes itself a reusable skill; a weekly curator consolidates and prunes them.
-- **Skills, connectors & MCP** — assign reusable [skills](/docs/reference/skills), connect Gmail / Drive / Notion (OAuth or API key), and add MCP servers over HTTP *and* stdio.
-- **Workspaces, a self-extending ROOT agent, Telegram, Office-file editing** — plus generic guards so agents don't lie, loop, or die (real-dollar cost caps, no-progress detection, no-false-success).
+- **Local-first** — single command, embedded Postgres; your data never leaves your machine.
+- **Any model, per agent** — Anthropic, OpenAI, Google, native DeepSeek & MiniMax, OpenRouter, or local (LM Studio / Ollama). One key per provider; each agent picks its own model.
+- **Orchestrators that finish** — route to one specialist and resume on its result, or fan out independent work to many sub-agents in parallel and compile the answer.
+- **Memory that compounds** — persistent facts auto-injected into every job, plus chat continuity across sessions.
+- **Self-improving agents** — an opt-in [learning loop](/docs/concepts/learning-loop): after a substantial job an agent reflects and writes itself a reusable skill; a curator consolidates them.
+- **Skills, connectors & MCP** — assign reusable [skills](/docs/reference/skills), connect Gmail / Drive / Notion, and add MCP servers over HTTP *and* stdio.
 
-## Explore
+## Guides
 
-**Concepts** — how the pieces fit together:
-
-- [Agents](/docs/concepts/agents) · [Orchestrators](/docs/concepts/orchestrators) · [Skills](/docs/concepts/skills)
-- [Memory](/docs/concepts/memory) · [Models](/docs/concepts/models) · [Connectors & MCP](/docs/concepts/connectors-and-mcp) · [Learning loop](/docs/concepts/learning-loop)
-
-**Guides** — do a specific thing:
-
-- [Create an agent](/docs/guides/create-an-agent) · [Connect a model](/docs/guides/connect-a-model)
-- [Telegram](/docs/guides/telegram) · [Automations](/docs/guides/automations) · [Shell commands](/docs/guides/shell-commands) · [ROOT agent](/docs/guides/root-agent)
-
-**Run it** — [Self-hosting](/docs/self-hosting): ports, data, auth modes, updates.
-
-## Reference
-
-The [Skills reference](/docs/reference/skills) is generated directly from the
-product catalog at build time, so it always matches exactly what your install
-ships with.
+<Cards>
+  <Card title="Create an agent" href="/docs/guides/create-an-agent" />
+  <Card title="Connect a model" href="/docs/guides/connect-a-model" />
+  <Card title="Telegram" href="/docs/guides/telegram" />
+  <Card title="Automations" href="/docs/guides/automations" />
+  <Card title="Shell commands" href="/docs/guides/shell-commands" />
+  <Card title="ROOT agent" href="/docs/guides/root-agent" />
+</Cards>

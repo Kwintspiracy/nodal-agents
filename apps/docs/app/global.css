@@ -1,1 +1,110 @@
 @import 'tailwindcss';
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Nodal-Agents docs theme — matches the product design system (apps/web).
+
+   Look: soft "paper on canvas" surfaces. Boxes (cards, callouts, code, table
+   headers) are defined by a gentle background fill, NOT a hard white border —
+   borders are barely-there. Accent is the product's skill orange-red #ff5631.
+   Fonts: Inter (sans) + JetBrains Mono (code), loaded in app/layout.tsx.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --color-fd-background: #ffffff;
+  --color-fd-foreground: #0a0a0a;
+  --color-fd-muted: #f3f3f1;
+  --color-fd-muted-foreground: #6a6a6a;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #0a0a0a;
+  --color-fd-card: #f6f6f4;
+  --color-fd-card-foreground: #0a0a0a;
+  --color-fd-border: rgba(10, 10, 10, 0.06);
+  --color-fd-primary: #ff5631;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #f3f3f1;
+  --color-fd-secondary-foreground: #0a0a0a;
+  --color-fd-accent: #efefec;
+  --color-fd-accent-foreground: #0a0a0a;
+  --color-fd-ring: #ff5631;
+
+  --brand-skill: #ff5631;
+  --brand-agent: #d4ff2e;
+  --brand-connector: #3565ff;
+}
+
+.dark {
+  --color-fd-background: #0e0e10;
+  --color-fd-foreground: #f5f5f3;
+  --color-fd-muted: #18181b;
+  --color-fd-muted-foreground: #9a9a96;
+  --color-fd-popover: #161618;
+  --color-fd-popover-foreground: #f5f5f3;
+  --color-fd-card: #18181b;
+  --color-fd-card-foreground: #f5f5f3;
+  --color-fd-border: rgba(255, 255, 255, 0.07);
+  --color-fd-primary: #ff5631;
+  --color-fd-primary-foreground: #0a0a0a;
+  --color-fd-secondary: #1c1c20;
+  --color-fd-secondary-foreground: #f5f5f3;
+  --color-fd-accent: #242428;
+  --color-fd-accent-foreground: #f5f5f3;
+  --color-fd-ring: #ff5631;
+}
+
+/* Fonts ------------------------------------------------------------------- */
+body {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-jbmono), ui-monospace, 'JetBrains Mono', monospace;
+}
+
+/* Tables — soft filled, rounded, no violent borders ----------------------- */
+.prose table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--color-fd-border);
+  font-size: 0.875rem;
+}
+.prose thead {
+  background: var(--color-fd-muted);
+}
+.prose th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.5rem 0.85rem;
+  color: var(--color-fd-foreground);
+  border: 0;
+}
+.prose td {
+  padding: 0.5rem 0.85rem;
+  border: 0;
+  border-top: 1px solid var(--color-fd-border);
+  vertical-align: top;
+}
+.prose tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-fd-muted) 50%, transparent);
+}
+
+/* Body links — assert the brand (Cards carry a class; plain links don't) --- */
+.prose a:not([class]) {
+  color: var(--color-fd-primary);
+  font-weight: 500;
+  text-decoration: none;
+}
+.prose a:not([class]):hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Active sidebar item — give the accent real presence -------------------- */
+#nd-sidebar a[data-active='true'] {
+  color: var(--color-fd-primary);
+  background: color-mix(in srgb, var(--color-fd-primary) 10%, transparent);
+}

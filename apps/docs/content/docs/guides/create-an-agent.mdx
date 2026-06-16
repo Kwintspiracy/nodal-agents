@@ -1,58 +1,102 @@
 ---
 title: Create an agent
-description: Build and configure an agent in the Nodal-Agents dashboard from scratch.
+description: Build and configure an agent in the dashboard — from name to first task.
 ---
 
-An agent is the basic unit of work: a name, a system prompt that shapes its behaviour, a model, and an optional set of skills, connectors, and MCP servers. Every agent you create can be chatted with directly, wired to Telegram, or scheduled to run on a cron.
+An agent is the basic unit of work: a **name**, a **system prompt** that shapes its behaviour, a **model**, and an optional set of **skills**, **connectors**, and **MCP servers**. Chat with it directly, wire it to Telegram, or put it on a schedule.
 
-## Prerequisites
+<Callout type="info">
+You need the stack running (`nodal-agents up`) and at least one provider key set in **LLM Providers** first — see [Connect a model](/docs/guides/connect-a-model).
+</Callout>
 
-- Nodal-Agents running (`nodal-agents up`). See [Getting Started](/docs/getting-started).
-- At least one LLM provider configured in **LLM Providers**. See [Connect a model](/docs/guides/connect-a-model).
+## Build it
 
-## Create the agent
+<Steps>
 
-1. Open the dashboard at `http://localhost:3000` and go to **Agents**.
-2. Click **New agent** (or the `+` button in the header).
-3. Fill in the **Name** — this is what you and other agents call it.
-4. Write a **Personality / system prompt** — tell it what it is, what it knows, how it should respond, and what it should not do. Be specific: vague prompts produce vague agents.
-5. Under **Role**, choose one of:
-   - **Worker** — runs tasks directly; has no sub-agents.
-   - **Router (orchestrator)** — delegates every task to exactly one specialist sub-agent.
-   - **Planner (orchestrator)** — fans out independent sub-tasks to multiple sub-agents in parallel and compiles the result.
-6. If the role is Router or Planner, pick the **sub-agents** this agent can delegate to.
-7. Select the **LLM provider key** and a **model** from the dropdown. The dropdown shows models from the selected provider's live endpoint.
-8. Optionally set a **fallback chain** — ordered list of alternative (provider, model) pairs the runner tries if the primary fails.
-9. Click **Save**.
+<Step>
 
-## Assign skills and connectors
+### Open Agents → New agent
 
-After saving, you land on the agent's detail page. Use the tabs:
+Go to `http://localhost:3000`, open **Agents**, and click **New agent**.
 
-- **Skills** — attach reusable skill definitions. See the [Skills reference](/docs/reference/skills).
-- **Connectors** — assign OAuth or API-key connectors (Gmail, Drive, Notion, Airtable, etc.) and MCP servers.
-- **Autonomy** — set per-tool approval rules for write and destructive operations. Options per tool: **Autonomous** (run immediately), **Ask first** (pause for your approval), or **Block**.
+</Step>
 
-## Connect to Telegram
+<Step>
 
-Go to **Agents → `<agent name>` → Telegram** and paste a bot token from [@BotFather](https://t.me/BotFather). DM the bot once — the runner records your chat ID so it can send you confirmations and notify you on automation success.
+### Name it and write its persona
 
-## Chat with the agent
+The **name** is how you and other agents address it. The **personality / system prompt** is the Markdown injected at the top of every job — tell it what it is, what it knows, how it should respond, and what *not* to do.
 
-Select the agent in the **Chat** sidebar and type a task. The agent runs immediately. You can follow progress in **Jobs**.
+<Callout type="warn">
+Vague prompts produce vague agents. Be specific about scope and tone.
+</Callout>
 
-## Agent roles at a glance
+</Step>
+
+<Step>
+
+### Pick a role
 
 | Role | Delegates? | Use when |
 |------|-----------|----------|
-| Worker | No | The agent does the work itself |
-| Router | Yes — to one sub-agent | You need specialist routing |
-| Planner | Yes — to many in parallel | You need fan-out and synthesis |
+| **Worker** | No | the agent does the work itself |
+| **Router** | to one sub-agent | you need specialist routing |
+| **Planner** | to many, in parallel | you need fan-out + synthesis |
 
-## Notes
+Router and Planner are [orchestrators](/docs/concepts/orchestrators) — pick the **sub-agents** they may delegate to.
 
-- A worker agent with no skills assigned still has access to the built-in memory and workspace tools.
-- Changing the model mid-session does not affect jobs already in flight.
-- Deleting an agent also deletes its associated jobs, schedules, and memory.
+</Step>
 
-The first orchestrator you create becomes this workspace's [ROOT agent](/docs/guides/root-agent) automatically.
+<Step>
+
+### Choose a model
+
+Select a **provider key** and a **model** (the list is pulled from the provider's live endpoint). Optionally set a **fallback chain** — ordered `(provider, model)` pairs the runner tries if the primary fails.
+
+</Step>
+
+<Step>
+
+### Save, then assign tools
+
+On the detail page, use the tabs:
+
+- **Skills** — reusable capabilities that inject guidance and unlock tools ([reference](/docs/reference/skills)).
+- **Connectors** — Gmail, Drive, Notion, Airtable… plus MCP servers ([concepts](/docs/concepts/connectors-and-mcp)).
+- **Autonomy** — per-tool approval: **Autonomous**, **Ask first**, or **Block**.
+
+</Step>
+
+</Steps>
+
+## Talk to it
+
+<Tabs items={['Dashboard chat', 'Telegram']}>
+
+<Tab value="Dashboard chat">
+
+Select the agent in the **Chat** sidebar and type a task. It runs immediately; follow progress in **Jobs**.
+
+</Tab>
+
+<Tab value="Telegram">
+
+Open **Agents → your agent → Telegram** and paste a bot token from [@BotFather](https://t.me/BotFather). DM the bot once so the runner records your chat ID. Full walkthrough in the [Telegram guide](/docs/guides/telegram).
+
+</Tab>
+
+</Tabs>
+
+<Callout type="info" title="Good to know">
+- A worker with no skills still has the built-in **memory** and **workspace** tools.
+- The **first orchestrator** you create becomes this workspace's [ROOT agent](/docs/guides/root-agent) automatically.
+- Deleting an agent also deletes its jobs, schedules, and memory.
+</Callout>
+
+## Next
+
+<Cards>
+  <Card title="🧠 How memory works" href="/docs/concepts/memory" description="What the agent remembers across jobs." />
+  <Card title="📅 Automate it" href="/docs/guides/automations" description="Run this agent on a schedule." />
+  <Card title="🛠️ Give it skills" href="/docs/reference/skills" description="The capabilities you can assign." />
+</Cards>
