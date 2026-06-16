@@ -18,9 +18,23 @@ export type { DecryptedCredential, OauthPayload, Db } from './queries/credential
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export { createAgentRepo, attachAgentToOrchestrator } from './repos/agents.ts';
 export type { CreateAgentInput, CreateAgentResult, AttachAgentResult } from './repos/agents.ts';
-export { createSkillRepo, updateSkillRepo, assignSkillRepo, touchSkillsLastUsed, transitionSkillLifecycle, archiveAgentSkill } from './repos/skills.ts';
+export {
+  createSkillRepo,
+  updateSkillRepo,
+  assignSkillRepo,
+  touchSkillsLastUsed,
+  transitionSkillLifecycle,
+  archiveAgentSkill,
+} from './repos/skills.ts';
 export { pruneOldJobs } from './repos/retention.ts';
 export type { PruneResult } from './repos/retention.ts';
+export {
+  getAppSetting,
+  setAppSetting,
+  getInstallNotes,
+  setInstallNotes,
+  INSTALL_NOTES_KEY,
+} from './repos/app-settings.ts';
 export type {
   CreateSkillInput,
   CreateSkillResult,

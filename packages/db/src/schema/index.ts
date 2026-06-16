@@ -21,3 +21,4 @@ export * from './auth.ts';
 export * from './agent-connector-assignments.ts';
 export * from './agent-workspaces.ts';
 export * from './chat-messages.ts';
+export * from './app-settings.ts';

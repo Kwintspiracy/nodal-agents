@@ -2120,7 +2120,7 @@ describe('executeJob', () => {
     const customRegistry = makeReg();
     regBuiltins(customRegistry);
 
-    const LARGE_OUTPUT = 'x'.repeat(200_000);
+    const LARGE_OUTPUT = 'lorem ipsum dolor sit amet '.repeat(8_000);
     // Override save_memory to return a large string for this test
     customRegistry.register({
       name: 'save_memory',
@@ -2209,7 +2209,7 @@ describe('executeJob', () => {
     const customRegistry = makeReg();
     regBuiltins(customRegistry);
 
-    const LARGE_MARKDOWN = 'x'.repeat(200_000);
+    const LARGE_MARKDOWN = 'lorem ipsum dolor sit amet '.repeat(8_000);
     customRegistry.register({
       name: 'save_memory',
       description: 'save_memory override returning a large object for truncation test',

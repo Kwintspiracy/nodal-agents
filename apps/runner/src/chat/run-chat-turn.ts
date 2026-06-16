@@ -12,6 +12,7 @@ import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { getDeploymentContext } from '../job/deployment.ts';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -156,9 +157,11 @@ export async function runChatTurn(opts: {
     orchestratorMode: (agentRow.orchestratorMode ?? null) as 'router' | 'planner' | null,
     memoryTokenBudget: agentRow.memoryTokenBudget,
   };
+  const deployment = await getDeploymentContext(db);
   const systemPrompt = await buildSystemPrompt(agent, db, {
     origin: 'dashboard',
     surface: 'chat',
+    deployment,
   });
 
   // 4. Load recent history of THIS conversation (most recent N, chronological).

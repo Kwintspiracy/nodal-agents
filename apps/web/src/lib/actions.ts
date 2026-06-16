@@ -53,6 +53,8 @@ import {
   createAgentRepo,
   createSkillRepo,
   assignSkillRepo,
+  getInstallNotes,
+  setInstallNotes,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -3380,14 +3382,13 @@ export async function listAgentApprovalRulesAction(
     if (!agent) return fail('not_found', 'Agent not found');
 
     const rows = await db
-      .select({ id: approvalRules.id, toolName: approvalRules.toolName, action: approvalRules.action })
+      .select({
+        id: approvalRules.id,
+        toolName: approvalRules.toolName,
+        action: approvalRules.action,
+      })
       .from(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, session.entityId),
-          eq(approvalRules.agentId, agentId),
-        ),
-      );
+      .where(and(eq(approvalRules.entityId, session.entityId), eq(approvalRules.agentId, agentId)));
 
     return ok(
       rows.map((r) => ({
@@ -5599,7 +5600,11 @@ const PROVIDER_TEST_CONFIG: Record<
   'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
   ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
   deepseek: { canonicalBase: 'https://api.deepseek.com', path: '/models', auth: 'bearer' },
-  minimax: { canonicalBase: 'https://api.minimax.io/anthropic', path: '/v1/models', auth: 'bearer' },
+  minimax: {
+    canonicalBase: 'https://api.minimax.io/anthropic',
+    path: '/v1/models',
+    auth: 'bearer',
+  },
 };
 
 /**
@@ -5775,13 +5780,12 @@ export async function listKeyModelsAction(keyId: string): Promise<ActionResult<s
         baseUrl: entityLlmKeys.baseUrl,
       })
       .from(entityLlmKeys)
-      .where(
-        and(eq(entityLlmKeys.id, keyId), eq(entityLlmKeys.entityId, session.entityId)),
-      );
+      .where(and(eq(entityLlmKeys.id, keyId), eq(entityLlmKeys.entityId, session.entityId)));
     if (!saved) return fail('not_found', 'LLM key not found');
 
     const provider = saved.provider as LlmProvider;
-    const decryptedKey = saved.apiKey && saved.apiKey.length > 0 ? decrypt(saved.apiKey) : undefined;
+    const decryptedKey =
+      saved.apiKey && saved.apiKey.length > 0 ? decrypt(saved.apiKey) : undefined;
 
     const cfg = PROVIDER_TEST_CONFIG[provider];
     const effectiveBase = (saved.baseUrl ?? '').replace(/\/$/, '') || cfg?.canonicalBase;
@@ -5897,6 +5901,42 @@ export async function listAgentConnectorsAction(
   } catch (err) {
     console.error('[listAgentConnectorsAction]', err);
     return fail('db_error', 'Failed to load agent connectors');
+  }
+}
+
+// ─── Install Notes (machine-global setting) ──────────────────────────────────
+//
+// Operator-authored text injected into every agent's system prompt as
+// `### Install notes (from the operator)` inside the `## Runtime` block.
+// Applies live — no restart required. Useful for machine-specifics that
+// auto-detection can't capture (e.g. "ComfyUI runs on :8188").
+
+export async function getInstallNotesAction(): Promise<ActionResult<string>> {
+  try {
+    await getSession();
+    const db = getDb();
+    const notes = await getInstallNotes(db);
+    return ok(notes);
+  } catch (err) {
+    console.error('[getInstallNotesAction]', err);
+    return fail('db_error', 'Failed to load install notes');
+  }
+}
+
+export async function setInstallNotesAction(notes: string): Promise<ActionResult<void>> {
+  try {
+    await getSession();
+    const parsed = z.string().max(4000).safeParse(notes);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    await setInstallNotes(db, parsed.data);
+    revalidatePath('/settings');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setInstallNotesAction]', err);
+    return fail('db_error', 'Failed to save install notes');
   }
 }
 

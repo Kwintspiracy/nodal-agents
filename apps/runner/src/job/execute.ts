@@ -40,6 +40,7 @@ import {
   executeTool,
   ALWAYS_ON_TOOLS,
   createTelegramSendMessageTool,
+  createSendImageTool,
   listWorkspaceMcpToolNames,
 } from '@nodal-agents/tools';
 import type { ToolDefinition, ApprovalRule, ToolProvisioning } from '@nodal-agents/tools';
@@ -59,13 +60,7 @@ import {
   DelegationPendingError,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
-import type {
-  AgentId,
-  JobId,
-  EntityId,
-  Agent,
-  JobContext,
-} from '@nodal-agents/orchestration';
+import type { AgentId, JobId, EntityId, Agent, JobContext } from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import {
@@ -82,6 +77,7 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
+import { getDeploymentContext } from './deployment.ts';
 
 // Per-result char budget for tool outputs entering the conversation. A single
 // tool (e.g. firecrawl_scrape returning a full web page) can otherwise inject
@@ -113,7 +109,7 @@ const TOOL_PROVISIONING: ToolProvisioning = {
 // an agent that keeps messaging the user across consecutive turns instead of
 // finishing with return_result. Extend this set as new outbound channels ship
 // (whatsapp_send_message, slack_send_message, …).
-const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(['telegram_send_message']);
+const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(['telegram_send_message', 'send_image']);
 
 // Guard 1d — delivery tools whose presence in a turn counts as "delivered" for
 // the no-delivery runaway detector. Superset of DELIVERY_TOOL_NAMES: also includes
@@ -123,6 +119,7 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'return_result',
   'dashboard_publish',
   'telegram_send_message',
+  'send_image',
 ]);
 
 // Channels whose ONLY path to the user is a delivery tool call (telegram_send_message).
@@ -133,12 +130,21 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
 const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram']);
 
 /** Truncate an oversized tool-result string with an explicit, model-readable marker. */
-function truncateForContext(value: string): string {
-  if (value.length <= MAX_TOOL_RESULT_CHARS) return value;
-  const dropped = value.length - MAX_TOOL_RESULT_CHARS;
+export function truncateForContext(value: string): string {
+  // Elide long base64/binary runs FIRST. They're useless to the model as text,
+  // and they're the dominant re-sent-every-turn bloat: a generated image comes
+  // back as ~50K of base64, and the runner re-sends the whole history each turn,
+  // so over ~10 turns one job burns ~700K input tokens (observed live, 7c78bf2c,
+  // $2.14). Files belong on disk — reference them by path/URL, not inline bytes.
+  const v = value.replace(
+    /[A-Za-z0-9+/]{256,}={0,2}/g,
+    (m) => `[binary elided: ${m.length} chars — reference the file by path/URL, not inline]`,
+  );
+  if (v.length <= MAX_TOOL_RESULT_CHARS) return v;
+  const dropped = v.length - MAX_TOOL_RESULT_CHARS;
   return (
-    value.slice(0, MAX_TOOL_RESULT_CHARS) +
-    `\n\n[... truncated: ${dropped} chars dropped (total ${value.length}) ...]`
+    v.slice(0, MAX_TOOL_RESULT_CHARS) +
+    `\n\n[... truncated: ${dropped} chars dropped (total ${v.length}) ...]`
   );
 }
 
@@ -253,9 +259,7 @@ export function describeUnavailableTool(badName: string, available: readonly str
     const tl = t.toLowerCase();
     return tl !== lower && (tl.endsWith(lower) || tl.includes(lower));
   });
-  const hint = suggestions.length
-    ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?`
-    : '';
+  const hint = suggestions.length ? ` Did you mean: ${suggestions.slice(0, 3).join(' or ')}?` : '';
   return (
     `The tool "${badName}" is not available to you.${hint} ` +
     `Your available tools are: ${available.join(', ')}. ` +
@@ -510,10 +514,12 @@ export async function executeJob(
   // that intent to the agent so it ends with a confirmation, and engage the
   // delivery guard below so the send is actually enforced.
   const cronWantsConfirmation = job.channel === 'cron' && job.chatId != null;
+  const deployment = await getDeploymentContext(db);
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
     ...(cronWantsConfirmation ? { notifyOnSuccess: true } : {}),
+    deployment,
   };
 
   let systemPrompt = job.systemPrompt;
@@ -558,6 +564,7 @@ export async function executeJob(
   // every future outbound tool (whatsapp/slack) follows.
   if (agentRow.telegramBotToken && job.chatId) {
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
+    capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
   }
 
   // Close callbacks for per-job MCP transports — invoked in the LLM loop's
@@ -1402,7 +1409,12 @@ export async function executeJob(
             : undefined;
         if (badTool && unavailableToolNudges < MAX_UNAVAILABLE_TOOL_NUDGES) {
           unavailableToolNudges += 1;
-          trace('unavailable_tool_nudge', { turn, badTool, attempt: unavailableToolNudges, via: 'sdk' });
+          trace('unavailable_tool_nudge', {
+            turn,
+            badTool,
+            attempt: unavailableToolNudges,
+            via: 'sdk',
+          });
           messages = [
             ...messages,
             {
@@ -1626,7 +1638,14 @@ export async function executeJob(
             await failJob(db, jobId as string, 'telegram_not_delivered', runStats(), messages);
             return { status: 'failed', error: 'telegram_not_delivered' };
           }
-          const completedText = await completeJob(db, jobId as string, textContent, toolsUsed, runStats(), messages);
+          const completedText = await completeJob(
+            db,
+            jobId as string,
+            textContent,
+            toolsUsed,
+            runStats(),
+            messages,
+          );
           if (!completedText) {
             trace('terminal_write_lost_race', { turn, writer: 'completeJob_text', jobId });
           } else {
@@ -1634,13 +1653,18 @@ export async function executeJob(
             // or delay the job response — gates + throttle live inside the hook.
             // Snapshot carries the FINAL state (in-memory `job` is still
             // pre-completion). Only runs when completeJob won the terminal write.
-            void maybeRunReflection(deps, db, {
-              ...job,
-              status: 'completed',
-              turn,
-              toolsUsed,
-              messages,
-            }, runnerEnv).catch((e) => console.warn('[reflection]', e));
+            void maybeRunReflection(
+              deps,
+              db,
+              {
+                ...job,
+                status: 'completed',
+                turn,
+                toolsUsed,
+                messages,
+              },
+              runnerEnv,
+            ).catch((e) => console.warn('[reflection]', e));
           }
           return { status: 'completed', result: textContent };
         }
@@ -1717,7 +1741,8 @@ export async function executeJob(
             toolCallId: tc.toolCallId,
             toolName: 'return_result',
             output: toResultOutput({
-              error: 'ignored: duplicate return_result in the same turn — only the first is honored',
+              error:
+                'ignored: duplicate return_result in the same turn — only the first is honored',
             }),
           });
         }
@@ -2247,7 +2272,7 @@ export async function executeJob(
               output: toResultOutput({
                 error:
                   "deferred: status='blocked' exige un champ `reason`. Rappelle return_result " +
-                  "avec une raison concrète et actionnable expliquant ce qui te bloque et ce que " +
+                  'avec une raison concrète et actionnable expliquant ce qui te bloque et ce que ' +
                   "l'utilisateur peut faire — il la verra telle quelle.",
               }),
             });
@@ -2433,7 +2458,14 @@ export async function executeJob(
         }
 
         trace('completeJob_call', { turn, toolsUsed, stats: runStats() });
-        const completed = await completeJob(db, jobId as string, finalResult, toolsUsed, runStats(), messages);
+        const completed = await completeJob(
+          db,
+          jobId as string,
+          finalResult,
+          toolsUsed,
+          runStats(),
+          messages,
+        );
         if (!completed) {
           trace('terminal_write_lost_race', { turn, writer: 'completeJob', jobId });
         } else {
@@ -2441,13 +2473,18 @@ export async function executeJob(
           // or delay the job response — gates + throttle live inside the hook.
           // Snapshot carries the FINAL state (the in-memory `job` row is still
           // pre-completion). Only runs when completeJob won the terminal write.
-          void maybeRunReflection(deps, db, {
-            ...job,
-            status: 'completed',
-            turn,
-            toolsUsed,
-            messages,
-          }, runnerEnv).catch((e) => console.warn('[reflection]', e));
+          void maybeRunReflection(
+            deps,
+            db,
+            {
+              ...job,
+              status: 'completed',
+              turn,
+              toolsUsed,
+              messages,
+            },
+            runnerEnv,
+          ).catch((e) => console.warn('[reflection]', e));
         }
 
         // Re-fetch agent_jobs.result so the caller (the parent in a router
@@ -2556,17 +2593,17 @@ export async function executeJob(
                 `(e.g. dashboard_publish) AND return_result(status="success") in the same turn with your ` +
                 `best answer from what you have. If you genuinely cannot proceed, call ` +
                 `return_result(status="blocked") explaining what is missing. Do NOT call another gathering tool.`;
-              messages = [
-                ...messages,
-                { role: 'user', content: forcingMsg } as ModelMessage,
-              ];
+              messages = [...messages, { role: 'user', content: forcingMsg } as ModelMessage];
               trace('no_delivery_runaway_nudge', {
                 turn,
                 nudge: noDeliveryNudgesIssued,
                 turnsSinceDelivery,
                 sameToolStreak,
               });
-            } else if (noDeliveryNudgesIssued >= maxNoDeliveryNudges && turnsSinceDelivery > noDeliveryFailAt) {
+            } else if (
+              noDeliveryNudgesIssued >= maxNoDeliveryNudges &&
+              turnsSinceDelivery > noDeliveryFailAt
+            ) {
               // Nudge budget exhausted AND still gathering past the fail threshold.
               // Fail BEFORE the next LLM call so the (N+1)th gathering turn never runs.
               trace('no_delivery_runaway_fail', {

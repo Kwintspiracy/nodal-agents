@@ -10,7 +10,12 @@
 // skill content was silently dropped. End-to-end skill behavior never worked.
 
 import { eq } from '@nodal-agents/db';
-import { agentSkillAssignments, agentSkills, agentWorkspaces, touchSkillsLastUsed } from '@nodal-agents/db';
+import {
+  agentSkillAssignments,
+  agentSkills,
+  agentWorkspaces,
+  touchSkillsLastUsed,
+} from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
@@ -44,6 +49,74 @@ export interface JobContext {
    * runner only enforces that a delivery happens (invariant 2 holds).
    */
   notifyOnSuccess?: boolean;
+  /**
+   * Deployment context for this install. When provided, a `## Runtime` block
+   * is injected into the system prompt describing OS, network mode, localhost
+   * reachability, and optional operator notes. Computed live by the runner.
+   */
+  deployment?: DeploymentContext;
+}
+
+// ─── DeploymentContext ────────────────────────────────────────────────────────
+
+/**
+ * Describes the deployment reality of this Nodal-Agents install. Injected into
+ * every agent's system prompt as a `## Runtime` block so agents know whether
+ * local services are directly reachable and what network mode is active.
+ *
+ * Computed live by the runner (apps/runner/src/job/deployment.ts) on each job
+ * so it always reflects the actual running config — no stale cached values.
+ */
+export interface DeploymentContext {
+  os: string; // 'macOS' | 'Linux' | 'Windows' | raw platform
+  networkMode: 'loopback' | 'lan';
+  authMode: string; // 'local-trust' | 'local-auth' | 'bearer-token'
+  lanAddresses?: string[]; // IPv4s when LAN
+  containerized?: boolean;
+  installNotes?: string; // operator-authored, may be ''
+}
+
+// ─── buildRuntimeBlock ────────────────────────────────────────────────────────
+
+/**
+ * Render the `## Runtime` block injected into every agent's system prompt.
+ *
+ * Purpose: agents must know whether local services (127.0.0.1) are directly
+ * reachable, what the network mode is, and any operator-authored notes about
+ * the deployment — so they stop telling users to expose local services through
+ * public tunnels (ngrok, cloudflared), which is unnecessary here and a
+ * needless security risk.
+ *
+ * The block is computed live per job so it always matches the actual running
+ * config. Gated on jobContext.deployment — absent deployment means unknown
+ * context (e.g. system or test jobs), so the block is omitted.
+ */
+export function buildRuntimeBlock(d: DeploymentContext): string {
+  const networkLine =
+    d.networkMode === 'lan'
+      ? `LAN — the dashboard is reachable by other devices on the local network${d.lanAddresses && d.lanAddresses.length > 0 ? ` at ${d.lanAddresses.join(', ')}` : ''}; multiple users may share this instance.`
+      : `loopback — the dashboard is bound to localhost only; single-user instance on this machine.`;
+
+  const lines: string[] = [
+    `## Runtime`,
+    ``,
+    `You run locally inside Nodal-Agents on the user's own machine (${d.os}). You are NOT a cloud or hosted agent — your process and the user's machine are the same host.`,
+    ``,
+    `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`,
+    `- Network: ${networkLine}`,
+  ];
+
+  if (d.containerized) {
+    lines.push(
+      `- You run inside a container — to reach a service on the host machine, use \`host.docker.internal\` instead of \`127.0.0.1\`.`,
+    );
+  }
+
+  if (d.installNotes?.trim()) {
+    lines.push(``, `### Install notes (from the operator)`, ``, d.installNotes.trim());
+  }
+
+  return lines.join('\n');
 }
 
 // ─── buildJobContextBlock ─────────────────────────────────────────────────────
@@ -164,9 +237,10 @@ function buildWorkspacesBlock(
  * Parts (in order):
  * 1. agent.personality — raw, untouched. The LLM speaks in its own voice.
  * 2. team block — `## Your team` section, data-driven from DB (empty for workers)
- * 3. built-in capabilities — always-on tools (return_result, save_memory, etc.)
- * 4. skills metadata block — list of adapter names + tool counts (data-driven)
- * 5. job context block — `## Job context` section with runtime data (when provided)
+ * 3. runtime block — `## Runtime` deployment context (OS, network, install notes)
+ * 4. built-in capabilities — always-on tools (return_result, save_memory, etc.)
+ * 5. skills metadata block — list of adapter names + tool counts (data-driven)
+ * 6. job context block — `## Job context` section with runtime data (when provided)
  *
  * The personality may contain `{{team}}` placeholder — if so, inject there.
  * Otherwise append the team block after the personality.
@@ -235,6 +309,14 @@ export async function buildSystemPrompt(
     }
   }
 
+  // Runtime block — describes the deployment reality (OS, network mode,
+  // localhost reachability, operator notes) so agents stop asking users
+  // to set up tunnels for local services. Omitted when no deployment
+  // context is provided (system jobs, tests).
+  const runtimeBlock = jobContext?.deployment
+    ? '\n\n' + buildRuntimeBlock(jobContext.deployment)
+    : '';
+
   // 5. Built-in capabilities block — injected for every agent so the LLM sees
   //    save_memory / query_memory / return_result as first-class capabilities,
   //    not just optional tools buried in the SDK's tool list.
@@ -270,6 +352,7 @@ export async function buildSystemPrompt(
 
   return (
     personality +
+    runtimeBlock +
     '\n\n' +
     builtinBlock +
     workspacesBlock +

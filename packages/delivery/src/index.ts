@@ -2,6 +2,7 @@
 
 export {
   sendTelegramMessage,
+  sendTelegramPhoto,
   getTelegramBotInfo,
   getTelegramUpdates,
 } from './channels/telegram.ts';

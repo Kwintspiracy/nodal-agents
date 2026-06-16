@@ -507,6 +507,14 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       window_start timestamptz DEFAULT now()
     );
 
+    -- ── app_settings (migration 0045) ────────────────────────────────────────
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key text PRIMARY KEY,
+      value text NOT NULL DEFAULT '',
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS sessions (

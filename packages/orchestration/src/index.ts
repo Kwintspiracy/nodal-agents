@@ -63,5 +63,5 @@ export { checkRootJobComplete, getPendingTasksForRoot } from './planner/completi
 export { buildTeamBlock } from './team-block';
 
 // ─── System prompt assembly ───────────────────────────────────────────────────
-export { buildSystemPrompt } from './system-prompt';
-export type { JobContext } from './system-prompt';
+export { buildSystemPrompt, buildRuntimeBlock } from './system-prompt';
+export type { JobContext, DeploymentContext } from './system-prompt';

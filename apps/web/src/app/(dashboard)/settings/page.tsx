@@ -6,6 +6,7 @@ import {
   getRootConfigAction,
   listAgentsAction,
   getLanCommandYoloAction,
+  getInstallNotesAction,
   type WorkspaceRow,
 } from '@/lib/actions.ts';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
@@ -14,6 +15,7 @@ import NetworkForm from './NetworkForm.tsx';
 import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
 import LanCommandYoloSection from './LanCommandYoloSection.tsx';
+import InstallNotesForm from './InstallNotesForm.tsx';
 import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -32,6 +34,7 @@ export default async function SettingsPage() {
     rootConfigResult,
     agentsResult,
     lanYoloResult,
+    installNotesResult,
   ] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
@@ -40,6 +43,7 @@ export default async function SettingsPage() {
     getRootConfigAction(),
     listAgentsAction(),
     getLanCommandYoloAction(),
+    getInstallNotesAction(),
   ]);
   const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
@@ -113,6 +117,15 @@ export default async function SettingsPage() {
           lede="In multi-user / LAN mode, shell commands always require approval by default. The workspace owner can opt in to allow Yolo (auto-run) mode per agent."
         >
           <LanCommandYoloSection initial={lanYoloResult.data} />
+        </SetBlock>
+      )}
+
+      {installNotesResult.ok && (
+        <SetBlock
+          label="Install notes"
+          lede="Machine-specific context injected into every agent's runtime block. Apply live — no restart needed."
+        >
+          <InstallNotesForm initial={installNotesResult.data} />
         </SetBlock>
       )}
 
