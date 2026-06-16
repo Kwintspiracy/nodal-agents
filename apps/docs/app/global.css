@@ -3,27 +3,27 @@
 /* ──────────────────────────────────────────────────────────────────────────
    Nodal-Agents docs theme — matches the product design system (apps/web).
 
-   Look: soft "paper on canvas" surfaces. Boxes (cards, callouts, code, table
-   headers) are defined by a gentle background fill, NOT a hard white border —
-   borders are barely-there. Accent is the product's skill orange-red #ff5631.
+   Look: soft "paper on canvas". Content boxes (cards, callouts, code blocks,
+   tab panels) are defined by a gentle background FILL + a soft shadow — never a
+   hard outline. Accent is the product's skill orange-red #ff5631.
    Fonts: Inter (sans) + JetBrains Mono (code), loaded in app/layout.tsx.
    ────────────────────────────────────────────────────────────────────────── */
 
 :root {
   --color-fd-background: #ffffff;
   --color-fd-foreground: #0a0a0a;
-  --color-fd-muted: #f3f3f1;
+  --color-fd-muted: #f0f0ed;
   --color-fd-muted-foreground: #6a6a6a;
   --color-fd-popover: #ffffff;
   --color-fd-popover-foreground: #0a0a0a;
-  --color-fd-card: #f6f6f4;
+  --color-fd-card: #f4f4f2;
   --color-fd-card-foreground: #0a0a0a;
   --color-fd-border: rgba(10, 10, 10, 0.06);
   --color-fd-primary: #ff5631;
   --color-fd-primary-foreground: #ffffff;
-  --color-fd-secondary: #f3f3f1;
+  --color-fd-secondary: #f0f0ed;
   --color-fd-secondary-foreground: #0a0a0a;
-  --color-fd-accent: #efefec;
+  --color-fd-accent: #eaeae7;
   --color-fd-accent-foreground: #0a0a0a;
   --color-fd-ring: #ff5631;
 
@@ -33,20 +33,20 @@
 }
 
 .dark {
-  --color-fd-background: #0e0e10;
+  --color-fd-background: #0b0b0d;
   --color-fd-foreground: #f5f5f3;
-  --color-fd-muted: #18181b;
+  --color-fd-muted: #161619;
   --color-fd-muted-foreground: #9a9a96;
   --color-fd-popover: #161618;
   --color-fd-popover-foreground: #f5f5f3;
-  --color-fd-card: #18181b;
+  --color-fd-card: #1a1a1f;
   --color-fd-card-foreground: #f5f5f3;
-  --color-fd-border: rgba(255, 255, 255, 0.07);
+  --color-fd-border: rgba(255, 255, 255, 0.06);
   --color-fd-primary: #ff5631;
   --color-fd-primary-foreground: #0a0a0a;
-  --color-fd-secondary: #1c1c20;
+  --color-fd-secondary: #161619;
   --color-fd-secondary-foreground: #f5f5f3;
-  --color-fd-accent: #242428;
+  --color-fd-accent: #26262c;
   --color-fd-accent-foreground: #f5f5f3;
   --color-fd-ring: #ff5631;
 }
@@ -62,14 +62,28 @@ samp {
   font-family: var(--font-jbmono), ui-monospace, 'JetBrains Mono', monospace;
 }
 
-/* Tables — soft filled, rounded, no violent borders ----------------------- */
+/* Content boxes — fill + shadow define them, NEVER a hard outline ---------
+   Cards, callouts, code blocks and tab panels all render with rounded-* +
+   border. Drop the border and lift them with a soft shadow. Scoped to the
+   page body so the sidebar / search keep their structural edges. */
+#nd-page :is([class*='rounded-lg'], [class*='rounded-xl'])[class*='border'] {
+  border-color: transparent;
+  background-color: var(--color-fd-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.07);
+}
+.dark #nd-page :is([class*='rounded-lg'], [class*='rounded-xl'])[class*='border'] {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+/* Tables — soft filled header, gentle row lines (own colour, not the card
+   edge), rounded container ------------------------------------------------- */
 .prose table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   overflow: hidden;
   border-radius: 10px;
-  border: 1px solid var(--color-fd-border);
+  border: 1px solid rgba(127, 127, 127, 0.2);
   font-size: 0.875rem;
 }
 .prose thead {
@@ -85,7 +99,7 @@ samp {
 .prose td {
   padding: 0.5rem 0.85rem;
   border: 0;
-  border-top: 1px solid var(--color-fd-border);
+  border-top: 1px solid rgba(127, 127, 127, 0.14);
   vertical-align: top;
 }
 .prose tbody tr:nth-child(even) {
