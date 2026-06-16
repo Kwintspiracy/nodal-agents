@@ -262,8 +262,15 @@ export async function transitionSkillLifecycle(
   thresholds: LifecycleThresholds,
 ): Promise<LifecycleResult> {
   const now = new Date();
-  const staleAt = new Date(now.getTime() - thresholds.staleDays * 24 * 60 * 60 * 1000);
-  const archiveAt = new Date(now.getTime() - thresholds.archiveDays * 24 * 60 * 60 * 1000);
+  // ISO strings, NOT raw Date objects: these are interpolated into raw `sql`
+  // template fragments below (not typed column writes), and the postgres.js
+  // driver cannot serialize a bare Date passed as an untyped query param — it
+  // throws ERR_INVALID_ARG_TYPE. As an ISO string it binds cleanly and postgres
+  // implicitly casts it for the timestamptz comparison.
+  const staleAt = new Date(now.getTime() - thresholds.staleDays * 24 * 60 * 60 * 1000).toISOString();
+  const archiveAt = new Date(
+    now.getTime() - thresholds.archiveDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
 
   // active → stale
   const staledRows = await db

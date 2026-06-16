@@ -12,7 +12,7 @@ import { and, eq, isNull, lte, or } from '@nodal-agents/db';
 import { agentSchedules, agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { CronExpressionParser } from 'cron-parser';
-import { executeJob } from '../job/execute.ts';
+import { executeJob, type ExecuteJobResult } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
@@ -140,19 +140,29 @@ export async function runScheduleTick(
 
   const results = await Promise.allSettled(
     fires.map(async (fire) => {
-      const result = await executeJob(fire.jobId as JobId, deps);
-      return { fire, result };
+      try {
+        const result = await executeJob(fire.jobId as JobId, deps);
+        return { fire, result };
+      } catch (err) {
+        // executeJob threw (e.g. a re-thrown fatal like MessageStructureError /
+        // QuotaExhaustedError that bypasses the in-loop failJob). Convert it to a
+        // failed outcome HERE — preserving which schedule raised — so the schedule
+        // is marked failed below instead of left with last_status=null. Mirrors
+        // execute-ready.ts's per-task catch.
+        console.error('[runScheduleTick] executeJob threw for schedule', fire.scheduleId, err);
+        const result: ExecuteJobResult = {
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        };
+        return { fire, result };
+      }
     }),
   );
 
   for (const settled of results) {
-    if (settled.status === 'rejected') {
-      // executeJob threw — job is already marked failed by its internal handler.
-      // Reflect on the schedule row.
-      // We don't know which schedule raised, so this branch is rare; the
-      // settled.value path covers normal flow.
-      continue;
-    }
+    // Throws are caught above (every entry resolves); keep the guard only for an
+    // unexpected rejection of the map callback itself.
+    if (settled.status === 'rejected') continue;
     const { fire, result } = settled.value;
     let lastStatus: 'success' | 'failed' | 'no_action';
     if (result.status === 'completed') lastStatus = 'success';

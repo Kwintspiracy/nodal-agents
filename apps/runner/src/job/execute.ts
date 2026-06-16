@@ -79,7 +79,6 @@ import {
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import type { RunnerDeps } from '../deps.ts';
-import { env } from '../env.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
@@ -830,9 +829,13 @@ export async function executeJob(
   // the rules. In local-trust mode (single-user loopback) the switch is N/A.
   //
   // AUTH_MODE source: the passed runnerEnv when present (worker/chat routes +
-  // tests), else the module env (cron paths call executeJob without it; module
-  // env reads process.env, set by the CLI). Either way it is process-global.
-  const authMode = runnerEnv?.AUTH_MODE ?? env.AUTH_MODE;
+  // tests), else process.env directly (cron paths call executeJob without it).
+  // We read process.env rather than the module `env` proxy ON PURPOSE: the proxy
+  // validates the ENTIRE runner env (DATABASE_URL et al.) on first access, which
+  // throws in test contexts that don't set it — the cron paths call executeJob
+  // without runnerEnv, so that fallback threw and broke cron job execution under
+  // test. A single enum needs no full-env validation; default to local-trust.
+  const authMode = runnerEnv?.AUTH_MODE ?? process.env['AUTH_MODE'] ?? 'local-trust';
   if (authMode !== 'local-trust') {
     const RUN_COMMAND_TOOL = 'run_command';
     const [yoloEntityRow] = await db
