@@ -1,0 +1,43 @@
+---
+title: Getting Started
+description: Install Nodal-Agents and run your first agent in a couple of minutes.
+---
+
+## Install
+
+Requires **Node 22+**. No external Postgres, no Redis, no cloud config.
+
+```bash
+npm install -g nodal-agents
+nodal-agents up
+```
+
+Open [localhost:3000](http://localhost:3000). The CLI spawns an embedded Postgres
+on a free port, applies migrations, seeds the system skills, and starts the runner
+(`:3001`) and the dashboard (`:3000`).
+
+Your data lives at `~/.nodalai/` — wipe it any time with `rm -rf ~/.nodalai`. Stop
+the stack with `nodal-agents down`.
+
+## Connect a model
+
+Open **LLM Providers** in the dashboard and paste an API key for any provider
+(Anthropic, OpenAI, Google, DeepSeek, MiniMax, OpenRouter…) — or point it at a
+local model (LM Studio / Ollama). Setup is one key per provider; each agent then
+picks its own model on top.
+
+## Create your first agent
+
+1. Go to **Agents → New agent**.
+2. Give it a name, a personality / system prompt, and pick its model.
+3. Optionally assign it [skills](/docs/reference/skills), connectors, or MCP servers.
+4. Send it a task from the dashboard chat — or wire it to Telegram.
+
+## Update
+
+```bash
+nodal-agents update
+```
+
+Checks npm for the latest version, stops the stack, installs `nodal-agents@latest`,
+and restarts automatically. Your data is preserved.

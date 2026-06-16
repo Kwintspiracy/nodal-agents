@@ -1,0 +1,27 @@
+---
+title: Nodal-Agents
+description: A local-first, self-hostable multi-agent AI platform with a web dashboard — install in one command.
+---
+
+**Nodal-Agents** is a local-first, self-hostable multi-agent AI platform with a web
+dashboard. You install it with one command; it runs entirely on your machine
+(embedded Postgres, no cloud), and you build a team of AI agents that use any LLM,
+remember across sessions, talk to your tools, and improve over time.
+
+New here? **[Get started →](/docs/getting-started)**
+
+## What you get
+
+- **Local-first** — single command, embedded Postgres; your conversations, memory and credentials stay on your machine.
+- **Any model, per agent** — Anthropic, OpenAI, Google, Groq, Mistral, native DeepSeek & MiniMax, OpenRouter, or local (LM Studio / Ollama). Setup is one key per provider; each agent then picks its own model.
+- **Orchestrators that finish** — every orchestrator routes to one specialist and resumes on its result, or fans out independent work to many sub-agents in parallel and compiles the answer.
+- **Memory that compounds** — persistent facts auto-injected into every job, plus chat-thread continuity across sessions.
+- **Self-improving agents** — an opt-in learning loop: after a substantial job an agent reflects on the transcript and writes itself a reusable skill; a weekly curator consolidates and prunes them.
+- **Skills, connectors & MCP** — assign reusable [skills](/docs/reference/skills), connect Gmail / Drive / Notion (OAuth or API key), and add MCP servers over HTTP *and* stdio.
+- **Workspaces, a self-extending ROOT agent, Telegram, Office-file editing** — plus generic guards so agents don't lie, loop, or die (real-dollar cost caps, no-progress detection, no-false-success).
+
+## Reference
+
+The [Skills reference](/docs/reference/skills) is generated directly from the
+product catalog at build time, so it always matches exactly what your install
+ships with.

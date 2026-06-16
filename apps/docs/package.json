@@ -1,0 +1,35 @@
+{
+  "name": "@nodal-agents/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen": "tsx scripts/gen-reference.ts",
+    "dev": "tsx scripts/gen-reference.ts && next dev",
+    "build": "tsx scripts/gen-reference.ts && next build",
+    "start": "next start",
+    "postinstall": "fumadocs-mdx",
+    "lint": "eslint app lib",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nodal-agents/catalog": "workspace:*",
+    "fumadocs-core": "^16.10.3",
+    "fumadocs-mdx": "^15.0.12",
+    "fumadocs-ui": "^16.10.3",
+    "next": "^16.2.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/node": "^25.7.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.6",
+    "tailwindcss": "^4.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

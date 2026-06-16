@@ -1,0 +1,12 @@
+# Next.js
+/.next/
+/out/
+
+# Fumadocs generated source (postinstall: fumadocs-mdx)
+/.source/
+
+# Auto-generated reference docs (gen-reference.ts reads the product catalog)
+/content/docs/reference/
+
+# deps
+/node_modules/
