@@ -161,3 +161,13 @@ samp {
   color: var(--color-fd-primary);
   background: color-mix(in srgb, var(--color-fd-primary) 10%, transparent);
 }
+
+/* Drop the hard sidebar / nav divider lines — the gentle background step
+   between the sidebar and the content reads cleanly on its own. */
+#nd-sidebar,
+#nd-sidebar [class*='border-e'],
+#nd-subnav,
+#nd-toc,
+#nd-toc [class*='border-s'] {
+  border-color: transparent;
+}
