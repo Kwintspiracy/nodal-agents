@@ -145,13 +145,15 @@ samp {
   background: color-mix(in srgb, var(--color-fd-muted) 50%, transparent);
 }
 
-/* Body links — assert the brand (Cards carry a class; plain links don't) --- */
-.prose a:not([class]) {
+/* Body links — assert the brand. Cards carry a class; plain links don't. The
+   `:not([data-card])` keeps heading auto-anchors (which have no class but carry
+   data-card) from being recoloured — only real inline links go orange. */
+.prose a:not([class]):not([data-card]) {
   color: var(--color-fd-primary);
   font-weight: 500;
   text-decoration: none;
 }
-.prose a:not([class]):hover {
+.prose a:not([class]):not([data-card]):hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
