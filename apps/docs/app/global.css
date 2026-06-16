@@ -18,7 +18,7 @@
   --color-fd-popover-foreground: #0a0a0a;
   --color-fd-card: #f4f4f2;
   --color-fd-card-foreground: #0a0a0a;
-  --color-fd-border: rgba(10, 10, 10, 0.06);
+  --color-fd-border: rgba(10, 10, 10, 0.04);
   --color-fd-primary: #ff5631;
   --color-fd-primary-foreground: #ffffff;
   --color-fd-secondary: #f0f0ed;
@@ -41,7 +41,7 @@
   --color-fd-popover-foreground: #f5f5f3;
   --color-fd-card: #1a1a1f;
   --color-fd-card-foreground: #f5f5f3;
-  --color-fd-border: rgba(255, 255, 255, 0.06);
+  --color-fd-border: rgba(255, 255, 255, 0.025);
   --color-fd-primary: #ff5631;
   --color-fd-primary-foreground: #0a0a0a;
   --color-fd-secondary: #161619;
@@ -66,13 +66,52 @@ samp {
    Cards, callouts, code blocks and tab panels all render with rounded-* +
    border. Drop the border and lift them with a soft shadow. Scoped to the
    page body so the sidebar / search keep their structural edges. */
-#nd-page :is([class*='rounded-lg'], [class*='rounded-xl'])[class*='border'] {
+#nd-page
+  :is([class*='rounded-lg'], [class*='rounded-xl'])[class*='border']:not([style*='--callout-color']) {
   border-color: transparent;
   background-color: var(--color-fd-card);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.07);
 }
-.dark #nd-page :is([class*='rounded-lg'], [class*='rounded-xl'])[class*='border'] {
+.dark
+  #nd-page
+  :is([class*='rounded-lg'], [class*='rounded-xl'])[class*='border']:not([style*='--callout-color']) {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+/* Callouts get their OWN soft tinted background per type (product palette:
+   info = connector blue, warn = skill orange, error = red, success = green).
+   The component (mdx-components.tsx) adds an `nd-callout-<type>` class; explicit
+   rgba avoids color-mix being mangled by the CSS minifier. The coloured left bar
+   + icon come from Fumadocs. */
+.nd-callout {
+  border-color: transparent !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.07);
+}
+.nd-callout-info {
+  background-color: rgba(53, 101, 255, 0.09) !important;
+}
+.nd-callout-warn,
+.nd-callout-warning {
+  background-color: rgba(255, 86, 49, 0.1) !important;
+}
+.nd-callout-error {
+  background-color: rgba(181, 65, 65, 0.11) !important;
+}
+.nd-callout-success {
+  background-color: rgba(30, 122, 68, 0.12) !important;
+}
+.dark .nd-callout-info {
+  background-color: rgba(53, 101, 255, 0.16) !important;
+}
+.dark .nd-callout-warn,
+.dark .nd-callout-warning {
+  background-color: rgba(255, 86, 49, 0.14) !important;
+}
+.dark .nd-callout-error {
+  background-color: rgba(181, 65, 65, 0.18) !important;
+}
+.dark .nd-callout-success {
+  background-color: rgba(212, 255, 46, 0.12) !important;
 }
 
 /* Tables — soft filled header, gentle row lines (own colour, not the card
