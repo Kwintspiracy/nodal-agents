@@ -1807,7 +1807,11 @@ describe('executeJob', () => {
     // recovers with a valid call. One naming slip must NOT kill the job.
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'tc-bad', toolName: 'definitely_not_a_tool', args: {} }] },
-      { toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }] },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
     ]);
 
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
@@ -1892,9 +1896,7 @@ describe('executeJob', () => {
       .returning();
     if (!job) throw new Error('failed to create dashboard test job');
 
-    const llmClient = makeMockLlmClient(
-      repeatToolCall('telegram_send_message', { text: 'hi' }, 4),
-    );
+    const llmClient = makeMockLlmClient(repeatToolCall('telegram_send_message', { text: 'hi' }, 4));
 
     sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
@@ -3109,33 +3111,79 @@ describe('reliability guards', () => {
     expect(row?.status).toBe('completed');
   });
 
-  it('Guard 3b: refuses a false success when an earlier tool failure was never resolved', async () => {
+  it('Guard 3b: a NON-delivery side-tool failure does NOT make a success false — the job completes', async () => {
     const job = await createTestJob(db, seed);
-    // Turn 1: save_memory fails (invalid input) → unresolved failure tracked.
-    // Turns 2-4: return_result(status='success') while it stays unresolved →
-    // nudged twice, then failed loud. The agent never retried nor went blocked.
+    // Turn 1: save_memory fails (a non-delivery side action). Turn 2:
+    // return_result(status='success'). The deliverable is unaffected, so this is
+    // NOT a false success — the job COMPLETES; the failed call stays visible in
+    // the persisted transcript. Live regression this fixes: Java/Cortex sessions
+    // did all their work, then died on unresolved_tool_failure over a self-vote /
+    // dedup rejection the agent literally cannot retry to success.
     const llmClient = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'sm-bad', toolName: 'save_memory', args: {} }] },
       {
         toolCalls: [{ toolCallId: 'rr-1', toolName: 'return_result', args: { status: 'success' } }],
       },
-      {
-        toolCalls: [{ toolCallId: 'rr-2', toolName: 'return_result', args: { status: 'success' } }],
-      },
-      {
-        toolCalls: [{ toolCallId: 'rr-3', toolName: 'return_result', args: { status: 'success' } }],
-      },
     ]);
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
+    expect(result.status).toBe('completed');
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    expect(row?.status).toBe('failed');
-    expect(row?.error).toBe('unresolved_tool_failure');
+    expect(row?.status).toBe('completed');
+  });
+
+  it('Guard 3b: a DELIVERY tool failure DOES make a success false — the job fails loud', async () => {
+    const { z } = await import('zod');
+    const { createEmbeddingClient } = await import('@nodal-agents/llm');
+    const { LocalTrustProvider } = await import('@nodal-agents/auth');
+    const { createToolRegistry: makeReg, registerBuiltins: regBuiltins } =
+      await import('@nodal-agents/tools');
+
+    const job = await createTestJob(db, seed);
+    const customRegistry = makeReg();
+    regBuiltins(customRegistry);
+    // Override dashboard_publish (a DELIVERY tool) to fail: the user got nothing,
+    // so a 'success' declaration IS false and must fail loud — the Conciergus
+    // telegram-without-chat black-hole, generalised. This is the branch the
+    // benign-side-failure relaxation must NOT weaken.
+    customRegistry.register({
+      name: 'dashboard_publish',
+      description: 'failing dashboard_publish for the delivery-failure test',
+      inputSchema: z.object({ text: z.string() }),
+      riskLevel: 'write' as const,
+      execute: async () => {
+        throw new Error('publish failed');
+      },
+    });
+
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'dp', toolName: 'dashboard_publish', args: { text: 'hi' } }] },
+      {
+        toolCalls: [{ toolCallId: 'rr1', toolName: 'return_result', args: { status: 'success' } }],
+      },
+      {
+        toolCalls: [{ toolCallId: 'rr2', toolName: 'return_result', args: { status: 'success' } }],
+      },
+      {
+        toolCalls: [{ toolCallId: 'rr3', toolName: 'return_result', args: { status: 'success' } }],
+      },
+    ]);
+    setActiveLlmClient(llmClient);
+    const customDeps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+      registry: customRegistry,
+      authProvider: new LocalTrustProvider(),
+      close: async () => {},
+    };
+
+    const result = await executeJob(job.id as JobId, customDeps, testEnv);
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') expect(result.error).toBe('unresolved_tool_failure');
   });
 
   it('Guard 3b: an honest return_result(status="blocked") after a failure finalizes as agent_blocked', async () => {
@@ -3320,7 +3368,7 @@ describe('reliability guards', () => {
       // With sameToolStreakNudgeAt=3, maxNoDeliveryNudges=2, noDeliveryFailAt=5:
       // first nudge at turn 3, second at turn 5 (spacing=1), fail at turn >5
       // once delivery counter passes noDeliveryFailAt. Well before 50.
-      expect((row?.turn ?? 50)).toBeLessThan(30);
+      expect(row?.turn ?? 50).toBeLessThan(30);
     } finally {
       // Restore env regardless of test outcome.
       for (const [k, v] of Object.entries(savedEnv)) {
@@ -3389,7 +3437,7 @@ describe('reliability guards', () => {
       );
       expect(nudge).toBeDefined();
       // Failed before turn 50.
-      expect((row?.turn ?? 50)).toBeLessThan(30);
+      expect(row?.turn ?? 50).toBeLessThan(30);
     } finally {
       for (const [k, v] of Object.entries(savedEnv)) {
         if (v === undefined) {
@@ -3476,19 +3524,31 @@ describe('reliability guards', () => {
         {
           costUsd: 0.8,
           toolCalls: [
-            { toolCallId: 'tc-1', toolName: 'save_memory', args: { fact: 'a', category: 'context' } },
+            {
+              toolCallId: 'tc-1',
+              toolName: 'save_memory',
+              args: { fact: 'a', category: 'context' },
+            },
           ],
         },
         {
           costUsd: 0.8,
           toolCalls: [
-            { toolCallId: 'tc-2', toolName: 'save_memory', args: { fact: 'b', category: 'context' } },
+            {
+              toolCallId: 'tc-2',
+              toolName: 'save_memory',
+              args: { fact: 'b', category: 'context' },
+            },
           ],
         },
         {
           costUsd: 0.8,
           toolCalls: [
-            { toolCallId: 'tc-3', toolName: 'save_memory', args: { fact: 'c', category: 'context' } },
+            {
+              toolCallId: 'tc-3',
+              toolName: 'save_memory',
+              args: { fact: 'c', category: 'context' },
+            },
           ],
         },
       ]);
@@ -3522,7 +3582,11 @@ describe('reliability guards', () => {
         {
           costUsd: 0.3,
           toolCalls: [
-            { toolCallId: 'tc-sm', toolName: 'save_memory', args: { fact: 'x', category: 'context' } },
+            {
+              toolCallId: 'tc-sm',
+              toolName: 'save_memory',
+              args: { fact: 'x', category: 'context' },
+            },
           ],
         },
         {
@@ -3567,7 +3631,11 @@ describe('reliability guards', () => {
     });
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error, totalCostUsd: agentJobs.totalCostUsd })
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        totalCostUsd: agentJobs.totalCostUsd,
+      })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('failed');
@@ -3651,14 +3719,22 @@ describe('reliability guards', () => {
     const llmA = makeMockLlmClient([
       {
         toolCalls: [
-          { toolCallId: 'tc-rr-a', toolName: 'return_result', args: { status: 'success', text: 'done' } },
+          {
+            toolCallId: 'tc-rr-a',
+            toolName: 'return_result',
+            args: { status: 'success', text: 'done' },
+          },
         ],
       },
     ]);
     const llmB = makeMockLlmClient([
       {
         toolCalls: [
-          { toolCallId: 'tc-rr-b', toolName: 'return_result', args: { status: 'success', text: 'done' } },
+          {
+            toolCallId: 'tc-rr-b',
+            toolName: 'return_result',
+            args: { status: 'success', text: 'done' },
+          },
         ],
       },
     ]);
@@ -3715,7 +3791,11 @@ describe('reliability guards', () => {
       // Turn 2: return_result — but we'll flip the DB before this is called.
       {
         toolCalls: [
-          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success', text: 'done' } },
+          {
+            toolCallId: 'tc-rr',
+            toolName: 'return_result',
+            args: { status: 'success', text: 'done' },
+          },
         ],
       },
     ];
@@ -3725,7 +3805,8 @@ describe('reliability guards', () => {
       provider: 'mock',
       modelId: 'mock',
       doGenerate: async (_options) => {
-        const response = responsesWithReap[callIndex] ?? responsesWithReap[responsesWithReap.length - 1]!;
+        const response =
+          responsesWithReap[callIndex] ?? responsesWithReap[responsesWithReap.length - 1]!;
         llmCallCount++;
         callIndex++;
 
@@ -3741,7 +3822,12 @@ describe('reliability guards', () => {
             .where(eq(agentJobs.id, reaperFlippedJobId));
         }
 
-        const content: Array<{ type: 'tool-call'; toolCallId: string; toolName: string; input: string }> = [];
+        const content: Array<{
+          type: 'tool-call';
+          toolCallId: string;
+          toolName: string;
+          input: string;
+        }> = [];
         if (response.toolCalls) {
           for (const tc of response.toolCalls) {
             content.push({
@@ -3774,9 +3860,15 @@ describe('reliability guards', () => {
         streaming: false,
       },
       generateText: (args) =>
-        generateText({ ...args, model: mockModel } as Parameters<typeof generateText>[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
-      streamText: () => { throw new Error('not supported'); },
-      generateObject: () => { throw new Error('not supported'); },
+        generateText({ ...args, model: mockModel } as Parameters<
+          typeof generateText
+        >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
+      streamText: () => {
+        throw new Error('not supported');
+      },
+      generateObject: () => {
+        throw new Error('not supported');
+      },
     };
 
     setActiveLlmClient(mockLlmClient);
@@ -3816,7 +3908,11 @@ describe('reliability guards', () => {
     const llmFirst = makeMockLlmClient([
       {
         toolCalls: [
-          { toolCallId: 'tc-rr-1', toolName: 'return_result', args: { status: 'success', text: 'first run' } },
+          {
+            toolCallId: 'tc-rr-1',
+            toolName: 'return_result',
+            args: { status: 'success', text: 'first run' },
+          },
         ],
       },
     ]);
@@ -3825,17 +3921,18 @@ describe('reliability guards', () => {
 
     // Simulate the approval resume path: flip the row back to 'pending'.
     // (In production this is done by approve.ts + resumeDelegated.)
-    await db
-      .update(agentJobs)
-      .set({ status: 'pending' })
-      .where(eq(agentJobs.id, job.id));
+    await db.update(agentJobs).set({ status: 'pending' }).where(eq(agentJobs.id, job.id));
 
     // Second run on the same job (now pending again): claimJob succeeds and the
     // job completes normally.
     const llmSecond = makeMockLlmClient([
       {
         toolCalls: [
-          { toolCallId: 'tc-rr-2', toolName: 'return_result', args: { status: 'success', text: 'second run' } },
+          {
+            toolCallId: 'tc-rr-2',
+            toolName: 'return_result',
+            args: { status: 'success', text: 'second run' },
+          },
         ],
       },
     ]);

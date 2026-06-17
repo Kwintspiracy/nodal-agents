@@ -2342,39 +2342,58 @@ export async function executeJob(
 
         if (rrStatus === 'success' && unresolvedToolFailures.size > 0) {
           const stuck = [...unresolvedToolFailures];
-          if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
-            unresolvedFailureNudges += 1;
-            trace('unresolved_tool_failure_nudge', {
-              turn,
-              attempt: unresolvedFailureNudges,
-              stuck,
-            });
-            toolResultBlocks.push({
-              type: 'tool-result',
-              toolCallId: returnResultCall.toolCallId,
-              toolName: 'return_result',
-              output: toResultOutput({
-                error:
-                  'deferred: tu signales success mais ces actions ont échoué sans être corrigées (' +
-                  stuck.join(', ') +
-                  "). Réessaie l'action jusqu'à réussite, ou appelle return_result avec status='blocked'.",
-              }),
-            });
-            messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
-            messages = [
-              ...messages,
-              {
-                role: 'user',
-                content:
-                  "[système] Ne déclare pas un succès qui n'a pas eu lieu. Une action a échoué et " +
-                  "n'a pas été corrigée. Corrige-la, ou termine honnêtement avec status='blocked'.",
-              } as ModelMessage,
-            ];
-            continue;
+          // A 'success' is only FALSE when the user got nothing — i.e. a DELIVERY
+          // tool failed (telegram_send_message / send_image / dashboard_publish).
+          // Benign, non-retryable side-tool failures (a deduped comment, a vote on
+          // OWN content) while the agent HAS delivered are NOT a false success:
+          // the deliverable is honest and the failures stay visible in the
+          // persisted transcript. Hard-failing those turned complete, productive
+          // jobs into false FAILURES (live: Java/Cortex sessions did all the work,
+          // then died on unresolved_tool_failure over a self-vote/dedup rejection
+          // the agent literally cannot retry to success). The telegram-delivery
+          // guard below independently catches "nothing delivered on a tool-only
+          // channel".
+          const stuckDelivery = stuck.filter((t) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(t));
+          if (stuckDelivery.length > 0) {
+            if (unresolvedFailureNudges < MAX_UNRESOLVED_FAILURE_NUDGES) {
+              unresolvedFailureNudges += 1;
+              trace('unresolved_tool_failure_nudge', {
+                turn,
+                attempt: unresolvedFailureNudges,
+                stuck: stuckDelivery,
+              });
+              toolResultBlocks.push({
+                type: 'tool-result',
+                toolCallId: returnResultCall.toolCallId,
+                toolName: 'return_result',
+                output: toResultOutput({
+                  error:
+                    'deferred: tu signales success mais ta livraison a échoué sans être corrigée (' +
+                    stuckDelivery.join(', ') +
+                    "). Réessaie la livraison jusqu'à réussite, ou appelle return_result avec status='blocked'.",
+                }),
+              });
+              messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+              messages = [
+                ...messages,
+                {
+                  role: 'user',
+                  content:
+                    "[système] Ne déclare pas un succès qui n'a pas eu lieu. Ta livraison à " +
+                    "l'utilisateur a échoué et n'a pas été corrigée. Corrige-la, ou termine " +
+                    "honnêtement avec status='blocked'.",
+                } as ModelMessage,
+              ];
+              continue;
+            }
+            trace('unresolved_tool_failure', { turn, stuck: stuckDelivery });
+            await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
+            return { status: 'failed', error: 'unresolved_tool_failure' };
           }
-          trace('unresolved_tool_failure', { turn, stuck });
-          await failJob(db, jobId as string, 'unresolved_tool_failure', runStats(), messages);
-          return { status: 'failed', error: 'unresolved_tool_failure' };
+          // Only non-delivery side-tool failures remain → NOT a false success.
+          // Accept it and fall through to normal completion; the failed calls
+          // stay recorded in the persisted transcript (invariant #4: not silent).
+          trace('unresolved_side_tool_failures_accepted', { turn, stuck });
         }
 
         // Resolve the task-board state up front: a run that created tasks
@@ -2467,7 +2486,11 @@ export async function executeJob(
           messages,
         );
         if (!completed) {
+          // The conditional terminal write lost the race — another writer (e.g. the
+          // orphan reaper) already finalized this row. Do NOT claim 'completed':
+          // report that the row was already handled so the caller never overrides it.
           trace('terminal_write_lost_race', { turn, writer: 'completeJob', jobId });
+          return { status: 'already_handled' };
         } else {
           // Fire-and-forget Tier-1 reflection (OFF by default). MUST NOT block
           // or delay the job response — gates + throttle live inside the hook.
