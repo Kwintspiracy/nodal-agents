@@ -447,11 +447,20 @@ export async function executeJob(
   // skill_file_* builtins can read an installed (community) skill's bundled
   // files — and only the bundles of skills this agent actually holds.
   const assignedSkillRows = await db
-    .select({ slug: agentSkills.slug })
+    .select({
+      slug: agentSkills.slug,
+      scriptsAuthorized: agentSkillAssignments.scriptsAuthorized,
+    })
     .from(agentSkillAssignments)
     .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
     .where(eq(agentSkillAssignments.agentId, agentRow.id));
   const assignedSkillSlugs: string[] = assignedSkillRows.map((r) => r.slug);
+  // Slugs whose bundled scripts the owner has authorized THIS agent to run via
+  // run_skill_script (subset of assignedSkillSlugs). Gates both the tool's
+  // availability (whitelist below) and its execution (ToolContext → builtin).
+  const scriptAuthorizedSkillSlugs: string[] = assignedSkillRows
+    .filter((r) => r.scriptsAuthorized)
+    .map((r) => r.slug);
   const skillStore = skillStoreDir();
 
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
@@ -543,6 +552,15 @@ export async function executeJob(
     .map((n) => registry.get(n))
     .filter((t): t is AnyToolDef => t !== undefined);
 
+  // run_skill_script — offered ONLY to agents with ≥1 owner-authorized
+  // script-skill (agent_skill_assignments.scripts_authorized). Gated here at the
+  // whitelist (availability) AND in the builtin via scriptAuthorizedSkillSlugs
+  // (execution). Name for the worker whitelist, def for the orchestrator branch.
+  const scriptToolNames: string[] = scriptAuthorizedSkillSlugs.length > 0 ? ['run_skill_script'] : [];
+  const scriptToolDefs: AnyToolDef[] = scriptToolNames
+    .map((n) => registry.get(n))
+    .filter((t): t is AnyToolDef => t !== undefined);
+
   // Capability tools: computed from agent's configured integrations.
   // These are instantiated per-job and merged directly into toolDefs/toolMap.
   // CRITICAL: do NOT register into the shared registry — the registry is
@@ -616,6 +634,7 @@ export async function executeJob(
         ...memoryBuiltins,
         ...(returnResult ? [returnResult] : []),
         ...metaToolDefs,
+        ...scriptToolDefs,
         ...capabilityTools,
       ];
     } else {
@@ -796,7 +815,12 @@ export async function executeJob(
         {
           agentId: agentRow.id,
           configuredTools: registeredConfigured,
-          alwaysOn: [...ALWAYS_ON_TOOLS, ...registeredSkillBuiltins, ...metaToolNames],
+          alwaysOn: [
+            ...ALWAYS_ON_TOOLS,
+            ...registeredSkillBuiltins,
+            ...metaToolNames,
+            ...scriptToolNames,
+          ],
         },
         registry,
         capabilityTools,
@@ -1012,6 +1036,7 @@ export async function executeJob(
                 workspaces: agentWorkspacesList,
                 skillStoreDir: skillStore,
                 assignedSkillSlugs,
+                scriptAuthorizedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
               { approvalRules: resumeApprovalRules, onApprovalRequired: async () => {} },
@@ -1769,6 +1794,7 @@ export async function executeJob(
         workspaces: agentWorkspacesList,
         skillStoreDir: skillStore,
         assignedSkillSlugs,
+        scriptAuthorizedSkillSlugs,
         provisioning: TOOL_PROVISIONING,
       };
       const sharedToolOpts = {
@@ -1958,6 +1984,7 @@ export async function executeJob(
                 workspaces: agentWorkspacesList,
                 skillStoreDir: skillStore,
                 assignedSkillSlugs,
+                scriptAuthorizedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
               { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },

@@ -25,6 +25,7 @@ import {
   listAgentApprovalRulesAction,
   setAgentApprovalRuleAction,
   setRunCommandYoloAction,
+  setSkillScriptsAuthorizedAction,
   type AgentRow,
   type AgentEditRow,
   type AgentWorkspaceRow,
@@ -1105,6 +1106,12 @@ function AutonomyTab({
         lanCommandYolo={lanCommandYolo}
         isOwner={isOwner}
       />
+
+      <ScriptAuthSection
+        agentId={agentId}
+        attachedSkills={attachedSkills}
+        isOwner={isOwner}
+      />
     </div>
   );
 }
@@ -1311,6 +1318,169 @@ function CommandExecutionSection({
         onCancel={() => setConfirmOpen(false)}
       />
     </SectionCard>
+  );
+}
+
+// ─── Community-skill script authorization section ─────────────────────────────
+//
+// Shown only when ≥1 attached community skill ships bundled scripts (non-null
+// installedScripts with length > 0). One toggle row per such skill. Owner-only
+// for enabling (disabling is immediate, no confirm needed). Enabling pops a
+// ConfirmDialog listing the exact script paths before granting access.
+
+function ScriptAuthSection({
+  agentId,
+  attachedSkills,
+  isOwner,
+}: {
+  agentId: string;
+  attachedSkills: SkillRow[];
+  isOwner: boolean;
+}) {
+  // Only skills that carry bundled scripts need a toggle.
+  const scriptSkills = attachedSkills.filter(
+    (s) => s.isCommunity && s.installedScripts && s.installedScripts.length > 0,
+  );
+
+  if (scriptSkills.length === 0) return null;
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Community skill scripts"
+        hint="These community skills ship bundled scripts (Python / shell). By default scripts never run — enable only for skills you trust. The runner will only execute these exact files."
+      />
+      <div
+        className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+        data-testid="script-auth-list"
+      >
+        {scriptSkills.map((skill) => (
+          <ScriptAuthRow key={skill.id} skill={skill} agentId={agentId} isOwner={isOwner} />
+        ))}
+      </div>
+      <p className="mt-4 text-[11px] text-ink-4">
+        Granting script access lets this agent run the skill&apos;s bundled scripts on your machine
+        without per-command approval.
+      </p>
+    </SectionCard>
+  );
+}
+
+function ScriptAuthRow({
+  skill,
+  agentId,
+  isOwner,
+}: {
+  skill: SkillRow;
+  agentId: string;
+  isOwner: boolean;
+}) {
+  // Optimistic local state — seed from the SkillRow value (null → false as safe default).
+  const [authorized, setAuthorized] = useState<boolean>(skill.scriptsAuthorized ?? false);
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const scripts = skill.installedScripts ?? [];
+
+  // Read auth mode — mirrors CommandExecutionSection pattern.
+  const isLocalTrust =
+    (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const canToggle = isLocalTrust || isOwner;
+
+  async function doSet(next: boolean) {
+    setSaving(true);
+    setAuthorized(next); // optimistic
+    const result = await setSkillScriptsAuthorizedAction({ agentId, skillId: skill.id, authorized: next });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      setAuthorized(!next); // revert
+    } else {
+      toast.success(
+        next
+          ? `Scripts allowed for "${skill.name}"`
+          : `Script access revoked for "${skill.name}"`,
+      );
+    }
+  }
+
+  function handleToggle() {
+    if (authorized) {
+      // Disabling: immediate, no confirm.
+      void doSet(false);
+    } else {
+      // Enabling: show security confirmation first.
+      setConfirmOpen(true);
+    }
+  }
+
+  const confirmMessage =
+    `This lets ${skill.name} run its bundled scripts on your machine without per-command approval:\n\n` +
+    scripts.map((s) => `• ${s.path} (${s.language})`).join('\n') +
+    '\n\nOnly enable for skills you fully trust.';
+
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
+      {/* Skill identity */}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-medium text-ink">{skill.name}</span>
+          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-skill-vivid">
+            community
+          </span>
+          <span className="inline-flex h-[18px] items-center rounded-full bg-warn/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-warn">
+            {scripts.length} script{scripts.length > 1 ? 's' : ''}
+          </span>
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+          {scripts.map((s) => (
+            <code key={s.path} className="font-mono text-[10.5px] text-ink-4">
+              {s.path}
+            </code>
+          ))}
+        </div>
+        {!canToggle && (
+          <p className="mt-1.5 text-[11.5px] text-ink-4">
+            Only the workspace owner can authorize scripts.
+          </p>
+        )}
+      </div>
+
+      {/* Toggle */}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={authorized}
+        aria-label={`Allow scripts for ${skill.name}`}
+        disabled={saving || !canToggle}
+        onClick={handleToggle}
+        className={[
+          'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+          authorized ? 'border-warn/40 bg-warn/20' : 'border-rule-2 bg-canvas',
+        ].join(' ')}
+      >
+        <span
+          className={[
+            'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
+            authorized ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3',
+          ].join(' ')}
+        />
+      </button>
+
+      {/* Confirm dialog — window.confirm is banned; ConfirmDialog is the correct replacement */}
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Allow scripts for "${skill.name}"?`}
+        message={confirmMessage}
+        confirmLabel="Allow scripts"
+        destructive
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void doSet(true);
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </div>
   );
 }
 

@@ -55,6 +55,7 @@ import {
   assignSkillRepo,
   getInstallNotes,
   setInstallNotes,
+  setSkillScriptsAuthorized,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -3668,6 +3669,14 @@ export type SkillRow = {
   isCommunity: boolean;
   source: string | null;
   installedScripts: InstalledScript[] | null;
+  /**
+   * Whether the workspace owner has authorized this skill's bundled scripts to
+   * run for a specific agent. Only populated by getAgentAttachedSkillsAction —
+   * null when the row comes from the entity-wide listSkillsAction context (which
+   * doesn't know which agent is active). Community-only; always null for system
+   * and custom skills.
+   */
+  scriptsAuthorized: boolean | null;
   assignmentCount: number;
   /** Each agent currently assigned to this skill. Sized by assignmentCount
    *  but capped at the SQL layer at 8 names — the UI only renders an avatar
@@ -3784,6 +3793,7 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         isCommunity: r.isCommunity ?? false,
         source: r.source,
         installedScripts: (r.installedScripts as InstalledScript[] | null) ?? null,
+        scriptsAuthorized: null,
         assignmentCount: tallyMap.get(r.id) ?? 0,
         assignedAgents: assignedBySkill.get(r.id) ?? [],
         createdAt: r.createdAt,
@@ -4177,6 +4187,7 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       isCommunity: row.isCommunity ?? false,
       source: row.source,
       installedScripts: (row.installedScripts as InstalledScript[] | null) ?? null,
+      scriptsAuthorized: null,
       assignmentCount: 0,
       // The skill-detail view doesn't render the avatar stack; cheaper to
       // return [] here than to pay the join. List callers use listSkillsAction.
@@ -4214,6 +4225,143 @@ export async function unassignSkillAction(raw: unknown): Promise<ActionResult<vo
   } catch (err) {
     console.error('[unassignSkillAction]', err);
     return fail('db_error', 'Failed to unassign skill');
+  }
+}
+
+// ─── getAgentAttachedSkillsAction ────────────────────────────────────────────
+//
+// Returns the SkillRows for a specific agent with `scriptsAuthorized` populated
+// from the agent_skill_assignments row for that agent×skill pair.
+// Used by the agent edit page so the Autonomy tab can surface script auth toggles.
+
+export async function getAgentAttachedSkillsAction(
+  agentId: string,
+): Promise<ActionResult<SkillRow[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+
+    // Verify agent belongs to the active entity.
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    // Join skills with their assignment row for this agent.
+    const rows = await db
+      .select({
+        id: agentSkills.id,
+        name: agentSkills.name,
+        slug: agentSkills.slug,
+        content: agentSkills.content,
+        defaultContent: agentSkills.defaultContent,
+        contentOverridden: agentSkills.contentOverridden,
+        description: agentSkills.description,
+        active: agentSkills.active,
+        requiredBuiltins: agentSkills.requiredBuiltins,
+        isCommunity: agentSkills.isCommunity,
+        source: agentSkills.source,
+        installedScripts: agentSkills.installedScripts,
+        createdAt: agentSkills.createdAt,
+        updatedAt: agentSkills.updatedAt,
+        scriptsAuthorized: agentSkillAssignments.scriptsAuthorized,
+      })
+      .from(agentSkillAssignments)
+      .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
+      .where(
+        and(
+          eq(agentSkillAssignments.agentId, agentId),
+          eq(agentSkillAssignments.entityId, session.entityId),
+        ),
+      )
+      .orderBy(agentSkills.name);
+
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        isSystem: systemSkillSlugs.includes(r.slug),
+        content: r.content,
+        defaultContent: r.defaultContent,
+        contentOverridden: r.contentOverridden ?? false,
+        description: r.description,
+        active: r.active ?? true,
+        requiredBuiltins: (r.requiredBuiltins as string[] | null) ?? [],
+        isCommunity: r.isCommunity ?? false,
+        source: r.source,
+        installedScripts: (r.installedScripts as InstalledScript[] | null) ?? null,
+        scriptsAuthorized: r.scriptsAuthorized ?? false,
+        assignmentCount: 1,
+        assignedAgents: [],
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      })),
+    );
+  } catch (err) {
+    console.error('[getAgentAttachedSkillsAction]', err);
+    return fail('db_error', 'Failed to load agent skills');
+  }
+}
+
+// ─── setSkillScriptsAuthorizedAction ─────────────────────────────────────────
+//
+// Owner-only: flip the per-agent × per-skill script authorization.
+// When authorized=true the runner will grant run_skill_script to this agent for
+// this skill's bundled scripts. This is a consequential security grant — only
+// the workspace OWNER may change it.
+
+const SetSkillScriptsAuthorizedSchema = z.object({
+  agentId: z.string().guid(),
+  skillId: z.string().guid(),
+  authorized: z.boolean(),
+});
+
+export async function setSkillScriptsAuthorizedAction(
+  raw: unknown,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetSkillScriptsAuthorizedSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, skillId, authorized } = parsed.data;
+
+    const db = getDb();
+
+    // Always enforce owner-only. In local-trust mode there is only one user so
+    // they are always the owner — we still do the check uniformly for simplicity.
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can authorize skill scripts.');
+    }
+
+    // Verify agent belongs to this entity (prevents cross-entity writes).
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const result = await setSkillScriptsAuthorized(db, agentId, skillId, authorized);
+    if ('error' in result) {
+      return fail('not_assigned', 'This skill is not assigned to the agent.');
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setSkillScriptsAuthorizedAction]', err);
+    return fail('db_error', 'Failed to save script authorization');
   }
 }
 

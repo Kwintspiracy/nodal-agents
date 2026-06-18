@@ -44,3 +44,8 @@ apps/web/tests/manual/
 # reference uploads). The product is the implementation, not these.
 design/
 start-pg-screenshots.ts
+
+# Runtime image outputs dropped by the runner / ComfyUI during live tests
+apps/runner/ComfyUI_*.png
+apps/runner/zim_*.png
+/test-screenshots/

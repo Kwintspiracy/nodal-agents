@@ -16,8 +16,21 @@ import { z } from 'zod';
 
 type JsonSchema = Record<string, unknown>;
 
-/** Whole-schema fallback: an object with arbitrary keys, all values kept. */
-const PERMISSIVE: z.ZodTypeAny = z.record(z.string(), z.unknown());
+/**
+ * Whole-schema fallback: an object with arbitrary keys, all values kept.
+ *
+ * Uses `.catchall()` rather than `z.record()` on purpose. `z.record()`
+ * serialises to JSON Schema with a `propertyNames` keyword, which several
+ * provider grammar engines (notably OpenRouter → Parasail) do not implement —
+ * they reject the whole tool call with a hard 502 ("Unimplemented keys:
+ * [propertyNames]"). Because the fallback fires for any schemaless dict arg
+ * (e.g. a ComfyUI MCP `workflow` / `operations` parameter), that turned into
+ * run-to-run intermittent failures: same job, different provider route,
+ * different outcome. `z.object({}).catchall(z.unknown())` is semantically
+ * identical — an object that accepts and keeps arbitrary keys — but serialises
+ * to plain `additionalProperties`, which every provider accepts.
+ */
+const PERMISSIVE: z.ZodTypeAny = z.object({}).catchall(z.unknown());
 
 /**
  * Convert a JSON Schema (an MCP tool's `inputSchema`) to a Zod schema.

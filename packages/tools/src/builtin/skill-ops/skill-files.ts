@@ -54,7 +54,7 @@ export class SkillFileError extends Error {
  * verifying (1) the store is configured, (2) the slug is well-formed, (3) the
  * agent actually holds this skill, and (4) the skill is installed on disk.
  */
-async function resolveSkillRoot(ctx: ToolContext, slug: string): Promise<string> {
+export async function resolveSkillRoot(ctx: ToolContext, slug: string): Promise<string> {
   if (!ctx.skillStoreDir || !isAbsolute(ctx.skillStoreDir)) {
     throw new SkillFileError(
       'skill_store_unavailable',
@@ -92,7 +92,7 @@ async function resolveSkillRoot(ctx: ToolContext, slug: string): Promise<string>
  * technique as file-ops/workspace.ts: lexical resolve → realpath the deepest
  * existing ancestor → prefix-check the canonical path against the root.
  */
-async function resolveWithinSkill(realRoot: string, requestedPath: string): Promise<string> {
+export async function resolveWithinSkill(realRoot: string, requestedPath: string): Promise<string> {
   const lexical = isAbsolute(requestedPath)
     ? resolvePath(requestedPath)
     : resolvePath(realRoot, requestedPath);

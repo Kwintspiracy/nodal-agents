@@ -6,7 +6,7 @@ import {
   listAgentConnectorsAction,
   listAgentMcpServersAction,
   listJobsAction,
-  listSkillsAction,
+  getAgentAttachedSkillsAction,
   getLanCommandYoloAction,
 } from '@/lib/actions.ts';
 import AgentComposer from './AgentComposer.tsx';
@@ -40,7 +40,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       listAgentConnectorsAction(agent.id),
       listAgentMcpServersAction(agent.id),
       listJobsAction({ limit: 100 }),
-      listSkillsAction(),
+      getAgentAttachedSkillsAction(agent.id),
       getLanCommandYoloAction(),
     ]);
   const connectors = connectorsResult.ok ? connectorsResult.data : [];
@@ -48,11 +48,8 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   // Filter jobs to this agent client-side — `listJobsAction` is global at the
   // server action layer; the table-level filter keeps that surface unchanged.
   const jobs = (jobsResult.ok ? jobsResult.data : []).filter((j) => j.agentId === agent.id);
-  // Skills attached to this agent — derived from each SkillRow's enriched
-  // `assignedAgents` (already fetched by listSkillsAction).
-  const attachedSkills = (skillsResult.ok ? skillsResult.data : []).filter((s) =>
-    s.assignedAgents.some((a) => a.id === agent.id),
-  );
+  // Skills attached to this agent — with per-assignment scriptsAuthorized populated.
+  const attachedSkills = skillsResult.ok ? skillsResult.data : [];
 
   const lanCommandYolo = lanYoloResult.ok ? lanYoloResult.data.lanCommandYolo : false;
   const isOwner = lanYoloResult.ok ? lanYoloResult.data.isOwner : false;

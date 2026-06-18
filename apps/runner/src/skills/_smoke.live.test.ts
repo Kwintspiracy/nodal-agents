@@ -52,7 +52,7 @@ describe.skipIf(!process.env['LIVE_SKILL_INSTALL'])('LIVE install: zarazhangrui/
     expect(row!.source).toBe('zarazhangrui/frontend-slides');
     expect(row!.requiredBuiltins).toEqual(['skill_file_read', 'skill_file_list']);
     expect(row!.content).toContain("skill_file_read('frontend-slides'");
-    expect(row!.content).toContain('CANNOT execute scripts');
+    expect(row!.content).toContain('run_skill_script');
     expect(row!.content).toContain('extract-pptx.py');
 
     // Files actually landed in the store

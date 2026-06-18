@@ -230,6 +230,109 @@ export async function _extractArchiveBuffer(
   return extractBuffer(buf, destDir, workDir);
 }
 
+// ─── GitHub subdir fetch (efficient install from a monorepo) ──────────────────
+//
+// A skill that lives in a subdirectory of a large repo (e.g.
+// NousResearch/hermes-agent → skills/creative/comfyui) must NOT pull the
+// whole-repo tarball: that repo is 50MB+ compressed and hundreds of MB
+// extracted, which blows both the download and extraction caps just to reach a
+// ~200KB folder. Instead we walk ONLY the subdir via the GitHub Contents API
+// and download each file from raw.githubusercontent.com (already allowlisted).
+// One API request per directory; the same MAX_ENTRIES / MAX_EXTRACTED_BYTES
+// guards apply. This is the norm for community skills — most ship inside a
+// monorepo of many skills.
+
+interface GhContentEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'dir' | string;
+  size: number;
+  download_url: string | null;
+}
+
+function ghApiHeaders(): Record<string, string> {
+  const h: Record<string, string> = {
+    'User-Agent': 'nodal-agents-skill-installer',
+    Accept: 'application/vnd.github+json',
+  };
+  // Optional: lifts the 60 req/hr unauthenticated limit. Not required for public repos.
+  const token = process.env['GITHUB_TOKEN'];
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return h;
+}
+
+/** List a repo directory via the GitHub Contents API. null on 404 (ref/path missing). */
+async function ghContents(
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+): Promise<GhContentEntry[] | null> {
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURI(path)}?ref=${encodeURIComponent(ref)}`;
+  const res = await fetch(url, { headers: ghApiHeaders(), redirect: 'follow' });
+  if (res.status === 404) return null;
+  if (res.status === 403 || res.status === 429) {
+    throw new SkillFetchError(
+      'GitHub API rate limit reached. Set a GITHUB_TOKEN environment variable or retry later.',
+    );
+  }
+  if (!res.ok) throw new SkillFetchError(`GitHub Contents API error: HTTP ${res.status} for "${path}".`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new SkillFetchError(`Expected a directory at "${path}", got a file.`);
+  return data as GhContentEntry[];
+}
+
+/**
+ * Download every file under a GitHub subdir into `destRoot`, preserving
+ * repo-relative paths (so pickManifest's subdir logic works unchanged). Enforces
+ * the same entry-count and total-size caps as archive extraction.
+ */
+async function downloadGithubSubdir(
+  source: SkillSource,
+  ref: string,
+  topEntries: GhContentEntry[],
+  destRoot: string,
+): Promise<void> {
+  const destResolved = resolve(destRoot);
+  const destWithSep = destResolved.endsWith(sep) ? destResolved : destResolved + sep;
+  let entryCount = 0;
+  let totalBytes = 0;
+
+  const processEntries = async (entries: GhContentEntry[]): Promise<void> => {
+    for (const e of entries) {
+      if (e.type === 'dir') {
+        const sub = await ghContents(source.owner, source.repo, e.path, ref);
+        if (sub) await processEntries(sub);
+        continue;
+      }
+      // Skip anything that is not a plain file with a raw URL (submodules, symlinks).
+      if (e.type !== 'file' || !e.download_url) continue;
+      if (++entryCount > MAX_ENTRIES) {
+        throw new SkillFetchError(`Subdir contains too many files (max ${MAX_ENTRIES}).`);
+      }
+      totalBytes += e.size ?? 0;
+      if (totalBytes > MAX_EXTRACTED_BYTES) {
+        throw new SkillFetchError(
+          `Subdir exceeds size limit (${totalBytes} bytes, max ${MAX_EXTRACTED_BYTES}).`,
+        );
+      }
+      const abs = resolve(join(destRoot, e.path));
+      if (abs !== destResolved && !abs.startsWith(destWithSep)) {
+        throw new SkillFetchError(`Entry escapes the target directory: "${e.path}".`);
+      }
+      const fileRes = await fetch(e.download_url, {
+        headers: { 'User-Agent': 'nodal-agents-skill-installer' },
+        redirect: 'follow',
+      });
+      if (!fileRes.ok) throw new SkillFetchError(`Download failed for "${e.path}": HTTP ${fileRes.status}.`);
+      await mkdir(dirname(abs), { recursive: true });
+      await writeFile(abs, Buffer.from(await fileRes.arrayBuffer()));
+    }
+  };
+
+  await processEntries(topEntries);
+}
+
 /**
  * Download the skill archive and extract it. Returns the directory the skill's
  * files live under (a single top-level folder for GitHub tarballs; the extract
@@ -249,6 +352,23 @@ export async function downloadAndExtract(source: SkillSource): Promise<Extracted
       const buf = await downloadToBuffer(clawhubDownloadUrl(source));
       await extractBuffer(buf, extractDir, workDir);
       return { extractRoot: extractDir, ref: 'latest', cleanup };
+    }
+
+    // GitHub + explicit subdir: fetch ONLY that folder via the Contents API
+    // instead of the whole-repo tarball (essential for skills inside large
+    // monorepos). Files are written under extractDir at their repo-relative
+    // path, so pickManifest(extractRoot, subdir) resolves them unchanged.
+    if (source.provider === 'github' && source.subdir) {
+      const sub = source.subdir.replace(/\/+$/, '');
+      for (const ref of candidateRefs(source)) {
+        const top = await ghContents(source.owner, source.repo, sub, ref);
+        if (top === null) continue;
+        await downloadGithubSubdir(source, ref, top, extractDir);
+        return { extractRoot: extractDir, ref, cleanup };
+      }
+      throw new SkillFetchError(
+        `Subdir not found: ${source.owner}/${source.repo}/${sub} (tried refs: ${candidateRefs(source).join(', ')}).`,
+      );
     }
 
     // GitHub: try candidate refs until one resolves (404 → next).

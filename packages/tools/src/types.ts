@@ -63,6 +63,14 @@ export interface ToolContext {
    */
   assignedSkillSlugs?: string[];
   /**
+   * Slugs of skills this agent is AUTHORIZED to execute bundled scripts for via
+   * `run_skill_script` (agent_skill_assignments.scripts_authorized = true). A
+   * subset of assignedSkillSlugs — the owner opts in per agent × skill. Absent
+   * or empty ⇒ the agent runs no skill scripts (`run_skill_script` fails loud
+   * with `scripts_not_authorized`). Loaded by the runner alongside assignedSkillSlugs.
+   */
+  scriptAuthorizedSkillSlugs?: string[];
+  /**
    * Infrastructure-provisioning capabilities for ROOT meta-tools that create
    * MCP servers (and, later, connectors). Injected by the runner, which owns
    * the MCP adapter and secret encryption — so packages/tools takes no

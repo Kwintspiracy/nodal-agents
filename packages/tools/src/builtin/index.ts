@@ -20,6 +20,7 @@ import { OFFICE_TOOLS } from './office-ops';
 import { META_TOOLS } from './meta-ops';
 import { SKILL_TOOLS } from './skill-ops';
 import { runCommandTool } from './run-command';
+import { runSkillScriptTool } from './run-skill-script';
 
 export { returnResultTool } from './return-result';
 export { saveMemoryTool } from './save-memory';
@@ -43,6 +44,8 @@ export { createSkillTool, assignSkillTool, createAgentTool, attachAgentTool } fr
 export { SKILL_TOOLS, skillFileReadTool, skillFileListTool, SkillFileError } from './skill-ops';
 export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
+export { runSkillScriptTool } from './run-skill-script';
+export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
 
 /**
  * Register all built-in tools into the given registry.
@@ -86,6 +89,11 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // NOT always-on. Safe-by-default (defaultApproval='require_approval'); a
   // per-agent auto_approve rule ("Yolo") overrides the human-in-the-loop gate.
   registry.register(runCommandTool);
+  // run_skill_script — gated by per-skill×agent script authorization
+  // (agent_skill_assignments.scripts_authorized), NOT always-on and NOT via
+  // requiredBuiltins. The runner adds it to the whitelist only when the agent
+  // has ≥1 authorized script-skill. Safe-by-default like run_command.
+  registry.register(runSkillScriptTool);
 }
 
 /**

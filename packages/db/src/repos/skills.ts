@@ -208,6 +208,42 @@ export async function assignSkillRepo(
   return { ok: true };
 }
 
+// ─── setSkillScriptsAuthorized ────────────────────────────────────────────────
+
+export type SetScriptsAuthorizedResult = { ok: true } | { error: 'not_assigned' };
+
+/**
+ * Flip the per-skill × per-agent script-execution authorization (owner opt-in).
+ *
+ * When `authorized` is true, the runner registers `run_skill_script` for this
+ * agent and lets it execute the skill's bundled scripts. Default is false — a
+ * community skill's scripts NEVER run until the owner explicitly authorizes them
+ * for a specific agent × skill. Returns `not_assigned` if the agent does not
+ * hold the skill (you can only authorize scripts for an assigned skill).
+ *
+ * Scoped to (agentId, skillId) within the entity; the caller (web action) MUST
+ * verify ownership of the entity before calling — this is an owner-only control.
+ */
+export async function setSkillScriptsAuthorized(
+  db: AnyDrizzleDb,
+  agentId: string,
+  skillId: string,
+  authorized: boolean,
+): Promise<SetScriptsAuthorizedResult> {
+  const updated = await db
+    .update(agentSkillAssignments)
+    .set({ scriptsAuthorized: authorized })
+    .where(
+      and(
+        eq(agentSkillAssignments.agentId, agentId),
+        eq(agentSkillAssignments.skillId, skillId),
+      ),
+    )
+    .returning({ id: agentSkillAssignments.id });
+  if (updated.length === 0) return { error: 'not_assigned' };
+  return { ok: true };
+}
+
 // ─── touchSkillsLastUsed ──────────────────────────────────────────────────────
 
 /**

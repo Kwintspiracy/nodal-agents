@@ -4,7 +4,7 @@
 // cap, entry-count cap, path-traversal (zip-slip / tar-slip), tar entry-type
 // filter, and skill content size cap. The full network+DB install is live.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -23,6 +23,8 @@ import { pickManifest, SkillInstallError, buildContent, MAX_SKILL_CONTENT_BYTES 
 import {
   _extractArchiveBuffer,
   accumulateDeclaredBytes,
+  downloadAndExtract,
+  isFile,
   SkillFetchError,
   MAX_EXTRACTED_BYTES,
   MAX_ENTRIES,
@@ -343,6 +345,77 @@ describe('archive extraction security guards (zip)', () => {
   it('allows a normal zip (all guards pass)', async () => {
     const buf = makeZip([['SKILL.md', '---\nname: test\ndescription: d\n---\nbody']]);
     await expect(_extractArchiveBuffer(buf, destDir, workDir)).resolves.toBeUndefined();
+  });
+});
+
+// ── github subdir fetch (Contents API path — installs a skill nested in a big monorepo) ──
+describe('downloadAndExtract — github subdir fetch', () => {
+  const origFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = origFetch;
+  });
+
+  it('fetches ONLY the subdir via the Contents API and writes files at repo-relative paths', async () => {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/contents/skills/x?ref=main')) {
+        return new Response(
+          JSON.stringify([
+            { name: 'SKILL.md', path: 'skills/x/SKILL.md', type: 'file', size: 40,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md' },
+            { name: 'scripts', path: 'skills/x/scripts', type: 'dir', size: 0, download_url: null },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('/contents/skills/x/scripts?ref=main')) {
+        return new Response(
+          JSON.stringify([
+            { name: 'run.py', path: 'skills/x/scripts/run.py', type: 'file', size: 9,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/x/scripts/run.py' },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('raw.githubusercontent.com') && url.endsWith('SKILL.md')) {
+        return new Response('---\nname: test\ndescription: d\n---\nbody', { status: 200 });
+      }
+      if (url.includes('raw.githubusercontent.com') && url.endsWith('run.py')) {
+        return new Response('print(1)', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+
+    const source = parseSkillSource('https://github.com/o/r/tree/main/skills/x');
+    const { extractRoot, ref, cleanup } = await downloadAndExtract(source);
+    try {
+      expect(ref).toBe('main');
+      // Only the subdir's files, at their repo-relative paths (so pickManifest resolves unchanged):
+      expect(await isFile(join(extractRoot, 'skills', 'x', 'SKILL.md'))).toBe(true);
+      expect(await isFile(join(extractRoot, 'skills', 'x', 'scripts', 'run.py'))).toBe(true);
+      expect(await pickManifest(extractRoot, 'skills/x', null)).toBe('skills/x/SKILL.md');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('rejects a Contents entry whose path escapes the target directory (traversal guard)', async () => {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/contents/')) {
+        return new Response(
+          JSON.stringify([
+            { name: 'evil', path: '../../evil.txt', type: 'file', size: 5,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/evil' },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response('x', { status: 200 });
+    }) as typeof fetch;
+
+    const source = parseSkillSource('o/r/skills/x');
+    await expect(downloadAndExtract(source)).rejects.toBeInstanceOf(SkillFetchError);
   });
 });
 

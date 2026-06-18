@@ -52,10 +52,14 @@ export function buildContent(slug: string, body: string, scripts: DetectedScript
   const scriptNote = scripts.length
     ? `This skill bundles ${scripts.length} script file(s) (${scripts
         .map((s) => s.path)
-        .join(', ')}). You CANNOT execute scripts here. When an instruction calls for ` +
-      `running one, use an equivalent native tool if one exists; otherwise tell the ` +
-      `user that step needs script execution, which is not available.`
-    : 'You cannot execute scripts in this environment.';
+        .join(', ')}). To run one, use the run_skill_script tool — e.g. ` +
+      `run_skill_script({ skill: '${slug}', script: 'scripts/<name>', args: [...] }). It runs ` +
+      `from the skill folder, so the skill's own files (workflows/, sibling modules) resolve by ` +
+      `relative path; read its stdout (often JSON) for the result. If run_skill_script is NOT in ` +
+      `your available tools, script execution has not been authorized for you — do that step with ` +
+      `an equivalent native tool, or ask the user to enable "Allow scripts" for this skill. For ` +
+      `any other shell the skill instructs (curl, CLIs, pip install), use run_command if you have it.`
+    : 'This skill bundles no scripts.';
   return [
     '> **Installed skill — operational notes**',
     `> Your bundled files live in the skill store. Read them on demand with ` +

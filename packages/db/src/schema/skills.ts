@@ -137,6 +137,12 @@ export const agentSkillAssignments = pgTable(
     approvalOverrides: jsonb('approval_overrides').default(sql`'{}'::jsonb`),
     useCustomInstructions: boolean('use_custom_instructions').notNull().default(false),
     enabledOperations: text('enabled_operations').array(),
+    // Per-skill × per-agent authorization to EXECUTE the skill's bundled scripts
+    // (installed_scripts) via run_skill_script. Owner opt-in, default FALSE. A
+    // community skill may ship .py/.sh scripts, but the runtime refuses to run
+    // them unless the owner flips this for a specific agent × skill — the
+    // case-by-case execution gate. Loaded by the runner into the ToolContext.
+    scriptsAuthorized: boolean('scripts_authorized').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [],
