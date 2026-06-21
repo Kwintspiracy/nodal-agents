@@ -25,6 +25,12 @@ import { citationDisciplineSkill } from './skills/citation-discipline';
 import { safeToolUseSkill } from './skills/safe-tool-use';
 import { officeEditingSkill } from './skills/office-editing';
 import { commandExecutionSkill } from './skills/command-execution';
+import { toolCreateMcpSkill } from './skills/tool-create-mcp';
+import { toolCreateAgentSkill } from './skills/tool-create-agent';
+import { toolUpdateAgentSkill } from './skills/tool-update-agent';
+import { toolAttachMcpSkill } from './skills/tool-attach-mcp';
+import { toolAttachConnectorSkill } from './skills/tool-attach-connector';
+import { toolSchedulesSkill } from './skills/tool-schedules';
 
 export { officeEditingSkill } from './skills/office-editing';
 export { commandExecutionSkill } from './skills/command-execution';
@@ -42,6 +48,13 @@ export const systemSkills: SystemSkill[] = [
   safeToolUseSkill,
   officeEditingSkill,
   commandExecutionSkill,
+  // Tool usage guides — loaded on demand via skill_view, not auto-injected.
+  toolCreateMcpSkill,
+  toolCreateAgentSkill,
+  toolUpdateAgentSkill,
+  toolAttachMcpSkill,
+  toolAttachConnectorSkill,
+  toolSchedulesSkill,
 ];
 
 /**

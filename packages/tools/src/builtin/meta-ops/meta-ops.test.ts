@@ -758,17 +758,21 @@ describe('attach_agent', () => {
     const ctx = makeCtx();
 
     // Create a target agent directly (no auto-assignment)
-    const worker = await createAgentRepo(db as unknown as Parameters<typeof createAgentRepo>[0], seed.entityId, {
-      slug: 'attach-target-worker',
-      name: 'Attach Target Worker',
-      personality: 'p',
-      model: 'm',
-      llmKeyId: null,
-      role: 'agent',
-      orchestratorMode: null,
-      avatarUrl: null,
-      subAgentIds: [],
-    });
+    const worker = await createAgentRepo(
+      db as unknown as Parameters<typeof createAgentRepo>[0],
+      seed.entityId,
+      {
+        slug: 'attach-target-worker',
+        name: 'Attach Target Worker',
+        personality: 'p',
+        model: 'm',
+        llmKeyId: null,
+        role: 'agent',
+        orchestratorMode: null,
+        avatarUrl: null,
+        subAgentIds: [],
+      },
+    );
     if (!('id' in worker)) throw new Error('worker creation failed');
     const targetId = worker.id;
 
@@ -796,17 +800,21 @@ describe('attach_agent', () => {
   it('resolves the target by NAME (ilike)', async () => {
     const ctx = makeCtx();
 
-    const worker = await createAgentRepo(db as unknown as Parameters<typeof createAgentRepo>[0], seed.entityId, {
-      slug: 'attach-byname-worker',
-      name: 'Attach ByName Worker',
-      personality: 'p',
-      model: 'm',
-      llmKeyId: null,
-      role: 'agent',
-      orchestratorMode: null,
-      avatarUrl: null,
-      subAgentIds: [],
-    });
+    const worker = await createAgentRepo(
+      db as unknown as Parameters<typeof createAgentRepo>[0],
+      seed.entityId,
+      {
+        slug: 'attach-byname-worker',
+        name: 'Attach ByName Worker',
+        personality: 'p',
+        model: 'm',
+        llmKeyId: null,
+        role: 'agent',
+        orchestratorMode: null,
+        avatarUrl: null,
+        subAgentIds: [],
+      },
+    );
     if (!('id' in worker)) throw new Error('worker creation failed');
     const targetId = worker.id;
 
@@ -830,17 +838,21 @@ describe('attach_agent', () => {
   it('is idempotent: calling twice yields exactly one assignment row', async () => {
     const ctx = makeCtx();
 
-    const worker = await createAgentRepo(db as unknown as Parameters<typeof createAgentRepo>[0], seed.entityId, {
-      slug: 'attach-idem-worker',
-      name: 'Attach Idempotent Worker',
-      personality: 'p',
-      model: 'm',
-      llmKeyId: null,
-      role: 'agent',
-      orchestratorMode: null,
-      avatarUrl: null,
-      subAgentIds: [],
-    });
+    const worker = await createAgentRepo(
+      db as unknown as Parameters<typeof createAgentRepo>[0],
+      seed.entityId,
+      {
+        slug: 'attach-idem-worker',
+        name: 'Attach Idempotent Worker',
+        personality: 'p',
+        model: 'm',
+        llmKeyId: null,
+        role: 'agent',
+        orchestratorMode: null,
+        avatarUrl: null,
+        subAgentIds: [],
+      },
+    );
     if (!('id' in worker)) throw new Error('worker creation failed');
     const targetId = worker.id;
 

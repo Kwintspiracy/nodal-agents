@@ -125,6 +125,12 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
                 <span className="rounded-full border border-rule-2 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-4">
                   Origin orchestrator
                 </span>
+                <a
+                  href="/settings/root-context"
+                  className="ml-auto text-[12px] font-medium text-ink-3 underline decoration-rule underline-offset-[3px] hover:text-ink hover:decoration-ink-3"
+                >
+                  View &amp; edit context →
+                </a>
               </div>
             </div>
 
@@ -137,12 +143,19 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
                   {(
                     [
                       { key: 'createAgent', label: 'Create agents' },
-                      { key: 'attachAgent', label: 'Attach agents (assign existing as sub-agent)' },
+                      { key: 'updateAgent', label: 'Edit agents (model, personality, name)' },
+                      { key: 'attachAgent', label: 'Attach / detach sub-agents' },
                       { key: 'createSkill', label: 'Create skills' },
                       { key: 'updateSkill', label: 'Update skills' },
-                      { key: 'assignSkill', label: 'Assign skills' },
+                      { key: 'assignSkill', label: 'Assign / unassign skills' },
                       { key: 'createMcp', label: 'Create MCP servers' },
+                      { key: 'attachMcp', label: 'Attach / detach MCP servers' },
                       { key: 'createConnector', label: 'Create connectors' },
+                      { key: 'attachConnector', label: 'Attach / detach connectors' },
+                      {
+                        key: 'manageSchedules',
+                        label: 'Manage schedules (create / edit / pause cron)',
+                      },
                     ] as const
                   ).map(({ key, label }) => (
                     <label

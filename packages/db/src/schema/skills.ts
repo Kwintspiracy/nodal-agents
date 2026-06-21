@@ -43,9 +43,7 @@ export const agentSkills = pgTable(
     // user as a warning, since the runtime does NOT execute skill scripts.
     isCommunity: boolean('is_community').notNull().default(false),
     source: text('source'),
-    installedScripts: jsonb('installed_scripts').$type<
-      Array<{ path: string; language: string }>
-    >(),
+    installedScripts: jsonb('installed_scripts').$type<Array<{ path: string; language: string }>>(),
     // ─── Learning-loop columns (Phase A) ─────────────────────────────────────
     // createdBy: provenance — 'user' (default) | 'system' | 'agent'
     // state: lifecycle — 'active' (default) | 'stale' | 'archived'

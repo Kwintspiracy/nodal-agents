@@ -25,11 +25,11 @@ Config is saved to `~/.nodalai/config.json`. Run `nodal-agents init` at any time
 
 Default ports (configurable in `~/.nodalai/config.json`):
 
-| Service | Default port |
-|---------|-------------|
-| Dashboard (web) | 3000 |
-| Runner (API) | 3001 |
-| Embedded Postgres | 25432 |
+| Service           | Default port |
+| ----------------- | ------------ |
+| Dashboard (web)   | 3000         |
+| Runner (API)      | 3001         |
+| Embedded Postgres | 25432        |
 
 If a configured port is occupied on startup, `nodal-agents up` automatically rotates to the next free port and saves the new value to config. The dashboard opens at the resolved URL.
 

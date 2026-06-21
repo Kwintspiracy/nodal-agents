@@ -7,7 +7,12 @@ import Topbar from '@/components/ui/Topbar';
 import ThemedToaster from '@/components/ui/ThemedToaster';
 import { ApprovalsProvider, type PendingApproval } from '@/components/ApprovalsProvider';
 import { requireUserWithEntity } from '@/lib/server.ts';
-import { listWorkspacesAction, listApprovalsAction, type WorkspaceRow } from '@/lib/actions.ts';
+import {
+  listWorkspacesAction,
+  listApprovalsAction,
+  getEntityStatsAction,
+  type WorkspaceRow,
+} from '@/lib/actions.ts';
 
 // Gate every dashboard route. The proxy only checks cookie *presence*,
 // so a stale/invalidated cookie (DB reset, expired session) reaches the
@@ -23,6 +28,22 @@ export default async function DashboardLayout({ children }: { children: React.Re
     if (err instanceof NoEntityError) redirect('/onboarding');
     throw err;
   }
+
+  // First-run gate: a workspace with NO agents hasn't been set up yet — send it
+  // to the dedicated full-screen onboarding flow instead of dumping the user on
+  // an empty dashboard. We key off agent count (not LLM provider): in local
+  // trust the runner auto-seeds an env-derived LLM key on boot, so "has a
+  // provider" is almost always true and useless as a fresh-install signal.
+  // "Has at least one agent" is the real "is this set up?" line. Once they
+  // create their first agent, onboarding stops triggering.
+  // Only gate to onboarding on a SUCCESSFUL "zero agents" read. Do NOT redirect
+  // when the stats query fails: defaulting a failed read to 0 would bounce a
+  // real workspace into onboarding, and — because the onboarding page redirects
+  // back to '/' once it sees agentCount > 0 — an intermittent DB failure (e.g.
+  // pool exhaustion right after the onboarding click-through) flip-flops the two
+  // reads and produces a '/' <-> '/onboarding' redirect loop (blank screen).
+  const freshStats = await getEntityStatsAction();
+  if (freshStats.ok && freshStats.data.agentCount === 0) redirect('/onboarding');
 
   // Fetch workspaces server-side so the Sidebar receives them as a prop.
   // Failure is non-fatal — the sidebar falls back to an empty list.

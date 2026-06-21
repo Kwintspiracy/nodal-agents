@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { eq, and } from '@nodal-agents/db';
 import { mcpServers } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
+import { resolveAgentId, linkMcpToAgent } from './link-helpers';
 
 const CreateMcpInput = z.object({
   name: z.string().min(1).describe('Human-readable display name for the MCP server.'),
@@ -45,6 +46,14 @@ const CreateMcpInput = z.object({
     .record(z.string(), z.string())
     .optional()
     .describe('stdio only: environment variables for the subprocess (encrypted at rest).'),
+  attachToAgentSlug: z
+    .string()
+    .optional()
+    .describe(
+      'Optional: slug/name of an agent to immediately attach this MCP to, so its tools become ' +
+        'usable by that agent. Without this, the server is registered but NOT usable by anyone ' +
+        '— attach it later with attach_mcp.',
+    ),
 });
 
 type CreateMcpOutput = { ok: true; message: string } | { ok: false; error: string };
@@ -53,7 +62,11 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
   name: 'create_mcp',
   description:
     'Provision a new MCP server in this entity and make its tools available. ' +
+    "BEFORE calling this, run skill_view('tool-create-mcp') to load the exact format + a worked " +
+    'example (especially how to pass the API key — it goes in apiKey, never in the url). ' +
     'transport "http" needs url + apiKey (+ authScheme); "stdio" needs command (+ args, env). ' +
+    'Pass attachToAgentSlug to immediately attach it to an agent (otherwise the server is ' +
+    'registered but NO agent can use its tools — attach it after with attach_mcp). ' +
     'The server is verified by connecting and listing its tools BEFORE anything is saved — ' +
     'if it cannot connect, nothing is written and a clear error is returned. ' +
     'Fails if the slug is already used by another MCP server in this workspace.',
@@ -64,6 +77,21 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
     if (!provisioning) {
       return { ok: false, error: 'MCP provisioning is not available in this context.' };
     }
+
+    // Optionally attach the new server to an agent so its tools become usable.
+    // Returns a message suffix describing the outcome (the server is created
+    // regardless; a missing target is reported, not fatal).
+    const attachSuffix = async (mcpServerId: string): Promise<string> => {
+      if (!input.attachToAgentSlug) {
+        return ' (not attached to any agent yet — use attach_mcp to make its tools usable).';
+      }
+      const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.attachToAgentSlug);
+      if (!agentId) {
+        return ` (note: could not attach — no agent "${input.attachToAgentSlug}" found; attach it later with attach_mcp).`;
+      }
+      await linkMcpToAgent(ctx.db, ctx.entityId, agentId, mcpServerId);
+      return ` Attached to agent "${input.attachToAgentSlug}" — its tools are now available to that agent.`;
+    };
 
     // Slug must be unique within the entity — it prefixes the server's tool names.
     const existing = await ctx.db
@@ -110,22 +138,26 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
         if (conn) await conn.close().catch(() => {});
       }
 
-      await ctx.db.insert(mcpServers).values({
-        entityId: ctx.entityId,
-        name: input.name,
-        slug: input.slug,
-        transport: 'http',
-        url,
-        apiKey: provisioning.encrypt(apiKey),
-        apiKeyLast4: apiKey.slice(-4),
-        authScheme,
-        authParamName,
-        availableTools: tools,
-        active: true,
-      });
+      const [insertedHttp] = await ctx.db
+        .insert(mcpServers)
+        .values({
+          entityId: ctx.entityId,
+          name: input.name,
+          slug: input.slug,
+          transport: 'http',
+          url,
+          apiKey: provisioning.encrypt(apiKey),
+          apiKeyLast4: apiKey.slice(-4),
+          authScheme,
+          authParamName,
+          availableTools: tools,
+          active: true,
+        })
+        .returning({ id: mcpServers.id });
+      const suffixHttp = insertedHttp ? await attachSuffix(insertedHttp.id) : '';
       return {
         ok: true,
-        message: `Connected and registered MCP server "${input.name}" (${input.slug}) with ${tools.length} tool(s).`,
+        message: `Connected and registered MCP server "${input.name}" (${input.slug}) with ${tools.length} tool(s).${suffixHttp}`,
       };
     }
 
@@ -151,20 +183,24 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
     const encEnv: Record<string, string> = {};
     for (const [k, v] of Object.entries(env)) encEnv[k] = provisioning.encrypt(v);
 
-    await ctx.db.insert(mcpServers).values({
-      entityId: ctx.entityId,
-      name: input.name,
-      slug: input.slug,
-      transport: 'stdio',
-      command,
-      args,
-      envVars: encEnv,
-      availableTools: tools,
-      active: true,
-    });
+    const [insertedStdio] = await ctx.db
+      .insert(mcpServers)
+      .values({
+        entityId: ctx.entityId,
+        name: input.name,
+        slug: input.slug,
+        transport: 'stdio',
+        command,
+        args,
+        envVars: encEnv,
+        availableTools: tools,
+        active: true,
+      })
+      .returning({ id: mcpServers.id });
+    const suffixStdio = insertedStdio ? await attachSuffix(insertedStdio.id) : '';
     return {
       ok: true,
-      message: `Started and registered stdio MCP server "${input.name}" (${input.slug}) with ${tools.length} tool(s).`,
+      message: `Started and registered stdio MCP server "${input.name}" (${input.slug}) with ${tools.length} tool(s).${suffixStdio}`,
     };
   },
 };

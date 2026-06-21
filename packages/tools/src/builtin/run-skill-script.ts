@@ -52,7 +52,9 @@ const runSkillScriptSchema = z.object({
   skill: z
     .string()
     .min(1)
-    .describe("Slug of an installed skill you hold and are authorized to run scripts for (e.g. 'comfyui')."),
+    .describe(
+      "Slug of an installed skill you hold and are authorized to run scripts for (e.g. 'comfyui').",
+    ),
   script: z
     .string()
     .min(1)
@@ -112,48 +114,58 @@ class ScriptsNotAuthorizedError extends Error {
 
 // ─── Tool ───────────────────────────────────────────────────────────────────
 
-export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, RunSkillScriptOutput> = {
-  name: 'run_skill_script',
-  description:
-    "Execute a script that ships with one of your installed skills (e.g. a ComfyUI skill's " +
-    'run_workflow.py). Use this to run the skill\'s real automation instead of re-implementing ' +
-    'its logic inline. Pass the script path relative to the skill folder (find it with ' +
-    'skill_file_list) and any arguments as an array. The script runs from the skill folder, so ' +
-    'its bundled files (workflows/, references/) are reachable by relative path. Returns stdout, ' +
-    'stderr and the exit code — read the stdout (often JSON) for the result, e.g. an output ' +
-    'filename to deliver with send_image. By DEFAULT every run requires human approval; the user ' +
-    'can enable auto-run ("Yolo") per agent. A non-zero exit code is returned to you (not an error) ' +
-    '— read stderr and adapt. Only runs scripts of a skill the owner has authorized for you; ' +
-    'if it returns scripts_not_authorized, ask the user to enable it rather than retrying.',
-  inputSchema: runSkillScriptSchema,
-  riskLevel: 'destructive',
-  defaultApproval: 'require_approval',
-  execute: async (input: RunSkillScriptInput, ctx: ToolContext): Promise<RunSkillScriptOutput> => {
-    // GATE 2 — authorization: owner opted THIS skill's scripts in for THIS agent.
-    const authorized = ctx.scriptAuthorizedSkillSlugs ?? [];
-    if (!authorized.includes(input.skill)) {
-      throw new ScriptsNotAuthorizedError(input.skill);
-    }
+export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, RunSkillScriptOutput> =
+  {
+    name: 'run_skill_script',
+    description:
+      "Execute a script that ships with one of your installed skills (e.g. a ComfyUI skill's " +
+      "run_workflow.py). Use this to run the skill's real automation instead of re-implementing " +
+      'its logic inline. Pass the script path relative to the skill folder (find it with ' +
+      'skill_file_list) and any arguments as an array. The script runs from the skill folder, so ' +
+      'its bundled files (workflows/, references/) are reachable by relative path. Returns stdout, ' +
+      'stderr and the exit code — read the stdout (often JSON) for the result, e.g. an output ' +
+      'filename to deliver with send_image. By DEFAULT every run requires human approval; the user ' +
+      'can enable auto-run ("Yolo") per agent. A non-zero exit code is returned to you (not an error) ' +
+      '— read stderr and adapt. Only runs scripts of a skill the owner has authorized for you; ' +
+      'if it returns scripts_not_authorized, ask the user to enable it rather than retrying.',
+    inputSchema: runSkillScriptSchema,
+    riskLevel: 'destructive',
+    defaultApproval: 'require_approval',
+    execute: async (
+      input: RunSkillScriptInput,
+      ctx: ToolContext,
+    ): Promise<RunSkillScriptOutput> => {
+      // GATE 2 — authorization: owner opted THIS skill's scripts in for THIS agent.
+      const authorized = ctx.scriptAuthorizedSkillSlugs ?? [];
+      if (!authorized.includes(input.skill)) {
+        throw new ScriptsNotAuthorizedError(input.skill);
+      }
 
-    // GATE 1 — scope: resolve the skill root (verifies assigned + installed) and
-    // the script path strictly within it (realpath + prefix guard).
-    const realRoot = await resolveSkillRoot(ctx, input.skill);
-    const scriptAbs = await resolveWithinSkill(realRoot, input.script);
+      // GATE 1 — scope: resolve the skill root (verifies assigned + installed) and
+      // the script path strictly within it (realpath + prefix guard).
+      const realRoot = await resolveSkillRoot(ctx, input.skill);
+      const scriptAbs = await resolveWithinSkill(realRoot, input.script);
 
-    const interpreter = interpreterFor(scriptAbs);
-    if (!interpreter) {
-      const err = new Error(
-        `unsupported_script_type: only .py, .sh and .js scripts can be run (got "${input.script}").`,
+      const interpreter = interpreterFor(scriptAbs);
+      if (!interpreter) {
+        const err = new Error(
+          `unsupported_script_type: only .py, .sh and .js scripts can be run (got "${input.script}").`,
+        );
+        err.name = 'unsupported_script_type';
+        throw err;
+      }
+
+      const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+      // GATE 4 — no shell: interpreter + [script, ...args] as an arg array.
+      return runScript(
+        interpreter,
+        [scriptAbs, ...(input.args ?? [])],
+        realRoot,
+        timeoutMs,
+        input.script,
       );
-      err.name = 'unsupported_script_type';
-      throw err;
-    }
-
-    const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
-    // GATE 4 — no shell: interpreter + [script, ...args] as an arg array.
-    return runScript(interpreter, [scriptAbs, ...(input.args ?? [])], realRoot, timeoutMs, input.script);
-  },
-};
+    },
+  };
 
 // ─── Process execution (no shell, timeout + tree-kill, capped output) ─────────
 

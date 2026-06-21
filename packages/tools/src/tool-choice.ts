@@ -41,12 +41,19 @@ export type ToolChoice = 'required' | 'auto' | 'none';
 /**
  * Compute the tool_choice value for a given runner turn.
  *
- * Rules (from legacy runner.py, turn 934-945):
- *  - Orchestrators: force 'required' on turn 1 only — they often need to
- *    generate a final user-facing message on later turns.
- *  - Worker agents with adapter tools: force 'required' every turn — they
- *    must call tools, and return_result provides the exit path.
- *  - Everyone else: 'auto'.
+ * Rules:
+ *  - Turn 1: force 'required' for orchestrators (must start delegating/planning)
+ *    AND for workers with adapter tools (must start using their tools — drift
+ *    prevention for models that would otherwise answer in prose without acting).
+ *  - After turn 1: 'auto'. The agent decides — crucially this lets it emit a
+ *    final FREE-FORM TEXT answer (a research report, a synthesis, a summary).
+ *
+ * Why NOT force workers every turn (the previous rule): forcing 'required' on
+ * every turn makes a text deliverable IMPOSSIBLE — the agent can only ever call
+ * a tool, never write its report as a final assistant message. A research agent
+ * forced this way gathers data then calls return_result without ever composing
+ * the report, so the result is empty. Turn-1 force + auto after preserves
+ * drift-prevention while allowing the agent to actually write its answer.
  *
  * 'none' is kept in the type for future use but never returned here.
  */
@@ -60,13 +67,10 @@ export function computeToolChoice(cfg: ToolChoiceConfig): ToolChoice {
     return 'auto';
   }
 
-  // Worker with adapter tools → always required (GPT drift prevention)
-  if (hasAdapterTools && !isOrchestrator) {
-    return 'required';
-  }
-
-  // Orchestrator first turn → required (must call assign_* or create_task)
-  if (isOrchestrator && turn === 1) {
+  // Turn 1: force tool use so orchestrators start delegating and workers start
+  // using their tools. After turn 1, 'auto' so the agent can write a final
+  // free-form text answer instead of being trapped into always calling a tool.
+  if (turn === 1 && (isOrchestrator || hasAdapterTools)) {
     return 'required';
   }
 

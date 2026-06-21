@@ -21,8 +21,14 @@ import { META_TOOLS } from './meta-ops';
 import { SKILL_TOOLS } from './skill-ops';
 import { runCommandTool } from './run-command';
 import { runSkillScriptTool } from './run-skill-script';
+import { skillViewTool } from './skill-view';
+import { listModelsTool } from './list-models';
+import { listSchedulesTool } from './list-schedules';
 
 export { returnResultTool } from './return-result';
+export { skillViewTool } from './skill-view';
+export { listModelsTool } from './list-models';
+export { listSchedulesTool } from './list-schedules';
 export { saveMemoryTool } from './save-memory';
 export { queryMemoryTool } from './query-memory';
 export { markMemoryHelpfulTool } from './mark-memory-helpful';
@@ -40,7 +46,13 @@ export {
 } from './file-ops';
 export { OFFICE_TOOLS } from './office-ops';
 export { META_TOOLS } from './meta-ops';
-export { createSkillTool, assignSkillTool, createAgentTool, attachAgentTool } from './meta-ops';
+export {
+  createSkillTool,
+  assignSkillTool,
+  createAgentTool,
+  updateAgentTool,
+  attachAgentTool,
+} from './meta-ops';
 export { SKILL_TOOLS, skillFileReadTool, skillFileListTool, SkillFileError } from './skill-ops';
 export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
@@ -58,6 +70,9 @@ export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-scri
  */
 export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(returnResultTool);
+  registry.register(skillViewTool);
+  registry.register(listModelsTool);
+  registry.register(listSchedulesTool);
   registry.register(saveMemoryTool);
   registry.register(queryMemoryTool);
   registry.register(markMemoryHelpfulTool);
@@ -102,6 +117,9 @@ export function registerBuiltins(registry: ToolRegistry): void {
  */
 export const ALWAYS_ON_TOOLS = [
   'return_result',
+  'skill_view',
+  'list_models',
+  'list_schedules',
   'save_memory',
   'query_memory',
   'mark_memory_helpful',
@@ -127,6 +145,9 @@ export type AlwaysOnTool = (typeof ALWAYS_ON_TOOLS)[number];
  */
 export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: string }> = [
   { name: returnResultTool.name, description: returnResultTool.description },
+  { name: skillViewTool.name, description: skillViewTool.description },
+  { name: listModelsTool.name, description: listModelsTool.description },
+  { name: listSchedulesTool.name, description: listSchedulesTool.description },
   { name: saveMemoryTool.name, description: saveMemoryTool.description },
   { name: queryMemoryTool.name, description: queryMemoryTool.description },
   { name: markMemoryHelpfulTool.name, description: markMemoryHelpfulTool.description },

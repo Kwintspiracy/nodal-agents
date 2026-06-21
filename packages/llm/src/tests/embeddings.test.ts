@@ -1,7 +1,11 @@
 // embeddings.test.ts — EmbeddingClient paths
 
 import { describe, it, expect } from 'vitest';
-import { createEmbeddingClient, validateEmbeddingDimension, EXPECTED_EMBEDDING_DIM } from '../embeddings';
+import {
+  createEmbeddingClient,
+  validateEmbeddingDimension,
+  EXPECTED_EMBEDDING_DIM,
+} from '../embeddings';
 
 describe('createEmbeddingClient — keyword fallback', () => {
   it('returns null for embed() with keyword provider', async () => {
@@ -93,7 +97,9 @@ describe('validateEmbeddingDimension', () => {
 
   it('does NOT throw when vector length equals EXPECTED_EMBEDDING_DIM (1536)', () => {
     const correctVector = Array.from({ length: EXPECTED_EMBEDDING_DIM }, () => 0.5);
-    expect(() => validateEmbeddingDimension(correctVector, 'openai', 'text-embedding-3-small')).not.toThrow();
+    expect(() =>
+      validateEmbeddingDimension(correctVector, 'openai', 'text-embedding-3-small'),
+    ).not.toThrow();
   });
 
   it('keyword mode (null vector) is intentionally not validated — only real vectors are checked', () => {

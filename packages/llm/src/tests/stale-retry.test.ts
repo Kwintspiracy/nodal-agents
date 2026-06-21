@@ -191,7 +191,11 @@ describe('withStaleRetry — per-attempt timeout values', () => {
     };
 
     await expect(
-      withStaleRetry(fn, PROVIDER_MODEL, { primaryTimeoutMs: 300, retryTimeoutMs: 150, maxRetries: 2 }),
+      withStaleRetry(fn, PROVIDER_MODEL, {
+        primaryTimeoutMs: 300,
+        retryTimeoutMs: 150,
+        maxRetries: 2,
+      }),
     ).rejects.toBeInstanceOf(LLMTimeoutError);
 
     expect(seen).toEqual([300, 150, 150]);

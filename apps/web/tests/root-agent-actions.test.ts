@@ -148,12 +148,16 @@ async function setRoot(orchId: string | null) {
 
 const ALL_ON = {
   createAgent: true,
+  updateAgent: true,
   attachAgent: true,
   createSkill: true,
   updateSkill: true,
   assignSkill: true,
   createMcp: true,
+  attachMcp: true,
   createConnector: true,
+  attachConnector: true,
+  manageSchedules: true,
 } as const;
 
 async function metaRules() {
@@ -184,12 +188,16 @@ describe('getRootConfigAction', () => {
     if (!res.ok) return;
     expect(res.data.rootAgentId).toBeNull();
     // Empty stored grants parse to the original defaults, EXCEPT the newer
-    // opt-in grants (createMcp, createConnector): absent → false (never granted
-    // retroactively).
+    // opt-in grants: createMcp/createConnector absent → false (never granted
+    // retroactively), their attach_* mirrors inherit that false, and
+    // manageSchedules (a new capability) is also opt-in-false.
     expect(res.data.grants).toEqual({
       ...DEFAULT_ROOT_GRANTS,
       createMcp: false,
+      attachMcp: false,
       createConnector: false,
+      attachConnector: false,
+      manageSchedules: false,
     });
   });
 
@@ -269,17 +277,13 @@ describe('setRootAgentAction — write paths', () => {
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
 
     const rules = await metaRules();
-    expect(rules.length).toBe(7);
     const toolNames = rules.map((r) => r.toolName).sort();
-    expect(toolNames).toEqual([
-      'attach_agent',
-      'attach_skill',
-      'create_agent',
-      'create_connector',
-      'create_mcp',
-      'create_skill',
-      'update_skill',
-    ]);
+    // ALL_ON enables every meta-tool; attach grants also enable their detach
+    // mirror and manageSchedules enables the cron CRUD. Compute the expected set
+    // from the source of truth so it stays correct as the grant map evolves.
+    const { enabledMetaTools } = await import('@nodal-agents/shared');
+    const expectedNames = enabledMetaTools({ ...ALL_ON, autonomy: 'propose_confirm' }).sort();
+    expect(toolNames).toEqual(expectedNames);
     for (const rule of rules) {
       expect(rule.agentId).toBe(_orchestratorId);
       expect(rule.action).toBe('require_approval');
@@ -292,12 +296,16 @@ describe('setRootAgentAction — write paths', () => {
     await setRootAgentAction({
       grants: {
         createAgent: true,
+        updateAgent: false,
         attachAgent: false,
         createSkill: false,
         updateSkill: false,
         assignSkill: false,
         createMcp: false,
+        attachMcp: false,
         createConnector: false,
+        attachConnector: false,
+        manageSchedules: false,
         autonomy: 'propose_confirm',
       },
     });
@@ -347,8 +355,10 @@ describe('setRootAgentAction — write paths', () => {
     await setRoot(_orchestratorId);
     const { setRootAgentAction } = await import('../src/lib/actions.ts');
 
+    const { enabledMetaTools } = await import('@nodal-agents/shared');
+    const expectedCount = enabledMetaTools({ ...ALL_ON, autonomy: 'propose_confirm' }).length;
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'propose_confirm' } });
-    expect((await metaRules()).length).toBe(7);
+    expect((await metaRules()).length).toBe(expectedCount);
 
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'fully_autonomous' } });
     expect((await metaRules()).length).toBe(0);

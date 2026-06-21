@@ -170,10 +170,7 @@ describe('skill_file_list', () => {
   });
 
   it('refuses a skill the agent does not hold', async () => {
-    const r = await skillFileListTool.execute(
-      { skill: SLUG },
-      ctx({ store: STORE, assigned: [] }),
-    );
+    const r = await skillFileListTool.execute({ skill: SLUG }, ctx({ store: STORE, assigned: [] }));
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
     expect(r.reason).toContain('not assigned');

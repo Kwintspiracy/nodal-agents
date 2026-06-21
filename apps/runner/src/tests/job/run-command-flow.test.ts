@@ -336,7 +336,8 @@ describe('run_command — E2E runner integration', () => {
         // tool-result blocks: { type: 'tool-result', toolName, output: { type, value } }
         if (block['type'] !== 'tool-result') continue;
         const output = block['output'] as { type: string; value: unknown } | undefined;
-        const rawValue = output?.type === 'text' ? output.value : JSON.stringify(output?.value ?? null);
+        const rawValue =
+          output?.type === 'text' ? output.value : JSON.stringify(output?.value ?? null);
         const valueStr = typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue);
         if (valueStr.includes('[AWAITING_APPROVAL]')) foundAwaiting = true;
         if (block['toolName'] === 'run_command' && valueStr.includes(MARKER)) foundMarker = true;
@@ -421,9 +422,11 @@ describe('run_command — E2E runner integration', () => {
         for (const block of msg.content as Array<Record<string, unknown>>) {
           if (block['type'] !== 'tool-result') continue;
           const output = block['output'] as { type: string; value: unknown } | undefined;
-          const rawValue = output?.type === 'text' ? output.value : JSON.stringify(output?.value ?? null);
+          const rawValue =
+            output?.type === 'text' ? output.value : JSON.stringify(output?.value ?? null);
           const valueStr = typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue);
-          if (block['toolName'] === 'run_command' && valueStr.includes(MARKER2)) foundMarker2 = true;
+          if (block['toolName'] === 'run_command' && valueStr.includes(MARKER2))
+            foundMarker2 = true;
         }
       }
 
@@ -466,10 +469,14 @@ describe('run_command — E2E runner integration', () => {
       const job = await createJob();
       const llmClient = makeMockLlmClient([
         {
-          toolCalls: [{ toolCallId: 'tc-rc-3', toolName: 'run_command', args: { command: COMMAND3 } }],
+          toolCalls: [
+            { toolCallId: 'tc-rc-3', toolName: 'run_command', args: { command: COMMAND3 } },
+          ],
         },
         {
-          toolCalls: [{ toolCallId: 'tc-rr-3', toolName: 'return_result', args: { status: 'success' } }],
+          toolCalls: [
+            { toolCallId: 'tc-rr-3', toolName: 'return_result', args: { status: 'success' } },
+          ],
         },
       ]);
 
@@ -516,10 +523,14 @@ describe('run_command — E2E runner integration', () => {
       const job = await createJob();
       const llmClient = makeMockLlmClient([
         {
-          toolCalls: [{ toolCallId: 'tc-rc-4', toolName: 'run_command', args: { command: COMMAND4 } }],
+          toolCalls: [
+            { toolCallId: 'tc-rc-4', toolName: 'run_command', args: { command: COMMAND4 } },
+          ],
         },
         {
-          toolCalls: [{ toolCallId: 'tc-rr-4', toolName: 'return_result', args: { status: 'success' } }],
+          toolCalls: [
+            { toolCallId: 'tc-rr-4', toolName: 'return_result', args: { status: 'success' } },
+          ],
         },
       ]);
 
@@ -555,7 +566,10 @@ describe('run_command — E2E runner integration', () => {
     } finally {
       await db.delete(approvalRules).where(eq(approvalRules.id, ruleRow.id));
       // Reset the switch so it doesn't bleed into other tests.
-      await db.update(entities).set({ lanCommandYolo: false }).where(eq(entities.id, seed.entityId));
+      await db
+        .update(entities)
+        .set({ lanCommandYolo: false })
+        .where(eq(entities.id, seed.entityId));
     }
   });
 });

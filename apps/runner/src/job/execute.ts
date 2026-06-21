@@ -73,6 +73,9 @@ import {
   claimJob,
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
@@ -442,6 +445,23 @@ export async function executeJob(
     .orderBy(agentWorkspacesTable.position, agentWorkspacesTable.label);
   const agentWorkspacesList: Array<{ label: string; path: string }> = wsRows;
 
+  // Entity-wide SHARED workspace: a common scratch/hand-off area every agent in
+  // this entity can read/write — for ARTIFACTS (reports, images, html, pptx) that
+  // siblings or later runs need. Auto-created (works out-of-box); complements the
+  // per-agent workspaces above (special tasks) and entity-wide memory (facts).
+  // Labeled 'shared'. The agent's file_* tools see it like any other workspace.
+  if (job.entityId) {
+    const sharedPath = join(homedir(), '.nodalai', 'workspaces', job.entityId, 'shared');
+    try {
+      mkdirSync(sharedPath, { recursive: true });
+      if (!agentWorkspacesList.some((w) => w.label === 'shared')) {
+        agentWorkspacesList.push({ label: 'shared', path: sharedPath });
+      }
+    } catch {
+      // best-effort — a workspace we couldn't create is simply not offered
+    }
+  }
+
   // ── 3.6 Skill-file access context ─────────────────────────────────────────
   // Slugs of skills assigned to this agent + the store root, so the
   // skill_file_* builtins can read an installed (community) skill's bundled
@@ -523,7 +543,7 @@ export async function executeJob(
   // that intent to the agent so it ends with a confirmation, and engage the
   // delivery guard below so the send is actually enforced.
   const cronWantsConfirmation = job.channel === 'cron' && job.chatId != null;
-  const deployment = await getDeploymentContext(db);
+  const deployment = await getDeploymentContext(db, job.entityId ?? undefined);
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
@@ -556,7 +576,8 @@ export async function executeJob(
   // script-skill (agent_skill_assignments.scripts_authorized). Gated here at the
   // whitelist (availability) AND in the builtin via scriptAuthorizedSkillSlugs
   // (execution). Name for the worker whitelist, def for the orchestrator branch.
-  const scriptToolNames: string[] = scriptAuthorizedSkillSlugs.length > 0 ? ['run_skill_script'] : [];
+  const scriptToolNames: string[] =
+    scriptAuthorizedSkillSlugs.length > 0 ? ['run_skill_script'] : [];
   const scriptToolDefs: AnyToolDef[] = scriptToolNames
     .map((n) => registry.get(n))
     .filter((t): t is AnyToolDef => t !== undefined);
@@ -1606,12 +1627,21 @@ export async function executeJob(
       // response.toolCalls; replaying that leaves an unmatched tool_use and fails
       // message-structure validation — live regression: job 8fc974fb, MiniMax M3.)
       const reasoningParts = response.reasoning ?? [];
+      // HARNESS FIX: when a turn has BOTH a written answer (response.text) AND
+      // tool calls, KEEP the text. Previously the text was dropped whenever tool
+      // calls were present, so a model that writes its report as text alongside
+      // return_result/dashboard_publish lost the whole report — it never reached
+      // the persisted transcript, so result-capture/delivery found nothing. The
+      // text part is placed before the tool-call parts (valid assistant content
+      // shape for both Anthropic and OpenAI formats).
+      const hasText = (response.text ?? '').trim().length > 0;
       const assistantMsg: ModelMessage = {
         role: 'assistant',
         content:
           rawToolCalls.length > 0
             ? [
                 ...reasoningParts,
+                ...(hasText ? [{ type: 'text' as const, text: response.text || '' }] : []),
                 ...rawToolCalls.map((tc) => ({
                   type: 'tool-call' as const,
                   toolCallId: tc.toolCallId,

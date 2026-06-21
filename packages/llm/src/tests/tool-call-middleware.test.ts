@@ -376,6 +376,9 @@ describe('detectAgenticFamily dispatch', () => {
     ['moonshotai/kimi-k2', 'kimi'],
     ['moonshotai/kimi-k2.6', 'kimi'],
     ['moonshotai/kimi-k2-thinking', 'kimi'],
+    // K2.7+ emits native OpenAI tool_calls (live-verified) → no markup parser.
+    ['moonshotai/kimi-k2.7-code', null],
+    ['moonshotai/kimi-k2.8', null],
     ['qwen/qwen3-coder', 'nodal-format'],
     ['zai/glm-4.5', 'nodal-format'],
     ['zai/glm-4.7', 'nodal-format'],

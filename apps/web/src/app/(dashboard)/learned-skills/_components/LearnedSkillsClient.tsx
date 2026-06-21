@@ -96,7 +96,11 @@ export default function LearnedSkillsClient({
         setMode(prev);
         toast.error(result.message);
       } else {
-        toast.success(next === 'auto' ? 'Skills auto-assigned to authoring agent' : 'Skills require your approval before assignment');
+        toast.success(
+          next === 'auto'
+            ? 'Skills auto-assigned to authoring agent'
+            : 'Skills require your approval before assignment',
+        );
       }
     });
   }
@@ -139,19 +143,20 @@ export default function LearnedSkillsClient({
       } else {
         toast.success(`"${skillName}" restored`);
         setLocalSkills((prev) =>
-          prev.map((s) =>
-            s.id === skillId ? { ...s, state: 'active', archivedAt: null } : s,
-          ),
+          prev.map((s) => (s.id === skillId ? { ...s, state: 'active', archivedAt: null } : s)),
         );
       }
     });
   }
 
-  const openAssignModal = useCallback((skill: LearnedSkillRow) => {
-    const defaultAgentId = skill.createdByAgentId ?? null;
-    setAssigningAgentId(defaultAgentId ?? (assignableAgents[0]?.id ?? ''));
-    setAssignModal({ skillId: skill.id, skillName: skill.name, defaultAgentId });
-  }, [assignableAgents]);
+  const openAssignModal = useCallback(
+    (skill: LearnedSkillRow) => {
+      const defaultAgentId = skill.createdByAgentId ?? null;
+      setAssigningAgentId(defaultAgentId ?? assignableAgents[0]?.id ?? '');
+      setAssignModal({ skillId: skill.id, skillName: skill.name, defaultAgentId });
+    },
+    [assignableAgents],
+  );
 
   function handleAssignConfirm() {
     if (!assignModal || !assigningAgentId) return;
@@ -198,7 +203,9 @@ export default function LearnedSkillsClient({
       <div className="mb-4 rounded-2xl border border-rule-2 bg-paper p-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p id="agent-learning-label" className="text-[13px] font-medium text-ink">Agent learning</p>
+            <p id="agent-learning-label" className="text-[13px] font-medium text-ink">
+              Agent learning
+            </p>
             <p id="agent-learning-desc" className="mt-0.5 text-[12px] leading-[1.5] text-ink-3">
               When on, your agents save reusable techniques as skills after substantial tasks. You
               can review and undo everything here.
@@ -231,9 +238,14 @@ export default function LearnedSkillsClient({
           When an agent learns a new skill
         </p>
         <p id="assign-mode-desc" className="mb-4 text-[12px] leading-[1.5] text-ink-3">
-          Control whether new agent-authored skills are instantly assigned back to the agent, or held for your review first.
+          Control whether new agent-authored skills are instantly assigned back to the agent, or
+          held for your review first.
         </p>
-        <div role="radiogroup" aria-labelledby="assign-mode-label" aria-describedby="assign-mode-desc">
+        <div
+          role="radiogroup"
+          aria-labelledby="assign-mode-label"
+          aria-describedby="assign-mode-desc"
+        >
           <OptionRadio
             active={mode === 'auto'}
             onClick={() => handleModeChange('auto')}
@@ -375,9 +387,7 @@ export default function LearnedSkillsClient({
       >
         {assignModal && (
           <div className="space-y-4">
-            <p className="text-[12px] text-ink-3">
-              Select an agent to assign this skill to.
-            </p>
+            <p className="text-[12px] text-ink-3">Select an agent to assign this skill to.</p>
             <div>
               <label
                 htmlFor="assign-agent-select"

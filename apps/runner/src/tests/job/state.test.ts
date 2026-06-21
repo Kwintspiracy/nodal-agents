@@ -326,7 +326,11 @@ describe('DB state helpers', () => {
       status: 'completed',
       result: 'CHILD-REPORT',
     });
-    await completeJob(db as Parameters<typeof completeJob>[0], parentId, 'PARENT-SUMMARY: all done.');
+    await completeJob(
+      db as Parameters<typeof completeJob>[0],
+      parentId,
+      'PARENT-SUMMARY: all done.',
+    );
 
     const [row] = await db
       .select({ result: agentJobs.result })
@@ -454,16 +458,9 @@ describe('DB state helpers', () => {
   it('Leg 3: failJob returns false and does NOT overwrite when row is already terminal', async () => {
     // Insert a row already in 'failed' (simulating what the orphan reaper does).
     const jobId = await insertFreshJob('failed');
-    await db
-      .update(agentJobs)
-      .set({ error: 'orphan_job_reset' })
-      .where(eq(agentJobs.id, jobId));
+    await db.update(agentJobs).set({ error: 'orphan_job_reset' }).where(eq(agentJobs.id, jobId));
 
-    const wrote = await failJob(
-      db as Parameters<typeof failJob>[0],
-      jobId,
-      'zombie_attempt',
-    );
+    const wrote = await failJob(db as Parameters<typeof failJob>[0], jobId, 'zombie_attempt');
     expect(wrote).toBe(false);
 
     // Error code must still be the reaper's, not 'zombie_attempt'.
@@ -479,11 +476,7 @@ describe('DB state helpers', () => {
   it('Leg 3: failJob returns true and writes when row is processing', async () => {
     const jobId = await insertFreshJob('processing');
 
-    const wrote = await failJob(
-      db as Parameters<typeof failJob>[0],
-      jobId,
-      'test_failure_code',
-    );
+    const wrote = await failJob(db as Parameters<typeof failJob>[0], jobId, 'test_failure_code');
     expect(wrote).toBe(true);
 
     const [row] = await db

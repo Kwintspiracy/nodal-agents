@@ -1,6 +1,16 @@
 // agent_jobs table
 
-import { pgTable, text, uuid, integer, real, jsonb, timestamp, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  integer,
+  real,
+  jsonb,
+  timestamp,
+  index,
+  check,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';

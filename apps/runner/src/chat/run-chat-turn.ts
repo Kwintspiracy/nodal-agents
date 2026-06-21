@@ -157,7 +157,7 @@ export async function runChatTurn(opts: {
     orchestratorMode: (agentRow.orchestratorMode ?? null) as 'router' | 'planner' | null,
     memoryTokenBudget: agentRow.memoryTokenBudget,
   };
-  const deployment = await getDeploymentContext(db);
+  const deployment = await getDeploymentContext(db, entityId);
   const systemPrompt = await buildSystemPrompt(agent, db, {
     origin: 'dashboard',
     surface: 'chat',

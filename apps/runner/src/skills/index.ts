@@ -16,16 +16,8 @@ export function skillStoreDir(): string {
   return join(homedir(), '.nodalai', 'skills');
 }
 
-export {
-  installCommunitySkill,
-  uninstallCommunitySkill,
-  SkillInstallError,
-} from './install';
-export type {
-  InstallSkillOptions,
-  InstallSkillResult,
-  UninstallSkillOptions,
-} from './install';
+export { installCommunitySkill, uninstallCommunitySkill, SkillInstallError } from './install';
+export type { InstallSkillOptions, InstallSkillResult, UninstallSkillOptions } from './install';
 export { parseSkillSource, SkillSourceError } from './source';
 export { SkillFetchError } from './fetch';
 export { FrontmatterError } from './frontmatter';

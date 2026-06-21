@@ -1,0 +1,1 @@
+ALTER TABLE "agent_schedules" ADD COLUMN "timezone" text;

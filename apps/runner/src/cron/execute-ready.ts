@@ -3,7 +3,7 @@
 // Idempotency is enforced by a conditional UPDATE (status='todo') so two
 // concurrent ticks can never claim the same task twice.
 
-import { and, asc, desc, eq, inArray, isNotNull } from '@nodal-agents/db';
+import { and, asc, desc, eq, ne, inArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { executeJob } from '../job/execute.ts';
@@ -125,8 +125,13 @@ export async function executeReadyTasks(
       continue;
     }
 
-    // Build task text
-    const taskText = buildTaskText(task);
+    // Build task text, injecting the orchestration run's shared memory: the
+    // results of all sibling tasks (same rootJobId) already done. This restores
+    // — for the detached task-board model — what inline assign_ gave for free:
+    // every sub-run sees what the others in this run have produced, not just its
+    // explicit depends_on edges.
+    const runMemory = task.rootJobId ? await loadRunMemory(db, task.rootJobId, task.id) : '';
+    const taskText = buildTaskText(task, runMemory);
 
     // Create child job
     const jobRows = await db
@@ -240,11 +245,14 @@ async function markTaskFromResult(
 /**
  * Build the task prompt text from title, description, and injected dep context.
  */
-function buildTaskText(task: {
-  title: string;
-  description: string | null;
-  context: unknown;
-}): string {
+function buildTaskText(
+  task: {
+    title: string;
+    description: string | null;
+    context: unknown;
+  },
+  runMemory = '',
+): string {
   let text = task.title;
 
   if (task.description) {
@@ -284,5 +292,52 @@ function buildTaskText(task: {
     text += `\n\n## Context\n${ctx}`;
   }
 
+  // Orchestration run memory: results produced by sibling tasks of this same run.
+  if (runMemory.trim()) {
+    text += `\n\n## Shared memory from this run\nResults already produced by other agents working on this same request. Use them as context.\n\n${runMemory}`;
+  }
+
   return text;
+}
+
+/** Max chars of run memory injected into a sub-task (keeps the prompt bounded). */
+const RUN_MEMORY_BUDGET = 12_000;
+
+/**
+ * Load the orchestration run's shared memory for a starting sub-task: the
+ * (title, result) of every sibling task in the same rootJobId that is already
+ * `done` with a non-empty result, excluding the task itself. Oldest first,
+ * truncated to a char budget. Empty string when there's nothing yet.
+ */
+async function loadRunMemory(
+  db: AnyDrizzleDb,
+  rootJobId: string,
+  selfTaskId: string,
+): Promise<string> {
+  const siblings = await db
+    .select({ title: agentTasks.title, result: agentTasks.result, createdAt: agentTasks.createdAt })
+    .from(agentTasks)
+    .where(
+      and(
+        eq(agentTasks.rootJobId, rootJobId),
+        eq(agentTasks.status, 'done'),
+        ne(agentTasks.id, selfTaskId),
+      ),
+    )
+    .orderBy(asc(agentTasks.createdAt));
+
+  const sections: string[] = [];
+  let used = 0;
+  for (const s of siblings) {
+    const body = (s.result ?? '').trim();
+    if (!body) continue;
+    const section = `### ${s.title}\n${body}`;
+    if (used + section.length > RUN_MEMORY_BUDGET) {
+      sections.push('### … (older results truncated)');
+      break;
+    }
+    sections.push(section);
+    used += section.length;
+  }
+  return sections.join('\n\n');
 }

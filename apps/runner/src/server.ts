@@ -57,7 +57,10 @@ export function createApp(
   //   external API clients using BEARER_TOKEN keep working.
   //
   // /api/health and /api/worker stay public/self-authed respectively.
-  const requireRunnerAuth = async (c: Context, next: () => Promise<void>): Promise<Response | void> => {
+  const requireRunnerAuth = async (
+    c: Context,
+    next: () => Promise<void>,
+  ): Promise<Response | void> => {
     // local-trust: no auth required (intentional single-user no-auth for trusted local/dev use)
     if (runnerEnv.AUTH_MODE === 'local-trust') {
       await next();

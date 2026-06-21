@@ -122,7 +122,12 @@ describe('requireRunnerAuth — local-auth mode', () => {
 
   // Helper for a minimal valid POST to each route (body won't matter — the
   // middleware fires before body parsing on auth failure)
-  const post = (app_: ReturnType<typeof createApp>, path: string, body: unknown, headers: Record<string, string> = {}) =>
+  const post = (
+    app_: ReturnType<typeof createApp>,
+    path: string,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ) =>
     app_.fetch(
       new Request(`http://localhost${path}`, {
         method: 'POST',
@@ -182,7 +187,12 @@ describe('requireRunnerAuth — local-auth mode', () => {
 
   // Wrong bearer → 401 on all routes
   it('POST /api/chat with wrong bearer → 401', async () => {
-    const res = await post(localAuthApp, '/api/chat', { message: 'x' }, { Authorization: 'Bearer wrong' });
+    const res = await post(
+      localAuthApp,
+      '/api/chat',
+      { message: 'x' },
+      { Authorization: 'Bearer wrong' },
+    );
     expect(res.status).toBe(401);
   });
 
@@ -192,7 +202,12 @@ describe('requireRunnerAuth — local-auth mode', () => {
   });
 
   it('POST /api/agent with wrong bearer → 401', async () => {
-    const res = await post(localAuthApp, '/api/agent', { task: 'x' }, { Authorization: 'Bearer wrong' });
+    const res = await post(
+      localAuthApp,
+      '/api/agent',
+      { task: 'x' },
+      { Authorization: 'Bearer wrong' },
+    );
     expect(res.status).toBe(401);
   });
 
@@ -203,13 +218,23 @@ describe('requireRunnerAuth — local-auth mode', () => {
 
   // Correct WORKER_SECRET → reaches the route handler (not 401)
   it('POST /api/cron with correct bearer → not 401 (reaches handler)', async () => {
-    const res = await post(localAuthApp, '/api/cron', {}, { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` });
+    const res = await post(
+      localAuthApp,
+      '/api/cron',
+      {},
+      { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` },
+    );
     // Handler returns 200 with cron tick result
     expect(res.status).not.toBe(401);
   });
 
   it('POST /api/agent with correct bearer → not 401 (reaches handler, gets 400 or 202)', async () => {
-    const res = await post(localAuthApp, '/api/agent', { task: 'hello' }, { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` });
+    const res = await post(
+      localAuthApp,
+      '/api/agent',
+      { task: 'hello' },
+      { Authorization: `Bearer ${localAuthEnv.WORKER_SECRET}` },
+    );
     // 202 (job created) or 400 (invalid body) — either proves we passed the auth gate
     expect(res.status).not.toBe(401);
   });

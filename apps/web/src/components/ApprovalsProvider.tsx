@@ -1,13 +1,6 @@
 'use client';
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { ApprovalRow } from '@/lib/actions';
 import { listApprovalsAction } from '@/lib/actions';
 
@@ -79,9 +72,7 @@ export function ApprovalsProvider({
   }, [fetchPending]);
 
   return (
-    <ApprovalsContext.Provider value={{ pending, refresh }}>
-      {children}
-    </ApprovalsContext.Provider>
+    <ApprovalsContext.Provider value={{ pending, refresh }}>{children}</ApprovalsContext.Provider>
   );
 }
 
@@ -92,9 +83,7 @@ export function useApprovals(): ApprovalsContextValue {
   if (!ctx) {
     // Fail-soft: degrade to "no badge" rather than crashing the dashboard.
     // A wiring mistake should never surface as a raw error to the user.
-    console.warn(
-      '[useApprovals] called outside <ApprovalsProvider> — returning empty state.',
-    );
+    console.warn('[useApprovals] called outside <ApprovalsProvider> — returning empty state.');
     return FALLBACK;
   }
   return ctx;

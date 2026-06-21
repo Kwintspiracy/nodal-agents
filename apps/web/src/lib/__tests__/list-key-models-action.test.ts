@@ -75,10 +75,7 @@ describe('listKeyModelsAction', () => {
       .returning();
     if (!llmKey) throw new Error('failed to seed llm key');
 
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response('{}', { status: 401 })),
-    );
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })));
 
     const result = await listKeyModelsAction(llmKey.id);
     expect(result.ok).toBe(true);
@@ -100,10 +97,7 @@ describe('listKeyModelsAction', () => {
       .returning();
     if (!llmKey) throw new Error('failed to seed llm key');
 
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
-    );
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
 
     const result = await listKeyModelsAction(llmKey.id);
     expect(result.ok).toBe(true);
@@ -127,9 +121,9 @@ describe('listKeyModelsAction', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
-        Response.json({ data: [{ id: 'gpt-4o' }, { id: 'gpt-3.5-turbo' }] }),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(Response.json({ data: [{ id: 'gpt-4o' }, { id: 'gpt-3.5-turbo' }] })),
     );
 
     const result = await listKeyModelsAction(llmKey.id);

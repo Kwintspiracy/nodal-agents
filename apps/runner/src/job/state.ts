@@ -97,10 +97,7 @@ export async function setJobStatus(
  * (approval, delegation, self-chain) reset the row to 'pending' before calling
  * executeJob, so the WHERE status='pending' predicate never blocks a real resume.
  */
-export async function claimJob(
-  db: AnyDrizzleDb,
-  jobId: string,
-): Promise<boolean> {
+export async function claimJob(db: AnyDrizzleDb, jobId: string): Promise<boolean> {
   const rows = await db
     .update(agentJobs)
     .set({
@@ -201,6 +198,58 @@ async function fillResultFromChildrenIfEmpty(db: AnyDrizzleDb, jobId: string): P
 }
 
 /**
+ * Extract the agent's last substantive assistant text from a transcript.
+ * Used as the final fallback to capture a leaf agent's answer when it produced
+ * a written reply but never called a delivery tool (dashboard_publish / a send
+ * tool) that would have populated `result`. Returns '' if there is no usable text.
+ */
+function lastAssistantText(messages: unknown): string {
+  if (!Array.isArray(messages)) return '';
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: unknown; content?: unknown } | null;
+    if (!m || m.role !== 'assistant') continue;
+    const c = m.content;
+    if (typeof c === 'string' && c.trim() !== '') return c.trim();
+    if (Array.isArray(c)) {
+      const parts: string[] = [];
+      for (const p of c) {
+        const part = p as { type?: unknown; text?: unknown } | null;
+        if (part && part.type === 'text' && typeof part.text === 'string') parts.push(part.text);
+      }
+      const joined = parts.join('').trim();
+      if (joined !== '') return joined;
+    }
+  }
+  return '';
+}
+
+/**
+ * Final result-capture fallback (Result-capture fix): after children-compile, if
+ * the job's `result` is STILL empty, capture the agent's last written answer from
+ * the transcript. Guarantees a leaf agent's substantive output is never lost just
+ * because it forgot to call a delivery tool — the captured result then flows to
+ * dependents, run memory, and delivery. No-op if there is no usable text.
+ */
+async function fillResultFromFinalTextIfEmpty(
+  db: AnyDrizzleDb,
+  jobId: string,
+  messages: unknown,
+): Promise<void> {
+  const [row] = await db
+    .select({ result: agentJobs.result })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, jobId))
+    .limit(1);
+  if ((row?.result ?? '').trim().length > 0) return;
+  const text = lastAssistantText(messages);
+  if (!text) return;
+  await db
+    .update(agentJobs)
+    .set({ result: text, updatedAt: new Date() })
+    .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
+}
+
+/**
  * Mark a job as completed. Sets result, completedAt, and clears error.
  * Persists per-turn accumulated token counts and final turn when provided.
  *
@@ -263,7 +312,12 @@ export async function completeJob(
   // never a blank delegation. Only when WE won the terminal write, and only when
   // no fresh text was written this call (a non-empty `result` is already content;
   // an empty one may still hold an earlier dashboard_publish, so it's checked).
-  if (landed && result.length === 0) await fillResultFromChildrenIfEmpty(db, jobId);
+  if (landed && result.length === 0) {
+    await fillResultFromChildrenIfEmpty(db, jobId);
+    // Last resort: capture the agent's own written answer from the transcript so
+    // a leaf job's substantive output is never lost (feeds dependents + delivery).
+    if (messages !== undefined) await fillResultFromFinalTextIfEmpty(db, jobId, messages);
+  }
   return landed;
 }
 
@@ -340,12 +394,7 @@ export async function failJob(
     await db
       .update(agentJobs)
       .set({ result: explanation, updatedAt: new Date() })
-      .where(
-        and(
-          eq(agentJobs.id, jobId),
-          or(isNull(agentJobs.result), eq(agentJobs.result, '')),
-        ),
-      );
+      .where(and(eq(agentJobs.id, jobId), or(isNull(agentJobs.result), eq(agentJobs.result, ''))));
   }
 
   return landed;

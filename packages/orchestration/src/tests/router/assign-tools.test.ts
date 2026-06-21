@@ -189,16 +189,16 @@ describe('generateAssignTools', () => {
 
     const tools = await generateAssignTools(orch.id as AgentId, db);
     const desc = tools[0]?.description ?? '';
-    expect(desc).toContain('Tools:');
+    // The assign description surfaces the connector/MCP NAME (the capability),
+    // not the full per-operation tool list.
+    expect(desc).toContain('Connectors:');
     expect(desc).toContain('stripe');
-    expect(desc).toContain('stripe__list_customers');
-    expect(desc).toContain('stripe__retrieve_balance');
   });
 
-  it('respects enabled_tools whitelist in MCP server descriptions', async () => {
-    // If the user disables specific MCP tools per-agent, the orchestrator
-    // must NOT see them in the assign description — otherwise it would
-    // delegate work the child can't actually execute.
+  it('surfaces the MCP server name (capability) to the orchestrator', async () => {
+    // The orchestrator routes by capability (the connector/MCP NAME), not by the
+    // per-operation tool list. Per-agent enabled_tools still filter what the
+    // child can run at runtime; the assign description just names the capability.
     const { entityId } = await seedEntity(db);
     const orch = await seedOrchestrator(db, entityId, `orch-mcp-filter-${Date.now()}`);
     const w = await seedWorker(db, entityId, `test-mcp-filter-worker-${Date.now()}`);
@@ -232,9 +232,8 @@ describe('generateAssignTools', () => {
 
     const tools = await generateAssignTools(orch.id as AgentId, db);
     const desc = tools[0]?.description ?? '';
-    expect(desc).toContain('cogni_cortex__get_home');
-    expect(desc).toContain('cogni_cortex__post');
-    expect(desc).not.toContain('cogni_cortex__delete_post');
+    expect(desc).toContain('Connectors:');
+    expect(desc).toContain('cogni-cortex');
   });
 
   it('tool execute() throws DelegationPendingError (sentinel for runner)', async () => {

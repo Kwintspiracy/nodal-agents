@@ -171,7 +171,8 @@ export async function runCuratorConsolidation(
         ? { llmKeyId: ag.llmKeyId, fallbackChain: null, model: reflectionModel }
         : {
             llmKeyId: ag.llmKeyId,
-            fallbackChain: (ag.fallbackChain as readonly { keyId: string; model: string }[] | null) ?? null,
+            fallbackChain:
+              (ag.fallbackChain as readonly { keyId: string; model: string }[] | null) ?? null,
             model: ag.model ?? '',
           },
     );

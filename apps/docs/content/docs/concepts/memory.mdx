@@ -14,12 +14,12 @@ Each record holds a `fact` (plain text), a `category`, an `importance` score
 
 The four categories are:
 
-| Category | Intended use |
-|---|---|
-| `preference` | How the user or agent prefers to work |
-| `context` | Background facts about the entity or domain |
-| `outcome` | Results of past tasks worth remembering |
-| `learned_rule` | Discovered rules, constraints, or patterns |
+| Category       | Intended use                                |
+| -------------- | ------------------------------------------- |
+| `preference`   | How the user or agent prefers to work       |
+| `context`      | Background facts about the entity or domain |
+| `outcome`      | Results of past tasks worth remembering     |
+| `learned_rule` | Discovered rules, constraints, or patterns  |
 
 Facts can also carry an optional `valid_to` expiry and an `archived` flag so
 stale knowledge is never injected silently.
@@ -70,4 +70,4 @@ embedded into the entity-wide pool.
 - [Agents](/docs/concepts/agents) — how agents are configured, including the memory
   budget field
 - [Learning loop](/docs/concepts/learning-loop) — the related feature that writes
-  reusable *skills* (not facts) after a job completes
+  reusable _skills_ (not facts) after a job completes

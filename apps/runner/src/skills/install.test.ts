@@ -361,8 +361,13 @@ describe('downloadAndExtract — github subdir fetch', () => {
       if (url.includes('/contents/skills/x?ref=main')) {
         return new Response(
           JSON.stringify([
-            { name: 'SKILL.md', path: 'skills/x/SKILL.md', type: 'file', size: 40,
-              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md' },
+            {
+              name: 'SKILL.md',
+              path: 'skills/x/SKILL.md',
+              type: 'file',
+              size: 40,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md',
+            },
             { name: 'scripts', path: 'skills/x/scripts', type: 'dir', size: 0, download_url: null },
           ]),
           { status: 200, headers: { 'content-type': 'application/json' } },
@@ -371,8 +376,13 @@ describe('downloadAndExtract — github subdir fetch', () => {
       if (url.includes('/contents/skills/x/scripts?ref=main')) {
         return new Response(
           JSON.stringify([
-            { name: 'run.py', path: 'skills/x/scripts/run.py', type: 'file', size: 9,
-              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/x/scripts/run.py' },
+            {
+              name: 'run.py',
+              path: 'skills/x/scripts/run.py',
+              type: 'file',
+              size: 9,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/x/scripts/run.py',
+            },
           ]),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
@@ -405,8 +415,13 @@ describe('downloadAndExtract — github subdir fetch', () => {
       if (url.includes('/contents/')) {
         return new Response(
           JSON.stringify([
-            { name: 'evil', path: '../../evil.txt', type: 'file', size: 5,
-              download_url: 'https://raw.githubusercontent.com/o/r/main/evil' },
+            {
+              name: 'evil',
+              path: '../../evil.txt',
+              type: 'file',
+              size: 5,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/evil',
+            },
           ]),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
@@ -436,9 +451,9 @@ describe('accumulateDeclaredBytes', () => {
   });
 
   it('throws SkillFetchError when the running total would exceed the cap by 1 byte', () => {
-    expect(() =>
-      accumulateDeclaredBytes(MAX_EXTRACTED_BYTES, 1, MAX_EXTRACTED_BYTES),
-    ).toThrow(SkillFetchError);
+    expect(() => accumulateDeclaredBytes(MAX_EXTRACTED_BYTES, 1, MAX_EXTRACTED_BYTES)).toThrow(
+      SkillFetchError,
+    );
   });
 
   it('throws SkillFetchError with "Possible decompression bomb" in the message', () => {
@@ -452,9 +467,9 @@ describe('accumulateDeclaredBytes', () => {
     let running = accumulateDeclaredBytes(0, chunk, MAX_EXTRACTED_BYTES); // 40 MB — ok
     running = accumulateDeclaredBytes(running, chunk, MAX_EXTRACTED_BYTES); // 80 MB — ok
     // Third 40 MB chunk pushes total to 120 MB > 100 MB → must throw.
-    expect(() =>
-      accumulateDeclaredBytes(running, chunk, MAX_EXTRACTED_BYTES),
-    ).toThrow(SkillFetchError);
+    expect(() => accumulateDeclaredBytes(running, chunk, MAX_EXTRACTED_BYTES)).toThrow(
+      SkillFetchError,
+    );
   });
 
   it('handles an entrySize of 0 (directory entries) without throwing', () => {
@@ -488,7 +503,10 @@ describe('archive extraction security guards (tar)', () => {
       await writeFile(abs, content, 'utf8');
     }
     const tgz = join(workDir, 'test.tar.gz');
-    await tarCreate({ file: tgz, cwd: srcDir, gzip: true }, files.map(([n]) => n));
+    await tarCreate(
+      { file: tgz, cwd: srcDir, gzip: true },
+      files.map(([n]) => n),
+    );
     const { readFile } = await import('node:fs/promises');
     return readFile(tgz);
   }
@@ -512,7 +530,10 @@ describe('archive extraction security guards (tar)', () => {
     // The substantive guard is: MAX_ENTRIES is exported and equals 50_000.
     expect(MAX_ENTRIES).toBe(50_000);
 
-    const buf = await makeTarGz([['a.txt', 'x'], ['b.txt', 'y']]);
+    const buf = await makeTarGz([
+      ['a.txt', 'x'],
+      ['b.txt', 'y'],
+    ]);
     // Two entries: well under MAX_ENTRIES → should not throw.
     await expect(_extractArchiveBuffer(buf, destDir, workDir)).resolves.toBeUndefined();
   });

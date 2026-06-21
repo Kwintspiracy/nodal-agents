@@ -7,6 +7,7 @@ import {
   listAgentsAction,
   getLanCommandYoloAction,
   getInstallNotesAction,
+  getWorkspaceTimezoneAction,
   type WorkspaceRow,
 } from '@/lib/actions.ts';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
@@ -16,6 +17,7 @@ import WorkspacesSection from './WorkspacesSection.tsx';
 import RootAgentSection from './RootAgentSection.tsx';
 import LanCommandYoloSection from './LanCommandYoloSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
+import TimezoneForm from './TimezoneForm.tsx';
 import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetPane } from '@/components/ui/SetPane.tsx';
 import { SetRow } from '@/components/ui/SetRow.tsx';
@@ -35,6 +37,7 @@ export default async function SettingsPage() {
     agentsResult,
     lanYoloResult,
     installNotesResult,
+    tzResult,
   ] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
@@ -44,6 +47,7 @@ export default async function SettingsPage() {
     listAgentsAction(),
     getLanCommandYoloAction(),
     getInstallNotesAction(),
+    getWorkspaceTimezoneAction(),
   ]);
   const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
@@ -108,6 +112,15 @@ export default async function SettingsPage() {
       {networkResult.ok && (
         <SetBlock label="Network" lede="Control which devices can reach the dashboard.">
           <NetworkForm initial={networkResult.data} />
+        </SetBlock>
+      )}
+
+      {tzResult.ok && (
+        <SetBlock
+          label="Timezone"
+          lede="The zone your agents use to tell the time and schedule automations."
+        >
+          <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
         </SetBlock>
       )}
 

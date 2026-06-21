@@ -29,7 +29,11 @@ export { withRetry } from './retry';
 export type { RetryOptions } from './retry';
 
 // Embeddings
-export { createEmbeddingClient, validateEmbeddingDimension, EXPECTED_EMBEDDING_DIM } from './embeddings';
+export {
+  createEmbeddingClient,
+  validateEmbeddingDimension,
+  EXPECTED_EMBEDDING_DIM,
+} from './embeddings';
 export type { EmbeddingProviderConfig, EmbeddingClient } from './embeddings';
 
 // Provider registry (capability matrix + presets)

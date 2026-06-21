@@ -1027,7 +1027,7 @@ function AutonomyTab({
   }, [connectors, hasTelegramBot]);
 
   function ruleFor(toolName: string): ApprovalAction {
-    return (rules.find((r) => r.toolName === toolName)?.action) ?? 'auto_approve';
+    return rules.find((r) => r.toolName === toolName)?.action ?? 'auto_approve';
   }
 
   function handleChange(toolName: string, action: ApprovalAction) {
@@ -1092,9 +1092,8 @@ function AutonomyTab({
           </div>
         )}
         <p className="mt-4 text-[11px] text-ink-4">
-          Default when no rule is set:{' '}
-          <span className="font-medium text-ink-3">Autonomous</span>. Rules take effect on the next
-          job — already-running jobs are not affected.
+          Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>.
+          Rules take effect on the next job — already-running jobs are not affected.
         </p>
       </SectionCard>
 
@@ -1107,11 +1106,7 @@ function AutonomyTab({
         isOwner={isOwner}
       />
 
-      <ScriptAuthSection
-        agentId={agentId}
-        attachedSkills={attachedSkills}
-        isOwner={isOwner}
-      />
+      <ScriptAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
     </div>
   );
 }
@@ -1151,8 +1146,7 @@ function CommandExecutionSection({
 
   // Read auth mode client-side from NEXT_PUBLIC_AUTH_MODE (set by the CLI;
   // mirrors AUTH_MODE and is safe to read in client components).
-  const isLocalTrust =
-    (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
 
   // The toggle is enabled when:
   //   - local-trust mode (single-user loopback — no auth; classic behaviour), OR
@@ -1245,8 +1239,8 @@ function CommandExecutionSection({
           {isDormant && canManage && (
             <p className="mt-2 text-[11.5px] text-warn">
               This agent&apos;s Yolo is <b className="font-semibold">dormant</b> — workspace Yolo is
-              off, so its commands still require approval. Turn it off here to clear it, or re-enable
-              Yolo in{' '}
+              off, so its commands still require approval. Turn it off here to clear it, or
+              re-enable Yolo in{' '}
               <a
                 href="/settings"
                 className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
@@ -1383,23 +1377,24 @@ function ScriptAuthRow({
   const scripts = skill.installedScripts ?? [];
 
   // Read auth mode — mirrors CommandExecutionSection pattern.
-  const isLocalTrust =
-    (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
   const canToggle = isLocalTrust || isOwner;
 
   async function doSet(next: boolean) {
     setSaving(true);
     setAuthorized(next); // optimistic
-    const result = await setSkillScriptsAuthorizedAction({ agentId, skillId: skill.id, authorized: next });
+    const result = await setSkillScriptsAuthorizedAction({
+      agentId,
+      skillId: skill.id,
+      authorized: next,
+    });
     setSaving(false);
     if (!result.ok) {
       toast.error(result.message);
       setAuthorized(!next); // revert
     } else {
       toast.success(
-        next
-          ? `Scripts allowed for "${skill.name}"`
-          : `Script access revoked for "${skill.name}"`,
+        next ? `Scripts allowed for "${skill.name}"` : `Script access revoked for "${skill.name}"`,
       );
     }
   }
@@ -1506,9 +1501,7 @@ function AutonomyToolRow({
           <span
             className={[
               'inline-flex h-[18px] items-center rounded-full px-2 font-mono text-[9.5px] uppercase tracking-[0.1em]',
-              op.risk === 'destructive'
-                ? 'bg-err/10 text-err'
-                : 'bg-warn/10 text-warn',
+              op.risk === 'destructive' ? 'bg-err/10 text-err' : 'bg-warn/10 text-warn',
             ].join(' ')}
           >
             {riskLabel[op.risk] ?? op.risk}
@@ -1877,7 +1870,15 @@ function SettingsTab(props: {
               </select>
             )}
           </Field>
-          <Field label={liveModelsLoading && selectedKey?.id !== undefined && liveModelsCache[selectedKey.id] === undefined ? 'Model (loading…)' : 'Model'}>
+          <Field
+            label={
+              liveModelsLoading &&
+              selectedKey?.id !== undefined &&
+              liveModelsCache[selectedKey.id] === undefined
+                ? 'Model (loading…)'
+                : 'Model'
+            }
+          >
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
               <select
                 value={modelInDropdown ? model : '__custom__'}

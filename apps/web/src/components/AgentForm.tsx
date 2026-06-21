@@ -294,7 +294,11 @@ export default function AgentForm(props: Props) {
           </div>
           <div>
             <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
-              {liveModelsLoading && selectedKey?.id !== undefined && liveModelsCache[selectedKey.id] === undefined ? 'Model (loading…)' : 'Model'}
+              {liveModelsLoading &&
+              selectedKey?.id !== undefined &&
+              liveModelsCache[selectedKey.id] === undefined
+                ? 'Model (loading…)'
+                : 'Model'}
             </label>
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
               <select
@@ -530,7 +534,11 @@ export default function AgentForm(props: Props) {
                 </div>
                 <div>
                   <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
-                    {liveModelsLoading && selectedKey?.id !== undefined && liveModelsCache[selectedKey.id] === undefined ? 'Model (loading…)' : 'Model'}
+                    {liveModelsLoading &&
+                    selectedKey?.id !== undefined &&
+                    liveModelsCache[selectedKey.id] === undefined
+                      ? 'Model (loading…)'
+                      : 'Model'}
                   </label>
                   {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
                     <select

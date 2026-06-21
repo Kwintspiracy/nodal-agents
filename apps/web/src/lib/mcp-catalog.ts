@@ -368,6 +368,24 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     status: 'pending',
   },
   {
+    slug: 'perplexity',
+    label: 'Perplexity',
+    description:
+      'Real-time web search and research — gives an agent perplexity_search, perplexity_ask, perplexity_research (deep research with citations), and perplexity_reason (Sonar models). Runs the official Perplexity MCP server locally via npx.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Create an API key at https://console.perplexity.ai (Settings → API; keys start with pplx-) and set PERPLEXITY_API_KEY below. First run downloads the package via npx (requires network, ~5 s latency).',
+    command: 'npx',
+    args: ['-y', '@perplexity-ai/mcp-server@0.9.0'],
+    envVarNames: ['PERPLEXITY_API_KEY'],
+    status: 'pending',
+  },
+  {
     slug: 'apify',
     label: 'Apify',
     description:

@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { connectors } from '@nodal-agents/db';
 import { CONNECTOR_CATALOG } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
+import { resolveAgentId, linkConnectorToAgent } from './link-helpers';
 
 const CreateConnectorInput = z.object({
   slug: z
@@ -28,6 +29,14 @@ const CreateConnectorInput = z.object({
     ),
   name: z.string().min(1).describe('Display name for this connector instance.'),
   apiKey: z.string().min(1).describe('The provider API key / token (stored encrypted at rest).'),
+  attachToAgentSlug: z
+    .string()
+    .optional()
+    .describe(
+      'Optional: slug/name of an agent to immediately attach this connector to, so its tools ' +
+        'become usable by that agent. Without this, the connector is registered but NOT usable — ' +
+        'attach it later with attach_connector.',
+    ),
 });
 
 type CreateConnectorOutput = { ok: true; message: string } | { ok: false; error: string };
@@ -65,17 +74,32 @@ export const createConnectorTool: ToolDefinition<
       };
     }
 
-    await ctx.db.insert(connectors).values({
-      entityId: ctx.entityId,
-      slug: input.slug,
-      name: input.name,
-      apiKey: provisioning.encrypt(input.apiKey),
-      authType: 'api_key',
-      active: true,
-    });
+    const [inserted] = await ctx.db
+      .insert(connectors)
+      .values({
+        entityId: ctx.entityId,
+        slug: input.slug,
+        name: input.name,
+        apiKey: provisioning.encrypt(input.apiKey),
+        authType: 'api_key',
+        active: true,
+      })
+      .returning({ id: connectors.id });
+
+    let suffix =
+      ' (not attached to any agent yet — use attach_connector to make its tools usable).';
+    if (input.attachToAgentSlug && inserted) {
+      const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.attachToAgentSlug);
+      if (!agentId) {
+        suffix = ` (note: could not attach — no agent "${input.attachToAgentSlug}" found; attach it later with attach_connector).`;
+      } else {
+        await linkConnectorToAgent(ctx.db, ctx.entityId, agentId, inserted.id);
+        suffix = ` Attached to agent "${input.attachToAgentSlug}" — its tools are now available to that agent.`;
+      }
+    }
     return {
       ok: true,
-      message: `Registered connector "${input.name}" (${catalog.label}, slug ${input.slug}).`,
+      message: `Registered connector "${input.name}" (${catalog.label}, slug ${input.slug}).${suffix}`,
     };
   },
 };

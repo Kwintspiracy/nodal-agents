@@ -10,8 +10,9 @@
 
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { getInstallNotes } from '@nodal-agents/db';
+import { getInstallNotes, entities, eq } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { resolveTimezone, formatLocalTime } from '@nodal-agents/shared';
 import type { DeploymentContext } from '@nodal-agents/orchestration';
 
 /**
@@ -55,7 +56,10 @@ function getLanAddresses(): string[] {
  * Reads env via process.env directly (see module-level CRITICAL note).
  * Performs a single DB read for operator install notes.
  */
-export async function getDeploymentContext(db: AnyDrizzleDb): Promise<DeploymentContext> {
+export async function getDeploymentContext(
+  db: AnyDrizzleDb,
+  entityId?: string,
+): Promise<DeploymentContext> {
   // Determine network mode from BIND env var. '0.0.0.0' or '::' = LAN.
   const bind = process.env['BIND'] ?? '127.0.0.1';
   const networkMode: 'loopback' | 'lan' = bind === '0.0.0.0' || bind === '::' ? 'lan' : 'loopback';
@@ -72,6 +76,20 @@ export async function getDeploymentContext(db: AnyDrizzleDb): Promise<Deployment
   // A missing table is not a fatal error — just omit install notes gracefully.
   const installNotes = await getInstallNotes(db).catch(() => '');
 
+  // Workspace timezone (authoritative for "now" + scheduling). Stored on the
+  // entity, captured from the browser at onboarding; null → server's zone.
+  let storedTz: string | null = null;
+  if (entityId) {
+    const [row] = await db
+      .select({ timezone: entities.timezone })
+      .from(entities)
+      .where(eq(entities.id, entityId))
+      .catch(() => [] as { timezone: string | null }[]);
+    storedTz = row?.timezone ?? null;
+  }
+  const timezone = resolveTimezone(storedTz);
+  const localTime = formatLocalTime(timezone, new Date());
+
   return {
     os: detectOs(),
     networkMode,
@@ -79,5 +97,7 @@ export async function getDeploymentContext(db: AnyDrizzleDb): Promise<Deployment
     ...(lanAddresses !== undefined ? { lanAddresses } : {}),
     ...(containerized ? { containerized } : {}),
     ...(installNotes ? { installNotes } : {}),
+    timezone,
+    localTime,
   };
 }

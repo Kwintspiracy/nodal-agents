@@ -8,7 +8,7 @@ import Disc from '@/components/ui/Disc';
 import MonoCode from '@/components/ui/MonoCode';
 import StatusPill from '@/components/ui/StatusPill';
 import ConnectorForm from './ConnectorForm.tsx';
-import { CONN_BRAND_COLORS, connGlyph } from './connector-brand.ts';
+import { CONN_BRAND_COLORS, connGlyph, connIcon } from './connector-brand.ts';
 
 type Props = {
   instances: ConnectorRow[];
@@ -94,6 +94,7 @@ function ConnectorRow({
 
   const brandColor = CONN_BRAND_COLORS[instance.slug];
   const glyph = connGlyph(instance.slug, catalogEntry.label);
+  const iconSrc = connIcon(instance.slug);
   const isConnected = instance.active;
   const scopeList = instance.credentialScopes
     ? instance.credentialScopes.split(/\s+/).filter(Boolean)
@@ -105,8 +106,20 @@ function ConnectorRow({
         {/* Provider */}
         <td className="px-[18px] py-[13px] align-middle">
           <div className="flex items-center gap-3">
-            <Disc variant="conn" size="sm" shape="square" background={brandColor}>
-              <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
+            <Disc
+              variant="conn"
+              size="sm"
+              shape="square"
+              background={iconSrc ? '#ffffff' : brandColor}
+            >
+              {iconSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={iconSrc} alt="" className="h-4 w-4 object-contain" />
+              ) : (
+                <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
+                  {glyph}
+                </span>
+              )}
             </Disc>
             <div className="min-w-0">
               <div className="text-[13.5px] font-medium leading-[1.2] text-ink">

@@ -85,12 +85,16 @@ describe('meta-tool gating via root agent + grants', () => {
   it('root agent with all grants enabled gets all meta-tools in whitelist', () => {
     const allGrantsOn: RootGrants = {
       createAgent: true,
+      updateAgent: true,
       attachAgent: true,
       createSkill: true,
       updateSkill: true,
       assignSkill: true,
       createMcp: true,
+      attachMcp: true,
       createConnector: true,
+      attachConnector: true,
+      manageSchedules: true,
       autonomy: 'fully_autonomous',
     };
     const tools = computeForRootAgent(allGrantsOn);
@@ -111,12 +115,16 @@ describe('meta-tool gating via root agent + grants', () => {
   it('root agent with createAgent=false does NOT get create_agent in whitelist', () => {
     const grants: RootGrants = {
       createAgent: false,
+      updateAgent: true,
       attachAgent: true,
       createSkill: true,
       updateSkill: true,
       assignSkill: true,
       createMcp: true,
+      attachMcp: true,
       createConnector: true,
+      attachConnector: true,
+      manageSchedules: true,
       autonomy: 'propose_confirm',
     };
     const tools = computeForRootAgent(grants);
@@ -131,12 +139,16 @@ describe('meta-tool gating via root agent + grants', () => {
   it('root agent with updateSkill=false does NOT get update_skill in whitelist', () => {
     const grants: RootGrants = {
       createAgent: true,
+      updateAgent: true,
       attachAgent: true,
       createSkill: true,
       updateSkill: false,
       assignSkill: true,
       createMcp: true,
+      attachMcp: true,
       createConnector: true,
+      attachConnector: true,
+      manageSchedules: true,
       autonomy: 'propose_confirm',
     };
     const tools = computeForRootAgent(grants);
@@ -150,12 +162,16 @@ describe('meta-tool gating via root agent + grants', () => {
   it('root agent with all grants off gets no meta-tools', () => {
     const grants: RootGrants = {
       createAgent: false,
+      updateAgent: false,
       attachAgent: false,
       createSkill: false,
       updateSkill: false,
       assignSkill: false,
       createMcp: false,
+      attachMcp: false,
       createConnector: false,
+      attachConnector: false,
+      manageSchedules: false,
       autonomy: 'propose_confirm',
     };
     const tools = computeForRootAgent(grants);
@@ -168,12 +184,16 @@ describe('meta-tool gating via root agent + grants', () => {
   it('always-on tools remain in whitelist regardless of root status', () => {
     const allGrantsOn: RootGrants = {
       createAgent: true,
+      updateAgent: true,
       attachAgent: true,
       createSkill: true,
       updateSkill: true,
       assignSkill: true,
       createMcp: true,
+      attachMcp: true,
       createConnector: true,
+      attachConnector: true,
+      manageSchedules: true,
       autonomy: 'fully_autonomous',
     };
     const rootTools = computeForRootAgent(allGrantsOn);
@@ -190,17 +210,23 @@ describe('meta-tool gating via root agent + grants', () => {
   it('root agent with attachAgent=false does NOT get attach_agent in whitelist', () => {
     const grants: RootGrants = {
       createAgent: true,
+      updateAgent: true,
       attachAgent: false,
       createSkill: true,
       updateSkill: true,
       assignSkill: true,
       createMcp: true,
+      attachMcp: true,
       createConnector: true,
+      attachConnector: true,
+      manageSchedules: true,
       autonomy: 'propose_confirm',
     };
     const tools = computeForRootAgent(grants);
     const names = new Set(tools.map((t) => t.name));
-    expect(names.has('attach_agent'), 'attach_agent should be absent when grant is off').toBe(false);
+    expect(names.has('attach_agent'), 'attach_agent should be absent when grant is off').toBe(
+      false,
+    );
     expect(names.has('create_agent'), 'create_agent should be present').toBe(true);
     expect(names.has('create_skill'), 'create_skill should be present').toBe(true);
   });

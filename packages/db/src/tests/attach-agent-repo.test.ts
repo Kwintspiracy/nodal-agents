@@ -51,7 +51,12 @@ describe('attachAgentToOrchestrator', () => {
     if (!('id' in worker)) throw new Error('worker creation failed');
     const workerId = worker.id;
 
-    const result = await attachAgentToOrchestrator(db, entityId, orchestratorId, 'attach-worker-slug');
+    const result = await attachAgentToOrchestrator(
+      db,
+      entityId,
+      orchestratorId,
+      'attach-worker-slug',
+    );
 
     expect('ok' in result).toBe(true);
     if (!('ok' in result)) throw new Error('expected ok result');
@@ -90,7 +95,12 @@ describe('attachAgentToOrchestrator', () => {
     const workerId = worker.id;
 
     // Pass the name (case-mixed) instead of the slug
-    const result = await attachAgentToOrchestrator(db, entityId, orchestratorId, 'findable by display name');
+    const result = await attachAgentToOrchestrator(
+      db,
+      entityId,
+      orchestratorId,
+      'findable by display name',
+    );
 
     expect('ok' in result && result.ok).toBe(true);
     if (!('ok' in result) || !result.ok) throw new Error('expected ok:true');
@@ -124,10 +134,20 @@ describe('attachAgentToOrchestrator', () => {
     if (!('id' in worker)) throw new Error('worker creation failed');
     const workerId = worker.id;
 
-    const first = await attachAgentToOrchestrator(db, entityId, orchestratorId, 'attach-worker-idem');
+    const first = await attachAgentToOrchestrator(
+      db,
+      entityId,
+      orchestratorId,
+      'attach-worker-idem',
+    );
     expect('ok' in first && first.ok).toBe(true);
 
-    const second = await attachAgentToOrchestrator(db, entityId, orchestratorId, 'attach-worker-idem');
+    const second = await attachAgentToOrchestrator(
+      db,
+      entityId,
+      orchestratorId,
+      'attach-worker-idem',
+    );
     expect('ok' in second && second.ok).toBe(true);
 
     // Still exactly one row
@@ -144,7 +164,12 @@ describe('attachAgentToOrchestrator', () => {
   });
 
   it('returns error:agent_not_found for a missing slug', async () => {
-    const result = await attachAgentToOrchestrator(db, entityId, orchestratorId, 'no-such-agent-xyz');
+    const result = await attachAgentToOrchestrator(
+      db,
+      entityId,
+      orchestratorId,
+      'no-such-agent-xyz',
+    );
     expect('error' in result).toBe(true);
     if (!('error' in result)) throw new Error('expected error result');
     expect(result.error).toBe('agent_not_found');

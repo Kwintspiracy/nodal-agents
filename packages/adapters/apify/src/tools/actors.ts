@@ -28,7 +28,9 @@ const WebBrowseInput = z.object({
     .min(1)
     .max(10)
     .optional()
-    .describe('For a search query, how many results to return (default 3). Ignored for a single URL.'),
+    .describe(
+      'For a search query, how many results to return (default 3). Ignored for a single URL.',
+    ),
 });
 
 export type WebBrowseResult = { url: string; title: string; content: string };

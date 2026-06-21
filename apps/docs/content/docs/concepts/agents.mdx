@@ -7,38 +7,41 @@ An agent is a named, persistent AI persona you create in the dashboard. **The ca
 
 ## Configuration
 
-| Field | What it does |
-|-------|--------------|
+| Field                    | What it does                                              |
+| ------------------------ | --------------------------------------------------------- |
 | **Name / slug / avatar** | UI identity, and the handle orchestrators use to delegate |
-| **System prompt** | the Markdown injected at the top of every job |
-| **Model** | any configured provider key — each agent picks its own |
-| **Skills** | inject guidance and unlock gated built-in tools |
-| **Connectors** | OAuth / API-key integrations (Gmail, Notion, Airtable…) |
-| **MCP servers** | HTTP or stdio servers whose tools are namespaced per job |
-| **Workspaces** | filesystem paths the agent can read and write |
-| **Telegram** | optional bot token for inbound + outbound messages |
-| **Role** | `agent` (worker) or `orchestrator` |
+| **System prompt**        | the Markdown injected at the top of every job             |
+| **Model**                | any configured provider key — each agent picks its own    |
+| **Skills**               | inject guidance and unlock gated built-in tools           |
+| **Connectors**           | OAuth / API-key integrations (Gmail, Notion, Airtable…)   |
+| **MCP servers**          | HTTP or stdio servers whose tools are namespaced per job  |
+| **Workspaces**           | filesystem paths the agent can read and write             |
+| **Telegram**             | optional bot token for inbound + outbound messages        |
+| **Role**                 | `agent` (worker) or `orchestrator`                        |
 
 ## How a job runs
 
-A **job** is one unit of work — a chat message, a cron tick, an API call, or an inbound Telegram message. The runner loads the agent's config, builds the tool whitelist and system prompt *for that job*, then enters the LLM loop.
+A **job** is one unit of work — a chat message, a cron tick, an API call, or an inbound Telegram message. The runner loads the agent's config, builds the tool whitelist and system prompt _for that job_, then enters the LLM loop.
 
 <Callout type="warn" title="The tool whitelist is computed per job — there are no defaults">
-The runner unions the always-on builtins (`return_result`, memory tools) with every tool unlocked by the agent's assigned skills (via `requiredBuiltins`), its connectors, and its MCP servers. An agent with no skills gets only the always-on set. A tool that isn't in the whitelist is **never** offered to the model.
+  The runner unions the always-on builtins (`return_result`, memory tools) with every tool unlocked
+  by the agent's assigned skills (via `requiredBuiltins`), its connectors, and its MCP servers. An
+  agent with no skills gets only the always-on set. A tool that isn't in the whitelist is **never**
+  offered to the model.
 </Callout>
 
 ## Anti-loop guards
 
 Every job is bounded. When a limit is hit the job fails loud with a clear code — never a silent fallback.
 
-| Guard | Limit |
-|---|---|
-| Max turns per job | 50 |
-| Max tool calls per turn | 50 |
-| Max self-chain resumes | 15 |
-| Max delegation depth | 3 |
+| Guard                    | Limit     |
+| ------------------------ | --------- |
+| Max turns per job        | 50        |
+| Max tool calls per turn  | 50        |
+| Max self-chain resumes   | 15        |
+| Max delegation depth     | 3         |
 | Max total tokens per job | 1,500,000 |
-| Max cost per job | $2.00 |
+| Max cost per job         | $2.00     |
 
 ## Autonomy
 
@@ -51,7 +54,19 @@ Tool calls with real-world side-effects (like `run_command`) can require approva
 ## Related
 
 <Cards>
-  <Card title="Orchestrators" href="/docs/concepts/orchestrators" description="How agents delegate work and compile results." />
-  <Card title="Skills" href="/docs/concepts/skills" description="The reusable capabilities you assign." />
-  <Card title="Create an agent" href="/docs/guides/create-an-agent" description="Step-by-step in the dashboard." />
+  <Card
+    title="Orchestrators"
+    href="/docs/concepts/orchestrators"
+    description="How agents delegate work and compile results."
+  />
+  <Card
+    title="Skills"
+    href="/docs/concepts/skills"
+    description="The reusable capabilities you assign."
+  />
+  <Card
+    title="Create an agent"
+    href="/docs/guides/create-an-agent"
+    description="Step-by-step in the dashboard."
+  />
 </Cards>

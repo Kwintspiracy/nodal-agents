@@ -34,7 +34,10 @@ beforeAll(async () => {
   const r = await spinUpTestDb();
   db = r.db;
   seed = await seedMinimal(db);
-  await db.update(agents).set({ role: 'agent', systemAgent: true }).where(eq(agents.id, seed.agentId));
+  await db
+    .update(agents)
+    .set({ role: 'agent', systemAgent: true })
+    .where(eq(agents.id, seed.agentId));
 });
 
 function makeDeps(): RunnerDeps {

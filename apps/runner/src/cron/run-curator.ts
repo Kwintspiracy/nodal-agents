@@ -185,7 +185,12 @@ export async function runCuratorTick(
 
     // Due — run consolidation
     try {
-      await runCuratorConsolidation(db, candidate.entityId, e.CURATOR_MAX_TURNS, e.REFLECTION_MODEL);
+      await runCuratorConsolidation(
+        db,
+        candidate.entityId,
+        e.CURATOR_MAX_TURNS,
+        e.REFLECTION_MODEL,
+      );
     } catch (err) {
       console.warn(`${CURATOR_TRACE} consolidation failed for entity ${candidate.entityId}`, err);
     }

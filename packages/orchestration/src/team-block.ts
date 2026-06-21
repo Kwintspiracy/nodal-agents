@@ -16,6 +16,7 @@ import {
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
+import { summarizePurpose } from './router/assign-tools';
 
 // ─── buildTeamBlock ───────────────────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
       agentSlug: agents.slug,
       agentRole: agents.role,
       agentActive: agents.active,
+      agentPersonality: agents.personality,
     })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
@@ -184,14 +186,18 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     }
   }
 
+  // Capability hint = the connector/MCP NAMES the child can use (not the full
+  // per-operation list, which was noise the orchestrator couldn't route on). The
+  // name conveys the capability so the orchestrator won't think the child lacks
+  // an integration.
   function formatConnectorsTag(subAgentId: string): string {
     const conn = connectorMap.get(subAgentId);
     const mcp = mcpMap.get(subAgentId);
-    const parts: string[] = [];
-    if (conn) parts.push(...conn.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
-    if (mcp) parts.push(...mcp.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
-    if (parts.length === 0) return '';
-    return `\n  Tools: ${parts.join('; ')}`;
+    const names: string[] = [];
+    if (conn) names.push(...conn.map((c) => c.slug));
+    if (mcp) names.push(...mcp.map((c) => c.slug));
+    if (names.length === 0) return '';
+    return `\n  Connectors: ${[...new Set(names)].join(', ')}`;
   }
 
   // Unified orchestrator: every orchestrator receives BOTH delegation toolsets at
@@ -238,12 +244,24 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
       'task ID for a `depends_on` reference).\n',
   );
   lines.push(
-    'Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n',
+    '⚠️ THE FINAL SUMMARY TO THE USER IS AUTOMATIC — NEVER MAKE IT A TASK. Once the work tasks ' +
+      'finish, the system composes a short summary of the whole run and sends it to the user on ' +
+      'their original channel by itself. So even when the user says "puis fais une synthèse et ' +
+      'envoie-la moi" / "then summarize and send it to me", that final summarize-and-send step is ' +
+      'ALREADY handled — do NOT turn it into a task and do NOT add a `depends_on` "synthèse"/' +
+      '"summary"/"→ Telegram" task. Creating one produces a DUPLICATE and an extra useless run. ' +
+      'Create ONLY the real work tasks, then `return_result`. If the user wants a long deliverable ' +
+      '(a file, an Obsidian note, an email, an HTML page), make a work task that PRODUCES that ' +
+      'artifact — but the chat reply itself is never a task.\n',
   );
+  lines.push('Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n');
   lines.push('Your agents:');
   for (const row of childRows) {
-    const { subAgentId, agentName, agentSlug, agentRole, instructions } = row;
+    const { subAgentId, agentName, agentSlug, agentRole, instructions, agentPersonality } = row;
     const toolSlug = agentSlug.replace(/-/g, '_');
+    // What the agent is FOR (summary of its personality) — drives correct routing.
+    const purpose = summarizePurpose(agentPersonality);
+    const purposeTag = purpose ? `\n  Purpose: ${purpose}` : '';
     const skills = skillMap.get(subAgentId) ?? [];
     const skillsTag = skills.length > 0 ? `\n  Skills: ${skills.join(', ')}` : '';
     const connectorsTag = formatConnectorsTag(subAgentId);
@@ -251,7 +269,7 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
     lines.push(
       `- **${agentName}**${roleTag} — assign tool \`assign_${toolSlug}\`, task handle ` +
-        `\`${agentSlug}\`${skillsTag}${connectorsTag}${instrTag}`,
+        `\`${agentSlug}\`${purposeTag}${skillsTag}${connectorsTag}${instrTag}`,
     );
   }
 

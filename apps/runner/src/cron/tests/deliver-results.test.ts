@@ -7,11 +7,24 @@
 //   - compiled result includes all task titles + results
 //   - regression: inject_delegation.wrong_status — all tasks found, not just first
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agentTasks } from '@nodal-agents/db';
+import { agentJobs, agentTasks, agents } from '@nodal-agents/db';
+
+// Mock the channel send + the LLM resolver so we can assert WHAT gets sent to
+// the channel (the short synthesis) without network/LLM. Hoisted by vitest.
+type SendOpts = { chatId: string; text: string; botToken: string };
+const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
+vi.mock('@nodal-agents/delivery', () => ({
+  sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
+}));
+const resolveAgentLlmClientMock = vi.fn((..._args: unknown[]): unknown => undefined);
+vi.mock('../../job/resolve-llm.ts', () => ({
+  resolveAgentLlmClient: (...args: unknown[]) => resolveAgentLlmClientMock(...args),
+}));
+
 import { deliverCompletedRoots } from '../deliver-results.ts';
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
@@ -219,6 +232,61 @@ describe('deliverCompletedRoots', () => {
     for (const res of results) {
       expect(compiled).toContain(res);
     }
+  });
+
+  it('channel return: synthesizes a SHORT summary and sends THAT (not the raw concat)', async () => {
+    // Give the root agent a bot token + an LLM key so the channel-return path runs.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'bot:TESTTOKEN', model: 'x/y' })
+      .where(eq(agents.id, seed.agentId));
+    resolveAgentLlmClientMock.mockResolvedValueOnce({
+      ok: true,
+      client: { generateText: vi.fn(async () => ({ text: 'SHORT SUMMARY ✅' })) },
+    });
+    sendTelegramMessageMock.mockClear();
+
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing', channel: 'telegram', chatId: '12345' })
+      .where(eq(agentJobs.id, rootJob.id));
+    // A long result that would exceed Telegram's limit if sent raw.
+    await createTaskForRoot(rootJob.id, 'done', 'x'.repeat(8000), 'Big Task A');
+    await createTaskForRoot(rootJob.id, 'done', 'y'.repeat(8000), 'Big Task B');
+
+    await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
+    const arg = sendTelegramMessageMock.mock.calls[0]![0] as { chatId: string; text: string };
+    expect(arg.chatId).toBe('12345');
+    expect(arg.text).toBe('SHORT SUMMARY ✅'); // the synthesis, NOT the 16K concat
+    expect(arg.text.length).toBeLessThan(100);
+  });
+
+  it('channel return: falls back to compiled text when the LLM is unavailable', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'bot:TESTTOKEN' })
+      .where(eq(agents.id, seed.agentId));
+    resolveAgentLlmClientMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'agent_no_llm_configured',
+    });
+    sendTelegramMessageMock.mockClear();
+
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing', channel: 'telegram', chatId: '777' })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'Fallback result body', 'Fallback Task');
+
+    await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
+    const arg = sendTelegramMessageMock.mock.calls[0]![0] as { text: string };
+    expect(arg.text).toContain('Fallback result body'); // compiled text, chunking handles length
   });
 
   it('idempotency: two concurrent ticks deliver each root exactly once', async () => {

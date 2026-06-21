@@ -50,7 +50,9 @@ describe('buildMiniMaxModel', () => {
       apiKey: 'mm-test-key',
     });
     expect(model).toBeDefined();
-    expect(typeof (model as { specificationVersion?: unknown }).specificationVersion).toBe('string');
+    expect(typeof (model as { specificationVersion?: unknown }).specificationVersion).toBe(
+      'string',
+    );
   });
 
   it('throws ProviderConfigError when apiKey is missing', () => {
@@ -122,10 +124,7 @@ describe('MiniMax fetch wrapper behaviour', () => {
     const apiKey = 'mm-real-key';
     const MINIMAX_REJECTED_BETAS = new Set(['fine-grained-tool-streaming', 'context-1m']);
 
-    const wrapper = async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    const wrapper = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const incoming = new Headers(init?.headers as HeadersInit | undefined);
       incoming.delete('x-api-key');
       incoming.set('Authorization', `Bearer ${apiKey}`);
@@ -177,10 +176,7 @@ describe('MiniMax fetch wrapper behaviour', () => {
     const MINIMAX_REJECTED_BETAS = new Set(['fine-grained-tool-streaming', 'context-1m']);
 
     const capturedHeaders: Headers[] = [];
-    const wrapper = async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    const wrapper = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const incoming = new Headers(init?.headers as HeadersInit | undefined);
       incoming.delete('x-api-key');
       incoming.set('Authorization', `Bearer ${apiKey}`);

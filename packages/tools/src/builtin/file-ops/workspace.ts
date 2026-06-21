@@ -18,6 +18,14 @@ import type { ToolContext } from '../../types';
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /**
+ * Label of the auto-injected, entity-wide SHARED workspace (a common scratch /
+ * hand-off area for all agents in the entity). It is ADDITIVE: reachable via the
+ * "shared/" label but never the implicit default and never forces a label on
+ * agents that have one real workspace. The runner injects it under this label.
+ */
+export const SHARED_WORKSPACE_LABEL = 'shared';
+
+/**
  * Max bytes returned by a single file_read call. Larger files require explicit
  * offset/limit pagination. 1 MiB ≈ ~250k tokens at 4 chars/token — already at
  * the upper edge of what most context windows want to receive in one shot.
@@ -167,17 +175,27 @@ export async function resolveAndCheckPath(
     return resolveUnderRoot(matchedWorkspace.path, relativeInWorkspace);
   }
 
-  if (workspaces.length === 1) {
-    // Single workspace: label prefix is optional — the full path resolves under it.
+  // The auto-injected entity-wide SHARED workspace is ADDITIVE: it's reachable
+  // by its "shared/" label, but it must never become the implicit default nor
+  // force a label on agents that have exactly one real workspace. So the
+  // default-resolution counts only NON-shared workspaces.
+  const ownWorkspaces = workspaces.filter((ws) => ws.label !== SHARED_WORKSPACE_LABEL);
+
+  if (ownWorkspaces.length === 1) {
+    // Single real workspace: label prefix is optional — full path resolves under it.
+    return resolveUnderRoot(ownWorkspaces[0]!.path, requestedPath);
+  }
+  if (ownWorkspaces.length === 0 && workspaces.length >= 1) {
+    // Only the shared workspace exists — use it as the default.
     return resolveUnderRoot(workspaces[0]!.path, requestedPath);
   }
 
-  // Multiple workspaces, no matching label → fail loud listing valid labels.
+  // Multiple real workspaces, no matching label → fail loud listing valid labels.
   const validLabels = workspaces.map((ws) => ws.label).join(', ');
   throw new WorkspaceError(
     'workspace_label_required',
     `This agent has multiple workspaces. Prefix the path with a workspace label. ` +
-      `Valid labels: ${validLabels}. Example: "${workspaces[0]!.label}/${requestedPath}".`,
+      `Valid labels: ${validLabels}. Example: "${ownWorkspaces[0]!.label}/${requestedPath}".`,
   );
 }
 

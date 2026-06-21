@@ -11,7 +11,7 @@ import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import Modal from '@/components/ui/Modal';
 import ConnectorAddForm from './ConnectorAddForm.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
-import { CONN_BRAND_COLORS, connGlyph } from './connector-brand.ts';
+import { CONN_BRAND_COLORS, connGlyph, connIcon } from './connector-brand.ts';
 import { catalogCategory } from './categories.ts';
 
 const CATEGORIES: ChipItem<string>[] = [
@@ -97,6 +97,7 @@ function ConnectorMarketCard({
 
   const brandColor = CONN_BRAND_COLORS[catalogItem.slug];
   const glyph = connGlyph(catalogItem.slug, catalogItem.label);
+  const iconSrc = connIcon(catalogItem.slug);
   const cat = catalogCategory(catalogItem.slug);
 
   // For oauth2 connectors with no existing credentials, the CTA skips the
@@ -112,10 +113,15 @@ function ConnectorMarketCard({
     <>
       <MarketplaceCard
         glyph={
-          <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
+          iconSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={iconSrc} alt="" className="h-6 w-6 object-contain" />
+          ) : (
+            <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
+          )
         }
         glyphVariant="conn"
-        glyphBackground={brandColor}
+        glyphBackground={iconSrc ? '#ffffff' : brandColor}
         name={catalogItem.label}
         description={catalogItem.docsHint}
         category={cat}

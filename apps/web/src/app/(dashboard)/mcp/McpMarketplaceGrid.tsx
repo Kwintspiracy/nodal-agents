@@ -7,6 +7,7 @@ import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
 import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
+import { connIcon } from '../connectors/connector-brand.ts';
 import Modal from '@/components/ui/Modal';
 import McpAddForm from './McpAddForm.tsx';
 import { mcpCategory } from './categories.ts';
@@ -86,6 +87,7 @@ function McpMarketCard({
   const [addOpen, setAddOpen] = useState(false);
   const router = useRouter();
   const glyph = catalogItem.label.slice(0, 2).toUpperCase();
+  const iconSrc = connIcon(catalogItem.slug);
   const cat = mcpCategory(catalogItem.slug);
   const isPending = catalogItem.status === 'pending';
 
@@ -98,10 +100,15 @@ function McpMarketCard({
     <>
       <MarketplaceCard
         glyph={
-          <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
+          iconSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={iconSrc} alt="" className="h-6 w-6 object-contain" />
+          ) : (
+            <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
+          )
         }
         glyphVariant="conn"
-        glyphBackground={MCP_BLUE}
+        glyphBackground={iconSrc ? '#ffffff' : MCP_BLUE}
         name={catalogItem.label}
         description={catalogItem.description}
         category={cat}

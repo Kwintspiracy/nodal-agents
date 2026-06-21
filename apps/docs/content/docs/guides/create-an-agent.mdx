@@ -6,7 +6,8 @@ description: Build and configure an agent in the dashboard — from name to firs
 An agent is the basic unit of work: a **name**, a **system prompt** that shapes its behaviour, a **model**, and an optional set of **skills**, **connectors**, and **MCP servers**. Chat with it directly, wire it to Telegram, or put it on a schedule.
 
 <Callout type="info">
-You need the stack running (`nodal-agents up`) and at least one provider key set in **LLM Providers** first — see [Connect a model](/docs/guides/connect-a-model).
+  You need the stack running (`nodal-agents up`) and at least one provider key set in **LLM
+  Providers** first — see [Connect a model](/docs/guides/connect-a-model).
 </Callout>
 
 ## Build it
@@ -25,11 +26,9 @@ Go to `http://localhost:3000`, open **Agents**, and click **New agent**.
 
 ### Name it and write its persona
 
-The **name** is how you and other agents address it. The **personality / system prompt** is the Markdown injected at the top of every job — tell it what it is, what it knows, how it should respond, and what *not* to do.
+The **name** is how you and other agents address it. The **personality / system prompt** is the Markdown injected at the top of every job — tell it what it is, what it knows, how it should respond, and what _not_ to do.
 
-<Callout type="warn">
-Vague prompts produce vague agents. Be specific about scope and tone.
-</Callout>
+<Callout type="warn">Vague prompts produce vague agents. Be specific about scope and tone.</Callout>
 
 </Step>
 
@@ -37,11 +36,11 @@ Vague prompts produce vague agents. Be specific about scope and tone.
 
 ### Pick a role
 
-| Role | Delegates? | Use when |
-|------|-----------|----------|
-| **Worker** | No | the agent does the work itself |
-| **Router** | to one sub-agent | you need specialist routing |
-| **Planner** | to many, in parallel | you need fan-out + synthesis |
+| Role        | Delegates?           | Use when                       |
+| ----------- | -------------------- | ------------------------------ |
+| **Worker**  | No                   | the agent does the work itself |
+| **Router**  | to one sub-agent     | you need specialist routing    |
+| **Planner** | to many, in parallel | you need fan-out + synthesis   |
 
 Router and Planner are [orchestrators](/docs/concepts/orchestrators) — pick the **sub-agents** they may delegate to.
 
@@ -88,15 +87,27 @@ Open **Agents → your agent → Telegram** and paste a bot token from [@BotFath
 </Tabs>
 
 <Callout type="info" title="Good to know">
-- A worker with no skills still has the built-in **memory** and **workspace** tools.
-- The **first orchestrator** you create becomes this workspace's [ROOT agent](/docs/guides/root-agent) automatically.
-- Deleting an agent also deletes its jobs, schedules, and memory.
+  - A worker with no skills still has the built-in **memory** and **workspace** tools. - The **first
+  orchestrator** you create becomes this workspace's [ROOT agent](/docs/guides/root-agent)
+  automatically. - Deleting an agent also deletes its jobs, schedules, and memory.
 </Callout>
 
 ## Next
 
 <Cards>
-  <Card title="🧠 How memory works" href="/docs/concepts/memory" description="What the agent remembers across jobs." />
-  <Card title="📅 Automate it" href="/docs/guides/automations" description="Run this agent on a schedule." />
-  <Card title="🛠️ Give it skills" href="/docs/reference/skills" description="The capabilities you can assign." />
+  <Card
+    title="🧠 How memory works"
+    href="/docs/concepts/memory"
+    description="What the agent remembers across jobs."
+  />
+  <Card
+    title="📅 Automate it"
+    href="/docs/guides/automations"
+    description="Run this agent on a schedule."
+  />
+  <Card
+    title="🛠️ Give it skills"
+    href="/docs/reference/skills"
+    description="The capabilities you can assign."
+  />
 </Cards>

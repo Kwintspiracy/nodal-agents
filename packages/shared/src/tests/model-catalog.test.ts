@@ -2,7 +2,12 @@
 // and providerOrder routing preference (P0-C, Part 2).
 
 import { describe, it, expect } from 'vitest';
-import { modelContextWindow, DEFAULT_CONTEXT_WINDOW, MODEL_CATALOG, findModelCatalogEntry } from '../model-catalog';
+import {
+  modelContextWindow,
+  DEFAULT_CONTEXT_WINDOW,
+  MODEL_CATALOG,
+  findModelCatalogEntry,
+} from '../model-catalog';
 
 describe('modelContextWindow', () => {
   it('returns the catalogued window for known models', () => {

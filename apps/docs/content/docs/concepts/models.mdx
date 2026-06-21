@@ -9,21 +9,21 @@ without needing its own credential.
 
 ## Supported providers
 
-| Provider | Type | Notes |
-|---|---|---|
-| Anthropic | Cloud | Prompt caching supported |
-| OpenAI | Cloud | Structured outputs supported |
-| Google | Cloud | Vision + structured outputs |
-| Mistral | Cloud | |
-| Groq | Cloud | |
-| DeepSeek | Cloud (native) | Direct endpoint at `api.deepseek.com` |
-| MiniMax | Cloud (native) | Anthropic-compatible endpoint at `api.minimax.io/anthropic` |
-| OpenRouter | Aggregator | Routes to many upstream models under one key |
-| Ollama | Local | Default base URL `http://localhost:11434` |
-| LM Studio | Local | Default base URL `http://localhost:1234/v1` |
-| Jan AI | Local | Default base URL `http://localhost:1337/v1` |
-| llama.cpp | Local | Default base URL `http://localhost:8080/v1` |
-| vLLM | Local | Default base URL `http://localhost:8000/v1` |
+| Provider   | Type           | Notes                                                       |
+| ---------- | -------------- | ----------------------------------------------------------- |
+| Anthropic  | Cloud          | Prompt caching supported                                    |
+| OpenAI     | Cloud          | Structured outputs supported                                |
+| Google     | Cloud          | Vision + structured outputs                                 |
+| Mistral    | Cloud          |                                                             |
+| Groq       | Cloud          |                                                             |
+| DeepSeek   | Cloud (native) | Direct endpoint at `api.deepseek.com`                       |
+| MiniMax    | Cloud (native) | Anthropic-compatible endpoint at `api.minimax.io/anthropic` |
+| OpenRouter | Aggregator     | Routes to many upstream models under one key                |
+| Ollama     | Local          | Default base URL `http://localhost:11434`                   |
+| LM Studio  | Local          | Default base URL `http://localhost:1234/v1`                 |
+| Jan AI     | Local          | Default base URL `http://localhost:1337/v1`                 |
+| llama.cpp  | Local          | Default base URL `http://localhost:8080/v1`                 |
+| vLLM       | Local          | Default base URL `http://localhost:8000/v1`                 |
 
 Local providers use the OpenAI-compatible API. You can override the base URL for
 any provider when you add the key.
@@ -61,17 +61,17 @@ Non-reasoning models are unaffected.
 
 ## Capabilities by provider
 
-| Provider | Tool use | Prompt caching | Vision | Structured outputs |
-|---|---|---|---|---|
-| Anthropic | Yes | Yes | Yes | No (tool-based) |
-| OpenAI | Yes | No | Yes | Yes |
-| Google | Yes | No | Yes | Yes |
-| Mistral | Yes | No | No | Yes |
-| Groq | Yes | No | No | Yes |
-| DeepSeek | Yes | No | No | No |
-| MiniMax | Yes | No | No | No |
-| OpenRouter | Yes | No | No | No |
-| Ollama | Yes | No | No | Yes |
+| Provider   | Tool use | Prompt caching | Vision | Structured outputs |
+| ---------- | -------- | -------------- | ------ | ------------------ |
+| Anthropic  | Yes      | Yes            | Yes    | No (tool-based)    |
+| OpenAI     | Yes      | No             | Yes    | Yes                |
+| Google     | Yes      | No             | Yes    | Yes                |
+| Mistral    | Yes      | No             | No     | Yes                |
+| Groq       | Yes      | No             | No     | Yes                |
+| DeepSeek   | Yes      | No             | No     | No                 |
+| MiniMax    | Yes      | No             | No     | No                 |
+| OpenRouter | Yes      | No             | No     | No                 |
+| Ollama     | Yes      | No             | No     | Yes                |
 
 Capabilities marked "No" are conservative defaults — individual models on a provider
 may differ from the table above.

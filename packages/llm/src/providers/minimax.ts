@@ -49,9 +49,7 @@ function createMiniMaxFetch(
     init?: Parameters<typeof globalThis.fetch>[1],
   ): Promise<Response> => {
     // Build a mutable Headers object from whatever was passed
-    const incoming = new Headers(
-      init?.headers as HeadersInit | undefined,
-    );
+    const incoming = new Headers(init?.headers as HeadersInit | undefined);
 
     // Swap auth: remove x-api-key, set Authorization: Bearer
     incoming.delete('x-api-key');

@@ -16,6 +16,10 @@ export const agentSchedules = pgTable(
     type: text('type').notNull().default('cron'),
     name: text('name').notNull(),
     cronExpr: text('cron_expr').notNull(),
+    // IANA timezone the cron is evaluated in (e.g. 'Asia/Singapore'). null = the
+    // server's local timezone (legacy rows). New schedules capture an explicit tz
+    // so "9am" stays 9am in the user's zone regardless of where the runner hosts.
+    timezone: text('timezone'),
     task: text('task'),
     objectives: text('objectives'),
     active: boolean('active').default(true),

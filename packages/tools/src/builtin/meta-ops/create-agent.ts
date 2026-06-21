@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { eq, createAgentRepo } from '@nodal-agents/db';
 import { agents } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
+import { resolveAgentProvider, validateModelForProvider } from './agent-model';
 
 const CreateAgentInput = z.object({
   slug: z
@@ -62,6 +63,8 @@ export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgen
   name: 'create_agent',
   description:
     'Create a NEW agent in this entity (auto-assigned to you). ' +
+    "BEFORE calling this, run skill_view('tool-create-agent') for the exact format + the " +
+    'create-before-attach rule (you must create an agent before you can attach/delegate to it). ' +
     'If the agent ALREADY EXISTS, use attach_agent instead — do not recreate it. ' +
     'role can be "worker" (standard), "router" (delegates to sub-agents by task type), or "planner" (plans and coordinates sub-agents). ' +
     'Optionally provide subAgentSlugs to wire up sub-agents immediately (router/planner roles). ' +
@@ -91,6 +94,15 @@ export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgen
 
     const { dbRole, orchestratorMode } = mapRole(input.role);
 
+    // Ground the model against the entity's provider catalog, and give the new
+    // agent the entity's active key so it runs on a real provider (not a random
+    // fallback). A model that isn't valid for the provider fails loud here.
+    const resolved = await resolveAgentProvider(ctx.db, ctx.entityId, null);
+    if (resolved) {
+      const check = validateModelForProvider(resolved.provider, input.model);
+      if (!check.ok) return check;
+    }
+
     let result;
     try {
       result = await createAgentRepo(ctx.db, ctx.entityId, {
@@ -98,7 +110,7 @@ export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgen
         name: input.name,
         personality: input.personality,
         model: input.model,
-        llmKeyId: null,
+        llmKeyId: resolved?.keyId ?? null,
         role: dbRole,
         orchestratorMode,
         avatarUrl: null,

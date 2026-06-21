@@ -35,10 +35,7 @@ export interface PruneResult {
  * @param db            Drizzle db instance (any driver).
  * @param retentionDays Number of days to keep. 0 or negative = no-op.
  */
-export async function pruneOldJobs(
-  db: AnyDrizzleDb,
-  retentionDays: number,
-): Promise<PruneResult> {
+export async function pruneOldJobs(db: AnyDrizzleDb, retentionDays: number): Promise<PruneResult> {
   if (retentionDays <= 0) {
     return { jobsDeleted: 0, toolCallsDeleted: 0 };
   }

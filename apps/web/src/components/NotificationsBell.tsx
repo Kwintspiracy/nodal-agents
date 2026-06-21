@@ -35,13 +35,7 @@ function inputSnippet(toolInput: Record<string, unknown> | null | undefined): st
 
 // ─── Approve button inside the dropdown ───────────────────────────────────────
 
-function ApproveButton({
-  item,
-  onApproved,
-}: {
-  item: PendingApproval;
-  onApproved: () => void;
-}) {
+function ApproveButton({ item, onApproved }: { item: PendingApproval; onApproved: () => void }) {
   const [isPending, startTransition] = useTransition();
 
   function handleApprove() {
@@ -117,9 +111,7 @@ function ApprovalsDropdown({
     >
       {/* Header */}
       <div className="border-b border-rule-2 px-4 py-3">
-        <p className="text-[13px] font-semibold text-ink">
-          Pending approvals ({items.length})
-        </p>
+        <p className="text-[13px] font-semibold text-ink">Pending approvals ({items.length})</p>
       </div>
 
       {/* Body */}
@@ -146,9 +138,7 @@ function ApprovalsDropdown({
                   <p className="mt-0.5 truncate text-[11px] text-ink-3">
                     {inputSnippet(item.toolInput as Record<string, unknown> | null)}
                   </p>
-                  <p className="mt-0.5 text-[10px] text-ink-4">
-                    {relativeTime(item.requestedAt)}
-                  </p>
+                  <p className="mt-0.5 text-[10px] text-ink-4">{relativeTime(item.requestedAt)}</p>
                 </div>
                 <ApproveButton item={item} onApproved={onApproved} />
               </Link>
@@ -205,13 +195,7 @@ export default function NotificationsBell() {
         )}
       </button>
 
-      {open && (
-        <ApprovalsDropdown
-          items={pending}
-          onClose={close}
-          onApproved={handleApproved}
-        />
-      )}
+      {open && <ApprovalsDropdown items={pending} onClose={close} onApproved={handleApproved} />}
     </div>
   );
 }

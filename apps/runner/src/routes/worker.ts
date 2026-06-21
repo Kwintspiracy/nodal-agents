@@ -72,4 +72,3 @@ async function runJobBackground(
     // This catch is defensive only.
   }
 }
-

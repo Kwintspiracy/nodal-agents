@@ -21,14 +21,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import {
-  eq,
-  and,
-  count,
-  agentSkills,
-  entities,
-  agents,
-} from '@nodal-agents/db';
+import { eq, and, count, agentSkills, entities, agents } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -45,25 +38,21 @@ import { _resetReflectionThrottle } from '../../reflection/throttle.ts';
 // entity-wide skill library is in the prompt even for skills not assigned to the
 // running agent.
 
-const {
-  getActiveLlmClient,
-  setActiveLlmClient,
-  getLastSystemPrompt,
-  setLastSystemPrompt,
-} = vi.hoisted(() => {
-  let _active: RunnerDeps['llmClient'] | null = null;
-  let _lastSystem: string | null = null;
-  return {
-    getActiveLlmClient: () => _active,
-    setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => {
-      _active = c;
-    },
-    getLastSystemPrompt: () => _lastSystem,
-    setLastSystemPrompt: (s: string | null) => {
-      _lastSystem = s;
-    },
-  };
-});
+const { getActiveLlmClient, setActiveLlmClient, getLastSystemPrompt, setLastSystemPrompt } =
+  vi.hoisted(() => {
+    let _active: RunnerDeps['llmClient'] | null = null;
+    let _lastSystem: string | null = null;
+    return {
+      getActiveLlmClient: () => _active,
+      setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => {
+        _active = c;
+      },
+      getLastSystemPrompt: () => _lastSystem,
+      setLastSystemPrompt: (s: string | null) => {
+        _lastSystem = s;
+      },
+    };
+  });
 
 vi.mock('@nodal-agents/llm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -97,7 +86,9 @@ function makeScriptedClient(turns: ScriptedTurn[], captureSystem = false): Runne
     doGenerate: async (args) => {
       // Capture system prompt on first invocation (test B).
       if (captureSystem && i === 0) {
-        setLastSystemPrompt(args.prompt.find((p) => p.role === 'system')?.content as string ?? null);
+        setLastSystemPrompt(
+          (args.prompt.find((p) => p.role === 'system')?.content as string) ?? null,
+        );
       }
       const t = turns[i] ?? turns[turns.length - 1] ?? {};
       i += 1;
@@ -277,10 +268,7 @@ beforeEach(async () => {
 
   // Enable reflection on the entity for all tests in this file (each individual
   // test that tests a gate overrides this after the beforeEach reset).
-  await db
-    .update(entities)
-    .set({ reflectionEnabled: true })
-    .where(eq(entities.id, seed.entityId));
+  await db.update(entities).set({ reflectionEnabled: true }).where(eq(entities.id, seed.entityId));
 });
 
 // ── A. Cross-agent patch ───────────────────────────────────────────────────────
@@ -332,9 +320,11 @@ describe('reflection-convergence — A: cross-agent patch', () => {
     // Call runReflection directly for agent A's job.
     const result = await runReflection(
       db as RunnerDeps['db'],
-      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<typeof runReflection>[1],
-      5,   // maxTurns
-      2,   // maxNewSkills
+      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<
+        typeof runReflection
+      >[1],
+      5, // maxTurns
+      2, // maxNewSkills
     );
 
     // (1) outcome is 'patched', created=0
@@ -350,10 +340,7 @@ describe('reflection-convergence — A: cross-agent patch', () => {
     expect(Number(afterCount?.n ?? 0)).toBe(countBefore);
 
     // (3) skill S has patch_count=1 and updated content.
-    const [patched] = await db
-      .select()
-      .from(agentSkills)
-      .where(eq(agentSkills.id, skillB.id));
+    const [patched] = await db.select().from(agentSkills).where(eq(agentSkills.id, skillB.id));
     expect(patched!.patchCount).toBe(1);
     expect(patched!.content).toContain('PATCHED BY AGENT A');
     // Provenance stays 'agent' (a patch must NEVER flip provenance).
@@ -409,7 +396,9 @@ describe('reflection-convergence — B: entity-wide skill visibility', () => {
 
     await runReflection(
       db as RunnerDeps['db'],
-      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<typeof runReflection>[1],
+      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<
+        typeof runReflection
+      >[1],
       5,
       2,
     );
@@ -485,7 +474,9 @@ describe('reflection-convergence — C: new-skill cap', () => {
 
     const result = await runReflection(
       db as RunnerDeps['db'],
-      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<typeof runReflection>[1],
+      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<
+        typeof runReflection
+      >[1],
       5,
       1, // maxNewSkills = 1 ← the cap under test
     );
@@ -579,7 +570,9 @@ describe('reflection-convergence — D: skill_view is read-only', () => {
 
     const result = await runReflection(
       db as RunnerDeps['db'],
-      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<typeof runReflection>[1],
+      { ...job, agentId: seed.agentId, entityId: seed.entityId } as Parameters<
+        typeof runReflection
+      >[1],
       5,
       2,
     );
@@ -597,10 +590,7 @@ describe('reflection-convergence — D: skill_view is read-only', () => {
     expect(Number(afterCount?.n ?? 0)).toBe(countBefore);
 
     // (3) The viewed skill's patch_count is still 0 — skill_view is read-only.
-    const [viewed] = await db
-      .select()
-      .from(agentSkills)
-      .where(eq(agentSkills.id, viewSkill.id));
+    const [viewed] = await db.select().from(agentSkills).where(eq(agentSkills.id, viewSkill.id));
     expect(viewed!.patchCount).toBe(0);
     // Content unchanged.
     expect(viewed!.content).toBe('Content to view.');

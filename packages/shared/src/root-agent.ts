@@ -13,23 +13,31 @@ const AutonomyLevelSchema = z.enum(['propose_confirm', 'destructive_gate', 'full
 
 export interface RootGrants {
   createAgent: boolean;
+  updateAgent: boolean;
   attachAgent: boolean;
   createSkill: boolean;
   updateSkill: boolean;
   assignSkill: boolean;
   createMcp: boolean;
+  attachMcp: boolean;
   createConnector: boolean;
+  attachConnector: boolean;
+  manageSchedules: boolean;
   autonomy: AutonomyLevel;
 }
 
 const RootGrantsSchema = z.object({
   createAgent: z.boolean(),
+  updateAgent: z.boolean(),
   attachAgent: z.boolean(),
   createSkill: z.boolean(),
   updateSkill: z.boolean(),
   assignSkill: z.boolean(),
   createMcp: z.boolean(),
+  attachMcp: z.boolean(),
   createConnector: z.boolean(),
+  attachConnector: z.boolean(),
+  manageSchedules: z.boolean(),
   autonomy: AutonomyLevelSchema,
 });
 
@@ -37,12 +45,16 @@ const RootGrantsSchema = z.object({
 
 export const DEFAULT_ROOT_GRANTS: RootGrants = {
   createAgent: true,
+  updateAgent: true,
   attachAgent: true,
   createSkill: true,
   updateSkill: true,
   assignSkill: true,
   createMcp: true,
+  attachMcp: true,
   createConnector: true,
+  attachConnector: true,
+  manageSchedules: true,
   autonomy: 'propose_confirm',
 };
 
@@ -63,45 +75,73 @@ export const DEFAULT_ROOT_GRANTS: RootGrants = {
  */
 export const INITIAL_AUTO_ROOT_GRANTS: RootGrants = {
   createAgent: false,
+  updateAgent: false,
   attachAgent: false,
   createSkill: false,
   updateSkill: false,
   assignSkill: false,
   createMcp: false,
+  attachMcp: false,
   createConnector: false,
+  attachConnector: false,
+  manageSchedules: false,
   autonomy: 'propose_confirm',
 };
 
 // ─── Meta-tool mapping ────────────────────────────────────────────────────────
 
-/** Meta-tool name per grant key. */
+/**
+ * Meta-tool name(s) per grant key. A grant may enable a SET of tools: the
+ * attach grants also enable their `detach_*` mirror (one toggle = manage that
+ * link both ways), and `manageSchedules` enables the full cron CRUD. This keeps
+ * the grant surface bounded instead of one toggle per tool.
+ */
 export const META_TOOL_BY_GRANT = {
   createAgent: 'create_agent',
-  attachAgent: 'attach_agent',
+  updateAgent: 'update_agent',
+  attachAgent: ['attach_agent', 'detach_agent'],
   createSkill: 'create_skill',
   updateSkill: 'update_skill',
-  assignSkill: 'attach_skill',
+  assignSkill: ['attach_skill', 'detach_skill'],
   createMcp: 'create_mcp',
+  attachMcp: ['attach_mcp', 'detach_mcp'],
   createConnector: 'create_connector',
+  attachConnector: ['attach_connector', 'detach_connector'],
+  manageSchedules: ['create_schedule', 'update_schedule', 'toggle_schedule', 'run_schedule'],
 } as const;
 
 export const META_TOOL_NAMES = [
   'create_agent',
+  'update_agent',
   'attach_agent',
+  'detach_agent',
   'create_skill',
   'update_skill',
   'attach_skill',
+  'detach_skill',
   'create_mcp',
+  'attach_mcp',
+  'detach_mcp',
   'create_connector',
+  'attach_connector',
+  'detach_connector',
+  'create_schedule',
+  'update_schedule',
+  'toggle_schedule',
+  'run_schedule',
 ] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Returns the names of the meta-tools whose grant is enabled. */
+/** Returns the names of the meta-tools whose grant is enabled (flattened — a
+ * grant may map to several tool names). */
 export function enabledMetaTools(grants: RootGrants): string[] {
   return (Object.keys(META_TOOL_BY_GRANT) as Array<keyof typeof META_TOOL_BY_GRANT>)
     .filter((key) => grants[key] === true)
-    .map((key) => META_TOOL_BY_GRANT[key]);
+    .flatMap((key) => {
+      const v = META_TOOL_BY_GRANT[key];
+      return Array.isArray(v) ? [...v] : [v];
+    });
 }
 
 /**
@@ -117,6 +157,10 @@ export function parseRootGrants(raw: unknown): RootGrants {
 
   const createAgent =
     typeof src['createAgent'] === 'boolean' ? src['createAgent'] : DEFAULT_ROOT_GRANTS.createAgent;
+  // updateAgent: editing an existing agent (model/personality) is additive +
+  // reversible like createAgent, so existing ROOTs get it automatically (absent → TRUE).
+  const updateAgent =
+    typeof src['updateAgent'] === 'boolean' ? src['updateAgent'] : DEFAULT_ROOT_GRANTS.updateAgent;
   // attachAgent: when absent from a stored object (a ROOT configured before this
   // grant existed), fall back to the default (TRUE), mirroring createAgent and the
   // other benign roster/skill grants. Assigning an EXISTING agent as a sub-agent is
@@ -137,17 +181,32 @@ export function parseRootGrants(raw: unknown): RootGrants {
   const createMcp = typeof src['createMcp'] === 'boolean' ? src['createMcp'] : false;
   const createConnector =
     typeof src['createConnector'] === 'boolean' ? src['createConnector'] : false;
+  // attach grants travel with their create counterpart: when absent (a ROOT
+  // configured before they existed) they inherit createMcp/createConnector, so a
+  // ROOT that could create an MCP/connector can also attach it (never the broken
+  // "create but can't attach" state).
+  const attachMcp = typeof src['attachMcp'] === 'boolean' ? src['attachMcp'] : createMcp;
+  const attachConnector =
+    typeof src['attachConnector'] === 'boolean' ? src['attachConnector'] : createConnector;
+  // manageSchedules is a new capability (agent creates/edits its own crons —
+  // recurring, cost-bearing): absent → FALSE, explicit opt-in only.
+  const manageSchedules =
+    typeof src['manageSchedules'] === 'boolean' ? src['manageSchedules'] : false;
   const autonomyParsed = AutonomyLevelSchema.safeParse(src['autonomy']);
   const autonomy = autonomyParsed.success ? autonomyParsed.data : DEFAULT_ROOT_GRANTS.autonomy;
 
   return {
     createAgent,
+    updateAgent,
     attachAgent,
     createSkill,
     updateSkill,
     assignSkill,
     createMcp,
+    attachMcp,
     createConnector,
+    attachConnector,
+    manageSchedules,
     autonomy,
   };
 }

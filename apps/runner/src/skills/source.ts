@@ -166,7 +166,14 @@ export function parseSkillSource(input: string): SkillSource {
     const owner = segs[0]!;
     const repo = stripGitSuffix(segs[1]!);
     if (segs[2] === 'tree' && segs.length >= 4) {
-      return github({ owner, repo, ref: segs[3]!, subdir: segs.slice(4).join('/') || null, skillName: null, raw });
+      return github({
+        owner,
+        repo,
+        ref: segs[3]!,
+        subdir: segs.slice(4).join('/') || null,
+        skillName: null,
+        raw,
+      });
     }
     return github({ owner, repo, ref: null, subdir: null, skillName: null, raw });
   }
@@ -174,7 +181,14 @@ export function parseSkillSource(input: string): SkillSource {
   // Shorthand: "<owner>/<repo>" or "<owner>/<repo>/<path...>"
   const m = OWNER_REPO.exec(raw);
   if (m) {
-    return github({ owner: m[1]!, repo: stripGitSuffix(m[2]!), ref: null, subdir: null, skillName: null, raw });
+    return github({
+      owner: m[1]!,
+      repo: stripGitSuffix(m[2]!),
+      ref: null,
+      subdir: null,
+      skillName: null,
+      raw,
+    });
   }
   const segs = raw.split('/').filter(Boolean);
   if (segs.length >= 2 && new RegExp(`^${SEGMENT}$`).test(segs[0]!)) {

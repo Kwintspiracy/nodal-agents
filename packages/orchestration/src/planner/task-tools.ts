@@ -76,9 +76,14 @@ export function generateTaskTools(
     {
       name: 'create_task',
       description:
-        'Create a task in the task board and assign it to an agent. ' +
+        'Create a WORK task in the task board and assign it to an agent. ' +
         'Tasks are executed asynchronously by the cron tick after this job completes. ' +
-        'Use depends_on to chain tasks sequentially.',
+        'Use depends_on to chain tasks sequentially. ' +
+        'DO NOT create a task whose job is to summarize the other tasks or to send the ' +
+        'result back to the user (e.g. "Synthèse … → Telegram", "summarize and reply"): the ' +
+        'user automatically receives a short summary of the whole run on their channel once ' +
+        'the work tasks finish — a summary/deliver task is a duplicate and is forbidden. Only ' +
+        'create tasks that do REAL work (research, write a file, send an email, build HTML, …).',
       inputSchema: createTaskSchema,
       riskLevel: 'write',
       execute: async (input: CreateTaskInput, ctx: ToolContext) => {

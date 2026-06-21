@@ -17,28 +17,28 @@ connector is exposed without a working implementation.
 
 ### Auth types
 
-| Auth type | How you connect |
-|-----------|----------------|
+| Auth type   | How you connect                                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **OAuth 2** | Click "Connect" in the dashboard; an OAuth flow authorizes the integration. One Google credential backs Drive, Gmail, Sheets, and Docs simultaneously. |
-| **API key** | Paste a key or Personal Access Token. |
+| **API key** | Paste a key or Personal Access Token.                                                                                                                  |
 
 ### Available connectors
 
 The current catalog (from `packages/shared/src/connector-catalog.ts`):
 
-| Name | Auth |
-|------|------|
-| Notion | API key |
-| Notion (OAuth) | OAuth 2 |
-| Google Drive | OAuth 2 |
-| Gmail | OAuth 2 |
-| Google Sheets | OAuth 2 |
-| Google Docs | OAuth 2 |
-| Airtable (OAuth) | OAuth 2 |
-| Airtable | API key (Personal Access Token) |
-| Apify | API key |
-| Firecrawl | API key |
-| Tavily | API key |
+| Name             | Auth                            |
+| ---------------- | ------------------------------- |
+| Notion           | API key                         |
+| Notion (OAuth)   | OAuth 2                         |
+| Google Drive     | OAuth 2                         |
+| Gmail            | OAuth 2                         |
+| Google Sheets    | OAuth 2                         |
+| Google Docs      | OAuth 2                         |
+| Airtable (OAuth) | OAuth 2                         |
+| Airtable         | API key (Personal Access Token) |
+| Apify            | API key                         |
+| Firecrawl        | API key                         |
+| Tavily           | API key                         |
 
 ### Assign a connector to an agent
 
@@ -92,11 +92,11 @@ encrypted at rest.
 
 The runner maps MCP tool annotations to its own risk model:
 
-| MCP annotation | Risk level |
-|----------------|-----------|
-| `readOnlyHint: true` | `read` (autonomous, no approval gate) |
-| `destructiveHint: true` | `destructive` |
-| no annotation | `write` (conservative default — passes through the approval gate) |
+| MCP annotation          | Risk level                                                        |
+| ----------------------- | ----------------------------------------------------------------- |
+| `readOnlyHint: true`    | `read` (autonomous, no approval gate)                             |
+| `destructiveHint: true` | `destructive`                                                     |
+| no annotation           | `write` (conservative default — passes through the approval gate) |
 
 ### Adding an MCP server
 

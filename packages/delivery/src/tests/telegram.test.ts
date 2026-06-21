@@ -148,4 +148,57 @@ describe('sendTelegramMessage', () => {
       return err instanceof DeliveryError && err.code === 'telegram_request_failed';
     });
   });
+
+  // ── Chunking: messages > 4096 must be split, not rejected as "too long" ──────
+  it('sends a single request when the text fits under the limit', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(() =>
+      Promise.resolve(makeFetchResponse(200, { ok: true, result: { message_id: 1 } })),
+    );
+    await sendTelegramMessage({ chatId: FAKE_CHAT_ID, text: 'short', botToken: FAKE_TOKEN });
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(1);
+  });
+
+  it('splits an oversized message into multiple sends, each within the limit', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(() =>
+      Promise.resolve(makeFetchResponse(200, { ok: true, result: { message_id: 7 } })),
+    );
+    // 15_000 chars across many lines (the real-world 15_480 "too long" case).
+    const longText = Array.from({ length: 300 }, (_, i) => `line ${i} ${'x'.repeat(45)}`).join(
+      '\n',
+    );
+    expect(longText.length).toBeGreaterThan(4096);
+
+    const res = await sendTelegramMessage({
+      chatId: FAKE_CHAT_ID,
+      text: longText,
+      botToken: FAKE_TOKEN,
+    });
+
+    const calls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(calls.length).toBeGreaterThan(1);
+    for (const [, init] of calls) {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      expect((body['text'] as string).length).toBeLessThanOrEqual(4096);
+    }
+    // No content lost: concatenating the chunks reconstructs the original lines.
+    const sent = calls
+      .map(([, init]) => JSON.parse(init?.body as string)['text'] as string)
+      .join('\n');
+    expect(sent).toBe(longText);
+    expect(res.messageId).toBe(7); // returns the LAST message id
+  });
+
+  it('hard-splits a single line longer than the limit', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(() =>
+      Promise.resolve(makeFetchResponse(200, { ok: true, result: { message_id: 1 } })),
+    );
+    const oneHugeLine = 'y'.repeat(10_000);
+    await sendTelegramMessage({ chatId: FAKE_CHAT_ID, text: oneHugeLine, botToken: FAKE_TOKEN });
+    const calls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(calls.length).toBeGreaterThan(1);
+    for (const [, init] of calls) {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      expect((body['text'] as string).length).toBeLessThanOrEqual(4096);
+    }
+  });
 });

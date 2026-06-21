@@ -21,27 +21,37 @@ describe('buildOpenRouterExtraBody', () => {
     expect(Object.keys(body)).toEqual(['usage']);
   });
 
-  it('reasoning model (minimax/minimax-m3) gets reasoning:{enabled:true}', () => {
+  it('reasoning model (minimax/minimax-m3) gets reasoning:{enabled,effort:medium}', () => {
     const body = buildOpenRouterExtraBody('minimax/minimax-m3');
-    expect(body.reasoning).toEqual({ enabled: true });
+    // Effort is capped at 'medium' so the model can't think past the call timeout.
+    expect(body.reasoning).toEqual({ enabled: true, effort: 'medium' });
     expect(body.usage).toEqual({ include: true });
     // MiniMax has no providerOrder
     expect(body.provider).toBeUndefined();
   });
 
-  it('deepseek/deepseek-v4-pro gets provider:{order:["deepseek"],allow_fallbacks:true}', () => {
+  it('deepseek/deepseek-v4-pro gets provider order + reasoning (it IS a reasoning model)', () => {
     const body = buildOpenRouterExtraBody('deepseek/deepseek-v4-pro');
     expect(body.provider).toEqual({ order: ['deepseek'], allow_fallbacks: true });
     expect(body.usage).toEqual({ include: true });
-    // Not a reasoning model
-    expect(body.reasoning).toBeUndefined();
+    expect(body.reasoning).toEqual({ enabled: true, effort: 'medium' });
   });
 
-  it('deepseek/deepseek-v4-flash gets provider:{order:["deepseek"],allow_fallbacks:true}', () => {
+  it('deepseek/deepseek-v4-flash gets provider order + reasoning (it IS a reasoning model)', () => {
     const body = buildOpenRouterExtraBody('deepseek/deepseek-v4-flash');
     expect(body.provider).toEqual({ order: ['deepseek'], allow_fallbacks: true });
     expect(body.usage).toEqual({ include: true });
-    expect(body.reasoning).toBeUndefined();
+    expect(body.reasoning).toEqual({ enabled: true, effort: 'medium' });
+  });
+
+  it('z-ai/glm-5.2 is a reasoning model → reasoning:{enabled,effort:medium}', () => {
+    const body = buildOpenRouterExtraBody('z-ai/glm-5.2');
+    expect(body.reasoning).toEqual({ enabled: true, effort: 'medium' });
+  });
+
+  it('moonshotai/kimi-k2.7-code is a reasoning model → reasoning:{enabled,effort:medium}', () => {
+    const body = buildOpenRouterExtraBody('moonshotai/kimi-k2.7-code');
+    expect(body.reasoning).toEqual({ enabled: true, effort: 'medium' });
   });
 
   it('unknown/custom model (not in catalog) produces only usage key — no provider, no reasoning', () => {

@@ -37,6 +37,13 @@ type ModelFamily = 'kimi' | 'nodal-format' | null;
  */
 export function detectAgenticFamily(modelId: string): ModelFamily {
   if (modelId.startsWith('moonshotai/kimi-k2')) {
+    // Kimi K2.7+ emits NATIVE OpenAI tool_calls (verified live via OpenRouter,
+    // 2026-06-21: kimi-k2.7-code returned finish_reason=tool_calls with a real
+    // tool_calls array, content just " "). Only the older K2.0–K2.6 line emits
+    // the pipe-bracket textual markup the parser middleware was built for.
+    // Applying that middleware to a native model would drop its tool calls.
+    const minor = Number(/kimi-k2\.(\d+)/.exec(modelId)?.[1] ?? '0');
+    if (minor >= 7) return null;
     return 'kimi';
   }
   if (
@@ -72,7 +79,13 @@ export function buildOpenRouterExtraBody(modelId: string): Record<string, unknow
   const providerOrder = entry?.providerOrder;
   return {
     usage: { include: true },
-    ...(isReasoning ? { reasoning: { enabled: true } } : {}),
+    // Bound the reasoning effort. Without an effort cap OpenRouter lets a
+    // reasoning model think unboundedly, which on slower routes overruns the
+    // 300s LLM-call timeout (live incident: minimax/minimax-m3 timed out after
+    // 300000ms). 'medium' caps the thinking budget — matches how Hermes drives
+    // reasoning models via OpenRouter. The runner still round-trips the
+    // reasoning_details OpenRouter returns.
+    ...(isReasoning ? { reasoning: { enabled: true, effort: 'medium' } } : {}),
     ...(providerOrder ? { provider: { order: providerOrder, allow_fallbacks: true } } : {}),
   };
 }

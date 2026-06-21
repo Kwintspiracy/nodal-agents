@@ -63,3 +63,30 @@ const CONN_GLYPHS: Record<string, string> = {
 export function connGlyph(slug: string, label: string): string {
   return CONN_GLYPHS[slug] ?? label.slice(0, 2).toUpperCase();
 }
+
+/**
+ * Brand SVG icon for a connector, served from /public/connector-icons. Returns
+ * null when we don't have a brand icon for the slug — the caller falls back to
+ * the monogram glyph. OAuth variants share the base brand's icon.
+ */
+const CONN_ICONS: Record<string, string> = {
+  // API connectors
+  notion: '/connector-icons/notion.svg',
+  'notion-oauth': '/connector-icons/notion.svg',
+  'google-drive': '/connector-icons/google-drive.svg',
+  gmail: '/connector-icons/gmail.svg',
+  'google-sheets': '/connector-icons/google-sheets.svg',
+  'google-docs': '/connector-icons/google-docs.svg',
+  airtable: '/connector-icons/airtable.svg',
+  'airtable-oauth': '/connector-icons/airtable.svg',
+  // MCP connectors (slugs from the MCP catalog)
+  stripe: '/connector-icons/stripe.svg',
+  sentry: '/connector-icons/sentry.svg',
+  'mcp-github': '/connector-icons/github.svg',
+  'mcp-postgres': '/connector-icons/postgresql.svg',
+  'mcp-git': '/connector-icons/git.svg',
+};
+
+export function connIcon(slug: string): string | null {
+  return CONN_ICONS[slug] ?? null;
+}

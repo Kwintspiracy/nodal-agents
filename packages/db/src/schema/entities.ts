@@ -30,6 +30,11 @@ export const entities = pgTable(
     icon: text('icon').default('🏢'),
     industry: text('industry'),
     goal: text('goal'),
+    // IANA timezone for this workspace (e.g. 'Europe/Paris'). Captured from the
+    // user's browser at onboarding, editable in Settings. Authoritative for the
+    // agent: it reads the current local time and schedules crons in THIS zone.
+    // null = fall back to the server's resolved timezone (legacy / pre-capture).
+    timezone: text('timezone'),
     mcpToken: uuid('mcp_token').defaultRandom(),
     // ROOT agent designation (Wave 1 — V4 ROOT agent, 2026-05-29).
     // Points at the agent that receives meta-tools. Set null when no root

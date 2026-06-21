@@ -32,16 +32,22 @@ describe('computeToolChoice', () => {
     );
   });
 
-  it('returns required for worker with adapter tools on turn 2', () => {
+  it('returns AUTO for worker with adapter tools after turn 1 (so it can write a text answer)', () => {
+    // Forcing required every turn would make a free-form text deliverable
+    // impossible — the agent could only ever call tools. After turn 1 it must be
+    // 'auto' so a research/synthesis agent can actually compose its report.
     expect(computeToolChoice({ isOrchestrator: false, turn: 2, hasAdapterTools: true })).toBe(
-      'required',
+      'auto',
     );
   });
 
-  it('returns required for worker with adapter tools on any turn', () => {
-    for (const turn of [1, 2, 5, 10, 15]) {
+  it('worker with adapter tools: required on turn 1, auto on every later turn', () => {
+    expect(computeToolChoice({ isOrchestrator: false, turn: 1, hasAdapterTools: true })).toBe(
+      'required',
+    );
+    for (const turn of [2, 5, 10, 15]) {
       expect(computeToolChoice({ isOrchestrator: false, turn, hasAdapterTools: true })).toBe(
-        'required',
+        'auto',
       );
     }
   });

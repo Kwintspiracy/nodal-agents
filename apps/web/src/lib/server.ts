@@ -57,17 +57,22 @@ export async function applyActiveEntity(session: AuthSession, req: Request): Pro
 }
 
 // ─── DB singleton ──────────────────────────────────────────────────────────────
-// One connection pool per server process. Next.js may instantiate multiple
-// workers, so each process gets its own pool — that's fine for a local install.
-
-let _db: ReturnType<typeof createClient>['db'] | null = null;
+// One connection pool per server process. Cached on `globalThis` — NOT a plain
+// module-level `let` — because `next dev` (Turbopack HMR) re-evaluates this
+// module on every code change. A module-scoped singleton would be re-created
+// each reload while the OLD pool stays open (its 10 connections never closed),
+// so a long editing session leaks pools until Postgres hits `too many clients`.
+// globalThis survives HMR, so the same pool is reused. No effect in production
+// (no HMR — the module evaluates once anyway).
+const dbGlobal = globalThis as unknown as {
+  __nodalDb?: ReturnType<typeof createClient>;
+};
 
 export function getDb() {
-  if (!_db) {
-    const { db } = createClient(env.DATABASE_URL);
-    _db = db;
+  if (!dbGlobal.__nodalDb) {
+    dbGlobal.__nodalDb = createClient(env.DATABASE_URL);
   }
-  return _db;
+  return dbGlobal.__nodalDb.db;
 }
 
 // ─── Auth provider singleton ───────────────────────────────────────────────────

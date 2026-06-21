@@ -8,7 +8,11 @@
 //    capabilities from the registry.
 
 import { describe, it, expect } from 'vitest';
-import { padDeepSeekReasoning, injectDeepSeekThinking, buildDeepSeekModel } from '../providers/deepseek';
+import {
+  padDeepSeekReasoning,
+  injectDeepSeekThinking,
+  buildDeepSeekModel,
+} from '../providers/deepseek';
 import { createLlmClient } from '../client';
 import { CAPABILITY_MATRIX } from '../providers/registry';
 import { ProviderConfigError } from '../errors';
@@ -190,7 +194,9 @@ describe('buildDeepSeekModel', () => {
     });
     // AI SDK language models expose specificationVersion
     expect(model).toBeDefined();
-    expect(typeof (model as { specificationVersion?: unknown }).specificationVersion).toBe('string');
+    expect(typeof (model as { specificationVersion?: unknown }).specificationVersion).toBe(
+      'string',
+    );
   });
 
   it('constructs a LanguageModel for deepseek-reasoner without throwing', () => {
@@ -200,7 +206,9 @@ describe('buildDeepSeekModel', () => {
       apiKey: 'sk-test-key',
     });
     expect(model).toBeDefined();
-    expect(typeof (model as { specificationVersion?: unknown }).specificationVersion).toBe('string');
+    expect(typeof (model as { specificationVersion?: unknown }).specificationVersion).toBe(
+      'string',
+    );
   });
 
   it('throws ProviderConfigError when apiKey is missing', () => {

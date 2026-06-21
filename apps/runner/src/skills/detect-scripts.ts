@@ -94,7 +94,10 @@ export async function detectScripts(
           const info = await stat(abs);
           if (info.size > 0 && info.size < 1024 * 1024) {
             const buf = await readFile(abs, 'utf8');
-            const firstLine = buf.slice(0, buf.indexOf('\n') === -1 ? buf.length : buf.indexOf('\n'));
+            const firstLine = buf.slice(
+              0,
+              buf.indexOf('\n') === -1 ? buf.length : buf.indexOf('\n'),
+            );
             const lang = shebangLanguage(firstLine);
             if (lang) found.set(rel, lang);
           }

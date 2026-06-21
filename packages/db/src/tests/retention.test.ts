@@ -30,10 +30,7 @@ beforeAll(async () => {
 
 // ─── Helper: insert a job with an explicit completed_at ───────────────────────
 
-async function insertJob(
-  status: string,
-  completedAt: Date | null,
-): Promise<string> {
+async function insertJob(status: string, completedAt: Date | null): Promise<string> {
   const [job] = await db
     .insert(schema.agentJobs)
     .values({

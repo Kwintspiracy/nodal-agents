@@ -226,14 +226,18 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'deepseek/deepseek-v4-flash',
       label: 'DeepSeek V4 Flash',
-      capabilities: { tools: true, forcedToolChoice: true },
+      // DeepSeek V4 is a reasoning model (reasoning_content / reasoning effort).
+      // Flagging reasoning makes the OpenRouter provider enable reasoning + round-trip
+      // its reasoning_details across tool calls — without it the model misbehaves
+      // (gathers then emits no answer). Matches how Hermes drives DeepSeek.
+      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
     },
     {
       modelId: 'deepseek/deepseek-v4-pro',
       label: 'DeepSeek V4 Pro',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
     },
@@ -272,6 +276,28 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // can round-trip them across tool-call turns.
       capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
       contextWindow: 1_048_576,
+    },
+    // Z.ai (GLM)
+    {
+      modelId: 'z-ai/glm-5.2',
+      label: 'GLM 5.2',
+      // A reasoning model (reasoning effort high/xhigh), strong at coding + tool
+      // use. reasoning:true → provider returns reasoning_details for round-trip.
+      // forcedToolChoice:false: send 'auto' (don't risk a rejected 'required' on
+      // a reasoning model; workers are 'auto' after turn 1 anyway).
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      contextWindow: 1_048_576,
+    },
+    // Moonshot (Kimi)
+    {
+      modelId: 'moonshotai/kimi-k2.7-code',
+      label: 'Kimi K2.7 Code',
+      // Always operates in thinking mode and preserves reasoning_content across
+      // turns (like DeepSeek) → reasoning:true is required so the provider
+      // round-trips reasoning_details. forcedToolChoice:false for the same reason
+      // as the other reasoning models.
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      contextWindow: 262_144,
     },
   ],
 };

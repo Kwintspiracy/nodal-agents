@@ -35,17 +35,29 @@ import { _resetReflectionThrottle } from '../../reflection/throttle.ts';
 import type { JobId } from '@nodal-agents/orchestration';
 
 // ── createLlmClient interception (mirrors root-meta-tools.test) ────────────────
-const { getActiveLlmClient, setActiveLlmClient, recordLlmArgs, getLastLlmConfig, resetLastLlmConfig } = vi.hoisted(() => {
+const {
+  getActiveLlmClient,
+  setActiveLlmClient,
+  recordLlmArgs,
+  getLastLlmConfig,
+  resetLastLlmConfig,
+} = vi.hoisted(() => {
   let _active: RunnerDeps['llmClient'] | null = null;
   // Captures the ProviderConfig passed to createLlmClient so tests can assert
   // which model flowed through the resolution path.
   let _lastConfig: { provider: string; model: string } | null = null;
   return {
     getActiveLlmClient: () => _active,
-    setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => { _active = c; },
-    recordLlmArgs: (cfg: { provider: string; model: string }) => { _lastConfig = cfg; },
+    setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => {
+      _active = c;
+    },
+    recordLlmArgs: (cfg: { provider: string; model: string }) => {
+      _lastConfig = cfg;
+    },
     getLastLlmConfig: () => _lastConfig,
-    resetLastLlmConfig: () => { _lastConfig = null; },
+    resetLastLlmConfig: () => {
+      _lastConfig = null;
+    },
   };
 });
 
@@ -242,7 +254,10 @@ beforeEach(async () => {
   // so existing gate-passing tests continue to work. Gate-disabled tests override
   // this to false after the reset (see test 11).
   const { entities: entitiesTable, eq: eqFn } = await import('@nodal-agents/db');
-  await db.update(entitiesTable).set({ reflectionEnabled: true }).where(eqFn(entitiesTable.id, seed.entityId));
+  await db
+    .update(entitiesTable)
+    .set({ reflectionEnabled: true })
+    .where(eqFn(entitiesTable.id, seed.entityId));
 });
 
 // ── 1. Happy path create ────────────────────────────────────────────────────────
@@ -270,16 +285,23 @@ describe('reflection — happy path create', () => {
     );
     const job = await insertCompletedJob();
 
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const rows = await db
       .select()
       .from(agentSkills)
       .where(
-        and(eq(agentSkills.slug, 'paginate-before-scrape'), eq(agentSkills.entityId, seed.entityId)),
+        and(
+          eq(agentSkills.slug, 'paginate-before-scrape'),
+          eq(agentSkills.entityId, seed.entityId),
+        ),
       );
     expect(rows).toHaveLength(1);
     expect(rows[0]!.createdBy).toBe('agent');
@@ -330,15 +352,16 @@ describe('reflection — happy path patch', () => {
     );
     const job = await insertCompletedJob();
 
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
-    const [row] = await db
-      .select()
-      .from(agentSkills)
-      .where(eq(agentSkills.id, existing.id));
+    const [row] = await db.select().from(agentSkills).where(eq(agentSkills.id, existing.id));
     expect(row!.patchCount).toBe(1);
     expect(row!.createdBy).toBe('agent'); // provenance unchanged (stays agent)
     expect(row!.content).toContain('paginate to the last page');
@@ -386,16 +409,17 @@ describe('reflection — happy path patch', () => {
     );
     const job = await insertCompletedJob();
 
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     // The user-owned row is byte-for-byte UNCHANGED.
-    const [row] = await db
-      .select()
-      .from(agentSkills)
-      .where(eq(agentSkills.id, userSkill.id));
+    const [row] = await db.select().from(agentSkills).where(eq(agentSkills.id, userSkill.id));
     expect(row!.createdBy).toBe('user'); // provenance NOT flipped
     expect(row!.patchCount).toBe(0); // NOT bumped
     expect(row!.content).toBe('Carefully hand-written user guidance — do not touch.');
@@ -424,10 +448,14 @@ describe('reflection — gate: disabled', () => {
       ]),
     );
     const job = await insertCompletedJob();
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const after = await skillsForAgentCreatedBy('agent');
     expect(after.length).toBe(before);
@@ -465,10 +493,14 @@ describe('reflection — gate: trivial job', () => {
     );
     // insertCompletedJob embeds 1 tool-call in messages (web_browse) → 1 iteration.
     const job = await insertCompletedJob();
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'trivial-skill'));
     expect(rows).toHaveLength(0);
@@ -498,17 +530,21 @@ describe('reflection — gate: trivial job', () => {
     // No need to change env; beforeEach already set REFLECTION_MIN_TOOL_ITERS=1.
     const job = await insertCompletedJob({ turn: 9, toolsUsed: [] });
     // Patch messages to have NO tool-call parts.
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-      turn: 9,
-      toolsUsed: [],
-      messages: [
-        // Plain text exchange — zero tool-call parts.
-        { role: 'user', content: 'What time is it?' },
-        { role: 'assistant', content: [{ type: 'text', text: 'It is noon.' }] },
-      ],
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+        turn: 9,
+        toolsUsed: [],
+        messages: [
+          // Plain text exchange — zero tool-call parts.
+          { role: 'user', content: 'What time is it?' },
+          { role: 'assistant', content: [{ type: 'text', text: 'It is noon.' }] },
+        ],
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'no-tools-skill'));
     expect(rows).toHaveLength(0);
@@ -532,12 +568,19 @@ describe('reflection — gate: failed job', () => {
       ]),
     );
     const job = await insertCompletedJob({ status: 'failed' });
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'failed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'failed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
-    const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'failed-job-skill'));
+    const rows = await db
+      .select()
+      .from(agentSkills)
+      .where(eq(agentSkills.slug, 'failed-job-skill'));
     expect(rows).toHaveLength(0);
   });
 });
@@ -562,11 +605,15 @@ describe('reflection — gate: recursion', () => {
       ]),
     );
     const job = await insertCompletedJob({ channel: 'api' });
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-      channel: 'reflection',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+        channel: 'reflection',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'recursion-skill'));
     expect(rows).toHaveLength(0);
@@ -590,11 +637,15 @@ describe('reflection — gate: chat', () => {
       ]),
     );
     const job = await insertCompletedJob({ channel: 'api' });
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-      channel: 'chat',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+        channel: 'chat',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'chat-skill'));
     expect(rows).toHaveLength(0);
@@ -626,10 +677,14 @@ describe('reflection — gate: throttle', () => {
 
     for (let n = 0; n < 4; n += 1) {
       const job = await insertCompletedJob();
-      await maybeRunReflection(makePassDeps(n), db as RunnerDeps['db'], {
-        ...job,
-        status: 'completed',
-      } as Parameters<typeof maybeRunReflection>[2]);
+      await maybeRunReflection(
+        makePassDeps(n),
+        db as RunnerDeps['db'],
+        {
+          ...job,
+          status: 'completed',
+        } as Parameters<typeof maybeRunReflection>[2],
+      );
     }
 
     // Cap = 2 ⇒ only the first two passes wrote a skill.
@@ -813,7 +868,10 @@ describe('reflection — gate: per-entity flag', () => {
     // beforeEach sets reflectionEnabled=true on the entity; disable it here to
     // test that Gate 5b blocks when the entity hasn't opted in.
     const { entities: entitiesTable2, eq: eqFn2 } = await import('@nodal-agents/db');
-    await db.update(entitiesTable2).set({ reflectionEnabled: false }).where(eqFn2(entitiesTable2.id, seed.entityId));
+    await db
+      .update(entitiesTable2)
+      .set({ reflectionEnabled: false })
+      .where(eqFn2(entitiesTable2.id, seed.entityId));
 
     // The env has REFLECTION_ENABLED='true' (set in beforeEach) so only
     // the per-entity flag should block the pass.
@@ -835,10 +893,14 @@ describe('reflection — gate: per-entity flag', () => {
       ]),
     );
     const job = await insertCompletedJob();
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const after = await skillsForAgentCreatedBy('agent');
     expect(after.length).toBe(before);
@@ -873,10 +935,14 @@ describe('reflection — gate: per-entity flag', () => {
       ]),
     );
     const job = await insertCompletedJob();
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     const rows = await db
       .select()
@@ -903,7 +969,10 @@ describe('reflection — gate: per-entity flag', () => {
     _resetEnvCache();
 
     const { entities: entitiesTable3, eq: eqFn3 } = await import('@nodal-agents/db');
-    await db.update(entitiesTable3).set({ reflectionEnabled: true }).where(eqFn3(entitiesTable3.id, seed.entityId));
+    await db
+      .update(entitiesTable3)
+      .set({ reflectionEnabled: true })
+      .where(eqFn3(entitiesTable3.id, seed.entityId));
 
     const deps = makeDeps(
       makeScriptedClient([
@@ -924,16 +993,17 @@ describe('reflection — gate: per-entity flag', () => {
       ]),
     );
     const job = await insertCompletedJob();
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     // The skill MUST be persisted — unset env + entity opt-in = reflection runs.
-    const rows = await db
-      .select()
-      .from(agentSkills)
-      .where(eq(agentSkills.slug, 'unset-env-skill'));
+    const rows = await db.select().from(agentSkills).where(eq(agentSkills.slug, 'unset-env-skill'));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.createdBy).toBe('agent');
   });
@@ -971,10 +1041,14 @@ describe('reflection — skill_assignment_mode=auto', () => {
     );
     const job = await insertCompletedJob();
 
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     // (1) The skill row has created_by_agent_id set to the authoring agent.
     const [skillRow] = await db
@@ -1038,10 +1112,14 @@ describe('reflection — skill_assignment_mode=approval', () => {
     );
     const job = await insertCompletedJob();
 
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     // The skill exists with provenance and authoring-agent stamped.
     const [skillRow] = await db
@@ -1098,10 +1176,14 @@ describe('reflection — REFLECTION_MODEL override', () => {
     );
 
     const job = await insertCompletedJob();
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     // (a) The override model reached createLlmClient.
     const captured = getLastLlmConfig();
@@ -1121,7 +1203,7 @@ describe('reflection — REFLECTION_MODEL override', () => {
     _resetEnvCache();
   });
 
-  it('when REFLECTION_MODEL is NOT set, createLlmClient is called with the agent\'s own model', async () => {
+  it("when REFLECTION_MODEL is NOT set, createLlmClient is called with the agent's own model", async () => {
     // Ensure REFLECTION_MODEL is absent (beforeEach + _resetEnvCache handles REFLECTION_ENABLED).
     delete process.env['REFLECTION_MODEL'];
     _resetEnvCache();
@@ -1147,10 +1229,14 @@ describe('reflection — REFLECTION_MODEL override', () => {
     );
 
     const job = await insertCompletedJob();
-    await maybeRunReflection(deps, db as RunnerDeps['db'], {
-      ...job,
-      status: 'completed',
-    } as Parameters<typeof maybeRunReflection>[2]);
+    await maybeRunReflection(
+      deps,
+      db as RunnerDeps['db'],
+      {
+        ...job,
+        status: 'completed',
+      } as Parameters<typeof maybeRunReflection>[2],
+    );
 
     // The agent's model from seedMinimal (defaults to the DB column default).
     // We assert it is NOT the override value, confirming the fallback path is taken.

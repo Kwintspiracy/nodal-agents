@@ -1,4 +1,9 @@
-import { listLearnedSkillsAction, getReflectionEnabledAction, getSkillAssignmentModeAction, listAssignableAgentsAction } from '@/lib/learned-skills-actions.ts';
+import {
+  listLearnedSkillsAction,
+  getReflectionEnabledAction,
+  getSkillAssignmentModeAction,
+  listAssignableAgentsAction,
+} from '@/lib/learned-skills-actions.ts';
 import LearnedSkillsClient from './_components/LearnedSkillsClient.tsx';
 
 export const dynamic = 'force-dynamic';

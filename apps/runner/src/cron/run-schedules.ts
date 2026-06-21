@@ -35,6 +35,7 @@ export async function runScheduleTick(
       entityId: agentSchedules.entityId,
       agentId: agentSchedules.agentId,
       cronExpr: agentSchedules.cronExpr,
+      timezone: agentSchedules.timezone,
       task: agentSchedules.task,
       nextRun: agentSchedules.nextRun,
       // Per-schedule opt-in: deliver a success confirmation to the user.
@@ -68,7 +69,13 @@ export async function runScheduleTick(
 
     let newNextRun: Date;
     try {
-      const interval = CronExpressionParser.parse(sched.cronExpr, { currentDate: now });
+      // Evaluate the cron in the schedule's own timezone (null = server-local,
+      // for legacy rows). This is what keeps "9am" firing at 9am in the user's
+      // zone regardless of where the runner is hosted.
+      const interval = CronExpressionParser.parse(sched.cronExpr, {
+        currentDate: now,
+        tz: sched.timezone ?? undefined,
+      });
       newNextRun = interval.next().toDate();
     } catch {
       // Bad cron expression — mark failed, skip. Don't keep retrying every tick.

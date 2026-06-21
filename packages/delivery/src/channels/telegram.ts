@@ -40,7 +40,55 @@ interface TelegramGetMeResult {
   can_read_all_group_messages?: boolean;
 }
 
+/** Telegram hard limit per message is 4096 chars; stay under it with a margin. */
+const TELEGRAM_MAX_CHARS = 3900;
+
+/**
+ * Split text into Telegram-sized chunks (≤ TELEGRAM_MAX_CHARS), preferring to
+ * break on paragraph/line boundaries so a message is never cut mid-line. A
+ * single line longer than the limit is hard-split. Returns [text] when it fits.
+ */
+function chunkForTelegram(text: string, max = TELEGRAM_MAX_CHARS): string[] {
+  if (text.length <= max) return [text];
+  const chunks: string[] = [];
+  let current = '';
+  for (const line of text.split('\n')) {
+    // A single oversized line: flush current, then hard-split the line.
+    if (line.length > max) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+      for (let i = 0; i < line.length; i += max) chunks.push(line.slice(i, i + max));
+      continue;
+    }
+    if (current.length + line.length + 1 > max) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = current ? `${current}\n${line}` : line;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * Send a message to a Telegram chat. Text longer than Telegram's 4096-char limit
+ * is automatically split into multiple messages (on line boundaries) — without
+ * this, a long message fails with "Bad Request: message is too long" and the
+ * delivery is silently lost. Returns the LAST message's id.
+ */
 export async function sendTelegramMessage(opts: TelegramSendOpts): Promise<{ messageId: number }> {
+  const parts = chunkForTelegram(opts.text);
+  let last = { messageId: 0 };
+  for (const part of parts) {
+    last = await sendOneTelegramMessage({ ...opts, text: part });
+  }
+  return last;
+}
+
+async function sendOneTelegramMessage(opts: TelegramSendOpts): Promise<{ messageId: number }> {
   const { chatId, text, botToken, parseMode, disableWebPagePreview } = opts;
 
   const body: Record<string, unknown> = {

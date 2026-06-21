@@ -25,9 +25,13 @@ export const dashboardPublishTool: ToolDefinition<
 > = {
   name: 'dashboard_publish',
   description:
-    "Publish the agent's answer to the dashboard. The text appears as the result in /jobs/<this-job> and as " +
-    'the row preview on /jobs. Use this when the dashboard is the (or one of the) intended destination(s) for ' +
-    'the user-facing output. For other surfaces, use the corresponding tool (telegram_send_message, etc.).' +
+    "Set this job's RESULT — the agent's substantive output. It becomes agent_jobs.result, shown on " +
+    "/jobs, AND it is the exact text handed to any task that depends on this one and to the run's " +
+    'final delivery. So for a task whose output another step (a synthesis) or the user will consume, ' +
+    'put the FULL content here — not a stub like "see below". (If you write your answer as your final ' +
+    'message text, it is captured automatically; this tool makes it explicit and is required when the ' +
+    'dashboard is an intended destination.) For other surfaces, use the corresponding tool ' +
+    '(telegram_send_message, etc.).' +
     '\n\n**Same-response with return_result (CRITICAL for cost & latency)**: ' +
     'Always emit dashboard_publish IN THE SAME response.content array as return_result. ' +
     'Splitting them across consecutive responses re-prompts the LLM unnecessarily and adds latency. ' +

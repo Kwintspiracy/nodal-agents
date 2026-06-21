@@ -173,6 +173,10 @@ describe('buildTeamBlock', () => {
     expect(block).toContain(`assign_${toolSlug}`); // in-line tool ALSO available
     // Soft lean reflects the auto-detected planner default (workers only).
     expect(block).toContain('independent workers');
+    // Channel-return invariant: the orchestrator must NOT delegate the final
+    // summary — the root sends it back automatically. Guard the guidance text.
+    expect(block).toContain('NEVER MAKE IT A TASK');
+    expect(block.toLowerCase()).toContain('automatic');
   });
 
   it('includes skill names from DB in team block', async () => {
@@ -262,11 +266,10 @@ describe('buildTeamBlock', () => {
     });
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    // Block must surface the connector slug AND at least one notion tool name
-    // so the orchestrator's LLM knows the worker can do this work.
-    expect(block).toContain('Tools:');
+    // Block must surface the connector slug so the orchestrator's LLM knows the
+    // worker can do this work (the connector NAME conveys the capability).
+    expect(block).toContain('Connectors:');
     expect(block).toContain('notion-oauth');
-    expect(block).toMatch(/notion_/); // at least one notion_* tool slug
   });
 
   it('includes sub-agent MCP server tools so the orchestrator can route Stripe/Cogni/etc requests', async () => {
@@ -316,11 +319,10 @@ describe('buildTeamBlock', () => {
     });
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
-    // Block must surface the server slug AND the namespaced tool names.
-    expect(block).toContain('Tools:');
+    // Block must surface the MCP server slug so the orchestrator knows the
+    // worker has this capability (the connector/MCP NAME, not every operation).
+    expect(block).toContain('Connectors:');
     expect(block).toContain('stripe');
-    expect(block).toContain('stripe__list_customers');
-    expect(block).toContain('stripe__retrieve_balance');
   });
 
   it('does not contain hardcoded agent slugs (invariant 1 spot-check)', async () => {

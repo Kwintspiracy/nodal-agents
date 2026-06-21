@@ -51,6 +51,30 @@ export type AssignInput = z.infer<typeof assignInputSchema>;
  * @param db             Drizzle DB handle
  * @returns              Array of ToolDefinition — one per active child
  */
+/**
+ * Distil an agent's personality into a one-line "what it's for" so the
+ * orchestrator can route by specialization. Takes the first 1–2 sentences of the
+ * personality (which conventionally open with "You are X, a <role>…"), stripped
+ * of markdown and capped — enough to convey the agent's vocation without dumping
+ * the whole prompt into every assign_ tool description.
+ */
+export function summarizePurpose(personality: string | null | undefined, maxLen = 240): string {
+  if (!personality) return '';
+  // Take the lead paragraph (up to the first blank line / markdown header).
+  const lead = personality.split(/\n\s*\n|\n#/)[0] ?? '';
+  // Collapse whitespace and strip markdown emphasis/bullets.
+  const clean = lead
+    .replace(/[*_`#>-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return '';
+  if (clean.length <= maxLen) return clean;
+  // Cut at the last sentence boundary before the cap, else hard-cap with an ellipsis.
+  const slice = clean.slice(0, maxLen);
+  const lastStop = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '));
+  return (lastStop > 60 ? slice.slice(0, lastStop + 1) : slice.trimEnd() + '…').trim();
+}
+
 export async function generateAssignTools(
   parentAgentId: AgentId,
   db: AnyDrizzleDb,
@@ -64,6 +88,7 @@ export async function generateAssignTools(
       agentSlug: agents.slug,
       agentRole: agents.role,
       agentActive: agents.active,
+      agentPersonality: agents.personality,
     })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
@@ -176,27 +201,37 @@ export async function generateAssignTools(
     }
   }
 
+  // Capability hint for the orchestrator: the NAMES of the connectors/MCP
+  // servers the child can use — NOT the full per-operation tool list (that was
+  // noise the orchestrator couldn't act on without each tool's description).
+  // The connector/MCP name conveys the capability ("has tavily", "has gmail")
+  // so the orchestrator won't wrongly think the child lacks an integration.
   function formatToolsTag(subAgentId: string): string {
     const conn = connectorMap.get(subAgentId);
     const mcp = mcpMap.get(subAgentId);
-    const parts: string[] = [];
-    if (conn) parts.push(...conn.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
-    if (mcp) parts.push(...mcp.map((c) => `${c.slug} (${c.toolNames.join(', ')})`));
-    if (parts.length === 0) return '';
-    return ` Tools: ${parts.join('; ')}.`;
+    const names: string[] = [];
+    if (conn) names.push(...conn.map((c) => c.slug));
+    if (mcp) names.push(...mcp.map((c) => c.slug));
+    if (names.length === 0) return '';
+    return ` Connectors: ${[...new Set(names)].join(', ')}.`;
   }
 
   // Build one tool per child
   const tools: ToolDefinition<typeof assignInputSchema, never>[] = [];
 
   for (const row of rows) {
-    const { subAgentId, instructions, agentName, agentSlug, agentRole } = row;
+    const { subAgentId, instructions, agentName, agentSlug, agentRole, agentPersonality } = row;
 
     // Normalize slug: hyphens → underscores for valid tool names
     const toolSlug = agentSlug.replace(/-/g, '_');
     const toolName = `assign_${toolSlug}`;
 
-    // Build description from live DB data (never hardcoded)
+    // Build description from live DB data (never hardcoded). Lead with WHAT THE
+    // AGENT IS FOR (a summary of its personality) so the orchestrator routes by
+    // specialization — without it, it sees interchangeable names and misroutes
+    // (e.g. handing a writing task to a social-network-only agent).
+    const purpose = summarizePurpose(agentPersonality);
+    const purposeDesc = purpose ? ` ${purpose}` : '';
     const skills = skillMap.get(subAgentId) ?? [];
     const skillsDesc = skills.length > 0 ? ` Skills: ${skills.join(', ')}.` : '';
     const toolsDesc = formatToolsTag(subAgentId);
@@ -204,7 +239,7 @@ export async function generateAssignTools(
     const instrNote = instructions ? ` Instructions: ${instructions}` : '';
 
     const description =
-      `Assign a task to ${agentName}${roleNote}.${skillsDesc}${toolsDesc}${instrNote}`.trim();
+      `Assign a task to ${agentName}${roleNote}.${purposeDesc}${skillsDesc}${toolsDesc}${instrNote}`.trim();
 
     // Capture in closure
     const capturedSlug = agentSlug;

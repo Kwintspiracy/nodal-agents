@@ -36,17 +36,29 @@ import { _resetEnvCache } from '../../env.ts';
 import { runCuratorTick } from '../../cron/run-curator.ts';
 
 // â”€â”€ createLlmClient interception (same as reflection.test) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const { getActiveLlmClient, setActiveLlmClient, recordLlmArgs, getLastLlmConfig, resetLastLlmConfig } = vi.hoisted(() => {
+const {
+  getActiveLlmClient,
+  setActiveLlmClient,
+  recordLlmArgs,
+  getLastLlmConfig,
+  resetLastLlmConfig,
+} = vi.hoisted(() => {
   let _active: RunnerDeps['llmClient'] | null = null;
   // Captures the ProviderConfig passed to createLlmClient so tests can assert
   // which model flowed through the resolution path (for REFLECTION_MODEL tests).
   let _lastConfig: { provider: string; model: string } | null = null;
   return {
     getActiveLlmClient: () => _active,
-    setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => { _active = c; },
-    recordLlmArgs: (cfg: { provider: string; model: string }) => { _lastConfig = cfg; },
+    setActiveLlmClient: (c: RunnerDeps['llmClient'] | null) => {
+      _active = c;
+    },
+    recordLlmArgs: (cfg: { provider: string; model: string }) => {
+      _lastConfig = cfg;
+    },
     getLastLlmConfig: () => _lastConfig,
-    resetLastLlmConfig: () => { _lastConfig = null; },
+    resetLastLlmConfig: () => {
+      _lastConfig = null;
+    },
   };
 });
 
@@ -119,8 +131,12 @@ function makeScriptedClient(turns: ScriptedTurn[]): RunnerDeps['llmClient'] {
       generateText({ ...args, model } as Parameters<typeof generateText>[0]) as ReturnType<
         RunnerDeps['llmClient']['generateText']
       >,
-    streamText: () => { throw new Error('streamText not supported in mock'); },
-    generateObject: () => { throw new Error('generateObject not supported in mock'); },
+    streamText: () => {
+      throw new Error('streamText not supported in mock');
+    },
+    generateObject: () => {
+      throw new Error('generateObject not supported in mock');
+    },
   };
 }
 
@@ -149,16 +165,21 @@ function makeNoopDeps(): RunnerDeps {
 /** Helper to set last_used_at to a past date on a skill (simulate age). */
 async function ageSkill(skillId: string, daysAgo: number) {
   const past = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-  await db.update(agentSkills).set({ lastUsedAt: past, createdAt: past, updatedAt: past }).where(eq(agentSkills.id, skillId));
+  await db
+    .update(agentSkills)
+    .set({ lastUsedAt: past, createdAt: past, updatedAt: past })
+    .where(eq(agentSkills.id, skillId));
 }
 
 /** Build a minimal RunnerEnv for curator tick calls (all curator-relevant fields set). */
-function makeCuratorEnv(overrides: {
-  reflectionEnabled?: string;
-  curatorMinSkills?: number;
-  curatorIntervalDays?: number;
-  reflectionModel?: string;
-} = {}): Parameters<typeof runCuratorTick>[2] {
+function makeCuratorEnv(
+  overrides: {
+    reflectionEnabled?: string;
+    curatorMinSkills?: number;
+    curatorIntervalDays?: number;
+    reflectionModel?: string;
+  } = {},
+): Parameters<typeof runCuratorTick>[2] {
   return {
     DATABASE_URL: 'test://local',
     EMBEDDING_PROVIDER: 'keyword',
@@ -178,7 +199,7 @@ function makeCuratorEnv(overrides: {
     CURATOR_MIN_SKILLS: overrides.curatorMinSkills ?? 5,
     CURATOR_INTERVAL_DAYS: overrides.curatorIntervalDays ?? 7,
     CURATOR_MAX_TURNS: 4,
-  RETENTION_DAYS: 0,
+    RETENTION_DAYS: 0,
   } as Parameters<typeof runCuratorTick>[2];
 }
 
@@ -506,7 +527,10 @@ describe('curator â€” runCuratorTick: mock LLM consolidation', () => {
 
     // Set last_curator_run_at to 8 days ago (> CURATOR_INTERVAL_DAYS=7) to trigger run
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-    await db.update(entities).set({ lastCuratorRunAt: eightDaysAgo }).where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ lastCuratorRunAt: eightDaysAgo })
+      .where(eq(entities.id, seed.entityId));
 
     const umbrellaSeed = `umbrella-${ts}`;
 
@@ -641,7 +665,10 @@ describe('curator â€” runCuratorTick: only reflection_enabled entities get 
 
     // Set last_curator_run_at to 8 days ago to trigger consolidation if enabled
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-    await db.update(entities).set({ lastCuratorRunAt: eightDaysAgo }).where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ lastCuratorRunAt: eightDaysAgo })
+      .where(eq(entities.id, seed.entityId));
 
     let llmCallCount = 0;
     const baseClient = makeScriptedClient([{}]);
@@ -689,7 +716,10 @@ describe('curator â€” REFLECTION_MODEL override', () => {
 
     // Set last_curator_run_at to 8 days ago so consolidation runs (not deferred)
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-    await db.update(entities).set({ lastCuratorRunAt: eightDaysAgo }).where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ lastCuratorRunAt: eightDaysAgo })
+      .where(eq(entities.id, seed.entityId));
 
     // Script: no-op pass (no tool calls) so we only need to assert the model arg.
     const deps = makeDeps(makeScriptedClient([{}]));
@@ -711,7 +741,7 @@ describe('curator â€” REFLECTION_MODEL override', () => {
     expect(captured!.model).toBe('openai/gpt-4o-mini');
   });
 
-  it('when REFLECTION_MODEL is NOT set, createLlmClient receives the agent\'s own model', async () => {
+  it("when REFLECTION_MODEL is NOT set, createLlmClient receives the agent's own model", async () => {
     const ts = Date.now();
     resetLastLlmConfig();
 
@@ -729,7 +759,10 @@ describe('curator â€” REFLECTION_MODEL override', () => {
 
     // Set last_curator_run_at to 8 days ago so consolidation runs
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-    await db.update(entities).set({ lastCuratorRunAt: eightDaysAgo }).where(eq(entities.id, seed.entityId));
+    await db
+      .update(entities)
+      .set({ lastCuratorRunAt: eightDaysAgo })
+      .where(eq(entities.id, seed.entityId));
 
     const deps = makeDeps(makeScriptedClient([{}]));
 

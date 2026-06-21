@@ -193,9 +193,7 @@ async function extractBuffer(buf: Buffer, destDir: string, workDir: string): Pro
       }
       const abs = resolve(join(destDir, entryPath));
       if (abs !== destResolved && !abs.startsWith(destWithSep)) {
-        throw new SkillFetchError(
-          `Archive entry escapes the target directory: "${entryPath}".`,
-        );
+        throw new SkillFetchError(`Archive entry escapes the target directory: "${entryPath}".`);
       }
       // Pre-extraction decompression-bomb guard: accumulate declared sizes from
       // tar headers and throw before node-tar writes the entry body to disk.
@@ -276,9 +274,11 @@ async function ghContents(
       'GitHub API rate limit reached. Set a GITHUB_TOKEN environment variable or retry later.',
     );
   }
-  if (!res.ok) throw new SkillFetchError(`GitHub Contents API error: HTTP ${res.status} for "${path}".`);
+  if (!res.ok)
+    throw new SkillFetchError(`GitHub Contents API error: HTTP ${res.status} for "${path}".`);
   const data = await res.json();
-  if (!Array.isArray(data)) throw new SkillFetchError(`Expected a directory at "${path}", got a file.`);
+  if (!Array.isArray(data))
+    throw new SkillFetchError(`Expected a directory at "${path}", got a file.`);
   return data as GhContentEntry[];
 }
 
@@ -324,7 +324,8 @@ async function downloadGithubSubdir(
         headers: { 'User-Agent': 'nodal-agents-skill-installer' },
         redirect: 'follow',
       });
-      if (!fileRes.ok) throw new SkillFetchError(`Download failed for "${e.path}": HTTP ${fileRes.status}.`);
+      if (!fileRes.ok)
+        throw new SkillFetchError(`Download failed for "${e.path}": HTTP ${fileRes.status}.`);
       await mkdir(dirname(abs), { recursive: true });
       await writeFile(abs, Buffer.from(await fileRes.arrayBuffer()));
     }

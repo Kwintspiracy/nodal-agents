@@ -102,9 +102,7 @@ export function validateFrontmatter(fm: SkillFrontmatter): {
   }
   const slug = slugify(name);
   if (!slug) {
-    throw new FrontmatterError(
-      `Skill name "${name}" has no usable characters for an identifier.`,
-    );
+    throw new FrontmatterError(`Skill name "${name}" has no usable characters for an identifier.`);
   }
   if (!fm.description) {
     throw new FrontmatterError('SKILL.md is missing the required `description` field.');

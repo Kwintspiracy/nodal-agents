@@ -74,6 +74,8 @@ export interface DeploymentContext {
   lanAddresses?: string[]; // IPv4s when LAN
   containerized?: boolean;
   installNotes?: string; // operator-authored, may be ''
+  timezone?: string; // workspace IANA timezone (e.g. 'Europe/Paris')
+  localTime?: string; // current wall-clock time in that timezone, human-readable
 }
 
 // ─── buildRuntimeBlock ────────────────────────────────────────────────────────
@@ -105,6 +107,13 @@ export function buildRuntimeBlock(d: DeploymentContext): string {
     `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`,
     `- Network: ${networkLine}`,
   ];
+
+  if (d.timezone) {
+    lines.push(
+      `- Date & time: it is currently ${d.localTime ?? '(unknown)'} in the user's timezone (${d.timezone}). ` +
+        `Use this as "now". When scheduling, give wall-clock times in THIS timezone — the system applies the zone, so NEVER convert to UTC yourself.`,
+    );
+  }
 
   if (d.containerized) {
     lines.push(
@@ -254,8 +263,18 @@ export async function buildSystemPrompt(
   db: AnyDrizzleDb,
   jobContext?: JobContext,
 ): Promise<string> {
-  // 1. Start with the raw personality (never modify the agent's voice)
-  let personality = agent.personality;
+  // 1. Anchor the agent's IDENTITY first, then the raw personality (the agent's
+  //    voice is never modified — the identity line is a separate prefix). Without
+  //    a stable "who you are", an agent in a conversation that mentions other
+  //    agents (sub-agents it creates, connectors, other minds) loses track and
+  //    starts speaking AS one of them — observed even on strong models. The name
+  //    is data-driven from the DB (not hardcoded agent metadata).
+  const identityLine = agent.name
+    ? `You are ${agent.name}, an AI agent working for the user inside Nodal-Agents. ` +
+      `Any other agents you create, manage, delegate to, or connect are SEPARATE from you — ` +
+      `never speak or act as if you were them.\n\n`
+    : '';
+  let personality = identityLine + agent.personality;
 
   // 2. Build team block (data-driven from DB — empty string for workers)
   const teamBlock = await buildTeamBlock(agent.id, db);

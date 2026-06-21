@@ -143,7 +143,12 @@ export const SkillFileReadInputSchema = z.object({
     .string()
     .min(1)
     .describe("Path to a bundled file, relative to the skill's folder (e.g. 'references/x.md')."),
-  offset: z.number().int().min(0).optional().describe('1-based line number to start at. Default 1.'),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe('1-based line number to start at. Default 1.'),
   limit: z
     .number()
     .int()

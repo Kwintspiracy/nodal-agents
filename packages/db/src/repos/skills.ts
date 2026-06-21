@@ -118,8 +118,9 @@ export async function updateSkillRepo(
 
   // Each column may take either a literal value or a SQL expression (used for the
   // atomic patch_count increment below) — match drizzle's update-set shape.
-  const set: { [K in keyof typeof agentSkills.$inferInsert]?: (typeof agentSkills.$inferInsert)[K] | SQL } =
-    { updatedAt: new Date() };
+  const set: {
+    [K in keyof typeof agentSkills.$inferInsert]?: (typeof agentSkills.$inferInsert)[K] | SQL;
+  } = { updatedAt: new Date() };
   if (patch.name !== undefined) set.name = patch.name;
   if (patch.description !== undefined) set.description = patch.description;
   if (patch.active !== undefined) set.active = patch.active;
@@ -234,10 +235,7 @@ export async function setSkillScriptsAuthorized(
     .update(agentSkillAssignments)
     .set({ scriptsAuthorized: authorized })
     .where(
-      and(
-        eq(agentSkillAssignments.agentId, agentId),
-        eq(agentSkillAssignments.skillId, skillId),
-      ),
+      and(eq(agentSkillAssignments.agentId, agentId), eq(agentSkillAssignments.skillId, skillId)),
     )
     .returning({ id: agentSkillAssignments.id });
   if (updated.length === 0) return { error: 'not_assigned' };
@@ -257,10 +255,7 @@ export async function setSkillScriptsAuthorized(
  * Callers in `packages/orchestration` import and call this via the re-export
  * from `@nodal-agents/db`.
  */
-export async function touchSkillsLastUsed(
-  db: AnyDrizzleDb,
-  skillIds: string[],
-): Promise<void> {
+export async function touchSkillsLastUsed(db: AnyDrizzleDb, skillIds: string[]): Promise<void> {
   if (skillIds.length === 0) return;
   await db
     .update(agentSkills)
@@ -303,7 +298,9 @@ export async function transitionSkillLifecycle(
   // driver cannot serialize a bare Date passed as an untyped query param — it
   // throws ERR_INVALID_ARG_TYPE. As an ISO string it binds cleanly and postgres
   // implicitly casts it for the timestamptz comparison.
-  const staleAt = new Date(now.getTime() - thresholds.staleDays * 24 * 60 * 60 * 1000).toISOString();
+  const staleAt = new Date(
+    now.getTime() - thresholds.staleDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const archiveAt = new Date(
     now.getTime() - thresholds.archiveDays * 24 * 60 * 60 * 1000,
   ).toISOString();

@@ -137,10 +137,7 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
           or(eq(agentSkills.createdBy, 'agent'), sql`${agentSkills.patchCount} > 0`),
         ),
       )
-      .orderBy(
-        sql`${agentSkills.lastUsedAt} DESC NULLS LAST`,
-        desc(agentSkills.createdAt),
-      );
+      .orderBy(sql`${agentSkills.lastUsedAt} DESC NULLS LAST`, desc(agentSkills.createdAt));
 
     // Fetch assigned agent names for all returned skills
     const skillIds = rows.map((r) => r.id);
@@ -164,18 +161,15 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
     }
 
     // Fetch createdByAgentName for skills with a non-null createdByAgentId
-    const createdByAgentIds = [...new Set(rows.map((r) => r.createdByAgentId).filter((id): id is string => id !== null))];
+    const createdByAgentIds = [
+      ...new Set(rows.map((r) => r.createdByAgentId).filter((id): id is string => id !== null)),
+    ];
     const createdByAgentNameMap = new Map<string, string>();
     if (createdByAgentIds.length > 0) {
       const createdByAgents = await db
         .select({ id: agents.id, name: agents.name })
         .from(agents)
-        .where(
-          and(
-            eq(agents.entityId, session.entityId),
-            inArray(agents.id, createdByAgentIds),
-          ),
-        );
+        .where(and(eq(agents.entityId, session.entityId), inArray(agents.id, createdByAgentIds)));
       for (const a of createdByAgents) {
         createdByAgentNameMap.set(a.id, a.name);
       }
@@ -196,7 +190,9 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
         updatedAt: r.updatedAt,
         createdByAgentId: r.createdByAgentId,
         assignedAgentNames: assignedAgentNamesMap.get(r.id) ?? [],
-        createdByAgentName: r.createdByAgentId ? (createdByAgentNameMap.get(r.createdByAgentId) ?? null) : null,
+        createdByAgentName: r.createdByAgentId
+          ? (createdByAgentNameMap.get(r.createdByAgentId) ?? null)
+          : null,
       })),
     );
   } catch (err) {
@@ -341,7 +337,9 @@ export async function setSkillAssignmentModeAction(mode: unknown): Promise<Actio
 
 // ─── listAssignableAgentsAction ───────────────────────────────────────────────
 
-export async function listAssignableAgentsAction(): Promise<ActionResult<{ id: string; name: string; slug: string }[]>> {
+export async function listAssignableAgentsAction(): Promise<
+  ActionResult<{ id: string; name: string; slug: string }[]>
+> {
   try {
     const session = await getSession();
     const db = getDb();
@@ -359,7 +357,10 @@ export async function listAssignableAgentsAction(): Promise<ActionResult<{ id: s
 
 // ─── assignLearnedSkillAction ─────────────────────────────────────────────────
 
-export async function assignLearnedSkillAction(skillId: unknown, agentId: unknown): Promise<ActionResult<void>> {
+export async function assignLearnedSkillAction(
+  skillId: unknown,
+  agentId: unknown,
+): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
     const parsedSkill = z.string().uuid().safeParse(skillId);
@@ -374,9 +375,15 @@ export async function assignLearnedSkillAction(skillId: unknown, agentId: unknow
       .where(and(eq(agentSkills.id, parsedSkill.data), eq(agentSkills.entityId, session.entityId)))
       .limit(1);
     if (!row) return fail('not_found', 'Skill not found');
-    if (row.createdBy !== 'agent') return fail('forbidden', 'Only agent-authored skills can be assigned here');
+    if (row.createdBy !== 'agent')
+      return fail('forbidden', 'Only agent-authored skills can be assigned here');
 
-    const result = await assignSkillRepo(db, session.entityId, { skillId: parsedSkill.data, agentId: parsedAgent.data }, []);
+    const result = await assignSkillRepo(
+      db,
+      session.entityId,
+      { skillId: parsedSkill.data, agentId: parsedAgent.data },
+      [],
+    );
     if ('error' in result) {
       if (result.error === 'already_assigned') {
         revalidatePath('/learned-skills');

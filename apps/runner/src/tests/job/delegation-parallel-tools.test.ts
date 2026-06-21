@@ -569,7 +569,9 @@ describe('unified orchestrator — one orchestrator drives BOTH delegation style
 
     const llmClient = makeMockLlmClient([
       // Parent turn 1: a single in-line delegation.
-      { toolCalls: [{ toolCallId: 'tc-assign-u', toolName: assignToolName, args: { task: 'go' } }] },
+      {
+        toolCalls: [{ toolCallId: 'tc-assign-u', toolName: assignToolName, args: { task: 'go' } }],
+      },
       // Child turn 1: publish + return so it completes synchronously.
       {
         toolCalls: [

@@ -60,11 +60,15 @@ import {
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
   listMemories,
+  createMemory,
   deleteMemory,
   updateMemory,
   MemoryNotFoundError,
+  MemoryDuplicateError,
 } from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
+import { buildSystemPrompt } from '@nodal-agents/orchestration';
+import type { Agent } from '@nodal-agents/orchestration';
 import { getLanAddresses } from './network.ts';
 import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
 import {
@@ -268,6 +272,73 @@ export async function renameWorkspaceAction(raw: unknown): Promise<ActionResult<
   } catch (err) {
     console.error('[renameWorkspaceAction]', err);
     return fail('db_error', 'Failed to rename workspace');
+  }
+}
+
+/**
+ * Set the active workspace's timezone (IANA, e.g. "Europe/Paris"). Authoritative
+ * for "what time is it" + cron scheduling. Captured from the browser at onboarding,
+ * editable in Settings. Idempotent on the active entity.
+ */
+/** Read the active workspace's timezone (stored, or the server's resolved zone). */
+export async function getWorkspaceTimezoneAction(): Promise<
+  ActionResult<{ timezone: string; isExplicit: boolean }>
+> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const [row] = await db
+      .select({ timezone: entities.timezone })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    const stored = row?.timezone ?? null;
+    const resolved = stored && isValidTz(stored) ? stored : serverTz();
+    return ok({ timezone: resolved, isExplicit: !!stored });
+  } catch (err) {
+    console.error('[getWorkspaceTimezoneAction]', err);
+    return fail('db_error', 'Failed to read timezone');
+  }
+}
+
+function serverTz(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+function isValidTz(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function setWorkspaceTimezoneAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = z.object({ timezone: z.string().min(1).max(64) }).safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    // Validate it's a real IANA zone.
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: parsed.data.timezone });
+    } catch {
+      return fail('validation_failed', `"${parsed.data.timezone}" is not a valid timezone.`);
+    }
+    const db = getDb();
+    await db
+      .update(entities)
+      .set({ timezone: parsed.data.timezone, updatedAt: new Date() })
+      .where(eq(entities.id, session.entityId));
+    revalidatePath('/', 'layout');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setWorkspaceTimezoneAction]', err);
+    return fail('db_error', 'Failed to set timezone');
   }
 }
 
@@ -1731,6 +1802,47 @@ export async function listMemoriesAction(
   } catch (err) {
     console.error('[listMemoriesAction]', err);
     return fail('db_error', 'Failed to load memories');
+  }
+}
+
+const CreateMemorySchema = z.object({
+  fact: z.string().min(1).max(2000),
+  category: z.enum(['preference', 'context', 'outcome', 'learned_rule']).default('context'),
+  importance: z.number().int().min(1).max(5).default(3),
+});
+
+/**
+ * Write an entity-wide memory fact. Used by the onboarding interview to persist
+ * what the agent learns about its operator (the chat surface only exposes
+ * run_task, so the agent can't call save_memory itself there — the web records
+ * the facts). Duplicate facts are a no-op (idempotent).
+ */
+export async function createMemoryAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = CreateMemorySchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    try {
+      await createMemory(db, {
+        entity_id: session.entityId,
+        agent_id: null,
+        fact: parsed.data.fact,
+        category: parsed.data.category,
+        importance: parsed.data.importance,
+        source: 'manual',
+        skill_tags: [],
+      });
+    } catch (err) {
+      if (err instanceof MemoryDuplicateError) return ok(undefined); // already known — fine
+      throw err;
+    }
+    return ok(undefined);
+  } catch (err) {
+    console.error('[createMemoryAction]', err);
+    return fail('db_error', 'Failed to save memory');
   }
 }
 
@@ -4321,9 +4433,7 @@ const SetSkillScriptsAuthorizedSchema = z.object({
   authorized: z.boolean(),
 });
 
-export async function setSkillScriptsAuthorizedAction(
-  raw: unknown,
-): Promise<ActionResult<void>> {
+export async function setSkillScriptsAuthorizedAction(raw: unknown): Promise<ActionResult<void>> {
   try {
     const session = await getSession();
     const parsed = SetSkillScriptsAuthorizedSchema.safeParse(raw);
@@ -6089,6 +6199,130 @@ export async function setInstallNotesAction(notes: string): Promise<ActionResult
 }
 
 /**
+ * Load the ROOT agent's own context pieces (identity + attached skill contents)
+ * for the ROOT Agent Context page. Install notes + memories are fetched
+ * separately by the page via their existing actions.
+ */
+export async function getRootContextAction(): Promise<
+  ActionResult<{
+    rootAgentId: string | null;
+    rootName: string | null;
+    personality: string;
+    skills: { id: string; name: string; description: string | null; content: string }[];
+  }>
+> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const { rootAgentId, rootName } = await resolveRoot(db, session.entityId);
+    if (!rootAgentId) {
+      return ok({ rootAgentId: null, rootName: null, personality: '', skills: [] });
+    }
+    const [agentRow] = await db
+      .select({ personality: agents.personality })
+      .from(agents)
+      .where(eq(agents.id, rootAgentId));
+    const skills = await db
+      .select({
+        id: agentSkills.id,
+        name: agentSkills.name,
+        description: agentSkills.description,
+        content: agentSkills.content,
+      })
+      .from(agentSkillAssignments)
+      .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
+      .where(eq(agentSkillAssignments.agentId, rootAgentId));
+    return ok({
+      rootAgentId,
+      rootName,
+      personality: agentRow?.personality ?? '',
+      skills: skills.map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description ?? null,
+        content: s.content ?? '',
+      })),
+    });
+  } catch (err) {
+    console.error('[getRootContextAction]', err);
+    return fail('db_error', 'Failed to load root context');
+  }
+}
+
+const UpdateRootPersonalitySchema = z.object({ personality: z.string().min(1).max(20000) });
+
+/** Update ONLY the ROOT agent's personality (identity slot of its prompt). */
+export async function updateRootPersonalityAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = UpdateRootPersonalitySchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const { rootAgentId } = await resolveRoot(db, session.entityId);
+    if (!rootAgentId) return fail('not_found', 'No ROOT agent designated');
+    await db
+      .update(agents)
+      .set({ personality: parsed.data.personality })
+      .where(and(eq(agents.id, rootAgentId), eq(agents.entityId, session.entityId)));
+    revalidatePath('/settings/root-context');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[updateRootPersonalityAction]', err);
+    return fail('db_error', 'Failed to update personality');
+  }
+}
+
+/**
+ * Assemble and return the FULL system prompt the ROOT agent actually runs on —
+ * exactly what `buildSystemPrompt` produces (identity + personality + runtime +
+ * built-in capabilities + workspaces + memory + skills + job context). This is
+ * the real artifact, so anything missing (e.g. the agent's name) is visible.
+ */
+export async function getRootSystemPromptAction(): Promise<ActionResult<string>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const { rootAgentId } = await resolveRoot(db, session.entityId);
+    if (!rootAgentId) return fail('not_found', 'No ROOT agent designated');
+    const [row] = await db.select().from(agents).where(eq(agents.id, rootAgentId));
+    if (!row) return fail('not_found', 'ROOT agent not found');
+
+    const agent = {
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      role: row.role ?? 'agent',
+      personality: row.personality,
+      entityId: row.entityId ?? null,
+      model: row.model ?? '',
+      active: row.active ?? true,
+      orchestratorMode: row.orchestratorMode ?? null,
+      memoryTokenBudget: row.memoryTokenBudget ?? 4000,
+    } as Agent;
+
+    const deployment = {
+      os:
+        process.platform === 'win32'
+          ? 'Windows'
+          : process.platform === 'darwin'
+            ? 'macOS'
+            : 'Linux',
+      networkMode: (process.env['BIND'] === '0.0.0.0' ? 'lan' : 'loopback') as 'loopback' | 'lan',
+      authMode: process.env['AUTH_MODE'] ?? 'local-trust',
+      installNotes: await getInstallNotes(db),
+    };
+
+    const prompt = await buildSystemPrompt(agent, db, { origin: 'dashboard', deployment });
+    return ok(prompt);
+  } catch (err) {
+    console.error('[getRootSystemPromptAction]', err);
+    return fail('db_error', 'Failed to assemble system prompt');
+  }
+}
+
+/**
  * Assign or unassign a connector to an agent, with optional per-operation
  * whitelist. Idempotent.
  *
@@ -6192,12 +6426,16 @@ export async function getRootConfigAction(): Promise<
 const SetRootGrantsSchema = z.object({
   grants: z.object({
     createAgent: z.boolean(),
+    updateAgent: z.boolean(),
     attachAgent: z.boolean(),
     createSkill: z.boolean(),
     updateSkill: z.boolean(),
     assignSkill: z.boolean(),
     createMcp: z.boolean(),
+    attachMcp: z.boolean(),
     createConnector: z.boolean(),
+    attachConnector: z.boolean(),
+    manageSchedules: z.boolean(),
     autonomy: z.enum(['propose_confirm', 'destructive_gate', 'fully_autonomous'] as const),
   }),
 });

@@ -163,7 +163,8 @@ export async function runReflection(
   maxNewSkills: number,
   reflectionModel?: string,
 ): Promise<ReflectionResult> {
-  if (!job.agentId || !job.entityId) return { outcome: 'skipped', created: 0, patched: 0, turns: 0 };
+  if (!job.agentId || !job.entityId)
+    return { outcome: 'skipped', created: 0, patched: 0, turns: 0 };
   const entityId = job.entityId;
   const agentId = job.agentId;
 
@@ -208,7 +209,11 @@ export async function runReflection(
     db,
     reflectionModel !== undefined
       ? { llmKeyId: agentRow.llmKeyId, fallbackChain: null, model: reflectionModel }
-      : { llmKeyId: agentRow.llmKeyId, fallbackChain: agentRow.fallbackChain ?? null, model: agentRow.model ?? '' },
+      : {
+          llmKeyId: agentRow.llmKeyId,
+          fallbackChain: agentRow.fallbackChain ?? null,
+          model: agentRow.model ?? '',
+        },
   );
   if (!resolved.ok) {
     console.warn(`${REFLECTION_TRACE} no LLM for agent ${agentRow.slug}: ${resolved.reason}`);

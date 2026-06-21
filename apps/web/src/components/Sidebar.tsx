@@ -176,11 +176,7 @@ export default function Sidebar({
                     icon={it.icon ? <it.icon size={14} /> : undefined}
                     dot={it.dot}
                     count={it.href === '/approvals' ? undefined : it.count}
-                    pill={
-                      it.href === '/approvals' && pendingCount > 0
-                        ? pendingCount
-                        : undefined
-                    }
+                    pill={it.href === '/approvals' && pendingCount > 0 ? pendingCount : undefined}
                     isActive={
                       // The Home link must match exactly — every other route
                       // starts with `/`, so the default startsWith logic would

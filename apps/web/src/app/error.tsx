@@ -19,8 +19,8 @@ export default function GlobalError({ error, reset }: ErrorProps) {
         {/* Never show the raw error.message to the user — it leaks internals and
             reads as a dev crash. The real error is logged to the console above. */}
         <p className="text-sm text-ink-3">
-          An unexpected error occurred. Try again, or refresh the page — the details have
-          been logged.
+          An unexpected error occurred. Try again, or refresh the page — the details have been
+          logged.
         </p>
         <button
           onClick={reset}
