@@ -27,15 +27,17 @@
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { systemSkills } from '@nodal-agents/catalog';
+import { systemSkills, type SystemSkill } from '@nodal-agents/catalog';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const refDir = join(here, '..', 'content', 'docs', 'reference');
 const skillsDir = join(refDir, 'skills');
 
+const systemSkillsDir = join(refDir, 'system-skills');
+
 // Idempotent: wipe + recreate so removed catalog entries don't leave stale pages.
 if (existsSync(refDir)) rmSync(refDir, { recursive: true, force: true });
-mkdirSync(skillsDir, { recursive: true });
+mkdirSync(refDir, { recursive: true });
 
 /** One-line, frontmatter-safe (JSON-quoted = valid YAML double-quoted scalar). */
 const fm = (v: string): string => JSON.stringify(v.replace(/\s+/g, ' ').trim());
@@ -55,7 +57,8 @@ const escapeAnglesOutsideCode = (md: string): string =>
 // ── Reference landing + nav ────────────────────────────────────────────────────
 writeFileSync(
   join(refDir, 'meta.json'),
-  JSON.stringify({ title: 'Reference', pages: ['index', 'skills'] }, null, 2) + '\n',
+  JSON.stringify({ title: 'Reference', pages: ['index', 'skills', 'system-skills'] }, null, 2) +
+    '\n',
 );
 writeFileSync(
   join(refDir, 'index.mdx'),
@@ -69,30 +72,33 @@ never drift from what your install actually contains.
 
 ## Skills
 
-The [system skills](/docs/reference/skills) shipped with every install — the
-reusable capabilities you can assign to any agent. Each page shows what the
-skill does, which tools it unlocks, and the exact guidance it injects into the
-agent's system prompt.
+The [skills](/docs/reference/skills) shipped with every install — the reusable
+capabilities you can assign to any agent. Each page shows what the skill does,
+which tools it unlocks, and the exact guidance it injects into the agent's
+system prompt.
+
+## System skills
+
+The [system skills](/docs/reference/system-skills) — agent-internal guides (e.g.
+per-meta-tool usage) loaded on demand via \`skill_view\`. They are not shown in
+the dashboard skill library and are never user-assigned, but they ship with
+every install and are documented here for completeness.
 `,
 );
 
-// ── One page per system skill ──────────────────────────────────────────────────
-const slugs: string[] = [];
-for (const skill of systemSkills) {
-  slugs.push(skill.slug);
-
+// ── One page per skill, split into two sections ─────────────────────────────────
+// "Skills" = user-facing assignable capabilities. "System skills" = agent-internal
+// guides (loaded on demand via skill_view, hidden from the dashboard library).
+// ALL skills are listed — just grouped.
+const renderPage = (skill: SystemSkill): string => {
   const unlocks =
     skill.requiredBuiltins && skill.requiredBuiltins.length > 0
       ? `\n**Unlocks tools:** ${skill.requiredBuiltins.map((b) => '`' + b + '`').join(', ')}`
       : '';
-
-  // Agent-internal skills are documented here but hidden from the dashboard
-  // skill library — note that so the reference stays complete AND accurate.
   const internalNote = skill.agentInternal
     ? `\n**Agent-internal:** loaded on demand by an agent via \`skill_view\` (not shown in the dashboard skill library, not user-assigned).`
     : '';
-
-  const page = `---
+  return `---
 title: ${fm(skill.name)}
 description: ${fm(skill.description)}
 ---
@@ -102,18 +108,29 @@ ${skill.description}
 **Slug:** \`${skill.slug}\`${unlocks}${internalNote}
 
 > The rest of this page is the exact guidance this skill injects into an agent's
-> system prompt — assign the skill and the agent is told the following.
+> system prompt.
 
 ---
 
 ${escapeAnglesOutsideCode(skill.content.trim())}
 `;
-  writeFileSync(join(skillsDir, `${skill.slug}.md`), page);
-}
+};
 
-writeFileSync(
-  join(skillsDir, 'meta.json'),
-  JSON.stringify({ title: 'Skills', pages: slugs }, null, 2) + '\n',
+/** Write one section folder (pages + nav meta.json), return the slugs written. */
+const writeSection = (dir: string, title: string, list: SystemSkill[]): string[] => {
+  mkdirSync(dir, { recursive: true });
+  const slugs = list.map((s) => s.slug);
+  for (const skill of list) writeFileSync(join(dir, `${skill.slug}.md`), renderPage(skill));
+  writeFileSync(join(dir, 'meta.json'), JSON.stringify({ title, pages: slugs }, null, 2) + '\n');
+  return slugs;
+};
+
+const userSkills = systemSkills.filter((s) => !s.agentInternal);
+const internalSkills = systemSkills.filter((s) => s.agentInternal);
+
+const skillSlugs = writeSection(skillsDir, 'Skills', userSkills);
+const sysSlugs = writeSection(systemSkillsDir, 'System skills', internalSkills);
+
+console.log(
+  `[gen-reference] wrote ${skillSlugs.length} skills + ${sysSlugs.length} system skills`,
 );
-
-console.log(`[gen-reference] wrote ${slugs.length} skill pages → content/docs/reference/skills/`);
