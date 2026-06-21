@@ -12,6 +12,7 @@ export const telegramResponderSkill: SystemSkill = {
   name: 'Telegram',
   description: 'How the agent must use and respond to Telegram',
   requiredBuiltins: [],
+  kind: 'channel',
   content: `## 📨 Splitting rules — read this first
 
  ### When content fits in one Telegram message (≤4096 chars)

@@ -13,13 +13,17 @@ import { eq } from '@nodal-agents/db';
 import {
   agentSkillAssignments,
   agentSkills,
+  agentConnectorAssignments,
+  connectors,
   agentWorkspaces,
   touchSkillsLastUsed,
 } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
+import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
+import { buildBaselineBlock, buildChannelBlock, buildDiscoverabilityBlock } from './agent-baseline';
 import type { Agent, AnyDrizzleDb } from './types';
 
 // ─── JobContext ────────────────────────────────────────────────────────────────
@@ -286,12 +290,21 @@ export async function buildSystemPrompt(
   const skillRows = await db
     .select({
       skillId: agentSkills.id,
+      skillSlug: agentSkills.slug,
       skillName: agentSkills.name,
       skillContent: agentSkills.content,
     })
     .from(agentSkillAssignments)
     .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
     .where(eq(agentSkillAssignments.agentId, agent.id as string));
+
+  // Connectors attached to this agent — used by the discoverability block to
+  // advertise only the capabilities the agent does NOT already have.
+  const connectorRows = await db
+    .select({ slug: connectors.slug })
+    .from(agentConnectorAssignments)
+    .innerJoin(connectors, eq(connectors.id, agentConnectorAssignments.connectorId))
+    .where(eq(agentConnectorAssignments.agentId, agent.id as string));
 
   // 3a. Learning-loop Phase A — bump last_used_at for all injected skills.
   //     Fire-and-forget: never awaited so skill injection adds zero latency.
@@ -312,9 +325,17 @@ export async function buildSystemPrompt(
     .where(eq(agentWorkspaces.agentId, agent.id as string))
     .orderBy(agentWorkspaces.position, agentWorkspaces.label);
 
+  // Only capability/custom skills go in the assigned-skills block. baseline +
+  // channel skills are injected by their dedicated layers (agent-baseline.ts);
+  // agent-internal load via skill_view — so a stray legacy assignment of one of
+  // those never double-injects here.
+  const assignedSkillRows = skillRows.filter((r) => {
+    const k = skillKindOfSlug(r.skillSlug);
+    return k === null || k === 'capability';
+  });
   const skillsBlock =
-    skillRows.length > 0
-      ? `\n\n## Skills\n\n${skillRows
+    assignedSkillRows.length > 0
+      ? `\n\n## Skills\n\n${assignedSkillRows
           .map((r) => `### ${r.skillName}\n\n${r.skillContent}`)
           .join('\n\n')}`
       : '';
@@ -369,14 +390,32 @@ export async function buildSystemPrompt(
   //    decides how to use this data (e.g. send via Telegram if chat_id is set).
   const jobContextBlock = jobContext ? buildJobContextBlock(jobContext) : '';
 
+  // 8. Behavior layers (see agent-baseline.ts):
+  //    L1 baseline — intrinsic discipline for EVERY agent (+ model-aware nudge).
+  //    L2 channel  — per-channel etiquette when bound to a channel.
+  //    L2bis discoverability — capabilities the agent could request but lacks.
+  const baselineBlock = buildBaselineBlock(agent.model);
+  const channelBlock = buildChannelBlock({
+    channel: jobContext?.origin,
+    telegram: Boolean(jobContext?.telegramChatId),
+  });
+  const discoverabilityBlock = buildDiscoverabilityBlock(
+    skillRows.map((r) => r.skillSlug),
+    connectorRows.map((r) => r.slug),
+  );
+  const wrap = (s: string): string => (s ? '\n\n' + s : '');
+
   return (
     personality +
+    wrap(baselineBlock) +
     runtimeBlock +
     '\n\n' +
     builtinBlock +
     workspacesBlock +
     memoryBlock +
     skillsBlock +
+    wrap(discoverabilityBlock) +
+    wrap(channelBlock) +
     jobContextBlock
   );
 }

@@ -12,7 +12,7 @@ export const toolCreateMcpSkill: SystemSkill = {
   description:
     'How to format a create_mcp call correctly — http/stdio, where the API key goes, examples.',
   requiredBuiltins: [],
-  agentInternal: true,
+  kind: 'agent-internal',
   content: `## Using create_mcp
 
 Provision an MCP server so its tools become available in this workspace. The call is VERIFIED by actually connecting before anything is saved, so a wrong format fails loudly — get it right the first time.

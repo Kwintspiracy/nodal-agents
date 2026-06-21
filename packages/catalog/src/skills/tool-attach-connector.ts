@@ -9,7 +9,7 @@ export const toolAttachConnectorSkill: SystemSkill = {
   description:
     'How to make a connector usable by an agent (the link create_connector does not make).',
   requiredBuiltins: [],
-  agentInternal: true,
+  kind: 'agent-internal',
   content: `## Using attach_connector
 
 Creating a connector is NOT enough — its operations reach an agent only once the connector is **attached** to that agent. \`attach_connector\` creates that link.

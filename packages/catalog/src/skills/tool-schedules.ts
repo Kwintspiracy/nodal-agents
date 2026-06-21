@@ -8,7 +8,7 @@ export const toolSchedulesSkill: SystemSkill = {
   name: 'Using schedules',
   description: 'How to create/edit/pause/run recurring schedules for an agent.',
   requiredBuiltins: [],
-  agentInternal: true,
+  kind: 'agent-internal',
   content: `## Using schedules
 
 A schedule fires a task for an agent on a recurring timer. Tools:

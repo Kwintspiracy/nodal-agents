@@ -40,14 +40,16 @@ function matchesQuery(s: SkillRow, q: string): boolean {
  */
 export default function SkillsClient({ skills, agents }: Props) {
   const assignedSkills = useMemo(
-    () => skills.filter((s) => s.assignmentCount > 0 && !s.agentInternal),
+    // Only capability/custom skills are ever assigned; baseline/channel/internal
+    // are part of every agent or loaded on demand and never appear as assigned.
+    () => skills.filter((s) => s.assignmentCount > 0 && s.systemKind !== 'agent-internal'),
     [skills],
   );
   const customSkills = useMemo(() => skills.filter((s) => !s.isSystem), [skills]);
-  // Agent-internal system skills (per-meta-tool guides loaded via skill_view) are
-  // hidden — the user has no reason to manage them. They stay in the DB + docs.
+  // Library = opt-in CAPABILITY skills only. baseline (intrinsic, every agent),
+  // channel (auto when bound), and agent-internal skills are not user-managed.
   const librarySkills = useMemo(
-    () => skills.filter((s) => s.isSystem && !s.agentInternal),
+    () => skills.filter((s) => s.systemKind === 'capability'),
     [skills],
   );
 

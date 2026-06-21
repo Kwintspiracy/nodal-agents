@@ -13,6 +13,7 @@ export const markdownOutputSkill: SystemSkill = {
   description:
     'Formats longer responses with clean, readable markdown: headings, lists, tables, fenced code blocks. Knows when plain prose is better.',
   requiredBuiltins: [],
+  kind: 'channel',
   content: `## Markdown output
 
 Use markdown to make responses scannable and useful. Apply structure where it genuinely helps; do not apply it reflexively.

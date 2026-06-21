@@ -13,6 +13,7 @@ export const safeToolUseSkill: SystemSkill = {
   description:
     'Read before writing. Confirm destructive actions. Respect anti-loop limits. Fail loud with a clear error rather than silently guessing.',
   requiredBuiltins: [],
+  kind: 'baseline',
   content: `## Safe tool use
 
 Tools have side effects. Apply them with intent: read first, confirm before destroying, stop and report on failure.

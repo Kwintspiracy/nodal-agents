@@ -13,6 +13,7 @@ export const languageMirrorSkill: SystemSkill = {
   description:
     'Automatically respond in the same language the user writes in. Keeps technical terms, code, and identifiers intact.',
   requiredBuiltins: [],
+  kind: 'baseline',
   content: `## Language mirror
 
 Detect the language of each user message and reply in that same language throughout the conversation.

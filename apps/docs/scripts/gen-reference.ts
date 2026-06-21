@@ -27,7 +27,7 @@
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { systemSkills, type SystemSkill } from '@nodal-agents/catalog';
+import { systemSkills, skillKind, type SystemSkill } from '@nodal-agents/catalog';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const refDir = join(here, '..', 'content', 'docs', 'reference');
@@ -94,9 +94,15 @@ const renderPage = (skill: SystemSkill): string => {
     skill.requiredBuiltins && skill.requiredBuiltins.length > 0
       ? `\n**Unlocks tools:** ${skill.requiredBuiltins.map((b) => '`' + b + '`').join(', ')}`
       : '';
-  const internalNote = skill.agentInternal
-    ? `\n**Agent-internal:** loaded on demand by an agent via \`skill_view\` (not shown in the dashboard skill library, not user-assigned).`
-    : '';
+  const kind = skillKind(skill);
+  const internalNote =
+    kind === 'agent-internal'
+      ? `\n**Agent-internal:** loaded on demand via \`skill_view\` (hidden from the dashboard library, not user-assigned).`
+      : kind === 'baseline'
+        ? `\n**Baseline:** intrinsic — injected into EVERY agent's base prompt by default (not assignable).`
+        : kind === 'channel'
+          ? `\n**Channel:** injected automatically when the agent is bound to a channel (not assignable).`
+          : '';
   return `---
 title: ${fm(skill.name)}
 description: ${fm(skill.description)}
@@ -169,6 +175,4 @@ and authorize the scripts for that agent — the runner gates execution behind
 `,
 );
 
-console.log(
-  `[gen-reference] wrote ${sysSlugs.length} system skills + the community skills page`,
-);
+console.log(`[gen-reference] wrote ${sysSlugs.length} system skills + the community skills page`);
