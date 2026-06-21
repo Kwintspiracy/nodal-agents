@@ -86,6 +86,12 @@ for (const skill of systemSkills) {
       ? `\n**Unlocks tools:** ${skill.requiredBuiltins.map((b) => '`' + b + '`').join(', ')}`
       : '';
 
+  // Agent-internal skills are documented here but hidden from the dashboard
+  // skill library — note that so the reference stays complete AND accurate.
+  const internalNote = skill.agentInternal
+    ? `\n**Agent-internal:** loaded on demand by an agent via \`skill_view\` (not shown in the dashboard skill library, not user-assigned).`
+    : '';
+
   const page = `---
 title: ${fm(skill.name)}
 description: ${fm(skill.description)}
@@ -93,7 +99,7 @@ description: ${fm(skill.description)}
 
 ${skill.description}
 
-**Slug:** \`${skill.slug}\`${unlocks}
+**Slug:** \`${skill.slug}\`${unlocks}${internalNote}
 
 > The rest of this page is the exact guidance this skill injects into an agent's
 > system prompt — assign the skill and the agent is told the following.

@@ -39,9 +39,17 @@ function matchesQuery(s: SkillRow, q: string): boolean {
  * one (Assigned → Custom → Built-in Library).
  */
 export default function SkillsClient({ skills, agents }: Props) {
-  const assignedSkills = useMemo(() => skills.filter((s) => s.assignmentCount > 0), [skills]);
+  const assignedSkills = useMemo(
+    () => skills.filter((s) => s.assignmentCount > 0 && !s.agentInternal),
+    [skills],
+  );
   const customSkills = useMemo(() => skills.filter((s) => !s.isSystem), [skills]);
-  const librarySkills = useMemo(() => skills.filter((s) => s.isSystem), [skills]);
+  // Agent-internal system skills (per-meta-tool guides loaded via skill_view) are
+  // hidden — the user has no reason to manage them. They stay in the DB + docs.
+  const librarySkills = useMemo(
+    () => skills.filter((s) => s.isSystem && !s.agentInternal),
+    [skills],
+  );
 
   const initialTab: Tab =
     assignedSkills.length > 0 ? 'assigned' : customSkills.length > 0 ? 'custom' : 'library';

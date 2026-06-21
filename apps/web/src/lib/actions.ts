@@ -84,7 +84,7 @@ import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG } from './mcp-catalog.ts';
-import { systemSkillSlugs } from '@nodal-agents/catalog';
+import { systemSkillSlugs, agentInternalSkillSlugs } from '@nodal-agents/catalog';
 import { connectMcp } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
@@ -3770,6 +3770,10 @@ export type SkillRow = {
    *  fixed catalog shown in the Library tab. False for user-authored skills,
    *  which live in the "My skills" tab. */
   isSystem: boolean;
+  /** Agent-internal system skill (loaded on demand via skill_view, e.g. the
+   *  per-meta-tool usage guides). Hidden from the dashboard skill library — the
+   *  user has no reason to manage these. Still seeded + documented. */
+  agentInternal: boolean;
   content: string;
   defaultContent: string | null;
   contentOverridden: boolean;
@@ -3896,6 +3900,7 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         name: r.name,
         slug: r.slug,
         isSystem: systemSkillSlugs.includes(r.slug),
+        agentInternal: agentInternalSkillSlugs.includes(r.slug),
         content: r.content,
         defaultContent: r.defaultContent,
         contentOverridden: r.contentOverridden ?? false,
@@ -4290,6 +4295,7 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       name: row.name,
       slug: row.slug,
       isSystem: systemSkillSlugs.includes(row.slug),
+      agentInternal: agentInternalSkillSlugs.includes(row.slug),
       content: row.content,
       defaultContent: row.defaultContent,
       contentOverridden: row.contentOverridden ?? false,
@@ -4398,6 +4404,7 @@ export async function getAgentAttachedSkillsAction(
         name: r.name,
         slug: r.slug,
         isSystem: systemSkillSlugs.includes(r.slug),
+        agentInternal: agentInternalSkillSlugs.includes(r.slug),
         content: r.content,
         defaultContent: r.defaultContent,
         contentOverridden: r.contentOverridden ?? false,

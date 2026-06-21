@@ -8,6 +8,7 @@ export const toolAttachMcpSkill: SystemSkill = {
   name: 'Using attach_mcp',
   description: 'How to make an MCP server usable by an agent (the link create_mcp does not make).',
   requiredBuiltins: [],
+  agentInternal: true,
   content: `## Using attach_mcp
 
 Creating an MCP server is NOT enough — its tools reach an agent only once the MCP is **attached** to that agent. \`attach_mcp\` creates that link.

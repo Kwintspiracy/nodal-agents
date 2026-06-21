@@ -8,6 +8,7 @@ export const toolUpdateAgentSkill: SystemSkill = {
   name: 'Using update_agent',
   description: 'How to edit an existing agent (model, personality, name) + picking a valid model.',
   requiredBuiltins: [],
+  agentInternal: true,
   content: `## Using update_agent
 
 Edit an EXISTING agent. Use it to change an agent's model, personality, or display name — you do NOT need to recreate it.

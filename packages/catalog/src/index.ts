@@ -65,4 +65,13 @@ export const systemSkills: SystemSkill[] = [
  */
 export const systemSkillSlugs: string[] = systemSkills.map((s) => s.slug);
 
+/**
+ * Slugs of agent-internal skills (loaded on demand via skill_view, e.g. the
+ * per-meta-tool usage guides). Hidden from the dashboard skill library — the
+ * user has no reason to see or assign them — but still seeded and documented.
+ */
+export const agentInternalSkillSlugs: string[] = systemSkills
+  .filter((s) => s.agentInternal)
+  .map((s) => s.slug);
+
 export type { SystemSkill };

@@ -24,4 +24,11 @@ export interface SystemSkill {
   content: string;
   /** Tool names this skill needs the agent to have access to (whitelist hint). */
   requiredBuiltins?: string[];
+  /**
+   * Agent-internal: loaded on demand by an agent via skill_view (e.g. the
+   * per-meta-tool usage guides), never user-assigned. Such skills are hidden
+   * from the dashboard skill library (no point letting the user manage them)
+   * but STILL documented in the generated reference. Default false = user-facing.
+   */
+  agentInternal?: boolean;
 }

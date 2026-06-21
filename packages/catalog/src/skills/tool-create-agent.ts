@@ -12,6 +12,7 @@ export const toolCreateAgentSkill: SystemSkill = {
   description:
     'How to format a create_agent call + the create-before-attach sequence and id rules.',
   requiredBuiltins: [],
+  agentInternal: true,
   content: `## Using create_agent
 
 Create a new agent (a worker, or a sub-orchestrator) in your workspace, assigned under you.
