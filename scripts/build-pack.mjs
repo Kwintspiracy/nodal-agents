@@ -17,6 +17,7 @@ import {
   mkdirSync,
   cpSync,
   writeFileSync,
+  readFileSync,
   existsSync,
   statSync,
   readdirSync,
@@ -107,9 +108,14 @@ if (existsSync(migrationsSrc)) {
 // Runtime deps only. Versions mirror what the workspace currently uses.
 // When a workspace dep is added, mirror it here AND in apps/runner/build.mjs
 // EXTERNALS array.
+// Single source of truth for the published version: apps/cli/package.json.
+// (Previously hardcoded here → drifted from the bumped version at publish time.)
+const cliPkgVersion = JSON.parse(
+  readFileSync(resolve(repoRoot, 'apps/cli/package.json'), 'utf-8'),
+).version;
 const packPkg = {
   name: 'nodal-agents',
-  version: '0.5.2',
+  version: cliPkgVersion,
   description: 'Local-first AI agent platform with a web dashboard — install in one command.',
   license: 'MIT',
   repository: {
@@ -200,5 +206,5 @@ console.log('  cli.js   ', sizeMB(resolve(packDir, 'cli.js')));
 console.log('  runner.js', sizeMB(resolve(packDir, 'runner.js')));
 console.log('  web/server.js', sizeMB(resolve(packDir, 'web/server.js')));
 console.log('\nNext steps:');
-console.log('  cd pack && npm pack       # produce nodal-agents-0.5.2.tgz');
+console.log(`  cd pack && npm pack       # produce nodal-agents-${cliPkgVersion}.tgz`);
 console.log('  cd pack && npm install -g . # local install test');
