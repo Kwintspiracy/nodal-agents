@@ -31,8 +31,6 @@ import { systemSkills, type SystemSkill } from '@nodal-agents/catalog';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const refDir = join(here, '..', 'content', 'docs', 'reference');
-const skillsDir = join(refDir, 'skills');
-
 const systemSkillsDir = join(refDir, 'system-skills');
 
 // Idempotent: wipe + recreate so removed catalog entries don't leave stale pages.
@@ -57,7 +55,7 @@ const escapeAnglesOutsideCode = (md: string): string =>
 // ── Reference landing + nav ────────────────────────────────────────────────────
 writeFileSync(
   join(refDir, 'meta.json'),
-  JSON.stringify({ title: 'Reference', pages: ['index', 'skills', 'system-skills'] }, null, 2) +
+  JSON.stringify({ title: 'Reference', pages: ['index', 'system-skills', 'skills'] }, null, 2) +
     '\n',
 );
 writeFileSync(
@@ -70,19 +68,20 @@ description: Auto-generated reference for everything Nodal-Agents ships with.
 This section is generated from the product catalog at build time, so it can
 never drift from what your install actually contains.
 
-## Skills
-
-The [skills](/docs/reference/skills) shipped with every install — the reusable
-capabilities you can assign to any agent. Each page shows what the skill does,
-which tools it unlocks, and the exact guidance it injects into the agent's
-system prompt.
-
 ## System skills
 
-The [system skills](/docs/reference/system-skills) — agent-internal guides (e.g.
-per-meta-tool usage) loaded on demand via \`skill_view\`. They are not shown in
-the dashboard skill library and are never user-assigned, but they ship with
-every install and are documented here for completeness.
+The [system skills](/docs/reference/system-skills) shipped in
+\`@nodal-agents/catalog\` and seeded into every install — the reusable
+capabilities and disciplines you can assign to any agent. Each page shows what
+the skill does, which tools it unlocks, and the exact guidance it injects into
+the agent's system prompt. A few are agent-internal (loaded on demand via
+\`skill_view\`, hidden from the dashboard) and marked as such.
+
+## Skills
+
+[Community skills](/docs/reference/skills) — install any open \`SKILL.md\` from
+GitHub, skills.sh, ClawHub, Anthropic, OpenAI, or Hermes. These aren't shipped
+with the product; you add them to your own install.
 `,
 );
 
@@ -125,12 +124,51 @@ const writeSection = (dir: string, title: string, list: SystemSkill[]): string[]
   return slugs;
 };
 
-const userSkills = systemSkills.filter((s) => !s.agentInternal);
-const internalSkills = systemSkills.filter((s) => s.agentInternal);
+// "System skills" = EVERY shipped catalog skill (they are all system-provided).
+// The agent-internal ones (tool-* meta-tool guides) stay in this list and are
+// individually marked "Agent-internal".
+const sysSlugs = writeSection(systemSkillsDir, 'System skills', systemSkills);
 
-const skillSlugs = writeSection(skillsDir, 'Skills', userSkills);
-const sysSlugs = writeSection(systemSkillsDir, 'System skills', internalSkills);
+// "Skills" = community / installable skills. These are NOT in the catalog (they
+// are fetched per-install from any open SKILL.md), so there is nothing to
+// auto-generate — this is a single hand-written guide page.
+writeFileSync(
+  join(refDir, 'skills.mdx'),
+  `---
+title: Skills
+description: Install community skills from any open SKILL.md — GitHub, skills.sh, ClawHub, Anthropic, OpenAI, Hermes.
+---
+
+Beyond the [system skills](/docs/reference/system-skills) that ship with every
+install, you can add **community skills**: any project that publishes an open
+\`SKILL.md\` (the Agent Skills format). They are fetched at runtime, stored under
+\`~/.nodalai/skills/\`, and assigned to agents just like system skills.
+
+## Where to find them
+
+- **[skills.sh](https://www.skills.sh/)** — a directory of community skills.
+- **GitHub** — paste any repo URL (or \`owner/repo\`) that contains a \`SKILL.md\`.
+- **ClawHub** — community skill registry.
+- **Anthropic / OpenAI / Hermes** — many published skills work as-is. A large set
+  is catalogued in the [Hermes skills docs](https://hermes-agent.nousresearch.com/docs/skills).
+
+## How to install
+
+In the dashboard, open **Skills → Install community skill** and paste the source
+(a GitHub URL, an \`owner/repo\`, or a skills.sh path). Nodal fetches the archive,
+locates the \`SKILL.md\`, validates its frontmatter, and stores the skill with
+\`is_community = true\` and its source URL.
+
+## Skills that bundle scripts
+
+Some community skills (Hermes-style) bundle \`.py\` / \`.sh\` scripts. Nodal detects
+them on install and lists them, but **never runs anything automatically**. To let
+an agent execute a skill's scripts, assign the **command-execution** system skill
+and authorize the scripts for that agent — the runner gates execution behind
+\`run_skill_script\` + your approval.
+`,
+);
 
 console.log(
-  `[gen-reference] wrote ${skillSlugs.length} skills + ${sysSlugs.length} system skills`,
+  `[gen-reference] wrote ${sysSlugs.length} system skills + the community skills page`,
 );
