@@ -33,6 +33,7 @@ export { createToolRegistry } from './registry';
 
 // Execution wrapper
 export { executeTool } from './execute';
+export { isCatastrophicCommand } from './catastrophic-command';
 
 // tool_choice discipline
 export { computeToolChoice } from './tool-choice';

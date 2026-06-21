@@ -2,6 +2,7 @@
 
 import { approvalRequests, toolCalls } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
+import { isCatastrophicCommand } from './catastrophic-command';
 import type { z } from 'zod';
 import type {
   ToolDefinition,
@@ -67,7 +68,21 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // default), 'require_approval' for safe-by-default tools like run_command. So a
   // per-agent `auto_approve` rule (the "Yolo" toggle) is exactly what lets
   // run_command run without a human in the loop.
-  const effectiveAction = matchedRule?.action ?? tool.defaultApproval;
+  let effectiveAction = matchedRule?.action ?? tool.defaultApproval;
+
+  // ── Hardline floor ─────────────────────────────────────────────────────────
+  // A catastrophic, machine-wide-destructive shell command can NEVER be
+  // auto-approved — not even under Yolo. Force a human decision regardless of
+  // any auto_approve rule, so an LLM slip or a malicious skill can't wipe the
+  // disk silently. (Last-resort circuit breaker, narrow by design.)
+  if (
+    tool.name === 'run_command' &&
+    effectiveAction !== 'block' &&
+    effectiveAction !== 'require_approval' &&
+    isCatastrophicCommand(String((validatedInput as { command?: unknown })?.command ?? ''))
+  ) {
+    effectiveAction = 'require_approval';
+  }
 
   if (effectiveAction === 'block') {
     const result: ToolExecutionResult = { outcome: 'error', error: 'blocked' };

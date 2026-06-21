@@ -423,3 +423,59 @@ describe('executeTool', () => {
     expect(result.outcome).toBe('success');
   });
 });
+
+// ─── Hardline floor for run_command ─────────────────────────────────────────────
+
+function makeRunCommandTool(): ToolDefinition<z.ZodObject<{ command: z.ZodString }>, string> {
+  return {
+    name: 'run_command',
+    description: 'run a shell command',
+    inputSchema: z.object({ command: z.string() }),
+    riskLevel: 'write',
+    defaultApproval: 'require_approval',
+    execute: async (input: { command: string }) => `ran:${input.command}`,
+  };
+}
+
+describe('executeTool — run_command hardline floor', () => {
+  function yoloRule(): ApprovalRule {
+    return {
+      id: 'yolo',
+      toolName: 'run_command',
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+  }
+
+  it('Yolo auto-approves an ordinary command (control)', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'ls -la' },
+      makeCtx(),
+      makeOpts([yoloRule()]),
+    );
+    expect(res.outcome).toBe('success'); // executed, no approval needed
+  });
+
+  it('Yolo CANNOT auto-approve a catastrophic command → forced to await approval', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'rm -rf /' },
+      makeCtx(),
+      makeOpts([yoloRule()]),
+    );
+    // The floor overrides the auto_approve rule: a human must decide.
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('floor applies to a chained catastrophic command too', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'cd /tmp && sudo rm -rf /' },
+      makeCtx(),
+      makeOpts([yoloRule()]),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+});
