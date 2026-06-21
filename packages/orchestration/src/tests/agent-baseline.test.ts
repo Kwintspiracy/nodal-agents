@@ -45,46 +45,77 @@ describe('Layer 2 — channel etiquette', () => {
 });
 
 describe('Layer 2bis — discoverability', () => {
+  const empty = {
+    assignedSkillSlugs: [] as string[],
+    attachedConnectorSlugs: [] as string[],
+    attachedMcpSlugs: [] as string[],
+    workspaceConnectors: [] as { slug: string; name: string }[],
+    workspaceMcps: [] as { slug: string; name: string }[],
+  };
+
   it('advertises capability skills the agent does NOT have', () => {
-    const block = buildDiscoverabilityBlock([], []);
+    const block = buildDiscoverabilityBlock(empty);
     expect(block).toContain('## Capabilities you can request');
-    // obsidian is a capability skill → should be offered when unassigned
     expect(capabilitySkillSlugs).toContain('obsidian');
     expect(block).toContain('obsidian');
   });
 
-  it("offers web search via Tavily when no web connector is attached (Quentin's case)", () => {
-    const block = buildDiscoverabilityBlock([], []);
+  it('nothing configured → offers web search as a NEW setup needing a Tavily key', () => {
+    const block = buildDiscoverabilityBlock(empty);
     expect(block.toLowerCase()).toContain('web search');
-    expect(block.toLowerCase()).toContain('tavily');
+    expect(block).toContain('needs a Tavily API key');
+    expect(block).toContain('Not set up in this workspace yet');
+  });
+
+  it("configured-but-unassigned → says 'already configured, just assign' (Quentin's bug)", () => {
+    // Tavily connector + Perplexity MCP are configured in the workspace but not
+    // attached to this agent → the agent must NOT ask for a new key.
+    const block = buildDiscoverabilityBlock({
+      ...empty,
+      workspaceConnectors: [{ slug: 'tavily', name: 'Tavily' }],
+      workspaceMcps: [{ slug: 'perplexity', name: 'Perplexity' }],
+    });
+    expect(block).toContain('ALREADY configured in this workspace');
+    expect(block).toContain('connector `tavily` (configured)');
+    expect(block).toContain('MCP server `perplexity` (configured)');
+    // and it must NOT also tell the user to add a Tavily key
+    expect(block).not.toContain('needs a Tavily API key');
   });
 
   it('does NOT re-offer a capability skill that is already assigned', () => {
-    const block = buildDiscoverabilityBlock(['obsidian'], []);
+    const block = buildDiscoverabilityBlock({ ...empty, assignedSkillSlugs: ['obsidian'] });
     expect(block).not.toContain('`obsidian`');
   });
 
-  it('does NOT offer a connector that is already attached', () => {
-    const block = buildDiscoverabilityBlock([], ['tavily']);
+  it('does NOT offer a connector already attached to the agent', () => {
+    const block = buildDiscoverabilityBlock({
+      ...empty,
+      attachedConnectorSlugs: ['tavily'],
+      workspaceConnectors: [{ slug: 'tavily', name: 'Tavily' }],
+    });
     expect(block.toLowerCase()).not.toContain('tavily');
   });
 
-  it('is empty when the agent already has every capability skill and connector', () => {
-    // Assign every capability skill + attach every advertised connector → nothing left.
-    const allConnectors = [
-      'tavily',
-      'firecrawl',
-      'apify',
-      'gmail',
-      'google-drive',
-      'google-sheets',
-      'google-docs',
-      'notion-oauth',
-      'notion',
-      'airtable-oauth',
-      'airtable',
-    ];
-    const block = buildDiscoverabilityBlock(capabilitySkillSlugs, allConnectors);
+  it('is empty when the agent already has everything', () => {
+    const block = buildDiscoverabilityBlock({
+      assignedSkillSlugs: capabilitySkillSlugs,
+      attachedConnectorSlugs: [
+        'tavily',
+        'firecrawl',
+        'apify',
+        'gmail',
+        'google-drive',
+        'google-sheets',
+        'google-docs',
+        'notion-oauth',
+        'notion',
+        'airtable-oauth',
+        'airtable',
+      ],
+      attachedMcpSlugs: [],
+      workspaceConnectors: [],
+      workspaceMcps: [],
+    });
     expect(block).toBe('');
   });
 });

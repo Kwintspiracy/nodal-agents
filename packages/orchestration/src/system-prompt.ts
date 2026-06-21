@@ -15,6 +15,8 @@ import {
   agentSkills,
   agentConnectorAssignments,
   connectors,
+  agentMcpServers,
+  mcpServers,
   agentWorkspaces,
   touchSkillsLastUsed,
 } from '@nodal-agents/db';
@@ -298,13 +300,35 @@ export async function buildSystemPrompt(
     .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
     .where(eq(agentSkillAssignments.agentId, agent.id as string));
 
-  // Connectors attached to this agent — used by the discoverability block to
-  // advertise only the capabilities the agent does NOT already have.
+  // Discoverability inputs (Layer 2bis). We need THREE facts to tell the agent
+  // the truth about a capability: is it attached to ME, is it configured in the
+  // WORKSPACE (so it just needs assigning, no new key), or is it nowhere yet.
   const connectorRows = await db
     .select({ slug: connectors.slug })
     .from(agentConnectorAssignments)
     .innerJoin(connectors, eq(connectors.id, agentConnectorAssignments.connectorId))
     .where(eq(agentConnectorAssignments.agentId, agent.id as string));
+  const mcpRows = await db
+    .select({ slug: mcpServers.slug })
+    .from(agentMcpServers)
+    .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
+    .where(eq(agentMcpServers.agentId, agent.id as string));
+  // Workspace-level configured connectors/MCP servers (entity-scoped). These
+  // exist with a credential but may not be attached to THIS agent yet.
+  const workspaceConnectors =
+    agent.entityId !== null
+      ? await db
+          .select({ slug: connectors.slug, name: connectors.name })
+          .from(connectors)
+          .where(eq(connectors.entityId, agent.entityId as string))
+      : [];
+  const workspaceMcps =
+    agent.entityId !== null
+      ? await db
+          .select({ slug: mcpServers.slug, name: mcpServers.name })
+          .from(mcpServers)
+          .where(eq(mcpServers.entityId, agent.entityId as string))
+      : [];
 
   // 3a. Learning-loop Phase A — bump last_used_at for all injected skills.
   //     Fire-and-forget: never awaited so skill injection adds zero latency.
@@ -399,10 +423,13 @@ export async function buildSystemPrompt(
     channel: jobContext?.origin,
     telegram: Boolean(jobContext?.telegramChatId),
   });
-  const discoverabilityBlock = buildDiscoverabilityBlock(
-    skillRows.map((r) => r.skillSlug),
-    connectorRows.map((r) => r.slug),
-  );
+  const discoverabilityBlock = buildDiscoverabilityBlock({
+    assignedSkillSlugs: skillRows.map((r) => r.skillSlug),
+    attachedConnectorSlugs: connectorRows.map((r) => r.slug),
+    attachedMcpSlugs: mcpRows.map((r) => r.slug),
+    workspaceConnectors,
+    workspaceMcps,
+  });
   const wrap = (s: string): string => (s ? '\n\n' + s : '');
 
   return (
