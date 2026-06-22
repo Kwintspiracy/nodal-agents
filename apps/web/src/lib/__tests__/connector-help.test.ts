@@ -57,14 +57,17 @@ describe('OAUTH_GUIDES', () => {
     expect(guide.format).toMatch(/apps\.googleusercontent\.com/);
   });
 
-  it('google-oauth: step 2 has 4 subLinks (one per Google API)', () => {
+  it('google-oauth: step 2 has 5 subLinks (one per Google API)', () => {
     const step2 = OAUTH_GUIDES['google-oauth'].steps[1];
-    expect(step2?.subLinks).toHaveLength(4);
+    expect(step2?.subLinks).toHaveLength(5);
     const hrefs = step2!.subLinks!.map((sl) => sl.href);
     expect(hrefs).toContain('https://console.cloud.google.com/apis/library/drive.googleapis.com');
     expect(hrefs).toContain('https://console.cloud.google.com/apis/library/gmail.googleapis.com');
     expect(hrefs).toContain('https://console.cloud.google.com/apis/library/sheets.googleapis.com');
     expect(hrefs).toContain('https://console.cloud.google.com/apis/library/docs.googleapis.com');
+    expect(hrefs).toContain(
+      'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
+    );
   });
 
   it('notion-oauth: sequential steps, valid URLs, format hint present', () => {

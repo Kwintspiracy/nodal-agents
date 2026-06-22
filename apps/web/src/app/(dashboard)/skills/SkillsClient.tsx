@@ -9,11 +9,13 @@ import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import { COMMUNITY_SKILL_CATALOG } from '@nodal-agents/shared';
 import SkillsAssignedTable from './SkillsAssignedTable.tsx';
 import SkillsLibraryGrid from './SkillsLibraryGrid.tsx';
+import CommunitySkillsGrid from './CommunitySkillsGrid.tsx';
 import InstallCommunitySkillModal from './InstallCommunitySkillModal.tsx';
 
-type Tab = 'assigned' | 'custom' | 'library';
+type Tab = 'assigned' | 'custom' | 'library' | 'community';
 
 type Props = {
   skills: SkillRow[];
@@ -52,6 +54,8 @@ export default function SkillsClient({ skills, agents }: Props) {
     () => skills.filter((s) => s.systemKind === 'capability'),
     [skills],
   );
+  // Installed slugs drive the "Installed" state on community catalog cards.
+  const installedSlugs = useMemo(() => skills.map((s) => s.slug), [skills]);
 
   const initialTab: Tab =
     assignedSkills.length > 0 ? 'assigned' : customSkills.length > 0 ? 'custom' : 'library';
@@ -85,6 +89,7 @@ export default function SkillsClient({ skills, agents }: Props) {
               { value: 'assigned', label: 'Assigned', count: assignedSkills.length },
               { value: 'custom', label: 'Custom', count: customSkills.length },
               { value: 'library', label: 'Built-in Library', count: librarySkills.length },
+              { value: 'community', label: 'Community', count: COMMUNITY_SKILL_CATALOG.length },
             ]}
           />
         }
@@ -97,7 +102,9 @@ export default function SkillsClient({ skills, agents }: Props) {
                 ? 'Search assigned skills…'
                 : tab === 'custom'
                   ? 'Search your skills…'
-                  : 'Search the library…'
+                  : tab === 'community'
+                    ? 'Search community skills…'
+                    : 'Search the library…'
             }
           />
         }
@@ -133,6 +140,8 @@ export default function SkillsClient({ skills, agents }: Props) {
           ) : (
             <SkillsAssignedTable skills={filtered} agents={agents} />
           )
+        ) : tab === 'community' ? (
+          <CommunitySkillsGrid installedSlugs={installedSlugs} query={query} />
         ) : librarySkills.length === 0 ? (
           <EmptyLibrary />
         ) : (

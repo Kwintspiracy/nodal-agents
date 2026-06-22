@@ -9,12 +9,18 @@ import {
   getProviderByCredentialType,
 } from '../oauth-providers.ts';
 
-const GOOGLE_SLUGS = ['google-drive', 'gmail', 'google-sheets', 'google-docs'] as const;
+const GOOGLE_SLUGS = [
+  'google-drive',
+  'gmail',
+  'google-calendar',
+  'google-sheets',
+  'google-docs',
+] as const;
 const ALL_SLUGS = [...GOOGLE_SLUGS, 'notion-oauth', 'airtable-oauth'] as const;
 
 describe('OAUTH_PROVIDERS — registry completeness', () => {
-  it('contains exactly 6 providers', () => {
-    expect(Object.keys(OAUTH_PROVIDERS)).toHaveLength(6);
+  it('contains exactly 7 providers', () => {
+    expect(Object.keys(OAUTH_PROVIDERS)).toHaveLength(7);
   });
 
   it.each(ALL_SLUGS)('has an entry for %s', (slug) => {

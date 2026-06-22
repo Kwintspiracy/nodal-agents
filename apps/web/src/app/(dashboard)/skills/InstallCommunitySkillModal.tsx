@@ -19,7 +19,8 @@ type Props = {
  *
  * Accepts: "owner/repo", a GitHub URL, or a "skills-sh/owner/repo/skill" path.
  * Calls installCommunitySkillAction and renders a script-warning block when
- * the installed skill bundles executable scripts (which the runtime does NOT run).
+ * the installed skill bundles executable scripts (which run only for an agent
+ * with the command-execution capability, once authorized and per-run approved).
  */
 export default function InstallCommunitySkillModal({ open, onClose }: Props) {
   const router = useRouter();
@@ -118,11 +119,13 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
                   <Warning size={15} weight="fill" className="mt-[1px] shrink-0 text-amber-400" />
                   <div className="space-y-1.5">
                     <p className="text-[12.5px] font-medium leading-[1.4] text-amber-300">
-                      This skill bundles executable scripts — they will not run.
+                      This skill bundles executable scripts.
                     </p>
                     <p className="text-[12px] leading-[1.4] text-amber-300/80">
-                      The runtime does not execute skill scripts. Knowledge-based features work;
-                      script-based features won&apos;t.
+                      They run only for an agent that has the{' '}
+                      <span className="font-mono">command-execution</span> capability and only after
+                      you authorize them — and every run is gated by your approval. Otherwise just
+                      the skill&apos;s instructions are used.
                     </p>
                     <ul className="mt-2 space-y-0.5">
                       {successSkill.installedScripts.map((s) => (
