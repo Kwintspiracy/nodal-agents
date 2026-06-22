@@ -56,6 +56,7 @@ const CONNECTOR_CAPABILITY: Record<string, { label: string; setup: string }> = {
   firecrawl: { label: 'Web scraping / crawling', setup: 'a Firecrawl API key' },
   apify: { label: 'Web automation & scraping actors', setup: 'an Apify token' },
   gmail: { label: 'Read and send email', setup: 'a connected Google account' },
+  'google-calendar': { label: 'Google Calendar events', setup: 'a connected Google account' },
   'google-drive': { label: 'Google Drive files', setup: 'a connected Google account' },
   'google-sheets': { label: 'Google Sheets', setup: 'a connected Google account' },
   'google-docs': { label: 'Google Docs', setup: 'a connected Google account' },

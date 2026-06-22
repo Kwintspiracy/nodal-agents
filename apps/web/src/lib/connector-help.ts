@@ -55,6 +55,10 @@ export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oa
             href: 'https://console.cloud.google.com/apis/library/docs.googleapis.com',
             label: 'Docs API',
           },
+          {
+            href: 'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
+            label: 'Calendar API',
+          },
         ],
       },
       {

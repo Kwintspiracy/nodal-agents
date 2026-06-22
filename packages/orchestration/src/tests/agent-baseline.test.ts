@@ -104,6 +104,7 @@ describe('Layer 2bis — discoverability', () => {
         'firecrawl',
         'apify',
         'gmail',
+        'google-calendar',
         'google-drive',
         'google-sheets',
         'google-docs',

@@ -61,6 +61,13 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
   },
   {
+    slug: 'google-calendar',
+    label: 'Google Calendar',
+    authType: 'oauth2',
+    credentialType: 'google-oauth',
+    docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
+  },
+  {
     slug: 'google-sheets',
     label: 'Google Sheets',
     authType: 'oauth2',

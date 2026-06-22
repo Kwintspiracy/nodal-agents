@@ -14,6 +14,10 @@ import { createNotionTools, NOTION_OPERATIONS } from '@nodal-agents/adapter-noti
 import { createAirtableTools, AIRTABLE_OPERATIONS } from '@nodal-agents/adapter-airtable';
 import { createDriveTools, DRIVE_OPERATIONS } from '@nodal-agents/adapter-google-drive';
 import { createGmailTools, GMAIL_OPERATIONS } from '@nodal-agents/adapter-gmail';
+import {
+  createGoogleCalendarTools,
+  GOOGLE_CALENDAR_OPERATIONS,
+} from '@nodal-agents/adapter-google-calendar';
 import { createSheetsTools, SHEETS_OPERATIONS } from '@nodal-agents/adapter-google-sheets';
 import { createDocsTools, DOCS_OPERATIONS } from '@nodal-agents/adapter-google-docs';
 import { createFirecrawlTools, FIRECRAWL_OPERATIONS } from '@nodal-agents/adapter-firecrawl';
@@ -43,6 +47,12 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
     toolFactory: (t) =>
       createGmailTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: GMAIL_OPERATIONS,
+  },
+  'google-calendar': {
+    credentialType: 'google-oauth',
+    toolFactory: (t) =>
+      createGoogleCalendarTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: GOOGLE_CALENDAR_OPERATIONS,
   },
   'google-sheets': {
     credentialType: 'google-oauth',

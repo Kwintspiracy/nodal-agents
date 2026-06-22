@@ -12,6 +12,7 @@ import { CREDENTIAL_TYPES } from '@nodal-agents/shared';
 const EXPECTED_SLUGS = [
   'google-drive',
   'gmail',
+  'google-calendar',
   'google-sheets',
   'google-docs',
   'notion-oauth',
