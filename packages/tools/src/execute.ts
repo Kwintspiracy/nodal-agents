@@ -70,6 +70,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // run_command run without a human in the loop.
   let effectiveAction = matchedRule?.action ?? tool.defaultApproval;
 
+  // ── Fully-autonomous workspace ───────────────────────────────────────────────
+  // The owner set the ROOT autonomy to `fully_autonomous` — "no prompts, period".
+  // Relax the safe-by-default `require_approval` posture to `auto_approve`. Guarded
+  // by `!matchedRule` so any EXPLICIT rule still wins (a user-set require_approval,
+  // and crucially the run_command LAN master-switch's injected require_approval).
+  // The catastrophic-command hardline floor below still re-forces a human decision.
+  if (opts.fullyAutonomous && !matchedRule && effectiveAction === 'require_approval') {
+    effectiveAction = 'auto_approve';
+  }
+
   // ── Hardline floor ─────────────────────────────────────────────────────────
   // A catastrophic, machine-wide-destructive shell command can NEVER be
   // auto-approved — not even under Yolo. Force a human decision regardless of

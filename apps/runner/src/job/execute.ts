@@ -912,6 +912,19 @@ export async function executeJob(
     }
   }
 
+  // ── 8c. Fully-autonomous workspace ────────────────────────────────────────────
+  // The owner's ROOT autonomy level governs how much hand-holding the workspace
+  // wants. `fully_autonomous` = "no approval prompts, period" — so we relax the
+  // safe-by-default require_approval posture inside executeTool. It is applied
+  // there AFTER explicit rules + the run_command LAN master-switch (8b) and BEFORE
+  // the catastrophic-command hardline floor, so neither safety boundary is bypassed.
+  const [autonomyRow] = await db
+    .select({ rootGrants: entitiesTable.rootGrants })
+    .from(entitiesTable)
+    .where(eq(entitiesTable.id, job.entityId ?? ''))
+    .limit(1);
+  const fullyAutonomous = parseRootGrants(autonomyRow?.rootGrants).autonomy === 'fully_autonomous';
+
   // ── 9. Initialize ChainCounters ───────────────────────────────────────────────
   const counters = new ChainCounters(DEFAULT_LIMITS);
   const hasAdapterTools = !isOrchestrator && toolDefs.length > ALWAYS_ON_TOOLS.length;
@@ -1060,7 +1073,11 @@ export async function executeJob(
                 scriptAuthorizedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
-              { approvalRules: resumeApprovalRules, onApprovalRequired: async () => {} },
+              {
+                approvalRules: resumeApprovalRules,
+                fullyAutonomous,
+                onApprovalRequired: async () => {},
+              },
             );
             if (execResult.outcome === 'success') {
               replacementOutput = toResultOutput(execResult.output);
@@ -1829,6 +1846,7 @@ export async function executeJob(
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
+        fullyAutonomous,
         onApprovalRequired: async () => {},
       };
       const preExecuted = new Map<string, Awaited<ReturnType<typeof executeTool>>>();
@@ -2017,7 +2035,11 @@ export async function executeJob(
                 scriptAuthorizedSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
-              { approvalRules: approvalRuleList, onApprovalRequired: async () => {} },
+              {
+                approvalRules: approvalRuleList,
+                fullyAutonomous,
+                onApprovalRequired: async () => {},
+              },
             );
           } catch (err) {
             if (err instanceof DelegationPendingError) {

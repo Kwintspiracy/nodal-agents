@@ -479,3 +479,65 @@ describe('executeTool — run_command hardline floor', () => {
     expect(res.outcome).toBe('awaiting_approval');
   });
 });
+
+describe('executeTool — fully_autonomous workspace', () => {
+  function autonomousOpts(rules: ApprovalRule[] = []): ExecuteOptions {
+    return { ...makeOpts(rules), fullyAutonomous: true };
+  }
+
+  it('control: a safe-by-default tool suspends when NOT fully_autonomous', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'ls -la' },
+      makeCtx(),
+      makeOpts(),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('fully_autonomous relaxes require_approval → run_command executes with no prompt', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'ls -la' },
+      makeCtx(),
+      autonomousOpts(),
+    );
+    expect(res.outcome).toBe('success');
+  });
+
+  it('fully_autonomous relaxes a safe-by-default skill-script tool too', async () => {
+    const skillScript = makeSimpleTool({
+      name: 'run_skill_script',
+      defaultApproval: 'require_approval',
+    });
+    const res = await executeTool(skillScript, { value: 'go' }, makeCtx(), autonomousOpts());
+    expect(res.outcome).toBe('success');
+  });
+
+  it('an EXPLICIT require_approval rule still wins under fully_autonomous', async () => {
+    const rule: ApprovalRule = {
+      id: 'pin',
+      toolName: 'run_command',
+      action: 'require_approval',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'ls -la' },
+      makeCtx(),
+      autonomousOpts([rule]),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('the catastrophic hardline floor still forces approval under fully_autonomous', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'rm -rf / --no-preserve-root' },
+      makeCtx(),
+      autonomousOpts(),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+});

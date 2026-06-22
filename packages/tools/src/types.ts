@@ -195,6 +195,14 @@ export interface ExecuteOptions {
   /** Approval rules loaded from DB for this agent/entity. Pass [] if not applicable. */
   approvalRules: ApprovalRule[];
   /**
+   * The workspace ROOT's autonomy is `fully_autonomous` → the owner has opted
+   * the whole workspace out of approval prompts. Relaxes the safe-by-default
+   * `require_approval` posture to `auto_approve`, but ONLY where no explicit rule
+   * applies — so a user/master-switch `require_approval` rule still wins — and the
+   * catastrophic-command hardline floor still forces a human in the loop.
+   */
+  fullyAutonomous?: boolean;
+  /**
    * Called when a tool requires approval. Caller (runner) is responsible for
    * updating job status and polling. Returns void — execution stops here.
    */
