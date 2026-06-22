@@ -84,6 +84,7 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
           agentId: agentSkillAssignments.agentId,
           skillName: agentSkills.name,
           skillSlug: agentSkills.slug,
+          skillDescription: agentSkills.description,
         })
         .from(agentSkillAssignments)
         .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
@@ -91,11 +92,15 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     ),
   );
 
-  const skillMap = new Map<string, string[]>();
+  // Keep the NAME and the DESCRIPTION: the orchestrator routes by what a skill
+  // DOES ("generate images via ComfyUI"), not by its opaque slug ("comfyui").
+  // Names-only here is exactly why a router confabulated a fake image agent
+  // instead of delegating to the teammate holding the ComfyUI skill.
+  const skillMap = new Map<string, { name: string; desc: string | null }[]>();
   for (const batch of skillRows) {
     for (const r of batch) {
       const existing = skillMap.get(r.agentId) ?? [];
-      existing.push(r.skillName);
+      existing.push({ name: r.skillName, desc: r.skillDescription });
       skillMap.set(r.agentId, existing);
     }
   }
@@ -263,7 +268,16 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     const purpose = summarizePurpose(agentPersonality);
     const purposeTag = purpose ? `\n  Purpose: ${purpose}` : '';
     const skills = skillMap.get(subAgentId) ?? [];
-    const skillsTag = skills.length > 0 ? `\n  Skills: ${skills.join(', ')}` : '';
+    const skillsTag =
+      skills.length > 0
+        ? `\n  Skills (what it can do): ${skills
+            .map((s) => {
+              const d = s.desc ? s.desc.replace(/\s+/g, ' ').trim() : '';
+              const short = d.length > 140 ? `${d.slice(0, 139).trimEnd()}…` : d;
+              return short ? `${s.name} — ${short}` : s.name;
+            })
+            .join('; ')}`
+        : '';
     const connectorsTag = formatConnectorsTag(subAgentId);
     const roleTag = agentRole === 'orchestrator' ? ' (orchestrator)' : '';
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
@@ -272,6 +286,15 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
         `\`${agentSlug}\`${purposeTag}${skillsTag}${connectorsTag}${instrTag}`,
     );
   }
+
+  lines.push(
+    '\n⚠️ The roster above is the COMPLETE, GROUND-TRUTH list of your team and their ' +
+      'capabilities. ONLY ever reference agents, skills, connectors, or tools that appear ' +
+      'above — NEVER invent a teammate or a capability. Before saying you cannot do ' +
+      'something, scan the list: if any agent’s skills/connectors match the request, delegate ' +
+      'to it. If genuinely none match, say so plainly (and how the user could enable it, if ' +
+      'you know) — do NOT fabricate an agent name or claim a tool you were not given.',
+  );
 
   return lines.join('\n');
 }

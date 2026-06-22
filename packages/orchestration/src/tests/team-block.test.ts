@@ -179,7 +179,7 @@ describe('buildTeamBlock', () => {
     expect(block.toLowerCase()).toContain('automatic');
   });
 
-  it('includes skill names from DB in team block', async () => {
+  it('includes skill names AND descriptions so the orchestrator routes by capability', async () => {
     const { entityId } = await seedContext(db);
     const orch = await seedAgent(
       db,
@@ -198,6 +198,7 @@ describe('buildTeamBlock', () => {
         name: 'Special Analytics Tool',
         slug: `analytics-tb-${Date.now()}`,
         content: 'Analytics skill content',
+        description: 'Generate marketing analytics dashboards from raw data',
       })
       .returning();
     await db.insert(agentSkillAssignments).values({
@@ -208,6 +209,13 @@ describe('buildTeamBlock', () => {
 
     const block = await buildTeamBlock(orch.id as AgentId, db);
     expect(block).toContain('Special Analytics Tool');
+    // THE FIX: the orchestrator must see WHAT the skill does (description), not
+    // just its opaque name — otherwise it confabulates a fake capable agent
+    // instead of delegating to the teammate who actually has the skill.
+    expect(block).toContain('Generate marketing analytics dashboards from raw data');
+    // Anti-confabulation guard is present.
+    expect(block).toContain('GROUND-TRUTH');
+    expect(block).toContain('NEVER invent a teammate');
   });
 
   it('includes sub-agent connector tools so the orchestrator can route Airtable/Notion/etc requests', async () => {
