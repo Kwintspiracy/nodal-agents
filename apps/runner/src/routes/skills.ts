@@ -26,6 +26,7 @@ const InstallRequestSchema = z.object({
 
 const UninstallRequestSchema = z.object({
   slug: z.string().min(1).max(128),
+  entityId: z.string().guid(),
 });
 
 function checkWorkerSecret(c: Context, runnerEnv: RunnerEnv): Response | null {
@@ -69,7 +70,7 @@ export async function installSkillRoute(
     const result = await installCommunitySkill({
       db: deps.db,
       source: parsed.data.source,
-      skillStoreDir: skillStoreDir(),
+      skillStoreDir: skillStoreDir(parsed.data.entityId),
       entityId: parsed.data.entityId,
     });
     return c.json({ ok: true, skill: result }, 200);
@@ -101,7 +102,7 @@ export async function uninstallSkillRoute(
     await uninstallCommunitySkill({
       db: deps.db,
       slug: parsed.data.slug,
-      skillStoreDir: skillStoreDir(),
+      skillStoreDir: skillStoreDir(parsed.data.entityId),
     });
     return c.json({ ok: true }, 200);
   } catch (err) {

@@ -4050,6 +4050,7 @@ export async function installCommunitySkillAction(
  */
 export async function uninstallCommunitySkillAction(slug: string): Promise<ActionResult<void>> {
   try {
+    const session = await getSession();
     if (!z.string().min(1).safeParse(slug).success) {
       return fail('validation_failed', 'Invalid skill slug');
     }
@@ -4065,7 +4066,7 @@ export async function uninstallCommunitySkillAction(slug: string): Promise<Actio
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.WORKER_SECRET}`,
         },
-        body: JSON.stringify({ slug }),
+        body: JSON.stringify({ slug, entityId: session.entityId }),
       });
     } catch (fetchErr) {
       console.error('[uninstallCommunitySkillAction] fetch failed:', fetchErr);

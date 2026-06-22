@@ -481,7 +481,7 @@ export async function executeJob(
   const scriptAuthorizedSkillSlugs: string[] = assignedSkillRows
     .filter((r) => r.scriptsAuthorized)
     .map((r) => r.slug);
-  const skillStore = skillStoreDir();
+  const skillStore = skillStoreDir(job.entityId);
 
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
   // Agents MUST have an llmKeyId pointing at an active entity_llm_keys row.
