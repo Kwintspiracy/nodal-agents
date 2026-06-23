@@ -61,6 +61,12 @@ export interface JobContext {
    * reachability, and optional operator notes. Computed live by the runner.
    */
   deployment?: DeploymentContext;
+  /**
+   * True when this job is a DELEGATED sub-task (it has a parent job). The agent
+   * must then return its result to the orchestrator (return_result) and NOT
+   * deliver to the end user itself — the ROOT owns the single channel reply.
+   */
+  isDelegated?: boolean;
 }
 
 // ─── DeploymentContext ────────────────────────────────────────────────────────
@@ -430,6 +436,25 @@ export async function buildSystemPrompt(
     workspaceConnectors,
     workspaceMcps,
   });
+
+  //    L3 delegated sub-task — when this job is a delegated child (it has a
+  //    parent), the agent must NOT deliver to the end user itself: it returns its
+  //    result to the orchestrator, and the ROOT owns the single reply on the
+  //    user's original channel. Without this a worker that holds an email/channel
+  //    connector double-delivers (observed: Researcher emailing its report while
+  //    the root also replied on Telegram).
+  const subAgentBlock = jobContext?.isDelegated
+    ? '## Delegated sub-task\n\n' +
+      'You are handling a sub-task delegated by an orchestrator — you are NOT addressing ' +
+      'the end user directly. Deliver your result by calling `return_result` with your ' +
+      'findings; the orchestrator collects it and sends the ONE final reply to the user on ' +
+      'their original channel. Do NOT contact the user yourself — no email (e.g. ' +
+      '`gmail_send_email`), no channel messages (`telegram_send_message` / `send_message`). ' +
+      'A direct send from you is a duplicate and breaks the single-channel-return contract. ' +
+      '(Producing a requested deliverable — a file, a document — is fine; it is messaging the ' +
+      'user as a channel that is not.)'
+    : '';
+
   const wrap = (s: string): string => (s ? '\n\n' + s : '');
 
   return (
@@ -443,6 +468,7 @@ export async function buildSystemPrompt(
     skillsBlock +
     wrap(discoverabilityBlock) +
     wrap(channelBlock) +
+    wrap(subAgentBlock) +
     jobContextBlock
   );
 }

@@ -643,6 +643,7 @@ async function runJob(
     origin: job.channel ?? 'unknown',
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
     ...(cronWantsConfirmation ? { notifyOnSuccess: true } : {}),
+    ...(job.parentJobId ? { isDelegated: true } : {}),
     deployment,
   };
 

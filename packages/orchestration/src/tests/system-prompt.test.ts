@@ -72,6 +72,30 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('You are a precise data analyst. Never guess.');
   });
 
+  it('injects the delegated sub-task discipline ONLY when the job is delegated', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP Worker',
+        slug: `test-sp-worker-${Date.now()}`,
+        personality: 'You do tasks.',
+        role: 'agent',
+      })
+      .returning();
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+
+    const delegated = await buildSystemPrompt(agent, db, { origin: 'telegram', isDelegated: true });
+    expect(delegated).toContain('Delegated sub-task');
+    expect(delegated).toContain('return_result');
+    expect(delegated).toContain('Do NOT contact the user yourself');
+
+    // A direct (non-delegated) job must NOT get the sub-agent discipline.
+    const direct = await buildSystemPrompt(agent, db, { origin: 'telegram' });
+    expect(direct).not.toContain('Delegated sub-task');
+  });
+
   it('appends team block when orchestrator has children', async () => {
     const { entityId } = await seedContext(db);
     const [orchRow] = await db
