@@ -42,19 +42,19 @@ const AUTONOMY_OPTIONS: { value: AutonomyLevel; name: string; description: strin
     value: 'propose_confirm',
     name: 'Propose & confirm',
     description:
-      'The ROOT agent proposes each meta-tool call (create agent, skill, etc.) and waits for your approval in the Approvals queue before executing.',
+      'Everything waits for your approval: meta-tools (create agent, skill…) AND tool actions — shell commands, skill scripts, connector writes all pause in the Approvals queue before running.',
   },
   {
     value: 'destructive_gate',
     name: 'Autonomous, gate destructive',
     description:
-      'Non-destructive meta-tools execute automatically. Destructive ones (none exist yet in the MVT toolset) would still require approval.',
+      'Ordinary work runs automatically (normal commands, scripts, meta-tools — no prompts). But destructive or heavy actions still ask first: deletions, software installs / large downloads, killing processes, disk operations. The sweet spot — no friction for routine work, a checkpoint before anything risky.',
   },
   {
     value: 'fully_autonomous',
     name: 'Fully autonomous',
     description:
-      'All enabled meta-tools execute without any approval step. Use only for agents you fully trust.',
+      'Nothing asks for approval — meta-tools AND every command, script and connector action run on their own. Only truly catastrophic shell commands (wiping the disk, etc.) still force a confirmation. Maximum power, no friction: an agent could e.g. install large software by itself, so use only if you fully trust it.',
   },
 ];
 
