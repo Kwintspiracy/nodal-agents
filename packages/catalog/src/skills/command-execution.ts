@@ -32,6 +32,7 @@ This skill unlocks the \`run_command\` tool, which runs a shell command in the a
 4. **Stay in the workspace.** Read/write files with the \`file_*\` tools and target the workspace; \`cwd\` cannot point outside it.
 5. **Non-interactive only.** Commands that wait for input (a \`y/n\` prompt, a password) will hang until the timeout. Use non-interactive flags (e.g. \`npm install --yes\`, \`--no-input\`).
 6. **Output is capped** (~100k characters per stream). If you need full output of a verbose command, redirect it to a file in the workspace and read it back with \`file_read\`.
+7. **Never install heavyweight software or reinstall a service on your own initiative.** A multi-gigabyte install (a fresh app, large model downloads, a full toolchain — e.g. \`comfy install\`, \`apt install\` of a big package) is a heavy, easily-duplicated action. If a local service or CLI you need is NOT responding — a server on a port, a daemon — that is **not** a licence to install it: it may simply be down, on a different port, or misconfigured. Report that it is unreachable and **ask the user** before installing anything large. This matters most under Yolo / auto-approve, where such a command would otherwise run with no human in the loop. A transient connection failure means "tell the user it's unreachable", never "install a fresh copy".
 
 ### Approval vs Yolo
 
