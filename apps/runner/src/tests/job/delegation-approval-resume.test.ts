@@ -215,15 +215,13 @@ beforeAll(async () => {
   await db
     .insert(agentSkillAssignments)
     .values({ entityId: seed.entityId, agentId: childId, skillId: skill.id });
-  await db
-    .insert(agentWorkspaces)
-    .values({
-      agentId: childId,
-      entityId: seed.entityId,
-      label: 'ws',
-      path: workspaceDir,
-      position: 0,
-    });
+  await db.insert(agentWorkspaces).values({
+    agentId: childId,
+    entityId: seed.entityId,
+    label: 'ws',
+    path: workspaceDir,
+    position: 0,
+  });
 });
 
 afterAll(async () => {
