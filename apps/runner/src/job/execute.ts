@@ -73,6 +73,7 @@ import {
   claimJob,
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
+import { triggerWorker } from '../routes/agent.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -293,10 +294,104 @@ export function shortBlockReason(reason: string): string {
 /**
  * Main LLM loop. Runs a job from pending/processing to terminal or blocked state.
  */
+interface ExecuteJobOpts {
+  /**
+   * True when this job is being driven IN-STACK by its parent's synchronous
+   * delegation (`await executeJob(child, …, { inlineDelegation: true })`). The
+   * parent handles the child's result itself on return, so the wrapper must NOT
+   * also re-trigger the parent — that would double-resume. A RESUMED child
+   * (post-approval, via /api/approve → triggerWorker) runs WITHOUT this flag, so
+   * the wrapper climbs back up to the suspended parent.
+   */
+  inlineDelegation?: boolean;
+}
+
+/**
+ * Public entry point. Runs the job (runJob), then — for a NON-inline invocation
+ * that reached a terminal state — re-triggers a parent suspended in
+ * `awaiting_delegation` waiting on this child. This is the nested
+ * delegation + approval resume path: a delegated child that suspended for
+ * approval, then was resumed via /api/approve → triggerWorker, climbs back to
+ * its parent here so the whole chain finishes instead of dying at the parent.
+ */
 export async function executeJob(
   jobId: JobId,
   deps: RunnerDeps,
   runnerEnv?: RunnerEnv,
+  opts?: ExecuteJobOpts,
+): Promise<ExecuteJobResult> {
+  const result = await runJob(jobId, deps, runnerEnv, opts);
+  if (
+    !opts?.inlineDelegation &&
+    (result.status === 'completed' || result.status === 'failed' || result.status === 'cancelled')
+  ) {
+    await maybeResumeParent(jobId, result, deps, runnerEnv);
+  }
+  return result;
+}
+
+/**
+ * If `childJobId` has a parent suspended in `awaiting_delegation` waiting on it,
+ * resume that parent with the child's terminal outcome and re-trigger it. Safe to
+ * call for any job: it no-ops when there is no parent, or the parent is not
+ * awaiting delegation (resumeDelegated itself also guards that status). The
+ * parent is flipped to `pending` by resumeDelegated, so even if triggerWorker is
+ * unavailable (no runnerEnv) the cron execute-ready tick will pick it up.
+ */
+async function maybeResumeParent(
+  childJobId: JobId,
+  outcome: Extract<ExecuteJobResult, { status: 'completed' | 'failed' | 'cancelled' }>,
+  deps: RunnerDeps,
+  runnerEnv?: RunnerEnv,
+): Promise<void> {
+  const { db } = deps;
+  const [child] = await db
+    .select({ parentJobId: agentJobs.parentJobId })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, childJobId as string))
+    .limit(1);
+  const parentJobId = child?.parentJobId;
+  if (!parentJobId) return;
+
+  const [parent] = await db
+    .select({ status: agentJobs.status })
+    .from(agentJobs)
+    .where(eq(agentJobs.id, parentJobId))
+    .limit(1);
+  // Only a parent ACTIVELY waiting on this delegation should be resumed. The
+  // synchronous in-stack path already handled its child (parent is no longer
+  // awaiting_delegation by the time it lands here), so this never double-fires.
+  if (parent?.status !== 'awaiting_delegation') return;
+
+  if (outcome.status === 'cancelled') {
+    // Cascade: the parent's only outstanding work was this child.
+    await db
+      .update(agentJobs)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(agentJobs.id, parentJobId));
+    return;
+  }
+
+  const childResult =
+    outcome.status === 'completed'
+      ? outcome.result
+      : { error: outcome.result || outcome.error || 'unknown' };
+  // Inject the child's outcome as a tool_result on the parent + flip it to
+  // pending (resumeDelegated). Re-verifies awaiting_delegation internally.
+  await resumeDelegated(parentJobId as JobId, childJobId, childResult, db);
+
+  if (runnerEnv) {
+    // Immediate re-trigger; the parent is now `pending` so the cron tick is the
+    // fallback if this is unavailable.
+    void triggerWorker(parentJobId, runnerEnv);
+  }
+}
+
+async function runJob(
+  jobId: JobId,
+  deps: RunnerDeps,
+  runnerEnv?: RunnerEnv,
+  opts?: ExecuteJobOpts,
 ): Promise<ExecuteJobResult> {
   const { db, registry } = deps;
   // llmClient is resolved per-job from the agent's llmKeyId (Brique 24/25).
@@ -2110,7 +2205,9 @@ export async function executeJob(
               // no queue, no orphaned children, no separate delivery cron.
               // The recursion is bounded by DelegationDepthExceededError
               // (max 3) thrown from bumpDelegationDepth above.
-              const childOutcome = await executeJob(delegation.childJobId, deps, runnerEnv);
+              const childOutcome = await executeJob(delegation.childJobId, deps, runnerEnv, {
+                inlineDelegation: true,
+              });
 
               if (childOutcome.status === 'failed') {
                 // Prefer the child's user-facing reason (e.g. an agent_blocked
@@ -2134,7 +2231,7 @@ export async function executeJob(
                   { error: childErr },
                   db,
                 );
-                return executeJob(jobId, deps, runnerEnv);
+                return runJob(jobId, deps, runnerEnv, opts);
               }
 
               if (childOutcome.status === 'cancelled') {
@@ -2153,27 +2250,22 @@ export async function executeJob(
               }
 
               if (childOutcome.status !== 'completed') {
-                // Child suspended (awaiting approval / its own delegation /
-                // already_handled). For a smoke-quality flow we treat this as
-                // a failure on the parent; a fuller resume mechanism (poll +
-                // re-trigger) would be needed to support nested suspensions.
-                await failJob(
-                  db,
-                  jobId as string,
-                  `child_suspended:${childOutcome.status}`,
-                  runStats(),
-                );
-                return {
-                  status: 'failed',
-                  error: `child_suspended:${childOutcome.status}`,
-                };
+                // Child SUSPENDED (awaiting approval / its own sub-delegation /
+                // awaiting_tasks). The parent is already persisted in
+                // `awaiting_delegation` (pending_delegation → this child) by
+                // handleDelegation, so leave it suspended and return — do NOT
+                // fail. When the child is later resumed (e.g. the user approves
+                // the gated command) and finishes, the child's executeJob wrapper
+                // calls maybeResumeParent, which resumes THIS parent and
+                // re-triggers it. Nested delegation + approval resume path.
+                return { status: 'awaiting_delegation' };
               }
 
               // Inject child's result as tool_result on the parent and flip
               // status back to 'pending' so we can re-enter executeJob.
               await resumeDelegated(jobId as JobId, delegation.childJobId, childOutcome.result, db);
 
-              return executeJob(jobId, deps, runnerEnv);
+              return runJob(jobId, deps, runnerEnv, opts);
             }
             throw err;
           }

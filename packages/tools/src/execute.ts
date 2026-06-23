@@ -82,10 +82,22 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     if (opts.autonomy === 'fully_autonomous') {
       effectiveAction = 'auto_approve';
     } else if (opts.autonomy === 'destructive_gate') {
+      // What still needs a human under "auto, gate destructive":
+      //  - run_command → only when the command ITSELF is destructive/heavy
+      //    (rm, install, download, kill, disk…); ordinary commands auto-run.
+      //  - run_skill_script → an authorized skill's own script is ordinary work
+      //    (the owner already opted into the skill + its scripts); any heavy op
+      //    it shells out to is a run_command, caught above. So: auto-run.
+      //  - any other tool → gate when its declared riskLevel is 'destructive'
+      //    (e.g. a connector delete). NOTE run_command/run_skill_script BOTH
+      //    declare riskLevel 'destructive' as a blanket safe-by-default, so they
+      //    must be judged by the command/skill rule, NOT that blanket level —
+      //    otherwise destructive_gate would gate every shell command (the bug).
       const command = String((validatedInput as { command?: unknown })?.command ?? '');
-      const isHeavy =
-        tool.riskLevel === 'destructive' ||
-        (tool.name === 'run_command' && isDestructiveOrHeavyCommand(command));
+      let isHeavy: boolean;
+      if (tool.name === 'run_command') isHeavy = isDestructiveOrHeavyCommand(command);
+      else if (tool.name === 'run_skill_script') isHeavy = false;
+      else isHeavy = tool.riskLevel === 'destructive';
       if (!isHeavy) effectiveAction = 'auto_approve';
     }
   }
