@@ -1,7 +1,7 @@
 // catastrophic-command.test.ts — the run_command hardline floor detector.
 
 import { describe, it, expect } from 'vitest';
-import { isCatastrophicCommand } from '../catastrophic-command';
+import { isCatastrophicCommand, isDestructiveOrHeavyCommand } from '../catastrophic-command';
 
 describe('isCatastrophicCommand — catches machine-wide destruction', () => {
   const catastrophic = [
@@ -47,6 +47,51 @@ describe('isCatastrophicCommand — leaves ordinary commands alone', () => {
   for (const cmd of safe) {
     it(`allows: ${cmd || '(empty)'}`, () => {
       expect(isCatastrophicCommand(cmd)).toBe(false);
+    });
+  }
+});
+
+describe('isDestructiveOrHeavyCommand — gates installs/deletes/etc under destructive_gate', () => {
+  const heavy = [
+    'rm file.txt',
+    'rm -rf ./build',
+    'rmdir mydir',
+    'del config.json',
+    'comfy install --nvidia',
+    'uvx --from comfy-cli comfy install --nvidia',
+    'npm install',
+    'pip install torch',
+    'comfy model download --url x --relative-path models/checkpoints',
+    'git clone https://github.com/foo/bar',
+    'wget https://example.com/big.bin',
+    'curl -O https://example.com/model.safetensors',
+    'kill 1234',
+    'systemctl stop nginx',
+    'mkfs.ext4 /dev/sdb',
+    'git push --force origin main',
+    'chmod -R 777 .',
+  ];
+  for (const cmd of heavy) {
+    it(`gates: ${cmd}`, () => {
+      expect(isDestructiveOrHeavyCommand(cmd)).toBe(true);
+    });
+  }
+
+  const ordinary = [
+    'ls -la',
+    'curl -s http://127.0.0.1:8188/system_stats',
+    'cat file.txt',
+    'python script.py',
+    'node build.js',
+    'echo hi',
+    'git status',
+    'mkdir foo',
+    'npm run build',
+    '',
+  ];
+  for (const cmd of ordinary) {
+    it(`allows: ${cmd || '(empty)'}`, () => {
+      expect(isDestructiveOrHeavyCommand(cmd)).toBe(false);
     });
   }
 });

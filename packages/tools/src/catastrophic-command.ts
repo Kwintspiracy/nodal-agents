@@ -53,3 +53,37 @@ export function isCatastrophicCommand(cmd: string): boolean {
 
   return false;
 }
+
+// ── Destructive / heavy actions (for the `destructive_gate` autonomy level) ──────
+// BROADER than the catastrophic floor: actions that mutate the machine in a heavy
+// or hard-to-undo way — file deletions, software installs / large downloads, disk
+// ops, process/service control, recursive permission changes, destructive VCS.
+// Under `destructive_gate`, ordinary work auto-approves but THESE still require a
+// human OK. We deliberately err toward asking: a false "ask" is cheap, a silent
+// 13 GB install (`comfy install`) or an `rm` is not.
+const DESTRUCTIVE_PATTERNS: RegExp[] = [
+  /\b(rm|rmdir|unlink|shred)\b/i, // delete (unix)
+  /\bdel\s|\bRemove-Item\b|\brd\s+\/s/i, // delete (windows/ps)
+  /\bfind\b[^\n]*-delete\b/i, // find … -delete
+  /\b(pip3?|npm|pnpm|yarn|apt|apt-get|yum|dnf|brew|pacman|choco|winget|uvx|pipx|cargo|gem|conda|comfy)\b[^\n]*\binstall\b/i, // pkg install
+  /\bgo\s+install\b|\bcomfy\b[^\n]*\bmodel\s+download\b|\bpip3?\b[^\n]*\bdownload\b/i, // go install / model dl
+  /\bwget\b|\bgit\s+clone\b|\bcurl\b[^\n]*\s-[oO]\b|\bInvoke-WebRequest\b|\biwr\b[^\n]*-OutFile/i, // large download / clone
+  /\b(kill|pkill|killall|taskkill)\b|\bStop-Process\b|\bStop-Service\b/i, // process kill
+  /\bsystemctl\b|\bsc\s+(stop|delete)\b|\bservice\b[^\n]*\b(stop|restart)\b/i, // service control
+  /\bmkfs(\.\w+)?\b|\bdd\b[^\n]*\bof=|\b(format|fdisk|parted|diskpart)\b/i, // disk ops
+  /\bchmod\s+-\S*R|\bchown\s+-\S*R|\bicacls\b/i, // recursive perms/ownership
+  /\bgit\s+push\b[^\n]*(--force|-f\b)|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-\S*f|\bgit\s+branch\s+-D\b/i, // destructive VCS
+];
+
+/**
+ * True when `cmd` performs a destructive or heavy, hard-to-undo action. Used by
+ * the `destructive_gate` autonomy level: such a command keeps its approval gate
+ * while ordinary commands auto-run. Catastrophic commands are a subset (always
+ * true here too).
+ */
+export function isDestructiveOrHeavyCommand(cmd: string): boolean {
+  if (typeof cmd !== 'string' || cmd.trim() === '') return false;
+  if (isCatastrophicCommand(cmd)) return true;
+  const c = cmd.trim();
+  return DESTRUCTIVE_PATTERNS.some((re) => re.test(c));
+}

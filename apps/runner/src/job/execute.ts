@@ -923,7 +923,7 @@ export async function executeJob(
     .from(entitiesTable)
     .where(eq(entitiesTable.id, job.entityId ?? ''))
     .limit(1);
-  const fullyAutonomous = parseRootGrants(autonomyRow?.rootGrants).autonomy === 'fully_autonomous';
+  const workspaceAutonomy = parseRootGrants(autonomyRow?.rootGrants).autonomy;
 
   // ── 9. Initialize ChainCounters ───────────────────────────────────────────────
   const counters = new ChainCounters(DEFAULT_LIMITS);
@@ -1075,7 +1075,7 @@ export async function executeJob(
               },
               {
                 approvalRules: resumeApprovalRules,
-                fullyAutonomous,
+                autonomy: workspaceAutonomy,
                 onApprovalRequired: async () => {},
               },
             );
@@ -1846,7 +1846,7 @@ export async function executeJob(
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
-        fullyAutonomous,
+        autonomy: workspaceAutonomy,
         onApprovalRequired: async () => {},
       };
       const preExecuted = new Map<string, Awaited<ReturnType<typeof executeTool>>>();
@@ -2037,7 +2037,7 @@ export async function executeJob(
               },
               {
                 approvalRules: approvalRuleList,
-                fullyAutonomous,
+                autonomy: workspaceAutonomy,
                 onApprovalRequired: async () => {},
               },
             );

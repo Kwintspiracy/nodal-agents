@@ -195,13 +195,17 @@ export interface ExecuteOptions {
   /** Approval rules loaded from DB for this agent/entity. Pass [] if not applicable. */
   approvalRules: ApprovalRule[];
   /**
-   * The workspace ROOT's autonomy is `fully_autonomous` → the owner has opted
-   * the whole workspace out of approval prompts. Relaxes the safe-by-default
-   * `require_approval` posture to `auto_approve`, but ONLY where no explicit rule
-   * applies — so a user/master-switch `require_approval` rule still wins — and the
-   * catastrophic-command hardline floor still forces a human in the loop.
+   * The workspace ROOT's autonomy level, which relaxes the safe-by-default
+   * `require_approval` posture — but ONLY where no explicit rule applies (a
+   * user/master-switch `require_approval` rule still wins) and the
+   * catastrophic-command hardline floor still forces a human decision:
+   *   - `fully_autonomous`  → auto-approve everything (no prompts, the owner's call);
+   *   - `destructive_gate`  → auto-approve ordinary work, but KEEP the gate for
+   *     destructive/heavy actions (a `destructive` tool, or a run_command that
+   *     deletes / installs / downloads / kills / formats — isDestructiveOrHeavyCommand);
+   *   - `propose_confirm` / undefined → no relaxation (every gated tool still asks).
    */
-  fullyAutonomous?: boolean;
+  autonomy?: 'propose_confirm' | 'destructive_gate' | 'fully_autonomous';
   /**
    * Called when a tool requires approval. Caller (runner) is responsible for
    * updating job status and polling. Returns void — execution stops here.

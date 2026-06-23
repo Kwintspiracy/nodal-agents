@@ -2,7 +2,7 @@
 
 import { approvalRequests, toolCalls } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
-import { isCatastrophicCommand } from './catastrophic-command';
+import { isCatastrophicCommand, isDestructiveOrHeavyCommand } from './catastrophic-command';
 import type { z } from 'zod';
 import type {
   ToolDefinition,
@@ -70,14 +70,24 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   // run_command run without a human in the loop.
   let effectiveAction = matchedRule?.action ?? tool.defaultApproval;
 
-  // ── Fully-autonomous workspace ───────────────────────────────────────────────
-  // The owner set the ROOT autonomy to `fully_autonomous` — "no prompts, period".
-  // Relax the safe-by-default `require_approval` posture to `auto_approve`. Guarded
-  // by `!matchedRule` so any EXPLICIT rule still wins (a user-set require_approval,
-  // and crucially the run_command LAN master-switch's injected require_approval).
-  // The catastrophic-command hardline floor below still re-forces a human decision.
-  if (opts.fullyAutonomous && !matchedRule && effectiveAction === 'require_approval') {
-    effectiveAction = 'auto_approve';
+  // ── Autonomy-based relaxation ────────────────────────────────────────────────
+  // The owner's ROOT autonomy level can relax the safe-by-default require_approval
+  // posture. Guarded by `!matchedRule` so any EXPLICIT rule still wins (a user-set
+  // require_approval, and crucially the run_command LAN master-switch's injected
+  // require_approval). The catastrophic hardline floor below still re-forces a human.
+  //   - fully_autonomous → auto-approve everything;
+  //   - destructive_gate → auto-approve ordinary work, but KEEP the gate for a
+  //     `destructive` tool or a destructive/heavy run_command (rm, install, kill…).
+  if (!matchedRule && effectiveAction === 'require_approval') {
+    if (opts.autonomy === 'fully_autonomous') {
+      effectiveAction = 'auto_approve';
+    } else if (opts.autonomy === 'destructive_gate') {
+      const command = String((validatedInput as { command?: unknown })?.command ?? '');
+      const isHeavy =
+        tool.riskLevel === 'destructive' ||
+        (tool.name === 'run_command' && isDestructiveOrHeavyCommand(command));
+      if (!isHeavy) effectiveAction = 'auto_approve';
+    }
   }
 
   // ── Hardline floor ─────────────────────────────────────────────────────────

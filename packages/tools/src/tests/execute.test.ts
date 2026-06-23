@@ -482,7 +482,7 @@ describe('executeTool — run_command hardline floor', () => {
 
 describe('executeTool — fully_autonomous workspace', () => {
   function autonomousOpts(rules: ApprovalRule[] = []): ExecuteOptions {
-    return { ...makeOpts(rules), fullyAutonomous: true };
+    return { ...makeOpts(rules), autonomy: 'fully_autonomous' };
   }
 
   it('control: a safe-by-default tool suspends when NOT fully_autonomous', async () => {
@@ -539,5 +539,60 @@ describe('executeTool — fully_autonomous workspace', () => {
       autonomousOpts(),
     );
     expect(res.outcome).toBe('awaiting_approval');
+  });
+});
+
+describe('executeTool — destructive_gate workspace', () => {
+  function gateOpts(rules: ApprovalRule[] = []): ExecuteOptions {
+    return { ...makeOpts(rules), autonomy: 'destructive_gate' };
+  }
+
+  it('auto-approves ORDINARY run_command (no prompt)', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'curl -s http://127.0.0.1:8188/system_stats' },
+      makeCtx(),
+      gateOpts(),
+    );
+    expect(res.outcome).toBe('success');
+  });
+
+  it('STILL gates a heavy install (comfy install) — the 13 GB case', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'uvx --from comfy-cli comfy install --nvidia' },
+      makeCtx(),
+      gateOpts(),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('STILL gates a deletion (rm -rf ./build)', async () => {
+    const res = await executeTool(
+      makeRunCommandTool(),
+      { command: 'rm -rf ./build' },
+      makeCtx(),
+      gateOpts(),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('STILL gates a `destructive` riskLevel tool regardless of command', async () => {
+    const destructiveTool = makeSimpleTool({
+      name: 'delete_thing',
+      riskLevel: 'destructive',
+      defaultApproval: 'require_approval',
+    });
+    const res = await executeTool(destructiveTool, { value: 'x' }, makeCtx(), gateOpts());
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('auto-approves a non-destructive safe-by-default skill script', async () => {
+    const skillScript = makeSimpleTool({
+      name: 'run_skill_script',
+      defaultApproval: 'require_approval',
+    });
+    const res = await executeTool(skillScript, { value: 'go' }, makeCtx(), gateOpts());
+    expect(res.outcome).toBe('success');
   });
 });
