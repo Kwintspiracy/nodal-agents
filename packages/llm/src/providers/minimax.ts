@@ -19,6 +19,7 @@
 
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { LanguageModel } from 'ai';
+import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
 import { ProviderConfigError } from '../errors';
 import { PROVIDER_PRESETS } from './registry';
@@ -26,6 +27,48 @@ import { PROVIDER_PRESETS } from './registry';
 // ─── Beta flags MiniMax rejects ───────────────────────────────────────────────
 
 const MINIMAX_REJECTED_BETAS = new Set(['fine-grained-tool-streaming', 'context-1m']);
+
+// ─── Extended thinking (manual mode) ──────────────────────────────────────────
+//
+// MiniMax's Anthropic-compatible endpoint supports extended thinking in MANUAL
+// mode only (not Claude's adaptive mode) — confirmed by Hermes' adapter. A
+// reasoning model like M3 is crippled without it: it's the "thinking" that makes
+// M3 as strong as it is. So we inject the Anthropic Messages `thinking` block —
+// the exact analogue of what we already do for DeepSeek Reasoner (injectDeepSeek-
+// Thinking), but in Anthropic shape with an explicit budget_tokens.
+//
+// The budget also doubles as the time bound that the OpenRouter route lacked
+// (uncapped M3 thinking once overran the 300s call timeout): manual thinking is
+// hard-capped at budget_tokens, so it can't run away.
+
+/** Manual thinking budget for MiniMax reasoning models (tokens). Matches Hermes' 'medium'. */
+const MINIMAX_THINKING_BUDGET = 8000;
+/** Output headroom required ON TOP of the thinking budget (Anthropic: max_tokens > budget_tokens). */
+const MINIMAX_OUTPUT_HEADROOM = 4096;
+
+/**
+ * Inject Anthropic-style manual extended thinking into a MiniMax request body,
+ * and satisfy the API's constraints when thinking is on:
+ *   - `max_tokens` MUST exceed `budget_tokens` → bump it if too low/absent.
+ *   - `temperature` MUST be 1 and `top_p`/`top_k` MUST be unset → normalise.
+ * Idempotent: a body that already carries `thinking` is left untouched.
+ *
+ * Pure function — exported for unit testing.
+ */
+export function injectMiniMaxThinking(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null) return body;
+  const b = body as Record<string, unknown>;
+  if (b['thinking'] !== undefined) return body;
+  b['thinking'] = { type: 'enabled', budget_tokens: MINIMAX_THINKING_BUDGET };
+  const minMax = MINIMAX_THINKING_BUDGET + MINIMAX_OUTPUT_HEADROOM;
+  const curMax = typeof b['max_tokens'] === 'number' ? (b['max_tokens'] as number) : 0;
+  if (curMax <= MINIMAX_THINKING_BUDGET) b['max_tokens'] = minMax;
+  // Extended thinking rejects sampling controls other than temperature=1.
+  b['temperature'] = 1;
+  delete b['top_p'];
+  delete b['top_k'];
+  return body;
+}
 
 // ─── Fetch wrapper for auth + beta-header stripping ───────────────────────────
 
@@ -42,6 +85,7 @@ const MINIMAX_REJECTED_BETAS = new Set(['fine-grained-tool-streaming', 'context-
  */
 function createMiniMaxFetch(
   apiKey: string,
+  opts: { injectThinking: boolean } = { injectThinking: false },
   baseFetch: typeof globalThis.fetch = globalThis.fetch,
 ): typeof globalThis.fetch {
   return async (
@@ -70,7 +114,20 @@ function createMiniMaxFetch(
       }
     }
 
-    return baseFetch(input, { ...init, headers: incoming });
+    // Inject manual extended thinking for reasoning models (M3). Parse → patch →
+    // re-serialize the JSON body, mirroring the DeepSeek Reasoner injection.
+    let patchedBody = init?.body;
+    if (opts.injectThinking && init?.body) {
+      try {
+        const rawBody =
+          typeof init.body === 'string' ? init.body : await new Response(init.body).text();
+        patchedBody = JSON.stringify(injectMiniMaxThinking(JSON.parse(rawBody)));
+      } catch {
+        // Malformed/streamed body — pass through unchanged rather than break the call.
+      }
+    }
+
+    return baseFetch(input, { ...init, headers: incoming, body: patchedBody });
   };
 }
 
@@ -99,12 +156,18 @@ export function buildMiniMaxModel(config: ProviderConfig): LanguageModel {
     config.baseURL ?? PROVIDER_PRESETS.minimax.defaultBaseURL,
   );
 
+  // Gate thinking injection on the catalog reasoning flag. Non-reasoning models
+  // (MiniMax-M2 / M2.7) must NOT receive the thinking block — only M3 is a
+  // reasoning model. Mirrors buildDeepSeekModel.
+  const entry = findModelCatalogEntry('minimax', config.model);
+  const isReasoning = entry?.capabilities.reasoning === true;
+
   const provider = createAnthropic({
     // The SDK sends x-api-key using this value; the fetch wrapper swaps it to
     // Authorization: Bearer before the request reaches the wire.
     apiKey: config.apiKey,
     baseURL,
-    fetch: createMiniMaxFetch(config.apiKey),
+    fetch: createMiniMaxFetch(config.apiKey, { injectThinking: isReasoning }),
   });
 
   return provider(config.model);

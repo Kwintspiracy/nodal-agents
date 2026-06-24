@@ -8,7 +8,11 @@
 //    tested by intercepting the actual fetch before any network call is made).
 
 import { describe, it, expect, vi } from 'vitest';
-import { buildMiniMaxModel, normalizeMiniMaxBaseURL } from '../providers/minimax';
+import {
+  buildMiniMaxModel,
+  normalizeMiniMaxBaseURL,
+  injectMiniMaxThinking,
+} from '../providers/minimax';
 import { createLlmClient } from '../client';
 import { CAPABILITY_MATRIX } from '../providers/registry';
 import { ProviderConfigError } from '../errors';
@@ -37,6 +41,49 @@ describe('normalizeMiniMaxBaseURL', () => {
     expect(normalizeMiniMaxBaseURL('https://api.minimax.io/anthropic/v1/')).toBe(
       'https://api.minimax.io/anthropic/v1',
     );
+  });
+});
+
+// ─── injectMiniMaxThinking ────────────────────────────────────────────────────
+
+describe('injectMiniMaxThinking', () => {
+  it('adds a manual thinking block with an explicit budget', () => {
+    const body = injectMiniMaxThinking({ model: 'MiniMax-M3', messages: [] }) as Record<
+      string,
+      unknown
+    >;
+    expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 8000 });
+  });
+
+  it('bumps max_tokens above the thinking budget (Anthropic constraint)', () => {
+    // Too-low max_tokens → bumped; thinking budget must stay below max_tokens.
+    const low = injectMiniMaxThinking({ max_tokens: 1000 }) as Record<string, unknown>;
+    expect(low['max_tokens']).toBe(8000 + 4096);
+    // A generous max_tokens is left as-is.
+    const high = injectMiniMaxThinking({ max_tokens: 32000 }) as Record<string, unknown>;
+    expect(high['max_tokens']).toBe(32000);
+  });
+
+  it('normalises sampling controls thinking rejects (temp=1, no top_p/top_k)', () => {
+    const body = injectMiniMaxThinking({ temperature: 0.7, top_p: 0.9, top_k: 40 }) as Record<
+      string,
+      unknown
+    >;
+    expect(body['temperature']).toBe(1);
+    expect(body['top_p']).toBeUndefined();
+    expect(body['top_k']).toBeUndefined();
+  });
+
+  it('is idempotent — a body that already has thinking is untouched', () => {
+    const preset = { thinking: { type: 'enabled', budget_tokens: 2000 }, temperature: 0.5 };
+    const out = injectMiniMaxThinking(preset) as Record<string, unknown>;
+    expect(out['thinking']).toEqual({ type: 'enabled', budget_tokens: 2000 });
+    expect(out['temperature']).toBe(0.5); // not normalised — we didn't touch it
+  });
+
+  it('passes non-object bodies through unchanged', () => {
+    expect(injectMiniMaxThinking(null)).toBeNull();
+    expect(injectMiniMaxThinking('text')).toBe('text');
   });
 });
 
