@@ -18,7 +18,7 @@ import {
 } from './file-ops';
 import { OFFICE_TOOLS } from './office-ops';
 import { META_TOOLS } from './meta-ops';
-import { SKILL_TOOLS } from './skill-ops';
+import { SKILL_TOOLS, skillFileWriteTool } from './skill-ops';
 import { runCommandTool } from './run-command';
 import { runSkillScriptTool } from './run-skill-script';
 import { skillViewTool } from './skill-view';
@@ -53,7 +53,13 @@ export {
   updateAgentTool,
   attachAgentTool,
 } from './meta-ops';
-export { SKILL_TOOLS, skillFileReadTool, skillFileListTool, SkillFileError } from './skill-ops';
+export {
+  SKILL_TOOLS,
+  skillFileReadTool,
+  skillFileListTool,
+  skillFileWriteTool,
+  SkillFileError,
+} from './skill-ops';
 export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
 export { runSkillScriptTool } from './run-skill-script';
@@ -109,6 +115,11 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // requiredBuiltins. The runner adds it to the whitelist only when the agent
   // has ≥1 authorized script-skill. Safe-by-default like run_command.
   registry.register(runSkillScriptTool);
+  // skill_file_write — gated by per-skill×agent file-write authorization
+  // (agent_skill_assignments.files_writable), NOT always-on and NOT via
+  // requiredBuiltins. The runner adds it to the whitelist only when the agent
+  // has ≥1 file-writable skill. Safe-by-default like run_skill_script.
+  registry.register(skillFileWriteTool);
 }
 
 /**

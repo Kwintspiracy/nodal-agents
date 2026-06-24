@@ -10,18 +10,27 @@ import { skillFileReadTool, skillFileListTool } from './skill-files';
 export {
   skillFileReadTool,
   skillFileListTool,
+  skillFileWriteTool,
   SkillFileError,
   SkillFileReadInputSchema,
   SkillFileListInputSchema,
+  SkillFileWriteInputSchema,
 } from './skill-files';
 export type {
   SkillFileReadInput,
   SkillFileReadOutput,
   SkillFileListInput,
   SkillFileListOutput,
+  SkillFileWriteInput,
+  SkillFileWriteOutput,
 } from './skill-files';
 
-/** All skill-ops tools, for bulk registration. */
+/**
+ * Read-only skill-ops tools, for bulk registration. Gated behind a skill's
+ * requiredBuiltins. skill_file_write is intentionally NOT here — it is
+ * registered separately and whitelisted per agent × skill via the
+ * files_writable flag (like run_skill_script), not via requiredBuiltins.
+ */
 export const SKILL_TOOLS: ToolDefinition<z.ZodTypeAny, unknown>[] = [
   skillFileReadTool,
   skillFileListTool,

@@ -14,8 +14,15 @@
 // boundary logic is intentionally self-contained — it does NOT touch the
 // universal workspace guard, so this feature cannot regress file_* security.
 
-import { readFile, realpath, stat, readdir } from 'node:fs/promises';
-import { resolve as resolvePath, join as joinPath, sep, isAbsolute, relative } from 'node:path';
+import { readFile, realpath, stat, readdir, writeFile, mkdir } from 'node:fs/promises';
+import {
+  resolve as resolvePath,
+  join as joinPath,
+  dirname,
+  sep,
+  isAbsolute,
+  relative,
+} from 'node:path';
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '../../types';
 
@@ -289,6 +296,114 @@ export const skillFileListTool: ToolDefinition<
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return { ok: false, reason: `Path not found: "${input.path ?? '.'}".` };
       }
+      throw err;
+    }
+  },
+};
+
+// ─── skill_file_write ─────────────────────────────────────────────────────────
+//
+// WRITE leg of skill-file access. Lets an agent modify the bundled files of a
+// skill it holds — drop a workflow into comfyui/workflows/, update a reference —
+// WITHOUT handing it a full shell (run_command / command-execution). It reuses
+// the exact same boundary as the reader (resolveSkillRoot + resolveWithinSkill:
+// assigned-skill check, realpath + prefix guard, no `..`/symlink escape), and
+// adds two gates on top, mirroring run_skill_script:
+//   AUTHORIZATION — the owner must flip files_writable for THIS agent × skill
+//     (ctx.fileWritableSkillSlugs). Default off — reading is always allowed,
+//     writing never is until the owner opts in, per skill, per agent.
+//   APPROVAL — defaultApproval 'require_approval': every write suspends for a
+//     human unless an explicit auto_approve ("Yolo") rule exists.
+
+/** Max bytes a single skill_file_write may write (generous for workflow JSON / refs). */
+const MAX_WRITE_BYTES = 1024 * 1024;
+
+/** Thrown when the owner has not authorized file writes for this agent × skill. */
+class FilesNotWritableError extends Error {
+  constructor(skill: string) {
+    super(
+      `files_not_writable: writing files into skill "${skill}" is not enabled for this agent. ` +
+        'The workspace owner must turn on "Allow file writes" for this agent × skill in Skills ' +
+        'settings. Do NOT retry — ask the user to enable it.',
+    );
+    this.name = 'files_not_writable';
+  }
+}
+
+export const SkillFileWriteInputSchema = z.object({
+  skill: z.string().min(1).describe("The skill's slug (its installed identifier)."),
+  path: z
+    .string()
+    .min(1)
+    .describe(
+      "Path to write, relative to the skill's folder (e.g. 'workflows/my_workflow.json'). " +
+        'Parent folders are created as needed. Must stay inside the skill folder.',
+    ),
+  content: z
+    .string()
+    .max(MAX_WRITE_BYTES)
+    .describe('The full file content to write (UTF-8). Overwrites the file if it already exists.'),
+});
+
+export type SkillFileWriteInput = z.infer<typeof SkillFileWriteInputSchema>;
+export type SkillFileWriteOutput =
+  | { ok: true; path: string; bytes_written: number; overwritten: boolean }
+  | { ok: false; reason: string };
+
+export const skillFileWriteTool: ToolDefinition<
+  typeof SkillFileWriteInputSchema,
+  SkillFileWriteOutput
+> = {
+  name: 'skill_file_write',
+  description:
+    "Write or overwrite a bundled file inside one of your installed skills' folders " +
+    '(e.g. drop a new workflow into a ComfyUI skill, update a reference doc). Use this to ' +
+    "curate a skill's resources without a shell. Pass the path relative to the skill folder; " +
+    'parent folders are created automatically and the path cannot escape the skill folder. ' +
+    'Only works for a skill the owner has marked file-writable for you; if it returns ' +
+    'files_not_writable, ask the user to enable it rather than retrying. By DEFAULT every ' +
+    'write requires human approval; the user can enable auto-write ("Yolo") per agent × skill.',
+  inputSchema: SkillFileWriteInputSchema,
+  riskLevel: 'destructive',
+  defaultApproval: 'require_approval',
+  execute: async (input, ctx) => {
+    try {
+      // GATE — authorization: owner opted THIS skill's writes in for THIS agent.
+      const writable = ctx.fileWritableSkillSlugs ?? [];
+      if (!writable.includes(input.skill)) {
+        throw new FilesNotWritableError(input.skill);
+      }
+
+      // SCOPE — resolve the skill root (verifies assigned + installed) and the
+      // target path strictly within it (realpath + prefix guard, shared reader logic).
+      const realRoot = await resolveSkillRoot(ctx, input.skill);
+      const target = await resolveWithinSkill(realRoot, input.path);
+
+      // Refuse to clobber a directory with a file write.
+      let overwritten = false;
+      try {
+        const info = await stat(target);
+        if (info.isDirectory()) {
+          return { ok: false, reason: `Path is a directory, not a file: "${input.path}".` };
+        }
+        overwritten = true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+
+      // Parent dirs are created within the boundary (dirname of an in-boundary
+      // path is itself in-boundary, so this cannot escape).
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, input.content, 'utf8');
+      return {
+        ok: true,
+        path: input.path,
+        bytes_written: Buffer.byteLength(input.content, 'utf8'),
+        overwritten,
+      };
+    } catch (err) {
+      if (err instanceof FilesNotWritableError) return { ok: false, reason: err.message };
+      if (err instanceof SkillFileError) return { ok: false, reason: err.message };
       throw err;
     }
   },

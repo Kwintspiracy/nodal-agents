@@ -141,6 +141,14 @@ export const agentSkillAssignments = pgTable(
     // them unless the owner flips this for a specific agent × skill — the
     // case-by-case execution gate. Loaded by the runner into the ToolContext.
     scriptsAuthorized: boolean('scripts_authorized').notNull().default(false),
+    // Per-skill × per-agent authorization to WRITE files into the skill's bundle
+    // (the install-store dir) via skill_file_write. Owner opt-in, default FALSE.
+    // An agent can always READ its assigned skills' files (skill_file_read), but
+    // it can only modify them — drop a workflow, update a reference — when the
+    // owner flips this for a specific agent × skill. Loaded by the runner into
+    // the ToolContext. Mirrors scriptsAuthorized: a bounded, owner-gated write
+    // path that avoids handing the agent a full shell (command-execution).
+    filesWritable: boolean('files_writable').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [],

@@ -56,6 +56,7 @@ import {
   getInstallNotes,
   setInstallNotes,
   setSkillScriptsAuthorized,
+  setSkillFilesWritable,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -3794,6 +3795,12 @@ export type SkillRow = {
    * and custom skills.
    */
   scriptsAuthorized: boolean | null;
+  /**
+   * Whether the workspace owner has authorized this skill's bundled files to be
+   * written by a specific agent via skill_file_write. Same population rules as
+   * scriptsAuthorized — only set by getAgentAttachedSkillsAction, null otherwise.
+   */
+  filesWritable: boolean | null;
   assignmentCount: number;
   /** Each agent currently assigned to this skill. Sized by assignmentCount
    *  but capped at the SQL layer at 8 names — the UI only renders an avatar
@@ -3912,6 +3919,7 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         source: r.source,
         installedScripts: (r.installedScripts as InstalledScript[] | null) ?? null,
         scriptsAuthorized: null,
+        filesWritable: null,
         assignmentCount: tallyMap.get(r.id) ?? 0,
         assignedAgents: assignedBySkill.get(r.id) ?? [],
         createdAt: r.createdAt,
@@ -4308,6 +4316,7 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       source: row.source,
       installedScripts: (row.installedScripts as InstalledScript[] | null) ?? null,
       scriptsAuthorized: null,
+      filesWritable: null,
       assignmentCount: 0,
       // The skill-detail view doesn't render the avatar stack; cheaper to
       // return [] here than to pay the join. List callers use listSkillsAction.
@@ -4389,6 +4398,7 @@ export async function getAgentAttachedSkillsAction(
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
         scriptsAuthorized: agentSkillAssignments.scriptsAuthorized,
+        filesWritable: agentSkillAssignments.filesWritable,
       })
       .from(agentSkillAssignments)
       .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
@@ -4417,6 +4427,7 @@ export async function getAgentAttachedSkillsAction(
         source: r.source,
         installedScripts: (r.installedScripts as InstalledScript[] | null) ?? null,
         scriptsAuthorized: r.scriptsAuthorized ?? false,
+        filesWritable: r.filesWritable ?? false,
         assignmentCount: 1,
         assignedAgents: [],
         createdAt: r.createdAt,
@@ -4481,6 +4492,61 @@ export async function setSkillScriptsAuthorizedAction(raw: unknown): Promise<Act
   } catch (err) {
     console.error('[setSkillScriptsAuthorizedAction]', err);
     return fail('db_error', 'Failed to save script authorization');
+  }
+}
+
+// ─── setSkillFilesWritableAction ─────────────────────────────────────────────
+//
+// Owner-only: flip the per-agent × per-skill file-write authorization.
+// When writable=true the runner will grant skill_file_write to this agent for
+// this skill's bundled files. Like script authorization, this is a consequential
+// grant — only the workspace OWNER may change it.
+
+const SetSkillFilesWritableSchema = z.object({
+  agentId: z.string().guid(),
+  skillId: z.string().guid(),
+  writable: z.boolean(),
+});
+
+export async function setSkillFilesWritableAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetSkillFilesWritableSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, skillId, writable } = parsed.data;
+
+    const db = getDb();
+
+    // Always enforce owner-only. In local-trust mode there is only one user so
+    // they are always the owner — we still do the check uniformly for simplicity.
+    const [entityRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!entityRow) return fail('not_found', 'Workspace not found');
+    if (entityRow.userId !== session.userId) {
+      return fail('forbidden', 'Only the workspace owner can authorize skill file writes.');
+    }
+
+    // Verify agent belongs to this entity (prevents cross-entity writes).
+    const [agentRow] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agentRow) return fail('not_found', 'Agent not found');
+
+    const result = await setSkillFilesWritable(db, agentId, skillId, writable);
+    if ('error' in result) {
+      return fail('not_assigned', 'This skill is not assigned to the agent.');
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setSkillFilesWritableAction]', err);
+    return fail('db_error', 'Failed to save file-write authorization');
   }
 }
 

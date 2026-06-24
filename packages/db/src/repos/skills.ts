@@ -242,6 +242,40 @@ export async function setSkillScriptsAuthorized(
   return { ok: true };
 }
 
+// ─── setSkillFilesWritable ────────────────────────────────────────────────────
+
+export type SetFilesWritableResult = { ok: true } | { error: 'not_assigned' };
+
+/**
+ * Flip the per-skill × per-agent file-write authorization (owner opt-in).
+ *
+ * When `writable` is true, the runner registers `skill_file_write` for this
+ * agent and lets it modify the skill's bundled files (drop a workflow, update a
+ * reference). Default is false — an agent can always READ its assigned skills'
+ * files, but it can only WRITE them once the owner explicitly authorizes it for
+ * a specific agent × skill. Returns `not_assigned` if the agent does not hold
+ * the skill (you can only authorize writes for an assigned skill).
+ *
+ * Scoped to (agentId, skillId) within the entity; the caller (web action) MUST
+ * verify ownership of the entity before calling — this is an owner-only control.
+ */
+export async function setSkillFilesWritable(
+  db: AnyDrizzleDb,
+  agentId: string,
+  skillId: string,
+  writable: boolean,
+): Promise<SetFilesWritableResult> {
+  const updated = await db
+    .update(agentSkillAssignments)
+    .set({ filesWritable: writable })
+    .where(
+      and(eq(agentSkillAssignments.agentId, agentId), eq(agentSkillAssignments.skillId, skillId)),
+    )
+    .returning({ id: agentSkillAssignments.id });
+  if (updated.length === 0) return { error: 'not_assigned' };
+  return { ok: true };
+}
+
 // ─── touchSkillsLastUsed ──────────────────────────────────────────────────────
 
 /**

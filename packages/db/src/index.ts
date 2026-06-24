@@ -23,6 +23,7 @@ export {
   updateSkillRepo,
   assignSkillRepo,
   setSkillScriptsAuthorized,
+  setSkillFilesWritable,
   touchSkillsLastUsed,
   transitionSkillLifecycle,
   archiveAgentSkill,

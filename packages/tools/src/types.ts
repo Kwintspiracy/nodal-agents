@@ -71,6 +71,14 @@ export interface ToolContext {
    */
   scriptAuthorizedSkillSlugs?: string[];
   /**
+   * Slugs of skills this agent is AUTHORIZED to WRITE files into via
+   * `skill_file_write` (agent_skill_assignments.files_writable = true). A subset
+   * of assignedSkillSlugs — the owner opts in per agent × skill. Absent or empty
+   * ⇒ the agent writes no skill files (`skill_file_write` fails loud with
+   * `files_not_writable`). Loaded by the runner alongside assignedSkillSlugs.
+   */
+  fileWritableSkillSlugs?: string[];
+  /**
    * Infrastructure-provisioning capabilities for ROOT meta-tools that create
    * MCP servers (and, later, connectors). Injected by the runner, which owns
    * the MCP adapter and secret encryption — so packages/tools takes no

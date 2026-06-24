@@ -26,6 +26,7 @@ import {
   setAgentApprovalRuleAction,
   setRunCommandYoloAction,
   setSkillScriptsAuthorizedAction,
+  setSkillFilesWritableAction,
   type AgentRow,
   type AgentEditRow,
   type AgentWorkspaceRow,
@@ -1107,6 +1108,7 @@ function AutonomyTab({
       />
 
       <ScriptAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
+      <FileWriteAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
     </div>
   );
 }
@@ -1468,6 +1470,153 @@ function ScriptAuthRow({
         title={`Allow scripts for "${skill.name}"?`}
         message={confirmMessage}
         confirmLabel="Allow scripts"
+        destructive
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void doSet(true);
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </div>
+  );
+}
+
+// ─── Community-skill file-write authorization section ─────────────────────────
+//
+// Shown only when ≥1 attached community skill exists. One toggle row per such
+// skill. Lets the agent WRITE files into the skill's bundle (e.g. drop a new
+// ComfyUI workflow) via skill_file_write — a bounded alternative to handing it a
+// full shell. Owner-only for enabling; disabling is immediate. Enabling pops a
+// ConfirmDialog. Default off — an agent can always read its skills' files but
+// never modify them until the owner opts in here.
+
+function FileWriteAuthSection({
+  agentId,
+  attachedSkills,
+  isOwner,
+}: {
+  agentId: string;
+  attachedSkills: SkillRow[];
+  isOwner: boolean;
+}) {
+  const writableSkills = attachedSkills.filter((s) => s.isCommunity);
+
+  if (writableSkills.length === 0) return null;
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Community skill file writes"
+        hint="Let this agent write files into a community skill's bundle (e.g. save a new ComfyUI workflow) without a shell. Reading is always allowed; writing is off until you enable it here."
+      />
+      <div
+        className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+        data-testid="file-write-auth-list"
+      >
+        {writableSkills.map((skill) => (
+          <FileWriteAuthRow key={skill.id} skill={skill} agentId={agentId} isOwner={isOwner} />
+        ))}
+      </div>
+      <p className="mt-4 text-[11px] text-ink-4">
+        Writes are bounded to the skill&apos;s own folder (no path escape) and require approval by
+        default — far narrower than granting shell access.
+      </p>
+    </SectionCard>
+  );
+}
+
+function FileWriteAuthRow({
+  skill,
+  agentId,
+  isOwner,
+}: {
+  skill: SkillRow;
+  agentId: string;
+  isOwner: boolean;
+}) {
+  const [writable, setWritable] = useState<boolean>(skill.filesWritable ?? false);
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const canToggle = isLocalTrust || isOwner;
+
+  async function doSet(next: boolean) {
+    setSaving(true);
+    setWritable(next); // optimistic
+    const result = await setSkillFilesWritableAction({
+      agentId,
+      skillId: skill.id,
+      writable: next,
+    });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      setWritable(!next); // revert
+    } else {
+      toast.success(
+        next
+          ? `File writes allowed for "${skill.name}"`
+          : `File writes revoked for "${skill.name}"`,
+      );
+    }
+  }
+
+  function handleToggle() {
+    if (writable) {
+      void doSet(false);
+    } else {
+      setConfirmOpen(true);
+    }
+  }
+
+  const confirmMessage =
+    `This lets ${skill.name} create and overwrite files inside its own skill folder ` +
+    '(e.g. workflows, references) without per-write approval defaults applying to the toggle ' +
+    'itself. Writes can never escape the skill folder.\n\nOnly enable for skills you trust to ' +
+    'manage their own bundle.';
+
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-medium text-ink">{skill.name}</span>
+          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-skill-vivid">
+            community
+          </span>
+        </div>
+        {!canToggle && (
+          <p className="mt-1.5 text-[11.5px] text-ink-4">
+            Only the workspace owner can authorize file writes.
+          </p>
+        )}
+      </div>
+
+      <button
+        type="button"
+        role="switch"
+        aria-checked={writable}
+        aria-label={`Allow file writes for ${skill.name}`}
+        disabled={saving || !canToggle}
+        onClick={handleToggle}
+        className={[
+          'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+          writable ? 'border-warn/40 bg-warn/20' : 'border-rule-2 bg-canvas',
+        ].join(' ')}
+      >
+        <span
+          className={[
+            'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
+            writable ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3',
+          ].join(' ')}
+        />
+      </button>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Allow file writes for "${skill.name}"?`}
+        message={confirmMessage}
+        confirmLabel="Allow file writes"
         destructive
         onConfirm={() => {
           setConfirmOpen(false);

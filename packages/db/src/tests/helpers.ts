@@ -355,6 +355,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       use_custom_instructions boolean NOT NULL DEFAULT false,
       enabled_operations text[],
       scripts_authorized boolean NOT NULL DEFAULT false,
+      files_writable boolean NOT NULL DEFAULT false,
       created_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (agent_id, skill_id)
     );

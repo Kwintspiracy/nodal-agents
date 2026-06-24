@@ -3,17 +3,17 @@
 // only read its assigned skills' bundles, never escape the skill folder).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, symlink, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { skillFileReadTool, skillFileListTool } from './skill-files';
+import { skillFileReadTool, skillFileListTool, skillFileWriteTool } from './skill-files';
 import type { ToolContext } from '../../types';
 
 let STORE: string; // the skill store root (~/.nodalai/skills equivalent)
 let OUTSIDE: string; // a sibling dir that holds a "secret" the skill must not reach
 const SLUG = 'demo-skill';
 
-function ctx(opts: { store?: string; assigned?: string[] }): ToolContext {
+function ctx(opts: { store?: string; assigned?: string[]; writable?: string[] }): ToolContext {
   return {
     jobId: '00000000-0000-0000-0000-000000000aaa',
     agentId: '00000000-0000-0000-0000-000000000bbb',
@@ -22,6 +22,7 @@ function ctx(opts: { store?: string; assigned?: string[] }): ToolContext {
     jobChatId: null,
     skillStoreDir: opts.store,
     assignedSkillSlugs: opts.assigned,
+    fileWritableSkillSlugs: opts.writable,
   };
 }
 
@@ -174,5 +175,96 @@ describe('skill_file_list', () => {
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
     expect(r.reason).toContain('not assigned');
+  });
+});
+
+describe('skill_file_write — happy path', () => {
+  it('writes a new file into the skill bundle and it reads back identically', async () => {
+    const body = '{"prompt":"a cat"}\n';
+    const r = await skillFileWriteTool.execute(
+      { skill: SLUG, path: 'workflows/new.json', content: body },
+      ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.overwritten).toBe(false);
+    expect(r.bytes_written).toBe(Buffer.byteLength(body, 'utf8'));
+    // Parent dir 'workflows/' was created and the bytes landed verbatim.
+    const onDisk = await readFile(join(STORE, SLUG, 'workflows', 'new.json'), 'utf8');
+    expect(onDisk).toBe(body);
+  });
+
+  it('overwrites an existing file and reports overwritten=true', async () => {
+    const r = await skillFileWriteTool.execute(
+      { skill: SLUG, path: 'SKILL.md', content: '# Replaced\n' },
+      ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.overwritten).toBe(true);
+    expect(await readFile(join(STORE, SLUG, 'SKILL.md'), 'utf8')).toBe('# Replaced\n');
+  });
+
+  it('refuses to clobber a directory with a file write', async () => {
+    const r = await skillFileWriteTool.execute(
+      { skill: SLUG, path: 'references', content: 'x' },
+      ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toContain('directory');
+  });
+});
+
+describe('skill_file_write — authorization + boundary', () => {
+  it('refuses when the owner has not made the skill file-writable', async () => {
+    const r = await skillFileWriteTool.execute(
+      { skill: SLUG, path: 'workflows/x.json', content: 'x' },
+      // assigned but NOT writable
+      ctx({ store: STORE, assigned: [SLUG], writable: [] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toContain('files_not_writable');
+    // And nothing was written.
+    await expect(stat(join(STORE, SLUG, 'workflows', 'x.json'))).rejects.toThrow();
+  });
+
+  it('refuses a skill the agent does not hold (even if listed writable)', async () => {
+    const r = await skillFileWriteTool.execute(
+      { skill: SLUG, path: 'workflows/x.json', content: 'x' },
+      ctx({ store: STORE, assigned: [], writable: [SLUG] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    // writable gate passes but resolveSkillRoot rejects the unassigned skill.
+    expect(r.reason).toContain('not assigned');
+  });
+
+  it('blocks `..` traversal escaping the skill folder', async () => {
+    const r = await skillFileWriteTool.execute(
+      { skill: SLUG, path: '../../pwned.key', content: 'x' },
+      ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toContain('outside the skill folder');
+    // The escaping path must not have been created in the OUTSIDE sibling.
+    await expect(stat(join(OUTSIDE, 'pwned.key'))).rejects.toThrow();
+  });
+
+  it('blocks an absolute path pointing outside the store', async () => {
+    const r = await skillFileWriteTool.execute(
+      { skill: SLUG, path: join(OUTSIDE, 'pwned.key'), content: 'x' },
+      ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toContain('outside the skill folder');
+  });
+
+  it('is destructive + approval-gated by default (safe posture)', () => {
+    expect(skillFileWriteTool.riskLevel).toBe('destructive');
+    expect(skillFileWriteTool.defaultApproval).toBe('require_approval');
   });
 });
