@@ -32,10 +32,17 @@ const CHAT_TOOLS = {
       'Your gateway to EVERY capability you have. Calling this runs a tracked job with your ' +
       'full toolset — connectors, skills, delegation to your team, and (as the workspace ROOT) ' +
       'creating agents, skills, MCP servers, connectors or automations. Use it for ANY action: ' +
-      'send, fetch, create, configure, publish, or multi-step work. Pass a clear, ' +
-      'self-contained instruction. Never decline an action the user asks for — escalate it ' +
-      'here. For plain conversation or recalling facts, reply in text instead (do not call this).',
-    inputSchema: z.object({ instruction: z.string().min(1).max(4000) }),
+      'send, fetch, create, configure, publish, or multi-step work.\n' +
+      'CONVEY THE REQUEST FAITHFULLY. The WHAT is the user’s, not yours: pass their actual ' +
+      'words and data through (verbatim where it matters — a pasted file, an exact phrasing). ' +
+      'Do NOT invent scope, sub-topics, sources, an analysis plan, a method, or a delivery the ' +
+      'user did not state — that is the worker’s own skills and judgment, and pre-deciding it ' +
+      'risks drifting from what the user asked. Add only what the user explicitly said (e.g. a ' +
+      'destination they named). If the conversation spans turns, make the instruction ' +
+      'self-contained by carrying the user’s intent across turns — NOT by enriching it.\n' +
+      'Never decline an action the user asks for — escalate it here. For plain conversation or ' +
+      'recalling facts, reply in text instead (do not call this).',
+    inputSchema: z.object({ instruction: z.string().min(1).max(16000) }),
   },
 };
 
@@ -49,7 +56,8 @@ const CHAT_TOOLS = {
 const ESCALATION_RECHECK =
   'Re-read your previous reply. If it committed to performing an action — running, launching, ' +
   'sending, fetching, creating, configuring, delegating, or any task or tool use — then your ' +
-  'text ALONE did nothing: call the run_task tool NOW with a clear, self-contained instruction. ' +
+  'text ALONE did nothing: call the run_task tool NOW, conveying the user’s request faithfully ' +
+  '(their words and data, with no invented scope, method, or delivery). ' +
   'If your reply was pure conversation, a question, or simply recalling a fact, do not call any ' +
   'tool — the conversation is complete.';
 
@@ -276,6 +284,15 @@ export async function runChatTurn(opts: {
     const instruction =
       String((runTask.input as { instruction?: unknown } | undefined)?.instruction ?? '').trim() ||
       message;
+    // SAFETY NET against intent drift: the worker must always see the USER's
+    // actual words, not only the orchestrator's framing. If the instruction did
+    // not already carry them (Alfred reworded/compressed despite the steer), append
+    // the user's exact message as the source of truth. Dedup when it's already in.
+    const probe = message.trim().slice(0, 160);
+    const workerContent =
+      probe.length > 0 && !instruction.includes(probe)
+        ? `${instruction}\n\n[User's exact request, verbatim — this is the source of truth; the line above is only framing]\n${message}`
+        : instruction;
     const [job] = await db
       .insert(agentJobs)
       .values({
@@ -284,7 +301,7 @@ export async function runChatTurn(opts: {
         status: 'pending',
         channel: 'dashboard',
         task: instruction,
-        messages: [{ role: 'user', content: instruction }],
+        messages: [{ role: 'user', content: workerContent }],
       })
       .returning({ id: agentJobs.id });
 
