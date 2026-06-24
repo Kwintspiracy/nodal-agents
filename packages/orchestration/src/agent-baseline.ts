@@ -17,9 +17,13 @@ import { systemSkills, skillKind } from '@nodal-agents/catalog';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 
 /**
- * Models that need a firmer verification nudge — weaker instruction-following or
- * a known habit of declaring a task done without actually checking (the exact
- * failure we hit live on DeepSeek/MiniMax). Frontier models get the baseline only.
+ * Open/mid models that need firmer execution discipline — weaker instruction-
+ * following, a habit of declaring a task done without checking, AND a habit of
+ * over-exploring (re-verifying, re-listing, running diagnostic commands, writing
+ * their own helper/conversion scripts) instead of using the tools and paths they
+ * were given. Both failures observed live on MiniMax M3 / DeepSeek. Frontier
+ * models (Claude/GPT) follow the baseline without this and get nothing extra —
+ * mirrors how Hermes injects per-model execution guidance.
  */
 const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/i;
 
@@ -31,8 +35,14 @@ export function buildBaselineBlock(model: string): string {
   const parts = contentOfKind('baseline');
   if (parts.length === 0) return '';
   const reinforcement = NEEDS_FIRMER_VERIFY.test(model)
-    ? '\n\n**Especially you:** actually run or check your work before you say a task ' +
-      'is done, and never write tool output you did not really get back.'
+    ? '\n\n**Especially you — execution discipline:** ' +
+      'Actually run or check your work before you say a task is done, and never write tool output ' +
+      'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
+      'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
+      'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded with ' +
+      'skill_view ships run_skill_script and ready-made workflows/templates) instead of writing ' +
+      'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
+      'steps that finish the task, then deliver the result with its output path.'
     : '';
   return `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}`;
 }
