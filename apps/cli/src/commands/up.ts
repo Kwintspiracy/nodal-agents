@@ -222,7 +222,12 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   // Now that ports are finalised, derive the user-facing URLs.
   const webUrl = `http://localhost:${config.ports.web}`;
-  const runnerUrl = `http://localhost:${config.ports.runner}`;
+  // 127.0.0.1, not localhost: in loopback mode the runner binds IPv4 127.0.0.1
+  // only (see buildEnvForRunner). On Windows `localhost` resolves to ::1 (IPv6)
+  // first, so a health probe to http://localhost:<runner> hits an address the
+  // runner never listens on → the check times out even though the runner is up.
+  // The web is fine on localhost because Next.js binds 0.0.0.0 (incl. ::1).
+  const runnerUrl = `http://127.0.0.1:${config.ports.runner}`;
 
   // ── 2. Start embedded Postgres ────────────────────────────────────────────
 
