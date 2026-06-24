@@ -196,12 +196,15 @@ describe('buildSystemPrompt', () => {
 
     const skillContent =
       'When asked to read or write a Google Sheet, use the gsheets_read or gsheets_write tool with the spreadsheet ID from the request.';
+    const skillDescription = 'Read and write Google Sheets by spreadsheet ID.';
+    const slug = `google-sheets-sp-${Date.now()}`;
     const [skill] = await db
       .insert(agentSkills)
       .values({
         entityId,
         name: 'Google Sheets',
-        slug: `google-sheets-sp-${Date.now()}`,
+        slug,
+        description: skillDescription,
         content: skillContent,
       })
       .returning();
@@ -215,13 +218,16 @@ describe('buildSystemPrompt', () => {
     const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
     const prompt = await buildSystemPrompt(agent, db);
 
-    // Brique 32: skills inject FULL content under a "## Skills" section, with
-    // each skill's instructions under a `### <name>` subheading. Pre-32 only
-    // the skill name was emitted in a bullet list — the actual content was
-    // silently dropped.
-    expect(prompt).toContain('## Skills');
-    expect(prompt).toContain('### Google Sheets');
-    expect(prompt).toContain(skillContent);
+    // Progressive disclosure: the prompt carries a COMPACT INDEX (slug + the
+    // one-line description + a skill_view call), NOT the full SKILL.md body.
+    // The full content loads on demand via skill_view — it must NOT be dumped here.
+    expect(prompt).toContain('## Skills (load before acting)');
+    expect(prompt).toContain(`skill_view('${slug}')`);
+    expect(prompt).toContain(skillDescription);
+    // Anti-reimplement steering is present.
+    expect(prompt).toMatch(/NEVER reimplement/i);
+    // The FULL body is NOT front-loaded anymore (the whole point of the change).
+    expect(prompt).not.toContain(skillContent);
     // The legacy "Your available adapters" header is gone.
     expect(prompt).not.toContain('Your available adapters');
   });

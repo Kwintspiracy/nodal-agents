@@ -300,7 +300,7 @@ export async function buildSystemPrompt(
       skillId: agentSkills.id,
       skillSlug: agentSkills.slug,
       skillName: agentSkills.name,
-      skillContent: agentSkills.content,
+      skillDescription: agentSkills.description,
     })
     .from(agentSkillAssignments)
     .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
@@ -363,11 +363,34 @@ export async function buildSystemPrompt(
     const k = skillKindOfSlug(r.skillSlug);
     return k === null || k === 'capability';
   });
+  // Progressive disclosure (the open "Agent Skills" design): the prompt carries
+  // only a COMPACT INDEX (slug + one-line description) — not each skill's full
+  // SKILL.md body. The agent loads the full instructions on demand with
+  // `skill_view('<slug>')` the moment a skill is relevant. We already do exactly
+  // this for agent-internal tool-usage skills (see skill-view.ts) — this extends
+  // it to community/capability skills, which were front-loaded in full (a single
+  // skill like comfyui is ~24K chars / a third of the prompt). Front-loading
+  // every body buried the actionable signal in setup/lore the model didn't need,
+  // and gave it no steer to USE the skill's bundled scripts — so models would
+  // wade through the manual and reinvent logic the skill already ships. The
+  // mandatory-load + anti-reimplement steering below mirrors what makes Hermes
+  // reliably use skills.
+  const skillIndex = assignedSkillRows
+    .map((r) => {
+      const desc = (r.skillDescription ?? '').trim() || '(load with skill_view for details)';
+      return `- \`skill_view('${r.skillSlug}')\` — **${r.skillName}**: ${desc}`;
+    })
+    .join('\n');
   const skillsBlock =
     assignedSkillRows.length > 0
-      ? `\n\n## Skills\n\n${assignedSkillRows
-          .map((r) => `### ${r.skillName}\n\n${r.skillContent}`)
-          .join('\n\n')}`
+      ? `\n\n## Skills (load before acting)\n\n` +
+        `Scan the skills below. For ANY skill even partially relevant to your task, you MUST call ` +
+        `\`skill_view('<slug>')\` to load its full instructions and follow them BEFORE you act — ` +
+        `even if you think you could do the task with basic tools. A skill defines HOW the task ` +
+        `must be done here and ships tested scripts + ready-made files (e.g. prebuilt workflows). ` +
+        `Run a skill's bundled scripts with \`run_skill_script\` (or by the exact paths skill_view ` +
+        `gives you). NEVER reimplement a skill's logic inline, and NEVER rebuild or re-convert ` +
+        `something the skill already provides.\n\n${skillIndex}`
       : '';
 
   // 4. Assemble: honour {{team}} placeholder or append
