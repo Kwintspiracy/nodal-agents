@@ -5,12 +5,26 @@ import { DeliveryError } from '../errors.ts';
 /** Timeout for all outbound Telegram API calls (sendMessage, getMe, getUpdates). */
 const TELEGRAM_TIMEOUT_MS = 10_000;
 
+/** One inline-keyboard button. `callback_data` is sent back in a callback_query when tapped (≤64 bytes). */
+export interface TelegramInlineButton {
+  text: string;
+  callback_data: string;
+}
+
+/** Inline keyboard: an array of button rows. */
+export type TelegramInlineKeyboard = TelegramInlineButton[][];
+
 export interface TelegramSendOpts {
   chatId: string;
   text: string;
   botToken: string;
   parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
   disableWebPagePreview?: boolean;
+  /**
+   * Optional inline keyboard. When the text is chunked (>4096 chars) the keyboard
+   * is attached to the LAST chunk only, so the buttons sit under the final message.
+   */
+  inlineKeyboard?: TelegramInlineKeyboard;
 }
 
 interface TelegramApiResponse<T = unknown> {
@@ -82,14 +96,21 @@ function chunkForTelegram(text: string, max = TELEGRAM_MAX_CHARS): string[] {
 export async function sendTelegramMessage(opts: TelegramSendOpts): Promise<{ messageId: number }> {
   const parts = chunkForTelegram(opts.text);
   let last = { messageId: 0 };
-  for (const part of parts) {
-    last = await sendOneTelegramMessage({ ...opts, text: part });
+  for (let i = 0; i < parts.length; i += 1) {
+    // Attach the inline keyboard to the final chunk only — buttons belong under
+    // the last message, not repeated on every chunk.
+    const isLast = i === parts.length - 1;
+    last = await sendOneTelegramMessage({
+      ...opts,
+      text: parts[i] as string,
+      inlineKeyboard: isLast ? opts.inlineKeyboard : undefined,
+    });
   }
   return last;
 }
 
 async function sendOneTelegramMessage(opts: TelegramSendOpts): Promise<{ messageId: number }> {
-  const { chatId, text, botToken, parseMode, disableWebPagePreview } = opts;
+  const { chatId, text, botToken, parseMode, disableWebPagePreview, inlineKeyboard } = opts;
 
   const body: Record<string, unknown> = {
     chat_id: chatId,
@@ -100,6 +121,9 @@ async function sendOneTelegramMessage(opts: TelegramSendOpts): Promise<{ message
   }
   if (disableWebPagePreview !== undefined) {
     body['disable_web_page_preview'] = disableWebPagePreview;
+  }
+  if (inlineKeyboard !== undefined) {
+    body['reply_markup'] = { inline_keyboard: inlineKeyboard };
   }
 
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
@@ -333,7 +357,59 @@ export interface TelegramUpdate {
     id: string;
     data?: string;
     from?: { id?: number; first_name?: string; username?: string };
+    /** The message the button is attached to — its chat is the authorization boundary. */
+    message?: { message_id?: number; chat?: { id?: number; type?: string } };
   };
+}
+
+/**
+ * Acknowledge a callback_query (button tap). Telegram shows the optional `text`
+ * as a transient toast/alert to the user who tapped. MUST be called within ~10s
+ * of receiving the callback or the client shows a spinner-then-error. Best-effort:
+ * never throws (a failed ack must not block the decision that already happened).
+ */
+export async function answerTelegramCallback(
+  botToken: string,
+  callbackQueryId: string,
+  text?: string,
+  showAlert = false,
+): Promise<void> {
+  const body: Record<string, unknown> = { callback_query_id: callbackQueryId };
+  if (text !== undefined) body['text'] = text;
+  if (showAlert) body['show_alert'] = true;
+  try {
+    await callBotApi<boolean>(botToken, 'answerCallbackQuery', body);
+  } catch {
+    /* best-effort ack — the decision is already persisted */
+  }
+}
+
+/**
+ * Edit an existing message's text (and optionally its inline keyboard). Used to
+ * turn an approval card into a resolved card ("✅ Approuvé") and strip its
+ * buttons so it can't be tapped twice. Best-effort: never throws.
+ */
+export async function editTelegramMessageText(opts: {
+  botToken: string;
+  chatId: string | number;
+  messageId: number;
+  text: string;
+  parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
+  inlineKeyboard?: TelegramInlineKeyboard;
+}): Promise<void> {
+  const body: Record<string, unknown> = {
+    chat_id: opts.chatId,
+    message_id: opts.messageId,
+    text: opts.text,
+  };
+  if (opts.parseMode !== undefined) body['parse_mode'] = opts.parseMode;
+  // Always send reply_markup: an explicit empty keyboard removes the buttons.
+  body['reply_markup'] = { inline_keyboard: opts.inlineKeyboard ?? [] };
+  try {
+    await callBotApi<unknown>(opts.botToken, 'editMessageText', body);
+  } catch {
+    /* best-effort — the resolution already happened */
+  }
 }
 
 /**

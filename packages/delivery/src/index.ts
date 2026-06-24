@@ -5,8 +5,16 @@ export {
   sendTelegramPhoto,
   getTelegramBotInfo,
   getTelegramUpdates,
+  answerTelegramCallback,
+  editTelegramMessageText,
 } from './channels/telegram.ts';
-export type { TelegramSendOpts, TelegramBotInfo, TelegramUpdate } from './channels/telegram.ts';
+export type {
+  TelegramSendOpts,
+  TelegramBotInfo,
+  TelegramUpdate,
+  TelegramInlineButton,
+  TelegramInlineKeyboard,
+} from './channels/telegram.ts';
 
 export { sendEmail } from './channels/email.ts';
 export type { EmailSendOpts } from './channels/email.ts';

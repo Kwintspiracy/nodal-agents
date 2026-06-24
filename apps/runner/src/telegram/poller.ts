@@ -15,6 +15,7 @@ import { getTelegramUpdates, DeliveryError, type TelegramUpdate } from '@nodal-a
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { handleTelegramUpdate, triggerJobWorker } from './handler.ts';
+import { handleApprovalCallback } from './approval-callback.ts';
 
 export interface PollerOpts {
   agentId: string;
@@ -93,6 +94,40 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       if (signal.aborted) break;
 
       const newOffset = update.update_id + 1;
+
+      // callback_query = an inline-button tap (e.g. an approval ✅/❌). It resolves
+      // an existing job rather than creating one, so it bypasses the message txn
+      // path below. The handler resolves + resumes internally and is best-effort
+      // on the Telegram side; only a hard DB failure (thrown) blocks offset
+      // advancement so we retry the same tap.
+      if (update.callback_query) {
+        try {
+          await handleApprovalCallback({
+            update,
+            receivingAgentId: agentId,
+            botToken,
+            deps,
+            env,
+          });
+          await deps.db
+            .update(agents)
+            .set({ telegramOffset: newOffset, updatedAt: new Date() })
+            .where(eq(agents.id, agentId));
+        } catch (err) {
+          console.error(
+            `[telegram-poller agent=${agentId}] callback update_id=${update.update_id} failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          await sleepWithAbort(backoffMs, signal);
+          backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
+          continue;
+        }
+        offset = newOffset;
+        backoffMs = BACKOFF_INITIAL_MS;
+        continue;
+      }
+
       let createdJobId: string | undefined;
 
       try {

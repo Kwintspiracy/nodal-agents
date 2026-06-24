@@ -10,11 +10,9 @@
 
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { eq } from '@nodal-agents/db';
-import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { triggerWorker } from './agent.ts';
+import { resolveApprovalDecision } from '../approvals/resolve.ts';
 
 // ─── Request schema ───────────────────────────────────────────────────────────
 
@@ -39,57 +37,20 @@ export async function approveRoute(
 
   const { approvalRequestId, decision, notes } = parsed.data;
 
-  // Load approval request
-  const approvalRows = await deps.db
-    .select()
-    .from(approvalRequests)
-    .where(eq(approvalRequests.id, approvalRequestId))
-    .limit(1);
+  // Dashboard-driven resolution → resolvedBy: 'api'. Shares the channel-neutral
+  // core with the Telegram inline-button path (approvals/resolve.ts).
+  const result = await resolveApprovalDecision(deps, runnerEnv, {
+    approvalRequestId,
+    decision,
+    resolvedBy: 'api',
+    notes: notes ?? null,
+  });
 
-  if (approvalRows.length === 0) {
-    return c.json({ error: 'approval_not_found' }, 404);
+  if (!result.ok) {
+    if (result.code === 'approval_not_found') return c.json({ error: 'approval_not_found' }, 404);
+    if (result.code === 'job_not_found') return c.json({ error: 'job_not_found' }, 404);
+    return c.json({ error: 'approval_already_resolved', status: result.status }, 400);
   }
 
-  const approval = approvalRows[0]!;
-
-  if (approval.status !== 'pending') {
-    return c.json({ error: 'approval_already_resolved', status: approval.status }, 400);
-  }
-
-  const jobId = approval.jobId;
-
-  // Verify the job exists
-  const jobRows = await deps.db.select().from(agentJobs).where(eq(agentJobs.id, jobId)).limit(1);
-
-  if (jobRows.length === 0) {
-    return c.json({ error: 'job_not_found' }, 404);
-  }
-
-  // Mark approval resolved. execute.ts step 11.7 reads this on resume and
-  // executes or rejects the tool (replacing the [AWAITING_APPROVAL] marker).
-  await deps.db
-    .update(approvalRequests)
-    .set({
-      status: decision === 'approve' ? 'approved' : 'rejected',
-      resolvedAt: new Date(),
-      resolvedBy: 'api',
-      notes: notes ?? null,
-    })
-    .where(eq(approvalRequests.id, approvalRequestId));
-
-  // Set job back to pending so executeJob will pick it up.
-  // Approval does NOT bump chain_count — the LLM did not make an extra chain
-  // call, the human just acted on an already-proposed action.
-  await deps.db
-    .update(agentJobs)
-    .set({
-      status: 'pending',
-      updatedAt: new Date(),
-    })
-    .where(eq(agentJobs.id, jobId));
-
-  // Resume the job
-  void triggerWorker(jobId, runnerEnv);
-
-  return c.json({ ok: true, jobId, status: 'pending', decision }, 200);
+  return c.json({ ok: true, jobId: result.jobId, status: 'pending', decision }, 200);
 }
