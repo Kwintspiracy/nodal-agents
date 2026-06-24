@@ -43,7 +43,12 @@ import {
   createSendImageTool,
   listWorkspaceMcpToolNames,
 } from '@nodal-agents/tools';
-import type { ToolDefinition, ApprovalRule, ToolProvisioning } from '@nodal-agents/tools';
+import type {
+  ToolDefinition,
+  ApprovalRule,
+  ToolProvisioning,
+  ApprovalGateRequest,
+} from '@nodal-agents/tools';
 import {
   ChainCounters,
   DEFAULT_LIMITS,
@@ -78,6 +83,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import type { RunnerDeps } from '../deps.ts';
+import { notifyApprovalCreated } from '../approvals/notify.ts';
 import type { RunnerEnv } from '../env.ts';
 import { skillStoreDir } from '../skills/index.ts';
 import { maybeRunReflection } from '../reflection/index.ts';
@@ -565,6 +571,7 @@ async function runJob(
     .select({
       slug: agentSkills.slug,
       scriptsAuthorized: agentSkillAssignments.scriptsAuthorized,
+      filesWritable: agentSkillAssignments.filesWritable,
     })
     .from(agentSkillAssignments)
     .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
@@ -575,6 +582,12 @@ async function runJob(
   // availability (whitelist below) and its execution (ToolContext → builtin).
   const scriptAuthorizedSkillSlugs: string[] = assignedSkillRows
     .filter((r) => r.scriptsAuthorized)
+    .map((r) => r.slug);
+  // Slugs whose bundled files the owner has authorized THIS agent to write via
+  // skill_file_write (subset of assignedSkillSlugs). Gates both the tool's
+  // availability (whitelist below) and its execution (ToolContext → builtin).
+  const fileWritableSkillSlugs: string[] = assignedSkillRows
+    .filter((r) => r.filesWritable)
     .map((r) => r.slug);
   const skillStore = skillStoreDir(job.entityId);
 
@@ -678,6 +691,16 @@ async function runJob(
     .map((n) => registry.get(n))
     .filter((t): t is AnyToolDef => t !== undefined);
 
+  // skill_file_write — offered ONLY to agents with ≥1 owner-authorized
+  // file-writable skill (agent_skill_assignments.files_writable). Gated here at
+  // the whitelist (availability) AND in the builtin via fileWritableSkillSlugs
+  // (execution). Mirrors scriptToolNames/scriptToolDefs.
+  const fileWriteToolNames: string[] =
+    fileWritableSkillSlugs.length > 0 ? ['skill_file_write'] : [];
+  const fileWriteToolDefs: AnyToolDef[] = fileWriteToolNames
+    .map((n) => registry.get(n))
+    .filter((t): t is AnyToolDef => t !== undefined);
+
   // Capability tools: computed from agent's configured integrations.
   // These are instantiated per-job and merged directly into toolDefs/toolMap.
   // CRITICAL: do NOT register into the shared registry — the registry is
@@ -752,6 +775,7 @@ async function runJob(
         ...(returnResult ? [returnResult] : []),
         ...metaToolDefs,
         ...scriptToolDefs,
+        ...fileWriteToolDefs,
         ...capabilityTools,
       ];
     } else {
@@ -937,6 +961,7 @@ async function runJob(
             ...registeredSkillBuiltins,
             ...metaToolNames,
             ...scriptToolNames,
+            ...fileWriteToolNames,
           ],
         },
         registry,
@@ -1167,12 +1192,13 @@ async function runJob(
                 skillStoreDir: skillStore,
                 assignedSkillSlugs,
                 scriptAuthorizedSkillSlugs,
+                fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
               {
                 approvalRules: resumeApprovalRules,
                 autonomy: workspaceAutonomy,
-                onApprovalRequired: async () => {},
+                onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
               },
             );
             if (execResult.outcome === 'success') {
@@ -1317,9 +1343,9 @@ async function runJob(
     '[système] Tu es sur Telegram et une de tes actions vient de créer une demande ' +
     "d'approbation : elle attend la validation de l'utilisateur avant de s'exécuter. Avant que " +
     "le job se mette en pause, appelle `telegram_send_message` pour dire à l'utilisateur, avec " +
-    'tes propres mots, quelle action tu as lancée et que tu attends son approbation (il la ' +
-    "validera depuis le dashboard). N'appelle PAS `return_result` — la mise en pause est " +
-    'automatique.';
+    'tes propres mots, quelle action tu as lancée et que tu attends son approbation (il pourra ' +
+    "valider directement depuis Telegram via les boutons ✅/❌, ou depuis le dashboard). N'appelle " +
+    'PAS `return_result` — la mise en pause est automatique.';
   // Suspend the job in `awaiting_approval`, persisting the current conversation
   // so the dashboard-driven resume (section 11.7) picks up exactly where we left
   // off. Closes over the loop accumulators (reassigned each turn) by reference.
@@ -1739,7 +1765,24 @@ async function runJob(
       // surface a tool call in the response *message* that isn't in
       // response.toolCalls; replaying that leaves an unmatched tool_use and fails
       // message-structure validation — live regression: job 8fc974fb, MiniMax M3.)
-      const reasoningParts = response.reasoning ?? [];
+      // HARNESS FIX (reasoning round-trip): a reasoning part from
+      // `response.reasoning` carries its signature in `providerMetadata` (the
+      // OUTPUT channel), but @ai-sdk/anthropic reads `providerOptions` (the INPUT
+      // channel) when it replays a thinking block. Without copying it across, the
+      // SDK can't reconstruct the signed block → it warns "unsupported reasoning
+      // metadata" and DROPS the block, so a reasoning model (MiniMax M3 on its
+      // Anthropic-compatible endpoint) loses its chain-of-thought across tool
+      // turns and re-plans from scratch each turn — erratic, token-burning runs
+      // (live: same prompt, 7 tools one run vs 18 the next). Mirror
+      // providerMetadata into providerOptions so the signature lands where the
+      // SDK looks. Each provider reads only its own namespaced key (anthropic /
+      // openrouter / …), so this is a safe no-op for models that don't need it.
+      const reasoningParts = (response.reasoning ?? []).map((p) => {
+        const part = p as { providerMetadata?: unknown; providerOptions?: unknown };
+        return part.providerMetadata != null && part.providerOptions == null
+          ? { ...p, providerOptions: part.providerMetadata }
+          : p;
+      });
       // HARNESS FIX: when a turn has BOTH a written answer (response.text) AND
       // tool calls, KEEP the text. Previously the text was dropped whenever tool
       // calls were present, so a model that writes its report as text alongside
@@ -1938,12 +1981,13 @@ async function runJob(
         skillStoreDir: skillStore,
         assignedSkillSlugs,
         scriptAuthorizedSkillSlugs,
+        fileWritableSkillSlugs,
         provisioning: TOOL_PROVISIONING,
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
         autonomy: workspaceAutonomy,
-        onApprovalRequired: async () => {},
+        onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
       };
       const preExecuted = new Map<string, Awaited<ReturnType<typeof executeTool>>>();
       const parallelizable =
@@ -2129,12 +2173,13 @@ async function runJob(
                 skillStoreDir: skillStore,
                 assignedSkillSlugs,
                 scriptAuthorizedSkillSlugs,
+                fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
               },
               {
                 approvalRules: approvalRuleList,
                 autonomy: workspaceAutonomy,
-                onApprovalRequired: async () => {},
+                onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
               },
             );
           } catch (err) {

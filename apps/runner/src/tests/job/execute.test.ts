@@ -2572,13 +2572,24 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     // Job still suspends — the gate is unchanged, only the comms is added.
     expect(result.status).toBe('awaiting_approval');
 
-    // The heads-up actually reached Telegram, with the real args (not a call count).
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: '199791464',
-      text: HEADS_UP,
-      botToken: 'fake-token',
-    });
+    // The DETERMINISTIC approval card reached Telegram — sent by the runner itself
+    // the instant the gate fired, NOT dependent on the LLM nudge (which was the
+    // fragile old behavior that silently sent nothing). It carries the gated
+    // action and ✅/❌ inline buttons so the user can resolve from Telegram.
+    const cardCall = sendTelegramMessageMock.mock.calls.find(
+      (call: unknown[]) => (call[0] as { inlineKeyboard?: unknown } | undefined)?.inlineKeyboard,
+    );
+    expect(cardCall).toBeDefined();
+    const card = (cardCall as unknown[])[0] as {
+      chatId: string;
+      botToken: string;
+      text: string;
+      inlineKeyboard: { text: string; callback_data: string }[][];
+    };
+    expect(card.chatId).toBe('199791464');
+    expect(card.botToken).toBe('fake-token');
+    expect(card.text).toContain('save_memory');
+    expect(card.inlineKeyboard[0]!.map((b) => b.callback_data.split(':')[2])).toEqual(['a', 'r']);
 
     // And a pending approval_request was genuinely created for the gated tool.
     const approvalRows = await approvalDb
