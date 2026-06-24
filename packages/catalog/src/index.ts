@@ -15,6 +15,7 @@ import type { SystemSkill, SkillKind } from './types';
 
 import { obsidianSkill } from './skills/obsidian';
 import { researchScopeDisciplineSkill } from './skills/research-scope-discipline';
+import { resultsDeliverySkill } from './skills/results-delivery';
 import { telegramResponderSkill } from './skills/telegram-responder';
 import { claudeHtmlDesignSkill } from './skills/claude-html-design';
 import { languageMirrorSkill } from './skills/language-mirror';
@@ -38,6 +39,7 @@ export { commandExecutionSkill } from './skills/command-execution';
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
   researchScopeDisciplineSkill,
+  resultsDeliverySkill,
   telegramResponderSkill,
   claudeHtmlDesignSkill,
   languageMirrorSkill,
