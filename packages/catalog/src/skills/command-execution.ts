@@ -36,6 +36,6 @@ This skill unlocks the \`run_command\` tool, which runs a shell command in the a
 
 ### Approval vs Yolo
 
-By default **every command pauses for human approval** — the user sees the exact command before it runs and approves or rejects it. If the user has enabled **Yolo mode** for this agent (in the agent's settings), commands run immediately without asking. Either way, announce what you are about to run and why before calling the tool.
+By default **every command pauses for human approval**. The user does NOT decide on a raw command first — they decide on the **\`purpose\`** you provide: a short plain-language sentence, **IN THEIR LANGUAGE**, of what the command does and why. ALWAYS fill \`purpose\` (it is required). When the command has a real downside — deletes/overwrites files, installs software, downloads from the network, spends money, long-running, hard to undo — also fill **\`impact\`** (shown to the user as a ⚠️ warning); omit it only when the command is genuinely harmless / read-only. A clear \`purpose\` gets approved fast; an unexplained wall of shell gets rejected or ignored. If **Yolo mode** is enabled for this agent, commands run immediately without asking — still fill \`purpose\`/\`impact\` for the record.
 `,
 };

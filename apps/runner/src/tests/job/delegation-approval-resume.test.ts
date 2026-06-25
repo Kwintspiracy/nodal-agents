@@ -269,7 +269,15 @@ describe('destructive_gate — worker run_command relaxation', () => {
   it('NORMAL command auto-approves (no suspension) under destructive_gate', async () => {
     const job = await createJob(childId);
     const llm = makeMockLlmClient([
-      { toolCalls: [{ toolCallId: 'n1', toolName: 'run_command', args: { command: NORMAL_CMD } }] },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'n1',
+            toolName: 'run_command',
+            args: { purpose: 'run a command for the test', command: NORMAL_CMD },
+          },
+        ],
+      },
       { toolCalls: [{ toolCallId: 'n2', toolName: 'return_result', args: { status: 'success' } }] },
     ]);
     const res = await executeJob(job.id as JobId, makeDeps(llm), testEnv);
@@ -283,7 +291,15 @@ describe('destructive_gate — worker run_command relaxation', () => {
   it('HEAVY command still gates (suspends) under destructive_gate', async () => {
     const job = await createJob(childId);
     const llm = makeMockLlmClient([
-      { toolCalls: [{ toolCallId: 'h1', toolName: 'run_command', args: { command: HEAVY_CMD } }] },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'h1',
+            toolName: 'run_command',
+            args: { purpose: 'run a command for the test', command: HEAVY_CMD },
+          },
+        ],
+      },
     ]);
     const res = await executeJob(job.id as JobId, makeDeps(llm), testEnv);
     expect(res.status).toBe('awaiting_approval');
@@ -309,7 +325,15 @@ describe('delegation — parent suspends on child gate, resumes after approval',
     //  [3] parent → return_result (after re-trigger)
     const llm = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'p1', toolName: assignTool, args: { task: 'delete it' } }] },
-      { toolCalls: [{ toolCallId: 'c1', toolName: 'run_command', args: { command: HEAVY_CMD } }] },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'c1',
+            toolName: 'run_command',
+            args: { purpose: 'run a command for the test', command: HEAVY_CMD },
+          },
+        ],
+      },
       { toolCalls: [{ toolCallId: 'c2', toolName: 'return_result', args: { status: 'success' } }] },
       { toolCalls: [{ toolCallId: 'p2', toolName: 'return_result', args: { status: 'success' } }] },
     ]);
@@ -371,7 +395,13 @@ describe('delegation — synchronous path unchanged', () => {
     const llm = makeMockLlmClient([
       { toolCalls: [{ toolCallId: 'sp1', toolName: assignTool, args: { task: 'run it' } }] },
       {
-        toolCalls: [{ toolCallId: 'sc1', toolName: 'run_command', args: { command: NORMAL_CMD } }],
+        toolCalls: [
+          {
+            toolCallId: 'sc1',
+            toolName: 'run_command',
+            args: { purpose: 'run a command for the test', command: NORMAL_CMD },
+          },
+        ],
       },
       {
         toolCalls: [{ toolCallId: 'sc2', toolName: 'return_result', args: { status: 'success' } }],

@@ -24,7 +24,13 @@ function relativeTime(date: Date | string | null): string {
 /** Produce a short readable snippet from toolInput. */
 function inputSnippet(toolInput: Record<string, unknown> | null | undefined): string {
   if (!toolInput) return '—';
-  // Show `command` if present (run_command), else compact JSON of first key.
+  // Prefer the agent's plain-language `purpose` (what this approval is FOR) over
+  // the raw command — that's what lets the user decide at a glance.
+  if (typeof toolInput.purpose === 'string' && toolInput.purpose.trim()) {
+    const p = toolInput.purpose.trim();
+    return p.length > 80 ? p.slice(0, 77) + '…' : p;
+  }
+  // Fallback: `command` if present (run_command), else compact JSON of first key.
   if (typeof toolInput.command === 'string') {
     const cmd = toolInput.command as string;
     return cmd.length > 60 ? cmd.slice(0, 57) + '…' : cmd;

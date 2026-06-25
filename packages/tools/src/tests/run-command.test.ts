@@ -50,7 +50,7 @@ function ctx(overrides?: Partial<ToolContext>): ToolContext {
 describe('run_command builtin', () => {
   it('captures stdout and exit code 0 from a real command', async () => {
     const out = await runCommandTool.execute(
-      { command: `node -e "process.stdout.write('hello-stdout')"` },
+      { purpose: 'run test command', command: `node -e "process.stdout.write('hello-stdout')"` },
       ctx(),
     );
     expect(out.exitCode).toBe(0);
@@ -61,7 +61,10 @@ describe('run_command builtin', () => {
 
   it('captures stderr and a non-zero exit code (returned, not thrown)', async () => {
     const out = await runCommandTool.execute(
-      { command: `node -e "process.stderr.write('boom'); process.exit(3)"` },
+      {
+        purpose: 'run test command',
+        command: `node -e "process.stderr.write('boom'); process.exit(3)"`,
+      },
       ctx(),
     );
     expect(out.exitCode).toBe(3);
@@ -71,6 +74,7 @@ describe('run_command builtin', () => {
   it('runs a compound command (&&) as a single call', async () => {
     const out = await runCommandTool.execute(
       {
+        purpose: 'run test command',
         command: `node -e "process.stdout.write('a')" && node -e "process.stdout.write('b')"`,
       },
       ctx(),
@@ -82,7 +86,7 @@ describe('run_command builtin', () => {
 
   it('runs in the agent workspace as its working directory', async () => {
     const out = await runCommandTool.execute(
-      { command: `node -e "process.stdout.write(process.cwd())"` },
+      { purpose: 'run test command', command: `node -e "process.stdout.write(process.cwd())"` },
       ctx(),
     );
     expect(await realpath(out.stdout.trim())).toBe(workspaceDir);
@@ -92,7 +96,11 @@ describe('run_command builtin', () => {
   it('resolves an explicit cwd inside the workspace', async () => {
     // Workspace root is fine; the point is the boundary-checked resolve runs.
     const out = await runCommandTool.execute(
-      { command: `node -e "process.stdout.write(process.cwd())"`, cwd: '.' },
+      {
+        purpose: 'run test command',
+        command: `node -e "process.stdout.write(process.cwd())"`,
+        cwd: '.',
+      },
       ctx(),
     );
     expect(out.exitCode).toBe(0);
@@ -101,7 +109,11 @@ describe('run_command builtin', () => {
 
   it('times out and kills a long-running command (with its children)', async () => {
     const out = await runCommandTool.execute(
-      { command: `node -e "setTimeout(()=>{}, 60000)"`, timeout_seconds: 1 },
+      {
+        purpose: 'run test command',
+        command: `node -e "setTimeout(()=>{}, 60000)"`,
+        timeout_seconds: 1,
+      },
       ctx(),
     );
     expect(out.timedOut).toBe(true);
@@ -110,7 +122,10 @@ describe('run_command builtin', () => {
 
   it('caps very large output (truncated=true, ≤ cap)', async () => {
     const out = await runCommandTool.execute(
-      { command: `node -e "process.stdout.write('x'.repeat(300000))"` },
+      {
+        purpose: 'run test command',
+        command: `node -e "process.stdout.write('x'.repeat(300000))"`,
+      },
       ctx(),
     );
     expect(out.truncated).toBe(true);
@@ -119,13 +134,19 @@ describe('run_command builtin', () => {
 
   it('fails loud when the agent has no workspace configured', async () => {
     await expect(
-      runCommandTool.execute({ command: 'echo hi' }, ctx({ workspaces: [] })),
+      runCommandTool.execute(
+        { purpose: 'run test command', command: 'echo hi' },
+        ctx({ workspaces: [] }),
+      ),
     ).rejects.toBeInstanceOf(WorkspaceError);
   });
 
   it('rejects a cwd that escapes the workspace (path_traversal_blocked)', async () => {
     await expect(
-      runCommandTool.execute({ command: 'echo hi', cwd: '../../somewhere-else' }, ctx()),
+      runCommandTool.execute(
+        { purpose: 'run test command', command: 'echo hi', cwd: '../../somewhere-else' },
+        ctx(),
+      ),
     ).rejects.toMatchObject({ code: 'path_traversal_blocked' });
   });
 });

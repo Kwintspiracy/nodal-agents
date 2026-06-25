@@ -46,7 +46,12 @@ describe('run_skill_script', () => {
     const out = await runSkillScriptTool.execute(
       // The third arg contains shell metacharacters — with shell:false they must
       // arrive at the script literally, proving the no-injection guarantee.
-      { skill: SLUG, script: 'scripts/echo.js', args: ['--prompt', 'a cat', '; rm -rf /'] },
+      {
+        purpose: 'run a bundled script',
+        skill: SLUG,
+        script: 'scripts/echo.js',
+        args: ['--prompt', 'a cat', '; rm -rf /'],
+      },
       ctx(),
     );
     expect(out.exitCode).toBe(0);
@@ -58,7 +63,7 @@ describe('run_skill_script', () => {
   it('refuses execution when the owner has NOT authorized scripts for this agent × skill', async () => {
     await expect(
       runSkillScriptTool.execute(
-        { skill: SLUG, script: 'scripts/echo.js' },
+        { purpose: 'run a bundled script', skill: SLUG, script: 'scripts/echo.js' },
         ctx({ scriptAuthorizedSkillSlugs: [] }),
       ),
     ).rejects.toThrow(/scripts_not_authorized/);
@@ -66,13 +71,19 @@ describe('run_skill_script', () => {
 
   it('refuses a path that escapes the skill folder (path_escape)', async () => {
     await expect(
-      runSkillScriptTool.execute({ skill: SLUG, script: '../../package.json' }, ctx()),
+      runSkillScriptTool.execute(
+        { purpose: 'run a bundled script', skill: SLUG, script: '../../package.json' },
+        ctx(),
+      ),
     ).rejects.toThrow(/outside the skill folder|escape|resolve/i);
   });
 
   it('refuses an unsupported script type', async () => {
     await expect(
-      runSkillScriptTool.execute({ skill: SLUG, script: 'data.txt' }, ctx()),
+      runSkillScriptTool.execute(
+        { purpose: 'run a bundled script', skill: SLUG, script: 'data.txt' },
+        ctx(),
+      ),
     ).rejects.toThrow(/unsupported_script_type/);
   });
 
@@ -81,7 +92,7 @@ describe('run_skill_script', () => {
     // does not actually hold the skill → resolveSkillRoot rejects. Defense in depth.
     await expect(
       runSkillScriptTool.execute(
-        { skill: SLUG, script: 'scripts/echo.js' },
+        { purpose: 'run a bundled script', skill: SLUG, script: 'scripts/echo.js' },
         ctx({ assignedSkillSlugs: [] }),
       ),
     ).rejects.toThrow(/not assigned/i);

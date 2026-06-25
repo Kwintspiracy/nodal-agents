@@ -49,6 +49,24 @@ function interpreterFor(scriptPath: string): string | null {
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
 const runSkillScriptSchema = z.object({
+  purpose: z
+    .string()
+    .min(1)
+    .max(400)
+    .describe(
+      "REQUIRED. A short plain-language explanation, IN THE USER'S LANGUAGE, of what running " +
+        'this script does and why. Shown FIRST on the approval prompt so the user can decide ' +
+        'without reading the raw script call.',
+    ),
+  impact: z
+    .string()
+    .max(400)
+    .optional()
+    .describe(
+      'OPTIONAL. The potential NEGATIVE or destructive impact, if any (writes files, installs ' +
+        'software, network/GPU use, spends money, long-running). Shown as a ⚠️ warning. OMIT when ' +
+        'the script is harmless / read-only.',
+    ),
   skill: z
     .string()
     .min(1)

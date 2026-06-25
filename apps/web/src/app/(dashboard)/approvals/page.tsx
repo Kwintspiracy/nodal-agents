@@ -88,6 +88,18 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
               agent={`${a.agentName ?? 'no agent'} · ${a.status}`}
               body={
                 <div className="space-y-1">
+                  {(() => {
+                    const ti = (a.toolInput ?? {}) as Record<string, unknown>;
+                    const purpose = typeof ti.purpose === 'string' ? ti.purpose.trim() : '';
+                    const impact = typeof ti.impact === 'string' ? ti.impact.trim() : '';
+                    if (!purpose && !impact) return null;
+                    return (
+                      <div className="space-y-0.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
+                        {purpose && <p className="text-[13px] text-ink">➤ {purpose}</p>}
+                        {impact && <p className="text-[12px] text-warn">⚠️ {impact}</p>}
+                      </div>
+                    );
+                  })()}
                   <div>
                     {a.agentName ? (
                       <>

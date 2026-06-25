@@ -30,6 +30,26 @@ const MAX_OUTPUT_CHARS = 100_000; // ~25k tokens — plenty for a command's outp
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
 const runCommandSchema = z.object({
+  purpose: z
+    .string()
+    .min(1)
+    .max(400)
+    .describe(
+      "REQUIRED. A short plain-language explanation, IN THE USER'S LANGUAGE, of what this " +
+        'command does and why you are running it. Shown FIRST on the approval prompt so the user ' +
+        'can decide WITHOUT reading the raw command. ' +
+        'E.g. "Install the Python dependencies for the comfyui skill so I can generate the image."',
+    ),
+  impact: z
+    .string()
+    .max(400)
+    .optional()
+    .describe(
+      'OPTIONAL. The potential NEGATIVE or destructive impact, if any: deletes/overwrites files, ' +
+        'installs software, downloads from the network, spends money, long-running, or otherwise ' +
+        'hard to undo. Shown as a ⚠️ warning on the approval prompt. OMIT entirely when the ' +
+        'command is harmless / read-only.',
+    ),
   command: z
     .string()
     .min(1)

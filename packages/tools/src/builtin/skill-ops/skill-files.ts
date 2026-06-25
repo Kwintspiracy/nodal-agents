@@ -331,6 +331,22 @@ class FilesNotWritableError extends Error {
 }
 
 export const SkillFileWriteInputSchema = z.object({
+  purpose: z
+    .string()
+    .min(1)
+    .max(400)
+    .describe(
+      "REQUIRED. A short plain-language explanation, IN THE USER'S LANGUAGE, of what you are " +
+        'writing into the skill and why. Shown FIRST on the approval prompt.',
+    ),
+  impact: z
+    .string()
+    .max(400)
+    .optional()
+    .describe(
+      'OPTIONAL. The potential NEGATIVE impact, if any (overwrites an existing bundled file, ' +
+        'changes how the skill behaves). Shown as a ⚠️ warning. OMIT when harmless.',
+    ),
   skill: z.string().min(1).describe("The skill's slug (its installed identifier)."),
   path: z
     .string()

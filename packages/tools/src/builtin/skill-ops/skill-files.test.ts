@@ -182,7 +182,12 @@ describe('skill_file_write — happy path', () => {
   it('writes a new file into the skill bundle and it reads back identically', async () => {
     const body = '{"prompt":"a cat"}\n';
     const r = await skillFileWriteTool.execute(
-      { skill: SLUG, path: 'workflows/new.json', content: body },
+      {
+        purpose: 'add a new workflow to the skill',
+        skill: SLUG,
+        path: 'workflows/new.json',
+        content: body,
+      },
       ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
     );
     expect(r.ok).toBe(true);
@@ -196,7 +201,12 @@ describe('skill_file_write — happy path', () => {
 
   it('overwrites an existing file and reports overwritten=true', async () => {
     const r = await skillFileWriteTool.execute(
-      { skill: SLUG, path: 'SKILL.md', content: '# Replaced\n' },
+      {
+        purpose: 'update the skill instructions',
+        skill: SLUG,
+        path: 'SKILL.md',
+        content: '# Replaced\n',
+      },
       ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
     );
     expect(r.ok).toBe(true);
@@ -207,7 +217,7 @@ describe('skill_file_write — happy path', () => {
 
   it('refuses to clobber a directory with a file write', async () => {
     const r = await skillFileWriteTool.execute(
-      { skill: SLUG, path: 'references', content: 'x' },
+      { purpose: 'write into references', skill: SLUG, path: 'references', content: 'x' },
       ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
     );
     expect(r.ok).toBe(false);
@@ -219,7 +229,7 @@ describe('skill_file_write — happy path', () => {
 describe('skill_file_write — authorization + boundary', () => {
   it('refuses when the owner has not made the skill file-writable', async () => {
     const r = await skillFileWriteTool.execute(
-      { skill: SLUG, path: 'workflows/x.json', content: 'x' },
+      { purpose: 'write a workflow', skill: SLUG, path: 'workflows/x.json', content: 'x' },
       // assigned but NOT writable
       ctx({ store: STORE, assigned: [SLUG], writable: [] }),
     );
@@ -232,7 +242,7 @@ describe('skill_file_write — authorization + boundary', () => {
 
   it('refuses a skill the agent does not hold (even if listed writable)', async () => {
     const r = await skillFileWriteTool.execute(
-      { skill: SLUG, path: 'workflows/x.json', content: 'x' },
+      { purpose: 'write a workflow', skill: SLUG, path: 'workflows/x.json', content: 'x' },
       ctx({ store: STORE, assigned: [], writable: [SLUG] }),
     );
     expect(r.ok).toBe(false);
@@ -243,7 +253,7 @@ describe('skill_file_write — authorization + boundary', () => {
 
   it('blocks `..` traversal escaping the skill folder', async () => {
     const r = await skillFileWriteTool.execute(
-      { skill: SLUG, path: '../../pwned.key', content: 'x' },
+      { purpose: 'attempt escape', skill: SLUG, path: '../../pwned.key', content: 'x' },
       ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
     );
     expect(r.ok).toBe(false);
@@ -255,7 +265,7 @@ describe('skill_file_write — authorization + boundary', () => {
 
   it('blocks an absolute path pointing outside the store', async () => {
     const r = await skillFileWriteTool.execute(
-      { skill: SLUG, path: join(OUTSIDE, 'pwned.key'), content: 'x' },
+      { purpose: 'attempt escape', skill: SLUG, path: join(OUTSIDE, 'pwned.key'), content: 'x' },
       ctx({ store: STORE, assigned: [SLUG], writable: [SLUG] }),
     );
     expect(r.ok).toBe(false);

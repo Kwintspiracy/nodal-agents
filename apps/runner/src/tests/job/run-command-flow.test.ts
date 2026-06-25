@@ -275,7 +275,7 @@ describe('run_command — E2E runner integration', () => {
           {
             toolCallId: 'tc-rc-1',
             toolName: 'run_command',
-            args: { command: COMMAND },
+            args: { purpose: 'run a command for the test', command: COMMAND },
           },
         ],
       },
@@ -384,7 +384,7 @@ describe('run_command — E2E runner integration', () => {
             {
               toolCallId: 'tc-rc-2',
               toolName: 'run_command',
-              args: { command: COMMAND2 },
+              args: { purpose: 'run a command for the test', command: COMMAND2 },
             },
           ],
         },
@@ -470,7 +470,11 @@ describe('run_command — E2E runner integration', () => {
       const llmClient = makeMockLlmClient([
         {
           toolCalls: [
-            { toolCallId: 'tc-rc-3', toolName: 'run_command', args: { command: COMMAND3 } },
+            {
+              toolCallId: 'tc-rc-3',
+              toolName: 'run_command',
+              args: { purpose: 'run a command for the test', command: COMMAND3 },
+            },
           ],
         },
         {
@@ -524,7 +528,11 @@ describe('run_command — E2E runner integration', () => {
       const llmClient = makeMockLlmClient([
         {
           toolCalls: [
-            { toolCallId: 'tc-rc-4', toolName: 'run_command', args: { command: COMMAND4 } },
+            {
+              toolCallId: 'tc-rc-4',
+              toolName: 'run_command',
+              args: { purpose: 'run a command for the test', command: COMMAND4 },
+            },
           ],
         },
         {

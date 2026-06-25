@@ -125,9 +125,23 @@ export async function notifyApprovalCreated(
       .where(eq(agents.id, req.agentId))
       .limit(1);
     const who = agent?.name ?? 'An agent';
+    // Lead with the agent's OWN plain-language explanation + impact (invariant #2:
+    // the LLM speaks, the runner only formats). The raw action stays available but
+    // SECONDARY and truncated — the user decides on the explanation, not on a wall
+    // of shell. Falls back to the old "wants to run: <detail>" when an older agent
+    // didn't provide a purpose.
+    const input = (req.toolInput ?? {}) as Record<string, unknown>;
+    const purpose = typeof input['purpose'] === 'string' ? input['purpose'].trim() : '';
+    const impact = typeof input['impact'] === 'string' ? input['impact'].trim() : '';
+    const detail = describeGatedAction(req.toolName, req.toolInput);
+    const detailShort =
+      detail.length > 500 ? detail.slice(0, 500) + '\n… (full detail on the dashboard)' : detail;
+
     const text =
-      `⏳ Approval needed\n\n` +
-      `${who} wants to run:\n${describeGatedAction(req.toolName, req.toolInput)}\n\n` +
+      `⏳ Approval needed — ${who}\n\n` +
+      (purpose ? `➤ ${purpose}\n` : `${who} wants to run an action.\n`) +
+      (impact ? `⚠️ Impact: ${impact}\n` : '') +
+      `\nDetails:\n${detailShort}\n\n` +
       `Tap a button below to decide — or resolve it from the dashboard.`;
 
     const inlineKeyboard: TelegramInlineKeyboard = [
