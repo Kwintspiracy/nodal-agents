@@ -13,13 +13,15 @@ export default defineConfig({
     // Exclude them so `pnpm test` only runs unit tests; `pnpm e2e` runs the
     // Playwright suite separately.
     exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**', 'tests/manual/**'],
-    // Default 5000ms is too tight: the first test in actions.test.ts triggers
-    // full module init (server-only mock, env parse, vi.mock chains) and times
-    // out under turbo concurrent load on slower runners (CI Ubuntu, 2 vCPU).
-    // 15s was set initially; bumped to 30s after CI run #25803978814 still
-    // timed out on `rejects slug with uppercase letters` under GHA load.
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    // Default 5000ms is too tight: the FIRST test in actions.test.ts pays the
+    // full module init of the (large, ~5k-line) actions.ts via dynamic import —
+    // server-only mock, env parse, vi.mock chains — and times out under turbo
+    // concurrent load on slower runners (CI Ubuntu, 2 vCPU). History: 15s →
+    // 30s (run #25803978814) → 60s here, after the parallel-agent UI merge grew
+    // actions.ts and it crept past 30s again on `rejects slug with uppercase
+    // letters`. It's a load cost on one test, not a hang — give real head-room.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     typecheck: {
       tsconfig: './tsconfig.test.json',
     },
