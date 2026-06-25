@@ -10,6 +10,7 @@ A self-hosted platform for building and orchestrating a **team of AI agents** on
 [![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docs](https://img.shields.io/badge/docs-online-3565ff)](https://kwintspiracy.github.io/nodal-agents/)
+[![Changelog](https://img.shields.io/badge/changelog-v0.6.0-d4ff2e)](CHANGELOG.md)
 
 | Home dashboard — light theme | Agent detail — dark theme |
 | :---: | :---: |
@@ -164,7 +165,7 @@ pnpm deps:check
 
 ## Status
 
-Used daily by the maintainer; stable enough for personal production. **Pre-1.0** — breaking changes are still possible between minors.
+Used daily by the maintainer; stable enough for personal production. **Pre-1.0** — breaking changes are still possible between minors. See the [changelog](CHANGELOG.md) for what shipped in each release.
 
 **On the roadmap** (genuine, not vaporware):
 
