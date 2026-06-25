@@ -244,12 +244,12 @@ describe('loadThreadHistory', () => {
     void otherId;
   });
 
-  it('drops jobs older than the 24h idle reset window', async () => {
+  it('drops jobs beyond the 24h outer scan bound', async () => {
     await insertCompletedJob({
       chatId: '12345',
       task: 'too old',
       result: 'too old reply',
-      minutesAgo: 60 * 25, // 25 hours ago — past the 1440-min window
+      minutesAgo: 60 * 25, // 25 hours ago — past the 24h MAX_LOOKBACK scan bound
     });
     await insertCompletedJob({
       chatId: '12345',
@@ -271,6 +271,99 @@ describe('loadThreadHistory', () => {
       { role: 'user', text: 'fresh' },
       { role: 'assistant', text: 'fresh reply' },
     ]);
+  });
+
+  it('resets the session after an idle gap — a 12h-old turn is dropped though within the 24h scan', async () => {
+    // The exact live bug: an unrelated image-gen turn 12h ago bled into a fresh
+    // research request because the old loader used a rolling 24h window. With a
+    // gap-based reset, the 12h silence (>> 30 min) starts a clean conversation.
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'image gen prompt',
+      result: 'image generated',
+      minutesAgo: 60 * 12, // 12h ago — inside the 24h scan, but past the idle gap
+    });
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'research string theory',
+      result: 'research reply',
+      minutesAgo: 3,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    // Only the recent turn survives — the 12h-old exchange is NOT context.
+    expect(summarize(history)).toEqual([
+      { role: 'user', text: 'research string theory' },
+      { role: 'assistant', text: 'research reply' },
+    ]);
+  });
+
+  it('breaks the session at an internal idle gap — keeps only the contiguous recent run', async () => {
+    // old topic, then a > 30-min silence, then two recent turns 5 min apart.
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'old topic',
+      result: 'old reply',
+      minutesAgo: 50,
+    });
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'new A',
+      result: 'reply A',
+      minutesAgo: 8,
+    });
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'new B',
+      result: 'reply B',
+      minutesAgo: 3,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    // Gap between 'new A' (8 min) and 'old topic' (50 min) = 42 min ≥ 30 → cut.
+    expect(summarize(history)).toEqual([
+      { role: 'user', text: 'new A' },
+      { role: 'assistant', text: 'reply A' },
+      { role: 'user', text: 'new B' },
+      { role: 'assistant', text: 'reply B' },
+    ]);
+  });
+
+  it('returns [] when even the most recent prior turn is past the idle gap', async () => {
+    // Nothing newer than 40 min ago → the whole prior session is stale.
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'stale turn',
+      result: 'stale reply',
+      minutesAgo: 40,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    expect(history).toEqual([]);
   });
 
   it('truncates any single message above the per-turn cap', async () => {
@@ -304,13 +397,15 @@ describe('loadThreadHistory', () => {
     // truncation), so each pair = 3000 chars. With BUDGET_CHARS=4000
     // and 5 prior pairs (15 000 chars total), the helper must drop the
     // oldest pairs until ≤ 4000, which leaves exactly 1 pair (3000 chars).
+    // All five within a single active session (5-min gaps, newest 5 min ago) so
+    // the gap-based reset keeps them all and the budget trim is what's exercised.
     const big = 'y'.repeat(1_500);
     for (let i = 0; i < 5; i++) {
       await insertCompletedJob({
         chatId: '12345',
         task: big,
         result: big,
-        minutesAgo: 60 - i * 5,
+        minutesAgo: 25 - i * 5,
       });
     }
 

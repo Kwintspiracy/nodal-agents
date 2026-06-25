@@ -8,9 +8,13 @@
 // Algorithm (see ~/.claude/plans/compiled-nibbling-stroustrup.md):
 // - Only conversational channels (telegram, slack, discord). Others are
 //   one-shot invocations and get no prior history.
-// - Query up to MAX_TURNS completed jobs from the same
-//   (entity, agent, channel, chat_id), created within the last
-//   IDLE_RESET_MINUTES (idle reset matching Hermes' 24h default).
+// - Query up to MAX_TURNS recent completed jobs from the same
+//   (entity, agent, channel, chat_id), then keep only the CURRENT session:
+//   walk newest->oldest and stop at the first silence >= IDLE_RESET_MINUTES.
+//   This is a real gap-based session reset (NOT a rolling time window): a
+//   continuously-active session is kept whole however long it runs, while a
+//   thread the user returns to after a break starts fresh — a 12h-old
+//   exchange is not context for a new request.
 // - Emit one (user, assistant) pair per prior job, from (task, result).
 //   Skip jobs without a result (hard fail / interrupted — the user saw
 //   nothing on their side either, so showing the LLM a hole is just noise).
@@ -44,12 +48,19 @@ const BUDGET_CHARS = 4_000;
 /** Per-message char cap — any single turn longer than this is truncated. */
 const PER_TURN_MAX_CHARS = 2_000;
 /**
- * Idle reset window. Beyond this gap from the last completed turn, we treat
- * the next message as a fresh conversation (no prior history loaded).
- * 1440 min = 24h, matching Hermes' `SessionResetPolicy.idle_minutes` default
- * (`hermes-agent-main/gateway/config.py:232`).
+ * Idle reset GAP. A silence of at least this long between two consecutive turns
+ * (or between the most recent prior turn and now) starts a FRESH conversation —
+ * everything before the gap is dropped. This is a true session reset, not a
+ * rolling window: a thread the user comes back to after a break starts clean
+ * (a 12h-old exchange is NOT context for a brand-new request).
  */
-const IDLE_RESET_MINUTES = 1440;
+const IDLE_RESET_MINUTES = 30;
+const IDLE_RESET_MS = IDLE_RESET_MINUTES * 60_000;
+/**
+ * Outer query bound — never scan rows older than this. Pure optimization to cap
+ * the candidate scan; the real session boundary is the gap logic, not this.
+ */
+const MAX_LOOKBACK_MS = 24 * 60 * 60_000;
 
 export interface LoadThreadHistoryOptions {
   db: RunnerDeps['db'];
@@ -77,7 +88,8 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   if (!CONVERSATIONAL_CHANNELS.has(opts.channel)) return [];
   if (!opts.chatId) return [];
 
-  const cutoff = new Date(Date.now() - IDLE_RESET_MINUTES * 60_000);
+  const now = Date.now();
+  const cutoff = new Date(now - MAX_LOOKBACK_MS);
 
   const rows = await opts.db
     .select({
@@ -85,6 +97,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       result: agentJobs.result,
       messages: agentJobs.messages,
       channel: agentJobs.channel,
+      createdAt: agentJobs.createdAt,
     })
     .from(agentJobs)
     .where(
@@ -101,9 +114,23 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     .orderBy(desc(agentJobs.createdAt))
     .limit(MAX_TURNS);
 
-  // The query returns newest-first; flip to chronological (oldest first)
-  // before building blocks so the budget loop drops the OLDEST blocks first.
-  const chronological = rows.slice().reverse();
+  // Gap-based session reset. Walk newest->oldest and keep turns only while the
+  // silence between consecutive turns stays under IDLE_RESET. Stop at the first
+  // gap (a session boundary). If the most recent prior turn is itself older than
+  // IDLE_RESET, the loop breaks on the very first row → no history at all (the
+  // thread went idle, so this message opens a fresh conversation).
+  const session: typeof rows = [];
+  let newerAt = now;
+  for (const row of rows) {
+    const at = new Date(row.createdAt as unknown as string | number | Date).getTime();
+    if (newerAt - at >= IDLE_RESET_MS) break;
+    session.push(row);
+    newerAt = at;
+  }
+
+  // Flip to chronological (oldest first) so the budget loop drops the OLDEST
+  // blocks first.
+  const chronological = session.reverse();
 
   // Each "block" is a contiguous slice of messages we keep or drop together
   // — either a 2-message `[user, assistant-text]` pair (no send-tool path)
