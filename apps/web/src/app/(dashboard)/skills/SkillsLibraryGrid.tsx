@@ -46,7 +46,7 @@ function SkillCard({ skill, agents }: { skill: SkillRow; agents: AgentRow[] }) {
                   label={`+${skill.assignmentCount}`}
                 />
               ) : (
-                <span className="font-mono text-[11px] text-ink-4">Unassigned</span>
+                <span className="font-mono text-[12px] text-ink-4">Unassigned</span>
               )
             }
             ctaLabel="Assign"
@@ -55,7 +55,7 @@ function SkillCard({ skill, agents }: { skill: SkillRow; agents: AgentRow[] }) {
             secondary={
               <Link
                 href={`/skills/${skill.id}/edit`}
-                className="inline-flex h-[30px] items-center rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+                className="inline-flex h-[30px] items-center rounded-[7px] border border-rule bg-paper px-3 text-[13px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
               >
                 Customise
               </Link>

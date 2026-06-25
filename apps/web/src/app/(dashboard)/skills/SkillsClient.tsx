@@ -155,7 +155,7 @@ export default function SkillsClient({ skills, agents }: Props) {
 function EmptyAssigned() {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[13px] leading-[1.5] text-ink-3">
+      <p className="text-[14px] leading-[1.5] text-ink-3">
         No skills assigned to any agent yet.
         <br />
         Assign one from the Custom or Built-in Library tab.
@@ -167,14 +167,14 @@ function EmptyAssigned() {
 function EmptyCustom({ onBrowse }: { onBrowse: () => void }) {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[13px] leading-[1.5] text-ink-3">
+      <p className="text-[14px] leading-[1.5] text-ink-3">
         You haven&apos;t created any skills yet — skills are reusable instructions you append to an
         agent&apos;s system prompt when assigned.
       </p>
       <div className="mt-4 flex items-center justify-center gap-2.5">
         <Link
           href="/skills/new"
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-skill-vivid px-3.5 text-[13px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-skill-vivid px-3.5 text-[14px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
         >
           <Plus size={13} weight="bold" />
           Create a skill
@@ -182,7 +182,7 @@ function EmptyCustom({ onBrowse }: { onBrowse: () => void }) {
         <button
           type="button"
           onClick={onBrowse}
-          className="text-[13px] font-medium text-ink-3 underline underline-offset-2 hover:text-ink"
+          className="text-[14px] font-medium text-ink-3 underline underline-offset-2 hover:text-ink"
         >
           or browse the Built-in Library
         </button>
@@ -194,7 +194,7 @@ function EmptyCustom({ onBrowse }: { onBrowse: () => void }) {
 function EmptyLibrary() {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[13px] leading-[1.5] text-ink-3">No built-in skills available.</p>
+      <p className="text-[14px] leading-[1.5] text-ink-3">No built-in skills available.</p>
     </div>
   );
 }

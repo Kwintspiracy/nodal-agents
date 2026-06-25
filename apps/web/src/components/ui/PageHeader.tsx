@@ -28,7 +28,7 @@ export default function PageHeader({ title, subtitle, actions, className = '' }:
         <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
           {title}
         </h1>
-        {subtitle && <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">{subtitle}</p>}
+        {subtitle && <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">{subtitle}</p>}
       </div>
       {actions && <div className="shrink-0">{actions}</div>}
     </div>

@@ -42,15 +42,15 @@ export default function EdRow({
       <div className="flex items-center gap-3.5 px-4 py-3.5">
         {glyph && <div className="flex-shrink-0">{glyph}</div>}
         <div className="min-w-0 flex-1">
-          <div className="text-[13.5px] font-medium leading-[1.2] text-ink">{name}</div>
+          <div className="text-[14px] font-medium leading-[1.2] text-ink">{name}</div>
           {description && (
-            <div className="mt-0.5 truncate text-[12px] leading-[1.3] text-ink-3">
+            <div className="mt-0.5 truncate text-[13px] leading-[1.3] text-ink-3">
               {description}
             </div>
           )}
         </div>
         {meta && (
-          <div className="flex-shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-ink-4">
+          <div className="flex-shrink-0 font-mono text-[11px] tracking-[0.04em] text-ink-4">
             {meta}
           </div>
         )}

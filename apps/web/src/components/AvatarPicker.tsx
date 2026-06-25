@@ -62,7 +62,7 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
           <p className="text-sm text-ink truncate">
             {value ? value.split('/').pop()?.replace('.png', '') : 'No avatar'}
           </p>
-          <p className="text-[11px] text-ink-3">Click to {value ? 'change' : 'pick'}</p>
+          <p className="text-[12px] text-ink-3">Click to {value ? 'change' : 'pick'}</p>
         </div>
       </button>
 

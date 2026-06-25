@@ -116,7 +116,7 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
 function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[13px] leading-[1.5] text-ink-3">
+      <p className="text-[14px] leading-[1.5] text-ink-3">
         No connectors installed yet.
         <br />
         Browse the Marketplace to add one.
@@ -133,7 +133,7 @@ function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
 function EmptySearch() {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[13px] leading-[1.5] text-ink-3">No connectors match your search.</p>
+      <p className="text-[14px] leading-[1.5] text-ink-3">No connectors match your search.</p>
     </div>
   );
 }

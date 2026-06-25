@@ -52,16 +52,16 @@ export default function SearchBox({
   return (
     <form
       onSubmit={handle}
-      className={`flex h-[34px] min-w-[280px] items-center gap-2 rounded-md border border-rule-2 bg-paper px-3 text-[12.5px] text-ink-4 ${className}`}
+      className={`flex h-[34px] min-w-[280px] items-center gap-2 rounded-md border border-rule-2 bg-paper px-3 text-[13px] text-ink-4 ${className}`}
     >
       <MagnifyingGlass size={13} className="shrink-0" />
       <input
         ref={ref}
         type="search"
         placeholder={placeholder}
-        className="flex-1 border-0 bg-transparent text-[13px] leading-none text-ink outline-none placeholder:text-ink-4"
+        className="flex-1 border-0 bg-transparent text-[14px] leading-none text-ink outline-none placeholder:text-ink-4"
       />
-      <span className="rounded-[5px] border border-rule bg-black/5 px-1.5 py-[1px] font-mono text-[11px] leading-none text-ink-4 dark:bg-white/[0.06]">
+      <span className="rounded-[5px] border border-rule bg-black/5 px-1.5 py-[1px] font-mono text-[12px] leading-none text-ink-4 dark:bg-white/[0.06]">
         /
       </span>
     </form>

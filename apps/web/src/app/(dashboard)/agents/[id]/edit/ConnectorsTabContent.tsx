@@ -235,7 +235,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
   if (connectors.length === 0 && mcpServers.length === 0) {
     return (
       <div className="space-y-4">
-        <p className="text-[12.5px] text-ink-3">
+        <p className="text-[13px] text-ink-3">
           No connectors or MCP servers installed on this workspace yet. Add some first; you&apos;ll
           then be able to attach them to this agent.
         </p>
@@ -252,7 +252,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
         hint="Revoke any to detach everywhere. Per-op (API) / per-tool (MCP) whitelist via the gear icon."
       >
         {connected.length === 0 && (
-          <p className="text-[12.5px] text-ink-3">
+          <p className="text-[13px] text-ink-3">
             No connectors or MCP servers attached to this agent yet. Pick from the list below.
           </p>
         )}
@@ -291,7 +291,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
           key={`conn:${c.connectorId}`}
           glyph={
             <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[c.slug]}>
-              <span className="font-mono text-[10.5px] font-semibold">
+              <span className="font-mono text-[11px] font-semibold">
                 {connGlyph(c.slug, c.label)}
               </span>
             </Disc>
@@ -348,7 +348,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                     return (
                       <label
                         key={op.slug}
-                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12.5px] transition-colors hover:bg-hover"
+                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[13px] transition-colors hover:bg-hover"
                       >
                         <input
                           type="checkbox"
@@ -356,10 +356,10 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                           onChange={() => connToggleOp(c.connectorId, op.slug, ops)}
                           className="shrink-0 accent-agent-vivid"
                         />
-                        <code className="shrink-0 font-mono text-[11px] text-ink-2">{op.slug}</code>
+                        <code className="shrink-0 font-mono text-[12px] text-ink-2">{op.slug}</code>
                         <RiskBadge op={op} />
                         {op.description && (
-                          <span className="truncate text-[11px] italic text-ink-4">
+                          <span className="truncate text-[12px] italic text-ink-4">
                             {op.description}
                           </span>
                         )}
@@ -387,7 +387,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
         key={`mcp:${s.mcpServerId}`}
         glyph={
           <Disc variant="conn" size="lg" shape="square">
-            <span className="font-mono text-[10.5px] font-semibold">MCP</span>
+            <span className="font-mono text-[11px] font-semibold">MCP</span>
           </Disc>
         }
         name={
@@ -441,7 +441,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                   return (
                     <label
                       key={tool.name}
-                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12.5px] transition-colors hover:bg-hover"
+                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[13px] transition-colors hover:bg-hover"
                     >
                       <input
                         type="checkbox"
@@ -449,9 +449,9 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                         onChange={() => mcpToggleTool(s.mcpServerId, tool.name, allTools)}
                         className="shrink-0 accent-agent-vivid"
                       />
-                      <code className="shrink-0 font-mono text-[11px] text-ink-2">{tool.name}</code>
+                      <code className="shrink-0 font-mono text-[12px] text-ink-2">{tool.name}</code>
                       {tool.description && (
-                        <span className="truncate text-[11px] italic text-ink-4">
+                        <span className="truncate text-[12px] italic text-ink-4">
                           {tool.description}
                         </span>
                       )}
@@ -481,10 +481,10 @@ function Section({
   return (
     <section className="space-y-2">
       <div>
-        <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
+        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">
           {label}
         </div>
-        {hint && <p className="mt-1 text-[11.5px] leading-[1.5] text-ink-3">{hint}</p>}
+        {hint && <p className="mt-1 text-[12px] leading-[1.5] text-ink-3">{hint}</p>}
       </div>
       <div className="space-y-2">{children}</div>
     </section>
@@ -493,7 +493,7 @@ function Section({
 
 function KindTag({ kind }: { kind: 'API' | 'MCP' }) {
   return (
-    <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
+    <span className="ml-2 font-mono text-[11px] uppercase tracking-[0.04em] text-ink-4">
       {kind}
     </span>
   );
@@ -504,7 +504,7 @@ function MiniBtn({ children, onClick }: { children: React.ReactNode; onClick: ()
     <button
       type="button"
       onClick={onClick}
-      className="rounded border border-rule px-2 py-1 text-[11px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
+      className="rounded border border-rule px-2 py-1 text-[12px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
     >
       {children}
     </button>
@@ -513,7 +513,7 @@ function MiniBtn({ children, onClick }: { children: React.ReactNode; onClick: ()
 
 function RiskBadge({ op }: { op: OperationDescriptor }) {
   const base =
-    'inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider';
+    'inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider';
   if (op.risk === 'read') {
     return <span className={`${base} bg-agent-vivid/10 text-ok`}>read</span>;
   }

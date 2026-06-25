@@ -128,7 +128,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
           onSubmit={handleCreateSubmit}
           className="mx-3.5 mt-1 rounded-[9px] border border-rule-2 bg-paper p-2.5"
         >
-          <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-4">
+          <p className="mb-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-4">
             New workspace
           </p>
           <div className="mb-2">
@@ -143,12 +143,12 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
               placeholder="Name…"
               maxLength={60}
               disabled={isCreating}
-              className="min-w-0 flex-1 rounded-md border border-rule bg-canvas px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none disabled:opacity-50"
+              className="min-w-0 flex-1 rounded-md border border-rule bg-canvas px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none disabled:opacity-50"
             />
             <button
               type="submit"
               disabled={isCreating || !newName.trim()}
-              className="shrink-0 rounded-md bg-ink px-3 py-1.5 text-[12px] font-medium text-canvas hover:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="shrink-0 rounded-md bg-ink px-3 py-1.5 text-[13px] font-medium text-canvas hover:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isCreating ? '…' : 'Create'}
             </button>
@@ -156,7 +156,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
               type="button"
               onClick={() => setShowNewForm(false)}
               disabled={isCreating}
-              className="shrink-0 rounded-md border border-rule px-2.5 py-1.5 text-[12px] text-ink-3 hover:border-rule-2 hover:text-ink-2 disabled:opacity-50"
+              className="shrink-0 rounded-md border border-rule px-2.5 py-1.5 text-[13px] text-ink-3 hover:border-rule-2 hover:text-ink-2 disabled:opacity-50"
             >
               ✕
             </button>

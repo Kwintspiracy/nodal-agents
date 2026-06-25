@@ -20,7 +20,7 @@ export function SetUrl({ subtitle, url }: { subtitle: string; url: string }) {
     <div className="flex items-center gap-3 bg-canvas/40 border border-rule-2 rounded-[9px] px-4 py-3.5 mt-2">
       <span className="flex-1 min-w-0">
         <span className="block text-xs leading-[1.4] text-ink-4">{subtitle}</span>
-        <span className="block font-mono text-[13px] leading-[1.4] text-ink tracking-[0.02em] mt-1.5">
+        <span className="block font-mono text-[14px] leading-[1.4] text-ink tracking-[0.02em] mt-1.5">
           {url}
         </span>
       </span>

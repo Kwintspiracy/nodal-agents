@@ -190,7 +190,7 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
             placeholder="0 9 * * *"
             className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
           />
-          <p className="text-[10px] text-ink-4 mt-1">
+          <p className="text-[11px] text-ink-4 mt-1">
             Format: minute hour day-of-month month day-of-week
           </p>
         </div>
@@ -215,9 +215,9 @@ function CronPreview({ expr, preview }: { expr: string; preview: ReturnType<type
       <div className="flex items-center gap-2 text-xs">
         <span className="text-ink-3">Schedule:</span>
         <span className="text-ink">{preview.humanLabel}</span>
-        <code className="ml-auto font-mono text-[10px] text-run">{expr}</code>
+        <code className="ml-auto font-mono text-[11px] text-run">{expr}</code>
       </div>
-      <div className="text-[10px] text-ink-4" suppressHydrationWarning>
+      <div className="text-[11px] text-ink-4" suppressHydrationWarning>
         Next runs: {preview.nextRuns.map((d) => formatNextRun(d)).join(' · ')}
       </div>
     </div>

@@ -63,13 +63,13 @@ export default function PillTabs<T extends string>({
               if (value === undefined) setInternal(t.value);
               onChange?.(t.value);
             }}
-            className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border-0 px-3 text-[11.5px] font-medium leading-none transition-colors ${
+            className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border-0 px-3 text-[12px] font-medium leading-none transition-colors ${
               isActive ? activeBg : 'bg-transparent text-ink-3 hover:text-ink-2'
             }`}
           >
             {t.label}
             {t.count !== undefined && (
-              <span className={`font-mono text-[10px] ${isActive ? 'opacity-85' : 'opacity-65'}`}>
+              <span className={`font-mono text-[11px] ${isActive ? 'opacity-85' : 'opacity-65'}`}>
                 {t.count}
               </span>
             )}

@@ -44,7 +44,7 @@ export default function InstallNotesForm({ initial }: Props) {
     <form onSubmit={handleSubmit}>
       <SetForm>
         <div className="space-y-2">
-          <p className="text-[12.5px] leading-[1.5] text-ink-3">
+          <p className="text-[13px] leading-[1.5] text-ink-3">
             These notes are injected into every agent&apos;s runtime context and apply live (no
             restart needed). Use them for machine-specifics the system can&apos;t auto-detect — for
             example: &ldquo;ComfyUI runs on :8188&rdquo;, a local GPU, a local API path, or services
@@ -56,9 +56,9 @@ export default function InstallNotesForm({ initial }: Props) {
             rows={5}
             maxLength={4000}
             placeholder="e.g. ComfyUI runs on :8188 with no auth. GPU: RTX 4090. Ollama on :11434."
-            className="w-full resize-y rounded-[9px] border border-rule-2 bg-canvas px-3 py-2.5 text-[13px] leading-[1.55] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-1 focus:ring-ink/20"
+            className="w-full resize-y rounded-[9px] border border-rule-2 bg-canvas px-3 py-2.5 text-[14px] leading-[1.55] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-1 focus:ring-ink/20"
           />
-          <div className="text-right text-[11px] text-ink-4">{notes.length} / 4000</div>
+          <div className="text-right text-[12px] text-ink-4">{notes.length} / 4000</div>
         </div>
         <SetCtaRow onCancel={handleReset} pending={isPending} />
       </SetForm>

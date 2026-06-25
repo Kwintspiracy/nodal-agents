@@ -47,7 +47,9 @@ export default function Topbar({
   showSearch = true,
 }: Props) {
   return (
-    <div className="flex h-[52px] shrink-0 items-center gap-2 px-4 md:gap-2.5 md:px-9">
+    // Desktop-only: on mobile the single header bar (Sidebar) carries the brand,
+    // hamburger, notifications and theme — no second stacked bar.
+    <div className="hidden h-[52px] shrink-0 items-center gap-2 px-4 md:gap-2.5 lg:flex lg:px-9">
       {left}
       <div className="flex-1" />
       {showSearch && <SearchBox className="hidden md:flex" />}

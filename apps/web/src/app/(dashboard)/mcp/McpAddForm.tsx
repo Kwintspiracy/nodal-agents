@@ -273,7 +273,7 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
             pattern="[a-z0-9-]+"
             className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
           />
-          <p className="text-[11px] text-ink-4 mt-1">
+          <p className="text-[12px] text-ink-4 mt-1">
             Tools will be named like <span className="font-mono text-ink-3">{slugPreview}</span>.
             Lowercase letters, digits, dashes.
           </p>
@@ -364,7 +364,7 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
             className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
           />
           {catalogItem.docsHint && (
-            <p className="text-[11px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
+            <p className="text-[12px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
           )}
         </div>
       )}
@@ -389,7 +389,7 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
               onChange={(e) => setPrefilledArgsText(e.target.value)}
               className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
             />
-            <p className="text-[11px] text-ink-4 mt-1">
+            <p className="text-[12px] text-ink-4 mt-1">
               Command: <span className="font-mono text-ink-3">{catalogItem.command ?? 'npx'}</span>
             </p>
           </div>
@@ -432,14 +432,14 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
               <button
                 type="button"
                 onClick={addEnvRow}
-                className="mt-2 text-[11px] text-ink-3 hover:text-ink"
+                className="mt-2 text-[12px] text-ink-3 hover:text-ink"
               >
                 + Add variable
               </button>
             </div>
           )}
 
-          {catalogItem.docsHint && <p className="text-[11px] text-ink-4">{catalogItem.docsHint}</p>}
+          {catalogItem.docsHint && <p className="text-[12px] text-ink-4">{catalogItem.docsHint}</p>}
         </>
       )}
 
@@ -462,7 +462,7 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
               placeholder="npx"
               className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
-            <p className="text-[11px] text-ink-4 mt-1">
+            <p className="text-[12px] text-ink-4 mt-1">
               Executable name (resolved via PATH) or absolute path.
             </p>
           </div>
@@ -521,12 +521,12 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
             <button
               type="button"
               onClick={addEnvRow}
-              className="mt-2 text-[11px] text-ink-3 hover:text-ink"
+              className="mt-2 text-[12px] text-ink-3 hover:text-ink"
             >
               + Add variable
             </button>
             {catalogItem.docsHint && (
-              <p className="text-[11px] text-ink-4 mt-2">{catalogItem.docsHint}</p>
+              <p className="text-[12px] text-ink-4 mt-2">{catalogItem.docsHint}</p>
             )}
           </div>
         </>

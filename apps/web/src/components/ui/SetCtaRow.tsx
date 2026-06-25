@@ -18,14 +18,14 @@ export function SetCtaRow({
       <button
         type="button"
         onClick={onCancel}
-        className="h-[34px] px-3.5 rounded-[9px] cursor-pointer bg-paper border border-rule text-[13px] font-medium text-ink-2 hover:bg-hover hover:border-rule-2 transition-colors"
+        className="h-[34px] px-3.5 rounded-[9px] cursor-pointer bg-paper border border-rule text-[14px] font-medium text-ink-2 hover:bg-hover hover:border-rule-2 transition-colors"
       >
         Cancel
       </button>
       <button
         type="submit"
         disabled={pending}
-        className="h-[34px] px-4 rounded-[9px] border-0 cursor-pointer bg-ink text-canvas text-[13px] font-medium hover:brightness-90 disabled:opacity-50 transition-[filter,opacity]"
+        className="h-[34px] px-4 rounded-[9px] border-0 cursor-pointer bg-ink text-canvas text-[14px] font-medium hover:brightness-90 disabled:opacity-50 transition-[filter,opacity]"
       >
         {pending ? 'Saving…' : saveLabel}
       </button>

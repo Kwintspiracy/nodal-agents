@@ -25,7 +25,7 @@ export default function BackButton({ href, label = 'Back', className = '' }: Pro
     <button
       type="button"
       onClick={() => (href ? router.push(href) : router.back())}
-      className={`inline-flex items-center gap-1.5 border-0 bg-transparent py-2 text-[13px] font-medium leading-none text-ink-3 transition-colors hover:text-ink ${className}`}
+      className={`inline-flex items-center gap-1.5 border-0 bg-transparent py-2 text-[14px] font-medium leading-none text-ink-3 transition-colors hover:text-ink ${className}`}
     >
       <CaretLeft size={14} weight="bold" />
       {label}

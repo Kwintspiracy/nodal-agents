@@ -72,12 +72,12 @@ export default function MarketplaceCard({
         </div>
       )}
 
-      <div className="text-[15.5px] font-semibold leading-[1.2] tracking-[-0.005em] text-ink">
+      <div className="text-[16px] font-semibold leading-[1.2] tracking-[-0.005em] text-ink">
         {name}
       </div>
-      {description && <div className="text-[13px] leading-[1.4] text-ink-3">{description}</div>}
+      {description && <div className="text-[14px] leading-[1.4] text-ink-3">{description}</div>}
       {category && (
-        <div className="mt-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-4">
+        <div className="mt-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-4">
           {category}
         </div>
       )}

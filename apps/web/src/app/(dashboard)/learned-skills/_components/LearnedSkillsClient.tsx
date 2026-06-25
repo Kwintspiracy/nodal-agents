@@ -38,20 +38,20 @@ type AssignModalState = {
 function StateBadge({ state }: { state: string }) {
   if (state === 'active') {
     return (
-      <span className="inline-flex items-center rounded-full bg-ok/15 px-2 py-0.5 text-[11px] font-medium text-ok">
+      <span className="inline-flex items-center rounded-full bg-ok/15 px-2 py-0.5 text-[12px] font-medium text-ok">
         active
       </span>
     );
   }
   if (state === 'stale') {
     return (
-      <span className="inline-flex items-center rounded-full bg-warn/15 px-2 py-0.5 text-[11px] font-medium text-warn">
+      <span className="inline-flex items-center rounded-full bg-warn/15 px-2 py-0.5 text-[12px] font-medium text-warn">
         stale
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center rounded-full bg-ink-5/40 px-2 py-0.5 text-[11px] font-medium text-ink-3">
+    <span className="inline-flex items-center rounded-full bg-ink-5/40 px-2 py-0.5 text-[12px] font-medium text-ink-3">
       archived
     </span>
   );
@@ -194,7 +194,7 @@ export default function LearnedSkillsClient({
         <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
           Learned Skills
         </h1>
-        <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+        <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
           Skills your agents discovered and saved automatically.
         </p>
       </div>
@@ -203,10 +203,10 @@ export default function LearnedSkillsClient({
       <div className="mb-4 rounded-2xl border border-rule-2 bg-paper p-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p id="agent-learning-label" className="text-[13px] font-medium text-ink">
+            <p id="agent-learning-label" className="text-[14px] font-medium text-ink">
               Agent learning
             </p>
-            <p id="agent-learning-desc" className="mt-0.5 text-[12px] leading-[1.5] text-ink-3">
+            <p id="agent-learning-desc" className="mt-0.5 text-[13px] leading-[1.5] text-ink-3">
               When on, your agents save reusable techniques as skills after substantial tasks. You
               can review and undo everything here.
             </p>
@@ -234,10 +234,10 @@ export default function LearnedSkillsClient({
 
       {/* Assignment mode section */}
       <div className="mb-6 rounded-2xl border border-rule-2 bg-paper p-5">
-        <p id="assign-mode-label" className="mb-1 text-[13px] font-medium text-ink">
+        <p id="assign-mode-label" className="mb-1 text-[14px] font-medium text-ink">
           When an agent learns a new skill
         </p>
-        <p id="assign-mode-desc" className="mb-4 text-[12px] leading-[1.5] text-ink-3">
+        <p id="assign-mode-desc" className="mb-4 text-[13px] leading-[1.5] text-ink-3">
           Control whether new agent-authored skills are instantly assigned back to the agent, or
           held for your review first.
         </p>
@@ -264,7 +264,7 @@ export default function LearnedSkillsClient({
       {/* Skills list */}
       {localSkills.length === 0 ? (
         <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-          <p className="text-[13px] leading-[1.5] text-ink-3">
+          <p className="text-[14px] leading-[1.5] text-ink-3">
             Your agents haven&apos;t learned anything yet. Enable agent learning above to get
             started.
           </p>
@@ -283,19 +283,19 @@ export default function LearnedSkillsClient({
                   className="flex-1 min-w-0 text-left"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-medium text-ink truncate">{skill.name}</span>
+                    <span className="text-[14px] font-medium text-ink truncate">{skill.name}</span>
                     <StateBadge state={skill.state} />
                     {skill.patchCount > 0 && (
-                      <span className="text-[11px] text-ink-3">
+                      <span className="text-[12px] text-ink-3">
                         {skill.patchCount} patch{skill.patchCount !== 1 ? 'es' : ''}
                       </span>
                     )}
                   </div>
                   {skill.description && (
-                    <p className="mt-0.5 text-[12px] text-ink-3 truncate">{skill.description}</p>
+                    <p className="mt-0.5 text-[13px] text-ink-3 truncate">{skill.description}</p>
                   )}
                   {/* Assignment line */}
-                  <p className="mt-0.5 text-[11px] text-ink-3">
+                  <p className="mt-0.5 text-[12px] text-ink-3">
                     {skill.assignedAgentNames.length > 0
                       ? `Assigned to ${skill.assignedAgentNames.join(', ')}`
                       : 'Not assigned'}
@@ -309,7 +309,7 @@ export default function LearnedSkillsClient({
                       type="button"
                       onClick={() => openAssignModal(skill)}
                       disabled={isPending}
-                      className="px-2.5 py-1 text-[12px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
+                      className="px-2.5 py-1 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
                     >
                       Assign
                     </button>
@@ -319,7 +319,7 @@ export default function LearnedSkillsClient({
                       type="button"
                       onClick={() => handleRestore(skill.id, skill.name)}
                       disabled={isPending}
-                      className="px-2.5 py-1 text-[12px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
+                      className="px-2.5 py-1 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
                     >
                       Restore
                     </button>
@@ -330,7 +330,7 @@ export default function LearnedSkillsClient({
                         setDialog({ type: 'archive', skillId: skill.id, skillName: skill.name })
                       }
                       disabled={isPending}
-                      className="px-2.5 py-1 text-[12px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
+                      className="px-2.5 py-1 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
                     >
                       Archive
                     </button>
@@ -341,7 +341,7 @@ export default function LearnedSkillsClient({
                       setDialog({ type: 'delete', skillId: skill.id, skillName: skill.name })
                     }
                     disabled={isPending}
-                    className="px-2.5 py-1 text-[12px] font-medium text-err border border-err/30 rounded-lg hover:bg-err/5 transition-colors disabled:opacity-50"
+                    className="px-2.5 py-1 text-[13px] font-medium text-err border border-err/30 rounded-lg hover:bg-err/5 transition-colors disabled:opacity-50"
                   >
                     Delete
                   </button>
@@ -350,7 +350,7 @@ export default function LearnedSkillsClient({
 
               {expandedId === skill.id && (
                 <div className="border-t border-rule-2 bg-canvas/50 px-5 py-4">
-                  <pre className="whitespace-pre-wrap text-[12px] text-ink-2 font-mono leading-relaxed">
+                  <pre className="whitespace-pre-wrap text-[13px] text-ink-2 font-mono leading-relaxed">
                     {skill.content}
                   </pre>
                 </div>
@@ -387,11 +387,11 @@ export default function LearnedSkillsClient({
       >
         {assignModal && (
           <div className="space-y-4">
-            <p className="text-[12px] text-ink-3">Select an agent to assign this skill to.</p>
+            <p className="text-[13px] text-ink-3">Select an agent to assign this skill to.</p>
             <div>
               <label
                 htmlFor="assign-agent-select"
-                className="mb-1.5 block text-[12px] font-medium text-ink"
+                className="mb-1.5 block text-[13px] font-medium text-ink"
               >
                 Agent
               </label>
@@ -399,7 +399,7 @@ export default function LearnedSkillsClient({
                 id="assign-agent-select"
                 value={assigningAgentId}
                 onChange={(e) => setAssigningAgentId(e.target.value)}
-                className="w-full rounded-lg border border-rule-2 bg-canvas px-3 py-2 text-[13px] text-ink focus:border-conn-vivid focus:outline-none"
+                className="w-full rounded-lg border border-rule-2 bg-canvas px-3 py-2 text-[14px] text-ink focus:border-conn-vivid focus:outline-none"
               >
                 {assignableAgents.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -412,7 +412,7 @@ export default function LearnedSkillsClient({
               <button
                 type="button"
                 onClick={() => setAssignModal(null)}
-                className="px-3 py-1.5 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors"
+                className="px-3 py-1.5 text-[14px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors"
               >
                 Cancel
               </button>
@@ -420,7 +420,7 @@ export default function LearnedSkillsClient({
                 type="button"
                 onClick={handleAssignConfirm}
                 disabled={!assigningAgentId || isPending}
-                className="px-3 py-1.5 text-[13px] font-medium text-white bg-conn-vivid rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+                className="px-3 py-1.5 text-[14px] font-medium text-white bg-conn-vivid rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
               >
                 Assign
               </button>

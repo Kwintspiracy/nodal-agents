@@ -93,7 +93,7 @@ export default function McpClient({ instances, catalog }: Props) {
           <button
             type="button"
             onClick={() => setCustomOpen(true)}
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-conn-vivid px-3.5 text-[13px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
+            className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-conn-vivid px-3.5 text-[14px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
           >
             + Add custom MCP
           </button>
@@ -137,7 +137,7 @@ export default function McpClient({ instances, catalog }: Props) {
               </button>
             ))}
           </div>
-          <p className="text-[11px] text-ink-4">
+          <p className="text-[12px] text-ink-4">
             {customFlavor === 'stdio'
               ? 'Run any MCP package locally (npx, python, a binary…). Provide the command, args, and env vars.'
               : 'Connect any Streamable-HTTP MCP server. Provide the URL, auth scheme, and API key.'}
@@ -163,7 +163,7 @@ export default function McpClient({ instances, catalog }: Props) {
 function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[13px] leading-[1.5] text-ink-3">
+      <p className="text-[14px] leading-[1.5] text-ink-3">
         No MCP servers installed yet.
         <br />
         Pick one from the Marketplace — its tools become available to any agent you assign it to.
@@ -172,7 +172,7 @@ function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
         <button
           type="button"
           onClick={onBrowse}
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-conn-vivid px-3.5 text-[13px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-conn-vivid px-3.5 text-[14px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
         >
           Browse Marketplace
         </button>
@@ -184,7 +184,7 @@ function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
 function EmptySearch() {
   return (
     <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[13px] leading-[1.5] text-ink-3">No servers match your search.</p>
+      <p className="text-[14px] leading-[1.5] text-ink-3">No servers match your search.</p>
     </div>
   );
 }

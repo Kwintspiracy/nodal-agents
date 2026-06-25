@@ -323,96 +323,98 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
               : 'Try a different filter.'}
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-rule-2">
-                <th className="px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
-                  Memory
-                </th>
-                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 md:table-cell">
-                  Agent
-                </th>
-                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 lg:table-cell">
-                  Category
-                </th>
-                <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 xl:table-cell">
-                  Last accessed
-                </th>
-                <th className="px-5 py-3 text-right text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((m) => {
-                const meta = getCategoryMeta(m.category);
-                const recent = isRecent(m.last_accessed_at);
-                return (
-                  <tr
-                    key={m.id}
-                    className="align-middle border-b border-rule-2/60 transition-colors last:border-0 hover:bg-hover/50"
-                  >
-                    {/* Memory: Disc + fact text */}
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-start gap-3">
-                        <Disc
-                          variant="neutral"
-                          size="md"
-                          shape="square"
-                          background={meta.color}
-                          className="mt-0.5 shrink-0 [&_svg]:h-[14px] [&_svg]:w-[14px]"
-                        >
-                          {meta.icon}
-                        </Disc>
-                        <div className="min-w-0">
-                          <div className="line-clamp-2 text-[13px] leading-snug text-ink">
-                            {m.fact}
-                          </div>
-                          <div className="mt-0.5 font-mono text-[11px] text-ink-4">
-                            {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
-                            {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-rule-2">
+                  <th className="px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
+                    Memory
+                  </th>
+                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 md:table-cell">
+                    Agent
+                  </th>
+                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 lg:table-cell">
+                    Category
+                  </th>
+                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 xl:table-cell">
+                    Last accessed
+                  </th>
+                  <th className="px-5 py-3 text-right text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((m) => {
+                  const meta = getCategoryMeta(m.category);
+                  const recent = isRecent(m.last_accessed_at);
+                  return (
+                    <tr
+                      key={m.id}
+                      className="align-middle border-b border-rule-2/60 transition-colors last:border-0 hover:bg-hover/50"
+                    >
+                      {/* Memory: Disc + fact text */}
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-start gap-3">
+                          <Disc
+                            variant="neutral"
+                            size="md"
+                            shape="square"
+                            background={meta.color}
+                            className="mt-0.5 shrink-0 [&_svg]:h-[14px] [&_svg]:w-[14px]"
+                          >
+                            {meta.icon}
+                          </Disc>
+                          <div className="min-w-0">
+                            <div className="line-clamp-2 text-[13px] leading-snug text-ink">
+                              {m.fact}
+                            </div>
+                            <div className="mt-0.5 font-mono text-[11px] text-ink-4">
+                              {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
+                              {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Agent */}
-                    <td className="hidden px-5 py-3.5 md:table-cell">
-                      {m.agentName ? (
-                        <Link
-                          href={`/agents`}
-                          className="inline-flex items-center gap-2 text-[12px] text-ink-2 transition-colors hover:text-ink"
-                        >
-                          <AgentAvatar name={m.agentName} size="sm" />
-                          {m.agentName}
-                        </Link>
-                      ) : (
-                        <span className="text-ink-4">—</span>
-                      )}
-                    </td>
+                      {/* Agent */}
+                      <td className="hidden px-5 py-3.5 md:table-cell">
+                        {m.agentName ? (
+                          <Link
+                            href={`/agents`}
+                            className="inline-flex items-center gap-2 text-[12px] text-ink-2 transition-colors hover:text-ink"
+                          >
+                            <AgentAvatar name={m.agentName} size="sm" />
+                            {m.agentName}
+                          </Link>
+                        ) : (
+                          <span className="text-ink-4">—</span>
+                        )}
+                      </td>
 
-                    {/* Category chip */}
-                    <td className="hidden px-5 py-3.5 lg:table-cell">
-                      <CategoryChip category={m.category} />
-                    </td>
+                      {/* Category chip */}
+                      <td className="hidden px-5 py-3.5 lg:table-cell">
+                        <CategoryChip category={m.category} />
+                      </td>
 
-                    {/* Last accessed */}
-                    <td className="hidden px-5 py-3.5 xl:table-cell">
-                      <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-ink-3">
-                        {formatAccessed(m.last_accessed_at)}
-                        {recent && <LiveDot variant="ok" size="sm" />}
-                      </span>
-                    </td>
+                      {/* Last accessed */}
+                      <td className="hidden px-5 py-3.5 xl:table-cell">
+                        <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-ink-3">
+                          {formatAccessed(m.last_accessed_at)}
+                          {recent && <LiveDot variant="ok" size="sm" />}
+                        </span>
+                      </td>
 
-                    {/* Actions */}
-                    <td className="px-5 py-3.5 text-right">
-                      <RowActions id={m.id} archived={m.archived ?? false} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      {/* Actions */}
+                      <td className="px-5 py-3.5 text-right">
+                        <RowActions id={m.id} archived={m.archived ?? false} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

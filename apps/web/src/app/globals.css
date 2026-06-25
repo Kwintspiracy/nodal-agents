@@ -126,6 +126,13 @@
   --color-run-bg: var(--c-run-bg);
   --color-err: var(--c-err);
 
+  /* Type scale — bumped one step up from the original handoff for legibility,
+     and snapped to whole pixels (the handoff used fractional sizes like 12.5px).
+     The arbitrary text-[Npx] usages across the app follow the same ladder
+     (11 / 12 / 13 / 14 / 15 / 16); xs→13, sm→15 keep the standard utilities in step. */
+  --text-xs: 13px;
+  --text-sm: 15px;
+
   /* Fonts — Inter/JetBrains Mono are wired via next/font in app/layout.tsx
      (it injects --font-inter and --font-jetbrains). */
   --font-sans:
@@ -161,7 +168,7 @@ body {
   background-color: var(--c-canvas);
   color: var(--c-ink);
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

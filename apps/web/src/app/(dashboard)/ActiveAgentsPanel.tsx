@@ -52,10 +52,10 @@ export default function ActiveAgentsPanel({ initial }: Props) {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-4">
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">
           Agents at work
         </h2>
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-ink-4">
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-ink-4">
           {stale ? (
             'reconnect…'
           ) : (
@@ -92,17 +92,17 @@ function AgentCard({ row }: { row: ActiveAgentRow }) {
         <div className="flex min-w-0 items-center gap-2.5">
           <AgentAvatar name={row.agentName} imageUrl={row.avatarUrl} size="lg" shape="round" />
           <div className="min-w-0">
-            <p className="truncate text-[14px] font-semibold leading-[1.2] text-ink">
+            <p className="truncate text-[15px] font-semibold leading-[1.2] text-ink">
               {row.agentName}
             </p>
-            <p className="truncate font-mono text-[11px] text-ink-4">{row.agentSlug}</p>
+            <p className="truncate font-mono text-[12px] text-ink-4">{row.agentSlug}</p>
           </div>
         </div>
         <span className="shrink-0 font-mono text-[24px] font-semibold leading-none tracking-[-0.02em] text-ink tabular-nums">
           {row.total}
         </span>
       </div>
-      <div className="mt-2 flex items-center gap-3 text-[11px]">
+      <div className="mt-2 flex items-center gap-3 text-[12px]">
         {row.processing > 0 && (
           <span className="text-run">
             <span className="font-mono tabular-nums">{row.processing}</span> running

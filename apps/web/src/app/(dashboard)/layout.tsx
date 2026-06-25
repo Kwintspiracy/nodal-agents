@@ -77,7 +77,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           once per visit at the dashboard level — pages compose their own
           content underneath. Canonical max-width is set on the inner wrapper.
         */}
-        <main className="flex min-w-0 flex-1 flex-col pt-[58px] lg:ml-[220px] lg:pt-0">
+        <main className="flex min-w-0 flex-1 flex-col pt-16 lg:ml-[220px] lg:pt-0">
           <Topbar />
           <div className="flex-1 overflow-x-hidden">
             <div className="max-w-6xl px-5 pb-10 sm:px-8 lg:px-9">{children}</div>

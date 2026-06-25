@@ -12,7 +12,7 @@ export function SetForm({
 }) {
   return (
     <div className="mt-3.5 bg-paper border border-rule-2 rounded-[14px] p-5">
-      {label && <div className="text-[13px] leading-none text-ink-3 mb-2.5">{label}</div>}
+      {label && <div className="text-[14px] leading-none text-ink-3 mb-2.5">{label}</div>}
       {children}
     </div>
   );

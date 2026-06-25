@@ -30,7 +30,7 @@ export default function LlmKeysList({ initialRows }: Props) {
   return (
     <div className="space-y-3">
       {rows.length === 0 ? (
-        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-[13px] text-ink-3">
+        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-[14px] text-ink-3">
           No LLM providers yet. Add one to start configuring agents.
         </div>
       ) : (
@@ -50,7 +50,7 @@ export default function LlmKeysList({ initialRows }: Props) {
         <button
           type="button"
           onClick={() => setFormState({ kind: 'create' })}
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-rule bg-paper px-3.5 text-[14px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
         >
           <Plus size={13} weight="bold" />
           Add provider

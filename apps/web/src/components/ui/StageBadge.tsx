@@ -29,7 +29,7 @@ export default function StageBadge({
 }) {
   return (
     <span
-      className={`inline-flex h-[22px] items-center rounded-[5px] px-2.5 text-[11px] font-medium leading-none ${STYLE[stage]} ${className}`}
+      className={`inline-flex h-[22px] items-center rounded-[5px] px-2.5 text-[12px] font-medium leading-none ${STYLE[stage]} ${className}`}
     >
       {LABEL[stage]}
     </span>
@@ -43,7 +43,7 @@ export default function StageBadge({
 export function ProBadge({ className = '' }: { className?: string }) {
   return (
     <span
-      className={`inline-flex h-[22px] items-center rounded-[5px] bg-ink px-2.5 font-mono text-[10.5px] font-semibold leading-none tracking-[0.06em] text-canvas ${className}`}
+      className={`inline-flex h-[22px] items-center rounded-[5px] bg-ink px-2.5 font-mono text-[11px] font-semibold leading-none tracking-[0.06em] text-canvas ${className}`}
     >
       PRO
     </span>

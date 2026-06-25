@@ -127,7 +127,7 @@ export default function WorkspacesSection({ initial }: Props) {
         {/* Workspace list */}
         <div className="mt-3.5 rounded-xl border border-rule-2 bg-paper overflow-hidden">
           {workspaces.length === 0 ? (
-            <p className="px-[18px] py-4 text-[13px] text-ink-4">No workspaces found.</p>
+            <p className="px-[18px] py-4 text-[14px] text-ink-4">No workspaces found.</p>
           ) : (
             workspaces.map((ws) => {
               const isRenaming = renamingId === ws.id;
@@ -137,7 +137,7 @@ export default function WorkspacesSection({ initial }: Props) {
                   className="flex items-center gap-3 px-[18px] py-3.5 border-b border-rule-2 last:border-b-0"
                 >
                   {/* Icon badge */}
-                  <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-md border border-rule-2 bg-canvas font-mono text-[13px] leading-none">
+                  <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-md border border-rule-2 bg-canvas font-mono text-[14px] leading-none">
                     {ws.icon ?? ws.name.slice(0, 1).toUpperCase()}
                   </span>
 
@@ -161,30 +161,30 @@ export default function WorkspacesSection({ initial }: Props) {
                             onChange={(e) => setRenameValue(e.target.value)}
                             maxLength={60}
                             disabled={isRenamePending}
-                            className="w-44 rounded-md border border-rule bg-canvas px-2 py-1 text-[12.5px] text-ink focus:border-ink-3 focus:outline-none"
+                            className="w-44 rounded-md border border-rule bg-canvas px-2 py-1 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
                           />
                           <button
                             type="submit"
                             disabled={!renameValue.trim()}
-                            className="rounded-md bg-ink px-2.5 py-1 text-[11.5px] font-medium text-canvas hover:brightness-90 disabled:opacity-50"
+                            className="rounded-md bg-ink px-2.5 py-1 text-[12px] font-medium text-canvas hover:brightness-90 disabled:opacity-50"
                           >
                             Save
                           </button>
                           <button
                             type="button"
                             onClick={cancelRename}
-                            className="rounded-md border border-rule px-2 py-1 text-[11.5px] text-ink-3 hover:border-rule-2 hover:text-ink-2"
+                            className="rounded-md border border-rule px-2 py-1 text-[12px] text-ink-3 hover:border-rule-2 hover:text-ink-2"
                           >
                             Cancel
                           </button>
                         </div>
                       </form>
                     ) : (
-                      <span className="text-[13.5px] font-medium text-ink leading-none">
+                      <span className="text-[14px] font-medium text-ink leading-none">
                         {ws.name}
                       </span>
                     )}
-                    <span className="font-mono text-[10px] text-ink-4 leading-none mt-0.5">
+                    <span className="font-mono text-[11px] text-ink-4 leading-none mt-0.5">
                       {ws.role}
                     </span>
                   </span>
@@ -196,7 +196,7 @@ export default function WorkspacesSection({ initial }: Props) {
                       <button
                         type="button"
                         onClick={() => handleSwitch(ws.id)}
-                        className="rounded-md border border-rule px-2.5 py-1 text-[11.5px] text-ink-3 hover:border-rule-2 hover:text-ink-2 transition-colors"
+                        className="rounded-md border border-rule px-2.5 py-1 text-[12px] text-ink-3 hover:border-rule-2 hover:text-ink-2 transition-colors"
                       >
                         Switch
                       </button>
@@ -205,7 +205,7 @@ export default function WorkspacesSection({ initial }: Props) {
                       <button
                         type="button"
                         onClick={() => startRename(ws)}
-                        className="rounded-md border border-rule px-2.5 py-1 text-[11.5px] text-ink-3 hover:border-rule-2 hover:text-ink-2 transition-colors"
+                        className="rounded-md border border-rule px-2.5 py-1 text-[12px] text-ink-3 hover:border-rule-2 hover:text-ink-2 transition-colors"
                       >
                         Rename
                       </button>
@@ -215,7 +215,7 @@ export default function WorkspacesSection({ initial }: Props) {
                         type="button"
                         onClick={() => setDeleteTarget(ws)}
                         disabled={isDeleting}
-                        className="rounded-md border border-rule px-2.5 py-1 text-[11.5px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50 transition-colors"
+                        className="rounded-md border border-rule px-2.5 py-1 text-[12px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50 transition-colors"
                       >
                         Delete
                       </button>
@@ -241,7 +241,7 @@ export default function WorkspacesSection({ initial }: Props) {
                 placeholder="Workspace name"
                 maxLength={60}
                 disabled={isCreating}
-                className="min-w-0 flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none disabled:opacity-50"
+                className="min-w-0 flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none disabled:opacity-50"
               />
             </div>
             <SetCtaRow onCancel={() => setNewName('')} pending={isCreating} saveLabel="Create" />

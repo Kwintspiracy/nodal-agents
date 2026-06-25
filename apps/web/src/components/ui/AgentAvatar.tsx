@@ -15,9 +15,9 @@ type Props = {
 };
 
 const SIZE: Record<NonNullable<Props['size']>, { box: string; text: string; px: number }> = {
-  sm: { box: 'h-6 w-6', text: 'text-[9.5px]', px: 24 },
-  md: { box: 'h-[30px] w-[30px]', text: 'text-[10.5px]', px: 30 },
-  lg: { box: 'h-[42px] w-[42px]', text: 'text-[14px]', px: 42 },
+  sm: { box: 'h-6 w-6', text: 'text-[11px]', px: 24 },
+  md: { box: 'h-[30px] w-[30px]', text: 'text-[11px]', px: 30 },
+  lg: { box: 'h-[42px] w-[42px]', text: 'text-[15px]', px: 42 },
 };
 
 function initials(name: string): string {

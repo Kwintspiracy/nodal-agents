@@ -76,7 +76,7 @@ export default function TimezoneForm({ initial, isExplicit }: Props) {
     <form onSubmit={handleSubmit}>
       <SetForm>
         <div className="space-y-2">
-          <p className="text-[12.5px] leading-[1.5] text-ink-3">
+          <p className="text-[13px] leading-[1.5] text-ink-3">
             The timezone your agents use to tell the time and schedule automations. Detected from
             your browser at setup
             {isExplicit ? '' : ' (currently the server default — set it to be sure)'}.
@@ -88,7 +88,7 @@ export default function TimezoneForm({ initial, isExplicit }: Props) {
               value={tz}
               onChange={(e) => setTz(e.target.value)}
               placeholder="e.g. Europe/Paris"
-              className="w-full rounded-[9px] border border-rule-2 bg-canvas px-3 py-2.5 text-[13px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-1 focus:ring-ink/20"
+              className="w-full rounded-[9px] border border-rule-2 bg-canvas px-3 py-2.5 text-[14px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-1 focus:ring-ink/20"
             />
             <datalist id="tz-options">
               {options.map((z) => (
@@ -98,7 +98,7 @@ export default function TimezoneForm({ initial, isExplicit }: Props) {
             <button
               type="button"
               onClick={detectFromBrowser}
-              className="shrink-0 rounded-[9px] border border-rule-2 px-3 py-2.5 text-[12.5px] text-ink-2 hover:bg-canvas-2"
+              className="shrink-0 rounded-[9px] border border-rule-2 px-3 py-2.5 text-[13px] text-ink-2 hover:bg-canvas-2"
             >
               Detect
             </button>

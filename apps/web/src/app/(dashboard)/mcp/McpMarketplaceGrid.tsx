@@ -53,7 +53,7 @@ export default function McpMarketplaceGrid({
 
       {catalog.length === 0 ? (
         <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-          <p className="text-[13px] text-ink-3">No servers in this category.</p>
+          <p className="text-[14px] text-ink-3">No servers in this category.</p>
         </div>
       ) : (
         <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
@@ -104,7 +104,7 @@ function McpMarketCard({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={iconSrc} alt="" className="h-6 w-6 object-contain" />
           ) : (
-            <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">{glyph}</span>
+            <span className="font-mono text-[11px] font-semibold tracking-[0.04em]">{glyph}</span>
           )
         }
         glyphVariant="conn"
@@ -117,14 +117,14 @@ function McpMarketCard({
             <span className="flex items-center gap-1.5">
               {isPending && (
                 <span
-                  className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 font-sans text-[11px] font-medium text-warn"
+                  className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 font-sans text-[12px] font-medium text-warn"
                   title="Not yet verified end-to-end — connection params may need adjusting."
                 >
                   Test pending
                 </span>
               )}
               {isInstalled && (
-                <span className="inline-flex items-center gap-1 rounded-[6px] bg-ok-bg px-2 py-1 font-sans text-[11px] font-medium text-ok">
+                <span className="inline-flex items-center gap-1 rounded-[6px] bg-ok-bg px-2 py-1 font-sans text-[12px] font-medium text-ok">
                   <CheckCircle size={11} weight="regular" />
                   {installedCount} installed
                 </span>

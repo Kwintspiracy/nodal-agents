@@ -26,7 +26,7 @@ const STYLE: Record<TypeVariant, string> = {
 export default function TypeChip({ variant, label, icon, className = '' }: Props) {
   return (
     <span
-      className={`inline-flex h-[22px] items-center gap-1.5 rounded-[5px] px-2.5 text-[11px] font-medium leading-none ${STYLE[variant]} ${className}`}
+      className={`inline-flex h-[22px] items-center gap-1.5 rounded-[5px] px-2.5 text-[12px] font-medium leading-none ${STYLE[variant]} ${className}`}
     >
       {icon && <span className="opacity-70 [&_svg]:h-[11px] [&_svg]:w-[11px]">{icon}</span>}
       {label}

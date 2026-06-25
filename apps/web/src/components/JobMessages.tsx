@@ -102,7 +102,7 @@ export default function JobMessages({ messages }: { messages: Message[] }) {
             }`}
           >
             <span
-              className={`inline-block text-[10px] font-semibold uppercase tracking-wider mb-1.5 ${
+              className={`inline-block text-[11px] font-semibold uppercase tracking-wider mb-1.5 ${
                 isAssistant ? 'text-run' : isTool ? 'text-ok' : 'text-ink-4'
               }`}
             >
@@ -120,10 +120,10 @@ export default function JobMessages({ messages }: { messages: Message[] }) {
                 if (block.kind === 'tool-call') {
                   return (
                     <div key={j} className="border-l-2 border-run/30 pl-3 py-1 bg-run-bg rounded-r">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-run mb-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-run mb-1">
                         → call {block.toolName}
                       </p>
-                      <pre className="font-mono text-[11px] text-ink-2 whitespace-pre-wrap break-words">
+                      <pre className="font-mono text-[12px] text-ink-2 whitespace-pre-wrap break-words">
                         {pretty(block.payload)}
                       </pre>
                     </div>
@@ -132,10 +132,10 @@ export default function JobMessages({ messages }: { messages: Message[] }) {
                 // tool-result
                 return (
                   <div key={j} className="border-l-2 border-ok/30 pl-3 py-1 bg-ok-bg rounded-r">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-ok mb-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-ok mb-1">
                       ← result {block.toolName ? `from ${block.toolName}` : ''}
                     </p>
-                    <pre className="font-mono text-[11px] text-ink-2 whitespace-pre-wrap break-words">
+                    <pre className="font-mono text-[12px] text-ink-2 whitespace-pre-wrap break-words">
                       {pretty(block.payload)}
                     </pre>
                   </div>

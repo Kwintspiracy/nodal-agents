@@ -39,7 +39,7 @@ export default async function AgentsPage() {
             Agents
           </h1>
           {groupsResult.ok && (
-            <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+            <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
               {totalAgents} agent{totalAgents !== 1 ? 's' : ''}
             </p>
           )}

@@ -20,6 +20,8 @@ import {
   isAbsolute as pathIsAbsolute,
   sep as pathSep,
 } from 'node:path';
+import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { realpath as fsRealpath } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import {
@@ -4839,9 +4841,38 @@ export type WeeklyActivityRow = {
   cancelled: number;
   awaiting: number;
   pending: number;
+  /**
+   * Per-model job counts for this week, keyed by a `provider/model` display
+   * label (e.g. 'openrouter/minimax-m1'). Σ(models) == total jobs for the
+   * week == Σ(status buckets), so the status bars and the model lines
+   * decompose the SAME weekly total two different ways and stay visually
+   * consistent.
+   */
+  models: Record<string, number>;
 };
 
-export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActivityRow[]>> {
+export type WeeklyActivityData = {
+  rows: WeeklyActivityRow[];
+  /** Distinct `provider/model` labels across the window, busiest-first. */
+  models: string[];
+};
+
+/**
+ * Build the `provider/model` label shown on the weekly chart. Strips the
+ * model id's own vendor-path prefix and trailing release-date suffix so a
+ * configured model like 'minimax/minimax-m1-20250101' served via an
+ * 'openrouter' key reads as 'openrouter/minimax-m1'. Jobs with no resolvable
+ * model (agent deleted) collapse to 'unknown'.
+ */
+function formatModelLabel(provider: string | null | undefined, model: string): string {
+  if (!model) return 'unknown';
+  const base = model.includes('/') ? (model.split('/').pop() ?? model) : model;
+  const short = base.replace(/-20\d{6}$/, '');
+  const prov = provider && provider.trim() ? provider.trim() : '';
+  return prov ? `${prov}/${short}` : short;
+}
+
+export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActivityData>> {
   try {
     const session = await getSession();
     const db = getDb();
@@ -4849,20 +4880,33 @@ export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActi
     // Single grouped query — pivot client-side. Last 12 weeks bounded by
     // created_at to keep the index `idx_agent_jobs_entity_created`
     // efficient even when the workspace has hundreds of thousands of jobs.
+    // Left-join agents (then its LLM key) so we can also decompose each week
+    // by the provider+model the job's agent is configured to run. Left (not
+    // inner) so jobs whose agent/key was deleted still count toward the
+    // status totals.
     const rows = await db
       .select({
         week: sql<string>`to_char(date_trunc('week', ${agentJobs.createdAt}), 'YYYY-MM-DD')`,
         status: agentJobs.status,
+        model: agents.model,
+        provider: entityLlmKeys.provider,
         count: sql<string>`count(*)`,
       })
       .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .leftJoin(entityLlmKeys, eq(entityLlmKeys.id, agents.llmKeyId))
       .where(
         and(
           eq(agentJobs.entityId, session.entityId),
           sql`${agentJobs.createdAt} > now() - interval '12 weeks'`,
         ),
       )
-      .groupBy(sql`date_trunc('week', ${agentJobs.createdAt})`, agentJobs.status);
+      .groupBy(
+        sql`date_trunc('week', ${agentJobs.createdAt})`,
+        agentJobs.status,
+        agents.model,
+        entityLlmKeys.provider,
+      );
 
     // Build the contiguous bucket list (12 oldest-to-newest weeks) so empty
     // weeks render as zero columns instead of disappearing. Postgres uses
@@ -4885,8 +4929,13 @@ export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActi
         cancelled: 0,
         awaiting: 0,
         pending: 0,
+        models: {},
       });
     }
+
+    // Track each model's total across the window so the chart can order the
+    // lines (busiest model first) and assign stable colours.
+    const modelTotals = new Map<string, number>();
 
     for (const r of rows) {
       // `to_char(date_trunc(...), 'YYYY-MM-DD')` returns a string for the
@@ -4900,9 +4949,19 @@ export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActi
       else if (status === 'cancelled') bucket.cancelled += n;
       else if (status === 'pending') bucket.pending += n;
       else bucket.awaiting += n; // processing + awaiting_approval + awaiting_delegation
+
+      // Per-model decomposition, keyed by the `provider/model` label. Jobs
+      // whose agent/key was deleted collapse to 'unknown' rather than dropped.
+      const model = formatModelLabel(r.provider, r.model && r.model.trim() ? r.model : '');
+      bucket.models[model] = (bucket.models[model] ?? 0) + n;
+      modelTotals.set(model, (modelTotals.get(model) ?? 0) + n);
     }
 
-    return ok(Array.from(buckets.values()));
+    const models = Array.from(modelTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([m]) => m);
+
+    return ok({ rows: Array.from(buckets.values()), models });
   } catch (err) {
     console.error('[getWeeklyActivityAction]', err);
     return fail('db_error', 'Failed to load weekly activity');
@@ -5008,6 +5067,9 @@ export type SettingsView = {
   authMode: 'local-trust' | 'local-auth' | 'bearer-token';
   runnerUrl: string;
   appUrl: string;
+  /** file:// URL to this workspace's shared folder (the `shared` workspace the
+   *  agents read/write together — see execute.ts). Lets the owner open it. */
+  sharedWorkspaceUrl: string;
   workerSecretConfigured: boolean;
   user: {
     userId: string;
@@ -5018,6 +5080,15 @@ export type SettingsView = {
 export async function getSettingsAction(): Promise<ActionResult<SettingsView>> {
   try {
     const session = await getSession();
+    // Shared workspace folder for this entity — must mirror execute.ts:
+    //   ~/.nodalai/workspaces/<entityId>/shared
+    const sharedWorkspacePath = pathJoin(
+      homedir(),
+      '.nodalai',
+      'workspaces',
+      session.entityId,
+      'shared',
+    );
     return ok({
       llm: {
         provider: env.LLM_PROVIDER ?? null,
@@ -5027,6 +5098,7 @@ export async function getSettingsAction(): Promise<ActionResult<SettingsView>> {
       authMode: env.AUTH_MODE,
       runnerUrl: env.RUNNER_URL,
       appUrl: env.NEXT_PUBLIC_APP_URL,
+      sharedWorkspaceUrl: pathToFileURL(sharedWorkspacePath).href,
       workerSecretConfigured: Boolean(env.WORKER_SECRET),
       user: {
         userId: session.userId,

@@ -132,10 +132,10 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
               >
                 ✎
               </button>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-3 font-mono">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 font-mono">
                 {catalogLabel}
               </span>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-ok">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-ok">
                 connected
               </span>
             </div>
@@ -203,7 +203,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
               placeholder="Paste the new key"
               className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
-            <p className="text-[11px] text-ink-4 mt-1">
+            <p className="text-[12px] text-ink-4 mt-1">
               Agent assignments stay intact — the key is verified against the server before being
               saved.
             </p>

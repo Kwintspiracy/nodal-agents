@@ -34,17 +34,17 @@ export default function MetricCard({ label, value, unit, subtle, delta }: Props)
 
   return (
     <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-rule-2 bg-paper px-3.5 py-3">
-      <div className="truncate font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-4">
+      <div className="truncate font-mono text-[11px] uppercase tracking-[0.14em] text-ink-4">
         {label}
       </div>
       <div className="mt-1 truncate text-[22px] font-medium leading-[1.1] tracking-[-0.02em] text-ink">
         {value}
-        {unit && <span className="ml-0.5 text-[11px] font-medium text-ink-4">{unit}</span>}
+        {unit && <span className="ml-0.5 text-[12px] font-medium text-ink-4">{unit}</span>}
       </div>
-      {subtle && <div className="text-[11px] leading-none text-ink-3">{subtle}</div>}
+      {subtle && <div className="text-[12px] leading-none text-ink-3">{subtle}</div>}
       {delta && (
         <div
-          className={`mt-0.5 inline-flex items-center gap-1 font-mono text-[11px] leading-none tracking-[0.02em] ${deltaColour}`}
+          className={`mt-0.5 inline-flex items-center gap-1 font-mono text-[12px] leading-none tracking-[0.02em] ${deltaColour}`}
         >
           <DeltaIcon size={9} weight="bold" />
           {delta.text}

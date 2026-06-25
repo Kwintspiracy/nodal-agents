@@ -72,7 +72,7 @@ export default async function SettingsPage() {
         <h1 className="m-0 text-[28px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink">
           Settings
         </h1>
-        <p className="mt-2 max-w-[780px] text-[13.5px] leading-[1.6] text-ink-3">
+        <p className="mt-2 max-w-[780px] text-[14px] leading-[1.6] text-ink-3">
           Security mode and network access are editable here. Session and worker secret are seeded
           by <MonoCode>nodal-agents init</MonoCode> and surfaced read-only. LLM providers live on{' '}
           <a
@@ -95,7 +95,7 @@ export default async function SettingsPage() {
             {s.workerSecretConfigured ? (
               <CheckOk>configured</CheckOk>
             ) : (
-              <span className="text-[13px] font-medium text-warn">
+              <span className="text-[14px] font-medium text-warn">
                 missing — runner calls will 403
               </span>
             )}
@@ -160,6 +160,18 @@ export default async function SettingsPage() {
           </SetRow>
           <SetRow label="Webhook ingress">
             <MonoCode>{s.appUrl}/wh/v1</MonoCode>
+          </SetRow>
+          <SetRow
+            label="Shared workspace"
+            sub="The folder your agents read and write together. Open it to grab generated files."
+          >
+            <a
+              href={s.sharedWorkspaceUrl}
+              className="text-run underline-offset-2 hover:underline"
+              title={s.sharedWorkspaceUrl}
+            >
+              <MonoCode>{s.sharedWorkspaceUrl}</MonoCode>
+            </a>
           </SetRow>
         </SetPane>
       </SetBlock>

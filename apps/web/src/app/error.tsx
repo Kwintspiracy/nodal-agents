@@ -29,7 +29,7 @@ export default function GlobalError({ error, reset }: ErrorProps) {
           Try again
         </button>
         {error.digest && (
-          <p className="font-mono text-[11px] text-ink-4">Reference: {error.digest}</p>
+          <p className="font-mono text-[12px] text-ink-4">Reference: {error.digest}</p>
         )}
       </div>
     </div>

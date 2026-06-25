@@ -215,7 +215,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
                 ✎
               </button>
               <span
-                className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider ${
                   status === 'connected' ? 'bg-agent-vivid/15 text-ok' : 'bg-warn-bg text-warn'
                 }`}
               >
@@ -326,7 +326,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
               placeholder="Paste the new key"
               className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
-            <p className="text-[11px] text-ink-4 mt-1">
+            <p className="text-[12px] text-ink-4 mt-1">
               Agent assignments stay intact — only the stored key changes.
             </p>
           </div>
@@ -368,7 +368,7 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
               {connectedScopes.split(/\s+/).map((scope) => (
                 <span
                   key={scope}
-                  className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-[10px] font-mono"
+                  className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-[11px] font-mono"
                 >
                   {scope}
                 </span>

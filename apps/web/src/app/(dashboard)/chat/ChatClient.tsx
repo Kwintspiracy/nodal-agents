@@ -307,7 +307,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
             <>
               <div className="relative flex items-center justify-center py-1">
                 <span className="absolute inset-x-0 top-1/2 h-px bg-rule-2" />
-                <span className="relative bg-paper px-3 text-[10px] font-semibold uppercase tracking-widest text-ink-4">
+                <span className="relative bg-paper px-3 text-[11px] font-semibold uppercase tracking-widest text-ink-4">
                   Today
                 </span>
               </div>
@@ -320,7 +320,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                   <div className="flex max-w-[80%] flex-col items-start">
                     <div className="mb-1 flex items-center gap-1.5">
                       <span className="text-xs font-medium text-ink-2">{rootName ?? 'Agent'}</span>
-                      <span className="rounded bg-ink/10 px-1 py-px text-[9px] font-semibold uppercase tracking-widest text-ink-3">
+                      <span className="rounded bg-ink/10 px-1 py-px text-[11px] font-semibold uppercase tracking-widest text-ink-3">
                         Orchestrator
                       </span>
                     </div>
@@ -427,7 +427,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
           ) : (
             groups.map(({ group, items }) => (
               <div key={group}>
-                <div className="sticky top-0 bg-paper px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-4">
+                <div className="sticky top-0 bg-paper px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-4">
                   {group}
                 </div>
                 {items.map((c) => (
@@ -498,7 +498,7 @@ function ConversationRow({
           {title}
         </span>
         <div className="flex shrink-0 items-center gap-1">
-          <span className="text-[10px] text-ink-4">{time}</span>
+          <span className="text-[11px] text-ink-4">{time}</span>
           <button
             type="button"
             onClick={(e) => {
@@ -524,7 +524,7 @@ function ConversationRow({
           </button>
         </div>
       </div>
-      {preview && <p className="truncate text-[11px] text-ink-4">{preview}</p>}
+      {preview && <p className="truncate text-[12px] text-ink-4">{preview}</p>}
     </div>
   );
 }
@@ -567,7 +567,7 @@ function MessageBubble({
       <div className="flex max-w-[80%] flex-col items-start">
         <div className="mb-1 flex items-center gap-1.5">
           <span className="text-xs font-medium text-ink-2">{rootName ?? 'Agent'}</span>
-          <span className="rounded bg-ink/10 px-1 py-px text-[9px] font-semibold uppercase tracking-widest text-ink-3">
+          <span className="rounded bg-ink/10 px-1 py-px text-[11px] font-semibold uppercase tracking-widest text-ink-3">
             Orchestrator
           </span>
         </div>
@@ -593,7 +593,7 @@ function StatusBadge({ status }: { status: string }) {
       : 'border-run/40 text-run';
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}
     >
       {!done && !failed && <span className="animate-pulse">●</span>}
       {label}
@@ -631,7 +631,7 @@ function DispatchCard({ jobId }: { jobId: string }) {
   return (
     <div className="mt-2 w-full rounded-lg border border-rule-2 bg-canvas/60 p-2.5">
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-ink-4">
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-ink-4">
           {children.length > 0
             ? `↘ Dispatched to ${children.length} agent${children.length > 1 ? 's' : ''}`
             : '↘ Task'}

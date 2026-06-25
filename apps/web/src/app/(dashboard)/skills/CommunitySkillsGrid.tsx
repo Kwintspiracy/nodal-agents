@@ -46,7 +46,7 @@ export default function CommunitySkillsGrid({ installedSlugs, query = '' }: Prop
   if (entries.length === 0) {
     return (
       <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-        <p className="text-[13px] leading-[1.5] text-ink-3">
+        <p className="text-[14px] leading-[1.5] text-ink-3">
           No community skills match your search.
         </p>
       </div>
@@ -91,7 +91,7 @@ function CommunitySkillCard({
   }
 
   const badge = (
-    <span className="font-mono text-[11px] text-ink-4">
+    <span className="font-mono text-[12px] text-ink-4">
       {hostLabel(entry.sourceHost).toLowerCase()} · {repoOf(entry.source)}
     </span>
   );
@@ -105,7 +105,7 @@ function CommunitySkillCard({
         installed ? (
           <>
             <span className="flex-1">{badge}</span>
-            <span className="inline-flex h-[30px] items-center rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium text-ink-4">
+            <span className="inline-flex h-[30px] items-center rounded-[7px] border border-rule bg-paper px-3 text-[13px] font-medium text-ink-4">
               Installed
             </span>
           </>

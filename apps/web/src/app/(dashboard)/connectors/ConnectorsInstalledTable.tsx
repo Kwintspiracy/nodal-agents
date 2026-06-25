@@ -27,43 +27,45 @@ type Props = {
 export default function ConnectorsInstalledTable({ instances, credsByType }: Props) {
   return (
     <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr>
-            <Th label="Provider" />
-            <Th label="Account" />
-            <Th label="Scopes" />
-            <Th label="Status" />
-            <Th label="Actions" align="right" />
-          </tr>
-        </thead>
-        <tbody>
-          {instances.map((inst) => {
-            const raw = CONNECTOR_CATALOG.find((c) => c.slug === inst.slug);
-            // Normalise CatalogEntry (credentialType?: …) → ConnectorCatalogItem (credentialType: … | null)
-            const catalogEntry: ConnectorCatalogItem = raw
-              ? { ...raw, credentialType: raw.credentialType ?? null }
-              : {
-                  slug: inst.slug,
-                  label: inst.name,
-                  authType: inst.authType as ConnectorCatalogItem['authType'],
-                  docsHint: '',
-                  credentialType: inst.credentialType ?? null,
-                };
-            const compatibleCredentials = catalogEntry.credentialType
-              ? (credsByType[catalogEntry.credentialType] ?? [])
-              : [];
-            return (
-              <ConnectorRow
-                key={inst.id}
-                instance={inst}
-                catalogEntry={catalogEntry}
-                compatibleCredentials={compatibleCredentials}
-              />
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <Th label="Provider" />
+              <Th label="Account" />
+              <Th label="Scopes" />
+              <Th label="Status" />
+              <Th label="Actions" align="right" />
+            </tr>
+          </thead>
+          <tbody>
+            {instances.map((inst) => {
+              const raw = CONNECTOR_CATALOG.find((c) => c.slug === inst.slug);
+              // Normalise CatalogEntry (credentialType?: …) → ConnectorCatalogItem (credentialType: … | null)
+              const catalogEntry: ConnectorCatalogItem = raw
+                ? { ...raw, credentialType: raw.credentialType ?? null }
+                : {
+                    slug: inst.slug,
+                    label: inst.name,
+                    authType: inst.authType as ConnectorCatalogItem['authType'],
+                    docsHint: '',
+                    credentialType: inst.credentialType ?? null,
+                  };
+              const compatibleCredentials = catalogEntry.credentialType
+                ? (credsByType[catalogEntry.credentialType] ?? [])
+                : [];
+              return (
+                <ConnectorRow
+                  key={inst.id}
+                  instance={inst}
+                  catalogEntry={catalogEntry}
+                  compatibleCredentials={compatibleCredentials}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

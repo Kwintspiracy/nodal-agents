@@ -39,7 +39,7 @@ export default function MarketplaceCardActions({
 }: Props) {
   return (
     <>
-      <span className="flex-1 text-[12.5px] leading-none text-ink-3">{status}</span>
+      <span className="flex-1 text-[13px] leading-none text-ink-3">{status}</span>
       {secondary}
       {ctaHref ? (
         <PrimaryButton variant={ctaVariant} size="sm" href={ctaHref}>

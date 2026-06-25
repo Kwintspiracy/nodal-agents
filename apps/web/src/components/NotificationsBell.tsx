@@ -62,7 +62,7 @@ function ApproveButton({ item, onApproved }: { item: PendingApproval; onApproved
         handleApprove();
       }}
       disabled={isPending}
-      className="shrink-0 rounded-md bg-ok px-2.5 py-1 text-[11px] font-semibold text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-40"
+      className="shrink-0 rounded-md bg-ok px-2.5 py-1 text-[12px] font-semibold text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-40"
     >
       {isPending ? '…' : 'Approve'}
     </button>
@@ -111,12 +111,12 @@ function ApprovalsDropdown({
     >
       {/* Header */}
       <div className="border-b border-rule-2 px-4 py-3">
-        <p className="text-[13px] font-semibold text-ink">Pending approvals ({items.length})</p>
+        <p className="text-[14px] font-semibold text-ink">Pending approvals ({items.length})</p>
       </div>
 
       {/* Body */}
       {items.length === 0 ? (
-        <p className="px-4 py-5 text-center text-[12.5px] text-ink-3">No pending approvals.</p>
+        <p className="px-4 py-5 text-center text-[13px] text-ink-3">No pending approvals.</p>
       ) : (
         <ul className="max-h-[340px] divide-y divide-rule-2 overflow-y-auto">
           {items.map((item) => (
@@ -128,17 +128,17 @@ function ApprovalsDropdown({
                 className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12px] font-medium text-ink">
+                  <p className="truncate text-[13px] font-medium text-ink">
                     {item.agentName ?? 'Agent'}
                     <span className="mx-1 text-ink-4">·</span>
-                    <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px] text-ink-2">
+                    <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[12px] text-ink-2">
                       {item.toolName}
                     </code>
                   </p>
-                  <p className="mt-0.5 truncate text-[11px] text-ink-3">
+                  <p className="mt-0.5 truncate text-[12px] text-ink-3">
                     {inputSnippet(item.toolInput as Record<string, unknown> | null)}
                   </p>
-                  <p className="mt-0.5 text-[10px] text-ink-4">{relativeTime(item.requestedAt)}</p>
+                  <p className="mt-0.5 text-[11px] text-ink-4">{relativeTime(item.requestedAt)}</p>
                 </div>
                 <ApproveButton item={item} onApproved={onApproved} />
               </Link>
@@ -152,7 +152,7 @@ function ApprovalsDropdown({
         <Link
           href="/approvals"
           onClick={onClose}
-          className="text-[12px] font-medium text-ink-2 transition-colors hover:text-ink"
+          className="text-[13px] font-medium text-ink-2 transition-colors hover:text-ink"
         >
           See all approvals →
         </Link>
@@ -189,7 +189,7 @@ export default function NotificationsBell() {
       >
         <Bell size={15} />
         {count > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-err px-1 text-[9px] font-bold leading-none text-canvas">
+          <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-err px-1 text-[11px] font-bold leading-none text-canvas">
             {count > 99 ? '99+' : count}
           </span>
         )}

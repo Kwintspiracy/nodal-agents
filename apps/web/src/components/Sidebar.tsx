@@ -29,6 +29,8 @@ import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
 import LiveCard from './ui/LiveCard';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
+import ThemeToggle from './ui/ThemeToggle';
+import NotificationsBell from './NotificationsBell';
 import { useApprovals } from './ApprovalsProvider';
 import type { WorkspaceRow } from '@/lib/actions';
 
@@ -94,6 +96,12 @@ const NAV: Group[] = [
   },
 ];
 
+/** Home matches exactly; every other route is active on prefix match. */
+function isItemActive(href: string, pathname: string): boolean {
+  if (href === '/') return pathname === '/';
+  return pathname === href || pathname.startsWith(href + '/');
+}
+
 export default function Sidebar({
   workspaces,
   userMenu,
@@ -106,47 +114,96 @@ export default function Sidebar({
   const { pending } = useApprovals();
   const pendingCount = pending.length;
 
-  // Close mobile drawer on route change.
+  // Close mobile menu on route change.
   useEffect(() => {
     queueMicrotask(() => setOpen(false));
   }, [pathname]);
 
+  // While the full-screen mobile menu is open, lock body scroll and let Escape
+  // dismiss it — standard dialog etiquette so the page behind doesn't move and
+  // keyboard users can always back out. No-op on desktop (menu never "opens").
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
   return (
     <>
-      {/* Mobile top bar (lg breakpoint and below) */}
-      <div className="fixed top-0 right-0 left-0 z-40 flex items-center justify-between border-b border-rule-2 bg-sidebar px-4 py-3.5 lg:hidden">
-        <div className="flex items-center gap-2 text-[14px] font-medium tracking-[-0.005em] text-ink">
-          <span className="flex h-[20px] w-[20px] items-center justify-center rounded-md bg-ink font-mono text-[10px] font-semibold text-canvas">
-            N
-          </span>
-          <span>Nodal-Agents</span>
-        </div>
+      {/* Mobile header bar (lg and below) — the single mobile nav strip:
+          hamburger (opens the full-screen menu) + brand on the left, the global
+          actions (notifications, theme) on the right. The desktop <Topbar> is
+          hidden on mobile so there is exactly ONE bar, not two stacked ones. */}
+      <header className="fixed top-0 right-0 left-0 z-40 flex h-16 items-center gap-1 border-b border-rule-2 bg-sidebar px-2 lg:hidden">
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="text-ink-3 transition-colors hover:text-ink"
-          aria-label={open ? 'Close menu' : 'Open menu'}
+          onClick={() => setOpen(true)}
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-ink-2 transition-colors hover:bg-hover hover:text-ink active:bg-hover"
+          aria-label="Open menu"
+          aria-controls="primary-nav"
+          aria-expanded={open}
         >
-          {open ? <X size={20} /> : <List size={20} />}
+          <List size={26} />
         </button>
-      </div>
+        <div className="flex min-w-0 items-center gap-2 pl-1 text-[15px] font-medium tracking-[-0.005em] text-ink">
+          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[11px] font-semibold text-canvas">
+            N
+          </span>
+          <span className="truncate">Nodal-Agents</span>
+        </div>
+        <div className="flex-1" />
+        <div className="flex items-center gap-1">
+          <NotificationsBell />
+          <ThemeToggle />
+        </div>
+      </header>
 
-      {/* Backdrop on mobile */}
-      {open && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
-          onClick={() => setOpen(false)}
-          aria-hidden
-        />
-      )}
-
-      {/* Sidebar shell — 220px on desktop, slide-in drawer on mobile */}
+      {/* One shell for both form factors:
+            • Mobile (≤lg): a FULL-SCREEN menu. A 220px drawer wastes a phone's
+              width, so the menu owns the whole viewport with roomy, thumb-sized
+              rows. Slides in from the left; `-translate-x-full` parks it off-screen.
+            • Desktop (lg+): the classic fixed 220px rail, always visible.
+          Keeping a single tree means NAV and the user/sign-out block render once
+          (no duplicate routes, no duplicate test ids). */}
       <aside
-        className={`fixed top-0 left-0 z-40 flex h-full w-[220px] flex-col border-r border-rule-2 bg-sidebar pt-4 pb-3 transition-transform duration-200 lg:translate-x-0 ${
+        id="primary-nav"
+        aria-label="Main navigation"
+        className={`fixed top-0 left-0 z-50 flex h-full w-full flex-col border-r border-rule-2 bg-sidebar pt-4 pb-3 transition-transform duration-200 ease-out lg:z-40 lg:w-[220px] lg:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <BrandMark />
+        {/* Mobile: brand + close share one centred row, so the ✕ sits in the
+            top-right corner perfectly level with the "Nodal-Agents" wordmark. */}
+        <div className="flex items-center justify-between px-4 pb-1 lg:hidden">
+          <div className="flex min-w-0 items-center gap-2 text-[16px] font-medium tracking-[-0.005em] text-ink">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[12px] font-semibold text-canvas">
+              N
+            </span>
+            <span className="truncate">Nodal-Agents</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="-mr-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ink-2 transition-colors hover:bg-hover hover:text-ink active:bg-hover"
+            aria-label="Close menu"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        {/* Desktop: the standard brand block (close button collapses away). */}
+        <div className="hidden lg:block">
+          <BrandMark />
+        </div>
+
         <WorkspaceSwitcher workspaces={workspaces ?? []} />
 
         <nav className="flex flex-1 flex-col overflow-y-auto py-1.5">
@@ -156,15 +213,20 @@ export default function Sidebar({
               {group.items.map((it) =>
                 it.external ? (
                   // Discord — always Discord-blurple, external-link icon, new tab.
+                  // Sizing mirrors SidebarLink: roomy on mobile, compact on desktop.
                   <a
                     key={it.href}
                     href={it.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group mx-2 flex h-[30px] items-center gap-2.5 rounded-lg bg-[#5865F2] px-2.5 text-[12.5px] font-medium leading-none text-white transition-[filter] hover:brightness-110"
+                    className="group mx-2 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-[15px] font-medium text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-2.5 lg:text-[12.5px] lg:leading-none"
                   >
-                    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                      <ArrowSquareOut size={14} weight="bold" />
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5">
+                      <ArrowSquareOut
+                        size={20}
+                        weight="bold"
+                        className="h-5 w-5 lg:h-3.5 lg:w-3.5"
+                      />
                     </span>
                     <span className="flex-1 truncate">{it.label}</span>
                   </a>
@@ -173,18 +235,15 @@ export default function Sidebar({
                     key={it.href}
                     href={it.href}
                     label={it.label}
-                    icon={it.icon ? <it.icon size={14} /> : undefined}
+                    icon={
+                      it.icon ? (
+                        <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" />
+                      ) : undefined
+                    }
                     dot={it.dot}
                     count={it.href === '/approvals' ? undefined : it.count}
                     pill={it.href === '/approvals' && pendingCount > 0 ? pendingCount : undefined}
-                    isActive={
-                      // The Home link must match exactly — every other route
-                      // starts with `/`, so the default startsWith logic would
-                      // mark Home as active everywhere.
-                      it.href === '/'
-                        ? pathname === '/'
-                        : pathname === it.href || pathname.startsWith(it.href + '/')
-                    }
+                    isActive={isItemActive(it.href, pathname)}
                   />
                 ),
               )}

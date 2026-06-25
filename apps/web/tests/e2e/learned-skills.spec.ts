@@ -51,7 +51,9 @@ test.describe('learned-skills page', () => {
     await page.goto('/learned-skills');
 
     // The radiogroup label must be visible
-    await expect(page.getByText('When an agent learns a new skill')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('When an agent learns a new skill')).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Both radio options must be visible
     const autoOption = page.getByRole('radio', { name: /auto-assign to the agent/i });

@@ -28,7 +28,7 @@ export default async function JobsPage({
           <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
             Runs
           </h1>
-          <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+          <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
             {jobs.length} recent run{jobs.length !== 1 ? 's' : ''}
             {agentId ? ' · filtered by agent' : ''}
           </p>
@@ -38,7 +38,7 @@ export default async function JobsPage({
 
       {/* Error state */}
       {!jobsResult.ok && (
-        <div className="mb-4 rounded-xl border border-warn/40 bg-warn-bg p-4 text-[13px] text-warn">
+        <div className="mb-4 rounded-xl border border-warn/40 bg-warn-bg p-4 text-[14px] text-warn">
           {jobsResult.message}
         </div>
       )}

@@ -53,7 +53,7 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
       <div className="flex items-center gap-3">
         {/* Provider glyph */}
         <div
-          className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl font-mono text-[13px] font-semibold tracking-[0.04em]"
+          className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl font-mono text-[14px] font-semibold tracking-[0.04em]"
           style={{ background: bg, color: fg }}
         >
           {initials}
@@ -62,11 +62,11 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
         {/* Name + region */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-[15px] font-semibold leading-[1.2] tracking-[-0.005em] text-ink">
+            <span className="text-[16px] font-semibold leading-[1.2] tracking-[-0.005em] text-ink">
               {row.nickname ?? prettyProviderName(row.provider)}
             </span>
             {row.nickname && (
-              <span className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-4">
+              <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-ink-4">
                 {prettyProviderName(row.provider)}
               </span>
             )}
@@ -99,18 +99,18 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
       <div className="flex flex-col gap-1">
         {row.baseUrl && (
           <div className="flex items-center gap-2 rounded-lg bg-canvas px-[10px] py-[7px]">
-            <code className="flex-1 truncate font-mono text-[12px] leading-none text-ink">
+            <code className="flex-1 truncate font-mono text-[13px] leading-none text-ink">
               {row.baseUrl}
             </code>
           </div>
         )}
         <div className="flex items-center gap-2 rounded-lg bg-canvas px-[10px] py-[7px]">
           {row.hasApiKey ? (
-            <code className="font-mono text-[12px] leading-none tracking-widest text-ink-3">
+            <code className="font-mono text-[13px] leading-none tracking-widest text-ink-3">
               ••••••••{row.apiKeyLast4 ?? ''}
             </code>
           ) : (
-            <span className="text-[12px] leading-none text-warn">No API key</span>
+            <span className="text-[13px] leading-none text-warn">No API key</span>
           )}
         </div>
       </div>
@@ -122,7 +122,7 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
           <button
             type="button"
             onClick={onEdit}
-            className="inline-flex h-[28px] items-center gap-1 rounded-md border border-rule px-[10px] text-[11.5px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
+            className="inline-flex h-[28px] items-center gap-1 rounded-md border border-rule px-[10px] text-[12px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
           >
             <GearSix size={12} weight="regular" />
             Configure
@@ -131,7 +131,7 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
             type="button"
             onClick={() => setConfirmOpen(true)}
             disabled={isPending}
-            className="inline-flex h-[28px] items-center rounded-md border border-err/30 px-[10px] text-[11.5px] font-medium text-err transition-colors hover:border-err/60 hover:bg-warn-bg disabled:opacity-40"
+            className="inline-flex h-[28px] items-center rounded-md border border-err/30 px-[10px] text-[12px] font-medium text-err transition-colors hover:border-err/60 hover:bg-warn-bg disabled:opacity-40"
           >
             Delete
           </button>
@@ -152,12 +152,12 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
 
 function AgentUsage({ count, keyId }: { count: number; keyId: string }) {
   if (count === 0) {
-    return <span className="font-sans text-[12.5px] leading-none text-ink-3">Not in use</span>;
+    return <span className="font-sans text-[13px] leading-none text-ink-3">Not in use</span>;
   }
   return (
     <Link
       href={`/agents?llmKeyId=${keyId}`}
-      className="font-sans text-[12.5px] leading-none text-ink-3 transition-colors hover:text-ink"
+      className="font-sans text-[13px] leading-none text-ink-3 transition-colors hover:text-ink"
       title={`${count} agent${count === 1 ? '' : 's'} use this key`}
     >
       <span className="font-mono tabular-nums">{count}</span> agent{count === 1 ? '' : 's'} using

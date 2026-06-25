@@ -40,7 +40,7 @@ type Props = AsButton | AsLink;
  */
 export default function PrimaryButton(props: Props) {
   const { children, variant = 'ink', size = 'md', className = '' } = props;
-  const dim = size === 'md' ? 'h-[34px] px-3.5 text-[13px]' : 'h-[30px] px-3 text-[12px]';
+  const dim = size === 'md' ? 'h-[34px] px-3.5 text-[14px]' : 'h-[30px] px-3 text-[13px]';
   const cls = `inline-flex items-center justify-center gap-1.5 rounded-md font-medium leading-none border-0 cursor-pointer transition-[filter] ${dim} ${VARIANT[variant]} ${className}`;
 
   if ('href' in props && props.href) {

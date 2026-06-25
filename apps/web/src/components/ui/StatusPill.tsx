@@ -75,7 +75,7 @@ export default function StatusPill({ variant, label, icon, className = '' }: Pro
 
   return (
     <span
-      className={`inline-flex h-[22px] items-center gap-1.5 rounded-[5px] px-2.5 text-[11px] font-medium leading-none ${STYLE[variant]} ${className}`}
+      className={`inline-flex h-[22px] items-center gap-1.5 rounded-[5px] px-2.5 text-[12px] font-medium leading-none ${STYLE[variant]} ${className}`}
     >
       {resolvedIcon}
       {text}

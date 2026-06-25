@@ -18,7 +18,7 @@ export default async function LlmProvidersPage() {
     <div className="py-7">
       <div className="mb-6">
         <h1 className="text-[28px] font-semibold tracking-[-0.015em] text-ink">LLM Providers</h1>
-        <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+        <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
           Enter the API key for each provider you want to use. Agents pick the provider and model.
         </p>
       </div>

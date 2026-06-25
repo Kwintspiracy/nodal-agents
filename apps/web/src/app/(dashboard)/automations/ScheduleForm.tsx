@@ -84,7 +84,7 @@ export default function ScheduleForm(props: Props) {
         type="button"
         onClick={() => setOpen(true)}
         disabled={props.agents.length === 0}
-        className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[13px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-40"
+        className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[14px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-40"
         title={props.agents.length === 0 ? 'Create an agent first' : ''}
       >
         + New schedule
@@ -194,7 +194,7 @@ export default function ScheduleForm(props: Props) {
         <button
           type="submit"
           disabled={isPending}
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[13px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[14px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
         >
           {isPending
             ? isEdit
@@ -210,7 +210,7 @@ export default function ScheduleForm(props: Props) {
             if (isEdit) props.onDone?.();
             else setOpen(false);
           }}
-          className="inline-flex h-[34px] items-center rounded-md border border-rule-2 px-3.5 text-[13px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink"
+          className="inline-flex h-[34px] items-center rounded-md border border-rule-2 px-3.5 text-[14px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink"
         >
           Cancel
         </button>

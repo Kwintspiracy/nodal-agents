@@ -61,7 +61,7 @@ export default async function DashboardPage() {
 
   const s = statsRes.data;
   const active = activeRes.ok ? activeRes.data : [];
-  const weekly = weeklyRes.ok ? weeklyRes.data : [];
+  const weekly = weeklyRes.ok ? weeklyRes.data : { rows: [], models: [] };
   const skills = skillsRes.ok ? skillsRes.data : [];
   const connectors = connsRes.ok ? connsRes.data.instances : [];
   const mcp = mcpRes.ok ? mcpRes.data.instances : [];
@@ -93,9 +93,9 @@ export default async function DashboardPage() {
       <div className="mb-5">
         <div className="flex flex-wrap items-baseline gap-3 text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
           {greet}
-          <span className="text-[13px] font-medium leading-none text-ink-3">{todayLabel}</span>
+          <span className="text-[14px] font-medium leading-none text-ink-3">{todayLabel}</span>
         </div>
-        <div className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+        <div className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
           {s.totalJobs > 0 ? (
             <>
               Your fleet has completed{' '}
@@ -178,13 +178,13 @@ export default async function DashboardPage() {
 
       {/* 4 — Weekly activity ------------------------------------------ */}
       <div className="mt-7">
-        <WeeklyActivityChart data={weekly} />
+        <WeeklyActivityChart data={weekly.rows} models={weekly.models} />
       </div>
 
       {/* 5 — Job status breakdown -------------------------------------- */}
       {Object.keys(s.statusCounts).length > 0 && (
         <div className="mt-7">
-          <h2 className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-4">
+          <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">
             Job status
           </h2>
           <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
@@ -214,23 +214,23 @@ export default async function DashboardPage() {
       {/* 6 — Per agent ------------------------------------------------- */}
       {s.perAgent.length > 0 && (
         <div className="mt-7">
-          <h2 className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-4">
+          <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">
             Per agent
           </h2>
           <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-rule-2">
-                  <th className="px-5 py-3 text-left font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
+                  <th className="px-5 py-3 text-left font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
                     Agent
                   </th>
-                  <th className="px-5 py-3 text-right font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
+                  <th className="px-5 py-3 text-right font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
                     Jobs
                   </th>
-                  <th className="hidden px-5 py-3 text-right font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
+                  <th className="hidden px-5 py-3 text-right font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
                     Input tk
                   </th>
-                  <th className="hidden px-5 py-3 text-right font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
+                  <th className="hidden px-5 py-3 text-right font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
                     Output tk
                   </th>
                 </tr>

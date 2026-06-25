@@ -49,7 +49,7 @@ export default function CancelJobButton({ jobId }: Props) {
         type="button"
         onClick={() => setOpen(true)}
         disabled={isPending}
-        className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-rule px-3 text-[12px] font-medium leading-none text-ink-3 transition-colors hover:border-warn/60 hover:bg-warn-bg hover:text-warn disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-rule px-3 text-[13px] font-medium leading-none text-ink-3 transition-colors hover:border-warn/60 hover:bg-warn-bg hover:text-warn disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isPending ? 'Cancelling…' : 'Cancel'}
       </button>

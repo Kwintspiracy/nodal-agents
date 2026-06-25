@@ -105,10 +105,7 @@ test.describe('Autonomy / Approvals tab', () => {
     const toolList = page.locator('[data-testid="autonomy-tool-list"]');
     const hasTools = await toolList.isVisible({ timeout: 5_000 }).catch(() => false);
     if (!hasTools) {
-      test.skip(
-        true,
-        'Agent has no assigned write/destructive tools — 3-way control test skipped',
-      );
+      test.skip(true, 'Agent has no assigned write/destructive tools — 3-way control test skipped');
       return;
     }
 
@@ -136,9 +133,7 @@ test.describe('Autonomy / Approvals tab', () => {
 
     // The "Ask first" button should still be the active selection.
     // We verify by checking that the button has the active styling (bg-warn class).
-    const persistedBtn = page.locator(
-      `[data-testid="autonomy-btn-${toolSlug}-require_approval"]`,
-    );
+    const persistedBtn = page.locator(`[data-testid="autonomy-btn-${toolSlug}-require_approval"]`);
     await expect(persistedBtn).toBeVisible({ timeout: 8_000 });
     // The active state uses bg-warn/15 class — verify it's applied.
     await expect(persistedBtn).toHaveClass(/bg-warn/, { timeout: 5_000 });

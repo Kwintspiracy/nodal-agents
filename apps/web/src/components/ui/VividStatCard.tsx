@@ -60,7 +60,7 @@ export default function VividStatCard({ variant, label, value, meta, foot, icon,
       className={`relative flex min-h-[172px] flex-col overflow-hidden rounded-2xl px-[18px] pt-4 pb-3.5 ${v.bg} ${v.fg}`}
     >
       <div
-        className={`mb-2.5 flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.16em] ${v.muted}`}
+        className={`mb-2.5 flex items-center justify-between font-mono text-[11px] uppercase tracking-[0.16em] ${v.muted}`}
       >
         <span className="flex items-center gap-2">
           {icon && (
@@ -81,10 +81,10 @@ export default function VividStatCard({ variant, label, value, meta, foot, icon,
         )}
       </div>
       <div className="mt-0.5 text-[56px] font-medium leading-none tracking-[-0.03em]">{value}</div>
-      {meta && <div className={`mt-1 text-[13px] leading-[1.3] ${v.muted}`}>{meta}</div>}
+      {meta && <div className={`mt-1 text-[14px] leading-[1.3] ${v.muted}`}>{meta}</div>}
       {foot && (
         <div
-          className={`mt-auto flex items-center justify-between border-t pt-3 text-[13px] leading-none ${v.border}`}
+          className={`mt-auto flex items-center justify-between border-t pt-3 text-[14px] leading-none ${v.border}`}
         >
           {foot}
         </div>

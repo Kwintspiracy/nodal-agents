@@ -38,9 +38,9 @@ export default function SignOutButton() {
       data-testid="user-menu-sign-out"
       aria-label="Sign out"
       title="Sign out"
-      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-ink-3 transition-colors hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 lg:h-8 lg:w-8 lg:rounded-md"
     >
-      <SignOut size={15} />
+      <SignOut size={15} className="h-[18px] w-[18px] lg:h-[15px] lg:w-[15px]" />
     </button>
   );
 }

@@ -133,7 +133,7 @@ export default function SecurityForm({ initial }: Props) {
                     className="w-full bg-canvas border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                   />
                 </div>
-                <p className="sm:col-span-2 text-[11px] text-ink-4">
+                <p className="sm:col-span-2 text-[12px] text-ink-4">
                   Use authorized JavaScript origins{' '}
                   <code className="font-mono">http://localhost:3000</code> and redirect URI{' '}
                   <code className="font-mono">http://localhost:3000/api/auth/callback/google</code>{' '}
@@ -148,7 +148,7 @@ export default function SecurityForm({ initial }: Props) {
           <Banner variant="warn">
             <b className="block font-medium text-ink">Config file missing</b>
             ~/.nodalai/config.json wasn&apos;t found. Save will fail until you&apos;ve run{' '}
-            <code className="font-mono text-[11px]">nodal-agents init</code> at least once.
+            <code className="font-mono text-[12px]">nodal-agents init</code> at least once.
           </Banner>
         )}
 
@@ -162,7 +162,7 @@ export default function SecurityForm({ initial }: Props) {
 
         {restartHint && (
           <Banner variant="info" title="Saved. Restart required.">
-            Run <code className="font-mono text-[11px]">nodal-agents down && nodal-agents up</code>{' '}
+            Run <code className="font-mono text-[12px]">nodal-agents down && nodal-agents up</code>{' '}
             to activate the new auth mode.
           </Banner>
         )}

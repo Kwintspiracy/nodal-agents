@@ -31,14 +31,14 @@ export default function ApprovalCard({ icon, title, agent, body, meta, actions }
       {/* Body — title + agent/subtitle */}
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13.5px] font-medium leading-snug text-ink">{title}</span>
-          {agent && <span className="font-mono text-[11px] text-ink-4">{agent}</span>}
+          <span className="text-[14px] font-medium leading-snug text-ink">{title}</span>
+          {agent && <span className="font-mono text-[12px] text-ink-4">{agent}</span>}
         </div>
         {body && <div className="text-xs text-ink-3">{body}</div>}
       </div>
 
       {/* Meta — right-side label column */}
-      {meta && <div className="shrink-0 text-right text-[11px] text-ink-4">{meta}</div>}
+      {meta && <div className="shrink-0 text-right text-[12px] text-ink-4">{meta}</div>}
 
       {/* Actions — deny / approve buttons or resolved note */}
       {actions && <div className="shrink-0">{actions}</div>}

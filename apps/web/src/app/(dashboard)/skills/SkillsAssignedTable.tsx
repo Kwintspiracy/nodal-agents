@@ -30,21 +30,23 @@ type Props = {
 export default function SkillsAssignedTable({ skills, agents }: Props) {
   return (
     <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr>
-            <Th label="Skill" />
-            <Th label="Assigned to" />
-            <Th label="Required built-ins" />
-            <Th label="Actions" align="right" />
-          </tr>
-        </thead>
-        <tbody>
-          {skills.map((s) => (
-            <SkillTableRow key={s.id} skill={s} agents={agents} />
-          ))}
-        </tbody>
-      </table>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <Th label="Skill" />
+              <Th label="Assigned to" />
+              <Th label="Required built-ins" />
+              <Th label="Actions" align="right" />
+            </tr>
+          </thead>
+          <tbody>
+            {skills.map((s) => (
+              <SkillTableRow key={s.id} skill={s} agents={agents} />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

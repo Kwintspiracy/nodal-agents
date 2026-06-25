@@ -52,14 +52,14 @@ export default function PillTabs2<T extends string>({
               if (value === undefined) setInternal(t.value);
               onChange?.(t.value);
             }}
-            className={`inline-flex h-[30px] items-center gap-2 rounded-lg border-0 px-3.5 text-[12.5px] font-medium leading-none transition-colors ${
+            className={`inline-flex h-[30px] items-center gap-2 rounded-lg border-0 px-3.5 text-[13px] font-medium leading-none transition-colors ${
               isActive ? 'bg-ink text-canvas' : 'bg-transparent text-ink-3 hover:text-ink-2'
             }`}
           >
             {t.label}
             {t.count !== undefined && (
               <span
-                className={`font-mono text-[11px] leading-none ${
+                className={`font-mono text-[12px] leading-none ${
                   isActive ? 'opacity-65' : 'opacity-60'
                 }`}
               >

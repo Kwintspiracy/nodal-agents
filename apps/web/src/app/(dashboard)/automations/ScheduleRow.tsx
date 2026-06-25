@@ -94,7 +94,7 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
               </>
             )}
           </div>
-          <div className="flex items-center gap-3 text-[10px] text-ink-4">
+          <div className="flex items-center gap-3 text-[11px] text-ink-4">
             {s.nextRun && s.active && <span>Next run {new Date(s.nextRun).toLocaleString()}</span>}
             {s.lastRun && (
               <span>

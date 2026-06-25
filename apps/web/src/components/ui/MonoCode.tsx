@@ -18,7 +18,7 @@ export default function MonoCode({
 }) {
   return (
     <code
-      className={`inline-flex items-center rounded-[5px] bg-hover px-1.5 py-1 font-mono text-[11px] leading-none tracking-[0.02em] text-ink-2 ${className}`}
+      className={`inline-flex items-center rounded-[5px] bg-hover px-1.5 py-1 font-mono text-[12px] leading-none tracking-[0.02em] text-ink-2 ${className}`}
     >
       {children}
     </code>

@@ -22,31 +22,33 @@ type Props = {
 export default function McpInstalledTable({ instances, catalog }: Props) {
   return (
     <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr>
-            <Th label="Server" />
-            <Th label="Tools" />
-            <Th label="Transport" />
-            <Th label="Status" />
-            <Th label="Actions" align="right" />
-          </tr>
-        </thead>
-        <tbody>
-          {instances.map((inst) => {
-            const catalogItem = catalog.find((c) => c.slug === inst.slug);
-            return (
-              <McpRow
-                key={inst.id}
-                instance={inst}
-                catalogLabel={catalogItem?.label ?? inst.name}
-                description={catalogItem?.description ?? ''}
-                transport={catalogItem?.transport ?? 'http'}
-              />
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <Th label="Server" />
+              <Th label="Tools" />
+              <Th label="Transport" />
+              <Th label="Status" />
+              <Th label="Actions" align="right" />
+            </tr>
+          </thead>
+          <tbody>
+            {instances.map((inst) => {
+              const catalogItem = catalog.find((c) => c.slug === inst.slug);
+              return (
+                <McpRow
+                  key={inst.id}
+                  instance={inst}
+                  catalogLabel={catalogItem?.label ?? inst.name}
+                  description={catalogItem?.description ?? ''}
+                  transport={catalogItem?.transport ?? 'http'}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

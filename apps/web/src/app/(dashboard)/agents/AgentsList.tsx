@@ -54,6 +54,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { PaperPlaneTilt, PencilSimple } from '@phosphor-icons/react';
 import {
   reorderAgentsAction,
   deleteAgentAction,
@@ -599,18 +600,26 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
 function RowActions({ agent }: { agent: AgentRow }) {
   return (
     <td className="px-5 py-3 text-right">
+      {/* Icon-only on mobile, label on desktop — keeps the row inside narrow
+          screens instead of clipping the buttons against the card edge. */}
       <div className="flex items-center justify-end gap-2">
         <Link
           href={`/agents/${agent.id}/telegram`}
-          className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-rule hover:text-ink transition-colors"
+          aria-label="Telegram"
+          title="Telegram"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-rule-2 px-2.5 py-1.5 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink sm:px-3"
         >
-          Telegram
+          <PaperPlaneTilt size={15} className="sm:hidden" />
+          <span className="hidden sm:inline">Telegram</span>
         </Link>
         <Link
           href={`/agents/${agent.id}/edit`}
-          className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-rule hover:text-ink transition-colors"
+          aria-label="Edit"
+          title="Edit"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-rule-2 px-2.5 py-1.5 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink sm:px-3"
         >
-          Edit
+          <PencilSimple size={15} className="sm:hidden" />
+          <span className="hidden sm:inline">Edit</span>
         </Link>
         <DeleteAgentButton id={agent.id} name={agent.name} deleteAction={deleteAgentAction} />
       </div>

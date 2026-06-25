@@ -402,9 +402,9 @@ function BackLink() {
   return (
     <Link
       href="/agents"
-      className="inline-flex items-center gap-1.5 text-[12.5px] text-ink-3 transition-colors hover:text-ink-2"
+      className="inline-flex items-center gap-1.5 text-[13px] text-ink-3 transition-colors hover:text-ink-2"
     >
-      <span className="text-[14px] leading-none">‹</span>
+      <span className="text-[15px] leading-none">‹</span>
       Back to agents
     </Link>
   );
@@ -423,7 +423,7 @@ function AgentPicker({ agents, activeId }: { agents: AgentRow[]; activeId: strin
             key={a.id}
             href={`/agents/${a.id}/edit`}
             className={[
-              'inline-flex h-[34px] items-center gap-2 rounded-full border px-3.5 text-[13px] font-medium transition-colors',
+              'inline-flex h-[34px] items-center gap-2 rounded-full border px-3.5 text-[14px] font-medium transition-colors',
               isActive
                 ? 'border-rule-2 bg-paper text-ink'
                 : 'border-rule bg-canvas text-ink-3 hover:border-rule-2 hover:text-ink-2',
@@ -496,17 +496,17 @@ function HeroCard({
             <h1 className="m-0 text-[22px] font-semibold leading-none tracking-[-0.01em] text-ink">
               {name}
             </h1>
-            <span className="inline-flex h-[24px] items-center gap-1.5 rounded-full border border-rule-2 bg-canvas px-2.5 text-[11.5px] font-medium text-ink-3">
+            <span className="inline-flex h-[24px] items-center gap-1.5 rounded-full border border-rule-2 bg-canvas px-2.5 text-[12px] font-medium text-ink-3">
               <span className="h-[6px] w-[6px] rounded-full bg-ink-3" />
               Idle
             </span>
           </div>
-          <p className="mt-2 text-[13.5px] leading-[1.55] text-ink-3">{personaPreview}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px] text-ink-3">
+          <p className="mt-2 text-[14px] leading-[1.55] text-ink-3">{personaPreview}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-ink-3">
             {model && (
               <span>
                 <span className="text-ink-4">Model:</span>{' '}
-                <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-2">
+                <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 font-mono text-[12px] text-ink-2">
                   {model}
                 </code>
               </span>
@@ -535,7 +535,7 @@ function HeroCard({
           <button
             type="button"
             onClick={onConfigure}
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[12.5px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
           >
             <GearIcon />
             Configure
@@ -568,7 +568,7 @@ function Sep() {
 function StatCell({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
   return (
     <div className="rounded-lg border border-rule-2 bg-canvas/40 px-4 py-3">
-      <div className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-4">{label}</div>
+      <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-4">{label}</div>
       <div
         className={`mt-1.5 text-[20px] font-semibold leading-none tracking-[-0.01em] ${dim ? 'text-ink-4' : 'text-ink'}`}
       >
@@ -623,14 +623,14 @@ function TabsBar({
             type="button"
             onClick={() => onChange(t.id)}
             className={[
-              'relative -mb-px border-b-2 px-4 pt-2.5 pb-3 text-[13.5px] font-medium transition-colors',
+              'relative -mb-px border-b-2 px-4 pt-2.5 pb-3 text-[14px] font-medium transition-colors',
               isActive ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2',
             ].join(' ')}
           >
             {t.label}
             {t.count !== undefined && t.count > 0 && (
               <span
-                className={`ml-1.5 font-mono text-[10.5px] ${isActive ? 'text-ink-2' : 'text-ink-4'}`}
+                className={`ml-1.5 font-mono text-[11px] ${isActive ? 'text-ink-2' : 'text-ink-4'}`}
               >
                 {t.count}
               </span>
@@ -660,10 +660,10 @@ function SectionHead({
   return (
     <div className="mb-4 flex items-start justify-between gap-4">
       <div>
-        <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
+        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">
           {label}
         </div>
-        {hint && <p className="mt-1 text-[12px] leading-[1.5] text-ink-3">{hint}</p>}
+        {hint && <p className="mt-1 text-[13px] leading-[1.5] text-ink-3">{hint}</p>}
       </div>
       {right}
     </div>
@@ -708,7 +708,7 @@ function OverviewTab({
                 <button
                   type="button"
                   onClick={onOpenConnectors}
-                  className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
+                  className="text-[12px] text-ink-3 underline hover:text-ink-2"
                 >
                   Manage
                 </button>
@@ -722,7 +722,7 @@ function OverviewTab({
               ))}
             </div>
           ) : (
-            <p className="text-[12.5px] text-ink-3">
+            <p className="text-[13px] text-ink-3">
               No connectors assigned yet.{' '}
               <button
                 type="button"
@@ -734,7 +734,7 @@ function OverviewTab({
             </p>
           )}
           {mcpsAssignedCount > 0 && (
-            <p className="mt-3 border-t border-rule-2 pt-3 text-[11.5px] text-ink-4">
+            <p className="mt-3 border-t border-rule-2 pt-3 text-[12px] text-ink-4">
               + {mcpsAssignedCount} MCP server{mcpsAssignedCount > 1 ? 's' : ''} attached (Settings
               → Knowledge).
             </p>
@@ -751,7 +751,7 @@ function OverviewTab({
               <button
                 type="button"
                 onClick={onOpenSkills}
-                className="text-[11.5px] text-ink-3 underline hover:text-ink-2"
+                className="text-[12px] text-ink-3 underline hover:text-ink-2"
               >
                 Manage
               </button>
@@ -765,7 +765,7 @@ function OverviewTab({
             ))}
           </div>
         ) : (
-          <p className="text-[12.5px] text-ink-3">
+          <p className="text-[13px] text-ink-3">
             No skills attached yet. Read-only view — manage on the{' '}
             <Link href="/skills" className="underline hover:text-ink-2">
               Skills page
@@ -815,7 +815,7 @@ function AgentWeeklyChart({ jobs }: { jobs: JobRow[] }) {
   return (
     <div>
       <div className="mb-3 flex items-baseline gap-2">
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">
           Runs · 7 days
         </span>
       </div>
@@ -823,7 +823,7 @@ function AgentWeeklyChart({ jobs }: { jobs: JobRow[] }) {
         <span className="text-[34px] font-semibold leading-none tracking-[-0.015em] text-ink">
           {total.toLocaleString()}
         </span>
-        <span className="text-[13.5px] text-ink-3">successful run{total === 1 ? '' : 's'}</span>
+        <span className="text-[14px] text-ink-3">successful run{total === 1 ? '' : 's'}</span>
       </div>
       <div className="h-[200px]">
         <ResponsiveContainer width="100%" height="100%">
@@ -838,13 +838,13 @@ function AgentWeeklyChart({ jobs }: { jobs: JobRow[] }) {
             <XAxis
               dataKey="day"
               stroke="var(--c-ink-4)"
-              tick={{ fill: 'var(--c-ink-4)', fontSize: 11 }}
+              tick={{ fill: 'var(--c-ink-4)', fontSize: 12 }}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
               stroke="var(--c-ink-4)"
-              tick={{ fill: 'var(--c-ink-4)', fontSize: 11 }}
+              tick={{ fill: 'var(--c-ink-4)', fontSize: 12 }}
               axisLine={false}
               tickLine={false}
               allowDecimals={false}
@@ -855,7 +855,7 @@ function AgentWeeklyChart({ jobs }: { jobs: JobRow[] }) {
                 background: 'var(--c-paper)',
                 border: '1px solid var(--c-rule)',
                 borderRadius: 10,
-                fontSize: 12,
+                fontSize: 13,
                 color: 'var(--c-ink)',
                 boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
               }}
@@ -882,7 +882,7 @@ function SkillEdRow({ skill }: { skill: SkillRow }) {
     <EdRow
       glyph={
         <Disc variant="skill" size="lg" shape="square">
-          <span className="font-mono text-[10.5px] font-semibold uppercase">
+          <span className="font-mono text-[11px] font-semibold uppercase">
             {skill.slug.slice(0, 2)}
           </span>
         </Disc>
@@ -893,7 +893,7 @@ function SkillEdRow({ skill }: { skill: SkillRow }) {
       actions={
         <Link
           href={`/skills/${skill.id}/edit`}
-          className="flex h-7 items-center gap-1 rounded-md border border-rule px-2 text-[11px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
+          className="flex h-7 items-center gap-1 rounded-md border border-rule px-2 text-[12px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
         >
           Open ›
         </Link>
@@ -909,7 +909,7 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
     <EdRow
       glyph={
         <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
-          <span className="font-mono text-[10.5px] font-semibold">
+          <span className="font-mono text-[11px] font-semibold">
             {connGlyph(row.slug, row.label)}
           </span>
         </Disc>
@@ -917,14 +917,14 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
       name={
         <>
           {row.label}
-          <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.04em] text-ink-4">
+          <span className="ml-2 font-mono text-[11px] uppercase tracking-[0.04em] text-ink-4">
             {row.slug.toUpperCase()}
           </span>
         </>
       }
       description={row.credentialName ?? undefined}
       actions={
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3">
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-3">
           <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
           on
         </span>
@@ -1059,7 +1059,7 @@ function AutonomyTab({
   if (!loaded) {
     return (
       <SectionCard>
-        <p className="text-[12.5px] text-ink-4">Loading…</p>
+        <p className="text-[13px] text-ink-4">Loading…</p>
       </SectionCard>
     );
   }
@@ -1072,7 +1072,7 @@ function AutonomyTab({
           hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Read-only tools are always autonomous and not shown."
         />
         {gateableTools.length === 0 ? (
-          <p className="text-[12.5px] text-ink-3">
+          <p className="text-[13px] text-ink-3">
             No write or destructive tools are currently assigned to this agent. Assign a connector
             (e.g. Gmail) or configure a Telegram bot to see its gateable tools here.
           </p>
@@ -1092,7 +1092,7 @@ function AutonomyTab({
             ))}
           </div>
         )}
-        <p className="mt-4 text-[11px] text-ink-4">
+        <p className="mt-4 text-[12px] text-ink-4">
           Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>.
           Rules take effect on the next job — already-running jobs are not affected.
         </p>
@@ -1227,19 +1227,19 @@ function CommandExecutionSection({
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-medium text-ink">
+            <span className="text-[14px] font-medium text-ink">
               Auto-run commands without approval (Yolo)
             </span>
-            <span className="inline-flex h-[18px] items-center rounded-full bg-err/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-err">
+            <span className="inline-flex h-[18px] items-center rounded-full bg-err/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-err">
               irreversible
             </span>
           </div>
-          <p className="mt-1 text-[12px] leading-[1.4] text-ink-3">
+          <p className="mt-1 text-[13px] leading-[1.4] text-ink-3">
             When on, this agent runs any shell command immediately with no approval gate. Commands
             are still logged. Only enable for agents you fully trust.
           </p>
           {isDormant && canManage && (
-            <p className="mt-2 text-[11.5px] text-warn">
+            <p className="mt-2 text-[12px] text-warn">
               This agent&apos;s Yolo is <b className="font-semibold">dormant</b> — workspace Yolo is
               off, so its commands still require approval. Turn it off here to clear it, or
               re-enable Yolo in{' '}
@@ -1253,7 +1253,7 @@ function CommandExecutionSection({
             </p>
           )}
           {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
-            <p className="mt-2 text-[11.5px] text-ink-4">
+            <p className="mt-2 text-[12px] text-ink-4">
               Yolo is off for this workspace. The owner can enable it in{' '}
               <a
                 href="/settings"
@@ -1265,7 +1265,7 @@ function CommandExecutionSection({
             </p>
           )}
           {!yoloAllowed && lanCommandYolo && !isOwner && (
-            <p className="mt-2 text-[11.5px] text-ink-4">
+            <p className="mt-2 text-[12px] text-ink-4">
               The workspace owner has enabled Yolo for this workspace, but only the owner can toggle
               it per agent.
             </p>
@@ -1354,7 +1354,7 @@ function ScriptAuthSection({
           <ScriptAuthRow key={skill.id} skill={skill} agentId={agentId} isOwner={isOwner} />
         ))}
       </div>
-      <p className="mt-4 text-[11px] text-ink-4">
+      <p className="mt-4 text-[12px] text-ink-4">
         Granting script access lets this agent run the skill&apos;s bundled scripts on your machine
         without per-command approval.
       </p>
@@ -1421,23 +1421,23 @@ function ScriptAuthRow({
       {/* Skill identity */}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13px] font-medium text-ink">{skill.name}</span>
-          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-skill-vivid">
+          <span className="text-[14px] font-medium text-ink">{skill.name}</span>
+          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-skill-vivid">
             community
           </span>
-          <span className="inline-flex h-[18px] items-center rounded-full bg-warn/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-warn">
+          <span className="inline-flex h-[18px] items-center rounded-full bg-warn/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-warn">
             {scripts.length} script{scripts.length > 1 ? 's' : ''}
           </span>
         </div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
           {scripts.map((s) => (
-            <code key={s.path} className="font-mono text-[10.5px] text-ink-4">
+            <code key={s.path} className="font-mono text-[11px] text-ink-4">
               {s.path}
             </code>
           ))}
         </div>
         {!canToggle && (
-          <p className="mt-1.5 text-[11.5px] text-ink-4">
+          <p className="mt-1.5 text-[12px] text-ink-4">
             Only the workspace owner can authorize scripts.
           </p>
         )}
@@ -1517,7 +1517,7 @@ function FileWriteAuthSection({
           <FileWriteAuthRow key={skill.id} skill={skill} agentId={agentId} isOwner={isOwner} />
         ))}
       </div>
-      <p className="mt-4 text-[11px] text-ink-4">
+      <p className="mt-4 text-[12px] text-ink-4">
         Writes are bounded to the skill&apos;s own folder (no path escape) and require approval by
         default — far narrower than granting shell access.
       </p>
@@ -1580,13 +1580,13 @@ function FileWriteAuthRow({
     <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13px] font-medium text-ink">{skill.name}</span>
-          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-skill-vivid">
+          <span className="text-[14px] font-medium text-ink">{skill.name}</span>
+          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-skill-vivid">
             community
           </span>
         </div>
         {!canToggle && (
-          <p className="mt-1.5 text-[11.5px] text-ink-4">
+          <p className="mt-1.5 text-[12px] text-ink-4">
             Only the workspace owner can authorize file writes.
           </p>
         )}
@@ -1646,10 +1646,10 @@ function AutonomyToolRow({
       {/* Tool identity */}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13px] font-medium text-ink">{op.name}</span>
+          <span className="text-[14px] font-medium text-ink">{op.name}</span>
           <span
             className={[
-              'inline-flex h-[18px] items-center rounded-full px-2 font-mono text-[9.5px] uppercase tracking-[0.1em]',
+              'inline-flex h-[18px] items-center rounded-full px-2 font-mono text-[11px] uppercase tracking-[0.1em]',
               op.risk === 'destructive' ? 'bg-err/10 text-err' : 'bg-warn/10 text-warn',
             ].join(' ')}
           >
@@ -1657,9 +1657,9 @@ function AutonomyToolRow({
           </span>
         </div>
         {op.description && (
-          <p className="mt-0.5 text-[12px] leading-[1.4] text-ink-3">{op.description}</p>
+          <p className="mt-0.5 text-[13px] leading-[1.4] text-ink-3">{op.description}</p>
         )}
-        <code className="mt-1 block font-mono text-[10.5px] text-ink-4">{op.slug}</code>
+        <code className="mt-1 block font-mono text-[11px] text-ink-4">{op.slug}</code>
       </div>
 
       {/* 3-way control */}
@@ -1690,7 +1690,7 @@ function AutonomyToolRow({
               onClick={() => onChange(action)}
               data-testid={`autonomy-btn-${op.slug}-${action}`}
               className={[
-                'relative h-[32px] px-3 text-[12px] font-medium transition-colors',
+                'relative h-[32px] px-3 text-[13px] font-medium transition-colors',
                 idx > 0 ? 'border-l border-rule-2' : '',
                 isActive ? activeClass : 'bg-canvas text-ink-3 hover:bg-hover hover:text-ink-2',
                 saving ? 'cursor-wait opacity-60' : '',
@@ -1910,11 +1910,11 @@ function SettingsTab(props: {
               value={name}
               onChange={(e) => onChangeName(e.target.value)}
               placeholder="Agent name"
-              className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
             />
           </Field>
           <Field label="Slug (read-only)">
-            <code className="block w-full rounded-lg border border-rule-2 bg-hover px-3 py-2 font-mono text-[11.5px] tracking-[0.02em] text-ink-3">
+            <code className="block w-full rounded-lg border border-rule-2 bg-hover px-3 py-2 font-mono text-[12px] tracking-[0.02em] text-ink-3">
               {slug}
             </code>
           </Field>
@@ -1938,7 +1938,7 @@ function SettingsTab(props: {
             onChange={(e) => onChangePersonality(e.target.value)}
             rows={24}
             placeholder="You are a helpful assistant…"
-            className="min-h-[560px] w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+            className="min-h-[560px] w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </Field>
         <div className="mt-4">
@@ -1946,7 +1946,7 @@ function SettingsTab(props: {
             <select
               value={role}
               onChange={(e) => onChangeRole(e.target.value as AgentRole)}
-              className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+              className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-ink-3 focus:outline-none"
             >
               <option value="worker">Worker — runs its own tools</option>
               <option value="router">Router — delegates one at a time</option>
@@ -1958,7 +1958,7 @@ function SettingsTab(props: {
           <div className="mt-4">
             <Field label={`Sub-agents · ${subAgentIds.length} selected`}>
               {peers.length === 0 ? (
-                <p className="text-[12.5px] text-warn">
+                <p className="text-[13px] text-warn">
                   Create at least one worker agent first — orchestrators need someone to delegate
                   to.
                 </p>
@@ -1969,7 +1969,7 @@ function SettingsTab(props: {
                     return (
                       <label
                         key={a.id}
-                        className="flex cursor-pointer items-center gap-3 px-3 py-2 text-[13px] transition-colors hover:bg-hover"
+                        className="flex cursor-pointer items-center gap-3 px-3 py-2 text-[14px] transition-colors hover:bg-hover"
                       >
                         <input
                           type="checkbox"
@@ -1978,7 +1978,7 @@ function SettingsTab(props: {
                           className="accent-agent-vivid"
                         />
                         <span className="text-ink">{a.name}</span>
-                        <span className="ml-auto font-mono text-[11px] text-ink-3">{a.slug}</span>
+                        <span className="ml-auto font-mono text-[12px] text-ink-3">{a.slug}</span>
                       </label>
                     );
                   })}
@@ -1995,7 +1995,7 @@ function SettingsTab(props: {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="LLM provider">
             {noLlmKeys ? (
-              <p className="text-[12.5px] text-warn">
+              <p className="text-[13px] text-warn">
                 No active LLM keys.{' '}
                 <Link href="/llm-providers" className="underline">
                   Add one
@@ -2006,7 +2006,7 @@ function SettingsTab(props: {
               <select
                 value={llmKeyId}
                 onChange={(e) => onChangeLlmKey(e.target.value)}
-                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-ink-3 focus:outline-none"
               >
                 {activeKeys.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -2034,7 +2034,7 @@ function SettingsTab(props: {
                 onChange={(e) =>
                   onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
                 }
-                className="mb-2 w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+                className="mb-2 w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-ink-3 focus:outline-none"
               >
                 {groupModelCatalog(modelCatalog).map(({ group, models }) =>
                   group ? (
@@ -2074,7 +2074,7 @@ function SettingsTab(props: {
                   MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
                   'e.g. claude-haiku-4-5-20251001'
                 }
-                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
               />
             )}
           </Field>
@@ -2083,7 +2083,7 @@ function SettingsTab(props: {
           <div className="mt-3">
             <Field label="Fallback providers (failover order)">
               {otherKeys.length === 0 ? (
-                <p className="text-[12px] text-ink-4">
+                <p className="text-[13px] text-ink-4">
                   Add another LLM key in{' '}
                   <Link href="/llm-providers" className="underline">
                     LLM providers
@@ -2092,7 +2092,7 @@ function SettingsTab(props: {
                 </p>
               ) : (
                 <div className="space-y-2.5">
-                  <p className="text-[12px] text-ink-4">
+                  <p className="text-[13px] text-ink-4">
                     If the primary is down (5xx / timeout / quota) mid-job, the runner fails over to
                     these in order. Pick the model each fallback should run on.
                   </p>
@@ -2110,14 +2110,14 @@ function SettingsTab(props: {
                             onChange={() => onToggleFallback(k.id)}
                             className="accent-ink"
                           />
-                          <span className="text-[13px] text-ink-2">
+                          <span className="text-[14px] text-ink-2">
                             {(k.nickname ?? prettyProviderName(k.provider)) +
                               ' (' +
                               prettyProviderName(k.provider) +
                               ')'}
                           </span>
                           {checked && (
-                            <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-[10px] font-medium text-ink-4">
+                            <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-[11px] font-medium text-ink-4">
                               #{order + 1}
                             </span>
                           )}
@@ -2127,7 +2127,7 @@ function SettingsTab(props: {
                             <select
                               value={fbModel}
                               onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 text-[12.5px] text-ink focus:border-ink-3 focus:outline-none"
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
                             >
                               {groupModelCatalog(fbCatalog).map(({ group, models }) =>
                                 group ? (
@@ -2153,7 +2153,7 @@ function SettingsTab(props: {
                               value={fbModel}
                               onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
                               placeholder="model id (e.g. llama-3.3-70b)"
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 font-mono text-[12px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
                             />
                           ))}
                       </div>
@@ -2175,9 +2175,9 @@ function SettingsTab(props: {
 
         {/* Existing folders with per-folder file lists + upload */}
         {!workspacesLoaded ? (
-          <p className="text-[12.5px] text-ink-4">Loading…</p>
+          <p className="text-[13px] text-ink-4">Loading…</p>
         ) : workspaces.length === 0 ? (
-          <p className="text-[12.5px] text-ink-4">No folders configured.</p>
+          <p className="text-[13px] text-ink-4">No folders configured.</p>
         ) : (
           <div className="space-y-4 mb-4">
             {workspaces.map((ws) => (
@@ -2188,16 +2188,16 @@ function SettingsTab(props: {
                 {/* Folder header row */}
                 <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-rule">
                   <div className="min-w-0 flex-1">
-                    <span className="font-mono text-[11px] font-semibold text-ink-2 mr-2">
+                    <span className="font-mono text-[12px] font-semibold text-ink-2 mr-2">
                       {ws.label}
                     </span>
-                    <span className="font-mono text-[11.5px] text-ink-3 break-all">{ws.path}</span>
+                    <span className="font-mono text-[12px] text-ink-3 break-all">{ws.path}</span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setWsRemoveId(ws.id)}
                     disabled={wsIsPending}
-                    className="shrink-0 rounded border border-rule px-2 py-0.5 text-[11px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
+                    className="shrink-0 rounded border border-rule px-2 py-0.5 text-[12px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
                   >
                     Remove
                   </button>
@@ -2206,15 +2206,15 @@ function SettingsTab(props: {
                 {/* File list */}
                 <div className="px-3 pt-2 pb-1">
                   {!wsFilesLoaded[ws.label] ? (
-                    <p className="text-[11.5px] text-ink-4 py-1">Loading files…</p>
+                    <p className="text-[12px] text-ink-4 py-1">Loading files…</p>
                   ) : (wsFiles[ws.label] ?? []).length === 0 ? (
-                    <p className="text-[11.5px] text-ink-4 py-1">No files uploaded yet.</p>
+                    <p className="text-[12px] text-ink-4 py-1">No files uploaded yet.</p>
                   ) : (
                     <div className="space-y-1 mb-2">
                       {(wsFiles[ws.label] ?? []).map((f) => (
                         <div
                           key={f.name}
-                          className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-canvas border border-rule-2 text-[11.5px]"
+                          className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-canvas border border-rule-2 text-[12px]"
                         >
                           <span className="font-mono text-ink-2 truncate min-w-0">{f.name}</span>
                           <span className="shrink-0 text-ink-4">
@@ -2228,7 +2228,7 @@ function SettingsTab(props: {
                             type="button"
                             onClick={() => handleDeleteFile(ws.label, f.name)}
                             disabled={wsFilesPending}
-                            className="shrink-0 rounded border border-rule px-1.5 py-0.5 text-[10px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
+                            className="shrink-0 rounded border border-rule px-1.5 py-0.5 text-[11px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
                           >
                             Delete
                           </button>
@@ -2239,7 +2239,7 @@ function SettingsTab(props: {
 
                   {/* Upload button + drag-drop */}
                   <label
-                    className={`flex items-center gap-2 cursor-pointer rounded-lg border border-dashed px-3 py-2 text-[12px] transition-colors mb-2
+                    className={`flex items-center gap-2 cursor-pointer rounded-lg border border-dashed px-3 py-2 text-[13px] transition-colors mb-2
                       ${
                         wsUploading && wsUploadLabel === ws.label
                           ? 'border-ink-3 text-ink-3 bg-hover'
@@ -2296,26 +2296,26 @@ function SettingsTab(props: {
                 onChange={(e) => setWsLabel(e.target.value)}
                 placeholder="Label (e.g. notes)"
                 maxLength={80}
-                className="w-28 shrink-0 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                className="w-28 shrink-0 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
               />
               <input
                 type="text"
                 value={wsPath}
                 onChange={(e) => setWsPath(e.target.value)}
                 placeholder="/home/you/notes  or  C:\Users\you\docs"
-                className="min-w-0 flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[12.5px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                className="min-w-0 flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
               />
               <button
                 type="button"
                 onClick={handleAddWorkspace}
                 disabled={wsIsPending || wsAdding || !wsLabel.trim() || !wsPath.trim()}
-                className="shrink-0 rounded-lg border border-rule px-4 py-2 text-[13px] font-medium text-ink-2 hover:border-rule-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                className="shrink-0 rounded-lg border border-rule px-4 py-2 text-[14px] font-medium text-ink-2 hover:border-rule-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {wsAdding ? 'Adding…' : 'Add'}
               </button>
             </div>
           </Field>
-          <p className="text-[11px] text-ink-4">
+          <p className="text-[12px] text-ink-4">
             Absolute path. Label is the prefix the agent uses (e.g.{' '}
             <code className="font-mono">notes/file.md</code>). Leave label blank if a single folder
             — label is then optional.
@@ -2351,7 +2351,7 @@ function SettingsTab(props: {
 
       {/* Sticky save bar */}
       <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 rounded-2xl border border-rule-2 bg-paper px-4 py-3 shadow-lg">
-        <div className="text-[12.5px] text-ink-3">
+        <div className="text-[13px] text-ink-3">
           {dirty ? (
             <span>
               <span className="mr-1.5 inline-block h-[7px] w-[7px] rounded-full bg-skill-vivid" />
@@ -2366,7 +2366,7 @@ function SettingsTab(props: {
             type="button"
             onClick={onReset}
             disabled={isPending || !dirty}
-            className="rounded-lg border border-rule px-4 py-2 text-[13px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg border border-rule px-4 py-2 text-[14px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Reset
           </button>
@@ -2375,7 +2375,7 @@ function SettingsTab(props: {
             onClick={onSave}
             disabled={isPending || noLlmKeys || !dirty}
             title={!dirty ? 'No changes to save' : undefined}
-            className="rounded-lg bg-ink px-5 py-2 text-[13px] font-semibold text-canvas transition-colors hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-ink px-5 py-2 text-[14px] font-semibold text-canvas transition-colors hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? 'Saving…' : 'Save'}
           </button>
@@ -2388,7 +2388,7 @@ function SettingsTab(props: {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-4">{label}</label>
+      <label className="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-4">{label}</label>
       <div>{children}</div>
     </div>
   );

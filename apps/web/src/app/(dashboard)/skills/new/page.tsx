@@ -16,7 +16,7 @@ export default function NewSkillPage() {
       <h1 className="mt-2 text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
         New skill
       </h1>
-      <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+      <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
         Skills are reusable instructions appended to an agent&apos;s system prompt when assigned.
       </p>
       <div className="mt-5">

@@ -19,7 +19,7 @@ export function TagMini({
     <span
       className={[
         'inline-flex items-center gap-1.5 h-[22px] px-2 rounded-[5px]',
-        'font-mono font-semibold text-[10px] tracking-[0.08em]',
+        'font-mono font-semibold text-[11px] tracking-[0.08em]',
         cls,
       ].join(' ')}
     >

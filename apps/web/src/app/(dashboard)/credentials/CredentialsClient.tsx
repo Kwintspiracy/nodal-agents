@@ -43,7 +43,7 @@ export default function CredentialsClient({
           <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
             Credentials
           </h1>
-          <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+          <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
             {credentials.length === 0
               ? 'No credentials yet — create one to connect OAuth providers.'
               : `${credentials.length} credential${credentials.length !== 1 ? 's' : ''}`}
