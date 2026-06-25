@@ -43,4 +43,8 @@ jobs:
         run: pnpm deps:check
 
       - name: Unit tests
-        run: pnpm test
+        # Cap turbo concurrency: running all ~26 package suites at once (each with
+        # its own vitest worker pool) oversubscribes the shared runner and starves
+        # individual tests into per-test timeouts. 3 at a time + the 60s global
+        # timeout keeps it reliable.
+        run: pnpm test -- --concurrency=3
