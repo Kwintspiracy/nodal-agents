@@ -15,14 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No `version:` here on purpose — pnpm/action-setup@v4 reads the
       # version from the `packageManager` field in the root package.json.
       # Specifying both causes ERR_PNPM_BAD_PM_VERSION.
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'

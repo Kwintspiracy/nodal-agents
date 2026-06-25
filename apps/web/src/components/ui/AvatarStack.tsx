@@ -38,9 +38,7 @@ function initials(name: string): string {
 export default function AvatarStack({ avatars, max = 5, label, className = '' }: Props) {
   if (avatars.length === 0) {
     return label ? (
-      <span className={`font-sans text-[13px] leading-none text-ink-3 ${className}`}>
-        {label}
-      </span>
+      <span className={`font-sans text-[13px] leading-none text-ink-3 ${className}`}>{label}</span>
     ) : null;
   }
   const head = avatars.slice(0, max);

@@ -159,9 +159,7 @@ export default function RootContextClient({
                       <span className="w-3 shrink-0 text-[12px] text-ink-4">
                         {open ? '▾' : '▸'}
                       </span>
-                      <span className="shrink-0 text-[14px] font-semibold text-ink">
-                        {s.name}
-                      </span>
+                      <span className="shrink-0 text-[14px] font-semibold text-ink">{s.name}</span>
                       {s.description && (
                         <span className="min-w-0 truncate text-[13px] text-ink-3">
                           — {s.description}

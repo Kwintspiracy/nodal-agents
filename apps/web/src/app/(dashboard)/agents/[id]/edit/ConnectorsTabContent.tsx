@@ -481,9 +481,7 @@ function Section({
   return (
     <section className="space-y-2">
       <div>
-        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">
-          {label}
-        </div>
+        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">{label}</div>
         {hint && <p className="mt-1 text-[12px] leading-[1.5] text-ink-3">{hint}</p>}
       </div>
       <div className="space-y-2">{children}</div>

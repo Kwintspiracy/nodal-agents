@@ -660,9 +660,7 @@ function SectionHead({
   return (
     <div className="mb-4 flex items-start justify-between gap-4">
       <div>
-        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">
-          {label}
-        </div>
+        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">{label}</div>
         {hint && <p className="mt-1 text-[13px] leading-[1.5] text-ink-3">{hint}</p>}
       </div>
       {right}

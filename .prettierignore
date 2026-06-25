@@ -10,3 +10,10 @@ pnpm-lock.yaml
 playwright-report
 test-results
 next-env.d.ts
+
+# Generated / build artifacts — regenerated each build, never format-check them
+# (prettier does NOT read .gitignore, so gitignored generated files must be
+# listed here too or `prettier --check .` flags them locally).
+apps/docs/.source/
+apps/docs/content/docs/reference/
+pack/

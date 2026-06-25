@@ -26,4 +26,12 @@ export default tseslint.config(
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },
+  {
+    // The CLI speaks to the user through stdout — console.log IS its output here,
+    // not a stray debug line. Allow all console methods in apps/cli.
+    files: ['apps/cli/**/*.{ts,tsx,mts,cts}'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 );
