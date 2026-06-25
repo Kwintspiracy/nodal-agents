@@ -173,35 +173,55 @@ async function extractBuffer(buf: Buffer, destDir: string, workDir: string): Pro
     // and reject any entry whose resolved path escapes destDir.
     // The filter signature is (path, Stats | ReadEntry): during extraction the
     // second argument is always a ReadEntry; Stats is only used when creating.
-    // IMPORTANT: this filter runs during header parse, BEFORE node-tar writes the
-    // entry body — so throwing here aborts extraction before any bytes hit disk.
+    //
+    // CRITICAL: the filter must NOT throw. node-tar runs it inside the tar parse
+    // stream, and an exception thrown here does NOT reject the tarExtract()
+    // promise — it leaks the stream and the promise hangs forever (observed:
+    // install.test's tar-symlink case timed out at 60s on Linux CI, while Windows
+    // silently skipped it because it can't create the symlink fixture). Instead we
+    // RECORD the first violation and return false — returning false during the
+    // header parse means the offending entry's body is never written to disk —
+    // then let extraction finish and throw afterwards.
+    let violation: SkillFetchError | null = null;
     const filter = (entryPath: string, entry: Stats | ReadEntry): boolean => {
+      if (violation) return false;
       entryCount++;
       if (entryCount > MAX_ENTRIES) {
-        throw new SkillFetchError(
+        violation = new SkillFetchError(
           `Archive contains too many entries (max ${MAX_ENTRIES}). Aborting extraction.`,
         );
+        return false;
       }
       // entry.type exists on ReadEntry (extraction). Stats has no .type field —
       // this path is only reached during extraction so we cast safely.
       const type: string = (entry as ReadEntry).type ?? 'File';
       if (type !== 'File' && type !== 'OldFile' && type !== 'Directory') {
-        throw new SkillFetchError(
+        violation = new SkillFetchError(
           `Archive contains a disallowed entry type "${type}" at path "${entryPath}". ` +
             `Only regular files and directories are permitted.`,
         );
+        return false;
       }
       const abs = resolve(join(destDir, entryPath));
       if (abs !== destResolved && !abs.startsWith(destWithSep)) {
-        throw new SkillFetchError(`Archive entry escapes the target directory: "${entryPath}".`);
+        violation = new SkillFetchError(
+          `Archive entry escapes the target directory: "${entryPath}".`,
+        );
+        return false;
       }
       // Pre-extraction decompression-bomb guard: accumulate declared sizes from
-      // tar headers and throw before node-tar writes the entry body to disk.
-      const entrySize = (entry as ReadEntry).size ?? 0;
-      declaredBytes = accumulateDeclaredBytes(declaredBytes, entrySize, MAX_EXTRACTED_BYTES);
+      // tar headers; returning false skips the body before it hits disk.
+      try {
+        const entrySize = (entry as ReadEntry).size ?? 0;
+        declaredBytes = accumulateDeclaredBytes(declaredBytes, entrySize, MAX_EXTRACTED_BYTES);
+      } catch (e) {
+        violation = e instanceof SkillFetchError ? e : new SkillFetchError(String(e));
+        return false;
+      }
       return true;
     };
     await tarExtract({ file: tgz, cwd: destDir, filter });
+    if (violation) throw violation;
     // Post-extraction decompression-bomb backstop (catches any discrepancy between
     // the declared size in the header and the actual bytes written to disk).
     const extractedBytes = await sumExtractedBytes(destDir);
