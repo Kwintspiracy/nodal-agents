@@ -49,3 +49,16 @@ start-pg-screenshots.ts
 apps/runner/ComfyUI_*.png
 apps/runner/zim_*.png
 /test-screenshots/
+
+# Local dogfood / diagnostic Playwright artifacts created by sub-agents during
+# live sessions. They hardcode Windows paths (D:\…\test-screenshots) and need a
+# running local stack, so they are NOT portable — kept on disk but out of the
+# committed e2e suite (vitest already excludes tests/e2e/; CI only runs vitest).
+apps/web/tests/e2e/dogfood-audit*.spec.ts
+apps/web/tests/e2e/bell-diag.spec.ts
+apps/web/tests/e2e/bell-approval.spec.ts
+apps/web/tests/e2e/command-execution-yolo.spec.ts
+apps/web/playwright.local-trust.config.ts
+apps/web/pw-onboarding-verify.cjs
+apps/web/pw-onboarding-verify.mjs
+/dogfood-root-context.md

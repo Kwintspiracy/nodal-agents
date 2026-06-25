@@ -1,0 +1,29 @@
+# Normalize all text files to LF inside the repo, regardless of the contributor's
+# OS or core.autocrlf setting. Without this, Windows checkouts (core.autocrlf=true)
+# show hundreds of files as "modified" purely from CRLF↔LF, drowning real diffs.
+* text=auto eol=lf
+
+# Scripts that Windows tooling expects to be CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never touch their bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.otf binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.tar binary
+*.mp4 binary
+*.webm binary
