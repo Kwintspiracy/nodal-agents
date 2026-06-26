@@ -11,9 +11,12 @@
 //   - reply to a previous bot msg  → continuation
 // Anything else in a group is ignored to avoid the bot replying to every line.
 
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
-import type { TelegramUpdate } from '@nodal-agents/delivery';
+import { getTelegramFile, type TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
@@ -21,6 +24,14 @@ import { triggerWorker } from '../routes/agent.ts';
 export interface HandleResult {
   /** A job was created — caller should triggerWorker after txn commits. */
   jobId?: string;
+  /**
+   * Present when the message carried a photo. The DOWNLOAD is network I/O, so it
+   * must happen OUTSIDE this DB transaction: the poller takes this, downloads the
+   * file, saves it to the shared workspace (telegram/<chatId>/<jobId>.<ext>), and
+   * upgrades the job to a multimodal [text + image] message — all before it
+   * triggers the worker.
+   */
+  photo?: { fileId: string; chatId: string; text: string };
   /** The update was filtered out. */
   skipped?:
     | 'no_message'
@@ -48,7 +59,9 @@ export async function handleTelegramUpdate(args: {
   const message = update.message;
   if (!message) return { skipped: 'no_message' };
 
-  const text = message.text ?? '';
+  // The user's words live in `text` for a plain message, or `caption` when the
+  // message carries media (a photo/document). Read both.
+  const text = message.text ?? message.caption ?? '';
   const chat = message.chat ?? {};
   const chatId = chat.id;
   const chatType = chat.type ?? 'private';
@@ -56,7 +69,15 @@ export async function handleTelegramUpdate(args: {
   const senderName = sender.first_name ?? 'Someone';
   const senderUsername = sender.username ?? '';
 
-  if (!text || chatId === undefined) return { skipped: 'no_text' };
+  // Telegram sends photo sizes in ascending order; the last is the highest res.
+  const largestPhoto =
+    Array.isArray(message.photo) && message.photo.length > 0
+      ? message.photo[message.photo.length - 1]
+      : undefined;
+  const hasPhoto = largestPhoto !== undefined;
+
+  // Skip only when there is NEITHER text NOR a photo (sticker / service message).
+  if ((!text && !hasPhoto) || chatId === undefined) return { skipped: 'no_text' };
 
   const isGroup = chatType === 'group' || chatType === 'supergroup';
 
@@ -115,6 +136,12 @@ export async function handleTelegramUpdate(args: {
     taskText = `[Message from ${senderName}${senderUsername ? ` (@${senderUsername})` : ''}]: ${body}`;
   }
 
+  // A photo with no caption still becomes a job — give it a neutral task so the
+  // agent has context alongside the image (the poller attaches the image next).
+  if (!taskText.trim() && hasPhoto) {
+    taskText = 'Image envoyée (sans légende).';
+  }
+
   const [job] = await tx
     .insert(agentJobs)
     .values({
@@ -124,6 +151,8 @@ export async function handleTelegramUpdate(args: {
       task: taskText,
       chatId: String(chatId),
       status: 'pending',
+      // Text-only at insert; when there's a photo the poller upgrades this to a
+      // multimodal [text + image] message after downloading the file.
       messages: [{ role: 'user', content: taskText }],
     })
     .returning({ id: agentJobs.id });
@@ -141,7 +170,12 @@ export async function handleTelegramUpdate(args: {
     .set({ lastSeenChatIdTelegram: String(chatId) })
     .where(eq(agents.id, receivingAgentId));
 
-  return { jobId: job.id };
+  return {
+    jobId: job.id,
+    photo: largestPhoto
+      ? { fileId: largestPhoto.file_id, chatId: String(chatId), text: taskText }
+      : undefined,
+  };
 }
 
 /**
@@ -150,6 +184,67 @@ export async function handleTelegramUpdate(args: {
  */
 export function triggerJobWorker(jobId: string, env: RunnerEnv): void {
   void triggerWorker(jobId, env);
+}
+
+/**
+ * Download an inbound Telegram photo and attach it to the job. Runs in the poller
+ * AFTER the create-job transaction commits (network I/O must not sit inside a DB
+ * txn), and BEFORE the worker is triggered (so it sees the complete job).
+ *
+ * The image is saved to the entity's SHARED workspace at
+ *   <shared>/telegram/<chatId>/<jobId>.<ext>
+ * — persistent, traceable, and reachable by the agent's `file_*` tools and by any
+ * sub-agent it delegates to. The job's single user message is upgraded from
+ * text-only to multimodal `[text, image]`, with the image stored as its absolute
+ * path; executeJob hydrates that path into actual bytes for the LLM call (so the
+ * messages JSONB stays lean — no base64 in the DB).
+ *
+ * Best-effort by contract: callers wrap this in try/catch. On failure the job
+ * stays text-only and the worker still runs (the agent reports it couldn't load
+ * the image rather than silently doing nothing).
+ */
+export async function attachInboundPhoto(args: {
+  jobId: string;
+  entityId: string;
+  botToken: string;
+  photo: { fileId: string; chatId: string; text: string };
+  db: RunnerDeps['db'];
+}): Promise<string> {
+  const { jobId, entityId, botToken, photo, db } = args;
+
+  const download = await getTelegramFile(botToken, photo.fileId);
+  // Mirror execute.ts: the shared workspace lives at
+  // ~/.nodalai/workspaces/<entityId>/shared
+  const dir = join(
+    homedir(),
+    '.nodalai',
+    'workspaces',
+    entityId,
+    'shared',
+    'telegram',
+    photo.chatId,
+  );
+  await mkdir(dir, { recursive: true });
+  const ext = download.ext === 'bin' ? 'jpg' : download.ext;
+  const filePath = join(dir, `${jobId}.${ext}`);
+  await writeFile(filePath, download.bytes);
+
+  await db
+    .update(agentJobs)
+    .set({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: photo.text },
+            { type: 'image', image: filePath },
+          ],
+        },
+      ],
+    })
+    .where(eq(agentJobs.id, jobId));
+
+  return filePath;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

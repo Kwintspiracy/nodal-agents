@@ -322,6 +322,55 @@ async function callBotApi<T>(
   return json.result;
 }
 
+export interface TelegramFileDownload {
+  bytes: Uint8Array;
+  /** Lowercase extension WITHOUT the dot, derived from the file_path (e.g. 'jpg'). */
+  ext: string;
+}
+
+/**
+ * Download a Telegram file by its file_id: getFile resolves the file_path, then
+ * we GET it from the file endpoint. Returns the raw bytes + a best-effort
+ * extension. The bot token is the credential — redacted from any error message.
+ */
+export async function getTelegramFile(
+  botToken: string,
+  fileId: string,
+): Promise<TelegramFileDownload> {
+  const file = await callBotApi<{ file_path?: string }>(botToken, 'getFile', { file_id: fileId });
+  const filePath = file.file_path;
+  if (!filePath) {
+    throw new DeliveryError(
+      'telegram_request_failed',
+      'telegram_request_failed: getFile returned no file_path',
+    );
+  }
+  const url = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
+    throw new DeliveryError(
+      'telegram_request_failed',
+      `telegram_request_failed: file download error: ${safeMsg}`,
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  if (!res.ok) {
+    throw new DeliveryError(
+      'telegram_request_failed',
+      `telegram_request_failed: file download HTTP ${res.status}`,
+    );
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const ext = (filePath.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+  return { bytes, ext };
+}
+
 /**
  * Validate a bot token by calling Telegram's getMe.
  * Throws `telegram_invalid_token` on auth failure.
@@ -349,6 +398,19 @@ export interface TelegramUpdate {
   message?: {
     message_id?: number;
     text?: string;
+    /** Caption accompanying a photo/document/video — where the user's words live
+     *  when the message carries media instead of plain text. */
+    caption?: string;
+    /** Photo sizes, smallest → largest. The last entry is the highest resolution. */
+    photo?: Array<{
+      file_id: string;
+      file_unique_id?: string;
+      width?: number;
+      height?: number;
+      file_size?: number;
+    }>;
+    /** A file attachment (e.g. an image sent as a document to preserve quality). */
+    document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
     chat?: { id?: number; type?: string };
     from?: { id?: number; first_name?: string; username?: string; is_bot?: boolean };
     reply_to_message?: { from?: { is_bot?: boolean } };

@@ -82,6 +82,7 @@ import { triggerWorker } from '../routes/agent.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import type { RunnerDeps } from '../deps.ts';
 import { notifyApprovalCreated } from '../approvals/notify.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -194,6 +195,59 @@ export function compactOldToolResults(
     return { ...m, content };
   });
   return { messages: out, evicted };
+}
+
+/**
+ * Resolve inbound media stored as local file paths into actual LLM image inputs.
+ *
+ * The Telegram poller saves an inbound photo to the shared workspace and writes
+ * the job's user message as `[{type:'text'}, {type:'image', image: '<abs path>'}]`
+ * — a PATH, not bytes, so the messages JSONB stays lean and the file is reusable
+ * by the agent's file_* tools. Here, just before the LLM call, we:
+ *   - vision-capable model → load the file into a Uint8Array the AI SDK can send;
+ *   - non-vision model      → replace the image with a text note so the agent
+ *     says it can't see the picture instead of hallucinating a description.
+ * Mutates `messages` in place; best-effort per part (a missing file degrades to a
+ * note, never throws).
+ */
+/**
+ * Model-aware vision check. The provider-level CAPABILITY_MATRIX is conservative
+ * (openrouter/ollama/openai-compatible default to vision:false because it depends
+ * on the underlying model), so we ALSO recognise well-known vision models by id —
+ * letting a vision model on e.g. OpenRouter receive the image even when its
+ * provider flag is off. False stays false for plainly text-only models.
+ */
+function modelCanSeeImages(model: string): boolean {
+  return /gpt-4o|gpt-4\.1|chatgpt|o3|o4-|claude|gemini|pixtral|llava|qwen.*vl|[-/]vl[-:]|vision|llama.*(vision|scout|maverick)|glm-4\.?\d?v|grok.*vision|internvl|molmo/i.test(
+    model,
+  );
+}
+
+async function hydrateMediaParts(messages: ModelMessage[], canSeeImages: boolean): Promise<void> {
+  for (const m of messages) {
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+    const parts = m.content as unknown as Array<Record<string, unknown>>;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (!p || p['type'] !== 'image' || typeof p['image'] !== 'string') continue;
+      const ref = p['image'] as string;
+      if (/^(https?:|data:)/i.test(ref)) continue; // already inline / fetchable
+      if (!canSeeImages) {
+        parts[i] = {
+          type: 'text',
+          text:
+            '[The user attached an image, but this model cannot see images. ' +
+            'Tell them so plainly and suggest switching this agent to a vision-capable model.]',
+        };
+        continue;
+      }
+      try {
+        parts[i] = { type: 'image', image: new Uint8Array(await readFile(ref)) };
+      } catch {
+        parts[i] = { type: 'text', text: '[Attached image could not be loaded.]' };
+      }
+    }
+  }
 }
 
 /**
@@ -629,6 +683,15 @@ async function runJob(
       forcedToolChoice: modelSupportsForcedToolChoice,
     });
   }
+
+  // Inbound media (e.g. a Telegram photo) is stored in the user message as an
+  // image part whose `image` is a LOCAL FILE PATH (telegram/handler.ts keeps it a
+  // path so the messages JSONB stays lean). Resolve it now that we know the model:
+  // load the bytes for a vision model, or collapse it to a text note otherwise.
+  await hydrateMediaParts(
+    messages,
+    llmClient.capabilities.vision === true || modelCanSeeImages(llmClient.config.model),
+  );
 
   // ── 4. Orchestrator? ──────────────────────────────────────────────────────────
   // A unified orchestrator receives BOTH delegation toolsets (assign_* + create_task)

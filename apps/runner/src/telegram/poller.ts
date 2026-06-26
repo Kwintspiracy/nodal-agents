@@ -14,7 +14,12 @@ import { agents } from '@nodal-agents/db';
 import { getTelegramUpdates, DeliveryError, type TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
-import { handleTelegramUpdate, triggerJobWorker } from './handler.ts';
+import {
+  handleTelegramUpdate,
+  triggerJobWorker,
+  attachInboundPhoto,
+  type HandleResult,
+} from './handler.ts';
 import { handleApprovalCallback } from './approval-callback.ts';
 
 export interface PollerOpts {
@@ -129,6 +134,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       }
 
       let createdJobId: string | undefined;
+      let createdPhoto: HandleResult['photo'];
 
       try {
         // Atomic: create job + advance offset. If anything throws, the txn
@@ -147,6 +153,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
             .where(eq(agents.id, agentId));
 
           createdJobId = result.jobId;
+          createdPhoto = result.photo;
         });
       } catch (err) {
         console.error(
@@ -163,6 +170,27 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
 
       offset = newOffset;
       backoffMs = BACKOFF_INITIAL_MS;
+
+      // Inbound photo: download it (network — out of the txn) and attach it to
+      // the job BEFORE the worker runs, so the agent sees the image. Best-effort:
+      // a failed download leaves the job text-only and the worker still runs.
+      if (createdJobId && createdPhoto) {
+        try {
+          await attachInboundPhoto({
+            jobId: createdJobId,
+            entityId: agentEntityId,
+            botToken,
+            photo: createdPhoto,
+            db: deps.db,
+          });
+        } catch (err) {
+          console.warn(
+            `[telegram-poller agent=${agentId}] photo attach failed for job ${createdJobId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
 
       // Fire worker AFTER commit so we never wake a worker for a rolled-back job.
       if (createdJobId) {
