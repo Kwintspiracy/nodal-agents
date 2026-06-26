@@ -23,7 +23,12 @@ import {
   entities as entitiesTable,
   getDecryptedCredentialById,
 } from '@nodal-agents/db';
-import { enabledMetaTools, parseRootGrants, modelContextWindow } from '@nodal-agents/shared';
+import {
+  enabledMetaTools,
+  parseRootGrants,
+  modelContextWindow,
+  modelCanSeeImages,
+} from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { createMcpTools, slugToPrefix, connectMcp } from '@nodal-agents/adapter-mcp';
 import {
@@ -195,19 +200,6 @@ export function compactOldToolResults(
     return { ...m, content };
   });
   return { messages: out, evicted };
-}
-
-/**
- * Model-aware vision check. The provider-level CAPABILITY_MATRIX is conservative
- * (openrouter/ollama/openai-compatible default to vision:false because it depends
- * on the underlying model), so we ALSO recognise well-known vision models by id —
- * letting a vision model on e.g. OpenRouter receive the image even when its
- * provider flag is off. False stays false for plainly text-only models.
- */
-function modelCanSeeImages(model: string): boolean {
-  return /gpt-4o|gpt-4\.1|chatgpt|o3|o4-|claude|gemini|pixtral|llava|qwen.*vl|[-/]vl[-:]|vision|llama.*(vision|scout|maverick)|glm-4\.?\d?v|grok.*vision|internvl|molmo|minimax[\s./_-]*m3/i.test(
-    model,
-  );
 }
 
 /**

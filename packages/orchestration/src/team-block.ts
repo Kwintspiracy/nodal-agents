@@ -14,6 +14,7 @@ import {
   mcpServers,
 } from '@nodal-agents/db';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import { modelCanSeeImages } from '@nodal-agents/shared';
 import type { AgentId, AnyDrizzleDb } from './types';
 import { detectOrchestratorMode } from './orchestrator-mode';
 import { summarizePurpose } from './router/assign-tools';
@@ -44,6 +45,7 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
       agentRole: agents.role,
       agentActive: agents.active,
       agentPersonality: agents.personality,
+      agentModel: agents.model,
     })
     .from(agentAssignments)
     .innerJoin(agents, eq(agentAssignments.subAgentId, agents.id))
@@ -262,11 +264,25 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
   lines.push('Pick ONE style per request — do not mix them in the same job. ' + defaultLean + '\n');
   lines.push('Your agents:');
   for (const row of childRows) {
-    const { subAgentId, agentName, agentSlug, agentRole, instructions, agentPersonality } = row;
+    const {
+      subAgentId,
+      agentName,
+      agentSlug,
+      agentRole,
+      instructions,
+      agentPersonality,
+      agentModel,
+    } = row;
     const toolSlug = agentSlug.replace(/-/g, '_');
     // What the agent is FOR (summary of its personality) — drives correct routing.
     const purpose = summarizePurpose(agentPersonality);
     const purposeTag = purpose ? `\n  Purpose: ${purpose}` : '';
+    // Surface the agent's LLM vision capability so the orchestrator can route an
+    // image to a teammate that can actually SEE it (the image travels with the
+    // delegation). Only shown when true — a positive capability the model routes on.
+    const visionTag = modelCanSeeImages(agentModel ?? '')
+      ? '\n  LLM: can see images (vision) — route image tasks here'
+      : '';
     const skills = skillMap.get(subAgentId) ?? [];
     const skillsTag =
       skills.length > 0
@@ -283,7 +299,7 @@ export async function buildTeamBlock(parentAgentId: AgentId, db: AnyDrizzleDb): 
     const instrTag = instructions ? `\n  Instructions: ${instructions}` : '';
     lines.push(
       `- **${agentName}**${roleTag} — assign tool \`assign_${toolSlug}\`, task handle ` +
-        `\`${agentSlug}\`${purposeTag}${skillsTag}${connectorsTag}${instrTag}`,
+        `\`${agentSlug}\`${purposeTag}${visionTag}${skillsTag}${connectorsTag}${instrTag}`,
     );
   }
 

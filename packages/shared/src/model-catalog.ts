@@ -14,6 +14,16 @@ export interface ModelCapabilities {
   tools: boolean;
   forcedToolChoice: boolean;
   /**
+   * The model accepts IMAGE input (it can "see" pictures). Sourced from the
+   * providers themselves — OpenRouter's `/api/v1/models` `architecture.
+   * input_modalities` and models.dev's `modalities.input` (refresh with
+   * `node scripts/refresh-model-vision.mjs`). Drives whether an inbound image is
+   * sent to the model AND is surfaced in the orchestrator's team block so it can
+   * route an image to a vision-capable teammate. Stamped onto every entry at load
+   * from VISION_MODEL_IDS; absence/false = text-only.
+   */
+  vision?: boolean;
+  /**
    * The model emits a hidden chain-of-thought (a "reasoning model"). On
    * OpenRouter these come back as `reasoning_details` and MUST be echoed back
    * unmodified on the next turn for the model to continue reasoning across tool
@@ -301,6 +311,55 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     },
   ],
 };
+
+/**
+ * Models that accept IMAGE input, by model id (both the namespaced OpenRouter
+ * form and the native-provider form). Source of truth fetched from the providers:
+ * OpenRouter's `/api/v1/models` (`architecture.input_modalities` includes "image")
+ * and models.dev (`modalities.input`). Refresh with
+ * `node scripts/refresh-model-vision.mjs`. Keyed by model id (not provider)
+ * because a model is vision-capable wherever it's served.
+ */
+export const VISION_MODEL_IDS = new Set<string>([
+  // OpenRouter (verified via /api/v1/models)
+  'anthropic/claude-haiku-4.5',
+  'anthropic/claude-opus-4.7',
+  'anthropic/claude-opus-4.7-fast',
+  'anthropic/claude-opus-4.8',
+  'anthropic/claude-opus-4.8-fast',
+  'anthropic/claude-sonnet-4.6',
+  'google/gemini-3.1-flash-lite-preview',
+  'google/gemini-3.1-pro-preview',
+  'google/gemini-3.5-flash',
+  'google/gemma-4-31b-it',
+  'minimax/minimax-m3',
+  'moonshotai/kimi-k2.7-code',
+  // Native-provider forms
+  'claude-opus-4-8',
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5-20251001',
+  'gpt-5',
+  'gpt-5-mini',
+  'gemini-2.0-flash',
+  'gemini-2.5-pro',
+  'mistral-large-latest',
+  'MiniMax-M3',
+]);
+
+// Stamp the fetched vision capability onto every catalogued entry so the picker
+// and any catalog consumer sees it alongside tools/reasoning — no per-entry edit.
+for (const entries of Object.values(MODEL_CATALOG)) {
+  for (const e of entries) e.capabilities.vision = VISION_MODEL_IDS.has(e.modelId);
+}
+
+/**
+ * Does this model accept image input? Keyed by model id (the canonical truth from
+ * the providers). Unknown/custom → false (conservative: don't send an image to a
+ * model we can't confirm sees them, which would error the provider call).
+ */
+export function modelCanSeeImages(modelId: string): boolean {
+  return VISION_MODEL_IDS.has(modelId);
+}
 
 /** Look up a curated entry by (provider, modelId). Returns undefined for custom/unknown. */
 export function findModelCatalogEntry(
