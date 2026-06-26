@@ -61,6 +61,15 @@ export async function handleDelegation(
   // Compute delegation depth: child = parent.delegation_depth + 1
   const childDepth = (parentJob.delegationDepth ?? 0) + 1;
 
+  // Propagate any inbound image attachment (a Telegram photo, stored as a
+  // shared-workspace PATH) from the parent into the child's first message, so a
+  // vision-capable delegate can actually SEE the picture instead of only reading
+  // a path in text. The child's executeJob resolves the path for the child's own
+  // model (bytes if it can see images, a routing note otherwise).
+  const imageParts = extractImageAttachments(parentJob.messages);
+  const childContent: unknown =
+    imageParts.length > 0 ? [{ type: 'text', text: childTask }, ...imageParts] : childTask;
+
   // 2. Create the child job
   const [childJob] = await db
     .insert(agentJobs)
@@ -73,7 +82,7 @@ export async function handleDelegation(
       status: 'pending',
       parentJobId: parentJob.id as string,
       delegationDepth: childDepth,
-      messages: [{ role: 'user', content: childTask }],
+      messages: [{ role: 'user', content: childContent }],
     })
     .returning();
 
@@ -131,4 +140,26 @@ export async function handleDelegation(
       chatId: updatedParent.chatId,
     },
   };
+}
+
+/**
+ * Pull image attachment parts out of a job's `messages` (the multimodal user
+ * message a Telegram photo produces: `[{type:'text'}, {type:'image', image:path}]`).
+ * Returns only path-based image parts — the convention for inbound media that
+ * executeJob resolves per-agent. Empty when the parent carried no image.
+ */
+function extractImageAttachments(messages: unknown): Array<{ type: 'image'; image: string }> {
+  if (!Array.isArray(messages)) return [];
+  const out: Array<{ type: 'image'; image: string }> = [];
+  for (const m of messages) {
+    const content = (m as { content?: unknown } | null)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const p of content) {
+      const part = p as { type?: unknown; image?: unknown } | null;
+      if (part && part.type === 'image' && typeof part.image === 'string') {
+        out.push({ type: 'image', image: part.image });
+      }
+    }
+  }
+  return out;
 }

@@ -198,19 +198,6 @@ export function compactOldToolResults(
 }
 
 /**
- * Resolve inbound media stored as local file paths into actual LLM image inputs.
- *
- * The Telegram poller saves an inbound photo to the shared workspace and writes
- * the job's user message as `[{type:'text'}, {type:'image', image: '<abs path>'}]`
- * — a PATH, not bytes, so the messages JSONB stays lean and the file is reusable
- * by the agent's file_* tools. Here, just before the LLM call, we:
- *   - vision-capable model → load the file into a Uint8Array the AI SDK can send;
- *   - non-vision model      → replace the image with a text note so the agent
- *     says it can't see the picture instead of hallucinating a description.
- * Mutates `messages` in place; best-effort per part (a missing file degrades to a
- * note, never throws).
- */
-/**
  * Model-aware vision check. The provider-level CAPABILITY_MATRIX is conservative
  * (openrouter/ollama/openai-compatible default to vision:false because it depends
  * on the underlying model), so we ALSO recognise well-known vision models by id —
@@ -223,31 +210,81 @@ function modelCanSeeImages(model: string): boolean {
   );
 }
 
-async function hydrateMediaParts(messages: ModelMessage[], canSeeImages: boolean): Promise<void> {
+/**
+ * Guidance handed to a NON-vision agent that received an image, so the LLM itself
+ * decides what to do (routing is its call, never hardcoded): delegate to a vision
+ * teammate, or tell the human. The image always travels with a delegation
+ * (handleDelegation copies the attachment to the child job).
+ */
+function visionRoutingNote(path: string): string {
+  return (
+    `[The user attached an IMAGE (saved at ${path}). Your current model can't see images. ` +
+    `Decide what to do: if a teammate runs a vision-capable model, DELEGATE this to them — the ` +
+    `image travels with the delegation, so just assign them the task (e.g. "describe this image"). ` +
+    `If no agent in this workspace can see images, tell the user plainly and suggest switching an ` +
+    `agent to a vision model (Claude, Gemini, GPT-4o, or a vision model on OpenRouter). Never ` +
+    `pretend to describe an image you cannot see.]`
+  );
+}
+
+/**
+ * Resolve image attachments for the LLM call WITHOUT mutating the stored messages
+ * — the persisted messages keep the lean file PATH, which also lets the path
+ * travel to a delegated child. Returns a fresh array used only for this
+ * generateText:
+ *   - vision model     → load the file into bytes the AI SDK can send (cached);
+ *   - non-vision model → swap the image for a routing note (see visionRoutingNote).
+ * Fast-paths to the original array when there's no local-path image to resolve.
+ */
+async function hydrateForLlm(
+  messages: ModelMessage[],
+  canSeeImages: boolean,
+  cache: Map<string, Uint8Array>,
+): Promise<ModelMessage[]> {
+  const isLocalImagePart = (p: unknown): p is { type: 'image'; image: string } =>
+    !!p &&
+    typeof p === 'object' &&
+    (p as { type?: unknown }).type === 'image' &&
+    typeof (p as { image?: unknown }).image === 'string' &&
+    !/^(https?:|data:)/i.test((p as { image: string }).image);
+
+  const needs = messages.some(
+    (m) => m.role === 'user' && Array.isArray(m.content) && m.content.some(isLocalImagePart),
+  );
+  if (!needs) return messages;
+
+  const out: ModelMessage[] = [];
   for (const m of messages) {
-    if (m.role !== 'user' || !Array.isArray(m.content)) continue;
-    const parts = m.content as unknown as Array<Record<string, unknown>>;
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
-      if (!p || p['type'] !== 'image' || typeof p['image'] !== 'string') continue;
-      const ref = p['image'] as string;
-      if (/^(https?:|data:)/i.test(ref)) continue; // already inline / fetchable
-      if (!canSeeImages) {
-        parts[i] = {
-          type: 'text',
-          text:
-            '[The user attached an image, but this model cannot see images. ' +
-            'Tell them so plainly and suggest switching this agent to a vision-capable model.]',
-        };
+    if (m.role !== 'user' || !Array.isArray(m.content)) {
+      out.push(m);
+      continue;
+    }
+    const newParts: unknown[] = [];
+    for (const p of m.content as unknown[]) {
+      if (!isLocalImagePart(p)) {
+        newParts.push(p);
         continue;
       }
-      try {
-        parts[i] = { type: 'image', image: new Uint8Array(await readFile(ref)) };
-      } catch {
-        parts[i] = { type: 'text', text: '[Attached image could not be loaded.]' };
+      const ref = p.image;
+      if (!canSeeImages) {
+        newParts.push({ type: 'text', text: visionRoutingNote(ref) });
+        continue;
       }
+      let bytes = cache.get(ref);
+      if (!bytes) {
+        try {
+          bytes = new Uint8Array(await readFile(ref));
+          cache.set(ref, bytes);
+        } catch {
+          newParts.push({ type: 'text', text: '[Attached image could not be loaded.]' });
+          continue;
+        }
+      }
+      newParts.push({ type: 'image', image: bytes });
     }
+    out.push({ ...m, content: newParts } as ModelMessage);
   }
+  return out;
 }
 
 /**
@@ -684,14 +721,15 @@ async function runJob(
     });
   }
 
-  // Inbound media (e.g. a Telegram photo) is stored in the user message as an
-  // image part whose `image` is a LOCAL FILE PATH (telegram/handler.ts keeps it a
-  // path so the messages JSONB stays lean). Resolve it now that we know the model:
-  // load the bytes for a vision model, or collapse it to a text note otherwise.
-  await hydrateMediaParts(
-    messages,
-    llmClient.capabilities.vision === true || modelCanSeeImages(llmClient.config.model),
-  );
+  // Inbound media (e.g. a Telegram photo) lives in the user message as an image
+  // part whose `image` is a LOCAL FILE PATH (telegram/handler.ts keeps it a path
+  // so the messages JSONB stays lean AND the path can travel to a delegated
+  // child). Whether THIS agent can see it depends on its model — computed once;
+  // each LLM call resolves the path into bytes (vision) or a routing note
+  // (non-vision) via hydrateForLlm WITHOUT touching the stored/persisted messages.
+  const canSeeImages =
+    llmClient.capabilities.vision === true || modelCanSeeImages(llmClient.config.model);
+  const imageCache = new Map<string, Uint8Array>();
 
   // ── 4. Orchestrator? ──────────────────────────────────────────────────────────
   // A unified orchestrator receives BOTH delegation toolsets (assign_* + create_task)
@@ -1640,7 +1678,10 @@ async function runJob(
       try {
         response = await llmClient.generateText({
           system: systemPrompt,
-          messages,
+          // Resolve any image attachment (path → bytes for vision, or a routing
+          // note for non-vision) into a fresh array — the stored `messages` keep
+          // the lean path so it can still travel to a delegated child.
+          messages: await hydrateForLlm(messages, canSeeImages, imageCache),
           tools: aiSdkTools,
           toolChoice,
         });
