@@ -205,7 +205,7 @@ export function compactOldToolResults(
  * provider flag is off. False stays false for plainly text-only models.
  */
 function modelCanSeeImages(model: string): boolean {
-  return /gpt-4o|gpt-4\.1|chatgpt|o3|o4-|claude|gemini|pixtral|llava|qwen.*vl|[-/]vl[-:]|vision|llama.*(vision|scout|maverick)|glm-4\.?\d?v|grok.*vision|internvl|molmo/i.test(
+  return /gpt-4o|gpt-4\.1|chatgpt|o3|o4-|claude|gemini|pixtral|llava|qwen.*vl|[-/]vl[-:]|vision|llama.*(vision|scout|maverick)|glm-4\.?\d?v|grok.*vision|internvl|molmo|minimax[\s./_-]*m3/i.test(
     model,
   );
 }
