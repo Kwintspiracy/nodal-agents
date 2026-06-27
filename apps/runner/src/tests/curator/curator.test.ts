@@ -199,6 +199,9 @@ function makeCuratorEnv(
     CURATOR_MIN_SKILLS: overrides.curatorMinSkills ?? 5,
     CURATOR_INTERVAL_DAYS: overrides.curatorIntervalDays ?? 7,
     CURATOR_MAX_TURNS: 4,
+    CURATOR_MEMORY_STALE_DAYS: 60,
+    CURATOR_MEMORY_IMPORTANCE_MAX: 2,
+    CURATOR_MEMORY_MIN: 8,
     RETENTION_DAYS: 0,
   } as Parameters<typeof runCuratorTick>[2];
 }

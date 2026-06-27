@@ -101,6 +101,16 @@ const envSchema = z.object({
   CURATOR_MIN_SKILLS: z.coerce.number().default(5),
   CURATOR_INTERVAL_DAYS: z.coerce.number().default(7),
   CURATOR_MAX_TURNS: z.coerce.number().default(4),
+  // ─── Memory curator (Tier-2, Brick 4) — same cadence/gating as skills ─────────
+  // CURATOR_MEMORY_STALE_DAYS:     days before an agent-authored, NEVER-accessed,
+  //   low-importance fact is auto-archived (Phase 1, deterministic, reversible).
+  // CURATOR_MEMORY_IMPORTANCE_MAX: only facts at/below this importance are eligible
+  //   for the usage-based Phase-1 archival (high-importance facts are kept).
+  // CURATOR_MEMORY_MIN:            min non-archived facts per entity to trigger the
+  //   LLM curation pass (Phase 2: distill blobs, merge duplicates).
+  CURATOR_MEMORY_STALE_DAYS: z.coerce.number().default(60),
+  CURATOR_MEMORY_IMPORTANCE_MAX: z.coerce.number().default(2),
+  CURATOR_MEMORY_MIN: z.coerce.number().default(8),
   // Optional. When set, the reflection + curator passes use THIS model id instead of
   // the agent's model — resolved against the agent's existing LLM key (ideal for an
   // OpenRouter key where one key serves many models; point the cheap/reliable

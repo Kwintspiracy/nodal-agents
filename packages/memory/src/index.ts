@@ -38,6 +38,10 @@ export { searchMemories, keywordSearchMemories } from './search';
 export { backfillEmbeddings } from './backfill';
 export type { BackfillResult } from './backfill';
 
+// Tier-2 memory curator (deterministic lifecycle + provenance-guarded mutations)
+export { transitionMemoryLifecycle, archiveAgentMemory, updateAgentMemoryFact } from './curator';
+export type { MemoryLifecycleResult, MemoryCuratorError } from './curator';
+
 // Filter (pure functions)
 export { applySkillFilter, filterByTags } from './filter';
 
