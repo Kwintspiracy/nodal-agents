@@ -28,6 +28,14 @@ export const agentJobs = pgTable(
     chatId: text('chat_id'),
     systemPrompt: text('system_prompt'),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
+    /**
+     * Flattened plain-text transcript (task + assistant text + tool outputs +
+     * result) for full-text episodic search. Populated at job completion by
+     * flattenTranscript(). A generated `search_tsv tsvector` column + GIN index
+     * (raw SQL, migration 0050 — not expressible in the Drizzle schema builder)
+     * makes it queryable by the `search_history` builtin.
+     */
+    searchText: text('search_text'),
     toolsUsed: text('tools_used')
       .array()
       .default(sql`'{}'::text[]`),

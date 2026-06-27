@@ -51,6 +51,7 @@ export {
   returnResultTool,
   saveMemoryTool,
   queryMemoryTool,
+  searchHistoryTool,
   webSearchTool,
   dashboardPublishTool,
   DashboardPublishInputSchema,

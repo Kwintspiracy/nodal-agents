@@ -5,6 +5,7 @@ import type { ToolRegistry } from '../types';
 import { returnResultTool } from './return-result';
 import { saveMemoryTool } from './save-memory';
 import { queryMemoryTool } from './query-memory';
+import { searchHistoryTool } from './search-history';
 import { markMemoryHelpfulTool } from './mark-memory-helpful';
 import { markMemoryOutdatedTool } from './mark-memory-outdated';
 import { webSearchTool } from './web-search';
@@ -31,6 +32,7 @@ export { listModelsTool } from './list-models';
 export { listSchedulesTool } from './list-schedules';
 export { saveMemoryTool } from './save-memory';
 export { queryMemoryTool } from './query-memory';
+export { searchHistoryTool } from './search-history';
 export { markMemoryHelpfulTool } from './mark-memory-helpful';
 export { markMemoryOutdatedTool } from './mark-memory-outdated';
 export { webSearchTool } from './web-search';
@@ -81,6 +83,7 @@ export function registerBuiltins(registry: ToolRegistry): void {
   registry.register(listSchedulesTool);
   registry.register(saveMemoryTool);
   registry.register(queryMemoryTool);
+  registry.register(searchHistoryTool);
   registry.register(markMemoryHelpfulTool);
   registry.register(markMemoryOutdatedTool);
   registry.register(webSearchTool);
@@ -133,6 +136,7 @@ export const ALWAYS_ON_TOOLS = [
   'list_schedules',
   'save_memory',
   'query_memory',
+  'search_history',
   'mark_memory_helpful',
   'mark_memory_outdated',
   'dashboard_publish',
@@ -161,6 +165,7 @@ export const ALWAYS_ON_TOOL_DOCS: ReadonlyArray<{ name: string; description: str
   { name: listSchedulesTool.name, description: listSchedulesTool.description },
   { name: saveMemoryTool.name, description: saveMemoryTool.description },
   { name: queryMemoryTool.name, description: queryMemoryTool.description },
+  { name: searchHistoryTool.name, description: searchHistoryTool.description },
   { name: markMemoryHelpfulTool.name, description: markMemoryHelpfulTool.description },
   { name: markMemoryOutdatedTool.name, description: markMemoryOutdatedTool.description },
   { name: dashboardPublishTool.name, description: dashboardPublishTool.description },

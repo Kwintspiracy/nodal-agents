@@ -4,6 +4,7 @@
 import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { flattenTranscript } from './transcript-text.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -290,7 +291,14 @@ export async function completeJob(
       error: null,
       completedAt: new Date(),
       updatedAt: new Date(),
-      ...(messages !== undefined && { messages }),
+      // Persist the transcript AND its flattened search text together so the
+      // episodic full-text index (search_history) always reflects the final
+      // transcript. search_tsv is a generated column — setting search_text
+      // recomputes it. (Brick 2.)
+      ...(messages !== undefined && {
+        messages,
+        searchText: flattenTranscript(messages, result),
+      }),
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
@@ -363,8 +371,9 @@ export async function failJob(
       updatedAt: now,
       // Persist the transcript on failure (mirrors completeJob) so a failed job
       // is DIAGNOSABLE, not opaque. The resume/guard failure paths used to lose
-      // it entirely. Omitted ⇒ the stored messages are left untouched.
-      ...(messages ? { messages } : {}),
+      // it entirely. Omitted ⇒ the stored messages are left untouched. Also
+      // index it for episodic search — a failed run is still worth recalling.
+      ...(messages ? { messages, searchText: flattenTranscript(messages) } : {}),
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,

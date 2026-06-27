@@ -146,6 +146,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       chat_id text,
       system_prompt text,
       messages jsonb DEFAULT '[]',
+      search_text text,
+      search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED,
       tools_used text[] DEFAULT '{}',
       turn integer DEFAULT 0,
       result text,
