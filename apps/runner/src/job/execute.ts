@@ -747,6 +747,7 @@ async function runJob(
   const deployment = await getDeploymentContext(db, job.entityId ?? undefined);
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
+    ...(job.task ? { task: job.task } : {}),
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
     ...(cronWantsConfirmation ? { notifyOnSuccess: true } : {}),
     ...(job.parentJobId ? { isDelegated: true } : {}),

@@ -82,6 +82,50 @@ describe('selectMemoriesUnderBudget — pure', () => {
   });
 });
 
+describe('selectMemoriesUnderBudget — relevance ranking (Brick 1)', () => {
+  it('boosts task-relevant facts above higher-importance irrelevant ones', () => {
+    const irrelevant = makeMem('irrelevant', 'the office is in Paris', 5);
+    const relevant = makeMem('relevant', 'client email templates live in Drive', 2);
+    // relevant: importance 2 + 2 keyword hits (client,email) → score 6; irrelevant: 5
+    const out = selectMemoriesUnderBudget(
+      [irrelevant, relevant],
+      10_000,
+      'send the client email report',
+    );
+    expect(out.map((m) => m.id)).toEqual(['relevant', 'irrelevant']);
+  });
+
+  it('without a query, ranking is unchanged (pure importance) — backward compatible', () => {
+    const irrelevant = makeMem('irrelevant', 'the office is in Paris', 5);
+    const relevant = makeMem('relevant', 'client email templates live in Drive', 2);
+    const out = selectMemoriesUnderBudget([irrelevant, relevant], 10_000);
+    expect(out.map((m) => m.id)).toEqual(['irrelevant', 'relevant']);
+  });
+
+  it('a single weak keyword hit does NOT override a much-higher importance fact', () => {
+    // relevant: importance 1 + 1 hit (email) → 3; high: importance 5 → 5. Importance wins.
+    const high = makeMem('high', 'unrelated but critical', 5);
+    const weak = makeMem('weak', 'email signature line', 1);
+    const out = selectMemoriesUnderBudget([high, weak], 10_000, 'send an email');
+    expect(out[0]?.id).toBe('high');
+  });
+
+  it('when the budget fits only one, picks the on-topic fact over the off-topic one', () => {
+    const offTopic = makeMem('off', 'X'.repeat(60), 4); // importance 4, no match, cost 80
+    const onTopic = makeMem('on', 'deploy the staging server tonight', 2); // 2 hits, cost 53
+    const out = selectMemoriesUnderBudget([offTopic, onTopic], 60, 'deploy to staging now');
+    expect(out.map((m) => m.id)).toEqual(['on']);
+  });
+
+  it('matches across French accents/casing (Unicode tokenizer)', () => {
+    const relevant = makeMem('rel', 'génère une facture pour le client', 2);
+    const other = makeMem('other', 'random unrelated note', 4);
+    // query lowercased tokens include "facture" + "client" → 2 hits → score 6 > 4
+    const out = selectMemoriesUnderBudget([other, relevant], 10_000, 'Génère la FACTURE du client');
+    expect(out[0]?.id).toBe('rel');
+  });
+});
+
 // ─── DB-bound integration ─────────────────────────────────────────────────────
 
 let db: Awaited<ReturnType<typeof spinUpTestDb>>['db'];
@@ -163,6 +207,36 @@ describe('selectMemoriesForInjection — DB', () => {
     });
     expect(out.map((m) => m.id)).toEqual([kept.id]);
     expect(out.find((m) => m.id === archived.id)).toBeUndefined();
+  });
+
+  it('relevance-ranks the fetched pool against the query (lower-importance but on-topic wins)', async () => {
+    await db.delete(agentMemory);
+    await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'quarterly revenue is up 12 percent',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+    await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'the email server uses port 587 with TLS',
+      category: 'context',
+      importance: 2,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const out = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 1500,
+      query: 'configure the email server',
+    });
+    // On-topic (importance 2, hits email+server) outranks the importance-5 fact.
+    expect(out[0]?.fact).toContain('email server');
   });
 });
 

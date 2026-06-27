@@ -40,6 +40,13 @@ export interface JobContext {
   /** Origin channel of the job: 'api', 'telegram', 'cron', etc. */
   origin: string;
   /**
+   * The current task / user-message text. Used to relevance-rank the injected
+   * persistent-memory block so the limited budget surfaces facts about THIS
+   * request, not just the globally most-important ones. Omit to fall back to
+   * pure importance×recency ordering.
+   */
+  task?: string;
+  /**
    * Set to 'chat' ONLY for the jobless in-app chat turn (runChatTurn). On this
    * surface the agent has exactly ONE tool (run_task) — NOT its built-in tools,
    * connectors, or skills — so the prompt must not advertise them. Distinct from
@@ -434,6 +441,7 @@ export async function buildSystemPrompt(
       ? await selectMemoriesForInjection(db, {
           entityId: agent.entityId as string,
           maxChars: agent.memoryTokenBudget,
+          query: jobContext?.task,
         })
       : [];
   const memoryBlock = buildPersistentMemoryBlock(memoryRows);

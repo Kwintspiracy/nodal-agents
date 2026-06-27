@@ -28,15 +28,170 @@ import type { MemoryRow } from './crud';
  */
 const RENDER_OVERHEAD_PER_ENTRY = 20;
 
+// Relevance boost: when a query (the current task) is provided, facts whose text
+// overlaps the task float up so the limited budget is spent on what THIS job is
+// about — not just the globally most-important facts. Kept deliberately small so
+// importance still dominates: a fact gets at most RELEVANCE_MATCH_CAP keyword
+// hits counted, each worth RELEVANCE_WEIGHT importance-points. So a fully-relevant
+// fact (+4) can out-rank an irrelevant one up to 4 importance points higher, but
+// a top-importance(5) fact stays competitive. No query → no boost → identical to
+// the prior importance×recency behavior (backward compatible).
+const RELEVANCE_WEIGHT = 2;
+const RELEVANCE_MATCH_CAP = 2;
+
+// Common EN + FR function words. Dropped from the query so a "the"/"les" doesn't
+// match (and boost) every fact that happens to contain it — that noise would let
+// an irrelevant high-importance fact win on a stopword hit. Content words only.
+const STOPWORDS = new Set<string>([
+  // English
+  'the',
+  'and',
+  'for',
+  'are',
+  'was',
+  'were',
+  'but',
+  'not',
+  'you',
+  'your',
+  'his',
+  'her',
+  'its',
+  'our',
+  'their',
+  'this',
+  'that',
+  'these',
+  'those',
+  'with',
+  'from',
+  'into',
+  'out',
+  'can',
+  'could',
+  'will',
+  'would',
+  'should',
+  'shall',
+  'may',
+  'might',
+  'must',
+  'has',
+  'have',
+  'had',
+  'been',
+  'being',
+  'then',
+  'than',
+  'them',
+  'they',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'how',
+  'all',
+  'any',
+  'some',
+  'such',
+  'only',
+  'too',
+  'very',
+  'just',
+  'also',
+  'per',
+  'via',
+  'about',
+  // French
+  'les',
+  'des',
+  'une',
+  'est',
+  'été',
+  'pour',
+  'avec',
+  'dans',
+  'par',
+  'sur',
+  'que',
+  'qui',
+  'quoi',
+  'dont',
+  'pas',
+  'plus',
+  'mais',
+  'son',
+  'ses',
+  'mes',
+  'tes',
+  'nos',
+  'vos',
+  'leur',
+  'leurs',
+  'mon',
+  'ton',
+  'cette',
+  'ces',
+  'cet',
+  'aux',
+  'vers',
+  'chez',
+  'sans',
+  'sous',
+  'entre',
+  'tout',
+  'tous',
+  'toute',
+  'comme',
+  'donc',
+  'alors',
+  'ainsi',
+  'une',
+  'deux',
+  'ce',
+  'la',
+  'le',
+]);
+
 /**
- * Pure selector: sort the given memories by importance DESC, then recency
- * (last_accessed_at DESC, created_at DESC), and greedy-accumulate until the
- * char budget is reached. Returns the subset that fits, in sorted order.
+ * Tokenize a free-text query (the job task / user message) into lowercased
+ * content keywords: ≥3 chars, not a stopword, deduped, split on any
+ * non-letter/digit (Unicode-aware, so French accents survive). Exported for
+ * reuse + testing.
+ */
+export function tokenizeQuery(query: string | undefined | null): string[] {
+  if (!query) return [];
+  const seen = new Set<string>();
+  for (const raw of query.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    if (raw.length > 2 && !STOPWORDS.has(raw)) seen.add(raw);
+  }
+  return [...seen];
+}
+
+/** Count distinct query keywords that appear (as substrings) in the fact. */
+function relevanceScore(fact: string, queryTokens: readonly string[]): number {
+  if (queryTokens.length === 0) return 0;
+  const haystack = fact.toLowerCase();
+  let n = 0;
+  for (const t of queryTokens) if (haystack.includes(t)) n++;
+  return n;
+}
+
+/**
+ * Pure selector: rank the given memories and greedy-accumulate until the char
+ * budget is reached. Returns the subset that fits, in ranked order.
+ *
+ * Ranking = blended score DESC, then recency (last_accessed_at DESC, created_at
+ * DESC), then `id` (stable). The score is `importance + min(relevanceHits,
+ * RELEVANCE_MATCH_CAP) * RELEVANCE_WEIGHT` — so when `query` is given, facts
+ * relevant to the current task are prioritized; when it's absent the score is
+ * just `importance` (the prior behavior, unchanged).
  *
  * - `maxChars <= 0` returns `[]` (memory injection disabled for this agent).
  * - A single memory whose render cost exceeds the budget is skipped — never
  *   inject a partial fact (could change the meaning).
- * - Stable for the same input: ties broken by `id` as last resort.
  *
  * Char accounting matches `buildPersistentMemoryBlock` in
  * `packages/orchestration/src/system-prompt.ts`. If that rendering changes,
@@ -45,11 +200,18 @@ const RENDER_OVERHEAD_PER_ENTRY = 20;
 export function selectMemoriesUnderBudget(
   memories: ReadonlyArray<AgentMemory>,
   maxChars: number,
+  query?: string | null,
 ): AgentMemory[] {
   if (maxChars <= 0) return [];
 
+  const tokens = tokenizeQuery(query);
+  const score = (m: AgentMemory): number =>
+    m.importance + Math.min(relevanceScore(m.fact, tokens), RELEVANCE_MATCH_CAP) * RELEVANCE_WEIGHT;
+
   const sorted = [...memories].sort((a, b) => {
-    if (b.importance !== a.importance) return b.importance - a.importance;
+    const sb = score(b);
+    const sa = score(a);
+    if (sb !== sa) return sb - sa;
     const aTouched = a.last_accessed_at ?? a.created_at;
     const bTouched = b.last_accessed_at ?? b.created_at;
     if (aTouched !== bTouched) return bTouched.localeCompare(aTouched);
@@ -69,7 +231,11 @@ export function selectMemoriesUnderBudget(
 
 // ─── selectMemoriesForInjection ───────────────────────────────────────────────
 
-const MAX_CANDIDATES = 50;
+// The DB pool we rank in-app. Ordered by importance so the most-important facts
+// are always in the pool; widened from 50 so relevance ranking (Brick 1) can
+// surface a task-relevant fact that isn't in the top tier by importance alone.
+// Still bounded — the char budget injects only ~10-15 of these.
+const MAX_CANDIDATES = 200;
 
 /**
  * Fetch the top candidate memories for an agent's system-prompt block, then
@@ -96,7 +262,7 @@ const MAX_CANDIDATES = 50;
  */
 export async function selectMemoriesForInjection(
   db: AnyDrizzleDb,
-  opts: { entityId: string; maxChars: number },
+  opts: { entityId: string; maxChars: number; query?: string | null },
 ): Promise<AgentMemory[]> {
   if (opts.maxChars <= 0) return [];
 
@@ -114,5 +280,5 @@ export async function selectMemoriesForInjection(
     .limit(MAX_CANDIDATES);
 
   const memories = candidates.map((row) => rowToMemory(row as MemoryRow));
-  return selectMemoriesUnderBudget(memories, opts.maxChars);
+  return selectMemoriesUnderBudget(memories, opts.maxChars, opts.query);
 }

@@ -169,6 +169,7 @@ export async function runChatTurn(opts: {
   const systemPrompt = await buildSystemPrompt(agent, db, {
     origin: 'dashboard',
     surface: 'chat',
+    task: message,
     deployment,
   });
 
