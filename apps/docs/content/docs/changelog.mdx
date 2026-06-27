@@ -7,6 +7,13 @@ Notable releases, newest first. Pre-1.0: minor versions can carry breaking
 changes. Every release is published to npm as `nodal-agents` and tagged on
 GitHub — upgrade in place with `nodal-agents update` (your data is preserved).
 
+## v0.6.1 — The Vision Release · Jun 27, 2026
+
+Send a picture on Telegram and your agents can actually look at it.
+
+- **Inbound images.** A photo sent on Telegram now starts a job — it was silently dropped before. The image is saved to your shared workspace (`telegram/<chat>/<job>.<ext>`), reachable by the agent's file tools, and handed to the model — so "describe this image" works.
+- **Vision routing, by real capability.** Each model's image support is read from the providers themselves (OpenRouter + models.dev) and surfaced in the orchestrator's team view. A text-only orchestrator routes the picture to a vision-capable teammate — the image travels with the delegation — or tells you plainly if none can see it. No guessing.
+
 ## v0.6.0 — The Clarity Release · Jun 25, 2026
 
 Approvals that explain themselves, chat hand-offs that stay faithful, and session memory that knows when a conversation is over.
