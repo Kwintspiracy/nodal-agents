@@ -77,7 +77,7 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 - *API key* — Airtable · Apify · Firecrawl · Notion · Tavily
 
 **MCP servers** — over Streamable HTTP *and* stdio, plus add/edit your own:
-Apify · Blender · Canvas LMS · Cogni Cortex · Composio · Fetch · Filesystem · Git · GitHub · KeyShot · Linear · n8n · Notion · Perplexity · Photoshop · Playwright · PostgreSQL · Sentry · Stripe · Supabase · Unity · Unreal Engine
+Apify · Blender · Cogni Cortex · Composio · Fetch · Filesystem · Git · GitHub · KeyShot · Linear · n8n · Notion · Perplexity · Photoshop · Playwright · PostgreSQL · Sentry · Stripe · Supabase · Unity · Unreal Engine
 
 **Skills** — built-in: office editing (Excel/Word/PowerPoint), shell execution, Obsidian, Telegram etiquette, task planning, markdown output, citation discipline, research methodology, results delivery, language mirroring, HTML design. Plus **install any community `SKILL.md`** from GitHub / skills.sh / ClawHub — and agents can **write their own**.
 

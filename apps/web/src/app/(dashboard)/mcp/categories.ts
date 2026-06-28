@@ -25,7 +25,6 @@ export function mcpCategory(slug: string): string {
   if (slug === 'linear') return 'Productivity';
   if (slug === 'n8n') return 'Productivity';
   if (slug === 'notion') return 'Productivity';
-  if (slug === 'canvas') return 'Productivity';
   if (slug === 'blender') return 'Creative';
   if (slug === 'unity') return 'Creative';
   if (slug === 'unreal-engine') return 'Creative';

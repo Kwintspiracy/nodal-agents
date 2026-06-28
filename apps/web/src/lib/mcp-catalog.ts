@@ -474,24 +474,6 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     args: ['run', '--directory', '<adb-mcp-dir>', 'ps-mcp.py'],
     status: 'pending',
   },
-  {
-    slug: 'canvas',
-    label: 'Canvas',
-    description:
-      'Canvas LMS (Instructure) — manage courses, assignments, modules, enrollments, grades, and student data. Runs canvas-mcp-server locally via npx.',
-    serverUrl: null,
-    transport: 'stdio',
-    authScheme: 'header',
-    authParamName: 'Authorization',
-    keyPrefix: [],
-    verifyToolName: null,
-    docsHint:
-      'Set CANVAS_API_TOKEN (Canvas → Account → Settings → New Access Token) and CANVAS_DOMAIN (your institution domain, e.g. your_school.instructure.com). Runs the npm canvas-mcp-server via npx; first run downloads the package.',
-    command: 'npx',
-    args: ['-y', 'canvas-mcp-server'],
-    envVarNames: ['CANVAS_API_TOKEN', 'CANVAS_DOMAIN'],
-    status: 'pending',
-  },
   // ── Custom entries ────────────────────────────────────────────────────────
   // Reserved slugs — the action layer (createMcpServerFromCatalogAction)
   // detects these and substitutes user-supplied values (slug, auth scheme,
