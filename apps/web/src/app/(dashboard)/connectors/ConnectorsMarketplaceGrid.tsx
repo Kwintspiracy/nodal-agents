@@ -21,6 +21,7 @@ const CATEGORIES: ChipItem<string>[] = [
   { value: 'Data', label: 'Data' },
   { value: 'DevTools', label: 'DevTools' },
   { value: 'Comms', label: 'Comms' },
+  { value: 'Creative', label: 'Creative' },
   { value: 'Other', label: 'Other' },
 ];
 

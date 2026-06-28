@@ -530,6 +530,22 @@ importers:
         specifier: ^25.7.0
         version: 25.7.0
 
+  packages/adapters/poyo:
+    dependencies:
+      '@nodal-agents/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@nodal-agents/tools':
+        specifier: workspace:*
+        version: link:../../tools
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^25.7.0
+        version: 25.7.0
+
   packages/adapters/tavily:
     dependencies:
       '@nodal-agents/shared':
@@ -748,6 +764,9 @@ importers:
       '@nodal-agents/adapter-notion':
         specifier: workspace:*
         version: link:../adapters/notion
+      '@nodal-agents/adapter-poyo':
+        specifier: workspace:*
+        version: link:../adapters/poyo
       '@nodal-agents/adapter-tavily':
         specifier: workspace:*
         version: link:../adapters/tavily

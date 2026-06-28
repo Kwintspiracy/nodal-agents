@@ -22,6 +22,7 @@ const EXPECTED_SLUGS = [
   'firecrawl',
   'apify',
   'tavily',
+  'poyo',
 ] as const;
 
 const VALID_CREDENTIAL_SOURCES = [...CREDENTIAL_TYPES, 'api_key'] as const;

@@ -28,6 +28,7 @@ export const CONN_BRAND_COLORS: Record<string, string> = {
   firecrawl: '#f97316',
   tavily: '#6366f1',
   composio: '#000000',
+  poyo: '#7c3aed',
 };
 
 /**
@@ -60,6 +61,7 @@ const CONN_GLYPHS: Record<string, string> = {
   'cogni-cortex': 'CX',
   keyshot: 'KS',
   photoshop: 'Ps',
+  poyo: 'Po',
 };
 
 export function connGlyph(slug: string, label: string): string {

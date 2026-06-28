@@ -23,6 +23,7 @@ import { createDocsTools, DOCS_OPERATIONS } from '@nodal-agents/adapter-google-d
 import { createFirecrawlTools, FIRECRAWL_OPERATIONS } from '@nodal-agents/adapter-firecrawl';
 import { createApifyTools, APIFY_OPERATIONS } from '@nodal-agents/adapter-apify';
 import { createTavilyTools, TAVILY_OPERATIONS } from '@nodal-agents/adapter-tavily';
+import { createPoyoTools, POYO_OPERATIONS } from '@nodal-agents/adapter-poyo';
 import type { z } from 'zod';
 import type { ToolDefinition } from '@nodal-agents/tools';
 import type { CredentialType, OperationDescriptor } from '@nodal-agents/shared';
@@ -113,5 +114,11 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
     toolFactory: (t) =>
       createTavilyTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: TAVILY_OPERATIONS,
+  },
+  poyo: {
+    credentialType: 'api_key',
+    toolFactory: (t) =>
+      createPoyoTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: POYO_OPERATIONS,
   },
 };

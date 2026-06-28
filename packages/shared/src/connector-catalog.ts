@@ -112,4 +112,10 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     authType: 'api_key',
     docsHint: 'API key Tavily — app.tavily.com.',
   },
+  {
+    slug: 'poyo',
+    label: 'Poyo',
+    authType: 'api_key',
+    docsHint: 'API key Poyo — poyo.ai (API Console). Sent as a Bearer token.',
+  },
 ];

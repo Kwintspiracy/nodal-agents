@@ -23,5 +23,6 @@ export function catalogCategory(slug: string): string {
   if (slug === 'apify' || slug === 'firecrawl' || slug === 'tavily') return 'Data';
   if (slug === 'stripe') return 'Data';
   if (slug === 'postgres') return 'Data';
+  if (slug === 'poyo') return 'Creative';
   return 'Other';
 }
