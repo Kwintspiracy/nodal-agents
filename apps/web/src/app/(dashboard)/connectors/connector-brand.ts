@@ -108,6 +108,7 @@ const CONN_ICONS: Record<string, string> = {
   'mcp-fetch': '/connector-icons/fetch.svg',
   keyshot: '/connector-icons/keyshot.svg',
   composio: '/connector-icons/composio.png',
+  canvas: '/connector-icons/canvas.svg',
 };
 
 export function connIcon(slug: string): string | null {
