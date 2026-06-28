@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
 import Disc from '@/components/ui/Disc';
-import { connIcon } from '../connectors/connector-brand.ts';
+import { connIcon, connEmoji } from '../connectors/connector-brand.ts';
 import MonoCode from '@/components/ui/MonoCode';
 import StatusPill from '@/components/ui/StatusPill';
 import McpServerRow from './McpServerRow.tsx';
@@ -80,6 +80,7 @@ function McpRow({
   const [expanded, setExpanded] = useState(false);
   const glyph = catalogLabel.slice(0, 2).toUpperCase();
   const iconSrc = connIcon(instance.slug);
+  const emoji = connEmoji(instance.slug);
 
   return (
     <>
@@ -91,11 +92,13 @@ function McpRow({
               variant="conn"
               size="sm"
               shape="square"
-              background={iconSrc ? '#ffffff' : MCP_BLUE}
+              background={iconSrc || emoji ? '#ffffff' : MCP_BLUE}
             >
               {iconSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={iconSrc} alt="" className="h-4 w-4 object-contain" />
+              ) : emoji ? (
+                <span className="text-[15px] leading-none">{emoji}</span>
               ) : (
                 <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
                   {glyph}

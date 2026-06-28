@@ -103,8 +103,24 @@ const CONN_ICONS: Record<string, string> = {
   firecrawl: '/connector-icons/firecrawl.svg',
   apify: '/connector-icons/apify.svg',
   tavily: '/connector-icons/tavily.svg',
+  // Generic-tool + remaining brand icons: fetch → Lucide globe; keyshot favicon;
+  // composio favicon (PNG — no public SVG).
+  'mcp-fetch': '/connector-icons/fetch.svg',
+  keyshot: '/connector-icons/keyshot.svg',
+  composio: '/connector-icons/composio.png',
 };
 
 export function connIcon(slug: string): string | null {
   return CONN_ICONS[slug] ?? null;
+}
+
+/**
+ * Native OS emoji to render INSTEAD of a brand icon/monogram for a few slugs
+ * where the OS's own glyph is the best icon. The filesystem connector renders
+ * the folder emoji 📁 — which the OS draws natively (the macOS folder on Mac,
+ * the Windows folder on Windows). Returns null for everything else.
+ */
+export function connEmoji(slug: string): string | null {
+  if (slug === 'mcp-filesystem') return '📁';
+  return null;
 }
