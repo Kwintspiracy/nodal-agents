@@ -58,6 +58,7 @@ const CONN_GLYPHS: Record<string, string> = {
   'custom-http-mcp': '+',
   'custom-stdio-mcp': '+',
   'cogni-cortex': 'CX',
+  keyshot: 'KS',
 };
 
 export function connGlyph(slug: string, label: string): string {
@@ -85,6 +86,10 @@ const CONN_ICONS: Record<string, string> = {
   'mcp-github': '/connector-icons/github.svg',
   'mcp-postgres': '/connector-icons/postgresql.svg',
   'mcp-git': '/connector-icons/git.svg',
+  // 3D / creative MCP connectors (brand SVGs from simple-icons)
+  blender: '/connector-icons/blender.svg',
+  unity: '/connector-icons/unity.svg',
+  'unreal-engine': '/connector-icons/unreal-engine.svg',
 };
 
 export function connIcon(slug: string): string | null {
