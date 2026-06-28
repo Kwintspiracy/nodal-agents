@@ -63,6 +63,10 @@ async function insertCompletedJob(opts: {
   task: string;
   result: string | null;
   minutesAgo?: number;
+  /** When the reply was DELIVERED (completed_at), minutes ago. Defaults to unset
+   *  (→ the gap logic falls back to created_at). Set it to simulate a SLOW job
+   *  whose reply reached the user long after the message arrived. */
+  completedMinutesAgo?: number;
   status?: 'completed' | 'failed';
   /** Optional `messages` JSONB — defaults to `[]`. Used to exercise the
    * fallback chain in `extractAssistantReply` (tool-call extraction). */
@@ -83,6 +87,9 @@ async function insertCompletedJob(opts: {
       result: opts.result,
       messages: (opts.messages ?? []) as never,
       createdAt,
+      ...(opts.completedMinutesAgo !== undefined
+        ? { completedAt: new Date(Date.now() - opts.completedMinutesAgo * 60_000) }
+        : {}),
     })
     .returning({ id: agentJobs.id });
   if (!row) throw new Error('insert returned no row');
@@ -354,12 +361,13 @@ describe('loadThreadHistory', () => {
   });
 
   it('breaks the session at an internal idle gap — keeps only the contiguous recent run', async () => {
-    // old topic, then a > 30-min silence, then two recent turns 5 min apart.
+    // old topic, then a silence past the idle-reset (now 4h), then two recent
+    // turns a few min apart. The old topic is dropped; the recent run is kept.
     await insertCompletedJob({
       chatId: '12345',
       task: 'old topic',
       result: 'old reply',
-      minutesAgo: 50,
+      minutesAgo: 60 * 5, // 5h ago — past the 4h idle-reset gap
     });
     await insertCompletedJob({
       chatId: '12345',
@@ -393,12 +401,12 @@ describe('loadThreadHistory', () => {
   });
 
   it('returns [] when even the most recent prior turn is past the idle gap', async () => {
-    // Nothing newer than 40 min ago → the whole prior session is stale.
+    // Nothing newer than 5h ago → the whole prior session is stale (idle-reset = 4h).
     await insertCompletedJob({
       chatId: '12345',
       task: 'stale turn',
       result: 'stale reply',
-      minutesAgo: 40,
+      minutesAgo: 60 * 5,
     });
 
     const history = await loadThreadHistory({
@@ -413,8 +421,10 @@ describe('loadThreadHistory', () => {
     expect(history).toEqual([]);
   });
 
-  it('truncates any single message above the per-turn cap', async () => {
-    const huge = 'x'.repeat(10_000);
+  it('truncates a long message keeping BOTH head and tail (the conclusion survives)', async () => {
+    // A long reply whose load-bearing conclusion is at the END. Head+tail
+    // truncation must keep both the opening AND the closing instruction.
+    const huge = 'HEAD_OPENING ' + 'x'.repeat(10_000) + ' TAIL_CONCLUSION';
     await insertCompletedJob({
       chatId: '12345',
       task: 'short prompt',
@@ -434,25 +444,28 @@ describe('loadThreadHistory', () => {
     const s = summarize(history);
     expect(s).toHaveLength(2);
     const aText = s[1]?.text ?? '';
-    // Per-turn cap is 2000 chars; truncation adds a short marker.
-    expect(aText.length).toBeLessThanOrEqual(2_100);
+    // Per-turn cap is 2400 chars + a short marker.
+    expect(aText.length).toBeLessThanOrEqual(2_500);
     expect(aText).toContain('truncated');
+    // BOTH ends are preserved — not just the head.
+    expect(aText).toContain('HEAD_OPENING');
+    expect(aText).toContain('TAIL_CONCLUSION');
   });
 
   it('drops oldest pairs when the total char budget is exceeded — never an assistant orphan', async () => {
-    // Each turn below = 1500 chars (under the 2000 per-turn cap, no
-    // truncation), so each pair = 3000 chars. With BUDGET_CHARS=4000
-    // and 5 prior pairs (15 000 chars total), the helper must drop the
-    // oldest pairs until ≤ 4000, which leaves exactly 1 pair (3000 chars).
-    // All five within a single active session (5-min gaps, newest 5 min ago) so
-    // the gap-based reset keeps them all and the budget trim is what's exercised.
-    const big = 'y'.repeat(1_500);
-    for (let i = 0; i < 5; i++) {
+    // Each turn = 2400 chars (at the per-turn cap, no truncation), so each block
+    // counts ≈ 4800 chars in the budget. With BUDGET_CHARS=16000 and 8 prior
+    // blocks (≈38 400 total), the helper drops oldest blocks until ≤ 16000 →
+    // 3 blocks survive (≈14 400). All 8 are one active session (5-min gaps,
+    // newest 5 min ago) so the gap reset keeps them and the budget trim is what
+    // is exercised.
+    const big = 'y'.repeat(2_400);
+    for (let i = 0; i < 8; i++) {
       await insertCompletedJob({
         chatId: '12345',
         task: big,
         result: big,
-        minutesAgo: 25 - i * 5,
+        minutesAgo: 40 - i * 5,
       });
     }
 
@@ -465,11 +478,12 @@ describe('loadThreadHistory', () => {
       excludeJobId: '00000000-0000-0000-0000-000000000000',
     });
 
-    // Exactly one block must survive (3000 ≤ 4000 budget).
+    // 3 blocks survive (3×4800 = 14400 ≤ 16000; a 4th would be 19200 > 16000).
+    // Survivors are the MOST RECENT, in complete (user, assistant) pairs.
     const s = summarize(history);
-    expect(s).toHaveLength(2);
+    expect(s).toHaveLength(6);
     expect(s[0]?.role).toBe('user');
-    expect(s[1]?.role).toBe('assistant');
+    expect(s[5]?.role).toBe('assistant');
   });
 
   it('extracts the assistant reply from telegram_send_message when result is null', async () => {
@@ -730,5 +744,33 @@ describe('loadThreadHistory', () => {
     // Most importantly: the stale Cortex/calc text MUST NOT bleed through.
     expect(s[1]?.text).not.toContain('4 × 5');
     expect(s[1]?.text).not.toContain('Cortex');
+  });
+
+  it('measures the idle gap from DELIVERY (completed_at), not job start — a slow job keeps a quick follow-up', async () => {
+    // The live ComfyUI bug (jobs dbbf4d8c → 8b493110). The agent's job was CREATED
+    // 5h ago (when the user sent the photo) but its reply was DELIVERED only 10 min
+    // ago (a slow 4h50m analysis/prep). The user replied right after. A
+    // created_at→created_at gap reads 5h and WIPES the thread; the correct
+    // delivery-based gap is 10 min, so the thread is kept and the agent remembers
+    // exactly what it asked ("launch ComfyUI and tell me").
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'analyze the photo and prep the workflow',
+      result: 'Workflow ready. Launch ComfyUI and tell me when it is.',
+      minutesAgo: 60 * 5, // created 5h ago — past the 4h idle-reset if measured from creation
+      completedMinutesAgo: 10, // but DELIVERED only 10 min ago
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const flat = summarize(history);
+    expect(flat.some((m) => /launch comfyui/i.test(m.text))).toBe(true);
   });
 });

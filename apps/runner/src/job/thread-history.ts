@@ -41,20 +41,35 @@ import type { RunnerDeps } from '../deps.ts';
  */
 const CONVERSATIONAL_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'slack', 'discord']);
 
-/** Max prior (user, assistant) pairs to load. */
-const MAX_TURNS = 5;
-/** Total char budget across all loaded pairs. ~4000 chars ≈ ~1000 tokens. */
-const BUDGET_CHARS = 4_000;
-/** Per-message char cap — any single turn longer than this is truncated. */
-const PER_TURN_MAX_CHARS = 2_000;
+/** Max prior (user, assistant) pairs to load — enough to hold a multi-step thread. */
+const MAX_TURNS = 8;
+/**
+ * Total char budget across all loaded pairs (~16K chars ≈ ~4K tokens). Trivial
+ * against a 200K–1M context window, but big enough to actually carry a real
+ * conversation: these agents are verbose (measured median reply ≈ 1.3K chars,
+ * p75 ≈ 3K), so the old 4K budget held barely 1–2 exchanges before dropping the
+ * foundational turns — the agent looked like it "lost the thread".
+ */
+const BUDGET_CHARS = 16_000;
+/** Per-message char cap — any single turn longer than this is truncated (head + tail). */
+const PER_TURN_MAX_CHARS = 2_400;
 /**
  * Idle reset GAP. A silence of at least this long between two consecutive turns
  * (or between the most recent prior turn and now) starts a FRESH conversation —
- * everything before the gap is dropped. This is a true session reset, not a
- * rolling window: a thread the user comes back to after a break starts clean
- * (a 12h-old exchange is NOT context for a brand-new request).
+ * everything before the gap is dropped. A true session reset, not a rolling
+ * window.
+ *
+ * Default raised 30min → 4h: 30 minutes was FAR too aggressive for real human
+ * cadence — a user who asks something, goes to do it (launch ComfyUI, render,
+ * read a brief), and replies 35+ minutes later got their whole conversation
+ * WIPED (measured: 37% of real Telegram turns started with zero history). The
+ * asymmetry is the point — carrying a bit of stale context the LLM can ignore is
+ * mild; wiping context the user is mid-conversation about is the painful failure.
+ * 4h still resets a genuinely-new session (next morning, hours later) and keeps
+ * the original "12h-old exchange must not bleed in" bug fixed. Tunable via
+ * THREAD_IDLE_RESET_MINUTES.
  */
-const IDLE_RESET_MINUTES = 30;
+const IDLE_RESET_MINUTES = Number(process.env.THREAD_IDLE_RESET_MINUTES) || 240;
 const IDLE_RESET_MS = IDLE_RESET_MINUTES * 60_000;
 /**
  * Outer query bound — never scan rows older than this. Pure optimization to cap
@@ -98,6 +113,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       messages: agentJobs.messages,
       channel: agentJobs.channel,
       createdAt: agentJobs.createdAt,
+      completedAt: agentJobs.completedAt,
     })
     .from(agentJobs)
     .where(
@@ -121,18 +137,27 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     .orderBy(desc(agentJobs.createdAt))
     .limit(MAX_TURNS);
 
-  // Gap-based session reset. Walk newest->oldest and keep turns only while the
-  // silence between consecutive turns stays under IDLE_RESET. Stop at the first
-  // gap (a session boundary). If the most recent prior turn is itself older than
-  // IDLE_RESET, the loop breaks on the very first row → no history at all (the
-  // thread went idle, so this message opens a fresh conversation).
+  // Gap-based session reset. Walk newest->oldest; keep turns while the user's
+  // SILENCE between them stays under IDLE_RESET; stop at the first real gap.
+  //
+  // CRITICAL: the gap is measured from when the prior turn's reply was DELIVERED
+  // (completed_at) to when the newer turn was created — NOT created_at→created_at.
+  // A job's runtime is NOT user silence: a 28-min image-gen / research / render
+  // job created at 7:22 but delivered at 7:49, then answered at 7:57, is an 8-min
+  // gap (7:49→7:57), not 35 min (7:22→7:57). The created_at→created_at form
+  // inflated the gap by the whole job runtime and wiped conversations the user
+  // replied to within seconds — worst exactly for the heavy tasks people then
+  // follow up on. (Verified live on jobs dbbf4d8c → 8b493110.)
   const session: typeof rows = [];
-  let newerAt = now;
+  let newerCreatedAt = now; // current message time, for the first comparison
   for (const row of rows) {
-    const at = new Date(row.createdAt as unknown as string | number | Date).getTime();
-    if (newerAt - at >= IDLE_RESET_MS) break;
+    const createdAt = new Date(row.createdAt as unknown as string | number | Date).getTime();
+    const deliveredAt = row.completedAt
+      ? new Date(row.completedAt as unknown as string | number | Date).getTime()
+      : createdAt;
+    if (newerCreatedAt - deliveredAt >= IDLE_RESET_MS) break;
     session.push(row);
-    newerAt = at;
+    newerCreatedAt = createdAt;
   }
 
   // Flip to chronological (oldest first) so the budget loop drops the OLDEST
@@ -310,9 +335,18 @@ function extractAssistantReply(row: {
   return null;
 }
 
+/**
+ * Cap a single turn at PER_TURN_MAX_CHARS, keeping BOTH the head AND the tail
+ * (70/30). A long agent reply's TAIL is usually the most load-bearing part for
+ * continuity — the conclusion, the next step, the question to the user ("…now
+ * launch ComfyUI and tell me when it's ready"). The old head-only slice dropped
+ * exactly that tail, so the next turn lost the instruction it was replying to.
+ */
 function truncate(s: string): string {
   if (s.length <= PER_TURN_MAX_CHARS) return s;
-  return s.slice(0, PER_TURN_MAX_CHARS) + ' [… truncated]';
+  const head = Math.floor(PER_TURN_MAX_CHARS * 0.7);
+  const tail = PER_TURN_MAX_CHARS - head;
+  return s.slice(0, head) + ' […truncated…] ' + s.slice(s.length - tail);
 }
 
 function totalChars(blocks: ReadonlyArray<ReadonlyArray<ModelMessage>>): number {
