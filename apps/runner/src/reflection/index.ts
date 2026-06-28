@@ -32,6 +32,48 @@ const EXCLUDED_CHANNELS: ReadonlySet<string> = new Set(['chat', 'reflection']);
 const DEFAULT_MIN_TOOL_ITERS = 10;
 const DEFAULT_MAX_NEW_SKILLS_PER_PASS = 2;
 
+// Resolve the reflection env slice. When no validated `runnerEnv` is passed, we
+// read the module-level `env` Proxy — but accessing it runs parseEnv(), which
+// THROWS when DATABASE_URL is unset (a unit test that fire-and-forgets reflection
+// without setting process.env). Since the hook is called as `void maybeRunReflection(…)`,
+// that synchronous throw becomes an UNHANDLED REJECTION → an order-dependent CI
+// flake. Guard it like resolveCuratorEnv: on failure, fall back to
+// REFLECTION_ENABLED:'false' so the pass is a clean no-op instead of a throw.
+type ReflectionEnvSlice = Pick<
+  RunnerEnv,
+  | 'REFLECTION_ENABLED'
+  | 'REFLECTION_MIN_TOOL_ITERS'
+  | 'REFLECTION_MAX_PER_HOUR'
+  | 'REFLECTION_MAX_TURNS'
+  | 'REFLECTION_MAX_NEW_SKILLS_PER_PASS'
+  | 'REFLECTION_MODEL'
+>;
+
+const SAFE_REFLECTION_DEFAULTS: ReflectionEnvSlice = {
+  REFLECTION_ENABLED: 'false',
+  REFLECTION_MIN_TOOL_ITERS: DEFAULT_MIN_TOOL_ITERS,
+  REFLECTION_MAX_PER_HOUR: 0,
+  REFLECTION_MAX_TURNS: 4,
+  REFLECTION_MAX_NEW_SKILLS_PER_PASS: DEFAULT_MAX_NEW_SKILLS_PER_PASS,
+  REFLECTION_MODEL: undefined,
+};
+
+function resolveReflectionEnv(runnerEnv?: RunnerEnv): ReflectionEnvSlice {
+  if (runnerEnv) return runnerEnv;
+  try {
+    return {
+      REFLECTION_ENABLED: globalEnv.REFLECTION_ENABLED,
+      REFLECTION_MIN_TOOL_ITERS: globalEnv.REFLECTION_MIN_TOOL_ITERS,
+      REFLECTION_MAX_PER_HOUR: globalEnv.REFLECTION_MAX_PER_HOUR,
+      REFLECTION_MAX_TURNS: globalEnv.REFLECTION_MAX_TURNS,
+      REFLECTION_MAX_NEW_SKILLS_PER_PASS: globalEnv.REFLECTION_MAX_NEW_SKILLS_PER_PASS,
+      REFLECTION_MODEL: globalEnv.REFLECTION_MODEL,
+    };
+  } catch {
+    return SAFE_REFLECTION_DEFAULTS;
+  }
+}
+
 /**
  * Count tool-call iterations in a job transcript — the complexity signal that
  * gates reflection. A heartbeat/cron run with only a couple of tool calls is not
@@ -74,9 +116,10 @@ export async function maybeRunReflection(
   job: AgentJobRow,
   runnerEnv?: RunnerEnv,
 ): Promise<void> {
-  // Resolve env: prefer the caller-provided instance (avoids a fresh parseEnv()
-  // call in tests that supply a testEnv but haven't set process.env).
-  const e = runnerEnv ?? globalEnv;
+  // Resolve env: prefer the caller-provided instance; else read the Proxy under a
+  // guard so an unset DATABASE_URL can't turn this fire-and-forget hook into an
+  // unhandled rejection (CI flake). On failure → REFLECTION_ENABLED:'false' no-op.
+  const e = resolveReflectionEnv(runnerEnv);
 
   // Gate 1a — global kill-switch: explicit 'false' disables every entity regardless of per-entity flag.
   if (e.REFLECTION_ENABLED === 'false') return;

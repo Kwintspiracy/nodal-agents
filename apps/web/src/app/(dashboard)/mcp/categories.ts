@@ -31,6 +31,6 @@ export function mcpCategory(slug: string): string {
   if (slug === 'keyshot') return 'Creative';
   if (slug === 'photoshop') return 'Creative';
   if (slug.startsWith('custom-')) return 'Custom';
-  // mcp-sequential-thinking and anything new without an explicit mapping.
+  // Anything new without an explicit mapping.
   return 'Other';
 }

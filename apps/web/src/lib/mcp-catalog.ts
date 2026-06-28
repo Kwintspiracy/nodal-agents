@@ -93,7 +93,7 @@ export type McpCatalogEntry = {
   /**
    * Env var names the server expects. Shown in the Add form as pre-labelled
    * rows so the user knows exactly what to fill in.
-   * `undefined` = no env vars required (e.g. filesystem, sequential-thinking).
+   * `undefined` = no env vars required (e.g. filesystem).
    */
   envVarNames?: string[];
 };
@@ -228,22 +228,6 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
       'Replace <connection-string> in the args with your Postgres connection URL (e.g. postgresql://user:pass@host:5432/dbname). The server connects in read-only mode.',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-postgres@0.6.2', '<connection-string>'],
-  },
-  {
-    slug: 'mcp-sequential-thinking',
-    label: 'Sequential Thinking',
-    description:
-      'Structured multi-step reasoning helper — guides agents through decomposing complex problems step-by-step before acting. First run downloads the package via npx (requires network, ~5 s latency).',
-    serverUrl: null,
-    transport: 'stdio',
-    authScheme: 'header',
-    authParamName: 'Authorization',
-    keyPrefix: [],
-    verifyToolName: null,
-    docsHint:
-      'No configuration needed. Add it to an agent to enable structured reasoning scaffolding.',
-    command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-sequential-thinking@2025.12.18'],
   },
   {
     slug: 'mcp-playwright',
