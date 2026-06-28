@@ -43,6 +43,13 @@ export default function McpMarketplaceGrid({
   category,
   onCategoryChange,
 }: Props) {
+  // Render alphabetically by label, keeping the "custom" entries last.
+  const sortedCatalog = [...catalog].sort((a, b) => {
+    const ac = a.slug.startsWith('custom-');
+    const bc = b.slug.startsWith('custom-');
+    if (ac !== bc) return ac ? 1 : -1;
+    return a.label.localeCompare(b.label);
+  });
   return (
     <div>
       <ChipRow
@@ -58,7 +65,7 @@ export default function McpMarketplaceGrid({
         </div>
       ) : (
         <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
-          {catalog.map((item) => {
+          {sortedCatalog.map((item) => {
             const installedInstances = instances.filter((i) => i.slug === item.slug);
             const isInstalled = installedInstances.length > 0;
             return (

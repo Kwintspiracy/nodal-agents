@@ -367,7 +367,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     command: 'npx',
     args: ['-y', '@perplexity-ai/mcp-server@0.9.0'],
     envVarNames: ['PERPLEXITY_API_KEY'],
-    status: 'pending',
+    status: 'verified',
   },
   {
     slug: 'apify',
@@ -386,8 +386,9 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   // ── 3D / rendering (stdio) ────────────────────────────────────────────────
   // Each needs a companion plugin/add-on INSIDE the app (running locally) plus a
-  // local bridge server. Marked 'pending' — the command/path may need adjusting
-  // per the upstream README. All require the `uv` package manager on the host.
+  // local bridge server. Blender is live-verified; Unity/Unreal/KeyShot stay
+  // 'pending' — the command/path may need adjusting per the upstream README.
+  // All require the `uv` package manager on the host.
   {
     slug: 'blender',
     label: 'Blender',
@@ -403,7 +404,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
       'Install the BlenderMCP add-on from github.com/ahujasid/blender-mcp, open Blender 3.0+, and start its server (sidebar → BlenderMCP → Connect). Requires the `uv` package manager (uvx) on the host. No API key. (Blender also ships an official server at blender.org/lab/mcp-server.)',
     command: 'uvx',
     args: ['blender-mcp'],
-    status: 'pending',
+    status: 'verified',
   },
   {
     slug: 'unity',

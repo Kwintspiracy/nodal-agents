@@ -73,11 +73,11 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 **Models** — Anthropic · OpenAI · Google · Groq · Mistral · OpenRouter · **native DeepSeek** (`api.deepseek.com`) · **native MiniMax** (`api.minimax.io`) · any local model (LM Studio, Ollama). One key per provider; each agent picks its own model.
 
 **Connectors** — multi-instance (Gmail perso *and* boulot on one install), managed from the dashboard:
-- *OAuth* — Gmail · Google Drive · Sheets · Docs · Calendar · Notion · Airtable
-- *API key* — Notion · Airtable · Apify · Firecrawl · Tavily
+- *OAuth* — Airtable · Calendar · Docs · Gmail · Google Drive · Notion · Sheets
+- *API key* — Airtable · Apify · Firecrawl · Notion · Tavily
 
 **MCP servers** — over Streamable HTTP *and* stdio, plus add/edit your own:
-Stripe · GitHub · Supabase · Notion · Linear · Sentry · n8n · PostgreSQL · Playwright · Perplexity · Apify · Filesystem · Git · Fetch · Composio · Cogni Cortex · Blender · Unity · Unreal Engine · KeyShot · Photoshop · Canvas LMS
+Apify · Blender · Canvas LMS · Cogni Cortex · Composio · Fetch · Filesystem · Git · GitHub · KeyShot · Linear · n8n · Notion · Perplexity · Photoshop · Playwright · PostgreSQL · Sentry · Stripe · Supabase · Unity · Unreal Engine
 
 **Skills** — built-in: office editing (Excel/Word/PowerPoint), shell execution, Obsidian, Telegram etiquette, task planning, markdown output, citation discipline, research methodology, results delivery, language mirroring, HTML design. Plus **install any community `SKILL.md`** from GitHub / skills.sh / ClawHub — and agents can **write their own**.
 

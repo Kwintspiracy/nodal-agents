@@ -45,6 +45,8 @@ export default function ConnectorsMarketplaceGrid({
   category,
   onCategoryChange,
 }: Props) {
+  // Render connectors alphabetically by label.
+  const sortedCatalog = [...catalog].sort((a, b) => a.label.localeCompare(b.label));
   return (
     <div>
       <ChipRow
@@ -60,7 +62,7 @@ export default function ConnectorsMarketplaceGrid({
         </div>
       ) : (
         <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
-          {catalog.map((item) => {
+          {sortedCatalog.map((item) => {
             const installedInstances = instances.filter((i) => i.slug === item.slug);
             const isInstalled = installedInstances.length > 0;
             const compatible = item.credentialType ? (credsByType[item.credentialType] ?? []) : [];
