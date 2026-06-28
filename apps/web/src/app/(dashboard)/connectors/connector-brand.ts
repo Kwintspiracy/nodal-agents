@@ -79,6 +79,7 @@ const CONN_ICONS: Record<string, string> = {
   gmail: '/connector-icons/gmail.svg',
   'google-sheets': '/connector-icons/google-sheets.svg',
   'google-docs': '/connector-icons/google-docs.svg',
+  'google-calendar': '/connector-icons/google-calendar.svg',
   airtable: '/connector-icons/airtable.svg',
   'airtable-oauth': '/connector-icons/airtable.svg',
   // MCP connectors (slugs from the MCP catalog)
