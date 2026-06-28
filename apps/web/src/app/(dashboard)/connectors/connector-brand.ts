@@ -91,8 +91,13 @@ const CONN_ICONS: Record<string, string> = {
   blender: '/connector-icons/blender.svg',
   unity: '/connector-icons/unity.svg',
   'unreal-engine': '/connector-icons/unreal-engine.svg',
-  // (Adobe brand icons were pulled from simple-icons over trademark, so
-  // Photoshop falls back to a trademark-safe "Ps" monogram glyph.)
+  photoshop: '/connector-icons/photoshop.svg',
+  // Filled from Devicon (full-colour) where available, else simple-icons (mono).
+  'mcp-playwright': '/connector-icons/playwright.svg',
+  supabase: '/connector-icons/supabase.svg',
+  perplexity: '/connector-icons/perplexity.svg',
+  linear: '/connector-icons/linear.svg',
+  n8n: '/connector-icons/n8n.svg',
 };
 
 export function connIcon(slug: string): string | null {
