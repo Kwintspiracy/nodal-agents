@@ -25,6 +25,10 @@ export function mcpCategory(slug: string): string {
   if (slug === 'linear') return 'Productivity';
   if (slug === 'n8n') return 'Productivity';
   if (slug === 'notion') return 'Productivity';
+  if (slug === 'blender') return 'Creative';
+  if (slug === 'unity') return 'Creative';
+  if (slug === 'unreal-engine') return 'Creative';
+  if (slug === 'keyshot') return 'Creative';
   if (slug.startsWith('custom-')) return 'Custom';
   // mcp-sequential-thinking and anything new without an explicit mapping.
   return 'Other';

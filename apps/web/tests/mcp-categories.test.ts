@@ -6,7 +6,16 @@ import { mcpCategory } from '../src/app/(dashboard)/mcp/categories.ts';
 // A category returned by mcpCategory() that isn't in this set would make those
 // entries unreachable via the category chips (only visible under "All") — the
 // exact bug this test guards against.
-const CHIP_CATEGORIES = new Set(['Comms', 'Data', 'Dev', 'Web', 'Productivity', 'Custom', 'Other']);
+const CHIP_CATEGORIES = new Set([
+  'Comms',
+  'Data',
+  'Dev',
+  'Web',
+  'Productivity',
+  'Creative',
+  'Custom',
+  'Other',
+]);
 
 describe('mcpCategory', () => {
   it('maps every catalog slug to a filterable chip category', () => {

@@ -400,6 +400,78 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
       'Create an API token in the Apify Console (Settings → API & Integrations) and paste it here as a Bearer token. The hosted server runs Actors on your behalf.',
     status: 'pending',
   },
+  // ── 3D / rendering (stdio) ────────────────────────────────────────────────
+  // Each needs a companion plugin/add-on INSIDE the app (running locally) plus a
+  // local bridge server. Marked 'pending' — the command/path may need adjusting
+  // per the upstream README. All require the `uv` package manager on the host.
+  {
+    slug: 'blender',
+    label: 'Blender',
+    description:
+      'Drive Blender from natural language — build/modify 3D scenes, objects, and materials, then render. Runs the popular blender-mcp server (ahujasid) locally via uvx.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Install the BlenderMCP add-on from github.com/ahujasid/blender-mcp, open Blender 3.0+, and start its server (sidebar → BlenderMCP → Connect). Requires the `uv` package manager (uvx) on the host. No API key. (Blender also ships an official server at blender.org/lab/mcp-server.)',
+    command: 'uvx',
+    args: ['blender-mcp'],
+    status: 'pending',
+  },
+  {
+    slug: 'unity',
+    label: 'Unity',
+    description:
+      'Bridge an AI to the Unity Editor — manage assets, control scenes, edit scripts, run tests. Uses CoplayDev’s MCP for Unity (MIT — successor to justinpbarnett/unity-mcp).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'In Unity: Window → Package Manager → Add package from git URL → https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main. That installs the Python bridge under the package; replace <unity-mcp-server-dir> in the args with its absolute path (…/MCPForUnity/UnityMcpServer~/src). Requires `uv`. Confirm the server entry in github.com/CoplayDev/unity-mcp.',
+    command: 'uv',
+    args: ['run', '--directory', '<unity-mcp-server-dir>', 'server.py'],
+    status: 'pending',
+  },
+  {
+    slug: 'unreal-engine',
+    label: 'Unreal Engine',
+    description:
+      'Control Unreal Engine 5 from natural language — actors, Blueprints, procedural scene building. Uses the community unreal-mcp (chongdashu); Epic has no official MCP yet.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Clone github.com/chongdashu/unreal-mcp, install its UnrealMCP plugin into your UE5 project’s Plugins/, then point the args at the repo’s Python server dir: replace <unreal-mcp-python-dir> with the absolute path to that folder. Requires `uv`. Community project — verify the entry script name in its README.',
+    command: 'uv',
+    args: ['run', '--directory', '<unreal-mcp-python-dir>', 'unreal_mcp_server.py'],
+    status: 'pending',
+  },
+  {
+    slug: 'keyshot',
+    label: 'KeyShot',
+    description:
+      'Drive KeyShot rendering from an AI — import models, assign materials, set cameras/lighting, and render. Uses the keyshot-mcp bridge (pentatonic-ltd).',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Set up the KeyShot-side bridge per the keyshot-mcp project (pentatonic-ltd) — a KeyShot script plus the MCP server — then replace <keyshot-mcp-dir> with the absolute repo path. Requires `uv`. Niche project — confirm the entry script in its README.',
+    command: 'uv',
+    args: ['run', '--directory', '<keyshot-mcp-dir>', 'server.py'],
+    status: 'pending',
+  },
   // ── Custom entries ────────────────────────────────────────────────────────
   // Reserved slugs — the action layer (createMcpServerFromCatalogAction)
   // detects these and substitutes user-supplied values (slug, auth scheme,
