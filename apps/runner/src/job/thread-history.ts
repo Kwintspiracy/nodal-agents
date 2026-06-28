@@ -29,7 +29,7 @@
 // Fail-soft: callers should wrap in try/catch so a DB hiccup never kills a
 // job — at worst the agent loses session continuity for that turn.
 
-import { eq, and, ne, gt, desc } from '@nodal-agents/db';
+import { eq, and, ne, gt, desc, inArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -106,7 +106,14 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
         eq(agentJobs.agentId, opts.agentId),
         eq(agentJobs.channel, opts.channel),
         eq(agentJobs.chatId, opts.chatId),
-        eq(agentJobs.status, 'completed'),
+        // Terminal jobs that produced a user-facing turn — NOT just 'completed'.
+        // A job that FAILED (e.g. the agent asked the user to launch ComfyUI, so
+        // the generation couldn't finish) still DELIVERED a message the user saw
+        // and replied to. Excluding it broke continuity: on the user's reply the
+        // agent had no memory of what it had asked. extractAssistantReply returns
+        // null for failed jobs with no usable result, so silent internal failures
+        // are still skipped — only failures that spoke to the user are carried.
+        inArray(agentJobs.status, ['completed', 'failed']),
         ne(agentJobs.id, opts.excludeJobId),
         gt(agentJobs.createdAt, cutoff),
       ),

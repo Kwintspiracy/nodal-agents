@@ -135,6 +135,53 @@ describe('loadThreadHistory', () => {
     expect(history).toEqual([]);
   });
 
+  it('includes a FAILED job that delivered a user-facing reply (ask-and-wait continuity)', async () => {
+    // Regression: the agent asked the user to launch ComfyUI; that job ended
+    // `failed` (the generation couldn't finish) but DELIVERED the reply the user
+    // saw and replied to ("Il est lancé"). It MUST be in the next turn's history,
+    // or the agent has amnesia about what it just asked.
+    await insertCompletedJob({
+      chatId: '777',
+      task: 'mix the photo with my redhead and generate',
+      result: 'Workflow ready. ComfyUI is not running — launch it and tell me when it is.',
+      status: 'failed',
+      minutesAgo: 3,
+    });
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '777',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+    const flat = summarize(history);
+    expect(flat.some((m) => m.role === 'user' && m.text.includes('redhead'))).toBe(true);
+    expect(flat.some((m) => m.role === 'assistant' && /launch it and tell me/i.test(m.text))).toBe(
+      true,
+    );
+  });
+
+  it('still skips a FAILED job with no user-facing result (silent internal failure)', async () => {
+    await insertCompletedJob({
+      chatId: '888',
+      task: 'internal thing',
+      result: null,
+      status: 'failed',
+      minutesAgo: 2,
+      messages: [],
+    });
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '888',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+    expect(history).toEqual([]);
+  });
+
   it('returns 6 ModelMessages in chronological order for 3 prior completed jobs', async () => {
     await insertCompletedJob({
       chatId: '12345',
