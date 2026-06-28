@@ -472,6 +472,23 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     args: ['run', '--directory', '<keyshot-mcp-dir>', 'server.py'],
     status: 'pending',
   },
+  {
+    slug: 'photoshop',
+    label: 'Photoshop',
+    description:
+      'Control Adobe Photoshop from natural language — documents, layers, text, filters, adjustments. Cross-platform (macOS + Windows) via the adb-mcp project (mikechambers, Adobe) using a UXP plugin.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Cross-platform (macOS + Windows). Set up adb-mcp (github.com/mikechambers/adb-mcp): (1) load its UXP plugin into Photoshop 26+ via the Adobe UXP Developer Tool, (2) run the Node proxy (node proxy.js in adb-proxy-socket — listens on ws://localhost:3001), (3) point this command at the repo — replace <adb-mcp-dir> with the absolute repo path. Requires `uv` + Node. Confirm the server entry (ps-mcp.py) in the README. Adobe ships no turnkey MCP. — Simpler WINDOWS-ONLY alternative: command "uvx", args ["photoshop-mcp-server"], env PS_VERSION (loonghao’s COM server).',
+    command: 'uv',
+    args: ['run', '--directory', '<adb-mcp-dir>', 'ps-mcp.py'],
+    status: 'pending',
+  },
   // ── Custom entries ────────────────────────────────────────────────────────
   // Reserved slugs — the action layer (createMcpServerFromCatalogAction)
   // detects these and substitutes user-supplied values (slug, auth scheme,

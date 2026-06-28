@@ -59,6 +59,7 @@ const CONN_GLYPHS: Record<string, string> = {
   'custom-stdio-mcp': '+',
   'cogni-cortex': 'CX',
   keyshot: 'KS',
+  photoshop: 'Ps',
 };
 
 export function connGlyph(slug: string, label: string): string {
@@ -90,6 +91,8 @@ const CONN_ICONS: Record<string, string> = {
   blender: '/connector-icons/blender.svg',
   unity: '/connector-icons/unity.svg',
   'unreal-engine': '/connector-icons/unreal-engine.svg',
+  // (Adobe brand icons were pulled from simple-icons over trademark, so
+  // Photoshop falls back to a trademark-safe "Ps" monogram glyph.)
 };
 
 export function connIcon(slug: string): string | null {
