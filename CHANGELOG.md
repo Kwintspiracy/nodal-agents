@@ -10,6 +10,17 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.6.2 — The Recall Release · Jun 28, 2026
+
+Your agents remember — within a conversation, and across everything they've ever done.
+
+**Highlights**
+
+- **Conversations that hold the thread.** Session memory now measures a pause from when the agent's reply was *delivered*, not from when the job started — so a slow task (a render, a deep research run) no longer makes your quick follow-up look like an hour of silence that wipes the conversation. The idle reset widened (30 min → 4 h), the history budget grew, the reply's *tail* (its conclusion / next-step) is kept instead of chopped, and a job that *failed but spoke to you* stays in the thread. Measured on a real 122-message conversation: amnesia dropped from 39% to 13% (the rest are genuinely new sessions).
+- **Two-tier memory.** Injected memory is now ranked by relevance to the task at hand — not just global importance — so the budget surfaces facts about *this* request. Every job's transcript is full-text searchable on demand via the new always-on `search_history` tool: durable recall of anything the team has ever done, at zero standing context cost. And a background **memory curator** distills oversized facts, merges duplicates, and prunes the stale — never touching what you entered by hand.
+- **3D & creative connectors.** Blender, Unity, Unreal Engine, KeyShot, Photoshop (cross-platform), and Canvas LMS join the MCP marketplace under a new **Creative** category — each with a real brand icon.
+- A longer MCP tool timeout (heavy tools like renders no longer time out at 60 s), and a fix for an order-dependent CI flake.
+
 ## v0.6.1 — The Vision Release · Jun 27, 2026
 
 Send a picture on Telegram and your agents can actually look at it.

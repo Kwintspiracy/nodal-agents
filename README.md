@@ -10,7 +10,7 @@ A self-hosted platform for building and orchestrating a **team of AI agents** on
 [![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docs](https://img.shields.io/badge/docs-online-3565ff)](https://kwintspiracy.github.io/nodal-agents/)
-[![Changelog](https://img.shields.io/badge/changelog-v0.6.1-d4ff2e)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/changelog-v0.6.2-d4ff2e)](CHANGELOG.md)
 
 | Home dashboard — light theme | Agent detail — dark theme |
 | :---: | :---: |
@@ -61,7 +61,7 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 ### 🤝 Agents that actually finish
 
 - **Orchestrators that finish** — pick the delegation style per request: route to one specialist and resume on its result, or fan work out to many sub-agents in parallel and compile the answer.
-- **Memory that compounds** — persistent facts auto-injected into every job, plus chat-thread continuity (your agent remembers what it said 30 seconds ago — and yesterday).
+- **Memory that compounds** — durable facts auto-injected into every job, ranked by relevance to the task at hand; full-text `search_history` recall over everything the team has ever done; and a background curator that keeps the fact store clean. Plus chat-thread continuity that actually holds a conversation across slow tasks and natural pauses.
 - **Self-improving (opt-in)** — after a substantial job an agent can reflect and write itself a reusable skill; a weekly curator consolidates and prunes them. Every learned skill is reviewable, assignable, and revocable.
 - **Self-extending ROOT** — designate an orchestrator as ROOT and let it create skills, agents, MCP servers, and connectors on your behalf — gated by per-grant toggles and an autonomy level (propose-confirm → fully-autonomous).
 - **Human-in-the-loop** — risky tools pause for approval, and the prompt leads with the agent's plain-language explanation of *what* it wants to do and *why* (plus any ⚠️ impact) — not a wall of raw shell.
@@ -77,7 +77,7 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 - *API key* — Notion · Airtable · Apify · Firecrawl · Tavily
 
 **MCP servers** — over Streamable HTTP *and* stdio, plus add/edit your own:
-Stripe · GitHub · Supabase · Notion · Linear · Sentry · n8n · PostgreSQL · Playwright · Perplexity · Apify · Filesystem · Git · Fetch · Sequential Thinking · Composio · Cogni Cortex
+Stripe · GitHub · Supabase · Notion · Linear · Sentry · n8n · PostgreSQL · Playwright · Perplexity · Apify · Filesystem · Git · Fetch · Composio · Cogni Cortex · Blender · Unity · Unreal Engine · KeyShot · Photoshop · Canvas LMS
 
 **Skills** — built-in: office editing (Excel/Word/PowerPoint), shell execution, Obsidian, Telegram etiquette, task planning, markdown output, citation discipline, research methodology, results delivery, language mirroring, HTML design. Plus **install any community `SKILL.md`** from GitHub / skills.sh / ClawHub — and agents can **write their own**.
 
