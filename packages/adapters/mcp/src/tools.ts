@@ -7,6 +7,13 @@ import type { OperationRiskLevel } from '@nodal-agents/shared';
 import type { McpToolDescriptor } from './client.ts';
 import { jsonSchemaToZod } from './json-schema-to-zod.ts';
 
+// Per-request MCP tool-call timeout (ms). The SDK default (60s) is too short for
+// heavy tools — a Blender/KeyShot render, a long browser scrape — which otherwise
+// fail with "MCP error -32001: Request timed out" mid-operation. Default 3 min,
+// overridable via MCP_CALL_TIMEOUT_MS; paired with resetTimeoutOnProgress so a
+// server that streams progress can run longer still.
+const MCP_CALL_TIMEOUT_MS = Number(process.env.MCP_CALL_TIMEOUT_MS) || 180_000;
+
 /** Sanitise a server slug into a tool-name-safe prefix (`cogni-cortex` → `cogni_cortex`). */
 export function slugToPrefix(slug: string): string {
   return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
@@ -57,10 +64,19 @@ export function mcpToolToToolDefinition(
     inputSchema: jsonSchemaToZod(mcpTool.inputSchema),
     riskLevel: riskFromAnnotations(mcpTool.annotations),
     async execute(input) {
-      const result = await client.callTool({
-        name: originalName,
-        arguments: (input ?? {}) as Record<string, unknown>,
-      });
+      const result = await client.callTool(
+        {
+          name: originalName,
+          arguments: (input ?? {}) as Record<string, unknown>,
+        },
+        // Default result schema (CallToolResultSchema).
+        undefined,
+        // The MCP SDK's default per-request timeout is 60s — too short for heavy
+        // tools (a Blender/KeyShot render, a long scrape). Raise it and reset the
+        // clock whenever the server reports progress, so progress-streaming
+        // servers can run even longer. Overridable via MCP_CALL_TIMEOUT_MS.
+        { timeout: MCP_CALL_TIMEOUT_MS, resetTimeoutOnProgress: true },
+      );
       if (result.isError === true) {
         const detail = extractText(result.content);
         throw new Error(`MCP tool ${originalName} failed: ${detail || 'unknown error'}`);

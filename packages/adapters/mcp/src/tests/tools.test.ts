@@ -68,7 +68,11 @@ describe('mcpToolToToolDefinition', () => {
 
     const out = await def.execute({ detail: true }, {} as never);
 
-    expect(callTool).toHaveBeenCalledWith({ name: 'get_home', arguments: { detail: true } });
+    expect(callTool).toHaveBeenCalledWith(
+      { name: 'get_home', arguments: { detail: true } },
+      undefined,
+      expect.objectContaining({ timeout: expect.any(Number), resetTimeoutOnProgress: true }),
+    );
     // Text-only content blocks are joined into their text (often serialized JSON),
     // not surfaced as the raw block wrapper.
     expect(out).toBe('hi');
