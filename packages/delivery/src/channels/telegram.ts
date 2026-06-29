@@ -249,6 +249,79 @@ export async function sendTelegramPhoto(opts: {
   return { messageId: json.result?.message_id ?? 0 };
 }
 
+// Documents can be up to 50 MB and slower to upload than a photo — give them
+// a longer ceiling than sendPhoto.
+const DOCUMENT_TIMEOUT_MS = 60_000;
+
+/**
+ * Upload an arbitrary file (raw bytes) to a Telegram chat via sendDocument.
+ * Unlike sendPhoto, this accepts ANY file type (PDF, .md, .zip, .csv, …) and
+ * delivers it as a downloadable attachment. Uses multipart/form-data — do NOT
+ * set Content-Type; fetch sets the boundary.
+ */
+export async function sendTelegramDocument(opts: {
+  chatId: string;
+  botToken: string;
+  document: Uint8Array;
+  filename: string;
+  caption?: string;
+}): Promise<{ messageId: number }> {
+  const { chatId, botToken, document, filename, caption } = opts;
+
+  const form = new FormData();
+  form.append('chat_id', chatId);
+  if (caption !== undefined) form.append('caption', caption.slice(0, 1024));
+  // Buffer.from yields a concrete Uint8Array<ArrayBuffer> for strict Blob types.
+  const docBlob = new Blob([Buffer.from(document)]);
+  form.append('document', docBlob, filename);
+
+  const url = `https://api.telegram.org/bot${botToken}/sendDocument`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DOCUMENT_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new DeliveryError(
+        'telegram_request_failed',
+        `telegram_timeout: Telegram API did not respond within ${DOCUMENT_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
+    throw new DeliveryError(
+      'telegram_request_failed',
+      `telegram_request_failed: network error: ${safeMsg}`,
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  const json = (await response.json()) as TelegramApiResponse<TelegramSendResult>;
+
+  if (!response.ok || !json.ok) {
+    const desc = json.description ?? '';
+    if (response.status === 401) {
+      throw new DeliveryError('telegram_unauthorized', `telegram_unauthorized: ${desc}`);
+    }
+    if (response.status === 429) {
+      throw new DeliveryError('telegram_rate_limited', `telegram_rate_limited: ${desc}`);
+    }
+    if (response.status === 400 && desc.toLowerCase().includes('chat not found')) {
+      throw new DeliveryError('telegram_chat_not_found', `telegram_chat_not_found: ${desc}`);
+    }
+    throw new DeliveryError('telegram_request_failed', `telegram_request_failed: ${desc}`);
+  }
+
+  return { messageId: json.result?.message_id ?? 0 };
+}
+
 // ─── Bot config helpers (used by dashboard to set up agents) ──────────────────
 //
 // These hit the same `https://api.telegram.org/bot<token>/<method>` endpoints

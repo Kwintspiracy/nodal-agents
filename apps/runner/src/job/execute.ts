@@ -46,6 +46,7 @@ import {
   ALWAYS_ON_TOOLS,
   createTelegramSendMessageTool,
   createSendImageTool,
+  createSendFileTool,
   listWorkspaceMcpToolNames,
 } from '@nodal-agents/tools';
 import type {
@@ -125,7 +126,11 @@ const TOOL_PROVISIONING: ToolProvisioning = {
 // an agent that keeps messaging the user across consecutive turns instead of
 // finishing with return_result. Extend this set as new outbound channels ship
 // (whatsapp_send_message, slack_send_message, …).
-const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(['telegram_send_message', 'send_image']);
+const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'telegram_send_message',
+  'send_image',
+  'send_file',
+]);
 
 // Guard 1d — delivery tools whose presence in a turn counts as "delivered" for
 // the no-delivery runaway detector. Superset of DELIVERY_TOOL_NAMES: also includes
@@ -136,6 +141,7 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'dashboard_publish',
   'telegram_send_message',
   'send_image',
+  'send_file',
 ]);
 
 // Channels whose ONLY path to the user is a delivery tool call (telegram_send_message).
@@ -817,6 +823,7 @@ async function runJob(
   if (agentRow.telegramBotToken && job.chatId) {
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
+    capabilityTools.push(createSendFileTool() as unknown as AnyToolDef);
   }
 
   // Close callbacks for per-job MCP transports — invoked in the LLM loop's

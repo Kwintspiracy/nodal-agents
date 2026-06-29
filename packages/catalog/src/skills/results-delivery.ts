@@ -43,7 +43,7 @@ Un \`return_result\` complet n'est PAS « vide » — c'est la BONNE livraison q
 Si — et SEULEMENT si — tu es l'agent qui remet la réponse à l'utilisateur (pas un worker délégué), choisis la destination dans cet ordre :
 
 1. **La destination que l'utilisateur a nommée** dans sa demande (« envoie-le par email », « sur Telegram », « dans tel vault ») → utilise-la. Si elle exige une adresse/un identifiant que tu n'as pas, regarde ta mémoire/config ; à défaut, demande-la une fois.
-2. **Sinon, le canal de la conversation** : si la demande vient de Telegram, livre via \`telegram_send_message\`/\`send_image\` ; si dashboard, via \`dashboard_publish\` ou \`return_result\`.
+2. **Sinon, le canal de la conversation** : si la demande vient de Telegram, livre via \`telegram_send_message\` (texte), \`send_image\` (aperçu image inline) ou \`send_file\` (TOUT fichier en pièce jointe — PDF, .md, .txt, .csv, .zip… ; passe le chemin/URL, garde l'extension dans \`filename\`) ; si dashboard, via \`dashboard_publish\` ou \`return_result\`.
 
 Si tu es un **worker délégué**, ignore cet ordre : \`return_result\` avec le contenu complet, point — c'est l'orchestrateur qui choisira le canal (voir section 1).
 

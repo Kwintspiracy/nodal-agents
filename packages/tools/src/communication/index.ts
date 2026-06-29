@@ -3,3 +3,4 @@
 
 export { createTelegramSendMessageTool } from './telegram-send-message';
 export { createSendImageTool } from './send-image';
+export { createSendFileTool } from './send-file';

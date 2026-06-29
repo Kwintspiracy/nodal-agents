@@ -3,6 +3,7 @@
 export {
   sendTelegramMessage,
   sendTelegramPhoto,
+  sendTelegramDocument,
   getTelegramBotInfo,
   getTelegramUpdates,
   getTelegramFile,

@@ -59,7 +59,11 @@ export {
 export type { AlwaysOnTool, DashboardPublishInput } from './builtin/index';
 
 // Communication tools (capability-driven — registered per-agent based on agent config)
-export { createTelegramSendMessageTool, createSendImageTool } from './communication';
+export {
+  createTelegramSendMessageTool,
+  createSendImageTool,
+  createSendFileTool,
+} from './communication';
 
 // Skill-authoring grounding: the real MCP tool names of a workspace, injected
 // into create_skill / update_skill descriptions by the runner so the ROOT agent
