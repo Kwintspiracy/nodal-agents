@@ -2,6 +2,7 @@ import {
   getEntityStatsAction,
   getActiveJobsByAgentAction,
   getWeeklyActivityAction,
+  getDailyActivityAction,
   listSkillsAction,
   listConnectorsAction,
   listMcpServersAction,
@@ -39,14 +40,17 @@ export const dynamic = 'force-dynamic';
  *   Cards keep their headline values; gaps stay honest.
  */
 export default async function DashboardPage() {
-  const [statsRes, activeRes, weeklyRes, skillsRes, connsRes, mcpRes] = await Promise.all([
-    getEntityStatsAction(),
-    getActiveJobsByAgentAction(),
-    getWeeklyActivityAction(),
-    listSkillsAction(),
-    listConnectorsAction(),
-    listMcpServersAction(),
-  ]);
+  const [statsRes, activeRes, weeklyRes, dailyRes, skillsRes, connsRes, mcpRes] = await Promise.all(
+    [
+      getEntityStatsAction(),
+      getActiveJobsByAgentAction(),
+      getWeeklyActivityAction(),
+      getDailyActivityAction(),
+      listSkillsAction(),
+      listConnectorsAction(),
+      listMcpServersAction(),
+    ],
+  );
 
   if (!statsRes.ok) {
     return (
@@ -62,6 +66,7 @@ export default async function DashboardPage() {
   const s = statsRes.data;
   const active = activeRes.ok ? activeRes.data : [];
   const weekly = weeklyRes.ok ? weeklyRes.data : { rows: [], models: [] };
+  const daily = dailyRes.ok ? dailyRes.data : { rows: [], models: [] };
   const skills = skillsRes.ok ? skillsRes.data : [];
   const connectors = connsRes.ok ? connsRes.data.instances : [];
   const mcp = mcpRes.ok ? mcpRes.data.instances : [];
@@ -178,7 +183,7 @@ export default async function DashboardPage() {
 
       {/* 4 — Weekly activity ------------------------------------------ */}
       <div className="mt-7">
-        <WeeklyActivityChart data={weekly.rows} models={weekly.models} />
+        <WeeklyActivityChart weekly={weekly} daily={daily} />
       </div>
 
       {/* 5 — Job status breakdown -------------------------------------- */}

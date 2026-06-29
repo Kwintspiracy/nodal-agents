@@ -20,6 +20,7 @@
 // (no client fetch). The /stats page can re-render at any time and the
 // chart picks up the new data via prop change.
 
+import { useState } from 'react';
 import {
   Bar,
   CartesianGrid,
@@ -31,13 +32,17 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { WeeklyActivityRow } from '@/lib/actions.ts';
+import PillTabs from '@/components/ui/PillTabs';
+import type { WeeklyActivityRow, WeeklyActivityData } from '@/lib/actions.ts';
 
 interface Props {
-  data: WeeklyActivityRow[];
-  /** Distinct model ids across the window, ordered busiest-first. */
-  models: string[];
+  /** 12-week rolling view. */
+  weekly: WeeklyActivityData;
+  /** 7-day rolling view (one column per day). */
+  daily: WeeklyActivityData;
 }
+
+type Granularity = 'weekly' | 'daily';
 
 // Status → color. Kept in a const so the legend + bars stay in sync.
 // Hexes are read directly (recharts does not resolve CSS variables) but
@@ -128,21 +133,40 @@ function WeeklyLegend({ payload }: { payload?: LegendItem[] }) {
   );
 }
 
-export default function WeeklyActivityChart({ data, models }: Props) {
+export default function WeeklyActivityChart({ weekly, daily }: Props) {
+  const [granularity, setGranularity] = useState<Granularity>('weekly');
+  const active = granularity === 'weekly' ? weekly : daily;
+  const data = active.rows;
+  const models = active.models;
+
   const total = data.reduce(
     (acc, r) => acc + r.completed + r.awaiting + r.pending + r.cancelled + r.failed,
     0,
   );
 
+  const emptyMessage =
+    granularity === 'weekly' ? 'No jobs in the last 12 weeks.' : 'No jobs in the last 7 days.';
+  // Daily ticks are already a single day; weekly ones mark the week's start.
+  const labelPrefix = granularity === 'weekly' ? 'Week of ' : '';
+
   return (
     <div>
-      <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">
-        Weekly activity
-      </h2>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">Activity</h2>
+        <PillTabs<Granularity>
+          tabs={[
+            { value: 'weekly', label: 'Weekly' },
+            { value: 'daily', label: 'Daily · 7d' },
+          ]}
+          value={granularity}
+          onChange={setGranularity}
+          variant="inset"
+        />
+      </div>
       <div className="rounded-2xl border border-rule-2 bg-paper px-3 py-4">
         {total === 0 ? (
           <div className="flex h-[220px] items-center justify-center text-sm text-ink-3">
-            No jobs in the last 12 weeks.
+            {emptyMessage}
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={260}>
@@ -174,7 +198,7 @@ export default function WeeklyActivityChart({ data, models }: Props) {
                   boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
                 }}
                 labelStyle={{ color: 'var(--c-ink-3)' }}
-                labelFormatter={(v) => `Week of ${formatWeekTick(String(v ?? ''))}`}
+                labelFormatter={(v) => `${labelPrefix}${formatWeekTick(String(v ?? ''))}`}
               />
               {/* left:0 cancels the chart's negative left margin, which would
                   otherwise drag the legend off the card's left edge. */}

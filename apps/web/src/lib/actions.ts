@@ -4872,21 +4872,44 @@ function formatModelLabel(provider: string | null | undefined, model: string): s
   return prov ? `${prov}/${short}` : short;
 }
 
-export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActivityData>> {
+/**
+ * Shared activity loader for the home chart. Buckets jobs by `unit`
+ * ('week' or 'day') over a bounded window, decomposed by status AND by the
+ * agent's provider/model — the two consistent cuts the chart draws.
+ *
+ * `bucketIsos` is the pre-computed, contiguous list of bucket-start dates
+ * (oldest→newest) so empty buckets render as zero columns instead of
+ * vanishing.
+ */
+async function loadActivity(
+  unit: 'week' | 'day',
+  bucketIsos: string[],
+): Promise<ActionResult<WeeklyActivityData>> {
   try {
     const session = await getSession();
     const db = getDb();
 
-    // Single grouped query — pivot client-side. Last 12 weeks bounded by
-    // created_at to keep the index `idx_agent_jobs_entity_created`
-    // efficient even when the workspace has hundreds of thousands of jobs.
-    // Left-join agents (then its LLM key) so we can also decompose each week
-    // by the provider+model the job's agent is configured to run. Left (not
-    // inner) so jobs whose agent/key was deleted still count toward the
-    // status totals.
+    // The trunc unit + window are LITERALS (never user input). They must be
+    // inlined, NOT bound params: a bound `date_trunc($n, …)` gets a DIFFERENT
+    // placeholder in the SELECT vs the GROUP BY, so Postgres no longer sees them
+    // as the same expression and rejects the query ("created_at must appear in
+    // GROUP BY"). Reuse one literal `sql` fragment in both places so they match.
+    const truncExpr =
+      unit === 'week'
+        ? sql`date_trunc('week', ${agentJobs.createdAt})`
+        : sql`date_trunc('day', ${agentJobs.createdAt})`;
+    const windowCond =
+      unit === 'week'
+        ? sql`${agentJobs.createdAt} > now() - interval '12 weeks'`
+        : sql`${agentJobs.createdAt} > now() - interval '7 days'`;
+
+    // Single grouped query — pivot in JS. Bounded by created_at to keep the
+    // index `idx_agent_jobs_entity_created` efficient. Left-join agents (then
+    // its LLM key) so each bucket also decomposes by provider+model; LEFT (not
+    // inner) so jobs whose agent/key was deleted still count toward the totals.
     const rows = await db
       .select({
-        week: sql<string>`to_char(date_trunc('week', ${agentJobs.createdAt}), 'YYYY-MM-DD')`,
+        bucket: sql<string>`to_char(${truncExpr}, 'YYYY-MM-DD')`,
         status: agentJobs.status,
         model: agents.model,
         provider: entityLlmKeys.provider,
@@ -4895,33 +4918,11 @@ export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActi
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
       .leftJoin(entityLlmKeys, eq(entityLlmKeys.id, agents.llmKeyId))
-      .where(
-        and(
-          eq(agentJobs.entityId, session.entityId),
-          sql`${agentJobs.createdAt} > now() - interval '12 weeks'`,
-        ),
-      )
-      .groupBy(
-        sql`date_trunc('week', ${agentJobs.createdAt})`,
-        agentJobs.status,
-        agents.model,
-        entityLlmKeys.provider,
-      );
+      .where(and(eq(agentJobs.entityId, session.entityId), windowCond))
+      .groupBy(truncExpr, agentJobs.status, agents.model, entityLlmKeys.provider);
 
-    // Build the contiguous bucket list (12 oldest-to-newest weeks) so empty
-    // weeks render as zero columns instead of disappearing. Postgres uses
-    // ISO weeks starting Monday — mirror that here.
     const buckets = new Map<string, WeeklyActivityRow>();
-    const now = new Date();
-    // Snap to Monday at 00:00 UTC for the current week.
-    const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const dayOfWeek = monday.getUTCDay(); // 0 = Sunday
-    const daysSinceMonday = (dayOfWeek + 6) % 7;
-    monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(monday);
-      d.setUTCDate(d.getUTCDate() - i * 7);
-      const iso = d.toISOString().slice(0, 10);
+    for (const iso of bucketIsos) {
       buckets.set(iso, {
         week: iso,
         completed: 0,
@@ -4938,10 +4939,8 @@ export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActi
     const modelTotals = new Map<string, number>();
 
     for (const r of rows) {
-      // `to_char(date_trunc(...), 'YYYY-MM-DD')` returns a string for the
-      // start-of-week date — match it against the pre-computed buckets.
-      const bucket = buckets.get(r.week);
-      if (!bucket) continue; // older than 12 weeks, ignore
+      const bucket = buckets.get(r.bucket);
+      if (!bucket) continue; // outside the window, ignore
       const n = Number(r.count);
       const status = r.status ?? '';
       if (status === 'completed') bucket.completed += n;
@@ -4963,9 +4962,45 @@ export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActi
 
     return ok({ rows: Array.from(buckets.values()), models });
   } catch (err) {
-    console.error('[getWeeklyActivityAction]', err);
-    return fail('db_error', 'Failed to load weekly activity');
+    console.error('[loadActivity]', err);
+    return fail('db_error', 'Failed to load activity');
   }
+}
+
+/**
+ * Weekly job activity — rolling 12-week window, ISO weeks (Monday-start).
+ * Why 12 weeks: a quarterly trend without overwhelming the x-axis.
+ */
+export async function getWeeklyActivityAction(): Promise<ActionResult<WeeklyActivityData>> {
+  const now = new Date();
+  // Snap to Monday at 00:00 UTC for the current week (Postgres ISO weeks).
+  const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const daysSinceMonday = (monday.getUTCDay() + 6) % 7;
+  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
+  const isos: string[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(monday);
+    d.setUTCDate(d.getUTCDate() - i * 7);
+    isos.push(d.toISOString().slice(0, 10));
+  }
+  return loadActivity('week', isos);
+}
+
+/**
+ * Daily job activity — rolling 7-day window, one column per day. Same shape as
+ * the weekly view (the `week` field holds the day's ISO date) so the chart can
+ * render either with one toggle.
+ */
+export async function getDailyActivityAction(): Promise<ActionResult<WeeklyActivityData>> {
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const isos: string[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - i);
+    isos.push(d.toISOString().slice(0, 10));
+  }
+  return loadActivity('day', isos);
 }
 
 /**
