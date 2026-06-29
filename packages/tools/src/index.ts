@@ -63,6 +63,9 @@ export {
   createTelegramSendMessageTool,
   createSendImageTool,
   createSendFileTool,
+  createSendVideoTool,
+  createSendAudioTool,
+  createSendVoiceTool,
 } from './communication';
 
 // Skill-authoring grounding: the real MCP tool names of a workspace, injected

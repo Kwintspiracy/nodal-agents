@@ -322,6 +322,94 @@ export async function sendTelegramDocument(opts: {
   return { messageId: json.result?.message_id ?? 0 };
 }
 
+/**
+ * Generic raw-bytes upload to a Telegram send* method (sendVideo / sendAudio /
+ * sendVoice / …). Same multipart contract as sendPhoto/sendDocument — `field`
+ * is the form field Telegram expects for that method ('video', 'audio', …).
+ * Shared core so each new media type is a one-line wrapper, not a copy.
+ */
+async function uploadTelegramMedia(
+  method: string,
+  field: string,
+  opts: {
+    chatId: string;
+    botToken: string;
+    bytes: Uint8Array;
+    filename: string;
+    caption?: string;
+  },
+): Promise<{ messageId: number }> {
+  const { chatId, botToken, bytes, filename, caption } = opts;
+
+  const form = new FormData();
+  form.append('chat_id', chatId);
+  if (caption !== undefined) form.append('caption', caption.slice(0, 1024));
+  form.append(field, new Blob([Buffer.from(bytes)]), filename);
+
+  const url = `https://api.telegram.org/bot${botToken}/${method}`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DOCUMENT_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'POST', body: form, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new DeliveryError(
+        'telegram_request_failed',
+        `telegram_timeout: Telegram API did not respond within ${DOCUMENT_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
+    throw new DeliveryError(
+      'telegram_request_failed',
+      `telegram_request_failed: network error: ${safeMsg}`,
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  const json = (await response.json()) as TelegramApiResponse<TelegramSendResult>;
+  if (!response.ok || !json.ok) {
+    const desc = json.description ?? '';
+    if (response.status === 401) {
+      throw new DeliveryError('telegram_unauthorized', `telegram_unauthorized: ${desc}`);
+    }
+    if (response.status === 429) {
+      throw new DeliveryError('telegram_rate_limited', `telegram_rate_limited: ${desc}`);
+    }
+    if (response.status === 400 && desc.toLowerCase().includes('chat not found')) {
+      throw new DeliveryError('telegram_chat_not_found', `telegram_chat_not_found: ${desc}`);
+    }
+    throw new DeliveryError('telegram_request_failed', `telegram_request_failed: ${desc}`);
+  }
+  return { messageId: json.result?.message_id ?? 0 };
+}
+
+type TelegramMediaOpts = {
+  chatId: string;
+  botToken: string;
+  bytes: Uint8Array;
+  filename: string;
+  caption?: string;
+};
+
+/** Send a video to a Telegram chat (inline player) via sendVideo. */
+export function sendTelegramVideo(opts: TelegramMediaOpts): Promise<{ messageId: number }> {
+  return uploadTelegramMedia('sendVideo', 'video', opts);
+}
+
+/** Send an audio track to a Telegram chat (music player) via sendAudio. */
+export function sendTelegramAudio(opts: TelegramMediaOpts): Promise<{ messageId: number }> {
+  return uploadTelegramMedia('sendAudio', 'audio', opts);
+}
+
+/** Send a voice note to a Telegram chat (voice bubble) via sendVoice (expects OGG/Opus). */
+export function sendTelegramVoice(opts: TelegramMediaOpts): Promise<{ messageId: number }> {
+  return uploadTelegramMedia('sendVoice', 'voice', opts);
+}
+
 // ─── Bot config helpers (used by dashboard to set up agents) ──────────────────
 //
 // These hit the same `https://api.telegram.org/bot<token>/<method>` endpoints

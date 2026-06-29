@@ -47,6 +47,9 @@ import {
   createTelegramSendMessageTool,
   createSendImageTool,
   createSendFileTool,
+  createSendVideoTool,
+  createSendAudioTool,
+  createSendVoiceTool,
   listWorkspaceMcpToolNames,
 } from '@nodal-agents/tools';
 import type {
@@ -130,6 +133,9 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
   'telegram_send_message',
   'send_image',
   'send_file',
+  'send_video',
+  'send_audio',
+  'send_voice',
 ]);
 
 // Guard 1d — delivery tools whose presence in a turn counts as "delivered" for
@@ -142,6 +148,9 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'telegram_send_message',
   'send_image',
   'send_file',
+  'send_video',
+  'send_audio',
+  'send_voice',
 ]);
 
 // Channels whose ONLY path to the user is a delivery tool call (telegram_send_message).
@@ -824,6 +833,9 @@ async function runJob(
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendFileTool() as unknown as AnyToolDef);
+    capabilityTools.push(createSendVideoTool() as unknown as AnyToolDef);
+    capabilityTools.push(createSendAudioTool() as unknown as AnyToolDef);
+    capabilityTools.push(createSendVoiceTool() as unknown as AnyToolDef);
   }
 
   // Close callbacks for per-job MCP transports — invoked in the LLM loop's
