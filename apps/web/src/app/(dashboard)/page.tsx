@@ -73,11 +73,11 @@ export default async function DashboardPage() {
 
   // Derived metrics — all from real aggregates, no synthesis.
   const runningCount = active.length;
-  // Count skills actually IN USE (assigned to an agent in this workspace), to
-  // mirror the connectors card (installed instances). The library/marketplace
-  // skills that nobody has assigned shouldn't inflate this — they'd read like
-  // "11 skills" on a fresh workspace where none are wired to an agent.
-  const skillCount = skills.filter((sk) => sk.assignmentCount > 0).length;
+  // Count INSTALLED skills — the ones added to this workspace (custom +
+  // community), excluding the always-present built-in library. This mirrors the
+  // connectors card, which counts installed instances; both tiles say "installed"
+  // so the number's meaning is explicit and the two cards are consistent.
+  const skillCount = skills.filter((sk) => !sk.isSystem).length;
   const connectorCount = connectors.length + mcp.length;
   const totalTokens = s.totalInputTokens + s.totalOutputTokens;
   const successRate =
@@ -133,6 +133,7 @@ export default async function DashboardPage() {
           value={skillCount}
           icon={<Star size={13} weight="regular" />}
           href="/skills"
+          meta="installed"
         />
         <VividStatCard
           variant="conn"
@@ -142,8 +143,8 @@ export default async function DashboardPage() {
           href="/connectors"
           meta={
             mcp.length > 0
-              ? `${connectors.length} API · ${mcp.length} MCP`
-              : `${connectors.length} API`
+              ? `installed · ${connectors.length} API · ${mcp.length} MCP`
+              : `installed · ${connectors.length} API`
           }
         />
       </div>
