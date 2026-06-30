@@ -24,11 +24,23 @@ An agent is a named, persistent AI persona you create in the dashboard. **The ca
 A **job** is one unit of work — a chat message, a cron tick, an API call, or an inbound Telegram message. The runner loads the agent's config, builds the tool whitelist and system prompt _for that job_, then enters the LLM loop.
 
 <Callout type="warn" title="The tool whitelist is computed per job — there are no defaults">
-  The runner unions the always-on builtins (`return_result`, memory tools) with every tool unlocked
-  by the agent's assigned skills (via `requiredBuiltins`), its connectors, and its MCP servers. An
-  agent with no skills gets only the always-on set. A tool that isn't in the whitelist is **never**
-  offered to the model.
+  The runner unions the always-on builtins with every tool unlocked by the agent's assigned skills
+  (via `requiredBuiltins`), its connectors, and its MCP servers. An agent with no skills gets only
+  the always-on set. A tool that isn't in the whitelist is **never** offered to the model.
 </Callout>
+
+### Always-on built-in tools
+
+Every agent gets these 15 tools on every job, regardless of skills (`ALWAYS_ON_TOOLS` in `packages/tools/src/builtin/index.ts`):
+
+- `return_result` — set the job's final answer.
+- `skill_view` — read the full content of an assigned skill on demand.
+- `list_models` — list the models available to this agent.
+- `list_schedules` — list the agent's cron automations.
+- `save_memory`, `query_memory`, `mark_memory_helpful`, `mark_memory_outdated` — the [memory](/docs/concepts/memory) tools (write, recall, and rate persistent facts).
+- `search_history` — full-text recall across all of this workspace's past jobs and conversations, including ones run by other agents.
+- `dashboard_publish` — publish the agent's substantive output to the dashboard (it becomes the job's `result`, shown on `/jobs`).
+- `file_read`, `file_write`, `file_edit`, `file_list`, `file_search` — read and edit files in the agent's workspaces.
 
 ## Anti-loop guards
 

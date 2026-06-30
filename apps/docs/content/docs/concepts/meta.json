@@ -2,6 +2,7 @@
   "title": "Concepts",
   "pages": [
     "agents",
+    "workspaces",
     "orchestrators",
     "skills",
     "memory",

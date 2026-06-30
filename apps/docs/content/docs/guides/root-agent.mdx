@@ -3,7 +3,7 @@ title: ROOT agent
 description: Designate your first orchestrator as the workspace ROOT and grant it meta-tools to manage itself.
 ---
 
-The ROOT agent is the single top-level orchestrator in your workspace. It has access to **meta-tools** — `create_agent`, `create_skill`, `update_skill`, `attach_skill`, `attach_agent`, `create_mcp`, and `create_connector` — that let it extend the workspace on your behalf: writing new skills, creating agents, and wiring them together, all from within a chat or automation.
+The ROOT agent is the single top-level orchestrator in your workspace. It has access to **meta-tools** — for creating and updating agents and skills, attaching agents/skills/MCP servers/connectors, and managing its own cron schedules — that let it extend the workspace on your behalf: writing new skills, creating agents, and wiring them together, all from within a chat or automation.
 
 ## How ROOT designation works
 
@@ -17,17 +17,21 @@ ROOT powers are **all off by default** on a freshly auto-designated agent. Go to
 
 ### Allowed actions
 
-Toggle each meta-tool grant independently:
+Toggle each meta-tool grant independently. A single grant can unlock a **set** of related tools — the attach grants also unlock their `detach_*` mirror, and the schedules grant unlocks the full cron CRUD (`RootGrants` in `packages/shared/src/root-agent.ts`):
 
-| Grant              | Meta-tool unlocked |
-| ------------------ | ------------------ |
-| Create agents      | `create_agent`     |
-| Attach agents      | `attach_agent`     |
-| Create skills      | `create_skill`     |
-| Update skills      | `update_skill`     |
-| Assign skills      | `attach_skill`     |
-| Create MCP servers | `create_mcp`       |
-| Create connectors  | `create_connector` |
+| Grant              | Meta-tool(s) unlocked                                                   |
+| ------------------ | ----------------------------------------------------------------------- |
+| Create agents      | `create_agent`                                                          |
+| Update agents      | `update_agent`                                                          |
+| Attach agents      | `attach_agent`, `detach_agent`                                          |
+| Create skills      | `create_skill`                                                          |
+| Update skills      | `update_skill`                                                          |
+| Assign skills      | `attach_skill`, `detach_skill`                                          |
+| Create MCP servers | `create_mcp`                                                            |
+| Attach MCP servers | `attach_mcp`, `detach_mcp`                                              |
+| Create connectors  | `create_connector`                                                      |
+| Attach connectors  | `attach_connector`, `detach_connector`                                  |
+| Manage schedules   | `create_schedule`, `update_schedule`, `toggle_schedule`, `run_schedule` |
 
 Only enabled grants appear as tools in the ROOT agent's system context. Disabling a grant removes the tool immediately on the next job.
 

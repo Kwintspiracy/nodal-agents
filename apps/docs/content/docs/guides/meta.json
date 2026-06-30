@@ -3,6 +3,7 @@
   "pages": [
     "create-an-agent",
     "connect-a-model",
+    "connect-a-tool",
     "telegram",
     "automations",
     "shell-commands",

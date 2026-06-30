@@ -53,6 +53,13 @@ The runner's cron ticker evaluates due schedules every minute. For each due sche
 
 A bad cron expression causes the schedule to be marked `failed` and its `next_run` is pushed one year out — edit and save to fix it.
 
+<Callout type="info" title="Cron fires in your workspace timezone">
+  Cron expressions are evaluated in the **workspace timezone**, not UTC. Set it in **Settings** (the
+  timezone is captured from your browser at onboarding and editable there — it also accepts any IANA
+  name like `Europe/Paris`). So `0 9 * * *` means 09:00 in that zone. If automations fire at an
+  unexpected hour, check the workspace timezone first.
+</Callout>
+
 ## Telegram notifications
 
 Notification delivery is per-agent: the agent uses its own Telegram bot token. A schedule with **Notify me** enabled but assigned to an agent with no bot token shows a warning in the form. The notification is sent only on a successful (`completed`) run, not on failure or when the agent takes no action.

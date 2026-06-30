@@ -84,9 +84,21 @@ nodal-agents down && nodal-agents up
 
 Or edit `~/.nodalai/config.json` directly and set `"bind": "lan"`, then restart.
 
+### Auth modes
+
+The runner supports three auth modes (`AUTH_MODE` in `apps/runner/src/env.ts`); all three are selectable from **Settings → Security**:
+
+| Mode           | Behaviour                                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `local-trust`  | No authentication. The dashboard trusts any request. Default for a loopback bind.                                 |
+| `local-auth`   | Email + password sign-up. Default for a LAN bind; the first user to sign up becomes the admin.                    |
+| `bearer-token` | The runner API requires a static `Authorization: Bearer <token>` header. Used for headless / programmatic access. |
+
+When you do not set a mode explicitly, it is derived from `bind`: `loopback` → `local-trust`, `lan` → `local-auth`.
+
 ### Auth override
 
-You can enable email+password auth on a loopback install without switching to full LAN mode. In `~/.nodalai/config.json`:
+You can enable email+password auth on a loopback install without switching to full LAN mode. The `config.json` schema (`apps/cli/src/lib/config.ts`) is:
 
 ```json
 {
@@ -95,7 +107,20 @@ You can enable email+password auth on a loopback install without switching to fu
 }
 ```
 
-Restart for the change to take effect. The dashboard shows a login page at `/login`.
+`bind` is `"loopback"` or `"lan"`; `auth.mode` is `"local-auth"` (the override the wizard writes via Settings). Restart for the change to take effect. The dashboard then shows a login page at `/login`.
+
+### Bearer-token mode
+
+For programmatic or headless access, set `AUTH_MODE=bearer-token` and provide the token. The token lives at the top level of `config.json` as `bearerToken`:
+
+```json
+{
+  "bind": "loopback",
+  "bearerToken": "your-long-random-secret"
+}
+```
+
+Every request to the runner API must then carry `Authorization: Bearer your-long-random-secret`. Restart for the change to take effect.
 
 ## Update
 

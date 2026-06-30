@@ -61,20 +61,39 @@ Non-reasoning models are unaffected.
 
 ## Capabilities by provider
 
-| Provider   | Tool use | Prompt caching | Vision | Structured outputs |
-| ---------- | -------- | -------------- | ------ | ------------------ |
-| Anthropic  | Yes      | Yes            | Yes    | No (tool-based)    |
-| OpenAI     | Yes      | No             | Yes    | Yes                |
-| Google     | Yes      | No             | Yes    | Yes                |
-| Mistral    | Yes      | No             | No     | Yes                |
-| Groq       | Yes      | No             | No     | Yes                |
-| DeepSeek   | Yes      | No             | No     | No                 |
-| MiniMax    | Yes      | No             | No     | No                 |
-| OpenRouter | Yes      | No             | No     | No                 |
-| Ollama     | Yes      | No             | No     | Yes                |
+| Provider   | Tool use | Prompt caching | Structured outputs |
+| ---------- | -------- | -------------- | ------------------ |
+| Anthropic  | Yes      | Yes            | No (tool-based)    |
+| OpenAI     | Yes      | No             | Yes                |
+| Google     | Yes      | No             | Yes                |
+| Mistral    | Yes      | No             | Yes                |
+| Groq       | Yes      | No             | Yes                |
+| DeepSeek   | Yes      | No             | No                 |
+| MiniMax    | Yes      | No             | No                 |
+| OpenRouter | Yes      | No             | No                 |
+| Ollama     | Yes      | No             | Yes                |
 
-Capabilities marked "No" are conservative defaults — individual models on a provider
-may differ from the table above.
+## Vision (image input)
+
+Vision is **not** a per-provider flag — it is detected **per model id**. The model
+catalog (`packages/shared/src/model-catalog.ts`) keeps a `VISION_MODEL_IDS` set,
+sourced from the providers themselves (OpenRouter's `/api/v1/models` and
+models.dev), and `modelCanSeeImages()` looks each model up by id. A model not in
+the set is treated as text-only, so an inbound image is never sent to a model that
+can't see it.
+
+The vision-capable model families currently in the catalog are:
+
+- **Claude** — Opus, Sonnet, and Haiku (native and OpenRouter forms)
+- **Gemini** — 2.0 Flash, 2.5 Pro, and the 3.x preview line
+- **Gemma 4** (`google/gemma-4-31b-it`)
+- **MiniMax M3**
+- **Kimi** (`moonshotai/kimi-k2.7-code`)
+- **GPT-5** and GPT-5 mini
+- **Mistral Large**
+
+Text-only families in the catalog include DeepSeek and GLM (`z-ai/glm-5.2`).
+Custom or unlisted model ids default to text-only.
 
 ## Fallback chains
 

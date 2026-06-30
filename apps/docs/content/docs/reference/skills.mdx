@@ -1,0 +1,32 @@
+---
+title: Skills
+description: Install community skills from any open SKILL.md — GitHub, skills.sh, ClawHub, Anthropic, OpenAI, Hermes.
+---
+
+Beyond the [system skills](/docs/reference/system-skills) that ship with every
+install, you can add **community skills**: any project that publishes an open
+`SKILL.md` (the Agent Skills format). They are fetched at runtime, stored under
+`~/.nodalai/skills/`, and assigned to agents just like system skills.
+
+## Where to find them
+
+- **[skills.sh](https://www.skills.sh/)** — a directory of community skills.
+- **GitHub** — paste any repo URL (or `owner/repo`) that contains a `SKILL.md`.
+- **ClawHub** — community skill registry.
+- **Anthropic / OpenAI / Hermes** — many published skills work as-is. A large set
+  is catalogued in the [Hermes skills docs](https://hermes-agent.nousresearch.com/docs/skills).
+
+## How to install
+
+In the dashboard, open **Skills → Install community skill** and paste the source
+(a GitHub URL, an `owner/repo`, or a skills.sh path). Nodal fetches the archive,
+locates the `SKILL.md`, validates its frontmatter, and stores the skill with
+`is_community = true` and its source URL.
+
+## Skills that bundle scripts
+
+Some community skills (Hermes-style) bundle `.py` / `.sh` scripts. Nodal detects
+them on install and lists them, but **never runs anything automatically**. To let
+an agent execute a skill's scripts, assign the **command-execution** system skill
+and authorize the scripts for that agent — the runner gates execution behind
+`run_skill_script` + your approval.

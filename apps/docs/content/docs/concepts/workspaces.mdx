@@ -1,0 +1,91 @@
+---
+title: Workspaces
+description: A workspace (an "entity") is the isolation boundary for agents, skills, memory, and connectors. Create several, switch between them.
+---
+
+A **workspace** is the top-level container that everything else lives inside.
+In the code it's called an **entity** — you'll see `entityId` threaded through
+agents, skills, memory, and connectors — but in the dashboard it's simply your
+workspace.
+
+Think of it as a tenant: a self-contained space with its own agents and its own
+view of the world. Two workspaces never see each other's data.
+
+## What's scoped to a workspace
+
+Almost everything is keyed to the workspace it belongs to. Each of these tables
+carries an `entity_id`, and queries filter by it:
+
+| Scoped per workspace            | Notes                                            |
+| ------------------------------- | ------------------------------------------------ |
+| **Agents**                      | An agent belongs to one workspace.               |
+| **Skills** (`agent_skills`)     | Custom and learned skills are workspace-local.   |
+| **Memory** (`agent_memory`)     | Facts/memories are isolated per workspace.       |
+| **Connectors**                  | A connected Notion/Google/etc. is per workspace. |
+| **MCP servers** (`mcp_servers`) | MCP connections are per workspace.               |
+
+So a connector you connect in workspace A, a skill an agent learns in A, and a
+memory written in A are all invisible from workspace B. This isolation is
+enforced in the data layer: list/read/delete queries match on `entity_id`, not
+just the row id, so one workspace can't reach another's rows even by id.
+
+<Callout type="info">
+  **Credentials are the exception.** Your OAuth apps (the Client ID/secret you register in the
+  [Credentials](/docs/guides/connect-a-tool) wizard) are scoped to **your user**, not to a single
+  workspace — a connector in any of your workspaces can be backed by the same Google credential.
+  Only the *connector* (the authorized connection) is workspace-local.
+</Callout>
+
+Built-in library skills are the other shared thing — they're available in every
+workspace by slug. Everything you create stays in the workspace you created it
+in.
+
+## The default workspace
+
+On a fresh local install (local-trust mode, no auth), Nodal-Agents seeds a single
+default workspace named **Local** plus a starter agent. That's the one you land
+in. You can rename it, add agents, and connect tools — or create more workspaces
+alongside it.
+
+## Creating and switching workspaces
+
+The **workspace switcher** lives in the sidebar. Use it to:
+
+- **Switch** — pick another workspace. The dashboard reloads scoped to that
+  workspace's agents, skills, memory, and connectors. Your choice is remembered
+  in a cookie (`nodalai_active_entity`) that lasts a year, so you stay in the
+  same workspace across sessions until you switch again.
+- **Create** — make a new workspace (give it a name and an icon). You become its
+  owner. It starts empty — no agents, no connectors, no memory — a clean slate.
+
+When you switch, the server validates that you're a member of the target
+workspace before honouring the cookie, so a stale or tampered cookie can never
+drop you into a workspace you don't belong to.
+
+## When you'd want more than one
+
+- **Separate clients or projects.** One workspace per client keeps each one's
+  agents, connected accounts, and memory completely separate — no cross-talk, no
+  accidental data bleed.
+- **Personal vs work.** Keep a personal Google/Notion connection out of a
+  work-context agent's reach by putting them in different workspaces.
+- **Experiments.** Spin up a throwaway workspace to try a new agent or connector
+  without polluting your main one's memory and skills.
+
+If you only have a single context, the default workspace is all you need —
+multiple workspaces are there for when isolation matters.
+
+## Not to be confused with: agent workspaces
+
+There's a separate, lower-level concept also called a "workspace": an **agent
+workspace** is a named file directory an individual agent can read and write
+(`agent_workspaces` — `label` + `path`, e.g. a folder on disk). That's a file
+root _inside_ an agent, not the top-level tenant boundary this page is about. A
+top-level workspace (entity) contains agents; an agent workspace is a folder one
+agent uses.
+
+## Related
+
+- [Agents](/docs/concepts/agents)
+- [Connecting a tool](/docs/guides/connect-a-tool) — connectors and credentials
+- [Connectors & MCP](/docs/concepts/connectors-and-mcp)

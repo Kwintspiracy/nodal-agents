@@ -1,0 +1,47 @@
+---
+title: Reference
+description: Reference for everything Nodal-Agents ships with — skills, connectors, MCP servers, models, and the CLI/dashboard/API surface.
+---
+
+The catalog-driven pages in this section (system skills, connectors, MCP, models)
+are generated from the live product catalogs at build time, so they can never
+drift from what your install actually contains. The how-to pages (CLI,
+dashboard, operations, API) are hand-written.
+
+## System skills
+
+The [system skills](/docs/reference/system-skills) shipped in
+`@nodal-agents/catalog` and seeded into every install — the reusable
+capabilities and disciplines you can assign to any agent. Each page shows what
+the skill does, which tools it unlocks, and the exact guidance it injects into
+the agent's system prompt. A few are agent-internal (loaded on demand via
+`skill_view`, hidden from the dashboard) and marked as such.
+
+## Skills
+
+[Community skills](/docs/reference/skills) — install any open `SKILL.md` from
+GitHub, skills.sh, ClawHub, Anthropic, OpenAI, or Hermes. These aren't shipped
+with the product; you add them to your own install.
+
+## Connectors
+
+[Connectors](/docs/reference/connectors) — first-party integrations (Google
+Workspace, Notion, Airtable, and more). Each page lists the connector's auth and
+the full tool inventory from its adapter, grouped by risk (Read / Write /
+Destructive).
+
+## MCP connectors
+
+[MCP connectors](/docs/reference/mcp) — the curated library of Model Context
+Protocol servers you can connect, with transport, auth, and setup for each.
+
+## Models
+
+[Models & grants](/docs/reference/models) — the curated LLM catalog (with vision
+and reasoning capability per model) and the full ROOT-agent grant table.
+
+## CLI, dashboard, operations & API
+
+Hand-written guides for the [CLI](/docs/reference/cli), the
+[dashboard](/docs/reference/dashboard), [operating](/docs/reference/operate) your
+install, and the [HTTP API](/docs/reference/api).

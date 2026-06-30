@@ -44,17 +44,36 @@ follows the user across agents, not the individual agent.
 
 ## Searching memories during a job
 
-Agents can call `query_memory` explicitly when they need to dig deeper. The search
-is hybrid:
+Agents can call `query_memory` explicitly when they need to dig deeper.
 
-- **Vector (semantic)** — the query is embedded and matched by cosine similarity
-  against stored embeddings (threshold: 0.5 by default). Falls back to keyword if
-  the embedding call fails or returns no results.
-- **Keyword (ILIKE)** — splits the query into words and matches against the `fact`
-  text. Used as a fallback and available independently without an embedding client.
+**By default, search is keyword-only.** The runner ships with `EMBEDDING_PROVIDER`
+set to `keyword`, so out of the box there is no embedding step — semantic search
+does **not** run unless you explicitly enable it (see below).
+
+- **Keyword (ILIKE)** — the default path. Splits the query into words and matches
+  them against the `fact` text. Needs no embedding client and works with zero extra
+  configuration.
+- **Vector (semantic)** — available only when an embedding provider is configured.
+  The query is embedded and matched by cosine similarity against stored embeddings
+  (threshold: 0.5 by default). If the embedding call fails or returns no results,
+  the search falls back to keyword.
 
 Both paths update `last_accessed_at` on every returned row, which feeds back into
 the injection ranking for future jobs.
+
+## Enable semantic memory
+
+Semantic (vector) search is opt-in. To turn it on, set these runner environment
+variables (defined in `apps/runner/src/env.ts`):
+
+| Variable             | Default   | Purpose                                               |
+| -------------------- | --------- | ----------------------------------------------------- |
+| `EMBEDDING_PROVIDER` | `keyword` | Set to `ollama` or `openai` to enable embeddings      |
+| `EMBEDDING_MODEL`    | _(unset)_ | The embedding model id to use                         |
+| `EMBEDDING_BASE_URL` | _(unset)_ | Override the embedding endpoint (e.g. a local Ollama) |
+
+With `EMBEDDING_PROVIDER` left at `keyword`, the model/base-URL values are unused and
+`query_memory` runs the keyword path only.
 
 ## Writing memories
 

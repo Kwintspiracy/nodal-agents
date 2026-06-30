@@ -1,0 +1,119 @@
+---
+title: Dashboard reference
+description: Every page in the Nodal-Agents dashboard — what it's for and the actions it offers.
+---
+
+The dashboard is the web UI served at `http://localhost:3000` (or your rotated web port). Every page lives under the `(dashboard)` route group; the folder name maps directly to the URL path.
+
+## Home — `/`
+
+Workspace overview. Shows a greeting, headline stats (agents, skills, connectors), a weekly activity chart, job-status breakdown, success rate, token usage, and per-agent activity. The stat cards link through to Agents, Skills, and Connectors.
+
+## Runs — `/jobs`
+
+The job-run history (up to the 50 most recent). Each row shows the agent, task, status, and delegation context. Use this to watch what your fleet is doing.
+
+- **New task** — open a modal to send a one-off task to an agent.
+- **Search / filter** — by agent or task text.
+- **Open a run** — click a row to see its detail (transcript, tokens, cost, delegation tree).
+- **Cancel** — stop a running job.
+
+## Chat — `/chat`
+
+Direct conversation with your **root agent** (configured in Settings). Messages are grouped into conversations (Today / Yesterday / Earlier) with live polling for job status.
+
+- Send a message, start a new conversation, delete a conversation.
+
+If no root agent is designated, this page prompts you to set one in Settings.
+
+## Agents — `/agents`
+
+Manage the agent fleet. Agents are grouped under their orchestrators.
+
+- **Create / edit / delete** an agent.
+- **Drag-and-drop reorder** within an orchestrator group.
+- Per-agent job counts and live activity status.
+
+See [Create an agent](/docs/guides/create-an-agent) for the agent composer.
+
+## Skills — `/skills`
+
+Two tabs:
+
+- **Assigned** — a table of skills active on at least one agent. Unassign here.
+- **Library** — the full built-in + community catalog as category-filtered tiles. Assign a skill to one or more agents, or **install a community skill** from GitHub / the catalog.
+
+## Learned Skills — `/learned-skills`
+
+Skills the agents wrote themselves through the reflection loop. Review, **archive / restore / delete**, or **assign to an agent**. Two workspace-level controls live here:
+
+- **Reflection** on/off (per entity).
+- **Assignment mode** — auto-assign learned skills vs. require approval.
+
+## Connectors — `/connectors`
+
+Third-party integrations. Two tabs:
+
+- **Installed** — active connectors in a table; uninstall here.
+- **Marketplace** — the connector catalog as category-filtered tiles.
+
+Install a connector, then configure its credential (API key or OAuth — the OAuth flow redirects out and back). This page also surfaces OAuth success/error feedback.
+
+## MCP — `/mcp`
+
+Same two-tab structure as Connectors, for Model Context Protocol servers.
+
+- **Installed** servers in a table.
+- **Marketplace** of catalog MCP servers, plus a **custom MCP** form for adding your own stdio or HTTP server.
+
+## Credentials — `/credentials`
+
+The credential vault — stored API keys and OAuth tokens reused across connectors.
+
+- **Create** (wizard modal), **rename** (inline), **delete**, and view account name + token expiry.
+
+## Memory — `/memories`
+
+Persistent facts the agents learn and reference. Two tabs (Active / Archived).
+
+- **Create** a memory, **archive / restore**, **delete**.
+- Filter by agent, search by fact text, see the category (preference / context / outcome / learned_rule) and last-access date.
+
+## Approvals — `/approvals`
+
+The queue and history of tool calls that require your sign-off. Tabs: pending, approved, rejected, expired, all.
+
+- **Approve / reject** a pending tool call (optionally with a note).
+- Each entry shows the tool input, the agent's stated **purpose** and **impact**, and a link to the originating job.
+
+See the autonomy model in [Agents](/docs/concepts/agents).
+
+## Automations — `/automations`
+
+Scheduled, recurring agent tasks (cron). Create a schedule that fires an agent on an interval.
+
+- **Create / edit / delete** a schedule, **pause / enable**, **duplicate**, and **Run now**.
+
+Full details in [Automations](/docs/guides/automations).
+
+## LLM Providers — `/llm-providers`
+
+API keys for your LLM providers (Anthropic, OpenAI, OpenRouter, local endpoints, …). A first-class sidebar entry because it's touched often.
+
+- **Add** a provider key, **rename**, **delete**, and see provider type + active status.
+
+## Logs — `/logs`
+
+The fleet-wide tool-call audit trail. A paginated table (50 per page).
+
+- Filter by **agent**, **tool name**, or **job ID**; page through with Previous / Next; expand a row to see the full tool input/output.
+
+This is the in-app view of agent activity; the CLI `nodal-agents logs` tails the raw service log files instead.
+
+## Settings — `/settings`
+
+Workspace-level configuration: auth mode (display), security / sign-in method, network access (allowed IPs), timezone, the worker secret, install notes, the app/runner URLs, the **webhook ingress URL**, the shared-workspace path, the workspace list, **root-agent designation**, and LAN command (Yolo) mode.
+
+### Root context — `/settings/root-context`
+
+A deep view of everything the root agent receives as system context: its personality prompt, the full markdown of every assigned skill, install notes, and persistent memories — all editable in one place. Changes are read live on the next job.

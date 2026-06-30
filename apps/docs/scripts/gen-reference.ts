@@ -1,44 +1,76 @@
 /**
- * gen-reference.ts — generate the "Reference" docs section from the live product
- * catalog. Run before `next dev` / `next build` (see package.json scripts).
+ * gen-reference.ts — generate the catalog-driven half of the "Reference" docs
+ * section from the live product catalogs. Run before `next dev` / `next build`
+ * (see package.json scripts).
  *
- * The catalog (@nodal-agents/catalog) is the SINGLE SOURCE OF TRUTH for the
- * system skills shipped with every install. By generating the reference pages
- * from it at build time, the docs can never drift from what the product actually
- * ships — change a skill in the catalog, the docs regenerate. This is the
- * "dynamic" half of the documentation.
+ * The product catalogs (@nodal-agents/catalog system skills, the connector +
+ * MCP + model catalogs in @nodal-agents/shared / apps/web, the adapter
+ * `*_OPERATIONS` inventories, and the ROOT `RootGrants` interface) are the
+ * SINGLE SOURCE OF TRUTH. By regenerating these pages from them at build time,
+ * the docs can never drift from what the product actually ships — change a
+ * catalog entry, the docs regenerate. This is the "dynamic" half of the
+ * documentation; the hand-written pages (index, cli, dashboard, operate, api,
+ * skills) are committed and left untouched.
  *
- * Pages are written as `.md` (NOT `.mdx`): the skill content is arbitrary
+ * Skill pages are written as `.md` (NOT `.mdx`): the skill content is arbitrary
  * Markdown authored for LLM prompts and contains `{ }` (JSON examples) and
  * `<placeholder>` tokens that would break the MDX compiler. In `.md` mode MDX
  * expression/JSX parsing is off (`{` is literal), and we escape `<` outside code
  * spans so `<step>` renders as text instead of being eaten as an HTML tag. The
- * result is the skill rendered as real formatted docs — headings, tables, lists.
+ * catalog tables (connectors / mcp / models) are clean Markdown, so they are
+ * written as `.mdx`.
  *
- * Output (content/docs/reference/, gitignored — regenerated each build):
- *   reference/meta.json           — Reference section nav
- *   reference/index.mdx           — Reference landing page
- *   reference/skills/meta.json    — Skills sub-section nav (one entry per skill)
- *   reference/skills/<slug>.md    — one page per system skill
+ * THIS GENERATOR ONLY OWNS THESE SUBDIRS (wiped + regenerated each run):
+ *   reference/system-skills/   — one page per system skill + nav
+ *   reference/connectors/      — one page per connector + tool inventory + nav
+ *   reference/mcp/             — one page per MCP catalog entry + nav
+ *   reference/models/          — model catalog table + ROOT grants table + nav
  *
- * Connectors + MCP will be added here once their catalogs are lifted into a
- * shared package (they currently live inside apps/web).
+ * It NEVER deletes the hand-written, committed files that live alongside:
+ *   reference/index.mdx, reference/meta.json, reference/skills.mdx,
+ *   reference/cli.mdx, reference/dashboard.mdx, reference/operate.mdx,
+ *   reference/api.mdx
  */
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { systemSkills, skillKind, type SystemSkill } from '@nodal-agents/catalog';
+import {
+  CONNECTOR_CATALOG,
+  MODEL_CATALOG,
+  VISION_MODEL_IDS,
+  DEFAULT_ROOT_GRANTS,
+  modelGroupLabel,
+  type RootGrants,
+  type OperationDescriptor,
+} from '@nodal-agents/shared';
+import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+// The MCP catalog still lives inside apps/web (it is a pure-data module with no
+// imports, so tsx resolves the relative path fine). Lift into a shared package
+// later if a second consumer appears.
+import { MCP_CATALOG } from '../../web/src/lib/mcp-catalog';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const refDir = join(here, '..', 'content', 'docs', 'reference');
 const systemSkillsDir = join(refDir, 'system-skills');
+const connectorsDir = join(refDir, 'connectors');
+const mcpDir = join(refDir, 'mcp');
+const modelsDir = join(refDir, 'models');
 
-// Idempotent: wipe + recreate so removed catalog entries don't leave stale pages.
-if (existsSync(refDir)) rmSync(refDir, { recursive: true, force: true });
-mkdirSync(refDir, { recursive: true });
+// Idempotent: wipe + recreate ONLY the subdirs this generator owns, so removed
+// catalog entries don't leave stale pages. The hand-written reference pages
+// (index.mdx, meta.json, skills.mdx, cli.mdx, dashboard.mdx, operate.mdx,
+// api.mdx) are left in place.
+for (const dir of [systemSkillsDir, connectorsDir, mcpDir, modelsDir]) {
+  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+}
 
 /** One-line, frontmatter-safe (JSON-quoted = valid YAML double-quoted scalar). */
 const fm = (v: string): string => JSON.stringify(v.replace(/\s+/g, ' ').trim());
+
+/** Escape a `|` so it doesn't break a Markdown table cell, and collapse newlines. */
+const cell = (v: string): string => v.replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|');
 
 /**
  * Neutralise raw `<tag>` tokens that CommonMark would parse as HTML (swallowing
@@ -52,44 +84,8 @@ const escapeAnglesOutsideCode = (md: string): string =>
     .map((seg, i) => (i % 2 === 1 ? seg : seg.replace(/</g, '&lt;')))
     .join('');
 
-// ── Reference landing + nav ────────────────────────────────────────────────────
-writeFileSync(
-  join(refDir, 'meta.json'),
-  JSON.stringify({ title: 'Reference', pages: ['index', 'system-skills', 'skills'] }, null, 2) +
-    '\n',
-);
-writeFileSync(
-  join(refDir, 'index.mdx'),
-  `---
-title: Reference
-description: Auto-generated reference for everything Nodal-Agents ships with.
----
-
-This section is generated from the product catalog at build time, so it can
-never drift from what your install actually contains.
-
-## System skills
-
-The [system skills](/docs/reference/system-skills) shipped in
-\`@nodal-agents/catalog\` and seeded into every install — the reusable
-capabilities and disciplines you can assign to any agent. Each page shows what
-the skill does, which tools it unlocks, and the exact guidance it injects into
-the agent's system prompt. A few are agent-internal (loaded on demand via
-\`skill_view\`, hidden from the dashboard) and marked as such.
-
-## Skills
-
-[Community skills](/docs/reference/skills) — install any open \`SKILL.md\` from
-GitHub, skills.sh, ClawHub, Anthropic, OpenAI, or Hermes. These aren't shipped
-with the product; you add them to your own install.
-`,
-);
-
-// ── One page per skill, split into two sections ─────────────────────────────────
-// "Skills" = user-facing assignable capabilities. "System skills" = agent-internal
-// guides (loaded on demand via skill_view, hidden from the dashboard library).
-// ALL skills are listed — just grouped.
-const renderPage = (skill: SystemSkill): string => {
+// ── System skills: one page per skill ───────────────────────────────────────────
+const renderSkillPage = (skill: SystemSkill): string => {
   const unlocks =
     skill.requiredBuiltins && skill.requiredBuiltins.length > 0
       ? `\n**Unlocks tools:** ${skill.requiredBuiltins.map((b) => '`' + b + '`').join(', ')}`
@@ -121,58 +117,263 @@ ${escapeAnglesOutsideCode(skill.content.trim())}
 `;
 };
 
-/** Write one section folder (pages + nav meta.json), return the slugs written. */
-const writeSection = (dir: string, title: string, list: SystemSkill[]): string[] => {
-  mkdirSync(dir, { recursive: true });
+const writeSkillSection = (dir: string, title: string, list: SystemSkill[]): string[] => {
   const slugs = list.map((s) => s.slug);
-  for (const skill of list) writeFileSync(join(dir, `${skill.slug}.md`), renderPage(skill));
+  for (const skill of list) writeFileSync(join(dir, `${skill.slug}.md`), renderSkillPage(skill));
   writeFileSync(join(dir, 'meta.json'), JSON.stringify({ title, pages: slugs }, null, 2) + '\n');
   return slugs;
 };
 
-// "System skills" = EVERY shipped catalog skill (they are all system-provided).
-// The agent-internal ones (tool-* meta-tool guides) stay in this list and are
-// individually marked "Agent-internal".
-const sysSlugs = writeSection(systemSkillsDir, 'System skills', systemSkills);
+const sysSlugs = writeSkillSection(systemSkillsDir, 'System skills', systemSkills);
 
-// "Skills" = community / installable skills. These are NOT in the catalog (they
-// are fetched per-install from any open SKILL.md), so there is nothing to
-// auto-generate — this is a single hand-written guide page.
-writeFileSync(
-  join(refDir, 'skills.mdx'),
-  `---
-title: Skills
-description: Install community skills from any open SKILL.md — GitHub, skills.sh, ClawHub, Anthropic, OpenAI, Hermes.
+// ── Connectors: one page per catalog entry + adapter tool inventory ──────────────
+const RISK_LABEL: Record<OperationDescriptor['risk'], string> = {
+  read: 'Read',
+  write: 'Write',
+  destructive: 'Destructive',
+};
+const RISK_ORDER: Array<OperationDescriptor['risk']> = ['read', 'write', 'destructive'];
+
+const opsTable = (ops: OperationDescriptor[]): string => {
+  const sections: string[] = [];
+  for (const risk of RISK_ORDER) {
+    const group = ops.filter((o) => o.risk === risk);
+    if (group.length === 0) continue;
+    const rows = group
+      .map((o) => `| \`${o.slug}\` | ${cell(o.name)} | ${cell(o.description ?? '')} |`)
+      .join('\n');
+    sections.push(
+      `### ${RISK_LABEL[risk]} (${group.length})\n\n` +
+        `| Tool | Operation | Description |\n| --- | --- | --- |\n${rows}`,
+    );
+  }
+  return sections.join('\n\n');
+};
+
+const connectorSlugs: string[] = [];
+for (const c of CONNECTOR_CATALOG) {
+  connectorSlugs.push(c.slug);
+  const adapter = ADAPTER_REGISTRY[c.slug];
+  const ops = adapter?.operations ?? [];
+  const authLine =
+    c.authType === 'oauth2'
+      ? `**Auth:** OAuth 2.0${c.credentialType ? ` (credential type \`${c.credentialType}\`)` : ''}`
+      : `**Auth:** API key`;
+  const inventory =
+    ops.length > 0
+      ? `## Tools (${ops.length})\n\n${opsTable(ops)}`
+      : `## Tools\n\nThis connector has no adapter operation inventory in the catalog yet — only its auth and setup are documented above.`;
+  writeFileSync(
+    join(connectorsDir, `${c.slug}.mdx`),
+    `---
+title: ${fm(c.label)}
+description: ${fm(`${c.label} connector — ${c.docsHint}`)}
 ---
 
-Beyond the [system skills](/docs/reference/system-skills) that ship with every
-install, you can add **community skills**: any project that publishes an open
-\`SKILL.md\` (the Agent Skills format). They are fetched at runtime, stored under
-\`~/.nodalai/skills/\`, and assigned to agents just like system skills.
+${authLine}
 
-## Where to find them
+**Slug:** \`${c.slug}\`
 
-- **[skills.sh](https://www.skills.sh/)** — a directory of community skills.
-- **GitHub** — paste any repo URL (or \`owner/repo\`) that contains a \`SKILL.md\`.
-- **ClawHub** — community skill registry.
-- **Anthropic / OpenAI / Hermes** — many published skills work as-is. A large set
-  is catalogued in the [Hermes skills docs](https://hermes-agent.nousresearch.com/docs/skills).
+**Setup:** ${c.docsHint}
 
-## How to install
+> **Destructive operations** (delete, overwrite) can be disabled per-agent: in
+> the agent's **Connectors** tab, the "enabled operations" allowlist controls
+> exactly which of the tools below an agent may call. Operations marked
+> **Destructive** below are the ones to review first.
 
-In the dashboard, open **Skills → Install community skill** and paste the source
-(a GitHub URL, an \`owner/repo\`, or a skills.sh path). Nodal fetches the archive,
-locates the \`SKILL.md\`, validates its frontmatter, and stores the skill with
-\`is_community = true\` and its source URL.
+${inventory}
+`,
+  );
+}
+writeFileSync(
+  join(connectorsDir, 'meta.json'),
+  JSON.stringify({ title: 'Connectors', pages: connectorSlugs }, null, 2) + '\n',
+);
 
-## Skills that bundle scripts
+// ── MCP: one page per catalog entry ──────────────────────────────────────────────
+// Several catalog entries share a slug (e.g. `airtable`, `notion` appear as both
+// a direct connector AND an MCP server). De-dupe the page filename by suffixing
+// the transport so each entry gets its own page.
+const usedMcpNames = new Set<string>();
+const mcpPages: string[] = [];
+for (const m of MCP_CATALOG) {
+  let page = m.slug;
+  if (usedMcpNames.has(page)) page = `${m.slug}-${m.transport}`;
+  let n = 2;
+  while (usedMcpNames.has(page)) page = `${m.slug}-${m.transport}-${n++}`;
+  usedMcpNames.add(page);
+  mcpPages.push(page);
 
-Some community skills (Hermes-style) bundle \`.py\` / \`.sh\` scripts. Nodal detects
-them on install and lists them, but **never runs anything automatically**. To let
-an agent execute a skill's scripts, assign the **command-execution** system skill
-and authorize the scripts for that agent — the runner gates execution behind
-\`run_skill_script\` + your approval.
+  const status = m.status === 'pending' ? ' (test pending)' : '';
+  const transport = m.transport === 'http' ? 'Streamable HTTP' : 'stdio (local subprocess)';
+  const authScheme =
+    m.transport === 'stdio'
+      ? 'n/a (local subprocess — uses env vars, not an HTTP key)'
+      : m.authScheme === 'bearer'
+        ? 'Bearer token'
+        : m.authScheme === 'header'
+          ? `Header \`${m.authParamName}\``
+          : `Query param \`${m.authParamName}\``;
+  const facts = [
+    `**Transport:** ${transport}`,
+    `**Auth:** ${authScheme}`,
+    m.serverUrl ? `**Server URL:** \`${m.serverUrl}\`` : null,
+    m.command ? `**Command:** \`${[m.command, ...(m.args ?? [])].join(' ')}\`` : null,
+    m.envVarNames && m.envVarNames.length > 0
+      ? `**Env vars:** ${m.envVarNames.map((e) => '`' + e + '`').join(', ')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  // Written as `.md` (NOT `.mdx`): MCP docsHints are free-form and contain both
+  // `{ }` (a JSON header example in the Notion hint) and `<placeholder>` tokens
+  // (`<connection-string>`) that the MDX compiler would choke on. In `.md` mode
+  // `{` is literal; we still escape `<` outside code spans so `<repo-path>`
+  // renders as text instead of being eaten as an HTML tag — same rule the skill
+  // pages use.
+  writeFileSync(
+    join(mcpDir, `${page}.md`),
+    `---
+title: ${fm(`${m.label}${status}`)}
+description: ${fm(m.description)}
+---
+
+${escapeAnglesOutsideCode(m.description)}
+
+**Slug:** \`${m.slug}\`
+
+${facts}
+
+**Setup:** ${escapeAnglesOutsideCode(m.docsHint)}
+`,
+  );
+}
+writeFileSync(
+  join(mcpDir, 'meta.json'),
+  JSON.stringify({ title: 'MCP connectors', pages: mcpPages }, null, 2) + '\n',
+);
+
+// ── Models + ROOT grants ─────────────────────────────────────────────────────────
+// One generated section the generator owns: a models table (provider + vision +
+// reasoning, all from the catalog) and the full ROOT grants table (from the
+// RootGrants interface — every field, defaults-sourced for the value column).
+const PROVIDER_LABEL: Record<string, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  google: 'Google',
+  deepseek: 'DeepSeek',
+  minimax: 'MiniMax',
+  mistral: 'Mistral',
+  groq: 'Groq',
+  openrouter: 'OpenRouter',
+};
+const providerLabel = (p: string): string => PROVIDER_LABEL[p] ?? p;
+const yesno = (b: boolean): string => (b ? 'Yes' : 'No');
+
+const modelRows: string[] = [];
+for (const [provider, entries] of Object.entries(MODEL_CATALOG)) {
+  for (const e of entries) {
+    const group = modelGroupLabel(e.modelId);
+    const providerCell =
+      group && provider === 'openrouter' ? `OpenRouter / ${group}` : providerLabel(provider);
+    modelRows.push(
+      `| ${cell(e.label)} | \`${e.modelId}\` | ${providerCell} | ${yesno(
+        VISION_MODEL_IDS.has(e.modelId),
+      )} | ${yesno(Boolean(e.capabilities.reasoning))} |`,
+    );
+  }
+}
+const modelCount = modelRows.length;
+
+writeFileSync(
+  join(modelsDir, 'models.mdx'),
+  `---
+title: Models
+description: Curated LLM models Nodal-Agents pre-fills with the right capability flags (vision, reasoning).
+---
+
+These are the models in the curated catalog — the ones Nodal-Agents pre-fills
+with correct capability flags (tool calling, image input, reasoning). They are a
+convenience layer: you can always point an agent at any other model via the
+**Custom…** field plus the live "Test" probe, which is the source of truth for
+anything not listed here.
+
+- **Vision** — the model accepts image input (sourced from the providers
+  themselves: OpenRouter \`/api/v1/models\` and models.dev). An inbound image is
+  only sent to a vision-capable model, and the orchestrator can route an image
+  to a vision-capable teammate.
+- **Reasoning** — the model emits a hidden chain-of-thought that the runner
+  round-trips across tool calls.
+
+| Model | Model ID | Provider | Vision | Reasoning |
+| --- | --- | --- | --- | --- |
+${modelRows.join('\n')}
 `,
 );
 
-console.log(`[gen-reference] wrote ${sysSlugs.length} system skills + the community skills page`);
+// ROOT grants — every field of the RootGrants interface, with a one-line meaning
+// and the default value. Keys come from DEFAULT_ROOT_GRANTS so a new grant field
+// is never silently dropped (TS keyof check below makes a missing description a
+// compile error).
+const GRANT_MEANING: Record<keyof RootGrants, string> = {
+  createAgent: 'Create new sub-agents (the `create_agent` meta-tool).',
+  updateAgent: "Edit an existing agent's model or personality (`update_agent`).",
+  attachAgent: 'Attach / detach an existing agent as a sub-agent (`attach_agent`, `detach_agent`).',
+  createSkill: 'Author a new skill (`create_skill`).',
+  updateSkill: 'Edit an existing skill (`update_skill`).',
+  assignSkill: 'Assign / unassign a skill to an agent (`attach_skill`, `detach_skill`).',
+  createMcp: 'Connect a new MCP server (`create_mcp`).',
+  attachMcp: 'Attach / detach an MCP server to an agent (`attach_mcp`, `detach_mcp`).',
+  createConnector: 'Connect a new connector (`create_connector`).',
+  attachConnector:
+    'Attach / detach a connector to an agent (`attach_connector`, `detach_connector`).',
+  manageSchedules:
+    'Create, edit, toggle, and run cron schedules (`create_schedule`, `update_schedule`, `toggle_schedule`, `run_schedule`).',
+  autonomy:
+    'Autonomy level for the ROOT meta-tools: `propose_confirm`, `destructive_gate`, or `fully_autonomous`.',
+};
+const grantRows = (Object.keys(GRANT_MEANING) as Array<keyof RootGrants>)
+  .map((k) => {
+    const def = DEFAULT_ROOT_GRANTS[k];
+    const defCell = typeof def === 'boolean' ? yesno(def) : `\`${def}\``;
+    return `| \`${k}\` | ${cell(GRANT_MEANING[k])} | ${defCell} |`;
+  })
+  .join('\n');
+
+writeFileSync(
+  join(modelsDir, 'root-grants.mdx'),
+  `---
+title: ROOT grants
+description: The per-grant powers a ROOT agent can be given — every field of the RootGrants interface.
+---
+
+A **ROOT agent** is the top of an entity's hierarchy and the target of the
+dashboard chat. It can hold *meta-tools* that change your setup (create agents,
+author skills, connect MCP servers, manage schedules). Each power is a separate
+grant you toggle in **Settings → ROOT agent**, gated by the ROOT's autonomy
+level. The table below is every grant on the \`RootGrants\` interface.
+
+The **Default** column is the value a manually-designated ROOT starts with
+(\`DEFAULT_ROOT_GRANTS\`). An *auto-designated* ROOT — the first orchestrator
+created in an entity — instead starts with every power **off** until you opt in.
+
+| Grant | Meaning | Default |
+| --- | --- | --- |
+${grantRows}
+`,
+);
+
+writeFileSync(
+  join(modelsDir, 'meta.json'),
+  JSON.stringify({ title: 'Models & grants', pages: ['models', 'root-grants'] }, null, 2) + '\n',
+);
+
+console.log(
+  `[gen-reference] wrote ${sysSlugs.length} system skills, ` +
+    `${connectorSlugs.length} connectors (${connectorSlugs.reduce(
+      (n, s) => n + (ADAPTER_REGISTRY[s]?.operations.length ?? 0),
+      0,
+    )} tools), ` +
+    `${mcpPages.length} MCP entries, ${modelCount} models, ROOT grants table`,
+);

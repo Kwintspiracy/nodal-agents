@@ -1,0 +1,195 @@
+---
+title: Troubleshooting & FAQ
+description: The most common Nodal-Agents failures — symptom, cause, and fix — for connectors, models, jobs, and the local stack.
+---
+
+A central list of the failures people actually hit, grouped by area. Each entry
+is **symptom → cause → fix**.
+
+## Connectors & OAuth
+
+### `redirect_uri_mismatch` when connecting an OAuth connector
+
+**Symptom.** The OAuth popup (Google / Notion / Airtable) errors out with
+`redirect_uri_mismatch` or "redirect URI does not match."
+
+**Cause.** The redirect URI registered in your OAuth app does not **exactly**
+match the one Nodal-Agents uses. The redirect URI is built from your dashboard's
+own origin plus a per-provider callback path (e.g.
+`http://localhost:3000/api/oauth/google-oauth/callback`). A trailing slash,
+`http` vs `https`, or a different port all count as a mismatch. This is the
+single most common connector failure.
+
+**Fix.** Open the **Credentials** wizard (`/credentials`), copy the
+**Authorized redirect URI** it shows (there's a Copy button), and paste it
+verbatim into your OAuth app's redirect-URI field at the provider. If your
+dashboard's port rotated (see below), the origin changed — re-copy and update the
+registered URI. See [Connecting a tool](/docs/guides/connect-a-tool).
+
+### Notion "object not found"
+
+**Symptom.** Notion tools return "object not found" even though the page exists
+and the token is valid.
+
+**Cause.** Notion only exposes pages **explicitly shared with the integration**.
+A fresh integration sees nothing until you grant it each page.
+
+**Fix.** For every Notion page (or database) the agent should reach, open it →
+the **···** menu → **Connections** → select your integration. Then retry.
+
+### Airtable `invalid_scope`
+
+**Symptom.** The Airtable OAuth flow fails with `invalid_scope`.
+
+**Cause.** The four required scopes weren't saved on the integration before you
+started the flow. Checking the boxes isn't enough — the integration has to be
+saved/updated so the scopes persist.
+
+**Fix.** At [airtable.com/create/oauth](https://airtable.com/create/oauth) check
+`data.records:read`, `data.records:write`, `schema.bases:read`,
+`schema.bases:write`, then **save/update** the integration so the scopes stick,
+and retry.
+
+<Callout type="warn">
+  Airtable also rejects raw LAN-IP redirect URIs (e.g. `192.168.x.x`). If your dashboard runs on a
+  LAN IP, run this one flow from `http://localhost:3000`. The resulting credential then works from
+  any host.
+</Callout>
+
+## Models
+
+### Model "Test connection" fails
+
+**Symptom.** Adding or testing an LLM key reports `connection_failed` with a
+status line like `<provider> responded 401: …` or `… responded 404: …`.
+
+**Cause and fix** — the message tells you which:
+
+- **401 / 403** — wrong or missing API key. Re-paste the key.
+- **404 / "model not found"** — wrong base URL or model id. For
+  `openai-compatible` and `ollama`, the **base URL is required** — the test fails
+  with `baseUrl is required for <provider>` if it's blank. Check the model id
+  matches what the provider actually serves.
+- **Connection refused / timeout** — the base URL points nowhere reachable (see
+  local-model section below).
+
+The test hits the provider's models endpoint (e.g. `/models` for
+OpenAI-compatible, `/api/tags` for Ollama) with your credentials; on success it
+reports the number of models available.
+
+### Local model (LM Studio / Ollama) not reachable
+
+**Symptom.** A local model times out or the connection is refused, in the test or
+mid-job.
+
+**Cause.** The base URL doesn't point at a running local server, or points at the
+wrong port.
+
+**Fix.** Use the right base URL and make sure the server is up:
+
+- **LM Studio** — `http://localhost:1234/v1` (start the local server in LM
+  Studio's Developer tab).
+- **Ollama** — `http://localhost:11434` (`ollama serve` running, model pulled).
+
+On Windows, prefer `127.0.0.1` over `localhost` if a connection that "should
+work" times out — `localhost` can resolve to IPv6 (`::1`) first while the server
+only listens on IPv4.
+
+## Jobs
+
+### `token_budget_exceeded`
+
+**Symptom.** A job fails with `token_budget_exceeded`.
+
+**Cause.** Cumulative tokens for the job crossed the per-job ceiling — a runaway
+loop or a very large context. The default is **1,500,000** tokens.
+
+**Fix.** Investigate the loop first (a job burning 1.5M tokens is usually stuck,
+not legitimately large). To genuinely raise the ceiling, set
+`MAX_TOTAL_TOKENS_PER_JOB` in the runner's environment. Leveraging prompt caching
+(supported models) also stretches the budget, since the budget counts effective
+input tokens.
+
+### `cost_budget_exceeded` (cost cap killed the job)
+
+**Symptom.** A job fails with `cost_budget_exceeded`.
+
+**Cause.** The provider-reported dollar cost for the job crossed the cap. The
+default is **$2.00** per job. (Only fires for providers that report cost — e.g.
+OpenRouter with usage cost; for providers that don't report cost this guard never
+fires and the token budget is the backstop.)
+
+**Fix.** Raise the cap by setting `MAX_COST_PER_JOB_USD` in the runner's
+environment (e.g. `MAX_COST_PER_JOB_USD=5`).
+
+## Local stack
+
+### "Worker secret missing" → runner 403, jobs stuck `pending`
+
+**Symptom.** Dashboard tasks never start — they sit in `pending`. Settings flags
+a missing worker secret, or the web logs show
+`[sendTaskAction] WORKER_SECRET missing — cannot ping runner`.
+
+**Cause.** The web app wakes the runner with a `POST /api/worker` call
+authenticated by a shared `WORKER_SECRET` bearer token. If the secret is missing
+or mismatched between web and runner, the runner answers `403 invalid_worker_secret`
+(or `500 server_misconfiguration` if it has no secret configured) and the job
+never gets picked up.
+
+**Fix.** Ensure the **same** `WORKER_SECRET` is set for both the web and runner
+processes. In the managed CLI stack this is wired automatically; if you run the
+processes yourself, set it in both environments.
+
+### Port already in use / ports rotated unexpectedly
+
+**Symptom.** Startup complains about a port, or you notice the dashboard came up
+on a different port than expected (default ports: web **3000**, runner **3001**,
+Postgres **25432**).
+
+**Cause.** A previous run was closed without `Ctrl+C` (or without
+`nodal-agents down`), leaving orphan processes holding the ports — or the OS has
+reserved a port (Windows Hyper-V/WinNAT excluded ranges). On startup the CLI
+sweeps orphans on the configured ports and, if a port is still unbindable,
+**rotates** to a free neighbour and persists the new port in
+`~/.nodalai/config.json`.
+
+**Fix.** Usually nothing — let it rotate; the ready message prints the actual
+URL. If the dashboard origin changed, update any registered OAuth redirect URIs
+to match. To reset, run `nodal-agents down` and start again.
+
+### Orphaned Postgres holds the shared-memory block
+
+**Symptom.** Postgres won't start; the log mentions a **pre-existing shared
+memory block is still in use**.
+
+**Cause.** A previous Postgres crashed without releasing its Windows
+shared-memory section. That section is keyed to the **data dir**, not the port —
+so rotating to another port doesn't help; the new postmaster reattaches the same
+key and dies with that FATAL error.
+
+**Fix.** The CLI tries a graceful `pg_ctl stop -m fast` (which releases the SHM
+cleanly) and then a direct kill of the orphan postmaster. If it still survives,
+the CLI aborts with an actionable message:
+
+1. Run `nodal-agents down`.
+2. Kill the orphan postmaster (`Stop-Process -Id <pid> -Force` on Windows, or
+   `kill -9 <pid>`).
+3. If it persists, reboot to clear the orphan kernel object.
+
+No data is lost — the `pg-data` directory is preserved.
+
+### Node.js too old
+
+**Symptom.** `nodal-agents` errors out at install or boot with syntax/engine
+errors.
+
+**Cause.** An old Node.js runtime.
+
+**Fix.** Use **Node 22 or newer**. Check with `node -v` and upgrade if it's
+below 22. See [Self-hosting](/docs/self-hosting).
+
+## Related
+
+- [Connecting a tool](/docs/guides/connect-a-tool) — the full connector setup flow
+- [Connectors & MCP](/docs/concepts/connectors-and-mcp)
+- [Self-hosting](/docs/self-hosting)

@@ -5,8 +5,13 @@
 # Fumadocs generated source (postinstall: fumadocs-mdx)
 /.source/
 
-# Auto-generated reference docs (gen-reference.ts reads the product catalog)
-/content/docs/reference/
+# Auto-generated reference subdirs (gen-reference.ts owns these; the rest of
+# /content/docs/reference/ — index.mdx, meta.json, skills.mdx, cli.mdx,
+# dashboard.mdx, operate.mdx, api.mdx — is hand-written and committed)
+/content/docs/reference/system-skills/
+/content/docs/reference/connectors/
+/content/docs/reference/mcp/
+/content/docs/reference/models/
 
 # deps
 /node_modules/

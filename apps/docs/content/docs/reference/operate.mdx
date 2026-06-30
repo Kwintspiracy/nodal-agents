@@ -1,0 +1,60 @@
+---
+title: Operating & observability
+description: Watch runs, read cost and budget caps, control job retention, and tail logs.
+---
+
+Once agents are running, the dashboard and the CLI give you everything you need to watch what they do, cap what they cost, and reclaim disk.
+
+## Watching runs
+
+The **Runs** page (`/jobs`) lists the most recent job runs. Open any run to see its detail, including the **delegation tree**: when an orchestrator delegates to sub-agents, the orchestrator run sits above its delegated child runs so you can follow the whole fan-out at a glance.
+
+Each run shows:
+
+- **Tokens used** — per job, cumulative across resumes.
+- **Real provider cost** — the actual dollar cost when the provider reports it (OpenRouter with `usage:{include:true}`). Providers that don't report cost leave this at `$0`.
+- **Trigger** — an icon for how the job started (chat, cron schedule, webhook, API, internal).
+- **Status** — running / completed / failed / cancelled / no_action.
+
+You can **cancel** a running job from the run row or its detail.
+
+The **Logs** page (`/logs`) is the fleet-wide tool-call audit trail — every tool call, filterable by agent, tool name, or job ID.
+
+## Cost and budget caps
+
+The runner enforces two hard per-job backstops against runaway loops. Both have conservative defaults and are overridable per deployment via environment variables on the runner.
+
+| Guard | Env var | Default | Behavior |
+| ----- | ------- | ------- | -------- |
+| Token budget | `MAX_TOTAL_TOKENS_PER_JOB` | `1500000` (1.5M) | When a job's cumulative input + output tokens exceed this, the job fails with `token_budget_exceeded`. |
+| Dollar cost | `MAX_COST_PER_JOB_USD` | `2.0` | When the provider-reported cumulative cost exceeds this, the job fails with `cost_budget_exceeded`. |
+
+The cost cap only fires for providers that report per-call cost. For providers that don't, the cost stays `$0` and the **token budget is the fallback backstop**. Both caps are deliberately set far above where legitimate jobs sit (typical jobs use tens of thousands of tokens) while staying below the multi-million-token burns that motivated the guards.
+
+These are last-resort backstops. The anti-loop guards baked into the runtime — max delegation depth, max tool calls per turn, max chain length, and a no-progress detector — stop most runaways long before a budget cap is reached.
+
+## Job retention
+
+By default **nothing is ever deleted** — job history grows until you prune it. To cap database growth, set `RETENTION_DAYS` on the runner:
+
+| Value | Effect |
+| ----- | ------ |
+| `0` (default) | Disabled. No automatic deletion. |
+| `N > 0` | Each cron tick, terminal jobs (`completed`, `failed`, `cancelled`) whose `completed_at` is older than `N` days are pruned. Their `tool_calls` and `approval_requests` are removed via `ON DELETE CASCADE`. |
+
+Deleting job history is **irreversible**. Start with a large value (e.g. `90`) and reduce over time.
+
+## Reading logs
+
+Service logs are written to `~/.nodalai/logs/`. Tail them from the CLI:
+
+```bash
+nodal-agents logs runner      # the runner (LLM loop, cron, delivery)
+nodal-agents logs web         # the dashboard server
+nodal-agents logs postgres    # the embedded database
+nodal-agents logs             # print all three (no follow)
+```
+
+A single service follows live (`tail -f` style) until Ctrl+C; with no argument all three are printed once. If Postgres refuses to start, set `NODALAI_PG_LOG=1` before `nodal-agents up` for verbose Postgres startup output.
+
+For the in-app, structured view of agent actions, use the dashboard **Logs** page instead — it's the tool-call audit trail, not the raw service stdout.

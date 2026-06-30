@@ -1,0 +1,262 @@
+---
+title: Connecting a tool
+description: Wire an external service to your agents — OAuth connectors (with your own OAuth app), API-key connectors, and MCP servers.
+---
+
+Agents reach the outside world through **connectors** and **MCP servers**. This
+guide walks the actual dashboard flow for each — including the step the rest of
+the docs gloss over: for OAuth connectors you bring **your own** OAuth app, and
+you register it in the **Credentials** wizard before you can click Connect.
+
+If you just want the concepts, see
+[Connectors & MCP](/docs/concepts/connectors-and-mcp). This page is the
+step-by-step.
+
+## Two kinds of connector auth
+
+Every connector in the catalog is one of two auth types:
+
+| Auth type   | Connectors                                                                                         | What you provide                                                    |
+| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **OAuth 2** | Google Drive, Gmail, Google Sheets, Google Docs, Google Calendar, Notion (OAuth), Airtable (OAuth) | Your own OAuth app (Client ID + secret), then a one-click authorize |
+| **API key** | Notion, Airtable, Apify, Firecrawl, Tavily, Poyo                                                   | A key or Personal Access Token you paste                            |
+
+One Google credential backs Drive, Gmail, Sheets, Docs, and Calendar at once —
+they all share the `google-oauth` credential type, so you only set Google up
+once.
+
+## OAuth connectors — register your own OAuth app first
+
+Nodal-Agents does not ship a shared OAuth client. You create an OAuth app at the
+provider (Google, Notion, Airtable), store its Client ID and secret in the
+**Credentials** wizard, and only then does the connector's **Connect** button
+have something to authorize against.
+
+The wizard lives at **/credentials** in the dashboard (or click **Connect** on an
+OAuth connector — it routes you to the wizard if no matching credential exists
+yet, then back to auto-assign).
+
+### The redirect URI is the part that bites
+
+Every OAuth provider needs the **exact** redirect URI registered, or it refuses
+the connection. The Credentials wizard shows you the precise URI to copy for the
+provider you picked — it is built from your dashboard's own origin plus a
+per-provider callback path:
+
+- Google → `<your-origin>/api/oauth/google-oauth/callback`
+- Notion → `<your-origin>/api/oauth/notion-oauth/callback`
+- Airtable → `<your-origin>/api/oauth/airtable-oauth/callback`
+
+Copy it from the wizard's **Authorized redirect URI** box (there's a Copy
+button). Paste it verbatim — a single character off (trailing slash, `http` vs
+`https`, wrong port) produces a `redirect_uri_mismatch` and the flow fails. This
+is the most common reason a connection won't go through.
+
+### Google (Drive / Gmail / Sheets / Docs / Calendar)
+
+You need a Google Cloud project with the relevant APIs enabled.
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create
+   a new project (any name).
+2. Enable each API your agents will use — Drive, Gmail, Sheets, Docs, Calendar —
+   from the API Library, then hit **Enable** on each.
+3. **APIs & Services → OAuth consent screen.** User Type **External**, fill in
+   the app name, and add your own email as a **Test user**.
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID →
+   Application type: Web application.**
+5. Under **Authorized JavaScript origins**, add the origin shown in the wizard.
+6. Under **Authorized redirect URIs**, paste the redirect URI shown in the
+   wizard. Mandatory — Google rejects the connection if it's missing or differs
+   by one character.
+7. Click **Create**. Copy the **Client ID** (ends with
+   `.apps.googleusercontent.com`) and **Client secret**.
+8. Paste both into the Credentials wizard and continue. The OAuth authorize popup
+   completes the credential.
+
+Once the Google credential exists, every Google connector (Drive, Gmail, Sheets,
+Docs, Calendar) can use it — open the connector, click **Connect**, pick the
+credential.
+
+### Notion (OAuth — Public integration)
+
+Notion OAuth needs a **Public** integration. An Internal integration token can't
+do OAuth — that's the API-key path below.
+
+1. Go to [notion.so/my-integrations](https://www.notion.so/my-integrations) →
+   **+ New integration**.
+2. Set **Integration type** to **Public**. (No "Type" field on the page means
+   you're on the wrong screen.)
+3. Fill in a name and optional logo. Under **Capabilities** check at least: Read
+   content, Update content, Insert content.
+4. In **OAuth Domain & URIs**, paste the redirect URI from the wizard. Mandatory.
+5. **Submit**, then open the **Secrets** tab.
+6. Copy the **OAuth client ID** (a UUID) and **OAuth client secret** (starts with
+   `secret_`).
+7. Paste both into the Credentials wizard.
+
+### Airtable (OAuth)
+
+Airtable OAuth has two gotchas: a redirect-host restriction and a scopes step.
+
+<Callout type="warn">
+  Airtable only accepts **localhost** or an **HTTPS** redirect URI — a raw LAN IP (e.g.
+  `192.168.x.x`) is rejected. If your dashboard runs on a LAN IP, open it at `http://localhost:3000`
+  just for this flow. The resulting credential works from any host afterward.
+</Callout>
+
+1. Go to [airtable.com/create/oauth](https://airtable.com/create/oauth) →
+   **Register new OAuth integration**.
+2. Give it a name (e.g. `Nodal-Agents`).
+3. In **Redirect URIs**, paste the redirect URI from the wizard. Mandatory.
+4. In **Scopes**, check all four: `data.records:read`, `data.records:write`,
+   `schema.bases:read`, `schema.bases:write` — then **save/update** so the scopes
+   persist. If they aren't saved, the OAuth flow returns `invalid_scope`.
+5. **Register integration** (or Save changes if editing).
+6. On the detail page copy the **Client ID** (a UUID) and **Client secret**.
+7. Paste both into the Credentials wizard.
+
+### After the credential exists
+
+Go to **Connectors**, open the OAuth connector, click **Connect**, and pick the
+credential you just made. The authorize popup runs once; the connector turns
+connected. Then assign it to an agent: agent edit page → **Connectors** tab →
+enable it. Tools appear on the agent's next job.
+
+## API-key connectors
+
+These need no OAuth app — you paste a key. Go to **Connectors**, open the
+connector, expand the help, and paste. Where to get each key and what to watch
+for:
+
+### Notion (Internal token)
+
+The Internal-integration flow — single workspace, no OAuth.
+
+1. [notion.so/my-integrations](https://www.notion.so/my-integrations) → **+ New
+   integration**. Set type to **Internal**, select your workspace.
+2. Under **Capabilities** check at least Read / Update / Insert content.
+3. **Submit**, open **Secrets**, copy the **Internal Integration Token** (starts
+   with `secret_`).
+4. **Crucial:** for every Notion page the agent should touch, open the page → the
+   **···** menu → **Connections** → select your integration. Without this you get
+   "object not found" on every call — Notion only exposes pages explicitly shared
+   with the integration.
+
+### Airtable (Personal Access Token)
+
+1. [airtable.com/create/tokens](https://airtable.com/create/tokens) → **Create
+   new token**.
+2. Add scopes — at minimum `data.records:read`, `data.records:write`,
+   `schema.bases:read`.
+3. Under **Access**, pick the specific bases to expose (or All workspaces).
+4. **Create token** and copy it immediately — Airtable hides it after you close
+   the dialog. The token starts with `pat`.
+
+### Apify
+
+[console.apify.com/account/integrations](https://console.apify.com/account/integrations)
+→ copy the default Personal API token or create a dedicated one. It starts with
+`apify_api_`.
+
+### Firecrawl
+
+[firecrawl.dev/account](https://www.firecrawl.dev/account) → **API Keys** → copy
+or generate. It starts with `fc-`.
+
+### Tavily
+
+[app.tavily.com](https://app.tavily.com/) → API section → copy your key. It
+starts with `tvly-`.
+
+### Poyo
+
+Get a Poyo API key from the Poyo API Console at poyo.ai. It's sent as a **Bearer
+token**.
+
+## MCP servers
+
+MCP servers expose extra tools, namespaced by the server's slug (a server with
+slug `stripe` exposes `stripe__retrieve_balance`). Add one from **MCP** in the
+dashboard: pick a catalog entry, fill in what it asks for, then assign it to an
+agent via the agent's **Connectors** tab. See
+[Connectors & MCP](/docs/concepts/connectors-and-mcp) for the transport model.
+
+Per-server setup notes, pulled from the catalog:
+
+### HTTP servers (paste a key)
+
+- **Stripe** — `https://mcp.stripe.com`, Bearer key. Use a **Restricted** key
+  (`rk_test_…` / `rk_live_…`) for least privilege; standard secret keys
+  (`sk_test_…` / `sk_live_…`) also work. Both `sk_` and `rk_` prefixes are
+  accepted.
+- **Airtable (hosted)** — `https://mcp.airtable.com/mcp`, Bearer **PAT** (starts
+  with `pat`; scopes `data.records:read/write`, `schema.bases:read`). After
+  connecting, pick which bases the integration can access at
+  `airtable.com/?integrations=thirdParty`.
+- **Apify (hosted)** — `https://mcp.apify.com`, Bearer token from the Apify
+  Console (Settings → API & Integrations).
+- **Composio / Linear / Sentry / VidIQ** — you supply the server URL plus the
+  account key (Linear keys start with `lin_api_`).
+
+### stdio servers (spawned locally via `npx`)
+
+The runner runs these as a local subprocess via `npx -y <pkg>` on first use
+(downloads the package, ~5–30 s the first time). Most need a path argument or an
+env var:
+
+- **GitHub** — set `GITHUB_PERSONAL_ACCESS_TOKEN` to a PAT
+  ([github.com/settings/tokens](https://github.com/settings/tokens), `repo`
+  scope).
+- **Filesystem** — replace `<root-directory>` in the args with the absolute path
+  to expose. All operations are restricted to that tree.
+- **Git** — replace `<repo-path>` with the absolute repo root.
+- **PostgreSQL** — replace `<connection-string>` with your Postgres URL; connects
+  read-only.
+- **n8n** — set `N8N_API_URL` (your instance) and `N8N_API_KEY` (Settings → n8n
+  API).
+- **Supabase** — replace `<project-ref>` (Project Settings → General) and set
+  `SUPABASE_ACCESS_TOKEN` (a Personal Access Token from
+  `supabase.com/dashboard/account/tokens`). Read-only by default; remove
+  `--read-only` to allow writes.
+- **Notion (MCP)** — share the target pages with an internal integration, set
+  `NOTION_TOKEN` to the integration secret (starts with `ntn_`).
+- **Perplexity** — set `PERPLEXITY_API_KEY` (keys start with `pplx-`, from
+  `console.perplexity.ai`).
+- **Fetch / Playwright** — no key. Playwright launches a local headless browser,
+  so Chromium/Chrome must be available on the host.
+
+### App-bridge servers (need `uv`/`uvx` + a running plugin)
+
+The 3D / creative servers don't just run a process — they talk to a plugin
+running **inside** the desktop app, and they use the [`uv`](https://docs.astral.sh/uv/)
+package manager (`uv`/`uvx`) on the host:
+
+- **Blender** — install the BlenderMCP add-on
+  ([ahujasid/blender-mcp](https://github.com/ahujasid/blender-mcp)), open Blender
+  3.0+, start its server (sidebar → BlenderMCP → Connect). Spawned via `uvx
+blender-mcp`.
+- **Unity** — add the package via Package Manager from the CoplayDev git URL, then
+  point the args at the bundled Python server dir.
+- **Unreal Engine** — install the community UnrealMCP plugin into your UE5
+  project, point the args at the repo's Python server dir.
+- **KeyShot / Photoshop** — set up the app-side bridge per the upstream project,
+  then point the args at the repo path. Photoshop additionally needs the UXP
+  plugin loaded and a Node proxy running.
+
+These ship with a **Test pending** badge — the command or path may need
+adjusting per the upstream README.
+
+### Custom servers
+
+Not in the catalog? Pick **Custom MCP (HTTP)** (provide URL, auth, and a slug for
+tool naming) or **Custom MCP (stdio)** (provide command, args, env vars). A stdio
+server runs locally **with your permissions** — only connect ones you trust. Env
+var values are encrypted at rest.
+
+## Related
+
+- [Connectors & MCP](/docs/concepts/connectors-and-mcp) — the architecture
+- [Troubleshooting](/docs/troubleshooting) — `redirect_uri_mismatch`,
+  `invalid_scope`, "object not found", and friends
+- [Workspaces](/docs/concepts/workspaces) — connectors and credentials are
+  scoped per workspace

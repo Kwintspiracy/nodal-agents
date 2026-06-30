@@ -3,18 +3,42 @@ title: Getting Started
 description: Install Nodal-Agents and run your first agent in a couple of minutes.
 ---
 
-## Install
+## Prerequisites
 
-Requires **Node 22+**. No external Postgres, no Redis, no cloud config.
+**Node.js ≥ 22** is required (the package declares `engines: node >= 22`). `npm`
+ships with Node, so if you have a recent Node you already have npm. No external
+Postgres, no Redis, no cloud config.
+
+## Install
 
 ```bash
 npm install -g nodal-agents
 nodal-agents up
 ```
 
-Open [localhost:3000](http://localhost:3000). The CLI spawns an embedded Postgres
-on a free port, applies migrations, seeds the system skills, and starts the runner
-(`:3001`) and the dashboard (`:3000`).
+## First run: the setup wizard
+
+The very first time you run `nodal-agents up` — when no `~/.nodalai/config.json`
+exists yet — the CLI launches an interactive setup wizard before starting anything.
+It walks you through:
+
+1. **LLM provider** — which model you want to use, picked from a list of presets
+   (Ollama, LM Studio, Jan AI, llama.cpp, vLLM, Anthropic, OpenAI, OpenRouter…).
+2. **Endpoint URL** — the provider's base URL (pre-filled with a sensible default
+   you can accept or override).
+3. **Model** — the CLI fetches the available models from the endpoint and lets you
+   pick one; if it can't reach the endpoint, you type the model name instead.
+4. **API key** — prompted only for remote providers that require one.
+5. **Network mode** — Loopback (localhost only, no auth) or LAN (accessible on your
+   network, sign up with email + password).
+
+Your answers are saved to `~/.nodalai/config.json`. Re-run the wizard any time with
+`nodal-agents init`.
+
+Once the wizard finishes (or on every subsequent run, since the config now exists),
+the CLI spawns an embedded Postgres on a free port, applies migrations, seeds the
+system skills, and starts the runner (`:3001`) and the dashboard (`:3000`). Open
+[localhost:3000](http://localhost:3000).
 
 Your data lives at `~/.nodalai/` — wipe it any time with `rm -rf ~/.nodalai`. Stop
 the stack with `nodal-agents down`.

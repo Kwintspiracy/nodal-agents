@@ -1,0 +1,122 @@
+---
+title: CLI reference
+description: Every nodal-agents command, its flags, and the environment variables that affect the CLI.
+---
+
+The `nodal-agents` binary is the single entry point for the whole stack: it starts and stops the embedded Postgres, the runner, and the dashboard, and handles setup, updates, and logs.
+
+## Prerequisites
+
+Requires **Node.js 22 or newer**. The published package declares `engines: { "node": ">=22" }`. On an older Node the global install prints an `EBADENGINE` warning and the binary then crashes with a confusing error — install Node 22+ first.
+
+`npm` ships **with** Node.js, so if you don't have Node you don't have npm either. Install Node first, then:
+
+```bash
+npm install -g nodal-agents
+```
+
+## Commands
+
+| Command | What it does |
+| ------- | ------------ |
+| `nodal-agents` | Alias for `up` — starts the whole stack. |
+| `nodal-agents up` | Start Postgres, runner, and web; open the browser when healthy. |
+| `nodal-agents down` | Stop all running services gracefully. |
+| `nodal-agents init` | Interactive setup wizard (LLM, ports, bind mode). |
+| `nodal-agents update` | Update to the latest npm version and restart. |
+| `nodal-agents logs [service]` | Tail logs for `web`, `runner`, or `postgres`. |
+| `nodal-agents reset` | Delete **all** data and config at `~/.nodalai`. |
+
+### `nodal-agents up`
+
+Starts everything in order: cleans orphaned processes from a previous crashed run, starts embedded Postgres, applies Drizzle migrations, seeds the default user/entity/agent (local-trust mode only), spawns the runner and web, waits for both `/api/health` checks to pass, then opens the dashboard in your browser.
+
+If a configured port is occupied or reserved by the OS, `up` rotates to the next free port and saves the new value to `~/.nodalai/config.json`. If no config exists yet, it runs the `init` wizard first.
+
+| Flag | Effect |
+| ---- | ------ |
+| `--dev` | Run web in `next dev` mode (HMR, no prebuild). Slower first load, far faster iteration. Off by default. |
+
+Running `nodal-agents` with no subcommand is equivalent to `nodal-agents up` and also accepts `--dev`.
+
+### `nodal-agents down`
+
+Stops the runner and web (PIDs read from `~/.nodalai/pids/`) and stops Postgres **gracefully** via `pg_ctl stop -m fast`. The graceful Postgres stop is important on Windows: a hard kill leaves a shared-memory block that makes the next `up` fail until reboot.
+
+### `nodal-agents init`
+
+The interactive setup wizard. Walks through: LLM provider preset → endpoint URL → model (auto-fetched when the endpoint is reachable) → API key (remote providers only) → network bind mode (loopback or LAN). Writes the result to `~/.nodalai/config.json`. If the LLM endpoint isn't reachable, it warns but still saves the config.
+
+| Flag | Effect |
+| ---- | ------ |
+| `--force` | Overwrite an existing config without the confirmation prompt. |
+| `--non-interactive` | Write a default config without prompting (LAN bind, `local-auth` mode, no LLM preset). Used by container entrypoints / headless servers. |
+
+Without `--force`, init asks before overwriting an existing config.
+
+### `nodal-agents update`
+
+Checks the npm registry for a newer version. If already on latest, it prints a notice and exits. Otherwise it stops the stack (`down`), runs `npm install -g nodal-agents@latest`, and restarts the stack detached in the background. Your data in `~/.nodalai/pg-data/` is never touched.
+
+| Flag | Effect |
+| ---- | ------ |
+| `--no-restart` | Install the update but do not auto-restart. Run `nodal-agents up` yourself afterward. |
+
+If the registry is unreachable, or npm isn't on `PATH`, or the install hits a permission error, the command fails loud with an actionable message and exits non-zero (no silent fallback). The manual fallback is:
+
+```bash
+npm install -g nodal-agents@latest && nodal-agents up
+```
+
+### `nodal-agents logs [service]`
+
+Prints the existing contents of a log file then follows new output (`tail -f` style). Logs live in `~/.nodalai/logs/`.
+
+```bash
+nodal-agents logs runner      # tail + follow the runner log
+nodal-agents logs web         # the web log
+nodal-agents logs postgres    # the Postgres log
+nodal-agents logs             # print all three (no follow)
+```
+
+The valid service names are `web`, `runner`, and `postgres`. With no argument it prints all three and exits; with a single service it follows that log until you press Ctrl+C. An unknown service name exits with an error.
+
+### `nodal-agents reset`
+
+**Destructive.** Stops any running processes, then deletes the entire `~/.nodalai/` directory — config, the Postgres database, and logs. This is irreversible: your agents, jobs, memory, and provider keys are all gone.
+
+```bash
+nodal-agents reset          # prompts for confirmation (default: no)
+nodal-agents reset --yes    # skip the confirmation prompt
+```
+
+| Flag | Effect |
+| ---- | ------ |
+| `--yes` | Skip the confirmation prompt. |
+
+After a reset, run `nodal-agents init` to configure from scratch.
+
+## Environment variables
+
+These environment variables change CLI behavior:
+
+| Variable | Effect |
+| -------- | ------ |
+| `NODALAI_NO_BROWSER=1` | Skip opening the browser after `up`. Useful on headless servers and CI runners with no desktop. |
+| `NODALAI_PG_LOG=1` | Verbose embedded-Postgres logging during startup — surfaces the real Postgres error instead of a generic failure. Use when Postgres won't start. |
+
+Ports and bind mode are **not** environment variables — they live in `~/.nodalai/config.json` (defaults: web `3000`, runner `3001`, Postgres `25432`). Change them via `nodal-agents init` or by editing the config file. `up` automatically rotates any occupied or OS-reserved port to a free neighbour and persists the new value.
+
+## Data directory
+
+All persistent state lives under `~/.nodalai/`:
+
+```
+~/.nodalai/
+  config.json   # ports, bind mode, worker secret, LLM preset
+  pg-data/      # embedded Postgres data files (your agents, jobs, memory, keys)
+  pids/         # PID files for runner + web (used by `down`)
+  logs/         # web.log, runner.log, postgres.log
+```
+
+To wipe everything, use `nodal-agents reset` (preferred — it stops services first) rather than deleting the folder by hand.
