@@ -10,6 +10,15 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.6.4 — Onboarding Restored · Jul 1, 2026
+
+A fresh install no longer locks you out — the real first-run flow is back.
+
+**Highlights**
+
+- **Fixed: every fresh install was locked out.** A workspace with no agents yet (the default state right after install — no agent is seeded by design) was redirected to an unfinished onboarding placeholder ("Migration WIP") and trapped there, with no way to reach the dashboard or create an agent. The real guided first-run flow is restored and wired back in: connect a model → create your first agent → a short welcome interview where the orchestrator introduces itself, gets to know you (your name, where you're based, what you want help with), and saves that to memory. It had been built and tested but parked on a side branch and excluded from a past release for lint errors; those are fixed and it's merged.
+- **Documentation, greatly expanded.** A full reference pass: auto-generated catalog references (every connector and its tools grouped by read/write/destructive, MCP servers, models with vision/reasoning flags, ROOT grants — generated from the catalogs so they can't drift), plus new pages for connecting tools (per-connector OAuth/API-key setup), troubleshooting/FAQ, the CLI, the dashboard, operating & observability, the HTTP API, and workspaces. Several inaccuracies vs the code corrected.
+
 ## v0.6.3 — The Design Pass · Jun 30, 2026
 
 Every screen now wears the same skin — one header, one toolbar, one set of rules.
