@@ -48,7 +48,7 @@ import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 // The MCP catalog still lives inside apps/web (it is a pure-data module with no
 // imports, so tsx resolves the relative path fine). Lift into a shared package
 // later if a second consumer appears.
-import { MCP_CATALOG } from '../../web/src/lib/mcp-catalog';
+import { MCP_CATALOG } from '@nodal-agents/shared';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const refDir = join(here, '..', 'content', 'docs', 'reference');

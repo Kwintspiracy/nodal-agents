@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MCP_CATALOG } from '../src/lib/mcp-catalog.ts';
+import { MCP_CATALOG } from '@nodal-agents/shared';
 import { mcpCategory } from '../src/app/(dashboard)/mcp/categories.ts';
 import { CONNECTOR_CATEGORIES } from '../src/app/(dashboard)/connectors/categories.ts';
 

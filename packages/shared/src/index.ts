@@ -22,4 +22,5 @@ export * from './root-agent';
 export * from './connector-catalog';
 export * from './community-skill-catalog';
 export * from './model-catalog';
+export * from './mcp-catalog';
 export * from './timezone';

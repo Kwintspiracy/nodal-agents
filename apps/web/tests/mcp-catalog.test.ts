@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MCP_CATALOG } from '../src/lib/mcp-catalog.ts';
+import { MCP_CATALOG } from '@nodal-agents/shared';
 
 describe('MCP_CATALOG', () => {
   it('contains the Cogni Cortex entry', () => {
