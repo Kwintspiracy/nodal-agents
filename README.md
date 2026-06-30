@@ -10,7 +10,7 @@ A self-hosted platform for building and orchestrating a **team of AI agents** on
 [![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docs](https://img.shields.io/badge/docs-online-3565ff)](https://kwintspiracy.github.io/nodal-agents/)
-[![Changelog](https://img.shields.io/badge/changelog-v0.6.2-d4ff2e)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/changelog-v0.6.3-d4ff2e)](CHANGELOG.md)
 
 | Home dashboard — light theme | Agent detail — dark theme |
 | :---: | :---: |
@@ -119,11 +119,11 @@ A message becomes an `agent_jobs` row. The runner loads the agent's prior chat-t
 | --- | --- |
 | `/agents` | Create + edit agents; assign skills, connectors, MCP servers; pick each agent's provider, model, and failover chain. |
 | `/llm-providers` | Connect each LLM provider with one API key. Models are chosen per-agent. |
-| `/jobs` | Live job stream — task, agent, status, full transcript, tool I/O. |
+| `/jobs` | Delegation-aware runs — each orchestrator above the runs it delegated, with status, real cost, triggers, and the full transcript. |
 | `/connectors` | Active connector instances + Marketplace (multi-instance, OAuth or API key). |
 | `/mcp` | Active MCP servers + Marketplace — HTTP & stdio, plus your own custom servers. |
 | `/memories` | Persistent facts per workspace — search, edit, archive. |
-| `/skills` | Assigned / Custom / Built-in Library — write your own, customise built-ins, or install any community `SKILL.md`. |
+| `/skills` | Assigned (in use) + Library — browse the whole catalog by content category, write your own, or install any community `SKILL.md`. |
 | `/learned-skills` | Skills the agents wrote themselves — review, assign, archive, restore. |
 | `/approvals` | Human-in-the-loop gates for risky tools and the ROOT agent's meta-tools. |
 | `/automations` | Cron-scheduled agent triggers. |
@@ -183,7 +183,7 @@ nodal-agents update          # stop, install @latest, restart — data preserved
 nodal-agents update --no-restart
 ```
 
-When a newer version is available, `nodal-agents up` prints a one-line notice.
+When a newer version is available, the dashboard sidebar shows an "Update available" badge (and `nodal-agents up` prints a one-line notice).
 
 ---
 

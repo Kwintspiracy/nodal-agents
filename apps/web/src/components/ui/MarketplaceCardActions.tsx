@@ -19,6 +19,9 @@ type Props = {
   /** Optional secondary action rendered just left of the primary CTA
    *  (e.g. a "Customise" link on built-in skill cards). */
   secondary?: ReactNode;
+  /** Leading icon on the CTA. Defaults to a Plus; pass e.g. a download glyph
+   *  for "Download" CTAs where a "+" would read wrong. */
+  icon?: ReactNode;
 };
 
 /**
@@ -36,19 +39,23 @@ export default function MarketplaceCardActions({
   onCta,
   ctaHref,
   secondary,
+  icon,
 }: Props) {
+  const lead = icon ?? <Plus size={12} weight="bold" />;
   return (
     <>
-      <span className="flex-1 text-[13px] leading-none text-ink-3">{status}</span>
+      <span className="min-w-0 flex-1 truncate text-[13px] leading-none whitespace-nowrap text-ink-3">
+        {status}
+      </span>
       {secondary}
       {ctaHref ? (
-        <PrimaryButton variant={ctaVariant} size="sm" href={ctaHref}>
-          <Plus size={12} weight="bold" />
+        <PrimaryButton variant={ctaVariant} size="sm" href={ctaHref} className="shrink-0">
+          {lead}
           {ctaLabel}
         </PrimaryButton>
       ) : (
-        <PrimaryButton variant={ctaVariant} size="sm" onClick={onCta}>
-          <Plus size={12} weight="bold" />
+        <PrimaryButton variant={ctaVariant} size="sm" onClick={onCta} className="shrink-0">
+          {lead}
           {ctaLabel}
         </PrimaryButton>
       )}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   updateRootPersonalityAction,
@@ -9,6 +10,7 @@ import {
   deleteMemoryAction,
 } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import PageShell from '@/components/ui/PageShell';
 
 /**
  * RootContextClient — view + edit every piece of context the ROOT agent is fed:
@@ -91,12 +93,10 @@ export default function RootContextClient({
   }
 
   return (
-    <div className="py-7">
-      <h1 className="text-[28px] font-semibold tracking-[-0.015em] text-ink">ROOT Agent Context</h1>
-      <p className="mt-1.5 max-w-2xl text-[14px] leading-[1.5] text-ink-3">
-        Everything {rootName ?? 'your ROOT agent'} is fed as system-prompt context. Edits are read
-        live by the runner on the next turn — no restart needed.
-      </p>
+    <PageShell title="Root context" subtitle="What the ROOT agent sees every turn.">
+      <Link href="/settings" className="text-xs text-ink-3 hover:text-ink-2 transition-colors">
+        ← Settings
+      </Link>
 
       {!rootName ? (
         <div className="mt-6 rounded-xl border border-rule-2 bg-paper p-5 text-[14px] text-ink-3">
@@ -250,6 +250,6 @@ export default function RootContextClient({
           </section>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }

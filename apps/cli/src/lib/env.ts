@@ -1,6 +1,7 @@
 // env.ts — build environment variable maps for runner and web processes
 
 import type { Config } from './config.ts';
+import { getInstalledVersion } from './version.ts';
 
 /**
  * Build env vars for the runner process.
@@ -70,6 +71,9 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     // Expose auth mode to the client so login/page.tsx can render the right form.
     NEXT_PUBLIC_AUTH_MODE: authMode,
     NEXT_PUBLIC_APP_URL: `http://localhost:${config.ports.web}`,
+    // The running CLI version — the web's update badge (sidebar) compares this
+    // against the npm `latest` to tell the user when to run `nodal-agents update`.
+    NODAL_VERSION: getInstalledVersion(),
     PORT: String(config.ports.web),
     // BIND mirrors the runner's binding so /settings → Network can render the
     // "restart required" banner when the configured value drifts from runtime.

@@ -75,10 +75,19 @@ export default function MarketplaceCard({
       <div className="text-[16px] font-semibold leading-[1.2] tracking-[-0.005em] text-ink">
         {name}
       </div>
-      {description && <div className="text-[14px] leading-[1.4] text-ink-3">{description}</div>}
+      {description && (
+        <div
+          className="line-clamp-3 text-[14px] leading-[1.4] text-ink-3"
+          title={typeof description === 'string' ? description : undefined}
+        >
+          {description}
+        </div>
+      )}
       {category && (
-        <div className="mt-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-4">
-          {category}
+        <div className="mt-2">
+          <span className="inline-flex items-center rounded-full bg-hover px-2.5 py-1 font-mono text-[10px] font-medium tracking-[0.1em] text-ink-2 uppercase">
+            {category}
+          </span>
         </div>
       )}
 

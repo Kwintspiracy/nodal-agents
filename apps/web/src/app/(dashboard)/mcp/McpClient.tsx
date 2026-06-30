@@ -3,15 +3,19 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
-import PageHeader from '@/components/ui/PageHeader';
+import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
+import ChipRow from '@/components/ui/ChipRow';
 import PageSearchInput from '@/components/ui/PageSearchInput';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import { Plus } from '@phosphor-icons/react';
 import Modal from '@/components/ui/Modal';
 import McpInstalledTable from './McpInstalledTable.tsx';
 import McpMarketplaceGrid from './McpMarketplaceGrid.tsx';
 import McpAddForm from './McpAddForm.tsx';
 import { mcpCategory } from './categories.ts';
+import { CONNECTOR_CATEGORIES } from '../connectors/categories.ts';
 
 type Tab = 'installed' | 'marketplace';
 
@@ -40,12 +44,16 @@ export default function McpClient({ instances, catalog }: Props) {
   const customItem = customFlavor === 'http' ? customHttp : customStdio;
 
   const filteredInstalled = useMemo(() => {
-    if (!query.trim()) return instances;
-    const q = query.toLowerCase();
-    return instances.filter(
-      (inst) => inst.name.toLowerCase().includes(q) || inst.slug.toLowerCase().includes(q),
-    );
-  }, [instances, query]);
+    let items = instances;
+    if (category !== 'All') items = items.filter((inst) => mcpCategory(inst.slug) === category);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      items = items.filter(
+        (inst) => inst.name.toLowerCase().includes(q) || inst.slug.toLowerCase().includes(q),
+      );
+    }
+    return items;
+  }, [instances, query, category]);
 
   const filteredMarketplace = useMemo(() => {
     let items = catalog;
@@ -62,62 +70,59 @@ export default function McpClient({ instances, catalog }: Props) {
   }, [catalog, category, query]);
 
   return (
-    <div className="pb-10">
-      <PageHeader
-        title="MCP Connectors"
-        subtitle="Model Context Protocol servers your agents can call. Install from the marketplace or wire a custom HTTP / stdio server."
-      />
-      <PageTopBar
-        tabs={
-          <PillTabs2
-            value={tab}
-            onChange={(v) => {
-              setTab(v);
-              setQuery('');
-              setCategory('All');
-            }}
-            tabs={[
-              { value: 'installed', label: 'Installed', count: instances.length },
-              { value: 'marketplace', label: 'Marketplace', count: catalog.length },
-            ]}
+    <PageShell
+      title="MCP Connectors"
+      subtitle="MCP servers your agents can call."
+      toolbar={
+        <>
+          <PageTopBar
+            tabs={
+              <PillTabs2
+                value={tab}
+                onChange={(v) => {
+                  setTab(v);
+                  setQuery('');
+                }}
+                tabs={[
+                  { value: 'installed', label: 'Installed', count: instances.length },
+                  { value: 'marketplace', label: 'Library', count: catalog.length },
+                ]}
+              />
+            }
+            search={
+              <PageSearchInput
+                value={query}
+                onChange={setQuery}
+                placeholder={tab === 'installed' ? 'Search MCP servers…' : 'Search catalog…'}
+              />
+            }
+            cta={
+              <PrimaryButton variant="blue" onClick={() => setCustomOpen(true)}>
+                <Plus size={13} weight="bold" />
+                New MCP
+              </PrimaryButton>
+            }
           />
-        }
-        search={
-          <PageSearchInput
-            value={query}
-            onChange={setQuery}
-            placeholder={tab === 'installed' ? 'Search MCP servers…' : 'Search catalog…'}
+          <ChipRow
+            className="mt-3"
+            items={CONNECTOR_CATEGORIES}
+            value={category}
+            onChange={setCategory}
           />
-        }
-        cta={
-          <button
-            type="button"
-            onClick={() => setCustomOpen(true)}
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-conn-vivid px-3.5 text-[14px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
-          >
-            + Add custom MCP
-          </button>
-        }
-      />
-
-      <div className="pt-5">
-        {tab === 'installed' ? (
-          instances.length === 0 ? (
-            <EmptyInstalled onBrowse={() => setTab('marketplace')} />
-          ) : filteredInstalled.length === 0 ? (
-            <EmptySearch />
-          ) : (
-            <McpInstalledTable instances={filteredInstalled} catalog={catalog} />
-          )
+        </>
+      }
+    >
+      {tab === 'installed' ? (
+        instances.length === 0 ? (
+          <EmptyInstalled onBrowse={() => setTab('marketplace')} />
+        ) : filteredInstalled.length === 0 ? (
+          <EmptySearch />
         ) : (
-          <McpMarketplaceGrid
-            catalog={filteredMarketplace}
-            instances={instances}
-            category={category}
-            onCategoryChange={setCategory}
-          />
-        )}
-      </div>
+          <McpInstalledTable instances={filteredInstalled} catalog={catalog} />
+        )
+      ) : (
+        <McpMarketplaceGrid catalog={filteredMarketplace} instances={instances} />
+      )}
 
       <Modal open={customOpen} onClose={() => setCustomOpen(false)} title="Add a custom MCP server">
         <div className="space-y-3">
@@ -156,7 +161,7 @@ export default function McpClient({ instances, catalog }: Props) {
           )}
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

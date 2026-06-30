@@ -14,6 +14,8 @@ import {
 } from '@/lib/actions.ts';
 import { MODEL_CATALOG, findModelCatalogEntry, groupModelCatalog } from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
+import { Plus } from '@phosphor-icons/react';
+import PrimaryButton from './ui/PrimaryButton.tsx';
 import AvatarPicker from './AvatarPicker.tsx';
 
 type AgentRole = 'worker' | 'router' | 'planner';
@@ -674,12 +676,10 @@ export default function AgentForm(props: Props) {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="px-4 py-2 text-sm font-medium bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors"
-      >
-        + New agent
-      </button>
+      <PrimaryButton variant="agent" onClick={() => setOpen(true)}>
+        <Plus size={13} weight="bold" />
+        New agent
+      </PrimaryButton>
       {modal}
     </>
   );

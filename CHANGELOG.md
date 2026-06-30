@@ -10,6 +10,20 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.6.3 — The Design Pass · Jun 30, 2026
+
+Every screen now wears the same skin — one header, one toolbar, one set of rules.
+
+**Highlights**
+
+- **One header, one toolbar, everywhere.** Every page renders a single shared shell: a full-width navbar (page title + lede on the left; global search, notifications, theme on the right; a bottom rule), and beneath it a consistent toolbar — filter tabs + search + a single create button. Create buttons follow one colour convention (agents = lime, skills = coral, connectors = blue, everything else = white), always top-right, always labelled "New …". No more per-page drift.
+- **Runs, as a delegation tree.** The Runs page is now a delegation-aware table: each orchestrator sits directly above the runs it delegated, role colour-coded by a left accent, with trigger icons (cron / Telegram / dashboard), abbreviated token counts, and the real provider-reported cost.
+- **Skills, rebuilt.** Two views — _Assigned_ (a management table) and _Library_ (the whole catalog as uniform tiles), filtered by content category (Development, Finance, Office, Media, Design…) instead of the old source split. Category pills on every tile; one-click install from any community source.
+- **Long lists collapse.** OAuth scope URLs, required built-ins, and "used by" connectors now show as a compact "N items" pill you hover to expand — no more columns blown off the table. Credentials moved from cards to a matching table.
+- **Know when to update.** The sidebar shows your running version and, when npm has a newer one, an "Update available" badge with the one-line `nodal-agents update` command.
+- **All-English UI.** The community-skill catalog and connector descriptions are fully translated.
+- **Also:** Poyo image connector + VidIQ added to the catalogs · the full Telegram media surface (`send_file` / `send_video` / `send_audio` / `send_voice`, not just images) · a Weekly ⇄ Daily toggle on the home activity chart · a copy button + shortened path for the shared workspace in Settings · the unused Billing menu removed · the sidebar widened to 244px.
+
 ## v0.6.2 — The Recall Release · Jun 28, 2026
 
 Your agents remember — within a conversation, and across everything they've ever done.

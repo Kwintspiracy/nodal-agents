@@ -3,14 +3,16 @@
 import { useMemo, useState } from 'react';
 import type { ConnectorRow, ConnectorCatalogItem } from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
-import PageHeader from '@/components/ui/PageHeader';
+import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
+import ChipRow from '@/components/ui/ChipRow';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import { Plus } from '@phosphor-icons/react';
 import ConnectorsInstalledTable from './ConnectorsInstalledTable.tsx';
 import ConnectorsMarketplaceGrid from './ConnectorsMarketplaceGrid.tsx';
-import { catalogCategory } from './categories.ts';
+import { catalogCategory, CONNECTOR_CATEGORIES } from './categories.ts';
 
 type Tab = 'installed' | 'marketplace';
 
@@ -31,15 +33,19 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
   const [category, setCategory] = useState('All');
 
   const filteredInstalled = useMemo(() => {
-    if (!query.trim()) return instances;
-    const q = query.toLowerCase();
-    return instances.filter(
-      (inst) =>
-        inst.name.toLowerCase().includes(q) ||
-        inst.slug.toLowerCase().includes(q) ||
-        (inst.credentialAccountName ?? '').toLowerCase().includes(q),
-    );
-  }, [instances, query]);
+    let items = instances;
+    if (category !== 'All') items = items.filter((inst) => catalogCategory(inst.slug) === category);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      items = items.filter(
+        (inst) =>
+          inst.name.toLowerCase().includes(q) ||
+          inst.slug.toLowerCase().includes(q) ||
+          (inst.credentialAccountName ?? '').toLowerCase().includes(q),
+      );
+    }
+    return items;
+  }, [instances, query, category]);
 
   const filteredMarketplace = useMemo(() => {
     let items = catalog;
@@ -56,60 +62,64 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
   }, [catalog, category, query]);
 
   return (
-    <div className="pb-10">
-      <PageHeader
-        title="API Connectors"
-        subtitle="Wire your agents to external services — Gmail, Slack, HubSpot, and the rest. Browse the marketplace or manage the accounts you've already connected."
-      />
-      <PageTopBar
-        tabs={
-          <PillTabs2
-            value={tab}
-            onChange={(v) => {
-              setTab(v);
-              setQuery('');
-              setCategory('All');
-            }}
-            tabs={[
-              { value: 'installed', label: 'Installed', count: instances.length },
-              { value: 'marketplace', label: 'Marketplace', count: catalog.length },
-            ]}
+    <PageShell
+      title="API Connectors"
+      subtitle="Wire your agents to external services."
+      toolbar={
+        <>
+          <PageTopBar
+            tabs={
+              <PillTabs2
+                value={tab}
+                onChange={(v) => {
+                  setTab(v);
+                  setQuery('');
+                }}
+                tabs={[
+                  { value: 'installed', label: 'Installed', count: instances.length },
+                  { value: 'marketplace', label: 'Library', count: catalog.length },
+                ]}
+              />
+            }
+            search={
+              <PageSearchInput
+                value={query}
+                onChange={setQuery}
+                placeholder={tab === 'installed' ? 'Search connectors…' : 'Search providers…'}
+              />
+            }
+            cta={
+              <PrimaryButton variant="blue" onClick={() => setTab('marketplace')}>
+                <Plus size={13} weight="bold" />
+                New connector
+              </PrimaryButton>
+            }
           />
-        }
-        search={
-          <PageSearchInput
-            value={query}
-            onChange={setQuery}
-            placeholder={tab === 'installed' ? 'Search connectors…' : 'Search providers…'}
+          <ChipRow
+            className="mt-3"
+            items={CONNECTOR_CATEGORIES}
+            value={category}
+            onChange={setCategory}
           />
-        }
-        cta={
-          <PrimaryButton variant="ink" href="/credentials">
-            Manage credentials
-          </PrimaryButton>
-        }
-      />
-
-      <div className="pt-5">
-        {tab === 'installed' ? (
-          instances.length === 0 ? (
-            <EmptyInstalled onBrowse={() => setTab('marketplace')} />
-          ) : filteredInstalled.length === 0 ? (
-            <EmptySearch />
-          ) : (
-            <ConnectorsInstalledTable instances={filteredInstalled} credsByType={credsByType} />
-          )
+        </>
+      }
+    >
+      {tab === 'installed' ? (
+        instances.length === 0 ? (
+          <EmptyInstalled onBrowse={() => setTab('marketplace')} />
+        ) : filteredInstalled.length === 0 ? (
+          <EmptySearch />
         ) : (
-          <ConnectorsMarketplaceGrid
-            catalog={filteredMarketplace}
-            instances={instances}
-            credsByType={credsByType}
-            category={category}
-            onCategoryChange={setCategory}
-          />
-        )}
-      </div>
-    </div>
+          <ConnectorsInstalledTable instances={filteredInstalled} credsByType={credsByType} />
+        )
+      ) : (
+        <ConnectorsMarketplaceGrid
+          catalog={filteredMarketplace}
+          instances={instances}
+          credsByType={credsByType}
+        />
+      )}
+    </PageShell>
   );
 }
 

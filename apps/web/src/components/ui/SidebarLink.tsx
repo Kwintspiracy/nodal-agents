@@ -43,7 +43,7 @@ export default function SidebarLink({ href, label, icon, dot, count, pill, isAct
     // inside the full-screen menu; `lg:` reverts to the compact 30px desktop rail.
     <Link
       href={href}
-      className={`group mx-2 flex h-12 items-center gap-3 rounded-xl px-3 text-[16px] transition-colors lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-2.5 lg:text-[13px] lg:leading-none ${
+      className={`group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-[16px] transition-colors lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-[13px] lg:leading-none ${
         active
           ? 'bg-paper text-ink font-medium shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
           : 'text-ink-2 hover:bg-hover'

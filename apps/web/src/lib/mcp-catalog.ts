@@ -145,6 +145,20 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     docsHint:
       'Create an MCP server at https://app.composio.dev, paste its full URL here (format: https://backend.composio.dev/v3/mcp/<server-id>?user_id=<user-id>) plus your Composio API key.',
   },
+  {
+    slug: 'vidiq',
+    label: 'VidIQ',
+    description:
+      'YouTube growth toolkit — keyword research, video SEO scoring, competitor and channel analytics for creators.',
+    serverUrl: 'https://vidiq.com/mcp/',
+    transport: 'http',
+    authScheme: 'bearer',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Connect your VidIQ account at https://vidiq.com to obtain an MCP access token, then paste it here as the Bearer key.',
+  },
   // ── stdio servers ────────────────────────────────────────────────────────
   // These are spawned locally via `npx -y <pkg>` the first time. The runner
   // downloads the package on first use (needs network + adds ~5–30 s latency

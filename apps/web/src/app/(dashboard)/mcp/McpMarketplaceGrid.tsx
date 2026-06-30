@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle } from '@phosphor-icons/react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
-import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import { connIcon, connEmoji } from '../connectors/connector-brand.ts';
@@ -14,35 +13,18 @@ import { mcpCategory } from './categories.ts';
 
 const MCP_BLUE = '#3565ff';
 
-const CATEGORIES: ChipItem<string>[] = [
-  { value: 'All', label: 'All' },
-  { value: 'Comms', label: 'Comms' },
-  { value: 'Data', label: 'Data' },
-  { value: 'Dev', label: 'Dev' },
-  { value: 'Web', label: 'Web' },
-  { value: 'Productivity', label: 'Productivity' },
-  { value: 'Creative', label: 'Creative' },
-  { value: 'Custom', label: 'Custom' },
-  { value: 'Other', label: 'Other' },
-];
-
 type Props = {
   catalog: McpCatalogItem[];
   instances: McpServerInstance[];
-  category: string;
-  onCategoryChange: (cat: string) => void;
 };
 
 /**
- * McpMarketplaceGrid — the design's `.chip-row` + `.mk2-grid` pattern for MCP.
- * Category filter chips + 4-col grid of MarketplaceCard per catalog entry.
+ * McpMarketplaceGrid — the design's `.mk2-grid` pattern for MCP.
+ * 4-col grid of MarketplaceCard per catalog entry. The category filter chips
+ * now live in the page toolbar (McpClient), so the grid simply renders the
+ * already-filtered catalog it is handed.
  */
-export default function McpMarketplaceGrid({
-  catalog,
-  instances,
-  category,
-  onCategoryChange,
-}: Props) {
+export default function McpMarketplaceGrid({ catalog, instances }: Props) {
   // Render alphabetically by label, keeping the "custom" entries last.
   const sortedCatalog = [...catalog].sort((a, b) => {
     const ac = a.slug.startsWith('custom-');
@@ -50,35 +32,24 @@ export default function McpMarketplaceGrid({
     if (ac !== bc) return ac ? 1 : -1;
     return a.label.localeCompare(b.label);
   });
-  return (
-    <div>
-      <ChipRow
-        items={CATEGORIES}
-        value={category}
-        onChange={onCategoryChange}
-        className="mb-[18px]"
-      />
-
-      {catalog.length === 0 ? (
-        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-          <p className="text-[14px] text-ink-3">No servers in this category.</p>
-        </div>
-      ) : (
-        <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
-          {sortedCatalog.map((item) => {
-            const installedInstances = instances.filter((i) => i.slug === item.slug);
-            const isInstalled = installedInstances.length > 0;
-            return (
-              <McpMarketCard
-                key={item.slug}
-                catalogItem={item}
-                isInstalled={isInstalled}
-                installedCount={installedInstances.length}
-              />
-            );
-          })}
-        </div>
-      )}
+  return catalog.length === 0 ? (
+    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
+      <p className="text-[14px] text-ink-3">No servers in this category.</p>
+    </div>
+  ) : (
+    <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
+      {sortedCatalog.map((item) => {
+        const installedInstances = instances.filter((i) => i.slug === item.slug);
+        const isInstalled = installedInstances.length > 0;
+        return (
+          <McpMarketCard
+            key={item.slug}
+            catalogItem={item}
+            isInstalled={isInstalled}
+            installedCount={installedInstances.length}
+          />
+        );
+      })}
     </div>
   );
 }

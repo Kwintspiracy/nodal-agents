@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { DownloadSimple } from '@phosphor-icons/react';
 import { COMMUNITY_SKILL_CATALOG, type CommunitySkillCatalogEntry } from '@nodal-agents/shared';
 import { installCommunitySkillAction } from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
@@ -13,6 +14,8 @@ type Props = {
   installedSlugs: string[];
   /** Optional search query — filters by name/description/category. */
   query?: string;
+  /** Content-category filter ("All" = no filter). */
+  category?: string;
 };
 
 /** Human label for the install button: github → "GitHub", skills-sh → "Skills.sh". */
@@ -31,17 +34,22 @@ function repoOf(source: string): string {
  * source explicitly ("Install from GitHub"). Already-installed entries show a
  * muted "Installed" instead.
  */
-export default function CommunitySkillsGrid({ installedSlugs, query = '' }: Props) {
+export default function CommunitySkillsGrid({
+  installedSlugs,
+  query = '',
+  category = 'All',
+}: Props) {
   const installed = new Set(installedSlugs);
   const q = query.trim().toLowerCase();
-  const entries = q
-    ? COMMUNITY_SKILL_CATALOG.filter(
-        (e) =>
-          e.name.toLowerCase().includes(q) ||
-          e.description.toLowerCase().includes(q) ||
-          e.category.toLowerCase().includes(q),
-      )
-    : COMMUNITY_SKILL_CATALOG;
+  let entries = COMMUNITY_SKILL_CATALOG;
+  if (category !== 'All') entries = entries.filter((e) => e.category === category);
+  if (q)
+    entries = entries.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.description.toLowerCase().includes(q) ||
+        e.category.toLowerCase().includes(q),
+    );
 
   if (entries.length === 0) {
     return (
@@ -90,9 +98,10 @@ function CommunitySkillCard({
     });
   }
 
+  // Footer shows just the host ("github"); the full owner/repo is on hover.
   const badge = (
-    <span className="font-mono text-[12px] text-ink-4">
-      {hostLabel(entry.sourceHost).toLowerCase()} · {repoOf(entry.source)}
+    <span className="cursor-help font-mono text-[12px] text-ink-4" title={repoOf(entry.source)}>
+      {hostLabel(entry.sourceHost).toLowerCase()}
     </span>
   );
 
@@ -104,16 +113,17 @@ function CommunitySkillCard({
       foot={
         installed ? (
           <>
-            <span className="flex-1">{badge}</span>
-            <span className="inline-flex h-[30px] items-center rounded-[7px] border border-rule bg-paper px-3 text-[13px] font-medium text-ink-4">
+            <span className="min-w-0 flex-1 truncate">{badge}</span>
+            <span className="inline-flex h-[30px] shrink-0 items-center rounded-[7px] border border-rule bg-paper px-3 text-[13px] font-medium text-ink-4">
               Installed
             </span>
           </>
         ) : (
           <MarketplaceCardActions
             status={badge}
-            ctaLabel={isPending ? 'Installing…' : `Install from ${hostLabel(entry.sourceHost)}`}
+            ctaLabel={isPending ? 'Installing…' : 'Install'}
             ctaVariant="coral"
+            icon={<DownloadSimple size={12} weight="bold" />}
             onCta={isPending ? undefined : handleInstall}
           />
         )

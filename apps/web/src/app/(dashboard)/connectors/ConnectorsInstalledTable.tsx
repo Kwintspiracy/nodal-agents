@@ -5,8 +5,8 @@ import type { ConnectorRow, ConnectorCatalogItem } from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
 import Disc from '@/components/ui/Disc';
-import MonoCode from '@/components/ui/MonoCode';
 import StatusPill from '@/components/ui/StatusPill';
+import CountPill from '@/components/ui/CountPill';
 import ConnectorForm from './ConnectorForm.tsx';
 import { CONN_BRAND_COLORS, connGlyph, connIcon } from './connector-brand.ts';
 
@@ -20,7 +20,8 @@ type Props = {
  * One row per installed connector instance with:
  *   Provider (brand Disc + name + auth-type mono)
  *   Account (account name from credential)
- *   Scopes (MonoCode chips, truncated past 4)
+ *   Scopes (compact count pill — hover for the full list; the raw OAuth scope
+ *           URLs used to blow the table width out)
  *   Status (StatusPill done|warn)
  *   Actions (Configure link + ⋯ expand → ConnectorForm)
  */
@@ -144,14 +145,7 @@ function ConnectorRow({
         {/* Scopes */}
         <td className="px-[18px] py-[13px] align-middle">
           {scopeList.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {scopeList.slice(0, 4).map((s) => (
-                <MonoCode key={s}>{s}</MonoCode>
-              ))}
-              {scopeList.length > 4 && (
-                <span className="font-mono text-[11px] text-ink-4">+{scopeList.length - 4}</span>
-              )}
-            </div>
+            <CountPill items={scopeList} noun="scope" />
           ) : (
             <span className="font-mono text-[11px] text-ink-4">
               {instance.authType === 'api_key' ? 'api_key' : '—'}

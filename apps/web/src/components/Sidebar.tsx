@@ -17,7 +17,6 @@ import {
   ClockCountdown,
   ShieldCheck,
   ListMagnifyingGlass,
-  CurrencyDollar,
   GearSix,
   List,
   X,
@@ -28,6 +27,7 @@ import BrandMark from './ui/BrandMark';
 import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
 import LiveCard from './ui/LiveCard';
+import VersionBadge from './VersionBadge';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
 import ThemeToggle from './ui/ThemeToggle';
 import NotificationsBell from './NotificationsBell';
@@ -90,7 +90,6 @@ const NAV: Group[] = [
     section: 'Workspace',
     items: [
       { href: 'https://discord.gg/7UZsvZPgU', label: 'Join Discord', external: true },
-      { href: '/billing', label: 'Billing', icon: CurrencyDollar },
       { href: '/settings', label: 'Settings', icon: GearSix },
     ],
   },
@@ -176,7 +175,7 @@ export default function Sidebar({
       <aside
         id="primary-nav"
         aria-label="Main navigation"
-        className={`fixed top-0 left-0 z-50 flex h-full w-full flex-col border-r border-rule-2 bg-sidebar pt-4 pb-3 transition-transform duration-200 ease-out lg:z-40 lg:w-[220px] lg:translate-x-0 ${
+        className={`fixed top-0 left-0 z-50 flex h-full w-full flex-col border-r border-rule-2 bg-sidebar pt-4 pb-3 transition-transform duration-200 ease-out lg:z-40 lg:w-[244px] lg:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -219,7 +218,7 @@ export default function Sidebar({
                     href={it.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group mx-2 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-[15px] font-medium text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-2.5 lg:text-[12.5px] lg:leading-none"
+                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-[15px] font-medium text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-[12.5px] lg:leading-none"
                   >
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5">
                       <ArrowSquareOut
@@ -250,6 +249,11 @@ export default function Sidebar({
             </div>
           ))}
         </nav>
+
+        {/* Version + update nudge — sits right after the nav (Settings is the
+            last item). Shows the running version; surfaces an update badge when
+            npm has a newer one. */}
+        <VersionBadge />
 
         {/* Live card slot — hidden until we wire real telemetry, but the
             primitive is in place for Phase 2 / 3 to switch on. */}

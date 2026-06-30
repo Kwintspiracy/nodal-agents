@@ -12,101 +12,101 @@ export const obsidianSkill: SystemSkill = {
   name: 'Obsidian',
   description: 'Read, search, create, and edit notes in the Obsidian vault.',
   requiredBuiltins: [],
-  content: `Skill pour travailler sur un vault Obsidian via le système de fichiers : lire, lister, chercher, créer, éditer des notes, avec maîtrise complète de la syntaxe Obsidian Flavored Markdown.
+  content: `Skill for working on an Obsidian vault via the filesystem: read, list, search, create, edit notes, with full mastery of the Obsidian Flavored Markdown syntax.
 
 ### Setup
 
-Le vault Obsidian EST le workspace de cet agent (configuré côté dashboard : Agents → Edit → Workspace root path). Tous les paths que tu passes aux \`file_*\` sont **relatifs** à la racine du vault. Ne passe jamais d'absolus, n'inclus pas le chemin du vault.
+The Obsidian vault IS this agent's workspace (configured on the dashboard side: Agents → Edit → Workspace root path). All the paths you pass to \`file_*\` are **relative** to the vault root. Never pass absolute paths, don't include the vault path.
 
-Si un \`file_*\` retourne \`workspace_not_configured\`, demande à l'utilisateur de configurer le workspace dans le dashboard.
+If a \`file_*\` returns \`workspace_not_configured\`, ask the user to configure the workspace in the dashboard.
 
-### ⚠️ STEP 1 OBLIGATOIRE — Inspecter l'existant AVANT d'écrire
+### ⚠️ STEP 1 MANDATORY — Inspect what already exists BEFORE writing
 
-Une délégation a pu être lancée plusieurs fois (un appel précédent peut avoir foiré APRÈS avoir écrit un fichier — tu n'as aucune mémoire de ces tentatives). Avant TOUT \`file_write\` sur une task d'écriture :
+A delegation may have been launched several times (a previous call may have failed AFTER having written a file — you have no memory of those attempts). Before ANY \`file_write\` on a writing task:
 
-1. **\`file_list({ glob: "*.md", recursive: true })\`** pour voir ce qui existe dans le vault (ou cible le sous-dossier pertinent : \`file_list({ path: "Cosmologie", glob: "*.md" })\`).
-2. Si un fichier ressemblant à ta cible existe déjà (même topic, même dossier proche, créé récemment) :
-   - **\`file_read\`** pour vérifier son contenu.
-   - Si le contenu est complet et répond déjà à la task → **NE PAS RÉ-ÉCRIRE**. Réponds à l'utilisateur en référençant le fichier existant + appelle \`return_result{status:'success'}\` directement.
-   - Si le contenu est partiel/incomplet → **\`file_edit\`** ou **\`file_write\`** sur le MÊME chemin (pas un nouveau fichier avec nom légèrement différent). Mieux : enrichis l'existant plutôt que de tout réécrire.
-3. Sinon (rien d'équivalent n'existe) : continue le workflow normal de recherche + écriture.
+1. **\`file_list({ glob: "*.md", recursive: true })\`** to see what exists in the vault (or target the relevant subfolder: \`file_list({ path: "Cosmology", glob: "*.md" })\`).
+2. If a file resembling your target already exists (same topic, same nearby folder, recently created):
+   - **\`file_read\`** to check its content.
+   - If the content is complete and already answers the task → **DO NOT RE-WRITE**. Reply to the user referencing the existing file + call \`return_result{status:'success'}\` directly.
+   - If the content is partial/incomplete → **\`file_edit\`** or **\`file_write\`** on the SAME path (not a new file with a slightly different name). Better: enrich what exists rather than rewriting everything.
+3. Otherwise (nothing equivalent exists): continue the normal research + writing workflow.
 
-Cette étape coûte 1-2 turns et évite de polluer le vault de doublons quand une tentative précédente a échoué après file_write mais avant return_result.
+This step costs 1-2 turns and avoids polluting the vault with duplicates when a previous attempt failed after file_write but before return_result.
 
-### ⚠️ Workflow recherche → vault (CRITIQUE — éviter le loop)
+### ⚠️ Research → vault workflow (CRITICAL — avoid the loop)
 
-Quand tu fais une recherche web (\`firecrawl_search\` / \`firecrawl_scrape\`) ET que la task demande d'écrire dans le vault :
+When you do a web search (\`firecrawl_search\` / \`firecrawl_scrape\`) AND the task asks to write into the vault:
 
-1. **Étape 1 OBLIGATOIRE ci-dessus :** \`file_list\` + éventuellement \`file_read\` pour voir si un brouillon existe déjà.
-2. **Fais la recherche en MAX 4-6 tours** (1-2 search + 2-4 scrape ciblés). Ne pas dépasser.
-3. **DÈS QUE tu as assez de matière, appelle \`file_write\` IMMÉDIATEMENT.** Pas plus tard. Pas après save_memory. Pas après "encore une recherche pour vérifier".
-4. **APRÈS \`file_write\` :** OPTIONNELLEMENT 1 seul \`save_memory\` court (max 200 chars, du type "J'ai écrit X.md dans le vault à propos de Y"). PAS le contenu de la recherche.
-5. **Termine :** \`telegram_send_message\` (si jobContext.telegram_chat_id) + \`return_result{status:'success'}\` dans le même tour.
+1. **MANDATORY Step 1 above:** \`file_list\` + possibly \`file_read\` to see whether a draft already exists.
+2. **Do the research in a MAX of 4-6 turns** (1-2 search + 2-4 targeted scrape). Do not exceed this.
+3. **AS SOON AS you have enough material, call \`file_write\` IMMEDIATELY.** Not later. Not after save_memory. Not after "one more search to double-check".
+4. **AFTER \`file_write\`:** OPTIONALLY a single short \`save_memory\` (max 200 chars, like "I wrote X.md in the vault about Y"). NOT the content of the research.
+5. **Finish:** \`telegram_send_message\` (if jobContext.telegram_chat_id) + \`return_result{status:'success'}\` in the same turn.
 
-### ❌ Anti-patterns à ÉVITER absolument
+### ❌ Anti-patterns to ABSOLUTELY AVOID
 
-- ❌ **Écrire un nouveau fichier avec un nom légèrement différent** (\`Note v2.md\`, \`Note (2).md\`, \`Note-final.md\`) au lieu d'enrichir l'existant trouvé à l'Étape 1 → le vault se pollue de doublons quasi-identiques.
-- ❌ \`save_memory\` plusieurs fois avec le contenu de recherche → la mémoire est pour les FAITS DURABLES sur l'utilisateur, pas pour stocker des résumés de recherche. Le résumé va dans le fichier \`.md\`, pas en mémoire.
-- ❌ \`mark_memory_outdated\` en boucle pour "mettre à jour" la mémoire → si tu te retrouves à appeler ce tool plus d'une fois sur le même topic dans un job, **stop, tu es en loop, appelle file_write maintenant**.
-- ❌ Dire "j'ai sauvegardé dans le vault" via \`save_memory\` ALORS QUE tu n'as pas appelé \`file_write\`. C'est mentir — l'utilisateur ne verra rien dans son vault.
-- ❌ Continuer à scraper plus de pages "pour être exhaustif" après 5+ scrapes. Tu as ce qu'il faut. Écris.
-- ❌ Skipper l'Étape 1 "parce que tu penses que c'est une nouvelle task" → fais le \`file_list\` quand même. Coût 1 turn, bénéfice : zéro doublon.
+- ❌ **Writing a new file with a slightly different name** (\`Note v2.md\`, \`Note (2).md\`, \`Note-final.md\`) instead of enriching the existing one found in Step 1 → the vault gets polluted with near-identical duplicates.
+- ❌ \`save_memory\` several times with the research content → memory is for DURABLE FACTS about the user, not for storing research summaries. The summary goes in the \`.md\` file, not in memory.
+- ❌ \`mark_memory_outdated\` in a loop to "update" memory → if you find yourself calling this tool more than once on the same topic in a job, **stop, you are in a loop, call file_write now**.
+- ❌ Saying "I saved it in the vault" via \`save_memory\` WHEN you have not called \`file_write\`. That is lying — the user will see nothing in their vault.
+- ❌ Continuing to scrape more pages "to be exhaustive" after 5+ scrapes. You have what you need. Write.
+- ❌ Skipping Step 1 "because you think it's a new task" → do the \`file_list\` anyway. Cost: 1 turn, benefit: zero duplicates.
 
-### Lire une note
+### Read a note
 
-\`file_read({ path: "Daily/2026-05-16.md" })\` — retourne le contenu avec line numbers + pagination. Pour les longues notes, utilise \`offset\` et \`limit\`.
+\`file_read({ path: "Daily/2026-05-16.md" })\` — returns the content with line numbers + pagination. For long notes, use \`offset\` and \`limit\`.
 
-### Lister les notes
+### List the notes
 
-- \`file_list({ glob: "*.md", recursive: true })\` — toutes les notes
-- \`file_list({ path: "Projects", glob: "*.md" })\` — sous-dossier
-- \`file_list({ path: "." })\` — structure top-level
+- \`file_list({ glob: "*.md", recursive: true })\` — all notes
+- \`file_list({ path: "Projects", glob: "*.md" })\` — subfolder
+- \`file_list({ path: "." })\` — top-level structure
 
-### Rechercher
+### Search
 
-- \`file_search({ target: "files", pattern: "regex" })\` — par filename
-- \`file_search({ pattern: "regex", file_glob: "*.md" })\` — par contenu (défaut)
+- \`file_search({ target: "files", pattern: "regex" })\` — by filename
+- \`file_search({ pattern: "regex", file_glob: "*.md" })\` — by content (default)
 
-Skip auto de \`.git\` / \`.obsidian\` / \`node_modules\`.
+Auto-skip of \`.git\` / \`.obsidian\` / \`node_modules\`.
 
-### Créer une note (le geste central)
+### Create a note (the central act)
 
-\`file_write({ path: "Cosmologie/Fond Diffus Cosmologique 2026.md", content: "# Titre\\n\\n## Section 1\\n...", create_dirs: true })\`
+\`file_write({ path: "Cosmology/Cosmic Microwave Background 2026.md", content: "# Title\\n\\n## Section 1\\n...", create_dirs: true })\`
 
-Écriture atomique (tempfile + rename). \`create_dirs: true\` crée les dossiers parents manquants. **C'est ce tool qui matérialise le résultat de ton travail dans le vault** — sans ce call, ton boulot ne se voit nulle part.
+Atomic write (tempfile + rename). \`create_dirs: true\` creates the missing parent folders. **This is the tool that materializes the result of your work in the vault** — without this call, your work shows up nowhere.
 
-**Rappel** : ne pas créer un fichier sans avoir fait l'Étape 1 (\`file_list\` pour vérifier l'existant).
+**Reminder**: don't create a file without having done Step 1 (\`file_list\` to check what already exists).
 
-### Éditer une note (changement ciblé)
+### Edit a note (targeted change)
 
-\`file_edit({ path: "Note.md", old_string: "...", new_string: "..." })\` — quote exact (whitespace compris). Match multiple → fail loud (passe \`replace_all: true\` ou narrow). Match absent → re-read le fichier d'abord.
+\`file_edit({ path: "Note.md", old_string: "...", new_string: "..." })\` — exact quote (whitespace included). Multiple matches → fail loud (pass \`replace_all: true\` or narrow it). No match → re-read the file first.
 
-### Append à une note
+### Append to a note
 
-Deux approches : (1) **anchored** via \`file_edit\` avec un anchor stable comme \`old_string\` + anchor + nouveau contenu comme \`new_string\`. (2) **full rewrite** : \`file_read\` puis \`file_write\` avec le contenu concaténé.
+Two approaches: (1) **anchored** via \`file_edit\` with a stable anchor as \`old_string\` + anchor + new content as \`new_string\`. (2) **full rewrite**: \`file_read\` then \`file_write\` with the concatenated content.
 
-### Anti-patterns paths
+### Path anti-patterns
 
-- ❌ Path absolu (\`D:\\...\\foo.md\`) — le workspace te scope déjà, écris juste \`foo.md\`.
-- ❌ \`..\` qui sort du vault → \`path_traversal_blocked\` retourné.
-- ❌ Lire de grosses notes en entier → pagine avec \`offset\` / \`limit\`.
+- ❌ Absolute path (\`D:\\...\\foo.md\`) — the workspace already scopes you, just write \`foo.md\`.
+- ❌ \`..\` that goes outside the vault → \`path_traversal_blocked\` returned.
+- ❌ Reading large notes in full → paginate with \`offset\` / \`limit\`.
 
 ---
 
-## Référence — Obsidian Flavored Markdown (kepano/obsidian-skills)
+## Reference — Obsidian Flavored Markdown (kepano/obsidian-skills)
 
-Obsidian étend CommonMark + GFM avec wikilinks, embeds, callouts, properties, comments et autres syntaxes. Référence à ouvrir quand tu écris une note structurée pour Quentin.
+Obsidian extends CommonMark + GFM with wikilinks, embeds, callouts, properties, comments and other syntaxes. Reference to open when you write a structured note for Quentin.
 
-### Workflow création d'une note
+### Note creation workflow
 
-1. **Frontmatter YAML** au début (properties : title, tags, aliases). Voir section "Properties" ci-dessous.
-2. **Contenu** en markdown standard + syntaxes Obsidian ci-dessous.
-3. **Lier** les notes connexes via wikilinks (\`[[Note]]\`) ; markdown links (\`[text](url)\`) UNIQUEMENT pour URLs externes.
-4. **Embed** d'autres notes/images/PDFs via \`![[embed]]\`.
-5. **Callouts** pour info mise en avant via \`> [!type]\`.
-6. **Vérifier** que la note rend correctement en reading view Obsidian.
+1. **YAML frontmatter** at the start (properties: title, tags, aliases). See the "Properties" section below.
+2. **Content** in standard markdown + the Obsidian syntaxes below.
+3. **Link** the related notes via wikilinks (\`[[Note]]\`); markdown links (\`[text](url)\`) ONLY for external URLs.
+4. **Embed** other notes/images/PDFs via \`![[embed]]\`.
+5. **Callouts** for highlighted info via \`> [!type]\`.
+6. **Check** that the note renders correctly in Obsidian reading view.
 
-> Wikilinks vs Markdown links : \`[[wikilinks]]\` pour les notes du vault (Obsidian track les renames automatiquement), \`[text](url)\` UNIQUEMENT pour URLs externes.
+> Wikilinks vs Markdown links: \`[[wikilinks]]\` for vault notes (Obsidian tracks renames automatically), \`[text](url)\` ONLY for external URLs.
 
 ### Internal Links (Wikilinks)
 
@@ -118,13 +118,13 @@ Obsidian étend CommonMark + GFM avec wikilinks, embeds, callouts, properties, c
 [[#Heading in same note]]              Same-note heading link
 \`\`\`
 
-Define a block ID by appending \`^block-id\` to any paragraph :
+Define a block ID by appending \`^block-id\` to any paragraph:
 
 \`\`\`markdown
 This paragraph can be linked to. ^my-block-id
 \`\`\`
 
-Pour les listes et quotes, place le block ID sur une ligne séparée après le bloc :
+For lists and quotes, place the block ID on a separate line after the block:
 
 \`\`\`markdown
 > A quote block
@@ -132,9 +132,9 @@ Pour les listes et quotes, place le block ID sur une ligne séparée après le b
 ^quote-id
 \`\`\`
 
-### Embeds (référence complète)
+### Embeds (full reference)
 
-Préfixer un wikilink par \`!\` pour embed son contenu inline.
+Prefix a wikilink with \`!\` to embed its content inline.
 
 \`\`\`markdown
 ![[Note Name]]                         Embed full note
@@ -142,7 +142,7 @@ Préfixer un wikilink par \`!\` pour embed son contenu inline.
 ![[Note Name#^block-id]]               Embed block
 
 ![[image.png]]                         Embed image
-![[image.png|300]]                     Embed image (width only, aspect ratio préservé)
+![[image.png|300]]                     Embed image (width only, aspect ratio preserved)
 ![[image.png|640x480]]                 Embed image (width × height)
 
 ![Alt text](https://example.com/img.png)         External image
@@ -151,12 +151,12 @@ Préfixer un wikilink par \`!\` pour embed son contenu inline.
 ![[audio.mp3]]                         Embed audio (mp3, ogg)
 ![[document.pdf]]                      Embed PDF
 ![[document.pdf#page=3]]               Embed PDF page
-![[document.pdf#height=400]]           Embed PDF avec hauteur
+![[document.pdf#height=400]]           Embed PDF with height
 
-![[Note#^list-id]]                     Embed une liste avec block ID
+![[Note#^list-id]]                     Embed a list with block ID
 \`\`\`
 
-Embed search results :
+Embed search results:
 
 \`\`\`\`markdown
 \`\`\`query
@@ -164,7 +164,7 @@ tag:#project status:done
 \`\`\`
 \`\`\`\`
 
-### Callouts (référence complète)
+### Callouts (full reference)
 
 \`\`\`markdown
 > [!note]
@@ -181,25 +181,25 @@ tag:#project status:done
 > > Nested content
 \`\`\`
 
-Types supportés (avec aliases) :
+Supported types (with aliases):
 
-| Type | Aliases | Couleur / icône |
+| Type | Aliases | Color / icon |
 |------|---------|-----------------|
-| \`note\` | — | Bleu, crayon |
-| \`abstract\` | \`summary\`, \`tldr\` | Turquoise, presse-papier |
-| \`info\` | — | Bleu, info |
-| \`todo\` | — | Bleu, checkbox |
-| \`tip\` | \`hint\`, \`important\` | Cyan, flamme |
-| \`success\` | \`check\`, \`done\` | Vert, ✓ |
-| \`question\` | \`help\`, \`faq\` | Jaune, ? |
+| \`note\` | — | Blue, pencil |
+| \`abstract\` | \`summary\`, \`tldr\` | Turquoise, clipboard |
+| \`info\` | — | Blue, info |
+| \`todo\` | — | Blue, checkbox |
+| \`tip\` | \`hint\`, \`important\` | Cyan, flame |
+| \`success\` | \`check\`, \`done\` | Green, ✓ |
+| \`question\` | \`help\`, \`faq\` | Yellow, ? |
 | \`warning\` | \`caution\`, \`attention\` | Orange, ⚠ |
-| \`failure\` | \`fail\`, \`missing\` | Rouge, ✗ |
-| \`danger\` | \`error\` | Rouge, ⚡ |
-| \`bug\` | — | Rouge, bug |
-| \`example\` | — | Violet, liste |
-| \`quote\` | \`cite\` | Gris, " |
+| \`failure\` | \`fail\`, \`missing\` | Red, ✗ |
+| \`danger\` | \`error\` | Red, ⚡ |
+| \`bug\` | — | Red, bug |
+| \`example\` | — | Purple, list |
+| \`quote\` | \`cite\` | Gray, " |
 
-### Properties / Frontmatter (référence complète)
+### Properties / Frontmatter (full reference)
 
 \`\`\`yaml
 ---
@@ -220,22 +220,22 @@ due: 2024-02-01T14:30:00
 ---
 \`\`\`
 
-Types de properties :
+Property types:
 
-| Type | Exemple |
+| Type | Example |
 |------|---------|
 | Text | \`title: My Title\` |
 | Number | \`rating: 4.5\` |
 | Checkbox | \`completed: true\` |
 | Date | \`date: 2024-01-15\` |
 | Date & Time | \`due: 2024-01-15T14:30:00\` |
-| List | \`tags: [one, two]\` ou liste YAML |
+| List | \`tags: [one, two]\` or YAML list |
 | Links | \`related: "[[Other Note]]"\` |
 
-Properties par défaut :
-- \`tags\` — searchable, apparaît dans graph view
-- \`aliases\` — noms alternatifs (utilisés pour les link suggestions)
-- \`cssclasses\` — classes CSS appliquées à la note
+Default properties:
+- \`tags\` — searchable, appears in graph view
+- \`aliases\` — alternative names (used for link suggestions)
+- \`cssclasses\` — CSS classes applied to the note
 
 ### Tags
 
@@ -246,9 +246,9 @@ Properties par défaut :
 #tag_with_underscores
 \`\`\`
 
-Tags peuvent contenir : lettres (toute langue), chiffres (pas en premier caractère), underscores \`_\`, hyphens \`-\`, slashes \`/\` (nesting). Aussi définissables en frontmatter sous \`tags\`.
+Tags can contain: letters (any language), digits (not as the first character), underscores \`_\`, hyphens \`-\`, slashes \`/\` (nesting). Also definable in frontmatter under \`tags\`.
 
-### Comments (masqués en reading view)
+### Comments (hidden in reading view)
 
 \`\`\`markdown
 This is visible %%but this is hidden%% text.
@@ -267,9 +267,9 @@ This entire block is hidden in reading view.
 ### Math (LaTeX)
 
 \`\`\`markdown
-Inline : $e^{i\\pi} + 1 = 0$
+Inline: $e^{i\\pi} + 1 = 0$
 
-Block :
+Block:
 $$
 \\frac{a}{b} = c
 $$
@@ -286,7 +286,7 @@ graph TD
 \`\`\`
 \`\`\`\`
 
-Pour linker des nodes Mermaid à des notes Obsidian : ajouter \`class NodeName internal-link;\`.
+To link Mermaid nodes to Obsidian notes: add \`class NodeName internal-link;\`.
 
 ### Footnotes
 
@@ -298,7 +298,7 @@ Text with a footnote[^1].
 Inline footnote.^[This is inline.]
 \`\`\`
 
-### Exemple complet (réutilisable comme template)
+### Full example (reusable as a template)
 
 \`\`\`\`markdown
 ---
@@ -333,6 +333,6 @@ The algorithm uses $O(n \\log n)$ sorting. See [[Algorithm Notes#Sorting]] for d
 Reviewed in [[Meeting Notes 2024-01-10#Decisions]].
 \`\`\`\`
 
-Source de référence : https://help.obsidian.md/obsidian-flavored-markdown · Crédit kepano/obsidian-skills
+Reference source: https://help.obsidian.md/obsidian-flavored-markdown · Credit kepano/obsidian-skills
 `,
 };

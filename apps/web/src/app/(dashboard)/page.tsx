@@ -11,6 +11,7 @@ import VividStatCard from '@/components/ui/VividStatCard';
 import MetricCard from '@/components/ui/MetricCard';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
+import PageShell from '@/components/ui/PageShell';
 import ActiveAgentsPanel from './ActiveAgentsPanel.tsx';
 import WeeklyActivityChart from './WeeklyActivityChart.tsx';
 import { UsersThree, Star, PlugsConnected } from '@phosphor-icons/react/dist/ssr';
@@ -54,12 +55,11 @@ export default async function DashboardPage() {
 
   if (!statsRes.ok) {
     return (
-      <div className="py-7">
-        <h1 className="text-[28px] font-semibold tracking-[-0.015em] text-ink">Dashboard</h1>
-        <div className="mt-4 rounded-xl border border-warn/40 bg-warn-bg p-5 text-sm text-warn">
+      <PageShell title="Home">
+        <div className="rounded-xl border border-warn/40 bg-warn-bg p-5 text-sm text-warn">
           {statsRes.message}
         </div>
-      </div>
+      </PageShell>
     );
   }
 
@@ -93,26 +93,19 @@ export default async function DashboardPage() {
   });
 
   return (
-    <div className="py-7">
-      {/* 0 — Greeting --------------------------------------------------- */}
-      <div className="mb-5">
-        <div className="flex flex-wrap items-baseline gap-3 text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
+    <PageShell
+      title={
+        <span className="inline-flex flex-wrap items-baseline gap-3">
           {greet}
           <span className="text-[14px] font-medium leading-none text-ink-3">{todayLabel}</span>
-        </div>
-        <div className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
-          {s.totalJobs > 0 ? (
-            <>
-              Your fleet has completed{' '}
-              <b className="font-medium text-ink">{s.totalJobs.toLocaleString()}</b>{' '}
-              {s.totalJobs === 1 ? 'job' : 'jobs'} since the workspace was seeded.
-            </>
-          ) : (
-            <>No jobs run yet. Spin up an agent to start the fleet.</>
-          )}
-        </div>
-      </div>
-
+        </span>
+      }
+      subtitle={
+        s.totalJobs > 0
+          ? `${s.totalJobs.toLocaleString()} ${s.totalJobs === 1 ? 'job' : 'jobs'} run so far`
+          : 'No jobs yet — spin up an agent.'
+      }
+    >
       {/* 1 — Three vivid stat cards ------------------------------------ */}
       <div className="grid grid-cols-1 gap-3.5 md:grid-cols-3">
         <VividStatCard
@@ -269,7 +262,7 @@ export default async function DashboardPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
 

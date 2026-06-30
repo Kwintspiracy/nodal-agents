@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import CountPill from '@/components/ui/CountPill';
 
 import type { ActionResult } from '@/lib/actions.ts';
 
@@ -77,6 +78,7 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
   const expiryText = formatExpiry(credential.expiresAt);
   const typeLabel = TYPE_LABELS[credential.type] ?? credential.type;
   const inUseCount = credential.inUseBy.length;
+  const scopeList = credential.scopes ? credential.scopes.split(/\s+/).filter(Boolean) : [];
 
   function performDelete() {
     setDeleteOpen(false);
@@ -191,19 +193,9 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
         </div>
       )}
 
-      {/* Scopes */}
-      {credential.scopes && (
-        <div className="flex flex-wrap gap-1">
-          {credential.scopes.split(/\s+/).map((scope) => (
-            <span
-              key={scope}
-              className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-[11px] font-mono"
-            >
-              {scope}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* Scopes — compact pill; hover for the full list (raw OAuth scope URLs
+          are long and used to make the card sprawl). */}
+      {scopeList.length > 0 && <CountPill items={scopeList} noun="scope" />}
 
       {/* In-use chips */}
       {inUseCount > 0 && (

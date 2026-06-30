@@ -15,6 +15,12 @@ interface CreateProps {
   agents: AgentRow[];
   onDone?: () => void;
   initial?: undefined;
+  /** When provided, the open/closed state of the create form is controlled by
+   *  the parent. This lets the trigger button live elsewhere (e.g. the page
+   *  toolbar) while the form renders in the page body. When omitted, the
+   *  component owns its own state and renders its built-in trigger button. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 interface EditProps {
@@ -22,13 +28,21 @@ interface EditProps {
   agents: AgentRow[];
   initial: ScheduleRow;
   onDone?: () => void;
+  open?: undefined;
+  onOpenChange?: undefined;
 }
 
 type Props = CreateProps | EditProps;
 
 export default function ScheduleForm(props: Props) {
   const isEdit = props.mode === 'edit';
-  const [open, setOpen] = useState(isEdit);
+  const controlled = !isEdit && props.open !== undefined;
+  const [internalOpen, setInternalOpen] = useState(isEdit);
+  const open = controlled ? (props.open ?? false) : internalOpen;
+  const setOpen = (next: boolean) => {
+    if (controlled) props.onOpenChange?.(next);
+    else setInternalOpen(next);
+  };
   const [isPending, startTransition] = useTransition();
   // Controlled so the "no Telegram bot" warning can react to the current agent
   // + notify choices before submit.
@@ -79,6 +93,9 @@ export default function ScheduleForm(props: Props) {
   }
 
   if (!isEdit && !open) {
+    // Controlled: the trigger button lives in the page toolbar — render nothing
+    // here when closed.
+    if (controlled) return null;
     return (
       <button
         type="button"

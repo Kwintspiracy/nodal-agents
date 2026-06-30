@@ -1,3 +1,17 @@
+import type { ChipItem } from '@/components/ui/ChipRow';
+
+/** The category filter chips shown in the connectors / MCP toolbar (row 2). */
+export const CONNECTOR_CATEGORIES: ChipItem<string>[] = [
+  { value: 'All', label: 'All' },
+  { value: 'CRM', label: 'CRM' },
+  { value: 'Productivity', label: 'Productivity' },
+  { value: 'Data', label: 'Data' },
+  { value: 'DevTools', label: 'DevTools' },
+  { value: 'Comms', label: 'Comms' },
+  { value: 'Creative', label: 'Creative' },
+  { value: 'Other', label: 'Other' },
+];
+
 /**
  * Maps a catalog slug to one of the ChipRow category labels.
  * Derived from the slug + authType — no extra column needed.

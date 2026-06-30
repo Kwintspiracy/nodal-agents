@@ -1379,6 +1379,147 @@ export async function listJobsAction(
   }
 }
 
+/**
+ * A run enriched with its DELEGATION role — feeds the Runs page delegation view.
+ *   - `orchestrator`: this job delegated to at least one child (lime).
+ *   - `delegated`:    this job was spawned by a parent (blue) — `fromAgentName`
+ *                      is the parent's agent.
+ *   - `standalone`:   neither (neutral).
+ */
+export type DelegationRunRow = {
+  id: string;
+  agentName: string;
+  agentSlug: string | null;
+  agentAvatarUrl: string | null;
+  role: 'orchestrator' | 'delegated' | 'standalone';
+  fromAgentName: string | null;
+  task: string;
+  channel: string;
+  status: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  createdAt: Date | null;
+  completedAt: Date | null;
+};
+
+export async function listDelegationRunsAction(
+  opts: { limit?: number; agentId?: string | null } = {},
+): Promise<ActionResult<DelegationRunRow[]>> {
+  try {
+    const session = await getSession();
+    const limit = Math.min(opts.limit ?? 50, 100);
+    const db = getDb();
+
+    const rows = await db
+      .select({
+        id: agentJobs.id,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        agentAvatarUrl: agents.avatarUrl,
+        task: agentJobs.task,
+        channel: agentJobs.channel,
+        status: agentJobs.status,
+        inputTokens: agentJobs.inputTokens,
+        outputTokens: agentJobs.outputTokens,
+        costUsd: agentJobs.totalCostUsd,
+        createdAt: agentJobs.createdAt,
+        completedAt: agentJobs.completedAt,
+        parentJobId: agentJobs.parentJobId,
+      })
+      .from(agentJobs)
+      .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+      .where(
+        and(
+          eq(agentJobs.entityId, session.entityId),
+          opts.agentId ? eq(agentJobs.agentId, opts.agentId) : undefined,
+        ),
+      )
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(limit);
+
+    const ids = rows.map((r) => r.id);
+
+    // Orchestrators = jobs that some other job was delegated FROM (their id
+    // appears as a parent_job_id). One distinct query, no per-row subselect.
+    const childParents = ids.length
+      ? await db
+          .selectDistinct({ p: agentJobs.parentJobId })
+          .from(agentJobs)
+          .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.parentJobId, ids)))
+      : [];
+    const orchestratorIds = new Set(
+      childParents.map((c) => c.p).filter((p): p is string => p !== null),
+    );
+
+    // "from X": resolve each parent job's agent name.
+    const parentJobIds = [
+      ...new Set(rows.map((r) => r.parentJobId).filter((p): p is string => p !== null)),
+    ];
+    const parentName = new Map<string, string>();
+    if (parentJobIds.length) {
+      const pj = await db
+        .select({ id: agentJobs.id, name: agents.name })
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(inArray(agentJobs.id, parentJobIds));
+      for (const p of pj) parentName.set(p.id, p.name ?? 'Agent');
+    }
+
+    // Order parent-then-children: each orchestrator sits immediately ABOVE the
+    // delegated runs it spawned (recursively), so the delegation tree reads
+    // top-down instead of interleaving by raw creation time.
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const childrenOf = new Map<string, typeof rows>();
+    for (const r of rows) {
+      if (r.parentJobId && byId.has(r.parentJobId)) {
+        const arr = childrenOf.get(r.parentJobId) ?? [];
+        arr.push(r);
+        childrenOf.set(r.parentJobId, arr);
+      }
+    }
+    const seen = new Set<string>();
+    const ordered: typeof rows = [];
+    const emit = (r: (typeof rows)[number]) => {
+      if (seen.has(r.id)) return;
+      seen.add(r.id);
+      ordered.push(r);
+      for (const c of childrenOf.get(r.id) ?? []) emit(c);
+    };
+    for (const r of rows) if (!r.parentJobId || !byId.has(r.parentJobId)) emit(r);
+    for (const r of rows) emit(r); // sweep any orphan / cyclic leftovers
+
+    const result: DelegationRunRow[] = ordered.map((r) => {
+      const role: DelegationRunRow['role'] = r.parentJobId
+        ? 'delegated'
+        : orchestratorIds.has(r.id)
+          ? 'orchestrator'
+          : 'standalone';
+      const name = r.agentName ?? 'Unknown';
+      return {
+        id: r.id,
+        agentName: name,
+        agentSlug: r.agentSlug,
+        agentAvatarUrl: r.agentAvatarUrl ?? null,
+        role,
+        fromAgentName: r.parentJobId ? (parentName.get(r.parentJobId) ?? null) : null,
+        task: r.task,
+        channel: r.channel,
+        status: r.status,
+        inputTokens: r.inputTokens ?? 0,
+        outputTokens: r.outputTokens ?? 0,
+        costUsd: r.costUsd ?? 0,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+      };
+    });
+    return ok(result);
+  } catch (err) {
+    console.error('[listDelegationRunsAction]', err);
+    return fail('db_error', 'Failed to load delegation runs');
+  }
+}
+
 export async function getJobDetailAction(id: string): Promise<ActionResult<JobDetailRow>> {
   try {
     const session = await getSession();
@@ -5105,6 +5246,10 @@ export type SettingsView = {
   /** file:// URL to this workspace's shared folder (the `shared` workspace the
    *  agents read/write together — see execute.ts). Lets the owner open it. */
   sharedWorkspaceUrl: string;
+  /** Raw filesystem path of the shared folder — what the copy button copies. */
+  sharedWorkspacePath: string;
+  /** Shortened, layout-friendly display of the path (the UUID is elided). */
+  sharedWorkspacePathShort: string;
   workerSecretConfigured: boolean;
   user: {
     userId: string;
@@ -5134,6 +5279,8 @@ export async function getSettingsAction(): Promise<ActionResult<SettingsView>> {
       runnerUrl: env.RUNNER_URL,
       appUrl: env.NEXT_PUBLIC_APP_URL,
       sharedWorkspaceUrl: pathToFileURL(sharedWorkspacePath).href,
+      sharedWorkspacePath,
+      sharedWorkspacePathShort: `~/.nodalai/workspaces/${session.entityId.slice(0, 8)}…/shared`,
       workerSecretConfigured: Boolean(env.WORKER_SECRET),
       user: {
         userId: session.userId,
@@ -5144,6 +5291,73 @@ export async function getSettingsAction(): Promise<ActionResult<SettingsView>> {
     console.error('[getSettingsAction]', err);
     return fail('db_error', 'Failed to load settings');
   }
+}
+
+// ─── Version / update check ───────────────────────────────────────────────────
+
+export type VersionInfo = {
+  /** The running CLI version (from NODAL_VERSION, injected by the launcher). */
+  current: string | null;
+  /** The latest published version on npm, or null if the check failed/offline. */
+  latest: string | null;
+  updateAvailable: boolean;
+};
+
+// Compare two "X.Y.Z" versions — true when `latest` is strictly newer.
+function isNewerVersion(latest: string, current: string): boolean {
+  const parse = (v: string) =>
+    v
+      .split('-')[0]
+      .split('.')
+      .map((n) => parseInt(n, 10) || 0);
+  const a = parse(latest);
+  const b = parse(current);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return false;
+}
+
+// Cache the npm lookup so navigating the dashboard doesn't hit the registry on
+// every sidebar mount. A 30-minute TTL is plenty for an update nudge.
+let _versionCache: { at: number; latest: string | null } | null = null;
+const VERSION_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Version info for the sidebar update badge: the running version, the latest on
+ * npm, and whether an update is available. Never throws — a failed/offline
+ * registry check just yields `latest: null` (the badge falls back to showing the
+ * current version only).
+ */
+export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>> {
+  const current = process.env.NODAL_VERSION ?? null;
+  let latest: string | null = null;
+  try {
+    const now = Date.now();
+    if (_versionCache && now - _versionCache.at < VERSION_TTL_MS) {
+      latest = _versionCache.latest;
+    } else {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      try {
+        const res = await fetch('https://registry.npmjs.org/nodal-agents/latest', {
+          signal: controller.signal,
+          headers: { accept: 'application/json' },
+        });
+        if (res.ok) {
+          const body = (await res.json()) as { version?: string };
+          latest = typeof body.version === 'string' ? body.version : null;
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      _versionCache = { at: now, latest };
+    }
+  } catch {
+    latest = null;
+  }
+  const updateAvailable = Boolean(current && latest && isNewerVersion(latest, current));
+  return ok({ current, latest, updateAvailable });
 }
 
 // ─── Automation Actions ───────────────────────────────────────────────────────

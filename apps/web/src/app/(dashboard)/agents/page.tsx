@@ -5,6 +5,8 @@ import {
   getActiveJobsByAgentAction,
 } from '@/lib/actions.ts';
 import AgentForm from '@/components/AgentForm.tsx';
+import PageShell from '@/components/ui/PageShell';
+import PageTopBar from '@/components/ui/PageTopBar';
 import AgentsErrorRetry from './AgentsErrorRetry.tsx';
 import AgentsList from './AgentsList.tsx';
 
@@ -32,26 +34,16 @@ export default async function AgentsPage() {
   const totalAgents = flatAgents.length;
 
   return (
-    <div className="py-7">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
-            Agents
-          </h1>
-          {groupsResult.ok && (
-            <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
-              {totalAgents} agent{totalAgents !== 1 ? 's' : ''}
-            </p>
-          )}
-        </div>
-        <AgentForm llmKeys={llmKeys} agents={flatAgents} />
-      </div>
-
+    <PageShell
+      title="Agents"
+      subtitle={groupsResult.ok ? `${totalAgents} agent${totalAgents !== 1 ? 's' : ''}` : undefined}
+      toolbar={<PageTopBar cta={<AgentForm llmKeys={llmKeys} agents={flatAgents} />} />}
+    >
       {!groupsResult.ok ? (
         <AgentsErrorRetry message={groupsResult.message} />
       ) : (
         <AgentsList initialGroups={groupsResult.data} initialActivity={initialActivity} />
       )}
-    </div>
+    </PageShell>
   );
 }

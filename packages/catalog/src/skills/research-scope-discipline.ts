@@ -11,53 +11,53 @@ export const researchScopeDisciplineSkill: SystemSkill = {
   slug: 'research-scope-discipline',
   name: 'Research scope discipline',
   description:
-    'Discipline de scope pour éviter les runaways de recherche et les timeouts upstream sur les synthèses long-format.',
+    'Scope discipline to avoid research runaways and upstream timeouts on long-form syntheses.',
   requiredBuiltins: [],
-  content: `Discipline de scope pour les recherches encyclopédiques et synthèses long-format. Évite les timeouts upstream et améliore la qualité du livrable.
+  content: `Scope discipline for encyclopedic research and long-form syntheses. Avoids upstream timeouts and improves deliverable quality.
 
-## Cible par défaut : 5-8 KB de contenu structuré
+## Default target: 5-8 KB of structured content
 
-Quand on te demande une synthèse encyclopédique ou une recherche approfondie, vise **5-8 KB de contenu** (≈ 1200-1800 mots, ≈ 4-6 sections principales).
+When asked for an encyclopedic synthesis or in-depth research, aim for **5-8 KB of content** (≈ 1200-1800 words, ≈ 4-6 main sections).
 
-**NE PAS** viser 15-20 KB en un seul shot. C'est la cause #1 des timeouts upstream sur les LLM — y compris les modèles avec gros context. L'utilisateur peut toujours redemander un approfondissement précis après ; mieux vaut un délivrable solide qu'un timeout à 5 min.
+**DO NOT** aim for 15-20 KB in a single shot. That's the #1 cause of upstream timeouts on LLMs — including large-context models. The user can always ask for a specific deep-dive afterward; a solid deliverable beats a 5-minute timeout.
 
-## Workflow scope-progressif
+## Progressive-scope workflow
 
-1. **Cadre la portée** : au début de la tâche, identifie 4-6 sections clés (pas 12+). Si l'orchestrator demande "synthèse complète sur X", c'est À TOI de choisir les 4-6 angles les plus représentatifs et de t'y tenir.
-2. **Recherche ciblée** : 3-5 search/scrape MAX (pas 10+). Tu as ce qu'il faut pour rédiger une synthèse propre dès 3 sources solides. Plus de scrapes = plus de tokens en context = plus de risque de timeout.
-3. **Rédige direct** : après recherche, \`file_write\` (si destination vault) ou \`dashboard_publish\` (si livrable dashboard) ou \`return_result\` directement. Pas de saves intermédiaires inutiles.
+1. **Frame the scope**: at the start of the task, identify 4-6 key sections (not 12+). If the orchestrator asks for a "complete synthesis on X", it's UP TO YOU to pick the 4-6 most representative angles and stick to them.
+2. **Targeted research**: 3-5 searches/scrapes MAX (not 10+). You have what you need to write a clean synthesis from 3 solid sources. More scrapes = more tokens in context = more timeout risk.
+3. **Write straight away**: after research, \`file_write\` (if the destination is a vault), \`dashboard_publish\` (if it's a dashboard deliverable), or \`return_result\` directly. No pointless intermediate saves.
 
-## Si tu sens que ça va déborder
+## If you sense it's going to overflow
 
-Si tu réalises mid-job que le sujet mérite vraiment 15+ KB (cas rare : sujet vraiment dense, demande explicite "exhaustif"), **STOP**. Au lieu de continuer en mode "encyclopédie complète" :
+If you realize mid-job that the topic genuinely warrants 15+ KB (rare case: a truly dense subject, an explicit "exhaustive" request), **STOP**. Instead of pressing on in "full encyclopedia" mode:
 
-- Termine ce que tu as déjà rédigé : 5-8 KB ciblés sur les fondamentaux ✅
-- Dans ton \`return_result\` ou ton \`file_write\`, signale clairement à l'orchestrator : *"Cette synthèse couvre les fondamentaux de X. Les sujets connexes (sous-thème A, sous-thème B, sous-thème C) mériteraient une recherche dédiée si l'utilisateur veut aller plus loin."*
+- Finish what you've already written: 5-8 KB focused on the fundamentals ✅
+- In your \`return_result\` or your \`file_write\`, flag it clearly to the orchestrator: *"This synthesis covers the fundamentals of X. The related topics (sub-theme A, sub-theme B, sub-theme C) would warrant dedicated research if the user wants to go further."*
 
-Ça permet à l'orchestrator de re-déléguer en sous-tâches focalisées au lieu d'un mega-call qui timeout.
+This lets the orchestrator re-delegate into focused sub-tasks instead of one mega-call that times out.
 
-## Découpage proposé
+## Proposed breakdown
 
-Si l'orchestrator te confie une task très large (ex: "synthèse complète sur la mécanique quantique"), TU as le droit de répondre avec un découpage proposé AVANT de commencer :
+If the orchestrator hands you a very broad task (e.g., "complete synthesis on quantum mechanics"), YOU are allowed to respond with a proposed breakdown BEFORE starting:
 
 \`\`\`
-Cette synthèse complète mérite 3-4 sous-recherches focalisées :
-1. Histoire + fondateurs (Planck → Dirac)
-2. Postulats + formalisme mathématique
-3. Phénomènes observables (intrication, décohérence)
-4. Applications + recherches récentes (2024-2025)
+This complete synthesis warrants 3-4 focused sub-researches:
+1. History + founders (Planck → Dirac)
+2. Postulates + mathematical formalism
+3. Observable phenomena (entanglement, decoherence)
+4. Applications + recent research (2024-2025)
 
-Je commence par la #1 ; à toi de re-déléguer les 3 autres en turns successifs.
+I'll start with #1; it's up to you to re-delegate the other 3 in successive turns.
 \`\`\`
 
-C'est une alternative valide à un timeout silencieux.
+This is a valid alternative to a silent timeout.
 
 ## Anti-patterns
 
-- ❌ "Synthèse encyclopédique exhaustive sur tout l'historique + toutes les théories + tous les développements récents" en un seul shot → timeout garanti.
-- ❌ 10+ scrapes "pour être sûr de ne rien rater" → bloat context, qualité ne s'améliore plus après 4-5 sources.
-- ❌ Rédiger 15 KB puis dashboard_publish la totalité — préfère un livrable propre de 6 KB + signal "à approfondir si besoin".
-- ❌ Plus de 30 turns d'exécution sans avoir appelé \`file_write\` ni \`dashboard_publish\` ni \`return_result\` → tu es en runaway de recherche, écris ce que tu as MAINTENANT.
-- ✅ Synthèse focalisée 5-8 KB + signal explicite des extensions possibles.
+- ❌ "Exhaustive encyclopedic synthesis covering the entire history + every theory + all recent developments" in a single shot → guaranteed timeout.
+- ❌ 10+ scrapes "to be sure not to miss anything" → context bloat, and quality stops improving after 4-5 sources.
+- ❌ Writing 15 KB then dashboard_publish-ing the whole thing — prefer a clean 6 KB deliverable + a "deeper dive if needed" signal.
+- ❌ More than 30 execution turns without having called \`file_write\`, \`dashboard_publish\`, or \`return_result\` → you're in a research runaway, write what you have NOW.
+- ✅ Focused 5-8 KB synthesis + an explicit signal of possible extensions.
 `,
 };

@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useTransition, useCallback } from 'react';
+import { useState, useTransition, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Modal from '@/components/ui/Modal.tsx';
+import PageShell from '@/components/ui/PageShell';
+import PageTopBar from '@/components/ui/PageTopBar';
+import PageSearchInput from '@/components/ui/PageSearchInput';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
 import {
   setReflectionEnabledAction,
@@ -71,6 +74,15 @@ export default function LearnedSkillsClient({
   const [localSkills, setLocalSkills] = useState<LearnedSkillRow[]>(skills);
   const [assignModal, setAssignModal] = useState<AssignModalState>(null);
   const [assigningAgentId, setAssigningAgentId] = useState<string>('');
+  const [query, setQuery] = useState('');
+
+  const visibleSkills = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return localSkills;
+    return localSkills.filter(
+      (s) => s.name.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q),
+    );
+  }, [localSkills, query]);
 
   function handleToggle() {
     const next = !enabled;
@@ -188,17 +200,15 @@ export default function LearnedSkillsClient({
   }
 
   return (
-    <div className="pb-10">
-      {/* Header */}
-      <div className="py-7">
-        <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
-          Learned Skills
-        </h1>
-        <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
-          Skills your agents discovered and saved automatically.
-        </p>
-      </div>
-
+    <PageShell
+      title="Learned Skills"
+      subtitle="Skills your agents discovered automatically."
+      toolbar={
+        <PageTopBar
+          search={<PageSearchInput value={query} onChange={setQuery} placeholder="Search skill…" />}
+        />
+      }
+    >
       {/* Reflection toggle section */}
       <div className="mb-4 rounded-2xl border border-rule-2 bg-paper p-5">
         <div className="flex items-center justify-between gap-4">
@@ -269,9 +279,15 @@ export default function LearnedSkillsClient({
             started.
           </p>
         </div>
+      ) : visibleSkills.length === 0 ? (
+        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
+          <p className="text-[14px] leading-[1.5] text-ink-3">
+            No learned skills match &ldquo;{query}&rdquo;.
+          </p>
+        </div>
       ) : (
         <div className="space-y-2">
-          {localSkills.map((skill) => (
+          {visibleSkills.map((skill) => (
             <div
               key={skill.id}
               className="rounded-2xl border border-rule-2 bg-paper overflow-hidden"
@@ -428,6 +444,6 @@ export default function LearnedSkillsClient({
           </div>
         )}
       </Modal>
-    </div>
+    </PageShell>
   );
 }

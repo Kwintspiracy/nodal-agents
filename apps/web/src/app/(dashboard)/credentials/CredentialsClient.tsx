@@ -4,9 +4,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus } from '@phosphor-icons/react';
-import CredentialCard, { type CredentialEntry } from './CredentialCard.tsx';
+import { type CredentialEntry } from './CredentialCard.tsx';
+import CredentialsTable from './CredentialsTable.tsx';
 import CredentialWizard from './CredentialWizard.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import PageShell from '@/components/ui/PageShell';
+import PageTopBar from '@/components/ui/PageTopBar';
 import type { ActionResult } from '@/lib/actions.ts';
 
 interface Props {
@@ -37,24 +40,20 @@ export default function CredentialsClient({
   }, [justCreatedId, router]);
 
   return (
-    <div className="py-7">
-      <div className="mb-5 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
-            Credentials
-          </h1>
-          <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
-            {credentials.length === 0
-              ? 'No credentials yet — create one to connect OAuth providers.'
-              : `${credentials.length} credential${credentials.length !== 1 ? 's' : ''}`}
-          </p>
-        </div>
-        <PrimaryButton variant="ink" onClick={() => setWizardOpen(true)}>
-          <Plus size={13} weight="bold" />
-          New credential
-        </PrimaryButton>
-      </div>
-
+    <PageShell
+      title="Credentials"
+      subtitle="Saved authentications your connectors reuse."
+      toolbar={
+        <PageTopBar
+          cta={
+            <PrimaryButton variant="neutral" onClick={() => setWizardOpen(true)}>
+              <Plus size={13} weight="bold" />
+              New credential
+            </PrimaryButton>
+          }
+        />
+      }
+    >
       {credentials.length === 0 ? (
         <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
           <p className="text-sm text-ink-3">
@@ -70,20 +69,15 @@ export default function CredentialsClient({
           </div>
         </div>
       ) : (
-        <div className="space-y-3">
-          {credentials.map((cred) => (
-            <CredentialCard
-              key={cred.id}
-              credential={cred}
-              onDelete={onDelete}
-              onRename={onRename}
-              onRefresh={onRefresh}
-            />
-          ))}
-        </div>
+        <CredentialsTable
+          credentials={credentials}
+          onDelete={onDelete}
+          onRename={onRename}
+          onRefresh={onRefresh}
+        />
       )}
 
       {wizardOpen && <CredentialWizard onClose={() => setWizardOpen(false)} />}
-    </div>
+    </PageShell>
   );
 }

@@ -4,7 +4,7 @@
  * MemoriesClient — the interactive shell for the Memories page.
  *
  * Owns all filter state (tab, agent, search, archived) and renders:
- *   - PageTopBar with PillTabs2 + PageSearchInput + "Add source" CTA
+ *   - PageTopBar with PillTabs2 + PageSearchInput + "New source" CTA
  *   - 2-stat strip (Total memories, Pinned) — Storage/Last-write omitted (no DB data)
  *   - Agent filter ChipRow
  *   - Memory table: Disc + fact | Agent | Category chip | Last accessed | Actions
@@ -21,7 +21,7 @@
 import { useState, useMemo, useTransition } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import PageHeader from '@/components/ui/PageHeader';
+import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2, { type PillTab2 } from '@/components/ui/PillTabs2';
 import PageSearchInput from '@/components/ui/PageSearchInput';
@@ -271,32 +271,31 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
   ];
 
   return (
-    <div className="pb-10">
-      <PageHeader
-        title="Memory"
-        subtitle="What your agents remember between runs. Search across facts and outcomes, filter by agent, or archive what's no longer relevant."
-      />
-      {/* PageTopBar ─────────────────────────────────────────────────────── */}
-      <PageTopBar
-        tabs={<PillTabs2 tabs={tabs} value={tab} onChange={setTab} />}
-        search={
-          <PageSearchInput
-            value={q}
-            onChange={setQ}
-            placeholder="Search memories…"
-            minWidth={260}
-          />
-        }
-        cta={
-          <PrimaryButton variant="coral" disabled>
-            + Add source
-          </PrimaryButton>
-        }
-      />
-
+    <PageShell
+      title="Memory"
+      subtitle="What your agents remember between runs."
+      toolbar={
+        <PageTopBar
+          tabs={<PillTabs2 tabs={tabs} value={tab} onChange={setTab} />}
+          search={
+            <PageSearchInput
+              value={q}
+              onChange={setQ}
+              placeholder="Search memories…"
+              minWidth={260}
+            />
+          }
+          cta={
+            <PrimaryButton variant="neutral" disabled>
+              + New source
+            </PrimaryButton>
+          }
+        />
+      }
+    >
       {/* Stat strip ─────────────────────────────────────────────────────── */}
       {/* Storage / Last-write cards omitted: no quota or live-write tracking in DB */}
-      <div className="mt-4 grid grid-cols-2 gap-2.5 md:grid-cols-2">
+      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-2">
         <MetricCard label="Total memories" value={String(totalCount)} />
         <MetricCard
           label="Archived"
@@ -417,6 +416,6 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
           </div>
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }

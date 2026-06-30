@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle } from '@phosphor-icons/react';
 import type { ConnectorRow, ConnectorCatalogItem } from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
-import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
 import Modal from '@/components/ui/Modal';
@@ -14,23 +13,10 @@ import CredentialWizard, { type CredentialWizardType } from '../credentials/Cred
 import { CONN_BRAND_COLORS, connGlyph, connIcon } from './connector-brand.ts';
 import { catalogCategory } from './categories.ts';
 
-const CATEGORIES: ChipItem<string>[] = [
-  { value: 'All', label: 'All' },
-  { value: 'CRM', label: 'CRM' },
-  { value: 'Productivity', label: 'Productivity' },
-  { value: 'Data', label: 'Data' },
-  { value: 'DevTools', label: 'DevTools' },
-  { value: 'Comms', label: 'Comms' },
-  { value: 'Creative', label: 'Creative' },
-  { value: 'Other', label: 'Other' },
-];
-
 type Props = {
   catalog: ConnectorCatalogItem[];
   instances: ConnectorRow[];
   credsByType: Record<string, CompatibleCredential[]>;
-  category: string;
-  onCategoryChange: (cat: string) => void;
 };
 
 /**
@@ -39,46 +25,29 @@ type Props = {
  * Each card's CTA opens a Modal with ConnectorAddForm rendered directly inside.
  * The CredentialWizard is owned at card level to avoid nesting two z-50 portals.
  */
-export default function ConnectorsMarketplaceGrid({
-  catalog,
-  instances,
-  credsByType,
-  category,
-  onCategoryChange,
-}: Props) {
+export default function ConnectorsMarketplaceGrid({ catalog, instances, credsByType }: Props) {
   // Render connectors alphabetically by label.
   const sortedCatalog = [...catalog].sort((a, b) => a.label.localeCompare(b.label));
-  return (
-    <div>
-      <ChipRow
-        items={CATEGORIES}
-        value={category}
-        onChange={onCategoryChange}
-        className="mb-[18px]"
-      />
-
-      {catalog.length === 0 ? (
-        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-          <p className="text-[14px] text-ink-3">No connectors in this category.</p>
-        </div>
-      ) : (
-        <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
-          {sortedCatalog.map((item) => {
-            const installedInstances = instances.filter((i) => i.slug === item.slug);
-            const isInstalled = installedInstances.length > 0;
-            const compatible = item.credentialType ? (credsByType[item.credentialType] ?? []) : [];
-            return (
-              <ConnectorMarketCard
-                key={item.slug}
-                catalogItem={item}
-                isInstalled={isInstalled}
-                installedCount={installedInstances.length}
-                compatibleCredentials={compatible}
-              />
-            );
-          })}
-        </div>
-      )}
+  return catalog.length === 0 ? (
+    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
+      <p className="text-[14px] text-ink-3">No connectors in this category.</p>
+    </div>
+  ) : (
+    <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
+      {sortedCatalog.map((item) => {
+        const installedInstances = instances.filter((i) => i.slug === item.slug);
+        const isInstalled = installedInstances.length > 0;
+        const compatible = item.credentialType ? (credsByType[item.credentialType] ?? []) : [];
+        return (
+          <ConnectorMarketCard
+            key={item.slug}
+            catalogItem={item}
+            isInstalled={isInstalled}
+            installedCount={installedInstances.length}
+            compatibleCredentials={compatible}
+          />
+        );
+      })}
     </div>
   );
 }

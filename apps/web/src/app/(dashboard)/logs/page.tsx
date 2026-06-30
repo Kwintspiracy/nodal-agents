@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { listAgentsAction, listToolCallsAction, listToolNamesAction } from '@/lib/actions.ts';
+import PageShell from '@/components/ui/PageShell';
 import LogFilters from './LogFilters.tsx';
 import LogsTable from './LogsTable.tsx';
 
@@ -37,47 +38,32 @@ export default async function LogsPage({ searchParams }: PageProps) {
 
   if (!result.ok) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-semibold text-ink">Logs</h1>
+      <PageShell title="Logs">
         <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
           {result.message}
         </div>
-      </div>
+      </PageShell>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-ink">Logs</h1>
-        <p className="mt-0.5 text-sm text-ink-3">
-          {result.data.items.length === PAGE_SIZE
-            ? `Showing latest ${PAGE_SIZE} tool calls`
-            : `${result.data.items.length} tool call${result.data.items.length === 1 ? '' : 's'}`}
-          {sp.job && (
-            <>
-              {' '}
-              for job{' '}
-              <Link href={`/jobs/${sp.job}`} className="font-mono text-ink-2 hover:text-ink">
-                {sp.job.slice(0, 8)}
-              </Link>
-            </>
-          )}
-        </p>
+    <PageShell
+      title="Logs"
+      subtitle="Recent tool calls across the fleet."
+      toolbar={<LogFilters agents={agents} toolNames={toolNames} />}
+    >
+      <div className="space-y-6">
+        {result.data.items.length === 0 ? (
+          <div className="rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
+            No tool calls yet. Send a task on the Tasks page to generate some.
+          </div>
+        ) : (
+          <LogsTable items={result.data.items} />
+        )}
+
+        {result.data.items.length === PAGE_SIZE && <Pagination page={page} sp={sp} />}
       </div>
-
-      <LogFilters agents={agents} toolNames={toolNames} />
-
-      {result.data.items.length === 0 ? (
-        <div className="rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
-          No tool calls yet. Send a task on the Tasks page to generate some.
-        </div>
-      ) : (
-        <LogsTable items={result.data.items} />
-      )}
-
-      {result.data.items.length === PAGE_SIZE && <Pagination page={page} sp={sp} />}
-    </div>
+    </PageShell>
   );
 }
 

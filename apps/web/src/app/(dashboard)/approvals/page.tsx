@@ -4,6 +4,7 @@ import { listApprovalsAction } from '@/lib/actions.ts';
 import ApprovalCard from '@/components/ui/ApprovalCard';
 import StatusPill from '@/components/ui/StatusPill';
 import type { StatusVariant } from '@/components/ui/StatusPill';
+import PageShell from '@/components/ui/PageShell';
 import ApprovalActions from './ApprovalActions.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -36,42 +37,41 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
   const result = await listApprovalsAction({ status });
   if (!result.ok) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-semibold text-ink">Approvals</h1>
+      <PageShell title="Approvals">
         <div className="rounded-xl border border-err/25 bg-paper px-6 py-8 text-sm text-err">
           {result.message}
         </div>
-      </div>
+      </PageShell>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-ink">Approvals</h1>
-        <p className="mt-0.5 text-sm text-ink-3">
+    <PageShell
+      title="Approvals"
+      subtitle={
+        <>
           {result.data.length} {status === 'all' ? '' : status} approval
           {result.data.length === 1 ? '' : 's'}
-        </p>
-      </div>
-
-      {/* Tab filter strip */}
-      <div className="flex gap-1.5 text-xs">
-        {TABS.map((s) => (
-          <Link
-            key={s}
-            href={s === 'pending' ? '/approvals' : `/approvals?status=${s}`}
-            className={`rounded-md px-3 py-1.5 font-medium capitalize transition-colors ${
-              status === s
-                ? 'bg-ink text-canvas'
-                : 'border border-rule-2 text-ink-3 hover:border-rule hover:text-ink'
-            }`}
-          >
-            {s}
-          </Link>
-        ))}
-      </div>
-
+        </>
+      }
+      toolbar={
+        <div className="flex gap-1.5 text-xs">
+          {TABS.map((s) => (
+            <Link
+              key={s}
+              href={s === 'pending' ? '/approvals' : `/approvals?status=${s}`}
+              className={`rounded-md px-3 py-1.5 font-medium capitalize transition-colors ${
+                status === s
+                  ? 'bg-ink text-canvas'
+                  : 'border border-rule-2 text-ink-3 hover:border-rule hover:text-ink'
+              }`}
+            >
+              {s}
+            </Link>
+          ))}
+        </div>
+      }
+    >
       {result.data.length === 0 ? (
         <div className="rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
           {status === 'pending'
@@ -157,6 +157,6 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
           ))}
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }

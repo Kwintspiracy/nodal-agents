@@ -98,24 +98,24 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     slug: 'apify',
     label: 'Apify',
     authType: 'api_key',
-    docsHint: 'Token API Apify — console.apify.com/account/integrations.',
+    docsHint: 'Apify API token — console.apify.com/account/integrations.',
   },
   {
     slug: 'firecrawl',
     label: 'Firecrawl',
     authType: 'api_key',
-    docsHint: 'API key Firecrawl — firecrawl.dev/account.',
+    docsHint: 'Firecrawl API key — firecrawl.dev/account.',
   },
   {
     slug: 'tavily',
     label: 'Tavily',
     authType: 'api_key',
-    docsHint: 'API key Tavily — app.tavily.com.',
+    docsHint: 'Tavily API key — app.tavily.com.',
   },
   {
     slug: 'poyo',
     label: 'Poyo',
     authType: 'api_key',
-    docsHint: 'API key Poyo — poyo.ai (API Console). Sent as a Bearer token.',
+    docsHint: 'Poyo API key — poyo.ai (API Console). Sent as a Bearer token.',
   },
 ];

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import PageShell from '@/components/ui/PageShell';
 import { toast } from 'sonner';
 import {
   Area,
@@ -274,125 +275,127 @@ export default function AgentComposer({
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
-      <BackLink />
+    <PageShell title="Edit agent" subtitle={agent.name}>
+      <div className="space-y-6">
+        <BackLink />
 
-      <AgentPicker agents={allAgents} activeId={agent.id} />
+        <AgentPicker agents={allAgents} activeId={agent.id} />
 
-      <HeroCard
-        initial={initial}
-        avatarUrl={avatarUrl}
-        name={agent.name}
-        personaPreview={personaPreview}
-        role={initialRole}
-        slug={agent.slug}
-        model={agent.model}
-        llmKeyLabel={
-          llmKeys.find((k) => k.id === agent.llmKeyId)?.nickname ??
-          (llmKeys.find((k) => k.id === agent.llmKeyId)?.provider
-            ? prettyProviderName(
-                llmKeys.find((k) => k.id === agent.llmKeyId)!.provider as ProviderSlug,
-              )
-            : null)
-        }
-        stats={{
-          connectors: assignedConnectors,
-          mcps: assignedMcps,
-          subAgents: subAgentCount,
-          skills: attachedSkills.length,
-          totalRuns,
-          successfulRuns,
-        }}
-        onConfigure={() => setTab('settings')}
-      />
-
-      <TabsBar
-        tab={tab}
-        onChange={setTab}
-        counts={{
-          skills: attachedSkills.length,
-          // Connectors tab now lists API + MCP combined — count both.
-          connectors: assignedConnectors + assignedMcps,
-          runs: totalRuns,
-        }}
-      />
-
-      {tab === 'overview' && (
-        <OverviewTab
-          jobs={jobs}
-          attachedSkills={attachedSkills}
-          connectorsAssigned={assignedConnectorRows}
-          mcpsAssignedCount={assignedMcps}
-          onOpenSkills={() => setTab('skills')}
-          onOpenConnectors={() => setTab('connectors')}
+        <HeroCard
+          initial={initial}
+          avatarUrl={avatarUrl}
+          name={agent.name}
+          personaPreview={personaPreview}
+          role={initialRole}
+          slug={agent.slug}
+          model={agent.model}
+          llmKeyLabel={
+            llmKeys.find((k) => k.id === agent.llmKeyId)?.nickname ??
+            (llmKeys.find((k) => k.id === agent.llmKeyId)?.provider
+              ? prettyProviderName(
+                  llmKeys.find((k) => k.id === agent.llmKeyId)!.provider as ProviderSlug,
+                )
+              : null)
+          }
+          stats={{
+            connectors: assignedConnectors,
+            mcps: assignedMcps,
+            subAgents: subAgentCount,
+            skills: attachedSkills.length,
+            totalRuns,
+            successfulRuns,
+          }}
+          onConfigure={() => setTab('settings')}
         />
-      )}
-      {tab === 'skills' && <SkillsTab skills={attachedSkills} />}
-      {tab === 'connectors' && (
-        <SectionCard>
-          <ConnectorsTabContent
-            key={agent.id}
+
+        <TabsBar
+          tab={tab}
+          onChange={setTab}
+          counts={{
+            skills: attachedSkills.length,
+            // Connectors tab now lists API + MCP combined — count both.
+            connectors: assignedConnectors + assignedMcps,
+            runs: totalRuns,
+          }}
+        />
+
+        {tab === 'overview' && (
+          <OverviewTab
+            jobs={jobs}
+            attachedSkills={attachedSkills}
+            connectorsAssigned={assignedConnectorRows}
+            mcpsAssignedCount={assignedMcps}
+            onOpenSkills={() => setTab('skills')}
+            onOpenConnectors={() => setTab('connectors')}
+          />
+        )}
+        {tab === 'skills' && <SkillsTab skills={attachedSkills} />}
+        {tab === 'connectors' && (
+          <SectionCard>
+            <ConnectorsTabContent
+              key={agent.id}
+              agentId={agent.id}
+              connectors={connectors}
+              mcpServers={mcpServers}
+            />
+          </SectionCard>
+        )}
+        {tab === 'runs' && (
+          <RunsTable
+            jobs={jobs}
+            agents={[{ id: agent.id, name: agent.name, slug: agent.slug } as AgentRow, ...peers]}
+            agentId={agent.id}
+          />
+        )}
+        {tab === 'autonomy' && (
+          <AutonomyTab
             agentId={agent.id}
             connectors={connectors}
-            mcpServers={mcpServers}
+            hasTelegramBot={!!agent.telegramBotToken}
+            attachedSkills={attachedSkills}
+            lanCommandYolo={lanCommandYolo}
+            isOwner={isOwner}
           />
-        </SectionCard>
-      )}
-      {tab === 'runs' && (
-        <RunsTable
-          jobs={jobs}
-          agents={[{ id: agent.id, name: agent.name, slug: agent.slug } as AgentRow, ...peers]}
-          agentId={agent.id}
-        />
-      )}
-      {tab === 'autonomy' && (
-        <AutonomyTab
-          agentId={agent.id}
-          connectors={connectors}
-          hasTelegramBot={!!agent.telegramBotToken}
-          attachedSkills={attachedSkills}
-          lanCommandYolo={lanCommandYolo}
-          isOwner={isOwner}
-        />
-      )}
-      {tab === 'settings' && (
-        <SettingsTab
-          name={name}
-          slug={agent.slug}
-          avatarUrl={avatarUrl}
-          personality={personality}
-          role={role}
-          showSubAgents={showSubAgents}
-          subAgentIds={subAgentIds}
-          peers={peers}
-          llmKeyId={llmKeyId}
-          fallbackChain={fallbackChain}
-          activeKeys={activeKeys}
-          selectedKey={selectedKey}
-          model={model}
-          noLlmKeys={noLlmKeys}
-          workspaces={workspaces}
-          workspacesLoaded={workspacesLoaded}
-          onWorkspacesChange={setWorkspaces}
-          agentId={agent.id}
-          dirty={dirty}
-          isPending={isPending}
-          onChangeName={setName}
-          onChangeAvatar={setAvatarUrl}
-          onChangePersonality={setPersonality}
-          onChangeRole={setRole}
-          onToggleSubAgent={toggleSubAgent}
-          onToggleFallback={toggleFallback}
-          onChangeFallbackModel={setFallbackModel}
-          onChangeLlmKey={handleLlmKeyChange}
-          onChangeModel={handleModelChange}
-          onSave={handleSave}
-          onReset={handleReset}
-          liveModelsCache={liveModelsCache}
-          liveModelsLoading={liveModelsLoading}
-        />
-      )}
-    </div>
+        )}
+        {tab === 'settings' && (
+          <SettingsTab
+            name={name}
+            slug={agent.slug}
+            avatarUrl={avatarUrl}
+            personality={personality}
+            role={role}
+            showSubAgents={showSubAgents}
+            subAgentIds={subAgentIds}
+            peers={peers}
+            llmKeyId={llmKeyId}
+            fallbackChain={fallbackChain}
+            activeKeys={activeKeys}
+            selectedKey={selectedKey}
+            model={model}
+            noLlmKeys={noLlmKeys}
+            workspaces={workspaces}
+            workspacesLoaded={workspacesLoaded}
+            onWorkspacesChange={setWorkspaces}
+            agentId={agent.id}
+            dirty={dirty}
+            isPending={isPending}
+            onChangeName={setName}
+            onChangeAvatar={setAvatarUrl}
+            onChangePersonality={setPersonality}
+            onChangeRole={setRole}
+            onToggleSubAgent={toggleSubAgent}
+            onToggleFallback={toggleFallback}
+            onChangeFallbackModel={setFallbackModel}
+            onChangeLlmKey={handleLlmKeyChange}
+            onChangeModel={handleModelChange}
+            onSave={handleSave}
+            onReset={handleReset}
+            liveModelsCache={liveModelsCache}
+            liveModelsLoading={liveModelsLoading}
+          />
+        )}
+      </div>
+    </PageShell>
   );
 }
 

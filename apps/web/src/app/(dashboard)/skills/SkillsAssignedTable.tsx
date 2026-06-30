@@ -7,7 +7,7 @@ import { DotsThree, PencilSimple, Plus, Trash, CloudX } from '@phosphor-icons/re
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import { deleteSkillAction, uninstallCommunitySkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
-import MonoCode from '@/components/ui/MonoCode';
+import CountPill from '@/components/ui/CountPill';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import AssignSkillModal from './AssignSkillModal.tsx';
 
@@ -102,7 +102,10 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
                 </span>
               )}
             </div>
-            <div className="mt-0.5 text-[12px] leading-[1.3] text-ink-3">
+            <div
+              className="mt-0.5 line-clamp-2 max-w-[460px] text-[12px] leading-[1.3] text-ink-3"
+              title={skill.description ?? skill.slug}
+            >
               {skill.description ?? <span className="font-mono text-ink-4">{skill.slug}</span>}
             </div>
           </div>
@@ -119,16 +122,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
 
       <td className="px-[18px] py-4 align-middle">
         {skill.requiredBuiltins.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {skill.requiredBuiltins.slice(0, 4).map((b) => (
-              <MonoCode key={b}>{b}</MonoCode>
-            ))}
-            {skill.requiredBuiltins.length > 4 && (
-              <span className="font-mono text-[10.5px] text-ink-4">
-                +{skill.requiredBuiltins.length - 4}
-              </span>
-            )}
-          </div>
+          <CountPill items={skill.requiredBuiltins} noun="built-in" />
         ) : (
           <span className="font-mono text-[11px] text-ink-4">none</span>
         )}
@@ -151,49 +145,51 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
             <PencilSimple size={13} />
             Customise
           </Link>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-label="More actions"
-              className="flex h-[30px] w-[30px] items-center justify-center rounded-[7px] border border-rule bg-paper text-ink-3 transition-colors hover:text-ink"
-            >
-              <DotsThree size={16} weight="bold" />
-            </button>
-            {menuOpen && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                <div className="absolute top-[calc(100%+4px)] right-0 z-20 min-w-[140px] rounded-[9px] border border-rule-2 bg-paper p-1 shadow-[0_12px_32px_rgba(0,0,0,0.10)]">
-                  {skill.isCommunity && (
+          {!skill.isSystem && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-label="More actions"
+                className="flex h-[30px] w-[30px] items-center justify-center rounded-[7px] border border-rule bg-paper text-ink-3 transition-colors hover:text-ink"
+              >
+                <DotsThree size={16} weight="bold" />
+              </button>
+              {menuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+                  <div className="absolute top-[calc(100%+4px)] right-0 z-20 min-w-[140px] rounded-[9px] border border-rule-2 bg-paper p-1 shadow-[0_12px_32px_rgba(0,0,0,0.10)]">
+                    {skill.isCommunity && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setUninstallConfirmOpen(true);
+                        }}
+                        disabled={isPending}
+                        className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-err transition-colors hover:bg-warn-bg disabled:opacity-40"
+                      >
+                        <CloudX size={13} />
+                        Uninstall
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
                         setMenuOpen(false);
-                        setUninstallConfirmOpen(true);
+                        setConfirmOpen(true);
                       }}
                       disabled={isPending}
                       className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-err transition-colors hover:bg-warn-bg disabled:opacity-40"
                     >
-                      <CloudX size={13} />
-                      Uninstall
+                      <Trash size={13} />
+                      Delete
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setConfirmOpen(true);
-                    }}
-                    disabled={isPending}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-err transition-colors hover:bg-warn-bg disabled:opacity-40"
-                  >
-                    <Trash size={13} />
-                    Delete
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <ConfirmDialog
           open={confirmOpen}

@@ -1,4 +1,5 @@
 import BackButton from '@/components/ui/BackButton';
+import PageShell from '@/components/ui/PageShell';
 import SkillForm from '../SkillForm.tsx';
 
 /**
@@ -11,17 +12,11 @@ import SkillForm from '../SkillForm.tsx';
  */
 export default function NewSkillPage() {
   return (
-    <div className="py-7">
+    <PageShell title="New skill" subtitle="Reusable instructions for any agent.">
       <BackButton href="/skills" label="Back to Skills" />
-      <h1 className="mt-2 text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink">
-        New skill
-      </h1>
-      <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-3">
-        Skills are reusable instructions appended to an agent&apos;s system prompt when assigned.
-      </p>
       <div className="mt-5">
         <SkillForm mode="create" defaultOpen />
       </div>
-    </div>
+    </PageShell>
   );
 }

@@ -1,12 +1,16 @@
 import Link from 'next/link';
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from 'react';
 
-type Variant = 'ink' | 'coral' | 'blue';
+type Variant = 'ink' | 'coral' | 'blue' | 'agent' | 'neutral';
 
+// Create-button colour convention (matches the design): agents = lime,
+// skills = coral, connectors/MCP = blue, EVERYTHING ELSE = white (neutral).
 const VARIANT: Record<Variant, string> = {
-  ink: 'bg-ink text-canvas hover:brightness-[0.92]',
-  coral: 'bg-skill-vivid text-white hover:brightness-[0.94]',
-  blue: 'bg-conn-vivid text-white hover:brightness-[0.94]',
+  ink: 'bg-ink text-canvas border-0 hover:brightness-[0.92]',
+  agent: 'bg-agent-vivid text-[#1a2200] border-0 hover:brightness-[0.96]',
+  coral: 'bg-skill-vivid text-white border-0 hover:brightness-[0.94]',
+  blue: 'bg-conn-vivid text-white border-0 hover:brightness-[0.94]',
+  neutral: 'border border-rule-2 bg-paper text-ink hover:bg-hover',
 };
 
 type CommonProps = {
@@ -41,7 +45,7 @@ type Props = AsButton | AsLink;
 export default function PrimaryButton(props: Props) {
   const { children, variant = 'ink', size = 'md', className = '' } = props;
   const dim = size === 'md' ? 'h-[34px] px-3.5 text-[14px]' : 'h-[30px] px-3 text-[13px]';
-  const cls = `inline-flex items-center justify-center gap-1.5 rounded-md font-medium leading-none border-0 cursor-pointer transition-[filter] ${dim} ${VARIANT[variant]} ${className}`;
+  const cls = `inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium leading-none transition-[filter,background-color] ${dim} ${VARIANT[variant]} ${className}`;
 
   if ('href' in props && props.href) {
     // anchor-flavour
