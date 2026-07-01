@@ -123,6 +123,85 @@ const TOOL_PROVISIONING: ToolProvisioning = {
   encrypt,
 };
 
+// ─── web_search premium backend ───────────────────────────────────────────────
+// The `web_search` builtin is always-on and free by default (keyless DuckDuckGo).
+// When the agent has a Tavily or Firecrawl connector, the runner injects a
+// premium backend via ToolContext.searchBackend so web_search transparently uses
+// it. packages/tools must not depend on adapters/secrets, so we build the backend
+// HERE by reusing ADAPTER_REGISTRY's toolFactory and calling the connector's own
+// search tool. Priority: Tavily > Firecrawl. Their result shapes differ, so we
+// normalize each to {title, url, snippet}.
+type SearchBackend = (
+  query: string,
+) => Promise<{ results: Array<{ title: string; url: string; snippet: string }> }>;
+
+/**
+ * Resolve a premium web-search backend for an agent from its connector
+ * assignments. Returns undefined when the agent has neither a Tavily nor a
+ * Firecrawl connector (web_search then falls back to DuckDuckGo). Only api_key
+ * connectors are supported here (both Tavily and Firecrawl are api_key); a
+ * tampered/undecryptable key is treated as "no backend". A search connector that
+ * appears with an empty operations whitelist still provides the backend — the
+ * per-tool whitelist gates the DIRECT tavily_search/firecrawl_search tool, not
+ * the always-on unified web_search.
+ */
+async function resolveSearchBackend(
+  db: RunnerDeps['db'],
+  agentId: string,
+): Promise<SearchBackend | undefined> {
+  const rows = await db
+    .select({
+      slug: connectorsTable.slug,
+      apiKey: connectorsTable.apiKey,
+    })
+    .from(agentConnectorAssignments)
+    .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
+    .where(eq(agentConnectorAssignments.agentId, agentId));
+
+  // Priority: Tavily first, then Firecrawl.
+  for (const slug of ['tavily', 'firecrawl'] as const) {
+    const row = rows.find((r) => r.slug === slug);
+    if (!row?.apiKey) continue;
+    let key: string;
+    try {
+      key = decrypt(row.apiKey);
+    } catch {
+      continue; // tampered / wrong master key — treat as no backend
+    }
+    const entry = ADAPTER_REGISTRY[slug];
+    if (!entry) continue;
+    const toolName = slug === 'tavily' ? 'tavily_search' : 'firecrawl_search';
+    const searchTool = entry.toolFactory(key).find((t) => t.name === toolName);
+    if (!searchTool) continue;
+
+    return async (query: string) => {
+      // The adapter tools ignore ctx for search; a minimal ctx satisfies the type.
+      const out = (await searchTool.execute({ query }, {
+        jobId: '',
+        agentId,
+        entityId: '',
+        db,
+        jobChatId: null,
+      } as never)) as {
+        results?: Array<{
+          title?: string;
+          url?: string;
+          content?: string;
+          description?: string;
+        }>;
+      };
+      const results = (out.results ?? []).map((r) => ({
+        title: r.title ?? '',
+        url: r.url ?? '',
+        // Tavily → `content`; Firecrawl → `description`.
+        snippet: r.content ?? r.description ?? '',
+      }));
+      return { results };
+    };
+  }
+  return undefined;
+}
+
 // User-facing delivery tools: ones that push a message to a human channel.
 // A turn whose tool calls are ALL in this set (and contains no return_result)
 // is "delivery-only" — used by the anti-spam guard in the main loop to detect
@@ -688,6 +767,12 @@ async function runJob(
     .filter((r) => r.filesWritable)
     .map((r) => r.slug);
   const skillStore = skillStoreDir(job.entityId);
+
+  // Premium web-search backend (Tavily > Firecrawl) injected into every
+  // ToolContext below so the always-on web_search builtin uses the agent's
+  // configured provider when it has one; undefined ⇒ web_search falls back to
+  // its keyless DuckDuckGo path. Resolved once per job.
+  const searchBackend = await resolveSearchBackend(db, agentRow.id);
 
   // ── Per-agent LLM client resolution (Brique 24/25) ───────────────────────
   // Agents MUST have an llmKeyId pointing at an active entity_llm_keys row.
@@ -1307,6 +1392,7 @@ async function runJob(
                 scriptAuthorizedSkillSlugs,
                 fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
+                searchBackend,
               },
               {
                 approvalRules: resumeApprovalRules,
@@ -2099,6 +2185,7 @@ async function runJob(
         scriptAuthorizedSkillSlugs,
         fileWritableSkillSlugs,
         provisioning: TOOL_PROVISIONING,
+        searchBackend,
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -2291,6 +2378,7 @@ async function runJob(
                 scriptAuthorizedSkillSlugs,
                 fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
+                searchBackend,
               },
               {
                 approvalRules: approvalRuleList,

@@ -87,6 +87,18 @@ export interface ToolContext {
    * unverified row.
    */
   provisioning?: ToolProvisioning;
+  /**
+   * Premium web-search backend INJECTED by the runner when the agent has a
+   * Tavily or Firecrawl connector configured (priority: Tavily > Firecrawl).
+   * The `web_search` builtin uses it in preference to its own free DuckDuckGo
+   * fallback. Injected here — not resolved in packages/tools — because building
+   * it requires the adapters + decrypted connector keys, which packages/tools
+   * must never depend on (architecture rule: only the runner touches those).
+   * Absent ⇒ `web_search` falls back to a keyless DuckDuckGo scrape.
+   */
+  searchBackend?: (
+    query: string,
+  ) => Promise<{ results: Array<{ title: string; url: string; snippet: string }> }>;
 }
 
 // ─── ToolProvisioning ──────────────────────────────────────────────────────────

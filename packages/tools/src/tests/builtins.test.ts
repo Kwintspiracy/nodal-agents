@@ -1,6 +1,6 @@
 // builtins.test.ts — built-in tools behavior tests
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { agentMemory, agentJobs, eq } from '@nodal-agents/db';
 import { createToolRegistry } from '../registry';
@@ -10,7 +10,6 @@ import { saveMemoryTool } from '../builtin/save-memory';
 import { queryMemoryTool } from '../builtin/query-memory';
 import { webSearchTool } from '../builtin/web-search';
 import { dashboardPublishTool } from '../builtin/dashboard-publish';
-import { WebSearchNotConfiguredError } from '../errors';
 import type { ToolContext } from '../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 
@@ -212,20 +211,95 @@ describe('query_memory', () => {
 // ─── web_search ───────────────────────────────────────────────────────────────
 
 describe('web_search', () => {
-  it('throws WebSearchNotConfiguredError when env var not set', async () => {
-    // Ensure env var is not set
-    const original = process.env['NODALAI_WEB_SEARCH_URL'];
-    delete process.env['NODALAI_WEB_SEARCH_URL'];
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
 
-    try {
-      await expect(
-        webSearchTool.execute({ query: 'test query' }, makeCtx()),
-      ).rejects.toBeInstanceOf(WebSearchNotConfiguredError);
-    } finally {
-      if (original !== undefined) {
-        process.env['NODALAI_WEB_SEARCH_URL'] = original;
-      }
-    }
+  it('uses the injected premium backend when present (never touches DuckDuckGo)', async () => {
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const backend = vi.fn(async (query: string) => ({
+      results: [{ title: `T:${query}`, url: 'https://example.com', snippet: 'from backend' }],
+    }));
+
+    const result = await webSearchTool.execute(
+      { query: 'quantum computing' },
+      { ...makeCtx(), searchBackend: backend },
+    );
+
+    expect(backend).toHaveBeenCalledWith('quantum computing');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.results).toEqual([
+      { title: 'T:quantum computing', url: 'https://example.com', snippet: 'from backend' },
+    ]);
+    expect(result.degraded).toBeUndefined();
+  });
+
+  it('falls back to DuckDuckGo and parses title/url/snippet (mocked fetch)', async () => {
+    const html = `
+      <div class="result">
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fpage&rut=x">
+          Example &amp; Title
+        </a>
+        <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fpage">
+          A helpful <b>snippet</b> about the topic.
+        </a>
+      </div>`;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      text: async () => html,
+    })) as unknown as typeof fetch;
+
+    const result = await webSearchTool.execute({ query: 'test' }, makeCtx());
+
+    expect(result.degraded).toBeUndefined();
+    expect(result.results).toEqual([
+      {
+        title: 'Example & Title',
+        url: 'https://example.org/page',
+        snippet: 'A helpful snippet about the topic.',
+      },
+    ]);
+  });
+
+  it('degrades with guidance when DuckDuckGo fetch fails (network error)', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('network down');
+    }) as unknown as typeof fetch;
+
+    const result = await webSearchTool.execute({ query: 'test' }, makeCtx());
+
+    expect(result.results).toEqual([]);
+    expect(result.degraded).toBe(true);
+    expect(result.guidance).toContain('Tavily');
+  });
+
+  it('degrades with guidance when DuckDuckGo returns zero parseable results', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      text: async () => '<html><body>no results here</body></html>',
+    })) as unknown as typeof fetch;
+
+    const result = await webSearchTool.execute({ query: 'test' }, makeCtx());
+
+    expect(result.results).toEqual([]);
+    expect(result.degraded).toBe(true);
+    expect(result.guidance).toContain('Tavily');
+  });
+
+  it('degrades with guidance on a non-OK HTTP status', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      text: async () => '',
+    })) as unknown as typeof fetch;
+
+    const result = await webSearchTool.execute({ query: 'test' }, makeCtx());
+
+    expect(result.degraded).toBe(true);
+    expect(result.results).toEqual([]);
   });
 
   it('has riskLevel read', () => {
@@ -318,7 +392,8 @@ describe('registerBuiltins', () => {
     expect(ALWAYS_ON_TOOLS).toContain('save_memory');
     expect(ALWAYS_ON_TOOLS).toContain('query_memory');
     expect(ALWAYS_ON_TOOLS).toContain('dashboard_publish');
-    // web_search is NOT always-on (it's read and optional)
-    expect(ALWAYS_ON_TOOLS).not.toContain('web_search');
+    // web_search is now always-on: a unified, out-of-the-box web search (premium
+    // backend injected by the runner when configured, else free DuckDuckGo).
+    expect(ALWAYS_ON_TOOLS).toContain('web_search');
   });
 });
