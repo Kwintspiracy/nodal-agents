@@ -22,6 +22,7 @@ import {
   setWorkspaceTimezoneAction,
   setRootAgentAction,
 } from '@/lib/actions.ts';
+import { AUTONOMY_OPTIONS } from '@/lib/autonomy.ts';
 
 /**
  * OnboardingFlow — the dedicated, full-screen first-run experience.
@@ -149,7 +150,7 @@ Ask these FIVE things, in order, one per message, no extras:
 2. Which language they'd like you to speak — ask openly; do NOT suggest or list specific languages (never "French or English?"). Any language in the world is fine.
 3. Where they're based.
 4. Their goal with Nodal-Agents and where you can help most — just the gist, not specifics (you're not doing it now).
-5. When working on a task, whether you should take initiative or stick to exactly what they ask.
+5. While carrying out their requests, whether you should run tools and commands on your own, or check with them for approval before acting.
 
 Start now: one short friendly line (you just want to get to know them, no work yet) + question 1 ONLY. After each answer, a 3-5 word acknowledgement at most, then the next question. After the FIFTH answer, one short warm wrap-up line and end that final message with ${DONE_MARKER} on its own line.]`;
 
@@ -161,23 +162,8 @@ Start now: one short friendly line (you just want to get to know them, no work y
 // with a lightweight keyword heuristic over the free-text answer, then SHOW the
 // three modes so the operator can adjust before it's applied. The choice is
 // always applied deterministically (never inferred silently).
-const AUTONOMY_MODES: Array<{ value: AutonomyLevel; label: string; blurb: string }> = [
-  {
-    value: 'fully_autonomous',
-    label: 'Take initiative',
-    blurb: 'Works end to end and acts on its own, including tasks it decides are needed.',
-  },
-  {
-    value: 'destructive_gate',
-    label: 'A balanced mix',
-    blurb: 'Acts freely on everyday work, but asks first before anything risky or hard to undo.',
-  },
-  {
-    value: 'propose_confirm',
-    label: 'Ask me first',
-    blurb: 'Proposes what it plans to do and waits for your confirmation before acting.',
-  },
-];
+// Modes come from the shared source of truth (identical text + order in Settings
+// → ROOT agent): apps/web/src/lib/autonomy.ts.
 
 // Pre-select the autonomy mode from the operator's free-text 5th answer. Pure
 // keyword heuristic — deliberately biased toward the SAFER mode on ambiguity
@@ -876,12 +862,12 @@ export default function OnboardingFlow() {
               </h1>
               <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
                 Based on what you told {agentName || 'your agent'}, we&apos;ve pre-selected a level.
-                Adjust it if you like — it decides when {agentName || 'your agent'} acts on its own
-                versus asking you first.
+                Adjust it if you like — it decides whether {agentName || 'your agent'} asks you to
+                approve its actions before running them, while carrying out what you ask.
               </p>
 
               <div className="mt-5 flex flex-col gap-2.5">
-                {AUTONOMY_MODES.map((m) => {
+                {AUTONOMY_OPTIONS.map((m) => {
                   const active = autonomy === m.value;
                   return (
                     <button
@@ -902,9 +888,11 @@ export default function OnboardingFlow() {
                         >
                           {active && <span className="h-2 w-2 rounded-full bg-ink" />}
                         </span>
-                        <span className="text-[13.5px] font-medium text-ink">{m.label}</span>
+                        <span className="text-[13.5px] font-medium text-ink">{m.name}</span>
                       </div>
-                      <p className="mt-1 pl-6 text-[12.5px] leading-[1.5] text-ink-3">{m.blurb}</p>
+                      <p className="mt-1 pl-6 text-[12.5px] leading-[1.5] text-ink-3">
+                        {m.description}
+                      </p>
                     </button>
                   );
                 })}
