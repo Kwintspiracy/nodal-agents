@@ -3,8 +3,8 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import open from 'open';
-import { readConfig, writeConfig } from '../lib/config.ts';
-import { runInit } from './init.ts';
+import { randomBytes } from 'crypto';
+import { readConfig, writeConfig, type Config } from '../lib/config.ts';
 import { startEmbeddedPostgres, runMigrations, stopOrphanPostgres } from '../lib/postgres.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
 import {
@@ -66,12 +66,30 @@ export interface RunUpOptions {
 }
 
 export async function runUp(opts: RunUpOptions = {}): Promise<void> {
-  // ── 1. Load config (run init if missing) ──────────────────────────────────
+  // ── 1. Load config (write a no-friction default if missing) ───────────────
 
   let config = readConfig();
   if (!config) {
-    console.log(chalk.yellow('No config found — running init wizard first.\n'));
-    config = await runInit();
+    // First run with no config: skip the interactive terminal wizard entirely.
+    // Write a sensible default (loopback → local-trust, no login, no LLM) and
+    // let the BROWSER onboarding flow collect the model + create the first
+    // agent. The runner boots keyless (seed-llm-key finds no LLM_* env and
+    // simply skips), so the dashboard's onboarding is reached on first load.
+    //
+    // Power users who want LAN / email-auth / a pre-baked LLM key still run
+    // `nodal-agents init` explicitly — that path is unchanged.
+    console.log(chalk.cyan('  First run — opening the dashboard to finish setup…\n'));
+    const defaultConfig: Config = {
+      // No `llm` section: the browser onboarding sets it via createLlmKeyAction.
+      ports: { web: 3000, runner: 3001, postgres: 25432 },
+      workerSecret: randomBytes(32).toString('hex'),
+      serverActionsKey: randomBytes(32).toString('base64'),
+      // loopback derives auth: local-trust (no login/signup). Leave `auth`
+      // unset so resolveAuthMode falls back to the loopback → local-trust map.
+      bind: 'loopback',
+    };
+    writeConfig(defaultConfig);
+    config = defaultConfig;
   }
 
   // URLs are computed after the port-rotation guard below — config.ports may
