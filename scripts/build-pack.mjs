@@ -191,9 +191,49 @@ const packPkg = {
     // pre-built .next/ and postcss is build-only. Drops to clean
     // when Next 16.3 stable releases (currently canary).
   },
+  // Ship exceljs INSIDE the tarball instead of letting `npm install -g` fetch it.
+  // exceljs is stale and drags in deprecated transitives (glob@7 "security",
+  // inflight "memory leak", fstream, rimraf@2, uuid@8) whose deprecation warnings
+  // scare users at install — even though they're upstream cruft, not reachable
+  // vulns. npm `overrides` do NOT reach a global install (verified empirically),
+  // so the only way to silence them is to stop re-resolving exceljs from the
+  // registry. Bundling adds ZERO bytes to what a user downloads (exceljs was
+  // always fetched) — it just rides in our tarball. Long-term fix: replace exceljs
+  // (blocked today: SheetJS left npm, xlsx-kit still young). See docs/proposals.
+  bundledDependencies: ['exceljs', 'node-fetch', 'fetch-blob', 'node-domexception'],
 };
 
 writeFileSync(resolve(packDir, 'package.json'), JSON.stringify(packPkg, null, 2) + '\n', 'utf-8');
+
+// ─── 7b. Stage bundledDependencies into pack/node_modules ─────────────────────
+// `npm pack`/`npm publish` embeds the bundledDependencies' directories from
+// pack/node_modules. We install ONLY that subtree in isolation (fast — not the
+// whole dep tree) and copy it in, so the published tarball ships exceljs and its
+// stale transitives instead of the user's `npm install -g` re-resolving (and
+// warning about) them.
+const bundled = packPkg.bundledDependencies ?? [];
+if (bundled.length > 0) {
+  console.log(`\n▶ Staging bundledDependencies (${bundled.join(', ')})…`);
+  const tmpDir = resolve(repoRoot, '.pack-bundle-tmp');
+  rmSync(tmpDir, { recursive: true, force: true });
+  mkdirSync(tmpDir, { recursive: true });
+  const tmpPkg = {
+    name: '_bundle',
+    version: '0.0.0',
+    private: true,
+    // Direct deps use the pinned range; bundled transitives (e.g. node-fetch /
+    // fetch-blob / node-domexception, not in `dependencies`) fall back to latest.
+    dependencies: Object.fromEntries(bundled.map((d) => [d, packPkg.dependencies[d] ?? 'latest'])),
+  };
+  writeFileSync(resolve(tmpDir, 'package.json'), JSON.stringify(tmpPkg, null, 2) + '\n', 'utf-8');
+  execSync('npm install --no-audit --no-fund --no-package-lock', {
+    cwd: tmpDir,
+    stdio: 'inherit',
+  });
+  cpSync(resolve(tmpDir, 'node_modules'), resolve(packDir, 'node_modules'), { recursive: true });
+  rmSync(tmpDir, { recursive: true, force: true });
+  console.log('✔ bundledDependencies staged in pack/node_modules');
+}
 
 // ─── 8. README ──────────────────────────────────────────────────────────────
 if (existsSync(resolve(repoRoot, 'README.md'))) {
