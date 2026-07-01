@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { MODEL_CATALOG, groupModelCatalog } from '@nodal-agents/shared';
+import {
+  MODEL_CATALOG,
+  groupModelCatalog,
+  DEFAULT_ROOT_GRANTS,
+  type AutonomyLevel,
+} from '@nodal-agents/shared';
 import {
   createLlmKeyAction,
   updateLlmKeyAction,
@@ -15,6 +20,7 @@ import {
   sendChatMessageAction,
   createMemoryAction,
   setWorkspaceTimezoneAction,
+  setRootAgentAction,
 } from '@/lib/actions.ts';
 
 /**
@@ -147,7 +153,59 @@ Ask these FIVE things, in order, one per message, no extras:
 
 Start now: one short friendly line (you just want to get to know them, no work yet) + question 1 ONLY. After each answer, a 3-5 word acknowledgement at most, then the next question. After the FIFTH answer, one short warm wrap-up line and end that final message with ${DONE_MARKER} on its own line.]`;
 
-const TOTAL_STEPS = 6;
+// ── Autonomy confirmation (step 5) ──────────────────────────────────────────
+// The interview's FIFTH answer ("take initiative or stick to exactly what you're
+// asked") DRIVES the ROOT agent's real autonomy — it no longer just lands in
+// memory. Onboarding is a deliberate act, so the created ROOT gets ALL grants ON
+// (DEFAULT_ROOT_GRANTS); this step only picks the autonomy level. We pre-select
+// with a lightweight keyword heuristic over the free-text answer, then SHOW the
+// three modes so the operator can adjust before it's applied. The choice is
+// always applied deterministically (never inferred silently).
+const AUTONOMY_MODES: Array<{ value: AutonomyLevel; label: string; blurb: string }> = [
+  {
+    value: 'fully_autonomous',
+    label: 'Take initiative',
+    blurb: 'Works end to end and acts on its own, including tasks it decides are needed.',
+  },
+  {
+    value: 'destructive_gate',
+    label: 'A balanced mix',
+    blurb: 'Acts freely on everyday work, but asks first before anything risky or hard to undo.',
+  },
+  {
+    value: 'propose_confirm',
+    label: 'Ask me first',
+    blurb: 'Proposes what it plans to do and waits for your confirmation before acting.',
+  },
+];
+
+// Pre-select the autonomy mode from the operator's free-text 5th answer. Pure
+// keyword heuristic — deliberately biased toward the SAFER mode on ambiguity
+// (the operator sees and can change the pick before it is applied).
+function inferAutonomy(answer: string): AutonomyLevel {
+  const a = answer.toLowerCase();
+  const initiative =
+    /\b(initiative|autonom|proactive|go ahead|do it yourself|on your own|figure it out|don'?t ask|without asking|just do|take the lead|decide)\b/.test(
+      a,
+    );
+  const askFirst =
+    /\b(ask first|ask me|check with me|confirm|my orders|exactly what|stick to|only what|wait for me|permission|don'?t act)\b/.test(
+      a,
+    );
+  const balanced =
+    /\b(mix|balance|depends|middle|both|risky|important|reversible|big|major|dangerous|destructive)\b/.test(
+      a,
+    );
+  // Ask-first wins outright when the operator is explicit about it; then the
+  // balanced signal; then initiative. Default (nothing matched) = ask-first.
+  if (askFirst && !initiative) return 'propose_confirm';
+  if (balanced) return 'destructive_gate';
+  if (initiative && !askFirst) return 'fully_autonomous';
+  if (initiative && askFirst) return 'destructive_gate';
+  return 'propose_confirm';
+}
+
+const TOTAL_STEPS = 7;
 
 export default function OnboardingFlow() {
   const router = useRouter();
@@ -232,6 +290,14 @@ export default function OnboardingFlow() {
   const [interviewDone, setInterviewDone] = useState(false);
   const [chatError, setChatError] = useState('');
   const transcriptRef = useRef<HTMLDivElement>(null);
+
+  // ── Step 5 — autonomy confirmation ─────────────────────────────────────
+  // Pre-selected from the interview's 5th answer, adjustable by the operator,
+  // then applied to the created ROOT agent on Continue. Defaults to the safe
+  // mode until the answer comes in.
+  const [autonomy, setAutonomy] = useState<AutonomyLevel>('propose_confirm');
+  const [applyingAutonomy, setApplyingAutonomy] = useState(false);
+  const [autonomyError, setAutonomyError] = useState('');
 
   // Keep the transcript pinned to the newest message.
   useEffect(() => {
@@ -423,6 +489,13 @@ export default function OnboardingFlow() {
     if (slot) {
       void createMemoryAction({ fact: `${slot.prefix} ${answer}`, category: slot.category });
     }
+    // The FIFTH answer (index 4 — "take initiative or stick to exactly what you
+    // ask") also DRIVES the ROOT autonomy: pre-select the mode from it so the
+    // confirmation step opens on the inferred choice. The answer still goes to
+    // memory above — this only adds the autonomy application.
+    if (answerCount === INTERVIEW_MEMORY.length - 1) {
+      setAutonomy(inferAutonomy(answer));
+    }
     setAnswerCount((n) => n + 1);
 
     setChatBusy(true);
@@ -433,6 +506,28 @@ export default function OnboardingFlow() {
       return;
     }
     pushAgentReply(reply.data.reply);
+  }
+
+  // Apply the chosen autonomy to the created ROOT agent, then advance to the
+  // Telegram step. Onboarding is a DELIBERATE act, so the created ROOT gets ALL
+  // grants ON (DEFAULT_ROOT_GRANTS) — a capable personal/local install — with
+  // the operator's chosen autonomy level. Writes entities.rootGrants + syncs the
+  // meta-tool approval rules for the active workspace (the created router IS that
+  // workspace's origin/ROOT orchestrator). Best-effort: a failure surfaces an
+  // error but the operator can still continue and tune it later in Settings.
+  async function applyAutonomyAndContinue() {
+    setAutonomyError('');
+    setApplyingAutonomy(true);
+    const res = await setRootAgentAction({
+      grants: { ...DEFAULT_ROOT_GRANTS, autonomy },
+    });
+    setApplyingAutonomy(false);
+    if (!res.ok) {
+      const detail = res.message || 'Could not save the autonomy level';
+      setAutonomyError(`${detail} — you can set this later in Settings → ROOT agent.`);
+      return;
+    }
+    setStep(6);
   }
 
   // Shared model picker: curated models grouped by LLM family (optgroups) so the
@@ -772,6 +867,69 @@ export default function OnboardingFlow() {
           )}
 
           {step === 5 && (
+            <div>
+              <div className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-ink-4">
+                How {agentName || 'your agent'} should work
+              </div>
+              <h1 className="mt-1 text-[20px] font-semibold tracking-[-0.01em] text-ink">
+                Set the autonomy level
+              </h1>
+              <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+                Based on what you told {agentName || 'your agent'}, we&apos;ve pre-selected a level.
+                Adjust it if you like — it decides when {agentName || 'your agent'} acts on its own
+                versus asking you first.
+              </p>
+
+              <div className="mt-5 flex flex-col gap-2.5">
+                {AUTONOMY_MODES.map((m) => {
+                  const active = autonomy === m.value;
+                  return (
+                    <button
+                      key={m.value}
+                      type="button"
+                      onClick={() => setAutonomy(m.value)}
+                      className={`rounded-lg border px-4 py-3 text-left transition-colors ${
+                        active
+                          ? 'border-ink bg-ink/[0.03]'
+                          : 'border-rule-2 bg-canvas hover:border-ink-4'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
+                            active ? 'border-ink' : 'border-rule-2'
+                          }`}
+                        >
+                          {active && <span className="h-2 w-2 rounded-full bg-ink" />}
+                        </span>
+                        <span className="text-[13.5px] font-medium text-ink">{m.label}</span>
+                      </div>
+                      <p className="mt-1 pl-6 text-[12.5px] leading-[1.5] text-ink-3">{m.blurb}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="mt-3 text-[11.5px] text-ink-4">
+                You can change this anytime in Settings → Autonomy.
+              </p>
+
+              {autonomyError && <p className="mt-3 text-[12.5px] text-warn">{autonomyError}</p>}
+
+              <div className="mt-6 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => void applyAutonomyAndContinue()}
+                  disabled={applyingAutonomy}
+                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
+                >
+                  {applyingAutonomy ? 'Saving…' : 'Continue →'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 6 && (
             <div className="text-center">
               <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-conn-vivid/15 text-[26px]">
                 ✈️
