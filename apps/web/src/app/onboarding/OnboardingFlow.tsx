@@ -443,6 +443,14 @@ export default function OnboardingFlow() {
   // ModelField lives at module scope (see bottom of file): defining a component
   // inside the render is a lint error ("Cannot create components during render").
 
+  // The welcome interview is "done enough" to continue once the operator has
+  // answered every question (the canonical `answerCount` the chat already tracks
+  // to slot answers into memory) — keyed off that COUNT, not only the fragile
+  // [[INTERVIEW_DONE]] marker that small/local models routinely forget to emit
+  // (which used to leave the user stuck with no Continue button). The marker,
+  // when present, still continues early.
+  const canContinue = interviewDone || answerCount >= INTERVIEW_MEMORY.length;
+
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-canvas px-4 py-10">
       <div className="w-full max-w-lg">
@@ -713,32 +721,44 @@ export default function OnboardingFlow() {
 
               {chatError && <p className="mt-3 text-[12.5px] text-warn">{chatError}</p>}
 
-              {!interviewDone ? (
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        void sendAnswer();
-                      }
-                    }}
-                    disabled={chatBusy || msgs.length === 0}
-                    placeholder="Type your answer…"
-                    className="h-[38px] flex-1 rounded-md border border-rule-2 bg-canvas px-3 text-[13.5px] text-ink disabled:opacity-50"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void sendAnswer()}
-                    disabled={chatBusy || !chatInput.trim()}
-                    className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-4 text-[13.5px] font-medium text-canvas disabled:opacity-40"
-                  >
-                    Send
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-3 flex justify-end">
+              {/* The input stays available the whole time so the operator can
+                  keep chatting even after Continue appears. */}
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendAnswer();
+                    }
+                  }}
+                  disabled={chatBusy || msgs.length === 0}
+                  placeholder="Type your answer…"
+                  className="h-[38px] flex-1 rounded-md border border-rule-2 bg-canvas px-3 text-[13.5px] text-ink disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => void sendAnswer()}
+                  disabled={chatBusy || !chatInput.trim()}
+                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-4 text-[13.5px] font-medium text-canvas disabled:opacity-40"
+                >
+                  Send
+                </button>
+              </div>
+
+              {/* Skip is ALWAYS available — a slow or stuck model must never trap
+                  the operator here. Continue appears as soon as the interview has
+                  run its course (answer count), independent of the done-marker. */}
+              <div className="mt-3 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setStep(5)}
+                  className="text-[12.5px] text-ink-3 underline hover:text-ink"
+                >
+                  Skip for now
+                </button>
+                {canContinue && (
                   <button
                     type="button"
                     onClick={() => setStep(5)}
@@ -746,18 +766,8 @@ export default function OnboardingFlow() {
                   >
                     Continue →
                   </button>
-                </div>
-              )}
-
-              {chatError && (
-                <button
-                  type="button"
-                  onClick={() => finish('/')}
-                  className="mt-3 text-[12.5px] text-ink-3 underline hover:text-ink"
-                >
-                  Skip to dashboard
-                </button>
-              )}
+                )}
+              </div>
             </div>
           )}
 
