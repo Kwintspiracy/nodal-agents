@@ -10,6 +10,14 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.6.6 — Fresh-Machine Boot Fix · Jul 1, 2026
+
+A fresh install on a clean machine could time out on its first launch — fixed.
+
+**Highlights**
+
+- **First run no longer times out on a clean machine.** The runner's health-check budget was 60s, but the very first `nodal-agents up` on a fresh machine is heavy — embedded-postgres fetches its ~70MB binary at runtime (more so when npm script-approval blocks its postinstall), and the runner loads a large module graph off a cold disk cache — which could blow past 60s and tear the stack down (`did not become healthy within 60000ms`). The cold-start budget is now **5 minutes** and env-overridable (`NODALAI_RUNNER_HEALTH_MS` / `NODALAI_WEB_HEALTH_MS`). If it ever still times out, **a retry runs warm** (binary cached, modules loaded) and comes up fast — and the error message now says exactly that.
+
 ## v0.6.5 — The Frictionless Release · Jul 1, 2026
 
 Install and first run, cleaned up: a silent install, a browser-first setup with

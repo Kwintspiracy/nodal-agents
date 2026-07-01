@@ -319,18 +319,18 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // ── 7. Wait for health ────────────────────────────────────────────────────
 
   const healthSpinner = ora('Waiting for services to be healthy…').start();
-  // `next dev` first-compile with Turbopack 16 + the workspace's module graph
-  // can take 2+ minutes from a cold cache. The .next/ cache shortens subsequent
-  // boots dramatically; the timeout below is the cold-start budget.
-  // `next start` against a prebuilt .next/ is fast, but on the FIRST request
-  // after boot Next still compiles route handlers lazily — /api/health can
-  // take 5-15s to respond before the server is fully warm. 60s leaves head
-  // room without making the spinner feel stuck.
-  const webHealthMs = opts.dev ? 180_000 : 60_000;
-  // Runner via tsx also pays a cold-start cost — the module graph grew with
-  // the recent adapter additions (firecrawl/apify/tavily) so 30s was too
-  // tight on slow disks. 60s is the new cold budget.
-  const runnerHealthMs = 60_000;
+  // First run on a CLEAN machine is heavy and slow, and this is where a too-tight
+  // budget bites hardest: embedded-postgres fetches its ~70MB binary at runtime
+  // (its postinstall may be blocked by npm script-approval), the runner loads a
+  // large module graph (googleapis et al.) off a cold disk cache, and seeds 19
+  // system skills — all before it answers /api/health. On a warm machine this is
+  // quick (<20s); on a fresh install it routinely blows past a minute, which is
+  // exactly what tore the stack down for fresh installers (runner "did not become
+  // healthy within 60000ms"). `next dev`/`next start` first-compile is similarly
+  // slow from a cold cache. So the cold-start budget is generous — 5 minutes —
+  // and env-overridable for very slow disks/connections.
+  const webHealthMs = Number(process.env['NODALAI_WEB_HEALTH_MS']) || 300_000;
+  const runnerHealthMs = Number(process.env['NODALAI_RUNNER_HEALTH_MS']) || 300_000;
   try {
     await Promise.all([
       waitForHealth(runnerUrl, runnerHealthMs),
@@ -346,6 +346,16 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     await Promise.allSettled([killSilent(runnerProcess), killSilent(webProcess)]);
     await pg.stop();
     clearPids();
+    // The first run on a fresh machine is slow (Postgres binary fetched at
+    // runtime, a large module graph loaded off a cold disk cache). A retry runs
+    // warm — binary cached, modules loaded — and usually comes up fast.
+    console.error(
+      chalk.yellow(
+        '\n  First run on a fresh machine can take a while to warm up.\n' +
+          '  → Run `nodal-agents up` again — it starts much faster the second time.\n' +
+          '  → Still timing out after a retry? Raise the budget: set NODALAI_RUNNER_HEALTH_MS=600000\n',
+      ),
+    );
     throw err;
   }
 
