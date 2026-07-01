@@ -10,6 +10,17 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.6.8 — First-Run Experience · Jul 1, 2026
+
+A fresh install lands on a capable agent that can search the web and matches the
+autonomy you asked for.
+
+**Highlights**
+
+- **Web search out of the box.** `web_search` is now a real, always-on tool: it uses your **Tavily** or **Firecrawl** connector if you have one, and otherwise falls back to a **free, best-effort DuckDuckGo** search — so a brand-new install can look things up immediately. If the free path is rate-limited or blocked, it says so and guides you to add a Tavily key for reliable results (and switches to it automatically once you do).
+- **Onboarding sets your autonomy for real.** The get-acquainted interview's "should I take initiative or stick to exactly what you ask?" answer now drives the agent's **actual autonomy level** — three modes (Take initiative / Balanced / Ask first), shown on a confirmation screen you can adjust, changeable anytime in Settings → Autonomy. It used to only land in memory. And the first agent now arrives with its ROOT powers **enabled**, not locked down — capable from minute one instead of asking to confirm everything (a local/personal install; the autonomy level is the guard-rail).
+- **Built-in tools, documented.** A new auto-generated reference lists all **51 built-in tools** (`web_search`, file ops, memory, `dashboard_publish`, the ROOT meta-tools…) with each one's risk level and how it's unlocked — generated from the tool registry so it can't drift.
+
 ## v0.6.7 — Boot Regression Fix · Jul 1, 2026
 
 Undoes a 0.6.5 packaging change that broke `nodal-agents up` on fresh installs.
