@@ -16,6 +16,7 @@
     "@nodal-agents/catalog": "workspace:*",
     "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
+    "@nodal-agents/tools": "workspace:*",
     "fumadocs-core": "^16.10.3",
     "fumadocs-mdx": "^15.0.12",
     "fumadocs-ui": "^16.10.3",

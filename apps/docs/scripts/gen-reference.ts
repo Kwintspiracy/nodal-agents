@@ -25,6 +25,7 @@
  *   reference/connectors/      — one page per connector + tool inventory + nav
  *   reference/mcp/             — one page per MCP catalog entry + nav
  *   reference/models/          — model catalog table + ROOT grants table + nav
+ *   reference/builtin-tools/   — built-in tool registry reference + nav
  *
  * It NEVER deletes the hand-written, committed files that live alongside:
  *   reference/index.mdx, reference/meta.json, reference/skills.mdx,
@@ -45,6 +46,20 @@ import {
   type OperationDescriptor,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
+import {
+  createToolRegistry,
+  registerBuiltins,
+  ALWAYS_ON_TOOLS,
+  type RiskLevel,
+} from '@nodal-agents/tools';
+
+/** The subset of a ToolDefinition this generator reads (avoids the zod generic). */
+type ToolInfo = {
+  name: string;
+  description: string;
+  riskLevel: RiskLevel;
+  defaultApproval?: 'require_approval';
+};
 // The MCP catalog still lives inside apps/web (it is a pure-data module with no
 // imports, so tsx resolves the relative path fine). Lift into a shared package
 // later if a second consumer appears.
@@ -56,12 +71,13 @@ const systemSkillsDir = join(refDir, 'system-skills');
 const connectorsDir = join(refDir, 'connectors');
 const mcpDir = join(refDir, 'mcp');
 const modelsDir = join(refDir, 'models');
+const builtinToolsDir = join(refDir, 'builtin-tools');
 
 // Idempotent: wipe + recreate ONLY the subdirs this generator owns, so removed
 // catalog entries don't leave stale pages. The hand-written reference pages
 // (index.mdx, meta.json, skills.mdx, cli.mdx, dashboard.mdx, operate.mdx,
 // api.mdx) are left in place.
-for (const dir of [systemSkillsDir, connectorsDir, mcpDir, modelsDir]) {
+for (const dir of [systemSkillsDir, connectorsDir, mcpDir, modelsDir, builtinToolsDir]) {
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
 }
@@ -369,11 +385,146 @@ writeFileSync(
   JSON.stringify({ title: 'Models & grants', pages: ['models', 'root-grants'] }, null, 2) + '\n',
 );
 
+// ── Built-in tools ────────────────────────────────────────────────────────────────
+// Enumerate the built-in tool registry (registerBuiltins is the single source of
+// truth for what ships). For each tool we emit its name, description, risk level,
+// whether it is always-on (ALWAYS_ON_TOOLS), and how it is unlocked when it is
+// NOT always-on — derived, never hardcoded:
+//   - via a system skill's `requiredBuiltins` (office-editing, command-execution, …);
+//   - a ROOT meta-tool gated by a `RootGrants` power (create_agent, create_skill, …);
+//   - a per-agent×skill authorization toggle (run_skill_script, skill_file_write).
+// A single generated page groups tools into "Always-on" and "Unlocked on demand".
+const builtinRegistry = createToolRegistry();
+registerBuiltins(builtinRegistry);
+const builtinTools = builtinRegistry
+  .list()
+  .slice()
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+const alwaysOnNames = new Set<string>(ALWAYS_ON_TOOLS);
+
+// builtin tool name → the system skill whose requiredBuiltins lists it. The
+// catalog is the source of truth, so a re-gated tool re-labels itself.
+const skillUnlocking = new Map<string, SystemSkill>();
+for (const skill of systemSkills) {
+  for (const b of skill.requiredBuiltins ?? []) {
+    if (!skillUnlocking.has(b)) skillUnlocking.set(b, skill);
+  }
+}
+
+// The ROOT meta-tools, keyed to the RootGrants power that gates them. Names come
+// from the DEFAULT_ROOT_GRANTS keys' meaning strings above (GRANT_MEANING already
+// spells out every meta-tool name), so this stays in lockstep with the grants
+// table — extracting the `tool_name` tokens keeps a new meta-tool from being
+// silently mislabelled as "unknown".
+const metaToolGrant = new Map<string, keyof RootGrants>();
+for (const grant of Object.keys(GRANT_MEANING) as Array<keyof RootGrants>) {
+  for (const [, toolName] of GRANT_MEANING[grant].matchAll(/`([a-z_]+)`/g)) {
+    metaToolGrant.set(toolName, grant);
+  }
+}
+
+const RISK_TOOL_LABEL: Record<ToolInfo['riskLevel'], string> = {
+  read: 'Read',
+  write: 'Write',
+  destructive: 'Destructive',
+};
+
+/** How a non-always-on tool is unlocked. Returns null for always-on tools. */
+const unlockNote = (name: string): string | null => {
+  if (alwaysOnNames.has(name)) return null;
+  const skill = skillUnlocking.get(name);
+  if (skill) return `Skill \`${skill.slug}\` (${skill.name})`;
+  const grant = metaToolGrant.get(name);
+  if (grant) return `ROOT grant \`${String(grant)}\``;
+  // Per-agent × skill authorization toggles (not a requiredBuiltins skill).
+  if (name === 'run_skill_script') return 'Per-agent script authorization (a script-bundled skill)';
+  if (name === 'skill_file_write')
+    return 'Per-agent file-write authorization (a file-writable skill)';
+  return 'Gated (not always-on)';
+};
+
+const toolRow = (t: ToolInfo): string => {
+  const approval = t.defaultApproval === 'require_approval' ? ' *(approval by default)*' : '';
+  // Written to a `.md` page (below): `{` is literal, but raw `<` tokens still
+  // need escaping outside code spans. Tool descriptions are prose (no code
+  // fences), so this is a straight angle-escape of the collapsed cell text.
+  const desc = escapeAnglesOutsideCode(cell(t.description));
+  return `| \`${t.name}\` | ${RISK_TOOL_LABEL[t.riskLevel]}${approval} | ${desc} |`;
+};
+
+const alwaysOnTools = builtinTools.filter((t) => alwaysOnNames.has(t.name));
+const gatedTools = builtinTools.filter((t) => !alwaysOnNames.has(t.name));
+
+const alwaysOnTable =
+  `| Tool | Risk | Description |\n| --- | --- | --- |\n` + alwaysOnTools.map(toolRow).join('\n');
+
+// Group the gated tools by how they are unlocked so the reference reads by concern.
+const gatedGroups = new Map<string, ToolInfo[]>();
+for (const t of gatedTools) {
+  const key = unlockNote(t.name) ?? 'Gated (not always-on)';
+  const arr = gatedGroups.get(key) ?? [];
+  arr.push(t);
+  gatedGroups.set(key, arr);
+}
+const gatedSections = [...gatedGroups.entries()]
+  .sort((a, b) => a[0].localeCompare(b[0]))
+  .map(([unlock, tools]) => {
+    const rows = tools.map(toolRow).join('\n');
+    return `### Unlocked by: ${unlock}\n\n| Tool | Risk | Description |\n| --- | --- | --- |\n${rows}`;
+  })
+  .join('\n\n');
+
+// Written as `.md` (NOT `.mdx`): several tool descriptions contain `{ }`
+// (a JSON example in dashboard_publish's `response.content = [{…}]`) and `<…>`
+// tokens (`<server-slug>__<tool>` in create_skill) that the MDX compiler would
+// choke on. In `.md` mode `{` is literal and toolRow() escapes `<` outside code
+// spans — the same rule the skill + MCP pages use.
+writeFileSync(
+  join(builtinToolsDir, 'builtin-tools.md'),
+  `---
+title: Built-in tools
+description: The tools every Nodal-Agents runtime registers — always-on plus the skill- and grant-gated ones — generated from the tool registry.
+---
+
+Every agent runs on the same built-in tool registry (\`registerBuiltins\`). This
+page is generated from that registry, so it can never drift from what the runtime
+actually exposes. Adapter (connector) and MCP tools are documented on their own
+pages — this is the runtime's own toolbox.
+
+Each tool carries a **risk level** (\`read\` / \`write\` / \`destructive\`) that
+drives the approval and autonomy gates. Tools marked *(approval by default)* are
+safe-by-default: they suspend for human approval unless an explicit
+\`auto_approve\` ("Yolo") rule overrides them.
+
+## Always-on (${alwaysOnTools.length})
+
+These tools are in every agent's whitelist by default (\`ALWAYS_ON_TOOLS\`) — no
+skill, connector, or grant required.
+
+${alwaysOnTable}
+
+## Unlocked on demand (${gatedTools.length})
+
+These tools are **not** always-on. Each is added to an agent's whitelist only
+when the agent holds the skill, ROOT grant, or per-agent authorization noted
+below — never by default.
+
+${gatedSections}
+`,
+);
+
+writeFileSync(
+  join(builtinToolsDir, 'meta.json'),
+  JSON.stringify({ title: 'Built-in tools', pages: ['builtin-tools'] }, null, 2) + '\n',
+);
+
 console.log(
   `[gen-reference] wrote ${sysSlugs.length} system skills, ` +
     `${connectorSlugs.length} connectors (${connectorSlugs.reduce(
       (n, s) => n + (ADAPTER_REGISTRY[s]?.operations.length ?? 0),
       0,
     )} tools), ` +
-    `${mcpPages.length} MCP entries, ${modelCount} models, ROOT grants table`,
+    `${mcpPages.length} MCP entries, ${modelCount} models, ROOT grants table, ` +
+    `${builtinTools.length} built-in tools (${alwaysOnTools.length} always-on, ${gatedTools.length} gated)`,
 );
