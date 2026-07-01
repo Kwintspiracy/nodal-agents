@@ -10,6 +10,18 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.6.5 — The Frictionless Release · Jul 1, 2026
+
+Install and first run, cleaned up: a silent install, a browser-first setup with
+no account, and a welcome chat that never traps you.
+
+**Highlights**
+
+- **A silent install.** `npm install -g nodal-agents` no longer prints the scary `npm warn deprecated` lines — `glob` "widely publicized security vulnerabilities", `inflight` "leaks memory", and the rest. They were stale transitive deps of `exceljs` (not reachable vulns, just upstream cruft); since npm `overrides` don't reach a global install, the fix bundles `exceljs` and the tiny fetch chain inside the published tarball. Same bytes a user downloads, **zero warnings**.
+- **Browser-first first run.** A fresh `nodal-agents up` asks **nothing** in the terminal. It boots with a sensible default and opens the dashboard straight to a guided setup — connect a model, create your first agent, meet it. `nodal-agents init` still exists for LAN / auth / terminal setup and Docker.
+- **No account by default.** Local installs run in `local-trust` on loopback — **no sign-up wall**. Auth is opt-in, for LAN / multi-user.
+- **A welcome chat that never traps you.** At the end of the get-acquainted interview, the **Continue** button now appears as soon as you've answered the questions (it no longer waits on a done-marker that smaller/local models forget to emit), and a **Skip for now** button is always visible so a slow model can't strand you.
+
 ## v0.6.4 — Onboarding Restored · Jul 1, 2026
 
 A fresh install no longer locks you out — the real first-run flow is back.

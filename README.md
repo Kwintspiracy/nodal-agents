@@ -10,7 +10,7 @@ A self-hosted platform for building and orchestrating a **team of AI agents** on
 [![Node](https://img.shields.io/badge/node-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docs](https://img.shields.io/badge/docs-online-3565ff)](https://kwintspiracy.github.io/nodal-agents/)
-[![Changelog](https://img.shields.io/badge/changelog-v0.6.4-d4ff2e)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/changelog-v0.6.5-d4ff2e)](CHANGELOG.md)
 
 | Home dashboard — light theme | Agent detail — dark theme |
 | :---: | :---: |
@@ -25,9 +25,9 @@ npm install -g nodal-agents
 nodal-agents up
 ```
 
-Open <http://localhost:3000>, paste an LLM API key under **LLM Providers**, and you have a working agent. The CLI spawns an embedded Postgres on a free port, applies migrations, seeds the system skills, and starts the runner (`:3001`) and dashboard (`:3000`).
+Run the two commands — **no config files, no account, nothing to answer in the terminal**. Your browser opens straight to a guided setup: connect a model, create your first agent, and you're working. Behind it, the CLI spawns an embedded Postgres on a free port, applies migrations, seeds the system skills, and starts the runner (`:3001`) and dashboard (`:3000`).
 
-> Node 22+ · no external Postgres, no Redis, no cloud config · data lives in `~/.nodalai/` · stop with `nodal-agents down`
+> Node 22+ · no external Postgres, no Redis, no cloud config · runs locally with no login · data lives in `~/.nodalai/` · stop with `nodal-agents down`
 
 ---
 
