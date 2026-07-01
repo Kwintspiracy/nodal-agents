@@ -10,6 +10,14 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.6.7 — Boot Regression Fix · Jul 1, 2026
+
+Undoes a 0.6.5 packaging change that broke `nodal-agents up` on fresh installs.
+
+**Highlights**
+
+- **Fixed: the runner failed to start on a fresh install.** 0.6.5 bundled the `node-fetch` chain into the tarball to silence one last benign deprecation notice — but `node-fetch@3` is ESM-only, and frozen into the package it displaced the CommonJS `node-fetch@2` that the Notion SDK loads via `require()`, crashing the runner at import (`Cannot find module 'node-fetch'`) so it never became healthy. Now **only `exceljs` is bundled** (CommonJS, self-contained): the scary warnings (`glob` "security", `inflight` "memory leak") stay gone, and the one benign `node-domexception` notice returns — a fine trade for a runner that actually boots. The generous 5-minute first-run health budget from 0.6.6 stays.
+
 ## v0.6.6 — Fresh-Machine Boot Fix · Jul 1, 2026
 
 A fresh install on a clean machine could time out on its first launch — fixed.

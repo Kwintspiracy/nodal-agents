@@ -200,7 +200,13 @@ const packPkg = {
   // registry. Bundling adds ZERO bytes to what a user downloads (exceljs was
   // always fetched) — it just rides in our tarball. Long-term fix: replace exceljs
   // (blocked today: SheetJS left npm, xlsx-kit still young). See docs/proposals.
-  bundledDependencies: ['exceljs', 'node-fetch', 'fetch-blob', 'node-domexception'],
+  // ONLY exceljs — it's CommonJS + self-contained, and the source of the SCARY
+  // warnings (glob "security", inflight "memory leak"). Do NOT bundle the
+  // node-fetch chain: node-fetch@3 is ESM-only and, frozen into the tarball, it
+  // displaced the node-fetch@2 that @notionhq/client requires via CommonJS —
+  // "Cannot find module 'node-fetch'" crashed the runner at startup on fresh
+  // installs. The one benign leftover (node-domexception) is not worth that risk.
+  bundledDependencies: ['exceljs'],
 };
 
 writeFileSync(resolve(packDir, 'package.json'), JSON.stringify(packPkg, null, 2) + '\n', 'utf-8');
