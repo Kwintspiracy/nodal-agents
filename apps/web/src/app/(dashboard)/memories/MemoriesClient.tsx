@@ -277,8 +277,14 @@ function ImportanceStars({
           <svg viewBox="0 0 16 16" className="h-[9px] w-[9px] shrink-0" fill="currentColor">
             <path d="M8 1a3 3 0 0 0-3 3v2H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-1V4a3 3 0 0 0-3-3zm-1.5 5V4a1.5 1.5 0 0 1 3 0v2z" />
           </svg>
-          <span className="group-hover:hidden">Pinned</span>
-          <span className="hidden group-hover:inline">Unpin</span>
+          {/* Both labels are always placed in the same grid cell (stacked) so
+              the pill's intrinsic width is driven by the wider word ("Pinned")
+              at all times — toggling `visibility` on hover swaps which one is
+              seen without ever reflowing the button (and the table below it). */}
+          <span className="grid">
+            <span className="col-start-1 row-start-1 group-hover:invisible">Pinned</span>
+            <span className="invisible col-start-1 row-start-1 group-hover:visible">Unpin</span>
+          </span>
         </button>
       )}
     </div>

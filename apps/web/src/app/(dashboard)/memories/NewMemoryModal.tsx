@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Modal from '@/components/ui/Modal';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 import { createMemoryAction } from '@/lib/actions';
 
 type Props = {
@@ -138,20 +139,17 @@ export default function NewMemoryModal({ open, onClose }: Props) {
           <StarPicker value={importance} onChange={setImportance} />
         </div>
 
-        {/* Actions */}
+        {/* Actions — standard PrimaryButton variants (neutral/ink) so text/bg
+            contrast is guaranteed by the design system, not hand-rolled. */}
         <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="inline-flex h-[34px] items-center rounded-md border border-rule px-3.5 text-[14px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
-          >
+          <PrimaryButton variant="neutral" onClick={handleClose}>
             Cancel
-          </button>
-          <button
-            type="button"
+          </PrimaryButton>
+          <PrimaryButton
+            variant="ink"
             onClick={handleSubmit}
             disabled={isPending || !fact.trim()}
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-agent-vivid px-3.5 text-[14px] font-medium text-white transition-[filter] hover:brightness-[0.94] disabled:cursor-not-allowed disabled:opacity-50"
+            className="disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? (
               <>
@@ -161,7 +159,7 @@ export default function NewMemoryModal({ open, onClose }: Props) {
             ) : (
               'Save memory'
             )}
-          </button>
+          </PrimaryButton>
         </div>
       </div>
     </Modal>
