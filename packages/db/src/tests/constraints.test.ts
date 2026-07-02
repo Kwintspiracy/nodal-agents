@@ -482,58 +482,70 @@ describe('UNIQUE constraints', () => {
     ).rejects.toThrow();
   });
 
-  it('connectors: allows same slug for different entities (composite unique)', async () => {
+  it('connectors: allows multiple instances with the same slug in the same entity — migration 0016', async () => {
+    // Multi-instance brique (migration 0016) dropped the old (entity_id, slug)
+    // UNIQUE constraint so an entity can hold several connectors of the same
+    // type (e.g. several Gmail accounts). Prove both rows coexist.
     const slug = `shared-slug-${Date.now()}`;
 
-    // entity A — create a separate user + entity
-    const [userA] = await db
-      .insert(schema.users)
-      .values({ email: `entity-a-${Date.now()}@example.com` })
-      .returning();
-    const [entityA] = await db
-      .insert(schema.entities)
-      .values({ userId: userA!.id, name: 'Entity A', slug: `entity-a-${Date.now()}` })
-      .returning();
-
-    // entity B — another user + entity
-    const [userB] = await db
-      .insert(schema.users)
-      .values({ email: `entity-b-${Date.now()}@example.com` })
-      .returning();
-    const [entityB] = await db
-      .insert(schema.entities)
-      .values({ userId: userB!.id, name: 'Entity B', slug: `entity-b-${Date.now()}` })
-      .returning();
-
-    // Insert connector for entity A — must succeed
     const [connA] = await db
       .insert(schema.connectors)
-      .values({ entityId: entityA!.id, name: 'C-A', slug, authType: 'oauth2' })
+      .values({ entityId: seed.entityId, name: 'C-A', slug, authType: 'oauth2' })
       .returning();
-    expect(connA).toBeDefined();
-
-    // Insert same slug for entity B — must also succeed (different entity)
     const [connB] = await db
       .insert(schema.connectors)
-      .values({ entityId: entityB!.id, name: 'C-B', slug, authType: 'oauth2' })
+      .values({ entityId: seed.entityId, name: 'C-B', slug, authType: 'oauth2' })
       .returning();
-    expect(connB).toBeDefined();
 
-    // Insert same slug for entity A again — must fail with the composite constraint name
-    try {
-      await db
-        .insert(schema.connectors)
-        .values({ entityId: entityA!.id, name: 'C-A-dup', slug, authType: 'oauth2' });
-      expect.fail('Expected duplicate-key error but insert succeeded');
-    } catch (err: unknown) {
-      // Drizzle 0.45 wraps the original pg error in `cause` (the top-level
-      // message is just the failing SQL). Check both layers so we don't
-      // depend on which one carries the constraint detail.
-      const topMsg = err instanceof Error ? err.message : String(err);
-      const cause = err instanceof Error ? err.cause : null;
-      const causeMsg = cause instanceof Error ? cause.message : String(cause ?? '');
-      expect(`${topMsg}\n${causeMsg}`).toMatch(/connectors_entity_slug_unique/);
-    }
+    expect(connA).toBeDefined();
+    expect(connB).toBeDefined();
+    expect(connA?.id).not.toBe(connB?.id);
+
+    const rows = await db
+      .select()
+      .from(schema.connectors)
+      .where(eq(schema.connectors.slug, slug));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.id).sort()).toEqual([connA!.id, connB!.id].sort());
+  });
+
+  it('mcp_servers: allows multiple instances with the same slug in the same entity — migration 0017', async () => {
+    // Multi-instance brique (migration 0017) dropped the old (entity_id, slug)
+    // UNIQUE index so an entity can register several MCP servers of the same
+    // type (e.g. two Cogni Cortex accounts). Prove both rows coexist.
+    const slug = `shared-mcp-slug-${Date.now()}`;
+
+    const [msA] = await db
+      .insert(schema.mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'MCP-A',
+        slug,
+        transport: 'http',
+        url: 'https://mcp-a.example.com',
+      })
+      .returning();
+    const [msB] = await db
+      .insert(schema.mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'MCP-B',
+        slug,
+        transport: 'http',
+        url: 'https://mcp-b.example.com',
+      })
+      .returning();
+
+    expect(msA).toBeDefined();
+    expect(msB).toBeDefined();
+    expect(msA?.id).not.toBe(msB?.id);
+
+    const rows = await db
+      .select()
+      .from(schema.mcpServers)
+      .where(eq(schema.mcpServers.slug, slug));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.id).sort()).toEqual([msA!.id, msB!.id].sort());
   });
 
   it('entity_llm_keys: allows multiple rows per (entity_id, provider) — Brique 24', async () => {

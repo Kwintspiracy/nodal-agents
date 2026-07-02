@@ -456,24 +456,34 @@ describe('CRUD: mcp_servers + mcp_connections', () => {
     ).rejects.toThrow();
   });
 
-  it('rejects a duplicate (entity_id, slug) via the UNIQUE constraint', async () => {
+  it('allows a duplicate (entity_id, slug) — multi-instance, migration 0017 dropped the UNIQUE index', async () => {
+    // See constraints.test.ts for the full multi-instance proof; this just
+    // keeps the CRUD round-trip aligned with prod (was previously asserting
+    // the old, now-dropped, constraint).
     const slug = `dup-mcp-${Date.now()}`;
-    await db.insert(schema.mcpServers).values({
-      entityId: seed.entityId,
-      name: 'First',
-      slug,
-      transport: 'http',
-      url: 'https://mcp.example.com',
-    });
-    await expect(
-      db.insert(schema.mcpServers).values({
+    const [first] = await db
+      .insert(schema.mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'First',
+        slug,
+        transport: 'http',
+        url: 'https://mcp.example.com',
+      })
+      .returning();
+    const [second] = await db
+      .insert(schema.mcpServers)
+      .values({
         entityId: seed.entityId,
         name: 'Second',
         slug,
         transport: 'http',
         url: 'https://mcp.example.com',
-      }),
-    ).rejects.toThrow();
+      })
+      .returning();
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(first?.id).not.toBe(second?.id);
   });
 });
 

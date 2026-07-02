@@ -216,8 +216,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       auth_type text NOT NULL DEFAULT 'api_key' CHECK (auth_type IN ('api_key','oauth2','bearer','basic','none')),
       credential_id uuid REFERENCES credentials(id) ON DELETE SET NULL,
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now(),
-      CONSTRAINT connectors_entity_slug_unique UNIQUE (entity_id, slug)
+      updated_at timestamptz DEFAULT now()
+      -- Multi-instance brique (migration 0016): the (entity_id, slug) UNIQUE
+      -- constraint was dropped in prod to allow several instances of the same
+      -- connector type per entity (e.g. several Gmail accounts). Not declared
+      -- here either, so the test DB matches prod.
     );
 
     CREATE TABLE IF NOT EXISTS agent_connector_assignments (
@@ -402,8 +405,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       active boolean DEFAULT true,
       available_tools jsonb,
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now(),
-      UNIQUE (entity_id, slug)
+      updated_at timestamptz DEFAULT now()
+      -- Multi-instance brique (migration 0017): the (entity_id, slug) UNIQUE
+      -- index was dropped in prod to allow several instances of the same MCP
+      -- server type per entity (e.g. two Cogni Cortex accounts). Not declared
+      -- here either, so the test DB matches prod.
     );
 
     CREATE TABLE IF NOT EXISTS agent_mcp_servers (
