@@ -24,6 +24,7 @@ import {
   eq,
   and,
   agentSkills,
+  agentMemory,
   entities,
   transitionSkillLifecycle,
   archiveAgentSkill,
@@ -178,6 +179,8 @@ function makeCuratorEnv(
     curatorMinSkills?: number;
     curatorIntervalDays?: number;
     reflectionModel?: string;
+    memoryCurationEnabled?: string;
+    curatorMemoryMin?: number;
   } = {},
 ): Parameters<typeof runCuratorTick>[2] {
   return {
@@ -201,7 +204,8 @@ function makeCuratorEnv(
     CURATOR_MAX_TURNS: 4,
     CURATOR_MEMORY_STALE_DAYS: 60,
     CURATOR_MEMORY_IMPORTANCE_MAX: 2,
-    CURATOR_MEMORY_MIN: 8,
+    CURATOR_MEMORY_MIN: overrides.curatorMemoryMin ?? 8,
+    MEMORY_CURATION_ENABLED: overrides.memoryCurationEnabled ?? 'false',
     RETENTION_DAYS: 0,
   } as Parameters<typeof runCuratorTick>[2];
 }
@@ -780,5 +784,155 @@ describe('curator â€” REFLECTION_MODEL override', () => {
     const captured = getLastLlmConfig();
     expect(captured).not.toBeNull();
     expect(captured!.model).not.toBe('openai/gpt-4o-mini');
+  });
+});
+
+// ── 13+14. Brick 2: memory curation decoupled from reflection ────────────────
+// memory_curation_enabled is a DEDICATED flag (default TRUE), independent from
+// reflection_enabled (the skill-learning opt-in). The memory pass must run when
+// reflection is off, and must NOT run when the memory flag itself is off.
+describe('curator — memory curation decoupled from reflection_enabled', () => {
+  it('runs the memory pass (set_importance) when reflection is OFF but memory curation is ON', async () => {
+    const ts = Date.now();
+
+    // Entity opts OUT of reflection, memory_curation_enabled stays at its
+    // schema default (true, seedMinimal never touches it).
+    await db
+      .update(entities)
+      .set({ reflectionEnabled: false })
+      .where(eq(entities.id, seed.entityId));
+
+    // Seed >= CURATOR_MEMORY_MIN=2 non-archived facts for this entity.
+    const [fact1] = await db
+      .insert(agentMemory)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        fact: `decoupled fact often used ${ts}`,
+        source: 'agent',
+        importance: 2,
+        accessCount: 15,
+        archived: false,
+      })
+      .returning();
+    await db.insert(agentMemory).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      fact: `decoupled fact two ${ts}`,
+      source: 'agent',
+      importance: 3,
+      archived: false,
+    });
+    if (!fact1) throw new Error('failed to seed fact');
+
+    // Due for consolidation (not first-run-deferred).
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await db
+      .update(entities)
+      .set({ lastCuratorRunAt: eightDaysAgo })
+      .where(eq(entities.id, seed.entityId));
+
+    let llmCallCount = 0;
+    const baseClient = makeScriptedClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'si1',
+            toolName: 'set_importance',
+            args: { memoryId: fact1.id, importance: 5, reason: 'frequently accessed' },
+          },
+        ],
+      },
+      {}, // turn 2: no-op → stop
+    ]);
+    const wrappedClient: RunnerDeps['llmClient'] = {
+      ...baseClient,
+      generateText: (...args) => {
+        llmCallCount += 1;
+        return baseClient.generateText(...args);
+      },
+    };
+    const deps = makeDeps(wrappedClient);
+
+    const result = await runCuratorTick(
+      db,
+      deps,
+      makeCuratorEnv({
+        reflectionEnabled: 'false',
+        memoryCurationEnabled: 'true',
+        curatorMemoryMin: 2,
+        curatorIntervalDays: 7,
+      }),
+    );
+
+    // Memory pass ran; skill consolidation did NOT (reflection is off).
+    expect(result.memoryCurationRan).toBeGreaterThanOrEqual(1);
+    expect(result.consolidationRan).toBe(0);
+    expect(llmCallCount).toBeGreaterThanOrEqual(1);
+
+    // The real DB row was re-scored by set_importance.
+    const [after] = await db
+      .select({ importance: agentMemory.importance })
+      .from(agentMemory)
+      .where(eq(agentMemory.id, fact1.id));
+    expect(after?.importance).toBe(5);
+  });
+
+  it('does NOT run the memory pass when memory_curation_enabled=false (global kill-switch)', async () => {
+    const ts = Date.now();
+
+    await db
+      .update(entities)
+      .set({ reflectionEnabled: false })
+      .where(eq(entities.id, seed.entityId));
+
+    // Seed enough facts to otherwise qualify.
+    await db.insert(agentMemory).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      fact: `kill-switch fact one ${ts}`,
+      source: 'agent',
+      importance: 2,
+      archived: false,
+    });
+    await db.insert(agentMemory).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      fact: `kill-switch fact two ${ts}`,
+      source: 'agent',
+      importance: 2,
+      archived: false,
+    });
+
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await db
+      .update(entities)
+      .set({ lastCuratorRunAt: eightDaysAgo })
+      .where(eq(entities.id, seed.entityId));
+
+    let llmCallCount = 0;
+    const baseClient = makeScriptedClient([{}]);
+    const wrappedClient: RunnerDeps['llmClient'] = {
+      ...baseClient,
+      generateText: (...args) => {
+        llmCallCount += 1;
+        return baseClient.generateText(...args);
+      },
+    };
+    const deps = makeDeps(wrappedClient);
+
+    const result = await runCuratorTick(
+      db,
+      deps,
+      makeCuratorEnv({
+        reflectionEnabled: 'false',
+        memoryCurationEnabled: 'false',
+        curatorMemoryMin: 2,
+        curatorIntervalDays: 7,
+      }),
+    );
+
+    expect(result.memoryCurationRan).toBe(0);
+    expect(llmCallCount).toBe(0);
   });
 });

@@ -104,7 +104,16 @@ export async function updateMemory(
   id: string,
   entityId: string,
   updates: Partial<
-    Pick<AgentMemory, 'fact' | 'category' | 'importance' | 'skill_tags' | 'archived' | 'valid_to'>
+    Pick<
+      AgentMemory,
+      | 'fact'
+      | 'category'
+      | 'importance'
+      | 'importance_locked'
+      | 'skill_tags'
+      | 'archived'
+      | 'valid_to'
+    >
   >,
 ): Promise<AgentMemory> {
   const payload: Record<string, unknown> = {
@@ -114,6 +123,7 @@ export async function updateMemory(
   if (updates.fact !== undefined) payload['fact'] = updates.fact;
   if (updates.category !== undefined) payload['category'] = updates.category;
   if (updates.importance !== undefined) payload['importance'] = updates.importance;
+  if (updates.importance_locked !== undefined) payload['importanceLocked'] = updates.importance_locked;
   if (updates.skill_tags !== undefined) payload['skillTags'] = updates.skill_tags;
   if (updates.archived !== undefined) payload['archived'] = updates.archived;
   if (updates.valid_to !== undefined) {
@@ -166,6 +176,7 @@ export function rowToMemory(row: MemoryRow): AgentMemory {
     valid_to: row.validTo?.toISOString() ?? null,
     fact_hash: row.factHash ?? null,
     archived: row.archived ?? false,
+    importance_locked: row.importanceLocked ?? false,
     last_accessed_at: row.lastAccessedAt?.toISOString() ?? null,
     access_count: row.accessCount ?? 0,
     created_at: row.createdAt?.toISOString() ?? new Date().toISOString(),

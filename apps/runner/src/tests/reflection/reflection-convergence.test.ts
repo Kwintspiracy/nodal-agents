@@ -636,6 +636,7 @@ describe('reflection-convergence — E: tool-call iteration gate', () => {
     CURATOR_MEMORY_STALE_DAYS: 60,
     CURATOR_MEMORY_IMPORTANCE_MAX: 2,
     CURATOR_MEMORY_MIN: 8,
+    MEMORY_CURATION_ENABLED: '',
     RETENTION_DAYS: 0,
     REFLECTION_MODEL: undefined,
   });

@@ -21,6 +21,7 @@ function makeMemory(overrides: Partial<AgentMemory> = {}): AgentMemory {
     valid_to: null,
     fact_hash: null,
     archived: false,
+    importance_locked: false,
     last_accessed_at: null,
     access_count: 0,
     created_at: new Date().toISOString(),

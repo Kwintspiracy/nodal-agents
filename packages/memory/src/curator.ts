@@ -61,6 +61,20 @@ async function loadSource(
   return row ? row.source : undefined;
 }
 
+/** Read a memory's provenance + user-lock state (the set_importance guard input). */
+async function loadSourceAndLock(
+  db: AnyDrizzleDb,
+  entityId: string,
+  memoryId: string,
+): Promise<{ source: string | null; importanceLocked: boolean } | undefined> {
+  const [row] = await db
+    .select({ source: agentMemory.source, importanceLocked: agentMemory.importanceLocked })
+    .from(agentMemory)
+    .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)))
+    .limit(1);
+  return row ? { source: row.source, importanceLocked: row.importanceLocked } : undefined;
+}
+
 /**
  * Provenance-guarded archive (reversible). Refuses source='manual' so the
  * curator can never bin a fact the user entered. Mirrors archiveAgentSkill.
@@ -98,6 +112,35 @@ export async function updateAgentMemoryFact(
   await db
     .update(agentMemory)
     .set({ fact: trimmed, factHash: computeFactHash(trimmed), updatedAt: new Date() })
+    .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)));
+  return { ok: true };
+}
+
+/**
+ * Provenance-guarded importance re-score — the curator's usage-driven
+ * correction to an agent's one-shot importance guess (see the module comment
+ * above: usage, proven by access_count, is a sounder signal than a first
+ * estimate). Refuses source='manual' like the other curator mutations, and
+ * refuses ANY fact the user has pinned (importance_locked=true) — a
+ * user-set importance is the top of the authority chain: agent → curator →
+ * user, and the user always wins.
+ */
+export async function updateAgentMemoryImportance(
+  db: AnyDrizzleDb,
+  entityId: string,
+  memoryId: string,
+  importance: number,
+): Promise<{ ok: true } | { error: MemoryCuratorError | 'invalid_importance' | 'importance_locked' }> {
+  if (!Number.isInteger(importance) || importance < 1 || importance > 5) {
+    return { error: 'invalid_importance' };
+  }
+  const row = await loadSourceAndLock(db, entityId, memoryId);
+  if (row === undefined) return { error: 'not_found' };
+  if (row.source === 'manual') return { error: 'not_agent_memory' };
+  if (row.importanceLocked) return { error: 'importance_locked' };
+  await db
+    .update(agentMemory)
+    .set({ importance, updatedAt: new Date() })
     .where(and(eq(agentMemory.id, memoryId), eq(agentMemory.entityId, entityId)));
   return { ok: true };
 }

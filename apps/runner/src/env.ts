@@ -111,6 +111,17 @@ const envSchema = z.object({
   CURATOR_MEMORY_STALE_DAYS: z.coerce.number().default(60),
   CURATOR_MEMORY_IMPORTANCE_MAX: z.coerce.number().default(2),
   CURATOR_MEMORY_MIN: z.coerce.number().default(8),
+  // Kill-switch semantics mirror REFLECTION_ENABLED but gate the MEMORY curator
+  // (Phase 2 LLM pass) specifically — decoupled from the skill-learning loop:
+  //   MEMORY_CURATION_ENABLED='false'  → global kill: disables memory curation
+  //                                       for every entity.
+  //   MEMORY_CURATION_ENABLED=''       → per-entity decides (production default
+  //       (unset)                         when the var is absent). Since
+  //                                       entities.memory_curation_enabled
+  //                                       defaults TRUE, memory curation runs
+  //                                       out of the box — unlike reflection.
+  //   MEMORY_CURATION_ENABLED='true'   → per-entity decides (same as unset).
+  MEMORY_CURATION_ENABLED: z.string().default(''),
   // Optional. When set, the reflection + curator passes use THIS model id instead of
   // the agent's model — resolved against the agent's existing LLM key (ideal for an
   // OpenRouter key where one key serves many models; point the cheap/reliable

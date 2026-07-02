@@ -94,7 +94,11 @@ describe('searchMemories — keyword fallback (null embedding)', () => {
     expect(facts.some((f) => f.toLowerCase().includes('notion'))).toBe(true);
   });
 
-  it('returns memories matching partial keyword', async () => {
+  it('returns memories matching a multi-word query (singular query, plural fact — english stemming)', async () => {
+    // FTS ('english' config, OR-joined terms) stems 'token' and 'tokens' to
+    // the same lexeme, so the singular query still finds the seeded plural
+    // fact ("...tokens expire after 1 hour.") — no ILIKE substring matching
+    // needed.
     const results = await searchMemories(db, keywordClient, {
       query: 'gmail token',
       entityId: seed.entityId,
@@ -330,6 +334,19 @@ describe('searchMemories — vector search', () => {
 // ─── keywordSearchMemories (embedding-free, for query_memory tool) ─────────────
 
 describe('keywordSearchMemories', () => {
+  it('stems the query — singular "token" finds a fact containing plural "tokens" (english config)', async () => {
+    const results = await keywordSearchMemories(db, {
+      query: 'token',
+      entityId: seed.entityId,
+    });
+
+    // Both "Notion API requires an integration token." (literal singular) and
+    // "Gmail OAuth2 tokens expire after 1 hour." (plural, found via stemming)
+    // must be returned.
+    expect(results.some((m) => m.fact.includes('Gmail OAuth2 tokens'))).toBe(true);
+    expect(results.some((m) => m.fact.includes('integration token'))).toBe(true);
+  });
+
   it('returns memories matching the query keywords', async () => {
     const results = await keywordSearchMemories(db, {
       query: 'user',
@@ -373,6 +390,37 @@ describe('keywordSearchMemories', () => {
     expect(results[0]?.importance).toBe(5);
   });
 
+  it('ranks by FTS relevance (term frequency), not just importance ties (Brick 1)', async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+
+    // Same importance on both — any ordering difference must come from ts_rank.
+    const weak = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'deploy the staging server sometime',
+      category: 'context',
+      importance: 3,
+      source: 'agent',
+      skill_tags: [],
+    });
+    const strong = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'deploy deploy deploy the staging staging server now',
+      category: 'context',
+      importance: 3,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const results = await keywordSearchMemories(freshDb, {
+      query: 'deploy staging',
+      entityId: freshSeed.entityId,
+    });
+
+    expect(results[0]?.id).toBe(strong.id);
+    expect(results[1]?.id).toBe(weak.id);
+  });
+
   it('bumps access tracking on returned rows', async () => {
     const { db: freshDb } = await spinUpTestDb();
     const freshSeed = await seedMinimal(freshDb);
@@ -392,5 +440,105 @@ describe('keywordSearchMemories', () => {
     const { getMemory } = await import('../crud');
     const fetched = await getMemory(freshDb, m.id, freshSeed.entityId);
     expect(fetched.access_count).toBe(1);
+  });
+
+  it('does NOT bump access tracking when touch:false (read-only UI search)', async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+
+    const m = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'Keyword search touch:false probe.',
+      category: 'context',
+      importance: 3,
+      source: 'agent',
+      skill_tags: [],
+    });
+    expect(m.access_count).toBe(0);
+
+    const results = await keywordSearchMemories(freshDb, {
+      query: 'probe',
+      entityId: freshSeed.entityId,
+      touch: false,
+    });
+    expect(results).toHaveLength(1);
+
+    const { getMemory } = await import('../crud');
+    const fetched = await getMemory(freshDb, m.id, freshSeed.entityId);
+    expect(fetched.access_count).toBe(0); // untouched — this is a read-only search
+  });
+
+  // ── P3.5: ts_rank dominates; `sort` only breaks ties among equal-relevance rows ──
+  it('ts_rank DOMINATES the order — a strongly-relevant, low-importance fact still ' +
+    "beats a barely-relevant, high-importance one under sort: 'importance'", async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+
+    // Strong match: all 4 query terms present, repeated → high ts_rank. Importance 1.
+    const stronglyRelevant = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'deploy deploy staging staging server server now now',
+      category: 'context',
+      importance: 1,
+      source: 'agent',
+      skill_tags: [],
+    });
+    // Weak match: only 1 of the 4 query terms present → low (nonzero) ts_rank. Importance 5.
+    const weaklyRelevantHighImportance = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'deploy something else entirely unrelated',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    // Even asking for 'importance' sort, the weak-but-important fact does NOT
+    // win — ts_rank is the primary ORDER BY key; importance is only the
+    // tiebreaker for equal-relevance rows (see keywordOrderBy in search.ts).
+    const results = await keywordSearchMemories(freshDb, {
+      query: 'deploy staging server now',
+      entityId: freshSeed.entityId,
+      sort: 'importance',
+    });
+
+    expect(results[0]?.id).toBe(stronglyRelevant.id);
+    expect(results.some((m) => m.id === weaklyRelevantHighImportance.id)).toBe(true);
+    expect(results.findIndex((m) => m.id === weaklyRelevantHighImportance.id)).toBeGreaterThan(
+      results.findIndex((m) => m.id === stronglyRelevant.id),
+    );
+  });
+
+  it("'sort' still governs the tiebreak between rows of EQUAL relevance", async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+
+    // Both facts match the query identically (same terms, same count) → tied
+    // ts_rank. Only importance should separate them under sort: 'importance'.
+    const higherImportance = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'ship the release candidate today',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+    const lowerImportance = await createMemory(freshDb, {
+      entity_id: freshSeed.entityId,
+      fact: 'ship the release candidate soon',
+      category: 'context',
+      importance: 2,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const results = await keywordSearchMemories(freshDb, {
+      query: 'ship release candidate',
+      entityId: freshSeed.entityId,
+      sort: 'importance',
+    });
+
+    expect(results[0]?.id).toBe(higherImportance.id);
+    expect(results[1]?.id).toBe(lowerImportance.id);
   });
 });

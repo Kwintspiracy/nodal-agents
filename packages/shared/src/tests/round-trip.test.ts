@@ -311,6 +311,54 @@ describe('AgentMemorySchema round-trip', () => {
       valid_to: null,
       fact_hash: 'abc123',
       archived: false,
+      importance_locked: false,
+      last_accessed_at: now,
+      access_count: 5,
+      created_at: now,
+      updated_at: now,
+    };
+    expect(AgentMemorySchema.parse(raw)).toEqual(raw);
+  });
+
+  it('defaults importance_locked to false when omitted', () => {
+    const raw = {
+      id: uuid,
+      entity_id: uuid2,
+      agent_id: null,
+      fact: 'User prefers formal language',
+      category: 'preference' as const,
+      importance: 4,
+      source: 'manual' as const,
+      skill_tags: ['notion', 'writing'],
+      memory_layer: 'L1' as const,
+      valid_from: now,
+      valid_to: null,
+      fact_hash: 'abc123',
+      archived: false,
+      last_accessed_at: now,
+      access_count: 5,
+      created_at: now,
+      updated_at: now,
+    };
+    expect(AgentMemorySchema.parse(raw)).toEqual({ ...raw, importance_locked: false });
+  });
+
+  it('accepts an explicit importance_locked=true (user pin)', () => {
+    const raw = {
+      id: uuid,
+      entity_id: uuid2,
+      agent_id: null,
+      fact: 'User prefers formal language',
+      category: 'preference' as const,
+      importance: 5,
+      source: 'manual' as const,
+      skill_tags: [],
+      memory_layer: null,
+      valid_from: now,
+      valid_to: null,
+      fact_hash: 'abc123',
+      archived: false,
+      importance_locked: true,
       last_accessed_at: now,
       access_count: 5,
       created_at: now,

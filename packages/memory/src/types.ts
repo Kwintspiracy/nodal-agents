@@ -42,6 +42,14 @@ export interface KeywordSearchOptions {
   limit?: number;
   /** Default: 'importance' */
   sort?: KeywordSort;
+  /**
+   * Whether returned rows bump access_count/last_accessed_at (the usage
+   * signal the curator re-scores importance from). Default: true — real
+   * agent usage (the query_memory tool) should count. Set false for
+   * read-only UI search (e.g. the /memories page search box) so browsing
+   * doesn't inflate a fact's proven-usage signal.
+   */
+  touch?: boolean;
 }
 
 // ─── List / Pagination ─────────────────────────────────────────────────────────

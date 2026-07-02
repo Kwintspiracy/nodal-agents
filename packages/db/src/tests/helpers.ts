@@ -65,6 +65,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       updated_at timestamptz DEFAULT now(),
       last_curator_run_at timestamptz,
       reflection_enabled boolean NOT NULL DEFAULT false,
+      memory_curation_enabled boolean NOT NULL DEFAULT true,
       skill_assignment_mode text NOT NULL DEFAULT 'approval',
       lan_command_yolo boolean NOT NULL DEFAULT false
     );
@@ -274,6 +275,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
       agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
       fact text NOT NULL,
+      search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(fact, ''))) STORED,
       category text DEFAULT 'context' CHECK (category IN ('preference','context','outcome','learned_rule')),
       importance integer DEFAULT 3 CHECK (importance >= 1 AND importance <= 5),
       source text DEFAULT 'agent' CHECK (source IN ('agent','reflection','manual')),
@@ -284,6 +286,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       valid_to timestamptz,
       fact_hash text,
       archived boolean DEFAULT false,
+      importance_locked boolean NOT NULL DEFAULT false,
       last_accessed_at timestamptz DEFAULT now(),
       access_count integer DEFAULT 0,
       created_at timestamptz DEFAULT now(),

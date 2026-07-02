@@ -24,6 +24,10 @@ export const AgentMemorySchema = z
     valid_to: z.string().datetime().nullable(),
     fact_hash: z.string().nullable(),
     archived: z.boolean(),
+    // User override lock (migration 0053) — when true, the curator refuses to
+    // re-score importance for this fact. Defaulted so rows/objects predating
+    // the column still parse.
+    importance_locked: z.boolean().default(false),
     last_accessed_at: z.string().datetime().nullable(),
     access_count: z.number().int().min(0),
     created_at: z.string().datetime(),
@@ -37,6 +41,7 @@ export const AgentMemoryInsertSchema = AgentMemorySchema.omit({
   updated_at: true,
   fact_hash: true,
   archived: true,
+  importance_locked: true,
   last_accessed_at: true,
   access_count: true,
   valid_from: true,

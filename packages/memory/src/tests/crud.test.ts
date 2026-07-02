@@ -295,6 +295,57 @@ describe('updateMemory', () => {
     ).rejects.toThrow(MemoryNotFoundError);
   });
 
+  it('sets importance and importance_locked together (user override)', async () => {
+    const created = await createMemory(db, {
+      entity_id: seed.entityId,
+      fact: 'Pin test fact.',
+      category: 'context',
+      importance: 2,
+      source: 'agent',
+      skill_tags: [],
+    });
+    expect(created.importance_locked).toBe(false);
+
+    const updated = await updateMemory(db, created.id, seed.entityId, {
+      importance: 5,
+      importance_locked: true,
+    });
+
+    expect(updated.importance).toBe(5);
+    expect(updated.importance_locked).toBe(true);
+
+    // Verify both persisted in DB
+    const fetched = await getMemory(db, created.id, seed.entityId);
+    expect(fetched.importance).toBe(5);
+    expect(fetched.importance_locked).toBe(true);
+  });
+
+  it('unpins (importance_locked=false) without touching the current importance', async () => {
+    const created = await createMemory(db, {
+      entity_id: seed.entityId,
+      fact: 'Unpin test fact.',
+      category: 'context',
+      importance: 2,
+      source: 'agent',
+      skill_tags: [],
+    });
+    await updateMemory(db, created.id, seed.entityId, {
+      importance: 5,
+      importance_locked: true,
+    });
+
+    const unpinned = await updateMemory(db, created.id, seed.entityId, {
+      importance_locked: false,
+    });
+
+    expect(unpinned.importance_locked).toBe(false);
+    expect(unpinned.importance).toBe(5); // value preserved — only the lock is cleared
+
+    const fetched = await getMemory(db, created.id, seed.entityId);
+    expect(fetched.importance_locked).toBe(false);
+    expect(fetched.importance).toBe(5);
+  });
+
   it('can archive a memory', async () => {
     const created = await createMemory(db, {
       entity_id: seed.entityId,

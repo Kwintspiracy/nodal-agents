@@ -54,6 +54,10 @@ export const entities = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
     lastCuratorRunAt: timestamp('last_curator_run_at', { withTimezone: true }),
     reflectionEnabled: boolean('reflection_enabled').notNull().default(false),
+    // Decoupled from reflection_enabled (which gates the skill-learning loop,
+    // opt-in). Gates the memory curator (Phase 2 LLM pass) — ON by default so
+    // memory curation runs even for entities that never opted into reflection.
+    memoryCurationEnabled: boolean('memory_curation_enabled').notNull().default(true),
     // Controls whether agent-authored skills are auto-assigned to the authoring
     // agent ('auto') or queued for the entity owner to approve ('approval').
     skillAssignmentMode: text('skill_assignment_mode')

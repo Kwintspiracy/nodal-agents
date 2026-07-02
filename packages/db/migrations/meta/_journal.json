@@ -351,6 +351,27 @@
       "when": 1783000000000,
       "tag": "0050_jobs_search_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1783100000000,
+      "tag": "0051_memory_search_fts",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1783200000000,
+      "tag": "0052_entities_memory_curation",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1783300000000,
+      "tag": "0053_memory_importance_locked",
+      "breakpoints": true
     }
   ]
 }

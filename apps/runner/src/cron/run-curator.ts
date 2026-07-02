@@ -6,13 +6,21 @@
 //   - stale → active: reactivation when recently re-used
 //   No LLM involved. Cheap SQL. Runs unconditionally every tick.
 //
-// Phase 2 (gated): LLM consolidation pass via runCuratorConsolidation.
-//   Gated by the global kill-switch (REFLECTION_ENABLED !== 'false') AND the
-//   per-entity reflection_enabled=true (enforced by the candidate query join).
-//   Per-entity: runs only when the entity has >= CURATOR_MIN_SKILLS agent-created
-//   ACTIVE skills AND the consolidation cadence allows it:
+// Phase 2 (gated, per-pass): two independent LLM passes on the SAME cadence
+// (shared entities.last_curator_run_at):
+//   - Skill consolidation (runCuratorConsolidation): gated by the global
+//     kill-switch (REFLECTION_ENABLED !== 'false') AND per-entity
+//     reflection_enabled=true. Opt-in — ships off by default.
+//   - Memory curation (runMemoryCuration): gated by the global kill-switch
+//     (MEMORY_CURATION_ENABLED !== 'false') AND per-entity
+//     memory_curation_enabled=true. Decoupled from reflection — ON by default,
+//     so memory curation runs even for entities that never opted into the
+//     skill-learning loop.
+//   Per-entity, per-pass: runs only when the entity clears that pass's
+//   candidate threshold (CURATOR_MIN_SKILLS / CURATOR_MEMORY_MIN) AND the
+//   shared consolidation cadence allows it:
 //     - last_curator_run_at IS NULL → first-run-deferred: stamp now(), skip LLM
-//     - last_curator_run_at < now - CURATOR_INTERVAL_DAYS → run consolidation
+//     - last_curator_run_at < now - CURATOR_INTERVAL_DAYS → run applicable pass(es)
 //   Stamps entities.last_curator_run_at = now() after each pass (or deferral).
 
 import {
@@ -62,6 +70,11 @@ const SAFE_LIFECYCLE_DEFAULTS = {
   CURATOR_MEMORY_IMPORTANCE_MAX: 2,
   CURATOR_MEMORY_MIN: 8,
   REFLECTION_ENABLED: 'false',
+  // Conservative fallback for environments without DATABASE_URL (test envs) —
+  // mirrors REFLECTION_ENABLED's safe default. The REAL production default
+  // (per-entity decides, ON since entities.memory_curation_enabled defaults
+  // true) comes from the zod schema in env.ts, not from this fallback.
+  MEMORY_CURATION_ENABLED: 'false',
   REFLECTION_MODEL: undefined,
 } as const;
 
@@ -76,6 +89,7 @@ type CuratorEnvSlice = Pick<
   | 'CURATOR_MEMORY_IMPORTANCE_MAX'
   | 'CURATOR_MEMORY_MIN'
   | 'REFLECTION_ENABLED'
+  | 'MEMORY_CURATION_ENABLED'
   | 'REFLECTION_MODEL'
 >;
 
@@ -102,6 +116,7 @@ function resolveCuratorEnv(runnerEnv?: RunnerEnv): CuratorEnvSlice {
       CURATOR_MEMORY_IMPORTANCE_MAX: globalEnv.CURATOR_MEMORY_IMPORTANCE_MAX,
       CURATOR_MEMORY_MIN: globalEnv.CURATOR_MEMORY_MIN,
       REFLECTION_ENABLED: globalEnv.REFLECTION_ENABLED,
+      MEMORY_CURATION_ENABLED: globalEnv.MEMORY_CURATION_ENABLED,
       REFLECTION_MODEL: globalEnv.REFLECTION_MODEL,
     };
   } catch {
@@ -135,10 +150,50 @@ export async function runCuratorTick(
     importanceMax: e.CURATOR_MEMORY_IMPORTANCE_MAX,
   });
 
-  // ── Phase 2: LLM consolidation (gated) ────────────────────────────────────
-  // Global kill-switch: explicit 'false' disables LLM consolidation entirely.
-  // Empty string (unset) or 'true' both allow per-entity flag to decide.
-  if (e.REFLECTION_ENABLED === 'false') {
+  // ── Phase 2: LLM consolidation (gated, per-pass) ──────────────────────────
+  // Skill consolidation and memory curation are gated INDEPENDENTLY: reflection
+  // is still opt-in (entities.reflection_enabled defaults false), while memory
+  // curation runs by default (entities.memory_curation_enabled defaults true).
+  // Each global kill-switch, when 'false', empties its Set entirely so that
+  // pass never runs for any entity this tick — regardless of per-entity flags.
+  const intervalMs = e.CURATOR_INTERVAL_DAYS * 24 * 60 * 60 * 1000;
+  const intervalCutoff = new Date(Date.now() - intervalMs);
+  const now = new Date();
+
+  const skillSet = new Set<string>();
+  if (e.REFLECTION_ENABLED !== 'false') {
+    // Candidates: >= CURATOR_MIN_SKILLS agent-created ACTIVE skills, entity opted in.
+    const skillCandidates = await db
+      .select({ entityId: agentSkills.entityId })
+      .from(agentSkills)
+      .innerJoin(entities, eq(entities.id, agentSkills.entityId))
+      .where(
+        and(
+          eq(agentSkills.createdBy, 'agent'),
+          eq(agentSkills.state, 'active'),
+          eq(entities.reflectionEnabled, true),
+        ),
+      )
+      .groupBy(agentSkills.entityId)
+      .having(sql`count(${agentSkills.id}) >= ${e.CURATOR_MIN_SKILLS}`);
+    for (const c of skillCandidates) if (c.entityId) skillSet.add(c.entityId);
+  }
+
+  const memorySet = new Set<string>();
+  if (e.MEMORY_CURATION_ENABLED !== 'false') {
+    // Candidates: >= CURATOR_MEMORY_MIN non-archived facts, entity opted in
+    // (memory_curation_enabled, ON by default — decoupled from reflection).
+    const memoryCandidates = await db
+      .select({ entityId: agentMemory.entityId })
+      .from(agentMemory)
+      .innerJoin(entities, eq(entities.id, agentMemory.entityId))
+      .where(and(eq(agentMemory.archived, false), eq(entities.memoryCurationEnabled, true)))
+      .groupBy(agentMemory.entityId)
+      .having(sql`count(${agentMemory.id}) >= ${e.CURATOR_MEMORY_MIN}`);
+    for (const c of memoryCandidates) if (c.entityId) memorySet.add(c.entityId);
+  }
+
+  if (skillSet.size === 0 && memorySet.size === 0) {
     return {
       staled: lifecycle.staled,
       archived: lifecycle.archived,
@@ -149,41 +204,6 @@ export async function runCuratorTick(
       memoryCurationRan: 0,
     };
   }
-
-  const intervalMs = e.CURATOR_INTERVAL_DAYS * 24 * 60 * 60 * 1000;
-  const intervalCutoff = new Date(Date.now() - intervalMs);
-  const now = new Date();
-
-  // Candidate entities (reflection_enabled) for the two LLM passes, on the SAME
-  // cadence (shared entities.last_curator_run_at):
-  //   - skills:  >= CURATOR_MIN_SKILLS agent-created ACTIVE skills.
-  //   - memory:  >= CURATOR_MEMORY_MIN non-archived facts.
-  const skillCandidates = await db
-    .select({ entityId: agentSkills.entityId })
-    .from(agentSkills)
-    .innerJoin(entities, eq(entities.id, agentSkills.entityId))
-    .where(
-      and(
-        eq(agentSkills.createdBy, 'agent'),
-        eq(agentSkills.state, 'active'),
-        eq(entities.reflectionEnabled, true),
-      ),
-    )
-    .groupBy(agentSkills.entityId)
-    .having(sql`count(${agentSkills.id}) >= ${e.CURATOR_MIN_SKILLS}`);
-
-  const memoryCandidates = await db
-    .select({ entityId: agentMemory.entityId })
-    .from(agentMemory)
-    .innerJoin(entities, eq(entities.id, agentMemory.entityId))
-    .where(and(eq(agentMemory.archived, false), eq(entities.reflectionEnabled, true)))
-    .groupBy(agentMemory.entityId)
-    .having(sql`count(${agentMemory.id}) >= ${e.CURATOR_MEMORY_MIN}`);
-
-  const skillSet = new Set<string>();
-  for (const c of skillCandidates) if (c.entityId) skillSet.add(c.entityId);
-  const memorySet = new Set<string>();
-  for (const c of memoryCandidates) if (c.entityId) memorySet.add(c.entityId);
 
   let consolidationDeferred = 0;
   let consolidationRan = 0;

@@ -39,7 +39,12 @@ export { backfillEmbeddings } from './backfill';
 export type { BackfillResult } from './backfill';
 
 // Tier-2 memory curator (deterministic lifecycle + provenance-guarded mutations)
-export { transitionMemoryLifecycle, archiveAgentMemory, updateAgentMemoryFact } from './curator';
+export {
+  transitionMemoryLifecycle,
+  archiveAgentMemory,
+  updateAgentMemoryFact,
+  updateAgentMemoryImportance,
+} from './curator';
 export type { MemoryLifecycleResult, MemoryCuratorError } from './curator';
 
 // Filter (pure functions)

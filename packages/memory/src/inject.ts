@@ -218,9 +218,26 @@ export function selectMemoriesUnderBudget(
     return a.id.localeCompare(b.id);
   });
 
+  return packUnderBudget(sorted, maxChars);
+}
+
+/**
+ * Greedy-accumulate PRE-ORDERED memories under a char budget. Does not sort —
+ * the caller's ordering is authoritative (extracted out of
+ * selectMemoriesUnderBudget so the FTS-ranked pool in
+ * selectMemoriesForInjection can reuse the same budget/skip-oversized-fact
+ * logic without being re-sorted by importance).
+ *
+ * - `maxChars <= 0` returns `[]`.
+ * - A single memory whose render cost exceeds the budget is skipped — never
+ *   inject a partial fact.
+ */
+function packUnderBudget(memories: ReadonlyArray<AgentMemory>, maxChars: number): AgentMemory[] {
+  if (maxChars <= 0) return [];
+
   const picked: AgentMemory[] = [];
   let used = 0;
-  for (const m of sorted) {
+  for (const m of memories) {
     const cost = m.fact.length + RENDER_OVERHEAD_PER_ENTRY;
     if (used + cost > maxChars) continue;
     picked.push(m);
@@ -245,8 +262,19 @@ const MAX_CANDIDATES = 200;
  *   1. Entity-scoped (multi-tenant invariant).
  *   2. archived = false. Never inject obsolete facts.
  *   3. valid_to IS NULL OR > now(). Never inject expired facts.
- *   4. Order by importance DESC, last_accessed_at DESC. Take top MAX_CANDIDATES.
- *   5. selectMemoriesUnderBudget(maxChars).
+ *   4a. With a tokenizable `query`: order candidates by `ts_rank(search_tsv,
+ *       plainto_tsquery('english', query)) DESC` (importance/recency as
+ *       tiebreak), so a fact relevant to THIS task surfaces even if it's
+ *       outside the importance/recency top tier — then pack in that FTS
+ *       order (authoritative; not re-sorted by importance).
+ *   4b. Without one: order by importance DESC, last_accessed_at DESC, then
+ *       selectMemoriesUnderBudget(maxChars) (unchanged prior behavior).
+ *   Both paths take top MAX_CANDIDATES before packing.
+ *
+ * The FTS `@@` operator is deliberately NOT used as a WHERE filter: we want
+ * non-matching facts to stay in the pool (rank 0) so the char budget still
+ * gets filled when nothing matches well — ts_rank in ORDER BY is enough to
+ * surface the relevant ones.
  *
  * Memory is entity-scoped, not agent-scoped — every agent in the entity sees
  * the same pool. This matches how `query_memory` already works (the existing
@@ -259,6 +287,7 @@ const MAX_CANDIDATES = 200;
  * @param db        Drizzle handle
  * @param opts.entityId  Multi-tenant scope.
  * @param opts.maxChars  Char budget from `agents.memoryTokenBudget`.
+ * @param opts.query     Current job task — drives FTS relevance ranking.
  */
 export async function selectMemoriesForInjection(
   db: AnyDrizzleDb,
@@ -266,16 +295,42 @@ export async function selectMemoriesForInjection(
 ): Promise<AgentMemory[]> {
   if (opts.maxChars <= 0) return [];
 
+  const baseConditions = and(
+    eq(agentMemory.entityId, opts.entityId),
+    eq(agentMemory.archived, false),
+    sql`(${agentMemory.validTo} IS NULL OR ${agentMemory.validTo} > now())`,
+  );
+
+  const rawQuery = opts.query ?? '';
+  const tokens = tokenizeQuery(rawQuery);
+
+  if (tokens.length > 0) {
+    // search_tsv is a generated column, not expressible in the Drizzle schema
+    // builder (migration 0051) — reference it via raw SQL, same as
+    // agent_jobs.search_tsv in search-history.ts.
+    const tsv = sql`"agent_memory"."search_tsv"`;
+    const tsq = sql`plainto_tsquery('english', ${rawQuery})`;
+
+    const candidates = await db
+      .select()
+      .from(agentMemory)
+      .where(baseConditions)
+      .orderBy(
+        sql`ts_rank(${tsv}, ${tsq}) DESC`,
+        desc(agentMemory.importance),
+        desc(agentMemory.lastAccessedAt),
+      )
+      .limit(MAX_CANDIDATES);
+
+    const memories = candidates.map((row) => rowToMemory(row as MemoryRow));
+    // FTS order is authoritative — pack as-is, do not re-rank by importance.
+    return packUnderBudget(memories, opts.maxChars);
+  }
+
   const candidates = await db
     .select()
     .from(agentMemory)
-    .where(
-      and(
-        eq(agentMemory.entityId, opts.entityId),
-        eq(agentMemory.archived, false),
-        sql`(${agentMemory.validTo} IS NULL OR ${agentMemory.validTo} > now())`,
-      ),
-    )
+    .where(baseConditions)
     .orderBy(desc(agentMemory.importance), desc(agentMemory.lastAccessedAt))
     .limit(MAX_CANDIDATES);
 

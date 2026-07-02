@@ -1,6 +1,6 @@
 // @nodal-agents/memory — searchMemories() — hybrid embedding + keyword search
 
-import { eq, and, sql, desc, ilike, or } from '@nodal-agents/db';
+import { eq, and, sql, desc } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { agentMemory } from '@nodal-agents/db';
 import type { AgentMemory } from '@nodal-agents/shared';
@@ -132,7 +132,19 @@ async function vectorSearch(
   return rows;
 }
 
-// ─── Keyword (ILIKE) search ────────────────────────────────────────────────────
+// ─── Keyword (FTS) search ───────────────────────────────────────────────────────
+//
+// Same engine as selectMemoriesForInjection (Brick 1) and the search_history
+// builtin: full-text against the generated search_tsv column (migration 0051),
+// ranked by ts_rank. Two deliberate differences from those two, because
+// query_memory is a user/agent-driven search tool that should be forgiving:
+//   - 'english' config (stemming): a "token" query matches a stored "tokens".
+//   - OR, not AND: a fact matching ANY query term is found (ranked by how
+//     many/how rare the terms it matches — ts_rank), instead of requiring
+//     every term to be present. Contrast with selectMemoriesForInjection's
+//     AND (plainto_tsquery), which is safe there because unmatched facts stay
+//     in the candidate pool anyway (no @@ filter) — here we DO filter with
+//     @@, so AND would silently drop a fact missing just one query word.
 
 /** Resolve the orderBy clause for a keyword sort mode. */
 function keywordOrderBy(sort: KeywordSort) {
@@ -149,25 +161,39 @@ async function keywordSearch(
 ): Promise<MemoryRow[]> {
   const { entityId, agentId, skillTags, category, limit } = filters;
 
-  // Split query into meaningful words (>2 chars) and search with ILIKE
-  const words = query
+  // Extract usable content words (>2 chars) and reduce each to plain
+  // alphanumerics. Unlike plainto_tsquery, to_tsquery does NOT sanitize its
+  // input and throws on tsquery-syntax characters (&, |, !, (, ), :) — so
+  // this strip is a correctness requirement, not just cleanliness, before we
+  // join the terms into an OR expression ourselves. An all-punctuation/
+  // too-short query yields no terms, and we fall through to the plain
+  // top-N list.
+  const orTerms = query
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length > 2)
-    .slice(0, 8);
+    .slice(0, 8)
+    .map((w) => w.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter((w) => w.length > 0);
 
   const conditions = buildWhereConditions({ entityId, agentId, skillTags, category });
   const orderBy = keywordOrderBy(sort);
 
-  // If we have usable keywords, build OR ilike conditions on fact
-  if (words.length > 0) {
-    const ilikeConditions = words.map((w) => ilike(agentMemory.fact, `%${w}%`));
+  if (orTerms.length > 0) {
+    // search_tsv is a generated column, not expressible in the Drizzle schema
+    // builder (migration 0051) — reference it via raw SQL, same as
+    // agent_jobs.search_tsv in search-history.ts.
+    const tsv = sql`"agent_memory"."search_tsv"`;
+    // orTerms are plain alphanumerics only (stripped above) — joining them
+    // with ' | ' can't produce tsquery syntax, and the whole expression is
+    // still bound as a single parameter (no string concatenation into SQL).
+    const tsq = sql`to_tsquery('english', ${orTerms.join(' | ')})`;
 
     const rows = await (db
       .select()
       .from(agentMemory)
-      .where(and(...conditions, or(...ilikeConditions)))
-      .orderBy(...orderBy)
+      .where(and(...conditions, sql`${tsv} @@ ${tsq}`))
+      .orderBy(sql`ts_rank(${tsv}, ${tsq}) DESC`, ...orderBy)
       .limit(limit) as unknown as Promise<MemoryRow[]>);
 
     return rows;
@@ -187,13 +213,23 @@ async function keywordSearch(
 /**
  * Keyword (ILIKE) memory search exposed to the query_memory tool. Same ranking
  * as the keyword fallback of searchMemories, but callable without an embedding
- * client. Bumps access tracking on the returned rows.
+ * client. Bumps access tracking on the returned rows UNLESS `touch: false` is
+ * passed (e.g. read-only UI search — see KeywordSearchOptions.touch).
  */
 export async function keywordSearchMemories(
   db: AnyDrizzleDb,
   opts: KeywordSearchOptions,
 ): Promise<AgentMemory[]> {
-  const { query, entityId, agentId, skillTags, category, limit = 10, sort = 'importance' } = opts;
+  const {
+    query,
+    entityId,
+    agentId,
+    skillTags,
+    category,
+    limit = 10,
+    sort = 'importance',
+    touch = true,
+  } = opts;
 
   const rows = await keywordSearch(
     db,
@@ -204,7 +240,7 @@ export async function keywordSearchMemories(
 
   const memories = rows.map((r) => rowToMemory(r));
 
-  if (memories.length > 0) {
+  if (touch && memories.length > 0) {
     await touchMemories(
       db,
       memories.map((m) => m.id),

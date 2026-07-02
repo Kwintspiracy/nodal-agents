@@ -2,16 +2,23 @@
 //
 // The memory analog of run-curator.ts (skill consolidation). Loads an entity's
 // non-archived durable facts and runs a tight loop where the curation model may:
-//   - edit_memory:    distill an oversized/blobby fact to its key statement, or
-//                     write the merged text when consolidating near-duplicates.
-//   - archive_memory: soft-archive a redundant/obsolete agent-authored fact.
+//   - edit_memory:     distill an oversized/blobby fact to its key statement, or
+//                      write the merged text when consolidating near-duplicates.
+//   - archive_memory:  soft-archive a redundant/obsolete agent-authored fact.
+//   - set_importance:  re-score a fact's importance (1-5) from REAL usage
+//                      (access_count) + relevance — the agent's initial
+//                      importance is a one-shot guess; usage is the proven signal.
 //
-// Provenance-guarded: both tools refuse source='manual' (user-entered facts) via
-// the repo helpers. Archiving is reversible. A no-op pass is the common, correct
-// outcome on a clean pool. Fail-closed: errors propagate to runCuratorTick.
+// Provenance-guarded: all three tools refuse source='manual' (user-entered facts)
+// via the repo helpers. Archiving is reversible. A no-op pass is the common,
+// correct outcome on a clean pool. Fail-closed: errors propagate to runCuratorTick.
 
 import { agentMemory, eq, and, agents, type AnyDrizzleDb } from '@nodal-agents/db';
-import { archiveAgentMemory, updateAgentMemoryFact } from '@nodal-agents/memory';
+import {
+  archiveAgentMemory,
+  updateAgentMemoryFact,
+  updateAgentMemoryImportance,
+} from '@nodal-agents/memory';
 import type { ModelMessage } from 'ai';
 import { z } from 'zod';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
@@ -31,17 +38,23 @@ const EditMemoryArgs = z.object({
 const ArchiveMemoryArgs = z.object({
   memoryId: z.string().uuid('memoryId must be a valid UUID.'),
 });
+const SetImportanceArgs = z.object({
+  memoryId: z.string().uuid('memoryId must be a valid UUID.'),
+  importance: z.number().int().min(1).max(5),
+  reason: z.string().min(1).max(200),
+});
 
 export interface MemoryCurationResult {
   edited: number;
   archived: number;
+  rescored: number;
   turns: number;
 }
 
 function buildSystemPrompt(candidateList: string): string {
   return `You are the MEMORY CURATOR for this entity. Your job is to keep the durable-fact memory SMALL, DENSE, and NON-REDUNDANT, so the limited injection budget is spent on signal.
 
-CANDIDATE FACTS (id, source, importance, length, text):
+CANDIDATE FACTS (id, source, importance, access_count, length, text):
 ${candidateList}
 
 WHAT A GOOD FACT IS: ONE short, durable statement (a preference, an ID, a convention, a learned rule) — typically under ${HEALTHY_FACT_CHARS} characters. NOT a document, a raw dump, or a session log.
@@ -50,12 +63,14 @@ ACTIONS:
 1. DISTILL oversized facts — if a fact is a big blob (a pasted workflow/JSON, a long log, a transcript), call edit_memory to replace it with just the key statement + a pointer to where the artifact actually lives (e.g. "... saved in workspace file workflows/X.json"). Keep the SIGNAL, drop the bulk.
 2. MERGE near-duplicates — when several facts say the same thing, edit_memory ONE of them to the best consolidated wording, then archive_memory the others.
 3. ARCHIVE the clearly obsolete or contradictory.
+4. RE-SCORE importance — a fact's initial importance is just the authoring agent's one-shot estimate. access_count is PROVEN usage, and it is more reliable than that estimate. Call set_importance to RAISE the importance of a durable fact that is accessed often (it clearly matters), and to LOWER the importance of a fact that has never been used despite being around a while (it probably doesn't). Give a short reason.
 
 HARD RULES:
-- You may ONLY edit/archive AGENT-authored facts. The tools REFUSE source='manual' (user-entered) — do NOT attempt them, and do not retry a refused call.
+- You may ONLY edit/archive/re-score AGENT-authored facts. The tools REFUSE source='manual' (user-entered) — do NOT attempt them, and do not retry a refused call.
 - Archiving is the maximum action — it is reversible; never invent or fabricate facts.
 - When a fact is already a clean short statement, LEAVE IT. A no-op pass is correct and common on a tidy pool.
-- Do NOT merge facts that are merely related but distinct — only true duplicates.`;
+- Do NOT merge facts that are merely related but distinct — only true duplicates.
+- Do NOT re-score every fact out of habit — only when access_count clearly disagrees with the current importance.`;
 }
 
 function renderCandidates(
@@ -64,6 +79,7 @@ function renderCandidates(
     fact: string;
     source: string | null;
     importance: number | null;
+    accessCount: number | null;
   }>,
 ): string {
   if (facts.length === 0) return '(none)';
@@ -72,7 +88,7 @@ function renderCandidates(
       const len = f.fact.length;
       const oversized = len > HEALTHY_FACT_CHARS ? ' OVERSIZED' : '';
       const text = len > 200 ? `${f.fact.slice(0, 200)}…` : f.fact;
-      return `- id=${f.id} source=${f.source ?? 'agent'} importance=${f.importance ?? 3} len=${len}${oversized}\n    ${text.replace(/\s+/g, ' ')}`;
+      return `- id=${f.id} source=${f.source ?? 'agent'} importance=${f.importance ?? 3} access_count=${f.accessCount ?? 0} len=${len}${oversized}\n    ${text.replace(/\s+/g, ' ')}`;
     })
     .join('\n');
 }
@@ -94,12 +110,13 @@ export async function runMemoryCuration(
       fact: agentMemory.fact,
       source: agentMemory.source,
       importance: agentMemory.importance,
+      accessCount: agentMemory.accessCount,
     })
     .from(agentMemory)
     .where(and(eq(agentMemory.entityId, entityId), eq(agentMemory.archived, false)))
     .limit(MAX_CANDIDATES);
 
-  if (candidates.length === 0) return { edited: 0, archived: 0, turns: 0 };
+  if (candidates.length === 0) return { edited: 0, archived: 0, rescored: 0, turns: 0 };
 
   // Resolve LLM client — root/any active agent's key, optional model override.
   const agentRows = await db
@@ -131,7 +148,7 @@ export async function runMemoryCuration(
   }
   if (!resolved?.ok) {
     console.warn(`${TRACE} no LLM client for entity ${entityId}, skipping`);
-    return { edited: 0, archived: 0, turns: 0 };
+    return { edited: 0, archived: 0, rescored: 0, turns: 0 };
   }
   const llmClient = resolved.client;
 
@@ -154,10 +171,16 @@ export async function runMemoryCuration(
         'Soft-archive a redundant/obsolete agent-authored fact (reversible). Provide the memory UUID. Refuses user-entered (manual) facts.',
       inputSchema: ArchiveMemoryArgs,
     },
+    set_importance: {
+      description:
+        "Re-score a fact's importance (1-5) from REAL usage (access_count) + relevance. Raise for frequently-accessed durable facts; lower for never-used ones. Refuses user-entered (manual) facts.",
+      inputSchema: SetImportanceArgs,
+    },
   };
 
   let edited = 0;
   let archived = 0;
+  let rescored = 0;
   let turns = 0;
   console.warn(`${TRACE} start`, { entityId, candidateCount: candidates.length });
 
@@ -234,6 +257,31 @@ export async function runMemoryCuration(
             outcome = `archived memory ${parsed.data.memoryId}`;
           }
         }
+      } else if (tc.toolName === 'set_importance') {
+        const parsed = SetImportanceArgs.safeParse(tc.input);
+        if (!parsed.success) {
+          outcome = `error: invalid_input: ${parsed.error.message}`;
+        } else {
+          const res = await updateAgentMemoryImportance(
+            db,
+            entityId,
+            parsed.data.memoryId,
+            parsed.data.importance,
+          );
+          if ('error' in res) {
+            outcome =
+              res.error === 'not_agent_memory'
+                ? `error: memory ${parsed.data.memoryId} is user-entered and cannot be re-scored by the curator.`
+                : res.error === 'invalid_importance'
+                  ? `error: importance must be an integer 1-5.`
+                  : res.error === 'importance_locked'
+                    ? `error: memory ${parsed.data.memoryId} importance is user-locked and cannot be re-scored.`
+                    : `error: memory ${parsed.data.memoryId} not found in this entity.`;
+          } else {
+            rescored += 1;
+            outcome = `set importance of memory ${parsed.data.memoryId} to ${parsed.data.importance} (${parsed.data.reason})`;
+          }
+        }
       } else {
         outcome = `error: unknown tool ${tc.toolName}`;
       }
@@ -247,6 +295,6 @@ export async function runMemoryCuration(
     messages.push({ role: 'tool', content: resultParts } as ModelMessage);
   }
 
-  console.warn(`${TRACE} done`, { entityId, edited, archived, turns });
-  return { edited, archived, turns };
+  console.warn(`${TRACE} done`, { entityId, edited, archived, rescored, turns });
+  return { edited, archived, rescored, turns };
 }

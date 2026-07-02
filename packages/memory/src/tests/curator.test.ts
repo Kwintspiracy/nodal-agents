@@ -4,7 +4,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import { agentMemory, eq } from '@nodal-agents/db';
-import { transitionMemoryLifecycle, archiveAgentMemory, updateAgentMemoryFact } from '../curator';
+import {
+  transitionMemoryLifecycle,
+  archiveAgentMemory,
+  updateAgentMemoryFact,
+  updateAgentMemoryImportance,
+} from '../curator';
 import { computeFactHash } from '../hash';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 
@@ -26,6 +31,7 @@ async function insertFact(o: {
   importance: number;
   accessCount?: number;
   createdAt?: Date;
+  importanceLocked?: boolean;
 }): Promise<string> {
   const [row] = await db
     .insert(agentMemory)
@@ -38,6 +44,7 @@ async function insertFact(o: {
       accessCount: o.accessCount ?? 0,
       archived: false,
       createdAt: o.createdAt ?? OLD,
+      importanceLocked: o.importanceLocked ?? false,
     })
     .returning({ id: agentMemory.id });
   return row!.id as string;
@@ -146,5 +153,91 @@ describe('updateAgentMemoryFact — provenance-guarded distill/merge', () => {
     expect(await updateAgentMemoryFact(db, seed.entityId, userFact, 'hacked')).toEqual({
       error: 'not_agent_memory',
     });
+  });
+});
+
+describe('updateAgentMemoryImportance — usage-driven re-scoring', () => {
+  it('changes the importance of an agent fact but REFUSES a user-entered (manual) one', async () => {
+    await db.delete(agentMemory);
+    const agentFact = await insertFact({
+      fact: 'agent fact often used',
+      source: 'agent',
+      importance: 2,
+      accessCount: 12,
+    });
+    const userFact = await insertFact({
+      fact: 'user fact',
+      source: 'manual',
+      importance: 3,
+    });
+
+    expect(await updateAgentMemoryImportance(db, seed.entityId, agentFact, 5)).toEqual({
+      ok: true,
+    });
+    const [row] = await db
+      .select({ importance: agentMemory.importance })
+      .from(agentMemory)
+      .where(eq(agentMemory.id, agentFact));
+    expect(row?.importance).toBe(5);
+
+    expect(await updateAgentMemoryImportance(db, seed.entityId, userFact, 1)).toEqual({
+      error: 'not_agent_memory',
+    });
+    const [userRow] = await db
+      .select({ importance: agentMemory.importance })
+      .from(agentMemory)
+      .where(eq(agentMemory.id, userFact));
+    expect(userRow?.importance).toBe(3); // untouched
+  });
+
+  it('returns not_found for a missing id', async () => {
+    const res = await updateAgentMemoryImportance(
+      db,
+      seed.entityId,
+      '00000000-0000-0000-0000-0000000000ff',
+      3,
+    );
+    expect(res).toEqual({ error: 'not_found' });
+  });
+
+  it('refuses to re-score a user-locked fact, leaving importance untouched', async () => {
+    await db.delete(agentMemory);
+    const lockedFact = await insertFact({
+      fact: 'user-pinned agent fact',
+      source: 'agent',
+      importance: 5,
+      accessCount: 0,
+      importanceLocked: true,
+    });
+
+    expect(await updateAgentMemoryImportance(db, seed.entityId, lockedFact, 1)).toEqual({
+      error: 'importance_locked',
+    });
+    const [row] = await db
+      .select({ importance: agentMemory.importance })
+      .from(agentMemory)
+      .where(eq(agentMemory.id, lockedFact));
+    expect(row?.importance).toBe(5); // untouched — the user's pin wins
+  });
+
+  it('rejects an out-of-range or non-integer importance without touching the row', async () => {
+    await db.delete(agentMemory);
+    const agentFact = await insertFact({ fact: 'agent fact', source: 'agent', importance: 3 });
+
+    expect(await updateAgentMemoryImportance(db, seed.entityId, agentFact, 6)).toEqual({
+      error: 'invalid_importance',
+    });
+    expect(await updateAgentMemoryImportance(db, seed.entityId, agentFact, 0)).toEqual({
+      error: 'invalid_importance',
+    });
+    expect(await updateAgentMemoryImportance(db, seed.entityId, agentFact, 2.5)).toEqual({
+      error: 'invalid_importance',
+    });
+
+    const [row] = await db
+      .select({ importance: agentMemory.importance })
+      .from(agentMemory)
+      .where(eq(agentMemory.id, agentFact));
+    expect(row?.importance).toBe(3); // untouched
   });
 });

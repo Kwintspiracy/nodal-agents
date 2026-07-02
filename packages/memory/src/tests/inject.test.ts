@@ -24,6 +24,7 @@ function makeMem(id: string, fact: string, importance: number, lastAccessed?: st
     valid_to: null,
     fact_hash: null,
     archived: false,
+    importance_locked: false,
     last_accessed_at: lastAccessed ?? '2026-01-01T00:00:00.000Z',
     access_count: 0,
     created_at: '2026-01-01T00:00:00.000Z',
@@ -238,6 +239,81 @@ describe('selectMemoriesForInjection — DB', () => {
     // On-topic (importance 2, hits email+server) outranks the importance-5 fact.
     expect(out[0]?.fact).toContain('email server');
   });
+
+  it('stems the task — a "token" task surfaces a fact containing "tokens" (english config)', async () => {
+    await db.delete(agentMemory);
+    await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'refresh tokens rotate weekly',
+      category: 'context',
+      importance: 2,
+      source: 'agent',
+      skill_tags: [],
+    });
+    await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'the office coffee machine is on the third floor',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const out = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 1500,
+      query: 'rotate the token now',
+    });
+    expect(out[0]?.fact).toBe('refresh tokens rotate weekly');
+  });
+
+  it('surfaces a relevant-but-low-importance fact hidden past MAX_CANDIDATES(200) by the old importance/recency ordering', async () => {
+    await db.delete(agentMemory);
+
+    // 200 higher-importance, query-irrelevant facts — under the pre-FTS
+    // ordering (importance DESC, last_accessed_at DESC) these fill every slot
+    // of the top-200 candidate pool, pushing the one relevant-but-low-importance
+    // fact below the LIMIT 200 cutoff.
+    for (let i = 0; i < 200; i++) {
+      await createMemory(db, {
+        entity_id: seed.entityId,
+        agent_id: seed.agentId,
+        fact: `filler fact number ${i} about nothing in particular`,
+        category: 'context',
+        importance: 5,
+        source: 'agent',
+        skill_tags: [],
+      });
+    }
+    const target = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'the printer configuration lives in the shared network folder',
+      category: 'context',
+      importance: 1,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    // Without a query: falls back to the old importance/recency ordering —
+    // the importance-1 fact is candidate #201, excluded by LIMIT 200.
+    const withoutQuery = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 50_000,
+    });
+    expect(withoutQuery.find((m) => m.id === target.id)).toBeUndefined();
+
+    // With a query matching it: FTS ranks it #1 (only match; the 200 fillers
+    // all rank 0), so it's inside the candidate pool and gets packed.
+    const withQuery = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 500,
+      query: 'printer configuration shared folder',
+    });
+    expect(withQuery.some((m) => m.id === target.id)).toBe(true);
+  });
 });
 
 // Small helper to avoid eq import cycle in test file
@@ -245,3 +321,109 @@ import { eq } from '@nodal-agents/db';
 function eqColumn(id: string) {
   return eq(agentMemory.id, id);
 }
+
+// ─── Backward-compat: no/empty/all-stopword query falls back to the pre-FTS
+// importance DESC → recency DESC ordering (Brick 1 must not regress this) ───
+describe('selectMemoriesForInjection — backward-compat ordering (no usable query)', () => {
+  it('with query omitted, orders purely by importance DESC then recency DESC', async () => {
+    await db.delete(agentMemory);
+    const low = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'low importance fact',
+      category: 'context',
+      importance: 1,
+      source: 'agent',
+      skill_tags: [],
+    });
+    const high = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'high importance fact',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+    const mid = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'mid importance fact',
+      category: 'context',
+      importance: 3,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const out = await selectMemoriesForInjection(db, { entityId: seed.entityId, maxChars: 5000 });
+    expect(out.map((m) => m.id)).toEqual([high.id, mid.id, low.id]);
+  });
+
+  it('an empty-string query does not throw and falls back to importance/recency ordering', async () => {
+    await db.delete(agentMemory);
+    const low = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'low importance fact',
+      category: 'context',
+      importance: 1,
+      source: 'agent',
+      skill_tags: [],
+    });
+    const high = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'high importance fact',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const out = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 5000,
+      query: '',
+    });
+    expect(out.map((m) => m.id)).toEqual([high.id, low.id]);
+  });
+
+  it('an all-stopwords task ("the and but") does not throw an invalid tsquery and falls back to importance/recency', async () => {
+    await db.delete(agentMemory);
+    const low = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'low importance fact',
+      category: 'context',
+      importance: 1,
+      source: 'agent',
+      skill_tags: [],
+    });
+    const high = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'high importance fact',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    await expect(
+      selectMemoriesForInjection(db, {
+        entityId: seed.entityId,
+        maxChars: 5000,
+        query: 'the and but',
+      }),
+    ).resolves.not.toThrow();
+
+    const out = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 5000,
+      query: 'the and but',
+    });
+    // tokenizeQuery strips all of "the"/"and"/"but" as stopwords → tokens=[]
+    // → same code path (and ordering) as no query at all.
+    expect(out.map((m) => m.id)).toEqual([high.id, low.id]);
+  });
+});

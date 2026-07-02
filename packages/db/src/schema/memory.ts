@@ -37,6 +37,15 @@ export const agentMemory = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'cascade' }),
+    /**
+     * Full-text source. A generated `search_tsv tsvector` column + GIN index
+     * (raw SQL, migration 0051 — not expressible in the Drizzle schema builder,
+     * same pattern as agent_jobs.search_tsv / migration 0050) makes this fact
+     * rankable by relevance. Powers memory injection (selectMemoriesForInjection)
+     * and the `query_memory` builtin (keywordSearchMemories) via ts_rank.
+     * Config is `'english'` (stemming — "tokens" matches a "token" query),
+     * unlike agent_jobs.search_tsv which stays `'simple'`.
+     */
     fact: text('fact').notNull(),
     category: text('category').default('context'),
     importance: integer('importance').default(3),
@@ -50,6 +59,12 @@ export const agentMemory = pgTable(
     validTo: timestamp('valid_to', { withTimezone: true }),
     factHash: text('fact_hash'),
     archived: boolean('archived').default(false),
+    /**
+     * User override lock (migration 0053). When true, the curator's
+     * usage-driven re-scoring MUST refuse to touch importance — a user-pinned
+     * value wins over the agent's guess and the curator's correction.
+     */
+    importanceLocked: boolean('importance_locked').notNull().default(false),
     lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }).defaultNow(),
     accessCount: integer('access_count').default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
