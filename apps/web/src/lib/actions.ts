@@ -66,6 +66,7 @@ import {
   createMemory,
   deleteMemory,
   updateMemory,
+  keywordSearchMemories,
   MemoryNotFoundError,
   MemoryDuplicateError,
 } from '@nodal-agents/memory';
@@ -1949,6 +1950,58 @@ export async function listMemoriesAction(
   }
 }
 
+/**
+ * Entity-scoped full-text search for the /memories page search box — the same
+ * FTS engine (search_tsv + ts_rank, migration 0051) the agent's query_memory
+ * tool uses, but with touch:false so browsing the dashboard never bumps
+ * access_count (that's the curator's real-usage signal; a page search isn't
+ * "usage"). Only covers non-archived rows — keywordSearch filters
+ * archived=false, so the Archived tab keeps its existing client-side filter.
+ */
+export async function searchMemoriesAction(
+  query: string,
+): Promise<ActionResult<MemoryListRow[]>> {
+  try {
+    const session = await getSession();
+    const trimmed = query.trim();
+    if (!trimmed) return ok([]);
+    const db = getDb();
+
+    const items = await keywordSearchMemories(db, {
+      query: trimmed,
+      entityId: session.entityId,
+      limit: 50,
+      touch: false,
+    });
+
+    const agentIds = Array.from(
+      new Set(items.map((m) => m.agent_id).filter((x): x is string => x !== null)),
+    );
+    const agentLookup = new Map<string, { name: string; slug: string }>();
+    if (agentIds.length > 0) {
+      const rows = await db
+        .select({ id: agents.id, name: agents.name, slug: agents.slug })
+        .from(agents)
+        .where(inArray(agents.id, agentIds));
+      for (const r of rows) agentLookup.set(r.id, { name: r.name, slug: r.slug });
+    }
+
+    const rows: MemoryListRow[] = items.map((m) => {
+      const agent = m.agent_id ? agentLookup.get(m.agent_id) : null;
+      return {
+        ...m,
+        agentName: agent?.name ?? null,
+        agentSlug: agent?.slug ?? null,
+      };
+    });
+
+    return ok(rows);
+  } catch (err) {
+    console.error('[searchMemoriesAction]', err);
+    return fail('db_error', 'Failed to search memories');
+  }
+}
+
 const CreateMemorySchema = z.object({
   fact: z.string().min(1).max(2000),
   category: z.enum(['preference', 'context', 'outcome', 'learned_rule']).default('context'),
@@ -2006,6 +2059,66 @@ export async function archiveMemoryAction(id: string): Promise<ActionResult<void
     }
     console.error('[archiveMemoryAction]', err);
     return fail('db_error', 'Failed to archive memory');
+  }
+}
+
+const UpdateMemoryImportanceSchema = z.object({
+  id: z.string().guid(),
+  importance: z.number().int().min(1).max(5),
+});
+
+/**
+ * User override of a fact's importance — top of the authority chain
+ * (agent guess → curator re-score → user pin). Always sets
+ * importance_locked=true so the curator never re-scores this fact again.
+ */
+export async function updateMemoryImportanceAction(
+  id: string,
+  importance: number,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = UpdateMemoryImportanceSchema.safeParse({ id, importance });
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    await updateMemory(db, parsed.data.id, session.entityId, {
+      importance: parsed.data.importance,
+      importance_locked: true,
+    });
+    revalidatePath('/memories');
+    return ok(undefined);
+  } catch (err) {
+    if (err instanceof MemoryNotFoundError) {
+      return fail('not_found', 'Memory not found');
+    }
+    console.error('[updateMemoryImportanceAction]', err);
+    return fail('db_error', 'Failed to update importance');
+  }
+}
+
+/**
+ * Unpin — hands authority back to the curator. Clears importance_locked
+ * WITHOUT touching the current importance value, so the fact keeps its
+ * last-known score until the curator's next usage-driven pass re-scores it.
+ */
+export async function unpinMemoryImportanceAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid memory id');
+    }
+    const db = getDb();
+    await updateMemory(db, id, session.entityId, { importance_locked: false });
+    revalidatePath('/memories');
+    return ok(undefined);
+  } catch (err) {
+    if (err instanceof MemoryNotFoundError) {
+      return fail('not_found', 'Memory not found');
+    }
+    console.error('[unpinMemoryImportanceAction]', err);
+    return fail('db_error', 'Failed to unpin importance');
   }
 }
 

@@ -18,6 +18,7 @@ import {
   decrypt,
   isEncrypted,
 } from '@nodal-agents/secrets';
+import { LOCAL_ENTITY_ID } from '@nodal-agents/auth';
 
 beforeAll(() => {
   process.env['DATABASE_URL'] = 'postgres://placeholder:5432/placeholder';
@@ -131,6 +132,8 @@ const memoryMocks = {
   listMemories: vi.fn(),
   deleteMemory: vi.fn(),
   updateMemory: vi.fn(),
+  createMemory: vi.fn(),
+  keywordSearchMemories: vi.fn(),
 };
 
 vi.mock('@nodal-agents/memory', async () => {
@@ -141,6 +144,8 @@ vi.mock('@nodal-agents/memory', async () => {
     listMemories: (...args: unknown[]) => memoryMocks.listMemories(...args),
     deleteMemory: (...args: unknown[]) => memoryMocks.deleteMemory(...args),
     updateMemory: (...args: unknown[]) => memoryMocks.updateMemory(...args),
+    createMemory: (...args: unknown[]) => memoryMocks.createMemory(...args),
+    keywordSearchMemories: (...args: unknown[]) => memoryMocks.keywordSearchMemories(...args),
   };
 });
 
@@ -1133,6 +1138,185 @@ describe('deleteMemoryAction', () => {
     const { deleteMemoryAction } = await import('../src/lib/actions.ts');
     const r = await deleteMemoryAction('aaaaaaaa-0000-0000-0000-000000000061');
     expect(r.ok).toBe(true);
+  });
+});
+
+describe('updateMemoryImportanceAction', () => {
+  it('rejects a non-uuid id', async () => {
+    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
+    const r = await updateMemoryImportanceAction('bad', 4);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects an importance outside 1-5', async () => {
+    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
+    const tooHigh = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000070', 6);
+    expect(tooHigh.ok).toBe(false);
+    if (!tooHigh.ok) expect(tooHigh.code).toBe('validation_failed');
+
+    const tooLow = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000070', 0);
+    expect(tooLow.ok).toBe(false);
+    if (!tooLow.ok) expect(tooLow.code).toBe('validation_failed');
+  });
+
+  it('translates MemoryNotFoundError into not_found (e.g. a fact scoped to another entity)', async () => {
+    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
+    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
+    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
+    const r = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000071', 5);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('pins the fact: sets importance AND importance_locked=true, scoped to the session entity', async () => {
+    memoryMocks.updateMemory.mockResolvedValueOnce({});
+    const { updateMemoryImportanceAction } = await import('../src/lib/actions.ts');
+    const r = await updateMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000072', 5);
+    expect(r.ok).toBe(true);
+    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
+    // updateMemory(db, id, entityId, updates)
+    expect(call[1]).toBe('aaaaaaaa-0000-0000-0000-000000000072');
+    expect(call[2]).toBe(LOCAL_ENTITY_ID);
+    expect(call[3]).toEqual({ importance: 5, importance_locked: true });
+  });
+});
+
+describe('unpinMemoryImportanceAction', () => {
+  it('rejects a non-uuid id', async () => {
+    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
+    const r = await unpinMemoryImportanceAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('translates MemoryNotFoundError into not_found', async () => {
+    const { MemoryNotFoundError } = await import('@nodal-agents/memory');
+    memoryMocks.updateMemory.mockRejectedValueOnce(new MemoryNotFoundError('id'));
+    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
+    const r = await unpinMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000073');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('clears importance_locked WITHOUT touching importance, scoped to the session entity', async () => {
+    memoryMocks.updateMemory.mockResolvedValueOnce({});
+    const { unpinMemoryImportanceAction } = await import('../src/lib/actions.ts');
+    const r = await unpinMemoryImportanceAction('aaaaaaaa-0000-0000-0000-000000000074');
+    expect(r.ok).toBe(true);
+    const call = memoryMocks.updateMemory.mock.calls.at(-1)!;
+    expect(call[1]).toBe('aaaaaaaa-0000-0000-0000-000000000074');
+    expect(call[2]).toBe(LOCAL_ENTITY_ID);
+    expect(call[3]).toEqual({ importance_locked: false });
+    // Importance itself is deliberately absent from the update payload.
+    expect(call[3]).not.toHaveProperty('importance');
+  });
+});
+
+describe('createMemoryAction', () => {
+  it('rejects an empty fact', async () => {
+    const { createMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await createMemoryAction({ fact: '' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('writes a source=manual fact scoped to the session entity, with defaults applied', async () => {
+    memoryMocks.createMemory.mockResolvedValueOnce({});
+    const { createMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await createMemoryAction({ fact: 'Prefers concise replies.' });
+    expect(r.ok).toBe(true);
+    const call = memoryMocks.createMemory.mock.calls.at(-1)!;
+    expect(call[1]).toEqual({
+      entity_id: LOCAL_ENTITY_ID,
+      agent_id: null,
+      fact: 'Prefers concise replies.',
+      category: 'context',
+      importance: 3,
+      source: 'manual',
+      skill_tags: [],
+    });
+  });
+
+  it('passes through an explicit category and importance from the New Memory modal', async () => {
+    memoryMocks.createMemory.mockResolvedValueOnce({});
+    const { createMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await createMemoryAction({
+      fact: 'Runs ComfyUI on port 8188.',
+      category: 'outcome',
+      importance: 5,
+    });
+    expect(r.ok).toBe(true);
+    const call = memoryMocks.createMemory.mock.calls.at(-1)!;
+    expect((call[1] as { category: string }).category).toBe('outcome');
+    expect((call[1] as { importance: number }).importance).toBe(5);
+  });
+
+  it('treats a duplicate fact as a no-op success (idempotent)', async () => {
+    const { MemoryDuplicateError } = await import('@nodal-agents/memory');
+    memoryMocks.createMemory.mockRejectedValueOnce(new MemoryDuplicateError('existing-id'));
+    const { createMemoryAction } = await import('../src/lib/actions.ts');
+    const r = await createMemoryAction({ fact: 'Already known fact.' });
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('searchMemoriesAction', () => {
+  it('returns an empty list without querying for a blank query', async () => {
+    memoryMocks.keywordSearchMemories.mockClear();
+    const { searchMemoriesAction } = await import('../src/lib/actions.ts');
+    const r = await searchMemoriesAction('   ');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual([]);
+    expect(memoryMocks.keywordSearchMemories).not.toHaveBeenCalled();
+  });
+
+  it('searches with touch:false, scoped to the session entity, and resolves agent names', async () => {
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000080';
+    memoryMocks.keywordSearchMemories.mockResolvedValueOnce([
+      {
+        id: 'bbbbbbbb-0000-0000-0000-000000000080',
+        entity_id: LOCAL_ENTITY_ID,
+        agent_id: agentId,
+        fact: 'Runs ComfyUI on port 8188.',
+        category: 'context',
+        importance: 3,
+        importance_locked: false,
+        source: 'agent',
+        skill_tags: [],
+        memory_layer: null,
+        valid_from: null,
+        valid_to: null,
+        fact_hash: null,
+        archived: false,
+        last_accessed_at: null,
+        access_count: 0,
+        created_at: '2026-07-01T00:00:00.000Z',
+        updated_at: '2026-07-01T00:00:00.000Z',
+      },
+    ]);
+    currentDb = makeDb([{ id: agentId, name: 'Boris', slug: 'boris' }]) as typeof currentDb;
+
+    const { searchMemoriesAction } = await import('../src/lib/actions.ts');
+    const r = await searchMemoriesAction('comfyui');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.length).toBe(1);
+      expect(r.data[0]!.agentName).toBe('Boris');
+    }
+
+    const call = memoryMocks.keywordSearchMemories.mock.calls.at(-1)!;
+    expect((call[1] as { touch: boolean }).touch).toBe(false);
+    expect((call[1] as { entityId: string }).entityId).toBe(LOCAL_ENTITY_ID);
+    expect((call[1] as { query: string }).query).toBe('comfyui');
+  });
+
+  it('surfaces a search failure as db_error', async () => {
+    memoryMocks.keywordSearchMemories.mockRejectedValueOnce(new Error('boom'));
+    const { searchMemoriesAction } = await import('../src/lib/actions.ts');
+    const r = await searchMemoriesAction('anything');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('db_error');
   });
 });
 
