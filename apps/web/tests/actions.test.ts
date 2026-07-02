@@ -1573,7 +1573,54 @@ describe('resolveApprovalAction', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
+  it('returns not_found (no runner call) when the approval does not belong to the caller entity', async () => {
+    // IDOR guard: resolveApprovalAction must scope its DB lookup to the
+    // caller's entity BEFORE forwarding to the runner. An empty scoped
+    // select simulates "belongs to another tenant" (or doesn't exist) —
+    // either way the caller gets an identical not_found, no cross-tenant leak.
+    currentDb = makeDb([]) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({
+      approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000095',
+      decision: 'approve',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it('proceeds to the runner when the approval belongs to the caller entity', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000096' },
+    ]) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          jobId: 'aaaaaaaa-0000-0000-0000-000000000097',
+          decision: 'approve',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const { resolveApprovalAction } = await import('../src/lib/actions.ts');
+    const r = await resolveApprovalAction({
+      approvalRequestId: 'aaaaaaaa-0000-0000-0000-000000000096',
+      decision: 'approve',
+    });
+    expect(r.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
   it('signs the runner call with WORKER_SECRET and returns ok on 200', async () => {
+    // The IDOR guard (FIX #2) does an entity-scoped select before forwarding
+    // to the runner — this test is about the runner call itself, so give it
+    // its own non-empty row rather than relying on state left by a sibling
+    // test (order-dependence caught by isolation review: `vitest -t` alone
+    // on this test failed before this line was added).
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000090' }]) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -1598,6 +1645,9 @@ describe('resolveApprovalAction', () => {
   });
 
   it('returns runner_unreachable when fetch throws', async () => {
+    // Own its currentDb (see note above) — the IDOR guard must find the
+    // approval before this test can reach the fetch-throws path.
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000093' }]) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
     const { resolveApprovalAction } = await import('../src/lib/actions.ts');
     const r = await resolveApprovalAction({
@@ -1610,6 +1660,9 @@ describe('resolveApprovalAction', () => {
   });
 
   it('forwards the runner error code on non-200', async () => {
+    // Own its currentDb (see note above) — the IDOR guard must find the
+    // approval before this test can reach the non-200 forwarding path.
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000094' }]) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ error: 'approval_already_resolved' }), {
         status: 400,
@@ -2701,7 +2754,17 @@ describe('updateAgentAction — db path', () => {
 
   it('re-inserts sub-agent assignments for router with subAgentIds', async () => {
     const subId = '22222222-2222-2222-2222-222222222222';
-    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000003' }]) as typeof currentDb;
+    // Sequenced, not the dumb shared-array `makeDb`: updateAgentAction now
+    // issues TWO selects (ownership, then the FIX #3 entity check on
+    // subAgentIds) and `makeDb` would hand the SAME 1-row array to both,
+    // making this test pass by row-count coincidence (1 subAgentId === 1
+    // shared row) rather than because the subAgentId was actually found.
+    // With 2 subAgentIds that coincidence breaks — makeDbSeq sequences each
+    // select explicitly so the test is green for the right reason.
+    currentDb = makeDbSeq([
+      [{ id: 'aaaaaaaa-0000-0000-0000-000000000003' }], // ownership check
+      [{ id: subId }], // subAgentIds entity check: subId IS found
+    ]) as typeof currentDb;
     const { updateAgentAction } = await import('../src/lib/actions.ts');
     const r = await updateAgentAction({
       id: 'aaaaaaaa-0000-0000-0000-000000000003',
@@ -2756,6 +2819,65 @@ describe('updateAgentAction — db path', () => {
 
     expect(jobsSetArg).toBeDefined();
     expect(jobsSetArg?.['systemPrompt']).toBe(null);
+  });
+
+  it('rejects subAgentIds not fully found in the caller entity (cross-tenant or nonexistent) — sub_agents_not_found', async () => {
+    // Mirrors createAgentRepo's entity check (packages/db/src/repos/agents.ts:
+    // 57-65), which the edit path skipped: attaching another tenant's agent as
+    // a sub-agent would let it execute under this orchestrator (its config,
+    // its skills, its LLM key). The sequential mock returns a row for the
+    // ownership check, then an EMPTY row for the entity-scoped subAgentIds
+    // check — simulating a foreign/nonexistent id.
+    const foreignSubId = '33333333-3333-3333-3333-333333333333';
+    currentDb = makeDbSeq([
+      [{ id: 'aaaaaaaa-0000-0000-0000-000000000005' }], // ownership check: agent exists
+      [], // subAgentIds entity check: nothing found
+    ]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000005',
+      name: 'Router',
+      personality: 'I route.',
+      model: 'gpt-4',
+      role: 'router',
+      subAgentIds: [foreignSubId],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+
+    // The request was rejected up front — no assignment was ever written.
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('accepts subAgentIds that ARE all in the caller entity — writes the assignment', async () => {
+    const subId = '44444444-4444-4444-4444-444444444444';
+    currentDb = makeDbSeq([
+      [{ id: 'aaaaaaaa-0000-0000-0000-000000000006' }], // ownership check
+      [{ id: subId }], // subAgentIds entity check: found
+    ]) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000006',
+      name: 'Router',
+      personality: 'I route.',
+      model: 'gpt-4',
+      role: 'router',
+      subAgentIds: [subId],
+    });
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).toHaveBeenCalled();
+
+    // Stronger proof (invariant #5): the actual payload written carries the
+    // validated subId, not just "insert happened".
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    const assignmentValues = valuesCalls[0]?.[0] as Array<Record<string, unknown>> | undefined;
+    expect(Array.isArray(assignmentValues)).toBe(true);
+    expect(assignmentValues?.[0]?.['subAgentId']).toBe(subId);
   });
 });
 

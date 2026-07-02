@@ -737,6 +737,21 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Agent not found');
 
+    // Entity check on subAgentIds — mirrors createAgentRepo (packages/db/src/
+    // repos/agents.ts:57-65), which validates this on create but the edit path
+    // never did. Without it a tenant could attach another tenant's agent as a
+    // sub-agent and have it execute under this orchestrator (its config, its
+    // skills, its LLM key).
+    if (subAgentIds.length > 0) {
+      const found = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(inArray(agents.id, subAgentIds), eq(agents.entityId, session.entityId)));
+      if (found.length !== subAgentIds.length) {
+        return fail('validation_failed', 'sub_agents_not_found');
+      }
+    }
+
     const { dbRole, orchestratorMode } = mapRoleToDb(role);
 
     // Update core fields. llmKeyId: undefined means "don't touch", null clears.
@@ -3669,11 +3684,33 @@ export async function resolveApprovalAction(
   raw: unknown,
 ): Promise<ActionResult<{ jobId: string; decision: string }>> {
   try {
-    await getSession();
+    const session = await getSession();
     const parsed = ResolveApprovalSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
+
+    // IDOR guard: getSession() only authenticates — it says nothing about
+    // whether THIS approval belongs to the caller's entity. Without this
+    // check, any authenticated user could resolve another tenant's approval
+    // (e.g. a gated run_command) just by knowing its GUID. Scope the lookup
+    // to session.entityId and treat "not found" and "found but other tenant"
+    // identically — don't reveal cross-tenant existence.
+    const db = getDb();
+    const [approval] = await db
+      .select({ id: approvalRequests.id })
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.id, parsed.data.approvalRequestId),
+          eq(approvalRequests.entityId, session.entityId),
+        ),
+      )
+      .limit(1);
+    if (!approval) {
+      return fail('not_found', 'Approval not found');
+    }
+
     if (!env.WORKER_SECRET) {
       console.error('[resolveApprovalAction] WORKER_SECRET missing');
       return fail('config_error', 'WORKER_SECRET is not set');
