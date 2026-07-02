@@ -366,6 +366,75 @@ describe('executeJob', () => {
     }
   });
 
+  // ─── Invariant 8: delegation depth guard ──────────────────────────────────
+
+  it('fails loud with delegation_depth_exceeded when job.delegationDepth is at the max (3)', async () => {
+    // Regression: DEFAULT_LIMITS.maxDelegationDepth is 3, but nothing ever
+    // compared the PERSISTED job.delegationDepth column to it — ChainCounters
+    // tracks depth in memory only and is recreated at 0 on every runJob call,
+    // so a cycle of orchestrators delegating to each other recursed unboundedly.
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'delegate again',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+        delegationDepth: 3,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create depth-exceeded test job');
+
+    // The LLM must never be called — the guard fires before the first turn.
+    const llmClient = makeMockLlmClient([]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('delegation_depth_exceeded');
+    }
+
+    const rows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('failed');
+    expect(rows[0]?.error).toBe('delegation_depth_exceeded');
+  });
+
+  it('a job BELOW the delegation depth max (0) is not blocked by the depth guard', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'a plain task',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+        delegationDepth: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create depth-0 test job');
+
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }] },
+    ]);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    const rows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.error).toBeNull();
+  });
+
   it('completes when LLM returns text only (no tools)', async () => {
     const job = await createTestJob(db, seed);
 

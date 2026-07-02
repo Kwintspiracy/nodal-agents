@@ -133,6 +133,25 @@ export async function executeReadyTasks(
     const runMemory = task.rootJobId ? await loadRunMemory(db, task.rootJobId, task.id) : '';
     const taskText = buildTaskText(task, runMemory);
 
+    // Invariant 8 (delegation depth): the create_task/task-board path must
+    // feed the same guard as assign_*/inline delegation. task.rootJobId is the
+    // CREATOR job's own id (create_task sets `rootJobId: ctx.jobId` — see
+    // packages/orchestration/src/planner/task-tools.ts:116), and it's already
+    // used below as this child's parentJobId. So the child's depth is the
+    // creator's depth + 1 — the same recursion metric assign_* uses. Without
+    // this, every task-board child defaulted to depth 0 forever, so a chain of
+    // orchestrators using create_task instead of assign_* was never bounded by
+    // the maxDelegationDepth guard in execute.ts.
+    let childDepth = 0;
+    if (task.rootJobId) {
+      const [creatorRow] = await db
+        .select({ delegationDepth: agentJobs.delegationDepth })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, task.rootJobId))
+        .limit(1);
+      childDepth = (creatorRow?.delegationDepth ?? 0) + 1;
+    }
+
     // Create child job
     const jobRows = await db
       .insert(agentJobs)
@@ -142,6 +161,7 @@ export async function executeReadyTasks(
         channel: 'task-board',
         task: taskText,
         parentJobId: task.rootJobId ?? undefined,
+        delegationDepth: childDepth,
         status: 'pending',
         messages: [{ role: 'user', content: taskText }],
       })

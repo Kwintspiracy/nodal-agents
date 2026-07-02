@@ -223,6 +223,69 @@ describe('executeReadyTasks', () => {
     expect(updatedTask[0]?.jobId).not.toBeNull();
   });
 
+  // ─── Invariant 8: delegation depth propagates through create_task too ─────
+  // (companion to the assign_*/inline-delegation guard in execute.ts)
+
+  it('sets the child job delegationDepth to the CREATOR job depth + 1 (create_task path bounded like assign_*)', async () => {
+    // create_task sets rootJobId = the creator job's own id (ctx.jobId — see
+    // packages/orchestration/src/planner/task-tools.ts:116), and execute-ready
+    // uses that same rootJobId as the child's parentJobId. So a creator job at
+    // depth 2 must produce a child at depth 3 — the same recursion metric
+    // assign_*/handleDelegation uses (packages/orchestration/src/router/
+    // delegate.ts:62).
+    const creatorJob = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'creator task',
+        status: 'processing',
+        messages: [],
+        delegationDepth: 2,
+      })
+      .returning();
+    const creatorJobId = creatorJob[0]!.id;
+
+    const task = await createTask({ rootJobId: creatorJobId });
+
+    const deps = makeDeps(db, [{ text: 'task done' }]);
+    await executeReadyTasks(db as RunnerDeps['db'], deps, 5);
+
+    const updatedTask = await db
+      .select({ jobId: agentTasks.jobId })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, task.id));
+    const childJobId = updatedTask[0]?.jobId;
+    expect(childJobId).not.toBeNull();
+
+    const childJob = await db
+      .select({ delegationDepth: agentJobs.delegationDepth })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, childJobId!));
+    expect(childJob[0]?.delegationDepth).toBe(3);
+  });
+
+  it('sets the child job delegationDepth to 0 when the task has no rootJobId (no creator job to inherit from)', async () => {
+    const task = await createTask({ rootJobId: null });
+
+    const deps = makeDeps(db, [{ text: 'task done' }]);
+    await executeReadyTasks(db as RunnerDeps['db'], deps, 5);
+
+    const updatedTask = await db
+      .select({ jobId: agentTasks.jobId })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, task.id));
+    const childJobId = updatedTask[0]?.jobId;
+    expect(childJobId).not.toBeNull();
+
+    const childJob = await db
+      .select({ delegationDepth: agentJobs.delegationDepth })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, childJobId!));
+    expect(childJob[0]?.delegationDepth).toBe(0);
+  });
+
   it('skips tasks with unresolved deps', async () => {
     const todoDep = await createTask({ status: 'todo' });
     const blockedTask = await createTask({ dependsOn: [todoDep.id] });

@@ -638,6 +638,26 @@ async function runJob(
     return { status: 'failed', error: 'chain_limit_exceeded' };
   }
 
+  // Invariant 8: delegationDepth is persisted per-job (bumped by handleDelegation
+  // on the CHILD row — parentDepth + 1, see packages/orchestration/src/router/
+  // delegate.ts:62) but was never actually compared to the max. ChainCounters
+  // tracks depth in-memory only and is recreated at 0 on every runJob call
+  // (line ~1248), so it never saw the persisted value either — the "depth 3"
+  // cap (invariant #8) was inert. A cycle of orchestrators delegating to each
+  // other would recurse unboundedly. Guard on the persisted column, mirroring
+  // the chainCount guard above.
+  if ((job.delegationDepth ?? 0) >= DEFAULT_LIMITS.maxDelegationDepth) {
+    await failJob(db, jobId as string, 'delegation_depth_exceeded', {
+      inputTokens: job.inputTokens ?? 0,
+      outputTokens: job.outputTokens ?? 0,
+      effectiveInputTokens: job.effectiveInputTokens ?? job.inputTokens ?? 0,
+      totalCostUsd: job.totalCostUsd ?? 0,
+      turn: job.turn ?? 0,
+      totalDurationMs: 0,
+    });
+    return { status: 'failed', error: 'delegation_depth_exceeded' };
+  }
+
   // The job transcript, declared up-front so EVERY failure path (early validation
   // failures AND the in-loop guards / catch) persists it via failJob — a failed
   // job must be diagnosable, not opaque. Section 11 below refines it (thread
