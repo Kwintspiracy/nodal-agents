@@ -27,6 +27,11 @@
  * flight, an instant client-side substring filter over the already-loaded
  * page keeps the table from flashing empty. The Archived tab always uses the
  * client-side filter — FTS only covers non-archived rows.
+ *
+ * The fact text (MemoryFact) is clamped to 2 lines by default (facts run up
+ * to 2000 chars) — click it to expand/collapse the full text in place. Every
+ * cell in the row carries align-top so a tall expanded row doesn't re-center
+ * the other columns.
  */
 
 import { useState, useMemo, useEffect, useTransition } from 'react';
@@ -123,6 +128,36 @@ function CategoryChip({ category }: { category: string | null | undefined }) {
       {m.icon}
       {m.label}
     </span>
+  );
+}
+
+/**
+ * MemoryFact — the fact text in the Memory cell. Clamped to 2 lines by
+ * default (facts can run up to 2000 chars); click anywhere on the text to
+ * expand to the full, unwrapped fact, click again to re-clamp. A trailing
+ * "… more" / "less" hint makes the affordance discoverable — a native
+ * `title` tooltip isn't enough for long text, so this is click, not hover.
+ */
+function MemoryFact({ fact }: { fact: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => setExpanded((v) => !v)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setExpanded((v) => !v);
+        }
+      }}
+      className="cursor-pointer text-[13px] leading-snug text-ink"
+    >
+      <span className={expanded ? '' : 'line-clamp-2'}>{fact}</span>{' '}
+      <span className="text-[11px] font-medium text-ink-4 hover:text-ink-2">
+        {expanded ? 'less' : '… more'}
+      </span>
+    </div>
   );
 }
 
@@ -501,10 +536,13 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                   return (
                     <tr
                       key={m.id}
-                      className="align-middle border-b border-rule-2/60 transition-colors last:border-0 hover:bg-hover/50"
+                      className="border-b border-rule-2/60 transition-colors last:border-0 hover:bg-hover/50"
                     >
-                      {/* Memory: Disc + fact text */}
-                      <td className="px-5 py-3.5">
+                      {/* Memory: Disc + fact text. align-top on every cell in this row —
+                          expanding a long fact grows this cell vertically (MemoryFact
+                          below), and the other cells should stay pinned to the top of
+                          the row instead of re-centering when that happens. */}
+                      <td className="px-5 py-3.5 align-top">
                         <div className="flex items-start gap-3">
                           <Disc
                             variant="neutral"
@@ -516,9 +554,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                             {meta.icon}
                           </Disc>
                           <div className="min-w-0">
-                            <div className="line-clamp-2 text-[13px] leading-snug text-ink">
-                              {m.fact}
-                            </div>
+                            <MemoryFact fact={m.fact} />
                             <div className="mt-0.5 font-mono text-[11px] text-ink-4">
                               {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
                               {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
@@ -528,7 +564,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                       </td>
 
                       {/* Agent */}
-                      <td className="hidden px-5 py-3.5 md:table-cell">
+                      <td className="hidden px-5 py-3.5 align-top md:table-cell">
                         {m.agentName ? (
                           <Link
                             href={`/agents`}
@@ -543,13 +579,13 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                       </td>
 
                       {/* Category chip */}
-                      <td className="hidden px-5 py-3.5 lg:table-cell">
+                      <td className="hidden px-5 py-3.5 align-top lg:table-cell">
                         <CategoryChip category={m.category} />
                       </td>
 
                       {/* Importance stars — click a star to pin (locks against the curator).
                           Always visible: this is the actionable control, not metadata. */}
-                      <td className="px-5 py-3.5">
+                      <td className="px-5 py-3.5 align-top">
                         <ImportanceStars
                           id={m.id}
                           importance={m.importance}
@@ -558,7 +594,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                       </td>
 
                       {/* Last accessed */}
-                      <td className="hidden px-5 py-3.5 xl:table-cell">
+                      <td className="hidden px-5 py-3.5 align-top xl:table-cell">
                         <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-ink-3">
                           {formatAccessed(m.last_accessed_at)}
                           {recent && <LiveDot variant="ok" size="sm" />}
@@ -566,7 +602,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                       </td>
 
                       {/* Actions */}
-                      <td className="px-5 py-3.5 text-right">
+                      <td className="px-5 py-3.5 text-right align-top">
                         <RowActions id={m.id} archived={m.archived ?? false} />
                       </td>
                     </tr>
