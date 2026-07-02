@@ -28,7 +28,7 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 
 ## Workflow rules
 
-- Opus orchestrates and reviews; Sonnet codes/tests; Haiku banned.
+- Opus 4.8 orchestrates and reviews; Sonnet 5 codes/tests; Haiku banned.
 - Max 5 concurrent agents.
 - Each brique merged only when its applicable test gates pass (unit + arch + regression always; integration/smoke when external service touched).
 - Plan file at `~/.claude/plans/nodalai-migration-plan.md` is the source of truth — update `[ ]` checkboxes as work progresses.
