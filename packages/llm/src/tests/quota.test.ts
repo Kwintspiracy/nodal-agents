@@ -40,10 +40,33 @@ describe('quota detection', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('converts "rate limit exceeded" 429 (plan-level) to QuotaExhaustedError', async () => {
+  it('plain "rate limit exceeded" 429 is retried, NOT converted to QuotaExhaustedError', async () => {
+    // 'rate limit exceeded' is the generic phrasing providers (OpenRouter, Groq,
+    // ...) use for an ordinary per-minute throttle — transient, not a billing
+    // fatal. Only a message co-occurring with a real quota/billing term (see
+    // the test below) should be fatal.
     const err = makeHttpError(429, 'Rate limit exceeded for your current plan');
+    const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValue('ok');
+
+    const promise = withRetry(fn, {
+      provider: 'groq',
+      model: 'llama3-8b',
+      maxRetries: 2,
+      baseDelayMs: 10,
+    });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('"rate limit exceeded" co-occurring with a real quota/billing term is still fatal', async () => {
+    const err = makeHttpError(
+      429,
+      'Rate limit exceeded — you have exceeded your current quota, check your billing',
+    );
     const fn = vi.fn().mockRejectedValue(err);
-    await expect(withRetry(fn, { provider: 'groq', model: 'llama3-8b' })).rejects.toBeInstanceOf(
+    await expect(withRetry(fn, { provider: 'openai', model: 'gpt-4o' })).rejects.toBeInstanceOf(
       QuotaExhaustedError,
     );
     expect(fn).toHaveBeenCalledTimes(1);

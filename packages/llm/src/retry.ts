@@ -20,10 +20,15 @@ const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 529]);
  *
  * Heuristic: inspect the message for billing/quota keywords.
  * Conservative — returns false if the message doesn't match known patterns.
+ *
+ * 'rate limit exceeded' is deliberately NOT in this list: it's the literal,
+ * generic phrasing providers (OpenRouter, Groq, ...) use for an ordinary
+ * per-minute throttle, which is transient and must go through the normal
+ * retryable 429 path. Only real quota/billing terms mark a 429 as fatal.
  */
 function isQuotaError(err: unknown, provider: string, model: string): boolean {
   const msg = errorMessage(err).toLowerCase();
-  const quotaKeywords = ['quota', 'billing', 'insufficient', 'rate limit exceeded', 'credit'];
+  const quotaKeywords = ['quota', 'billing', 'insufficient', 'credit'];
   return quotaKeywords.some((kw) => msg.includes(kw))
     ? (() => {
         throw new QuotaExhaustedError(provider, model, msg);
