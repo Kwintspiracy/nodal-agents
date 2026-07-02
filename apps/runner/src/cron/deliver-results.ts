@@ -13,6 +13,8 @@ import { checkRootJobComplete } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { maybeResumeParent } from '../job/execute.ts';
+import type { ExecuteJobResult } from '../job/execute.ts';
 
 // ─── deliverCompletedRoots ────────────────────────────────────────────────────
 
@@ -129,6 +131,31 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     if (claimed.length === 0) {
       // Another concurrent tick won the race — skip delivery
       continue;
+    }
+
+    // This root job may itself be a delegated child of another job stuck in
+    // `awaiting_delegation` (nested planner delegation — a child orchestrator
+    // that fanned out via create_task, finalized here by the cron rather than
+    // by executeJob's own wrapper). maybeResumeParent no-ops when there is no
+    // such parent; when there is, it injects this outcome as the parent's
+    // tool_result and flips it back to `pending` so it resumes instead of
+    // stalling forever (audit finding OR-5).
+    try {
+      const resumeOutcome: Extract<
+        ExecuteJobResult,
+        { status: 'completed' | 'failed' | 'cancelled' }
+      > =
+        rootStatus === 'completed'
+          ? { status: 'completed', result: compiledResult }
+          : rootStatus === 'failed'
+            ? { status: 'failed', error: rootError ?? 'all_tasks_failed', result: compiledResult }
+            : { status: 'cancelled' };
+      await maybeResumeParent(rootJobId as JobId, resumeOutcome, { db });
+    } catch (err) {
+      // This root was already delivered above (claim succeeded) — only the
+      // parent resume failed (e.g. malformed pending_delegation). Don't let
+      // that abort the whole tick: the other roots still need delivering.
+      console.warn(`[deliverCompletedRoots] maybeResumeParent failed for ${rootJobId}:`, err);
     }
 
     // Actually DELIVER to the originating channel. A root job carries a chatId

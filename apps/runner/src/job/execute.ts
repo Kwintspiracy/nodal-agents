@@ -519,12 +519,19 @@ export async function executeJob(
  * call for any job: it no-ops when there is no parent, or the parent is not
  * awaiting delegation (resumeDelegated itself also guards that status). The
  * parent is flipped to `pending` by resumeDelegated, so even if triggerWorker is
- * unavailable (no runnerEnv) the cron execute-ready tick will pick it up.
+ * unavailable (no runnerEnv) the cron's pending-job recovery phase
+ * (`findPendingJobsToRecover`, tick.ts Phase 2) will pick it up on a later tick.
+ *
+ * Exported so `deliverCompletedRoots` (cron) can call it too: a delegated
+ * child that is itself a planner orchestrator (fans out via create_task) is
+ * finalized directly by the cron, not by this file's `executeJob` wrapper —
+ * without also resuming from there, a parent left `awaiting_delegation`
+ * waiting on such a child would never be resumed (audit finding OR-5).
  */
-async function maybeResumeParent(
+export async function maybeResumeParent(
   childJobId: JobId,
   outcome: Extract<ExecuteJobResult, { status: 'completed' | 'failed' | 'cancelled' }>,
-  deps: RunnerDeps,
+  deps: Pick<RunnerDeps, 'db'>,
   runnerEnv?: RunnerEnv,
 ): Promise<void> {
   const { db } = deps;
