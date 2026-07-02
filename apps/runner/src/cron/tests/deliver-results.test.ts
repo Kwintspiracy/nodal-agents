@@ -150,7 +150,7 @@ describe('deliverCompletedRoots', () => {
     expect(updated[0]?.completedAt).toBeNull();
   });
 
-  it('delivers when mix of done and blocked tasks (all terminal)', async () => {
+  it('delivers when mix of done and blocked tasks (all terminal) — root stays completed, body tags the failure', async () => {
     const rootJob = await createRootJob();
     await db
       .update(agentJobs)
@@ -164,13 +164,68 @@ describe('deliverCompletedRoots', () => {
     expect(count).toBeGreaterThanOrEqual(1);
 
     const updated = await db
-      .select({ status: agentJobs.status, result: agentJobs.result })
+      .select({ status: agentJobs.status, result: agentJobs.result, error: agentJobs.error })
       .from(agentJobs)
       .where(eq(agentJobs.id, rootJob.id));
 
+    // At least one task succeeded — 'completed' is honest, and the body
+    // tags the failed section so the partial nature is not hidden.
     expect(updated[0]?.status).toBe('completed');
+    expect(updated[0]?.error).toBeNull();
     expect(updated[0]?.result).toContain('Task A');
     expect(updated[0]?.result).toContain('Task B');
+    expect(updated[0]?.result).toContain('[blocked]');
+  });
+
+  it('finding #8: root job marked failed (not completed) when ALL tasks are blocked/cancelled', async () => {
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing' })
+      .where(eq(agentJobs.id, rootJob.id));
+
+    await createTaskForRoot(rootJob.id, 'blocked', 'Task A blocked: some error', 'Task A');
+    await createTaskForRoot(rootJob.id, 'cancelled', 'Task B cancelled', 'Task B');
+
+    const count = await deliverCompletedRoots(db as RunnerDeps['db']);
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    const updated = await db
+      .select({ status: agentJobs.status, result: agentJobs.result, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, rootJob.id));
+
+    // No task succeeded, and at least one genuinely broke ('blocked') — the
+    // root must NOT be reported as 'completed'.
+    expect(updated[0]?.status).toBe('failed');
+    expect(updated[0]?.error).toBeTruthy();
+    expect(updated[0]?.result).toContain('[blocked]');
+    expect(updated[0]?.result).toContain('[cancelled]');
+  });
+
+  it('finding #8 refinement: root job marked cancelled (not failed) when ALL tasks were voluntarily cancelled', async () => {
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing' })
+      .where(eq(agentJobs.id, rootJob.id));
+
+    await createTaskForRoot(rootJob.id, 'cancelled', 'Task A cancelled', 'Task A');
+    await createTaskForRoot(rootJob.id, 'cancelled', 'Task B cancelled', 'Task B');
+
+    const count = await deliverCompletedRoots(db as RunnerDeps['db']);
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    const updated = await db
+      .select({ status: agentJobs.status, result: agentJobs.result, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, rootJob.id));
+
+    // No task succeeded, but nothing broke either — a voluntary abort is not
+    // a failure, so 'cancelled' (not 'failed') is the honest status.
+    expect(updated[0]?.status).toBe('cancelled');
+    expect(updated[0]?.error).toBeNull();
+    expect(updated[0]?.result).toContain('[cancelled]');
   });
 
   it('compiled result includes all task titles and results', async () => {

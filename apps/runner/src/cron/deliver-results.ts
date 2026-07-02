@@ -80,13 +80,41 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
 
     const compiledResult = compileTaskResults(taskRows);
 
+    // Derive the root's status from what the tasks actually did — a root is
+    // only honestly 'completed' when at least one task succeeded. Before this
+    // fix the UPDATE below always forced 'completed', even when every task in
+    // the fan-out had failed (audit finding #8, 2026-07): the body correctly
+    // tagged `[blocked]`/`[cancelled]` sections, but the STATUS lied, and any
+    // logic/dashboard filtering on status='completed' was fooled.
+    //
+    // agent_tasks has no 'failed' status — the check constraint is
+    // todo/in_progress/done/cancelled/blocked (packages/db/src/schema/tasks.ts)
+    // — so 'blocked' is the failure-equivalent terminal state and 'cancelled'
+    // is the voluntary-abort one. agent_jobs.status (packages/db/src/schema/
+    // jobs.ts) has no "partial" value between 'completed' and 'failed', so a
+    // MIX of done + failed/cancelled tasks is still reported 'completed': the
+    // compiled result body already tags each non-done section, which is the
+    // honest signal for a partial run. Priority when nothing succeeded:
+    //   1. any 'done'                          → 'completed' (partial run)
+    //   2. no 'done', at least one 'blocked'    → 'failed'    (something broke)
+    //   3. no 'done', no 'blocked' (all 'cancelled') → 'cancelled' (nothing broke,
+    //      the fan-out was voluntarily aborted — reporting 'failed' here would
+    //      itself be dishonest, per invariant #4)
+    const doneCount = taskRows.filter((t) => t.status === 'done').length;
+    const blockedCount = taskRows.filter((t) => t.status === 'blocked').length;
+    const rootStatus: 'completed' | 'failed' | 'cancelled' =
+      doneCount > 0 ? 'completed' : blockedCount > 0 ? 'failed' : 'cancelled';
+    const rootError =
+      rootStatus === 'failed' ? `all_tasks_failed (${taskRows.length})` : null;
+
     // Atomic claim: only deliver if root job completedAt is still NULL
     // This prevents double-delivery under concurrent ticks (invariant from spec).
     const claimed = await db
       .update(agentJobs)
       .set({
-        status: 'completed',
+        status: rootStatus,
         result: compiledResult,
+        error: rootError,
         completedAt: new Date(),
         updatedAt: new Date(),
       })
