@@ -48,9 +48,26 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
  * Resolve the auth mode for runtime processes.
  * Explicit `config.auth.mode` wins; otherwise we fall back to the legacy
  * mapping (loopback → local-trust, lan → local-auth).
+ *
+ * Refuses one dangerous combination: `bind=lan` (0.0.0.0) with an EXPLICIT
+ * `auth.mode=local-trust`. local-trust is a zero-auth pass-through — every
+ * runner route (including run_command's auto_approve path) would be reachable
+ * unauthenticated by anyone on the LAN. The safe default (bind=lan with no
+ * explicit mode) already resolves to local-auth; only an explicit override can
+ * hit this. Fail loud (invariant #4) instead of silently exposing an RCE
+ * surface.
  */
 export function resolveAuthMode(config: Config): 'local-trust' | 'local-auth' {
-  if (config.auth?.mode) return config.auth.mode;
+  if (config.auth?.mode) {
+    if (config.auth.mode === 'local-trust' && config.bind === 'lan') {
+      throw new Error(
+        'Invalid config: auth.mode="local-trust" with bind="lan" would expose every runner ' +
+          'route unauthenticated on the network (including run_command auto-approve). Refused. ' +
+          'Use auth.mode="local-auth" for a LAN bind, or bind="loopback" for local-trust.',
+      );
+    }
+    return config.auth.mode;
+  }
   return config.bind === 'lan' ? 'local-auth' : 'local-trust';
 }
 

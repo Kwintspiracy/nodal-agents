@@ -161,12 +161,41 @@ describe('resolveAuthMode', () => {
         auth: { mode: 'local-auth' },
       }),
     ).toBe('local-auth');
+    // loopback + explicit local-trust is a safe, unchanged combo.
     expect(
+      resolveAuthMode({
+        ...BASE_CONFIG,
+        bind: 'loopback',
+        auth: { mode: 'local-trust' },
+      }),
+    ).toBe('local-trust');
+  });
+
+  it('refuses local-trust explicitly combined with a LAN bind (Fix #12)', async () => {
+    // Regression for the audit finding: auth.mode="local-trust" + bind="lan"
+    // is a zero-auth pass-through on 0.0.0.0 — every runner route (including
+    // run_command auto_approve) would be reachable unauthenticated on the
+    // network. Must throw, never silently return local-trust.
+    const { resolveAuthMode } = await import('../lib/env.ts');
+    expect(() =>
       resolveAuthMode({
         ...BASE_CONFIG,
         bind: 'lan',
         auth: { mode: 'local-trust' },
       }),
-    ).toBe('local-trust');
+    ).toThrow(/local-trust/);
+  });
+
+  it('safe combos are unchanged: loopback+local-trust, lan-with-no-mode→local-auth, loopback+local-auth', async () => {
+    const { resolveAuthMode } = await import('../lib/env.ts');
+    expect(resolveAuthMode({ ...BASE_CONFIG, bind: 'loopback' })).toBe('local-trust');
+    expect(resolveAuthMode({ ...BASE_CONFIG, bind: 'lan' })).toBe('local-auth');
+    expect(
+      resolveAuthMode({ ...BASE_CONFIG, bind: 'loopback', auth: { mode: 'local-auth' } }),
+    ).toBe('local-auth');
+    // lan + explicit local-auth is the recommended, safe LAN combo.
+    expect(resolveAuthMode({ ...BASE_CONFIG, bind: 'lan', auth: { mode: 'local-auth' } })).toBe(
+      'local-auth',
+    );
   });
 });

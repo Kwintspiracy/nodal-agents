@@ -92,6 +92,11 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     config = defaultConfig;
   }
 
+  // Fail fast on a dangerous config combination (local-trust + LAN bind =
+  // unauthenticated RCE surface) BEFORE starting Postgres or spawning any
+  // process — resolveAuthMode throws; see apps/cli/src/lib/env.ts.
+  resolveAuthMode(config);
+
   // URLs are computed after the port-rotation guard below — config.ports may
   // change between here and there if the OS has reserved the configured port.
 
