@@ -5,10 +5,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { agentJobs, agents, entities } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider, seedLocalUser, LOCAL_ENTITY_ID } from '@nodal-agents/auth';
+import type { AuthProvider, AuthSession } from '@nodal-agents/auth';
 import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -167,5 +168,140 @@ describe('POST /api/agent', () => {
 
     expect(rows[0]?.channel).toBe('telegram');
     expect(rows[0]?.chatId).toBe('12345');
+  });
+});
+
+// ─── Entity authorization (findings #4/#5) ─────────────────────────────────
+//
+// agentSlug resolution has no entityId field in the body — the "entity of
+// the request" is whatever the route derives. A trusted caller keeps the
+// pre-existing session-or-null fallback (a WORKER_SECRET server call with no
+// forwarded session resolves the slug GLOBALLY, across every entity — this
+// is the pre-existing behavior for cron/internal/Telegram dispatch). An
+// UNTRUSTED session bearer-token caller must never fall into that global
+// resolution: its entity is always its own session's.
+
+describe('POST /api/agent — entity authorization (bearer-token mode)', () => {
+  let dbB: TestDb;
+  let appBearer: ReturnType<typeof createApp>;
+  let seedX: { userId: string; entityId: string; agentId: string; jobId: string };
+  let seedXAgentSlug: string;
+  let entityY: string;
+  let agentYSlug: string;
+  let agentYId: string;
+
+  class StubSessionAuthProvider implements AuthProvider {
+    constructor(private readonly session: AuthSession) {}
+    getSession(req: Request): Promise<AuthSession | null> {
+      // Mirrors production: a WORKER_SECRET server-to-server call carries no
+      // user cookie/session; only an explicit test marker simulates one.
+      if (req.headers.get('x-test-session') === '1') {
+        return Promise.resolve(this.session);
+      }
+      return Promise.resolve(null);
+    }
+  }
+
+  beforeAll(async () => {
+    const result = await spinUpTestDb();
+    dbB = result.db;
+    seedX = await seedMinimal(dbB);
+    const [seedXAgentRow] = await dbB
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seedX.agentId));
+    seedXAgentSlug = seedXAgentRow!.slug!;
+
+    const [entityYRow] = await dbB
+      .insert(entities)
+      .values({ userId: seedX.userId, name: 'Entity Y', slug: `entity-y-${crypto.randomUUID()}` })
+      .returning();
+    entityY = entityYRow!.id;
+
+    agentYSlug = `agent-y-${crypto.randomUUID()}`;
+    const [agentYRow] = await dbB
+      .insert(agents)
+      .values({
+        entityId: entityY,
+        name: 'Agent Y',
+        slug: agentYSlug,
+        personality: 'You are agent Y.',
+        active: true,
+      })
+      .returning();
+    agentYId = agentYRow!.id;
+
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const llmClient = createLlmClient({ provider: 'anthropic', model: 'test', apiKey: 'key' });
+    const embeddingClient = createEmbeddingClient({ provider: 'keyword' });
+
+    const depsBearer: RunnerDeps = {
+      db: dbB as RunnerDeps['db'],
+      llmClient,
+      embeddingClient,
+      registry,
+      authProvider: new StubSessionAuthProvider({
+        userId: seedX.userId,
+        entityId: seedX.entityId,
+      }),
+      close: async () => {},
+    };
+
+    appBearer = createApp(depsBearer, { ...testEnv, AUTH_MODE: 'bearer-token' });
+  });
+
+  it('untrusted session caller cannot resolve another entity slug (blocked, no job created)', async () => {
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({ task: 'cross-tenant attempt', agentSlug: agentYSlug }),
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('agent_not_found');
+
+    const rows = await dbB.select().from(agentJobs).where(eq(agentJobs.agentId, agentYId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('untrusted session caller can resolve its OWN entity slug', async () => {
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({ task: 'own-entity task', agentSlug: seedXAgentSlug }),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { jobId: string };
+    const rows = await dbB
+      .select({ agentId: agentJobs.agentId, entityId: agentJobs.entityId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, body.jobId));
+    expect(rows[0]?.agentId).toBe(seedX.agentId);
+    expect(rows[0]?.entityId).toBe(seedX.entityId);
+  });
+
+  it('trusted WORKER_SECRET caller keeps unchanged global slug resolution', async () => {
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
+        body: JSON.stringify({ task: 'trusted global lookup', agentSlug: agentYSlug }),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { jobId: string };
+    const rows = await dbB
+      .select({ agentId: agentJobs.agentId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, body.jobId));
+    expect(rows[0]?.agentId).toBe(agentYId);
   });
 });

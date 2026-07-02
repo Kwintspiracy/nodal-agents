@@ -6,7 +6,7 @@
 // executes or rejects the gated tool in execute.ts step 11.7). `resolvedBy`
 // records WHERE the decision came from ('api' = dashboard, 'telegram' = button).
 
-import { eq } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
 import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -20,6 +20,14 @@ export interface ResolveApprovalInput {
   /** Provenance of the decision — recorded in approval_requests.resolved_by. */
   resolvedBy: string;
   notes?: string | null;
+  /**
+   * Set by an UNTRUSTED caller (session bearer-token via /api/approve —
+   * finding #4/#5): the approval must belong to this entity, closing the
+   * runner-direct IDOR where an approval could be resolved by GUID alone
+   * across tenants. Trusted callers (web via WORKER_SECRET, the Telegram
+   * inline-button callback) pass undefined — unchanged behavior.
+   */
+  expectedEntityId?: string;
 }
 
 export type ResolveApprovalResult =
@@ -44,9 +52,18 @@ export async function resolveApprovalDecision(
   const [approval] = await deps.db
     .select()
     .from(approvalRequests)
-    .where(eq(approvalRequests.id, input.approvalRequestId))
+    .where(
+      input.expectedEntityId
+        ? and(
+            eq(approvalRequests.id, input.approvalRequestId),
+            eq(approvalRequests.entityId, input.expectedEntityId),
+          )
+        : eq(approvalRequests.id, input.approvalRequestId),
+    )
     .limit(1);
 
+  // Same code for "doesn't exist" and "exists but belongs to another entity"
+  // — an untrusted caller must not learn which GUIDs exist outside its scope.
   if (!approval) return { ok: false, code: 'approval_not_found' };
   if (approval.status !== 'pending') {
     return { ok: false, code: 'already_resolved', status: approval.status };

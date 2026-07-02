@@ -37,6 +37,11 @@ export async function approveRoute(
 
   const { approvalRequestId, decision, notes } = parsed.data;
 
+  // Authorization (finding #4/#5): an untrusted session bearer-token caller
+  // may only resolve an approval belonging to its own entity — trusted
+  // callers (web via WORKER_SECRET) keep the pre-existing unscoped lookup.
+  const expectedEntityId = c.get('callerTrusted') ? undefined : c.get('callerEntityId');
+
   // Dashboard-driven resolution → resolvedBy: 'api'. Shares the channel-neutral
   // core with the Telegram inline-button path (approvals/resolve.ts).
   const result = await resolveApprovalDecision(deps, runnerEnv, {
@@ -44,6 +49,7 @@ export async function approveRoute(
     decision,
     resolvedBy: 'api',
     notes: notes ?? null,
+    expectedEntityId,
   });
 
   if (!result.ok) {

@@ -41,9 +41,23 @@ export async function agentRoute(
 
   const { task, agentSlug, channel, chatId, parentJobId, triggerImmediately } = parsed.data;
 
-  // Resolve agentSlug → agentId (entity-scoped via session)
-  const session = await deps.authProvider.getSession(c.req.raw);
-  const entityId = session?.entityId ?? null;
+  // Resolve agentSlug → agentId (entity-scoped via caller — finding #4/#5).
+  // A trusted caller (web via WORKER_SECRET, local-trust) may or may not
+  // forward a session cookie — no cookie means a global caller (cron/
+  // internal/Telegram dispatch has no entity to scope to), so it keeps the
+  // pre-existing session-or-null fallback. An UNTRUSTED session bearer-token
+  // caller is never allowed to fall through to that global (entityId=null,
+  // cross-entity) slug resolution below — its entity is always its own
+  // session's, taken from the auth context requireRunnerAuth already
+  // verified (never null, since that path requires a session to pass).
+  const callerTrusted = c.get('callerTrusted');
+  let entityId: string | null;
+  if (callerTrusted) {
+    const session = await deps.authProvider.getSession(c.req.raw);
+    entityId = session?.entityId ?? null;
+  } else {
+    entityId = c.get('callerEntityId') ?? null;
+  }
 
   let agentId: string | null = null;
 

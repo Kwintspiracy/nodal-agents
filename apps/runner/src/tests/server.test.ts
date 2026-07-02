@@ -391,3 +391,77 @@ describe('/api/approve auth — bearer fallback (cross-process call from web)', 
     expect(res.status).toBe(404);
   });
 });
+
+// ─── requireRunnerAuth — bearer-token mode: fail-closed on empty entityId ────
+//
+// Defense in depth for findings #4/#5: every entity-scoped route trusts that
+// an untrusted (session bearer-token) caller's callerEntityId is always a
+// real, non-empty id. If a future AuthProvider bug ever produced a session
+// with a falsy entityId (e.g. an `?? ''` fallback), requireRunnerAuth must
+// refuse it outright — NOT let it through as "authenticated with no entity",
+// which would silently reopen the cross-entity IDOR at every downstream route.
+
+describe('requireRunnerAuth — bearer-token mode (fail-closed on empty entityId)', () => {
+  let emptyEntityApp: ReturnType<typeof createApp>;
+  const bearerEnv: RunnerEnv = { ...testEnv, AUTH_MODE: 'bearer-token', BEARER_TOKEN: 'token' };
+
+  beforeAll(async () => {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const llmClient = createLlmClient({ provider: 'anthropic', model: 'test', apiKey: 'k' });
+    const embeddingClient = createEmbeddingClient({ provider: 'keyword' });
+    const deps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient,
+      registry,
+      // A session with a falsy entityId — the exact bug this hardening guards against.
+      authProvider: {
+        getSession: async () => ({ userId: 'some-user', entityId: '' }),
+      },
+      close: async () => {},
+    };
+    emptyEntityApp = createApp(deps, bearerEnv);
+  });
+
+  it('POST /api/chat with a session but empty entityId → 401 (fail-closed, no route reached)', async () => {
+    const res = await emptyEntityApp.fetch(
+      new Request('http://localhost/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityId: '00000000-0000-0000-0000-000000000001',
+          agentId: '00000000-0000-0000-0000-000000000002',
+          conversationId: '00000000-0000-0000-0000-000000000003',
+          message: 'hello',
+        }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/agent with a session but empty entityId → 401 (fail-closed, no route reached)', async () => {
+    const res = await emptyEntityApp.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'hello' }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/approve with a session but empty entityId → 401 (fail-closed, no route reached)', async () => {
+    const res = await emptyEntityApp.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalRequestId: '00000000-0000-0000-0000-000000000099',
+          decision: 'approve',
+        }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+});

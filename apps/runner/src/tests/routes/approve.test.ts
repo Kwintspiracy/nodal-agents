@@ -5,10 +5,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests, agentJobs } from '@nodal-agents/db';
+import { approvalRequests, agentJobs, entities } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
+import type { AuthProvider, AuthSession } from '@nodal-agents/auth';
 import { createApp } from '../../server.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -218,5 +219,179 @@ describe('POST /api/approve', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('approval_already_resolved');
+  });
+});
+
+// ─── Entity authorization (findings #4/#5) ─────────────────────────────────
+//
+// Sprint 1 (finding #2) already scoped the runner-direct IDOR at the resolve
+// core. This proves the SAME IDOR is closed from the HTTP boundary too: an
+// untrusted session bearer-token caller cannot resolve an approval belonging
+// to another entity by GUID alone, while a trusted WORKER_SECRET caller (the
+// web, which already pre-checks server-side) keeps the pre-existing unscoped
+// lookup.
+
+describe('POST /api/approve — entity authorization (bearer-token mode)', () => {
+  let dbZ: TestDb;
+  let appBearer: ReturnType<typeof createApp>;
+  let seedZ: { userId: string; entityId: string; agentId: string; jobId: string };
+  let entityW: string;
+  let jobW: string;
+
+  class StubSessionAuthProvider implements AuthProvider {
+    constructor(private readonly session: AuthSession) {}
+    getSession(req: Request): Promise<AuthSession | null> {
+      // Mirrors production: a WORKER_SECRET server-to-server call carries no
+      // user cookie/session; only an explicit test marker simulates one.
+      if (req.headers.get('x-test-session') === '1') {
+        return Promise.resolve(this.session);
+      }
+      return Promise.resolve(null);
+    }
+  }
+
+  beforeAll(async () => {
+    const result = await spinUpTestDb();
+    dbZ = result.db;
+    seedZ = await seedMinimal(dbZ);
+
+    // Entity W: a separate tenant with its own job, holding an approval a
+    // caller scoped to entity Z must never be able to resolve.
+    const [entityWRow] = await dbZ
+      .insert(entities)
+      .values({ userId: seedZ.userId, name: 'Entity W', slug: `entity-w-${crypto.randomUUID()}` })
+      .returning();
+    entityW = entityWRow!.id;
+
+    const [jobWRow] = await dbZ
+      .insert(agentJobs)
+      .values({ entityId: entityW, channel: 'api', task: 'Entity W task' })
+      .returning();
+    jobW = jobWRow!.id;
+
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const llmClient = createLlmClient({ provider: 'anthropic', model: 'test', apiKey: 'key' });
+    const embeddingClient = createEmbeddingClient({ provider: 'keyword' });
+
+    const depsBearer: RunnerDeps = {
+      db: dbZ as RunnerDeps['db'],
+      llmClient,
+      embeddingClient,
+      registry,
+      authProvider: new StubSessionAuthProvider({
+        userId: seedZ.userId,
+        entityId: seedZ.entityId,
+      }),
+      close: async () => {},
+    };
+
+    appBearer = createApp(depsBearer, { ...testEnv, AUTH_MODE: 'bearer-token' });
+  });
+
+  it('untrusted session caller cannot resolve another entity approval (not_found, no effect)', async () => {
+    const [approval] = await dbZ
+      .insert(approvalRequests)
+      .values({
+        entityId: entityW,
+        jobId: jobW,
+        toolName: 'run_command',
+        toolInput: { command: 'rm -rf /' },
+        status: 'pending',
+      })
+      .returning();
+    const approvalId = approval!.id;
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({ approvalRequestId: approvalId, decision: 'approve' }),
+      }),
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('approval_not_found');
+
+    // No effect: entity W's approval and job are untouched.
+    const approvalRow = await dbZ
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approvalId));
+    expect(approvalRow[0]?.status).toBe('pending');
+
+    const jobRow = await dbZ
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobW));
+    expect(jobRow[0]?.status).toBe('pending');
+  });
+
+  it('untrusted session caller can resolve its OWN entity approval', async () => {
+    const [ownJob] = await dbZ
+      .insert(agentJobs)
+      .values({
+        entityId: seedZ.entityId,
+        agentId: seedZ.agentId,
+        channel: 'api',
+        task: 'own task',
+        status: 'awaiting_approval',
+      })
+      .returning();
+    const [approval] = await dbZ
+      .insert(approvalRequests)
+      .values({
+        entityId: seedZ.entityId,
+        jobId: ownJob!.id,
+        agentId: seedZ.agentId,
+        toolName: 'gmail_send',
+        toolInput: {},
+        status: 'pending',
+      })
+      .returning();
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({ approvalRequestId: approval!.id, decision: 'approve' }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const approvalRow = await dbZ
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(approvalRow[0]?.status).toBe('approved');
+  });
+
+  it('trusted WORKER_SECRET caller keeps unchanged unscoped resolution', async () => {
+    const [approval] = await dbZ
+      .insert(approvalRequests)
+      .values({
+        entityId: entityW,
+        jobId: jobW,
+        toolName: 'run_command',
+        toolInput: { command: 'ls' },
+        status: 'pending',
+      })
+      .returning();
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
+        body: JSON.stringify({ approvalRequestId: approval!.id, decision: 'approve' }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const approvalRow = await dbZ
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(approvalRow[0]?.status).toBe('approved');
   });
 });

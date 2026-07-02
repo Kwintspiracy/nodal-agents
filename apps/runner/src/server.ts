@@ -22,6 +22,7 @@ import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
 import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { AuthError } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
+import './lib/runner-auth-context.ts';
 
 // ─── createApp ────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,16 @@ export function createApp(
   // bearer-token mode additionally accepts a valid authProvider session so that
   //   external API clients using BEARER_TOKEN keep working.
   //
+  // Authorization vs authentication: the branches above only prove WHO is
+  // calling. They also stamp `callerTrusted` / `callerEntityId` on the
+  // context (packages/auth's AuthSession → Hono ContextVariableMap, see
+  // lib/runner-auth-context.ts) so the routes below can enforce WHICH
+  // entity's data the caller is allowed to touch — a trusted caller
+  // (local-trust / WORKER_SECRET) has already had its entity scoped by the
+  // web from the user's session, so its request body is trusted as-is; an
+  // untrusted session bearer-token caller must be checked against its own
+  // session.entityId (findings #4/#5).
+  //
   // /api/health and /api/worker stay public/self-authed respectively.
   const requireRunnerAuth = async (
     c: Context,
@@ -63,6 +74,7 @@ export function createApp(
   ): Promise<Response | void> => {
     // local-trust: no auth required (intentional single-user no-auth for trusted local/dev use)
     if (runnerEnv.AUTH_MODE === 'local-trust') {
+      c.set('callerTrusted', true);
       await next();
       return;
     }
@@ -71,6 +83,7 @@ export function createApp(
     const auth = c.req.header('authorization') ?? '';
     const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (bearer && runnerEnv.WORKER_SECRET && isValidWorkerSecret(bearer, runnerEnv.WORKER_SECRET)) {
+      c.set('callerTrusted', true);
       await next();
       return;
     }
@@ -79,7 +92,16 @@ export function createApp(
     if (runnerEnv.AUTH_MODE === 'bearer-token') {
       try {
         const session = await deps.authProvider.getSession(c.req.raw);
-        if (session) {
+        // Fail-closed defense in depth: an untrusted caller with no entity on
+        // its session is authorized for NOTHING. Every route below trusts
+        // that an untrusted caller's callerEntityId is always a real,
+        // non-empty id (chat.ts/agent.ts/approve.ts key their scoping off
+        // that assumption) — never let a session with a falsy entityId
+        // (a future provider bug, e.g. an `?? ''` fallback) through as
+        // "authenticated" and silently reopen the cross-entity IDOR.
+        if (session && session.entityId) {
+          c.set('callerTrusted', false);
+          c.set('callerEntityId', session.entityId);
           await next();
           return;
         }
