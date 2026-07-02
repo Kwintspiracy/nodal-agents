@@ -2883,6 +2883,99 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     // Cleanup.
     await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
   });
+
+  it('Fix #11: totalCostUsd is NOT lost across a suspend/resume — the triggering turn\'s cost survives the approval checkpoint', async () => {
+    // Regression for the audit finding: saveCheckpoint at the suspendForApproval
+    // site omitted totalCostUsd, so the in-memory accumulator (seeded from the
+    // costed LLM turn that emitted the gated call) never reached the DB row —
+    // resuming re-seeded totalCostUsd from the STALE persisted value (0), and
+    // the Guard 1e $ cap silently forgot the cost of every suspended turn.
+    await approvalDb.insert(approvalRules).values({
+      entityId: approvalSeed.entityId,
+      agentId: null,
+      toolName: 'save_memory',
+      action: 'require_approval',
+    });
+
+    const job = await approvalDb
+      .insert(agentJobs)
+      .values({
+        entityId: approvalSeed.entityId,
+        agentId: approvalSeed.agentId,
+        channel: 'api',
+        task: 'Do the gated thing',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning()
+      .then((rows) => rows[0]!);
+
+    // Turn 1 costs $0.42 and emits the gated save_memory call → suspends.
+    // Turn 2 (after approval) costs $0.10 and finishes with return_result.
+    const llmClient = makeMockLlmClient([
+      {
+        costUsd: 0.42,
+        toolCalls: [
+          {
+            toolCallId: 'tc-cost-a',
+            toolName: 'save_memory',
+            args: { fact: 'costed gated fact', category: 'context' },
+          },
+        ],
+      },
+      {
+        costUsd: 0.1,
+        toolCalls: [
+          { toolCallId: 'tc-cost-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const suspendResult = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+    expect(suspendResult.status).toBe('awaiting_approval');
+
+    // The DB row must already carry the $0.42 from the triggering turn —
+    // NOT 0 — right after the suspend checkpoint (before any resume).
+    const [suspendedRow] = await approvalDb
+      .select({ totalCostUsd: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(suspendedRow?.totalCostUsd).toBeCloseTo(0.42, 5);
+
+    // Approve and resume.
+    const approvalRows = await approvalDb
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    const approvalRow = approvalRows.find(
+      (r) => r.toolName === 'save_memory' && r.status === 'pending',
+    );
+    expect(approvalRow).toBeDefined();
+    await approvalDb
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    await approvalDb
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, job.id));
+
+    const resumeResult = await executeJob(job.id as JobId, makeApprovalDeps(llmClient), testEnv);
+    expect(resumeResult.status).toBe('completed');
+
+    // The accumulator picked up where it left off ($0.42) and added the resume
+    // turn's $0.10 — total $0.52. Neither lost (would be $0.10 alone) nor
+    // double-counted (would be $0.94 if the pre-suspend turn were replayed).
+    const [finalRow] = await approvalDb
+      .select({ totalCostUsd: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(finalRow?.totalCostUsd).toBeCloseTo(0.52, 5);
+
+    // Cleanup.
+    await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
+  });
 });
 
 // ─── Reliability guards (generic, channel-agnostic) ─────────────────────────

@@ -1510,6 +1510,7 @@ async function runJob(
         inputTokens,
         outputTokens,
         effectiveInputTokens,
+        totalCostUsd,
         servedProvider,
       });
     }
@@ -1587,6 +1588,7 @@ async function runJob(
       inputTokens,
       outputTokens,
       effectiveInputTokens,
+      totalCostUsd,
       servedProvider,
     });
     await setJobStatus(db, jobId as string, 'awaiting_approval');
@@ -2435,6 +2437,7 @@ async function runJob(
                 inputTokens,
                 outputTokens,
                 effectiveInputTokens,
+                totalCostUsd,
                 servedProvider,
               });
 
@@ -2921,6 +2924,7 @@ async function runJob(
             inputTokens,
             outputTokens,
             effectiveInputTokens,
+            totalCostUsd,
             servedProvider,
             totalDurationMs: Date.now() - startedAt,
           });
