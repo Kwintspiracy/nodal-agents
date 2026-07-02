@@ -2,6 +2,13 @@
 // Find tasks where status='todo' AND depends_on is non-empty AND all deps are done.
 // For each such task, inject dep results into context.deps and leave status as 'todo'
 // (the executeReadyTasks phase will claim them next).
+//
+// A dependency that finished 'blocked' or 'cancelled' can never become 'done'
+// — waiting for that would leave the dependent task in 'todo' forever, which
+// in turn keeps the root job non-terminal forever (checkRootJobComplete
+// requires every task to be terminal), so deliverCompletedRoots never fires:
+// a silent stall (audit finding OR-4). We treat that case as
+// resolved-failed and propagate the failure onto the dependent task instead.
 
 import { and, eq, inArray, isNotNull } from '@nodal-agents/db';
 import { agentTasks } from '@nodal-agents/db';
@@ -52,10 +59,31 @@ export async function unblockReadyTasks(db: AnyDrizzleDb): Promise<number> {
       .from(agentTasks)
       .where(inArray(agentTasks.id, depIds));
 
-    // All deps must be 'done' (not just some of them)
     if (depRows.length !== depIds.length) continue; // some deps don't exist yet
-    const allDone = depRows.every((d) => d.status === 'done');
-    if (!allDone) continue;
+
+    const stillPending = depRows.filter(
+      (d) => d.status !== 'done' && d.status !== 'blocked' && d.status !== 'cancelled',
+    );
+    if (stillPending.length > 0) continue; // still waiting on at least one dep
+
+    const failedDeps = depRows.filter((d) => d.status === 'blocked' || d.status === 'cancelled');
+    if (failedDeps.length > 0) {
+      // At least one dep is terminal-but-not-done and will never become
+      // 'done' — this task can never legitimately run. Mark it blocked
+      // (terminal) now rather than leave it in 'todo' forever.
+      const reason = failedDeps.map((d) => `"${d.title}" (${d.status})`).join(', ');
+      const updated = await db
+        .update(agentTasks)
+        .set({
+          status: 'blocked',
+          result: `Blocked: upstream dependenc${failedDeps.length > 1 ? 'ies' : 'y'} did not complete — ${reason}.`,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(agentTasks.id, task.id), eq(agentTasks.status, 'todo')))
+        .returning({ id: agentTasks.id });
+      unblocked += updated.length;
+      continue;
+    }
 
     // Build dep results map
     const depResults: Record<string, string> = {};
