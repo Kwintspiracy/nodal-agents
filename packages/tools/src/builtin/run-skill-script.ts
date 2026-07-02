@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
+import { buildChildEnv } from './child-env';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
@@ -205,7 +206,11 @@ function runScript(
       shell: false,
       detached: !isWindows,
       windowsHide: true,
-      env: process.env,
+      // Scrubbed env, NOT process.env — a skill script must not be able to read
+      // DATABASE_URL/WORKER_SECRET/LLM keys via os.environ / process.env. See
+      // child-env.ts. Cast for the same ambient-augmentation reason as
+      // run-command.ts (see its comment).
+      env: buildChildEnv(process.env) as unknown as NodeJS.ProcessEnv,
     });
 
     let stdout = '';

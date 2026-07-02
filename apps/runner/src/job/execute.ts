@@ -1206,18 +1206,26 @@ async function runJob(
     entityId: r.entityId,
   }));
 
-  // ── 8b. Workspace Yolo master-switch for run_command ──────────────────────────
-  // run_command is RCE-by-design; auto-approving it in a non-local-trust (LAN /
-  // multi-user) install is gated behind an explicit, owner-controlled workspace
-  // opt-in (entities.lan_command_yolo). The web layer gates *creating* a per-agent
-  // auto_approve rule, but rule creation is NOT the security boundary — EXECUTION
-  // is. So we enforce the same gate here, authoritatively: when the workspace has
-  // not opted in, run_command can never auto-approve, no matter what rules exist.
-  //   (a) drop any run_command auto_approve rule, and
-  //   (b) if no run_command-specific rule then remains, inject a require_approval
-  //       rule so a blanket wildcard ('*') auto_approve can't sweep it in either.
+  // ── 8b. Workspace Yolo master-switch for code-execution tools ─────────────────
+  // run_command, run_skill_script and skill_file_write are ALL code-execution
+  // surfaces — a shell command, a bundled skill script, and a skill file whose
+  // content is a script waiting to be run by one of the other two — so the master
+  // switch protects EXECUTION OF CODE, not just run_command. Auto-approving any of
+  // them in a non-local-trust (LAN / multi-user) install is gated behind an
+  // explicit, owner-controlled workspace opt-in (entities.lan_command_yolo). The
+  // web layer gates *creating* a per-agent auto_approve rule, but rule creation is
+  // NOT the security boundary — EXECUTION is. So we enforce the same gate here,
+  // authoritatively, per tool: when the workspace has not opted in, none of these
+  // three tools can ever auto-approve, no matter what rules exist.
+  //   (a) drop any auto_approve rule for that tool, and
+  //   (b) if no tool-specific rule then remains, inject a require_approval rule
+  //       so a blanket wildcard ('*') auto_approve can't sweep it in either.
   // Nothing is deleted from the DB — re-enabling the workspace switch reactivates
   // the rules. In local-trust mode (single-user loopback) the switch is N/A.
+  // Injecting an explicit require_approval rule also matters downstream: the
+  // autonomy relaxation in executeTool is guarded by `!matchedRule`, so once a
+  // tool has a matched rule here, fully_autonomous/destructive_gate can no longer
+  // auto-approve it either — the master switch outranks autonomy.
   //
   // AUTH_MODE source: the passed runnerEnv when present (worker/chat routes +
   // tests), else process.env directly (cron paths call executeJob without it).
@@ -1228,25 +1236,27 @@ async function runJob(
   // test. A single enum needs no full-env validation; default to local-trust.
   const authMode = runnerEnv?.AUTH_MODE ?? process.env['AUTH_MODE'] ?? 'local-trust';
   if (authMode !== 'local-trust') {
-    const RUN_COMMAND_TOOL = 'run_command';
+    const CODE_EXECUTION_TOOLS = ['run_command', 'run_skill_script', 'skill_file_write'];
     const [yoloEntityRow] = await db
       .select({ lanCommandYolo: entitiesTable.lanCommandYolo })
       .from(entitiesTable)
       .where(eq(entitiesTable.id, job.entityId ?? ''))
       .limit(1);
     if (!yoloEntityRow?.lanCommandYolo) {
-      approvalRuleList = approvalRuleList.filter(
-        (r) => !(r.toolName === RUN_COMMAND_TOOL && r.action === 'auto_approve'),
-      );
-      const hasRunCommandRule = approvalRuleList.some((r) => r.toolName === RUN_COMMAND_TOOL);
-      if (!hasRunCommandRule) {
-        approvalRuleList.push({
-          id: 'lan-yolo-gate',
-          toolName: RUN_COMMAND_TOOL,
-          action: 'require_approval',
-          agentId: agentRow.id,
-          entityId: job.entityId ?? '',
-        });
+      for (const codeTool of CODE_EXECUTION_TOOLS) {
+        approvalRuleList = approvalRuleList.filter(
+          (r) => !(r.toolName === codeTool && r.action === 'auto_approve'),
+        );
+        const hasToolRule = approvalRuleList.some((r) => r.toolName === codeTool);
+        if (!hasToolRule) {
+          approvalRuleList.push({
+            id: `lan-yolo-gate-${codeTool}`,
+            toolName: codeTool,
+            action: 'require_approval',
+            agentId: agentRow.id,
+            entityId: job.entityId ?? '',
+          });
+        }
       }
     }
   }

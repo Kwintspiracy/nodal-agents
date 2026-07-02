@@ -66,6 +66,7 @@ export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
 export { runSkillScriptTool } from './run-skill-script';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
+export { buildChildEnv } from './child-env';
 
 /**
  * Register all built-in tools into the given registry.

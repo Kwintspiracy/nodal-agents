@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
 import { assertWorkspacesConfigured, resolveAndCheckPath } from './file-ops/workspace';
+import { buildChildEnv } from './child-env';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,14 @@ function runInShell(command: string, cwd: string, timeoutMs: number): Promise<Ru
       shell: true,
       detached: !isWindows,
       windowsHide: true,
-      env: process.env,
+      // Scrubbed env, NOT process.env — a spawned command must not be able to
+      // read DATABASE_URL/WORKER_SECRET/LLM keys via `env`/`printenv`. See
+      // child-env.ts. buildChildEnv is typed as a plain Record (not
+      // NodeJS.ProcessEnv) so it stays independent of ambient global
+      // augmentations some workspace apps add to ProcessEnv (e.g. Next.js's
+      // required NODE_ENV) — spawn's `env` option accepts this shape at
+      // runtime, hence the cast.
+      env: buildChildEnv(process.env) as unknown as NodeJS.ProcessEnv,
     });
 
     let stdout = '';
