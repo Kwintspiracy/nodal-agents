@@ -62,7 +62,7 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   const validatedInput = parsed.data as z.infer<typeof tool.inputSchema>;
 
   // ── 2. Approval gate ───────────────────────────────────────────────────────
-  const matchedRule = _matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
+  const matchedRule = matchApprovalRule(opts.approvalRules, tool.name, ctx.agentId, ctx.entityId);
   // An explicit rule always wins. With no matching rule, fall back to the tool's
   // own default posture: undefined for ordinary tools (→ execute, the historical
   // default), 'require_approval' for safe-by-default tools like run_command. So a
@@ -221,8 +221,14 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
  * Find the most specific matching approval rule.
  * Specificity: agent-scoped + tool-name > entity-scoped + tool-name > wildcard.
  * Returns undefined if no rule matches (default: execute without approval).
+ *
+ * Exported so callers can pre-check whether a tool call WOULD be gated before
+ * calling executeTool — e.g. the runner's parallel read pre-pass (execute.ts
+ * in apps/runner) uses this to keep any call that would land on
+ * 'require_approval' out of the concurrent batch, so at most one
+ * approval_requests row is created per turn (see audit finding RT-3 / #17).
  */
-function _matchApprovalRule(
+export function matchApprovalRule(
   rules: ExecuteOptions['approvalRules'],
   toolName: string,
   agentId: string,

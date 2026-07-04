@@ -32,7 +32,7 @@ export {
 export { createToolRegistry } from './registry';
 
 // Execution wrapper
-export { executeTool } from './execute';
+export { executeTool, matchApprovalRule } from './execute';
 export { isCatastrophicCommand, isDestructiveOrHeavyCommand } from './catastrophic-command';
 
 // tool_choice discipline

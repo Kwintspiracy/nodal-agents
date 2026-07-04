@@ -53,6 +53,7 @@ import {
   createSendVoiceTool,
   listWorkspaceMcpToolNames,
   isCatastrophicCommand,
+  matchApprovalRule,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -2275,8 +2276,17 @@ async function runJob(
       // fix for sync-blocking scrape batches: a 19-read turn finishes in ~3 waves
       // (~tens of seconds) instead of 19 serial ~25s calls (~8 min) — which kept
       // the prompt cache cold and tripped the 5-min orphan-reset. Reads are
-      // side-effect-free and approval-free, so concurrency can't reorder state or
-      // skip an approval gate. Any write/delegation tool in the turn → serial path.
+      // side-effect-free, but they are NOT always approval-free — an explicit
+      // require_approval rule can still gate a read tool. The serial loop's
+      // `awaitingApproval` short-circuit (below) only guarantees ONE approval
+      // request per turn when it runs each call one at a time; running gated
+      // reads concurrently defeats that guarantee (each call independently
+      // inserts its own approval_requests row before the short-circuit ever
+      // sees the first one), and the resume-side marker replacement matches by
+      // toolName, not toolCallId — with 2+ pending rows for the same tool it
+      // will resolve the WRONG one (audit finding RT-3 / #17). So any call that
+      // would actually land on 'require_approval' keeps the whole turn on the
+      // serial path. Any write/delegation tool in the turn → serial path too.
       const sharedToolCtx = {
         jobId: jobId as string,
         agentId: agentRow.id,
@@ -2298,10 +2308,19 @@ async function runJob(
         onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
       };
       const preExecuted = new Map<string, Awaited<ReturnType<typeof executeTool>>>();
+      const wouldRequireApproval = (name: string): boolean => {
+        const def = toolMap.get(name);
+        if (!def) return false;
+        const rule = matchApprovalRule(approvalRuleList, name, agentRow.id, job.entityId ?? '');
+        return (rule?.action ?? def.defaultApproval) === 'require_approval';
+      };
       const parallelizable =
         callsToProcess.length > 1 &&
         callsToProcess.every(
-          (c) => !c.name.startsWith('assign_') && toolMap.get(c.name)?.riskLevel === 'read',
+          (c) =>
+            !c.name.startsWith('assign_') &&
+            toolMap.get(c.name)?.riskLevel === 'read' &&
+            !wouldRequireApproval(c.name),
         );
       if (parallelizable) {
         // Cap at the per-turn tool budget so we never execute past the limit the
