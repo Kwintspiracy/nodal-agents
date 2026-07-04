@@ -30,6 +30,7 @@ import {
   agentSkillAssignments,
   agentWorkspaces,
   entities,
+  toolCalls,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -583,5 +584,110 @@ describe('run_command — E2E runner integration', () => {
         .set({ lanCommandYolo: false })
         .where(eq(entities.id, seed.entityId));
     }
+  });
+
+  // ── Test 5: CATASTROPHIC COMMAND APPROVED (Fix #29) ───────────────────────
+  // A machine-wide-destructive command (`rm -rf /`) suspends normally (no rule
+  // matches → safe-by-default), a human approves it anyway, but the hardline
+  // floor (packages/tools/src/execute.ts) re-trips regardless of that approval
+  // — this is UNCHANGED, intentional fail-safe behavior. Before Fix #29 the
+  // job would silently feed the LLM an opaque `unexpected_gate_on_approved_tool`
+  // tool-result and keep looping; after the fix it fails loud with a clear,
+  // human-readable reason, and — provably — the command never executes.
+  it('CATASTROPHIC COMMAND: approved anyway → job fails with a clear reason, command never executes', async () => {
+    const COMMAND5 = 'rm -rf /';
+
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-rc-5',
+            toolName: 'run_command',
+            args: { purpose: 'wipe everything (should never run)', command: COMMAND5 },
+          },
+        ],
+      },
+      // Turn 2 would only be reached if the job wrongly kept looping instead
+      // of failing loud — left here so a regression back to the old behavior
+      // shows up as a mismatched status rather than an unrelated mock error.
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr-5', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    // ── Phase 1: ordinary safe-by-default suspend (no rule matches yet) ──────
+    const suspendResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(suspendResult.status).toBe('awaiting_approval');
+
+    const approvalRows = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    const approvalRow = approvalRows.find(
+      (r) => r.toolName === 'run_command' && r.status === 'pending',
+    );
+    expect(approvalRow).toBeDefined();
+    expect((approvalRow!.toolInput as { command: string }).command).toBe(COMMAND5);
+
+    // ── A human approves it anyway ────────────────────────────────────────────
+    await db
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    await db
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, job.id));
+
+    // ── Phase 2: resume → the hardline floor refuses it, job fails loud ──────
+    const resumeResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(resumeResult.status).toBe('failed');
+    if (resumeResult.status === 'failed') {
+      expect(resumeResult.error).toBe('catastrophic_command_refused');
+      // NOT the old opaque internal code.
+      expect(resumeResult.error).not.toBe('unexpected_gate_on_approved_tool');
+      expect(resumeResult.result).not.toContain('unexpected_gate_on_approved_tool');
+      // The reason is clear and human-readable.
+      expect(resumeResult.result).toMatch(/catastrophi/i);
+      expect(resumeResult.result).toMatch(/approbation|approval/i);
+    }
+
+    // ── DB row reflects the same honest failure ───────────────────────────────
+    const jobRows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(jobRows[0]?.status).toBe('failed');
+    expect(jobRows[0]?.error).toBe('catastrophic_command_refused');
+    expect(jobRows[0]?.result).toMatch(/catastrophi/i);
+
+    // ── The original approval request is stamped executed (never re-processed) ─
+    const resolvedApproval = await db
+      .select({ executedAt: approvalRequests.executedAt })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    expect(resolvedApproval[0]?.executedAt).not.toBeNull();
+
+    // ── CORE: the command never executed ──────────────────────────────────────
+    // No SECOND approval_requests row was spawned (the old behavior called
+    // executeTool anyway, which re-trips the floor and creates an orphaned
+    // pending row + a fresh notification).
+    const allApprovals = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    expect(allApprovals.length).toBe(1);
+    // Exactly ONE tool_calls audit row exists for run_command on this job (the
+    // phase-1 suspend, which writes an audit row without executing). If the
+    // command had actually run — or if executeTool had been called again and
+    // re-gated — a second row would exist.
+    const rcAuditRows = await db
+      .select()
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, job.id));
+    expect(rcAuditRows.filter((r) => r.toolName === 'run_command').length).toBe(1);
   });
 });

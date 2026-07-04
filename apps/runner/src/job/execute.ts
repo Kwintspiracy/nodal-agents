@@ -28,6 +28,7 @@ import {
   parseRootGrants,
   modelContextWindow,
   modelCanSeeImages,
+  estimateModelCostUsd,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import { createMcpTools, slugToPrefix, connectMcp } from '@nodal-agents/adapter-mcp';
@@ -51,6 +52,7 @@ import {
   createSendAudioTool,
   createSendVoiceTool,
   listWorkspaceMcpToolNames,
+  isCatastrophicCommand,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -1382,69 +1384,102 @@ async function runJob(
       (r) => r.status === 'approved' || r.status === 'rejected',
     );
 
+    // Fix #29: set when a resolved approval turns out to be a catastrophic
+    // run_command — see the check inside the loop below. Declared outside the
+    // loop so it survives to the fail-loud check right after it.
+    let catastrophicRefusalMessage: string | null = null;
+
     if (resolvedRows.length > 0) {
       // Process each resolved request and replace its marker in messages.
       for (const req of resolvedRows) {
         let replacementOutput: ToolResultOutput;
 
         if (req.status === 'approved') {
-          // Execute the approved tool, bypassing the gate — the human already
-          // reviewed and approved this exact call. The bypass is expressed via a
-          // synthetic auto_approve rule below (NOT an empty rules array: that would
-          // re-fire the tool's own defaultApproval and loop forever for run_command).
-          const toolDef = toolMap.get(req.toolName);
-          if (!toolDef) {
-            // Tool no longer in whitelist — treat as error and mark executed.
-            replacementOutput = toResultOutput({
-              error: `approved_tool_not_found:${req.toolName}`,
-            });
-          } else {
-            // Synthesize an explicit auto_approve rule for this tool so that
-            // tools with defaultApproval:'require_approval' (e.g. run_command)
-            // bypass their own gate during the resume-execution step. The human
-            // already reviewed and approved this exact call — re-gating on the
-            // tool's default posture would produce an infinite approval loop.
-            const resumeApprovalRules: ApprovalRule[] = [
-              {
-                id: 'resume-bypass',
-                entityId: job.entityId ?? '',
-                agentId: null,
-                toolName: req.toolName,
-                action: 'auto_approve',
-              },
-            ];
-            const execResult = await executeTool(
-              toolDef,
-              req.toolInput,
-              {
-                jobId: jobId as string,
-                agentId: agentRow.id,
-                entityId: job.entityId ?? '',
-                db,
-                jobChatId: job.chatId ?? null,
-                embeddingClient: deps.embeddingClient,
-                workspaces: agentWorkspacesList,
-                skillStoreDir: skillStore,
-                assignedSkillSlugs,
-                scriptAuthorizedSkillSlugs,
-                fileWritableSkillSlugs,
-                provisioning: TOOL_PROVISIONING,
-                searchBackend,
-              },
-              {
-                approvalRules: resumeApprovalRules,
-                autonomy: workspaceAutonomy,
-                onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
-              },
+          // Hardline floor, UX surfacing (Fix #29). A machine-wide-destructive
+          // shell command can NEVER auto-run — not even after an explicit human
+          // approval (packages/tools/src/execute.ts re-trips this floor
+          // unconditionally; that fail-safe is intentional and UNCHANGED here).
+          // Calling executeTool anyway would just hit that floor again, silently
+          // spawn a SECOND orphaned approval_requests row + notification (the
+          // internal gate creates one before returning 'awaiting_approval'), and
+          // leave the LLM staring at an opaque `unexpected_gate_on_approved_tool`
+          // code with no idea why its approved action never ran. Detect it here,
+          // BEFORE calling executeTool, and fail the job loud with a message the
+          // user can actually act on — pure UX, the command still never executes
+          // either way.
+          const isCatastrophicResume =
+            req.toolName === 'run_command' &&
+            isCatastrophicCommand(
+              String((req.toolInput as { command?: unknown } | null)?.command ?? ''),
             );
-            if (execResult.outcome === 'success') {
-              replacementOutput = toResultOutput(execResult.output);
-            } else if (execResult.outcome === 'error') {
-              replacementOutput = toResultOutput({ error: execResult.error });
+
+          if (isCatastrophicResume) {
+            catastrophicRefusalMessage =
+              'Cette commande est jugée catastrophique (destruction machine-wide) et reste ' +
+              "refusée même après approbation, par sécurité. Elle n'a pas été exécutée.";
+            replacementOutput = toResultOutput({ error: catastrophicRefusalMessage });
+            trace('resume_catastrophic_command_refused', { toolName: req.toolName });
+          } else {
+            // Execute the approved tool, bypassing the gate — the human already
+            // reviewed and approved this exact call. The bypass is expressed via a
+            // synthetic auto_approve rule below (NOT an empty rules array: that would
+            // re-fire the tool's own defaultApproval and loop forever for run_command).
+            const toolDef = toolMap.get(req.toolName);
+            if (!toolDef) {
+              // Tool no longer in whitelist — treat as error and mark executed.
+              replacementOutput = toResultOutput({
+                error: `approved_tool_not_found:${req.toolName}`,
+              });
             } else {
-              // outcome === 'awaiting_approval' should never occur — we passed a
-              // synthetic auto_approve rule that overrides any defaultApproval.
-              replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+              // Synthesize an explicit auto_approve rule for this tool so that
+              // tools with defaultApproval:'require_approval' (e.g. run_command)
+              // bypass their own gate during the resume-execution step. The human
+              // already reviewed and approved this exact call — re-gating on the
+              // tool's default posture would produce an infinite approval loop.
+              const resumeApprovalRules: ApprovalRule[] = [
+                {
+                  id: 'resume-bypass',
+                  entityId: job.entityId ?? '',
+                  agentId: null,
+                  toolName: req.toolName,
+                  action: 'auto_approve',
+                },
+              ];
+              const execResult = await executeTool(
+                toolDef,
+                req.toolInput,
+                {
+                  jobId: jobId as string,
+                  agentId: agentRow.id,
+                  entityId: job.entityId ?? '',
+                  db,
+                  jobChatId: job.chatId ?? null,
+                  embeddingClient: deps.embeddingClient,
+                  workspaces: agentWorkspacesList,
+                  skillStoreDir: skillStore,
+                  assignedSkillSlugs,
+                  scriptAuthorizedSkillSlugs,
+                  fileWritableSkillSlugs,
+                  provisioning: TOOL_PROVISIONING,
+                  searchBackend,
+                },
+                {
+                  approvalRules: resumeApprovalRules,
+                  autonomy: workspaceAutonomy,
+                  onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
+                },
+              );
+              if (execResult.outcome === 'success') {
+                replacementOutput = toResultOutput(execResult.output);
+              } else if (execResult.outcome === 'error') {
+                replacementOutput = toResultOutput({ error: execResult.error });
+              } else {
+                // outcome === 'awaiting_approval' should never occur here — we
+                // passed a synthetic auto_approve rule that overrides any
+                // defaultApproval, and the one case that DOES still re-gate
+                // (the catastrophic floor) was already handled above.
+                replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+              }
             }
           }
           trace('resume_approved_tool_executed', { toolName: req.toolName });
@@ -1506,6 +1541,28 @@ async function runJob(
           .update(approvalRequests)
           .set({ executedAt: new Date() })
           .where(eq(approvalRequests.id, req.id));
+      }
+
+      // Fix #29: a catastrophic run_command was approved but the hardline floor
+      // refuses it regardless — fail the job loud NOW, with the clear message,
+      // instead of feeding the opaque marker into the LLM loop as if this were
+      // an ordinary tool error. The marker replacement + executed_at stamp above
+      // already ran for it, so the persisted transcript is consistent.
+      if (catastrophicRefusalMessage !== null) {
+        trace('resume_catastrophic_command_failed_job');
+        await failJob(
+          db,
+          jobId as string,
+          'catastrophic_command_refused',
+          runStats(),
+          messages,
+          catastrophicRefusalMessage,
+        );
+        return {
+          status: 'failed',
+          error: 'catastrophic_command_refused',
+          result: catastrophicRefusalMessage,
+        };
       }
 
       // Persist the updated messages before entering the LLM loop.
@@ -1893,8 +1950,17 @@ async function runJob(
         response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
       )?.['openrouter'] as Record<string, unknown> | undefined;
       const rawCost = (orMeta?.['usage'] as Record<string, unknown> | undefined)?.['cost'];
+      const reportedCostUsd =
+        typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : undefined;
+      // Fix #21: OpenRouter is the only provider that self-reports cost above.
+      // Every native/BYOK provider (DeepSeek/MiniMax/Anthropic-direct/OpenAI/
+      // Google/Groq/Mistral/Ollama) leaves it unset — without this fallback
+      // totalCostUsd stays 0 forever for those and Guard 1e never fires.
+      // Derive from tokens × catalog list price instead; 0 (documented debt)
+      // for a model with no catalogued price yet.
       const callCostUsd =
-        typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : 0;
+        reportedCostUsd ??
+        estimateModelCostUsd(llmClient.config.provider, llmClient.config.model, promptTok, completionT);
       totalCostUsd += callCostUsd;
       // Capture the upstream provider name (P0-B: served-upstream observability).
       // OpenRouter sets providerMetadata.openrouter.provider to the upstream that
@@ -2665,12 +2731,28 @@ async function runJob(
       // A "sibling tool error" is one whose tool_result output is a JSON
       // object containing an `error` field (the shape we wrap failures in
       // — see toResultOutput callers in section i above).
-      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean =>
-        block.toolName !== 'return_result' &&
-        block.output.type === 'json' &&
-        block.output.value !== null &&
-        typeof block.output.value === 'object' &&
-        'error' in (block.output.value as Record<string, unknown>);
+      //
+      // Fix #19: toResultOutput forces `type: 'text'` (not 'json') once the
+      // serialized `{error: ...}` object exceeds MAX_TOOL_RESULT_CHARS — a
+      // large tool error (e.g. a misbehaving connector dumping a huge stack
+      // trace back) goes through truncateForContext instead. Checking
+      // `type === 'json'` alone missed that case entirely: the sibling error
+      // went undetected and the turn finalized 'completed' despite the failed
+      // side effect (invariant #4). truncateForContext only touches content
+      // AFTER the `{"error":` prefix (elision/truncation both preserve the
+      // head), so that prefix survives and is a safe marker to check for text
+      // outputs too.
+      const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean => {
+        if (block.toolName === 'return_result') return false;
+        if (block.output.type === 'json') {
+          return (
+            block.output.value !== null &&
+            typeof block.output.value === 'object' &&
+            'error' in (block.output.value as Record<string, unknown>)
+          );
+        }
+        return block.output.value.startsWith('{"error":');
+      };
 
       const turnHadSiblingToolError =
         returnResultCall !== undefined && toolResultBlocks.some(isToolErrorBlock);

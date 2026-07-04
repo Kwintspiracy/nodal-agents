@@ -34,6 +34,19 @@ export interface ModelCapabilities {
   reasoning?: boolean;
 }
 
+/**
+ * List price per the provider's own published rate card (not a live quote —
+ * refresh manually when a vendor changes pricing). Used to DERIVE a call's
+ * dollar cost for providers that don't self-report one (see `estimateModelCostUsd`
+ * / Guard 1e in apps/runner/src/job/execute.ts). Standard/cache-miss rate.
+ */
+export interface ModelPricing {
+  /** USD per 1M INPUT tokens. */
+  inputPerMillionUsd: number;
+  /** USD per 1M OUTPUT tokens. */
+  outputPerMillionUsd: number;
+}
+
 export interface ModelCatalogEntry {
   modelId: string;
   label: string;
@@ -44,6 +57,13 @@ export interface ModelCatalogEntry {
    * — callers fall back to DEFAULT_CONTEXT_WINDOW.
    */
   contextWindow?: number;
+  /**
+   * List price for deriving cost on providers that don't self-report it (see
+   * `estimateModelCostUsd`). Omit for unpriced models — the derived cost then
+   * stays 0 (documented debt: Guard 1a's token budget is the backstop for
+   * those, same as before this field existed).
+   */
+  pricing?: ModelPricing;
   /** Optional endpoint override (e.g. a model's native Anthropic-compatible URL). */
   route?: { baseURL?: string };
   /**
@@ -73,6 +93,9 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // calling with forced tool_choice supported.
       capabilities: { tools: true, forcedToolChoice: true },
       contextWindow: 128_000,
+      // Standard (cache-miss) rate per DeepSeek's public pricing page —
+      // verify against api-docs.deepseek.com/quick_start/pricing if this drifts.
+      pricing: { inputPerMillionUsd: 0.27, outputPerMillionUsd: 1.1 },
     },
     {
       modelId: 'deepseek-reasoner',
@@ -83,6 +106,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // assistant messages with tool_calls (the deepseek fetch shim handles this).
       capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
       contextWindow: 128_000,
+      pricing: { inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19 },
     },
   ],
 
@@ -96,6 +120,11 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // forced tool_choice with a 400/404 (observed on M3 via OpenRouter); the
   // runtime completion floor covers it. Context windows are docs-sourced where
   // available, else a conservative 200K until a live probe confirms.
+  // No `pricing` yet (unlike deepseek above) — no confidently-current MiniMax
+  // rate card verified at write time. Left as documented debt (Fix #21): the
+  // derived-cost fallback returns 0 for these until pricing is added, same as
+  // every other unpriced entry in this catalog; Guard 1a (token budget) is the
+  // backstop meanwhile.
   minimax: [
     {
       modelId: 'MiniMax-M3',
@@ -383,6 +412,35 @@ export const DEFAULT_CONTEXT_WINDOW = 128_000;
  */
 export function modelContextWindow(provider: string, modelId: string): number {
   return findModelCatalogEntry(provider, modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+}
+
+/**
+ * Estimate a single call's real dollar cost from its token counts × the
+ * catalog's list price. Fix #21 (2026-07 audit, "cap coût $ inopérant hors
+ * OpenRouter"): OpenRouter self-reports real cost in
+ * `providerMetadata.openrouter.usage.cost`, but every native/BYOK provider
+ * (DeepSeek/MiniMax/Anthropic-direct/OpenAI/Google/Groq/Mistral/Ollama) never
+ * populates that path — without this fallback, Guard 1e (the $ cost cap in
+ * apps/runner/src/job/execute.ts) never sees a non-zero cost for those calls
+ * and can never fire. Returns 0 — not an error — for any model without a
+ * catalogued `pricing` entry; that's tracked debt (see the `pricing` field
+ * doc), not a silent fallback: Guard 1a's token budget remains the backstop
+ * for unpriced models, same as before this function existed.
+ */
+export function estimateModelCostUsd(
+  provider: string,
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  const pricing = findModelCatalogEntry(provider, modelId)?.pricing;
+  if (!pricing) return 0;
+  const inTok = Number.isFinite(inputTokens) && inputTokens > 0 ? inputTokens : 0;
+  const outTok = Number.isFinite(outputTokens) && outputTokens > 0 ? outputTokens : 0;
+  return (
+    (inTok / 1_000_000) * pricing.inputPerMillionUsd +
+    (outTok / 1_000_000) * pricing.outputPerMillionUsd
+  );
 }
 
 // Pretty names for the sub-vendor namespaces seen in OpenRouter model ids.

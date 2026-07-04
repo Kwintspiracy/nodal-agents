@@ -24,6 +24,7 @@ import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { DeliveryError } from '@nodal-agents/delivery';
+import { findModelCatalogEntry } from '@nodal-agents/shared';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
 import {
@@ -3818,6 +3819,102 @@ describe('reliability guards', () => {
     expect(row?.status).toBe('failed');
     expect(row?.error).toBe('token_budget_exceeded'); // Guard 1a fired, not Guard 1e
     expect(row?.totalCostUsd).toBe(0); // no cost reported → stays 0
+  });
+
+  // ─── Fix #21: cost derivation for native/BYOK providers ───────────────────
+  // Before this fix, totalCostUsd only ever grew via
+  // providerMetadata.openrouter.usage.cost — a native provider (DeepSeek,
+  // MiniMax, Anthropic-direct, …) never populates that path, so Guard 1e could
+  // never fire for those jobs regardless of real spend. The fix derives a
+  // call's cost from tokens × the model catalog's list price whenever the
+  // provider stays silent. deepseek/deepseek-chat is catalogued with real
+  // pricing (packages/shared/src/model-catalog.ts) — used here as the "known
+  // priced native model" fixture.
+
+  it('Fix #21: a native provider (no openrouter cost metadata) derives cost from catalog pricing × tokens', async () => {
+    const pricing = findModelCatalogEntry('deepseek', 'deepseek-chat')?.pricing;
+    if (!pricing) throw new Error('test fixture stale: deepseek-chat has no catalog pricing');
+
+    const job = await createTestJob(db, seed);
+    const promptTokens = 2_000_000; // round number → a clean expected value
+
+    // Guard 1a (token budget) is checked BEFORE Guard 1e (cost) — raise it well
+    // above this turn's token count so it's the cost derivation under test that
+    // decides the outcome, not an incidental token-budget trip.
+    await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '10000000', async () => {
+      await withEnv('MAX_COST_PER_JOB_USD', '1000', async () => {
+        const llmClient = makeMockLlmClient(
+          [
+            {
+              promptTokens,
+              // No costUsd → no providerMetadata.openrouter → exercises the
+              // native-provider derivation path, not the OpenRouter self-report.
+              toolCalls: [
+                { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+              ],
+            },
+          ],
+          undefined,
+          { provider: 'deepseek', model: 'deepseek-chat' },
+        );
+        const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+        expect(result.status).toBe('completed');
+      });
+    });
+
+    const [row] = await db
+      .select({ totalCostUsd: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+
+    // Same formula the fix uses in execute.ts (estimateModelCostUsd): tokens ×
+    // catalog list price. This mock's outputTokens is fixed at 5 (see
+    // makeMockLlmClient above).
+    const expectedCostUsd =
+      (promptTokens / 1_000_000) * pricing.inputPerMillionUsd +
+      (5 / 1_000_000) * pricing.outputPerMillionUsd;
+    expect(row?.totalCostUsd).toBeGreaterThan(0);
+    expect(row?.totalCostUsd).toBeCloseTo(expectedCostUsd, 6);
+  });
+
+  it('Fix #21: derived native-provider cost can trip Guard 1e (cost_budget_exceeded)', async () => {
+    const job = await createTestJob(db, seed);
+    // 5M prompt tokens × $0.27/M (deepseek-chat catalog price) = $1.35, well
+    // over a $0.10 cap — the derived cost alone must trip the guard. Token
+    // budget is raised out of the way (see the test above) so it's the cost
+    // guard that fires, not an incidental token-budget trip.
+    await withEnv('MAX_TOTAL_TOKENS_PER_JOB', '10000000', async () => {
+      await withEnv('MAX_COST_PER_JOB_USD', '0.1', async () => {
+        const llmClient = makeMockLlmClient(
+          [
+            {
+              promptTokens: 5_000_000,
+              toolCalls: [
+                {
+                  toolCallId: 'tc-sm',
+                  toolName: 'save_memory',
+                  args: { fact: 'x', category: 'context' },
+                },
+              ],
+            },
+          ],
+          undefined,
+          { provider: 'deepseek', model: 'deepseek-chat' },
+        );
+        const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+        expect(result.status).toBe('failed');
+        if (result.status === 'failed') expect(result.error).toBe('cost_budget_exceeded');
+      });
+    });
+
+    const [row] = await db
+      .select({ error: agentJobs.error, totalCostUsd: agentJobs.totalCostUsd })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.error).toBe('cost_budget_exceeded');
+    // 1.35 from input tokens + a tiny output-token contribution (this mock's
+    // outputTokens is fixed at 5) — precision 4 comfortably covers both.
+    expect(row?.totalCostUsd).toBeCloseTo(1.35, 4);
   });
 
   // ─── P0-B: served-upstream observability ──────────────────────────────────
