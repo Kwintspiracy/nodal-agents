@@ -16,6 +16,40 @@ import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
 
+// ─── findUndeliveredRootJobIds ─────────────────────────────────────────────────
+
+/**
+ * Distinct root_job_ids that still need delivery: at least one task, AND the
+ * root job itself not yet delivered (completedAt IS NULL).
+ *
+ * Bounding the scan here — instead of pulling every root_job_id agent_tasks
+ * has ever seen and discarding the already-delivered ones one row at a time
+ * in deliverCompletedRoots' loop — is the fix for audit finding #27: retention
+ * doesn't purge agent_tasks, so the old unfiltered query re-scanned the ENTIRE
+ * task history every tick (120s) and re-issued a per-row SELECT for every root
+ * ever delivered, not just the ones still pending. The join against
+ * agent_jobs.completed_at excludes delivered roots up front, so the caller's
+ * loop only ever iterates roots that genuinely still need work.
+ *
+ * Note: there is no index on agent_tasks.root_job_id or agent_jobs.completed_at
+ * today (checked packages/db/src/schema/tasks.ts + jobs.ts) — the join to
+ * agent_jobs itself is cheap (keyed on the PK), but the FROM agent_tasks side
+ * is still a full scan until such an index exists. Flagging, not adding a
+ * migration for it here (out of scope for this fix).
+ *
+ * Exported (not just inlined in deliverCompletedRoots) so the bound-scan
+ * behavior itself is directly testable, independent of the per-row loop's own
+ * completedAt guard below.
+ */
+export async function findUndeliveredRootJobIds(db: AnyDrizzleDb): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ rootJobId: agentTasks.rootJobId })
+    .from(agentTasks)
+    .innerJoin(agentJobs, eq(agentJobs.id, agentTasks.rootJobId))
+    .where(and(isNotNull(agentTasks.rootJobId), isNull(agentJobs.completedAt)));
+  return rows.map((r) => r.rootJobId!);
+}
+
 // ─── deliverCompletedRoots ────────────────────────────────────────────────────
 
 /**
@@ -32,20 +66,16 @@ import type { ExecuteJobResult } from '../job/execute.ts';
  * @returns count of root jobs completed
  */
 export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
-  // Find distinct root_job_ids that have at least one task and haven't been delivered
-  const rootJobCandidates = await db
-    .selectDistinct({ rootJobId: agentTasks.rootJobId })
-    .from(agentTasks)
-    .where(isNotNull(agentTasks.rootJobId));
+  const undeliveredRootJobIds = await findUndeliveredRootJobIds(db);
 
-  if (rootJobCandidates.length === 0) return 0;
+  if (undeliveredRootJobIds.length === 0) return 0;
 
   let delivered = 0;
 
-  for (const row of rootJobCandidates) {
-    const rootJobId = row.rootJobId!;
-
-    // Check if root job already delivered (completedAt is set)
+  for (const rootJobId of undeliveredRootJobIds) {
+    // Check if root job already delivered (completedAt is set) — a
+    // race-safety net for concurrent ticks; findUndeliveredRootJobIds already
+    // excluded delivered roots from the candidate set above.
     const rootJobRows = await db
       .select({
         id: agentJobs.id,

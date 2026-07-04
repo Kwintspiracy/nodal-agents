@@ -25,7 +25,7 @@ vi.mock('../../job/resolve-llm.ts', () => ({
   resolveAgentLlmClient: (...args: unknown[]) => resolveAgentLlmClientMock(...args),
 }));
 
-import { deliverCompletedRoots } from '../deliver-results.ts';
+import { deliverCompletedRoots, findUndeliveredRootJobIds } from '../deliver-results.ts';
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
@@ -342,6 +342,37 @@ describe('deliverCompletedRoots', () => {
     expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
     const arg = sendTelegramMessageMock.mock.calls[0]![0] as { text: string };
     expect(arg.text).toContain('Fallback result body'); // compiled text, chunking handles length
+  });
+
+  it('fix #27: findUndeliveredRootJobIds excludes an already-delivered root from the SCAN itself', async () => {
+    // This is the actual claim of #27: the candidate query — not the per-row
+    // loop guard further down — must not even return an already-delivered
+    // root's id. Testing deliverCompletedRoots end-to-end can't distinguish
+    // "excluded from the scan" from "included in the scan, then skipped by
+    // the existing `if (rootJob.completedAt !== null) continue` guard" — both
+    // produce the same observable outcome (the sentinel is untouched) even
+    // WITHOUT the join fix. So call the scan function directly instead.
+    const deliveredRoot = await createRootJob(); // createRootJob() sets completedAt already
+    await createTaskForRoot(deliveredRoot.id, 'done', 'delivered root task');
+    await db
+      .update(agentJobs)
+      .set({ completedAt: new Date() })
+      .where(eq(agentJobs.id, deliveredRoot.id));
+
+    const pendingRoot = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'processing' })
+      .where(eq(agentJobs.id, pendingRoot.id));
+    await createTaskForRoot(pendingRoot.id, 'done', 'pending root task');
+
+    const candidates = await findUndeliveredRootJobIds(db as RunnerDeps['db']);
+
+    // The delivered root's id must NOT appear in the candidate set at all —
+    // proves the join filters it out at the SQL level, not just at the loop.
+    expect(candidates).not.toContain(deliveredRoot.id);
+    // The pending root's id must appear — the scan still surfaces real work.
+    expect(candidates).toContain(pendingRoot.id);
   });
 
   it('idempotency: two concurrent ticks deliver each root exactly once', async () => {

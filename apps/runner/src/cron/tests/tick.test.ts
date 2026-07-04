@@ -8,7 +8,7 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agentTasks, agents } from '@nodal-agents/db';
+import { agentJobs, agentTasks, agents, agentSchedules } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -292,5 +292,136 @@ describe('runCronTick (integration)', () => {
       // Each task row is unique — the DB has exactly one row per task
       expect(rows).toHaveLength(1);
     }
+  });
+
+  it('fix #20: a slow-firing schedule does not block phase 7 delivery within the same tick', async () => {
+    // A due schedule whose fired job's LLM call is deliberately slow — this is
+    // what an 8min planner fan-out looks like from runCronTick's point of view.
+    const [sched] = await db
+      .insert(agentSchedules)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        type: 'cron',
+        name: 'Slow schedule',
+        cronExpr: '0 9 * * *',
+        task: 'slow periodic job',
+        active: true,
+        nextRun: null,
+        notifyOnSuccess: false,
+      })
+      .returning();
+
+    // An unrelated root job, ready for phase 7 delivery, that has nothing to
+    // do with the schedule above.
+    const [rootJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'unrelated root job',
+        status: 'processing',
+        messages: [],
+      })
+      .returning();
+    await db.insert(agentTasks).values({
+      entityId: seed.entityId,
+      orchestratorId: seed.agentId,
+      assignedAgentId: seed.agentId,
+      title: 'Unrelated task',
+      status: 'done',
+      result: 'already finished',
+      rootJobId: rootJob!.id,
+    });
+
+    // LLM mock that sleeps before responding — the schedule's fired job will
+    // hit this inside executeJob.
+    const SLOW_MS = 500;
+    const slowModel = new MockLanguageModelV3({
+      provider: 'mock',
+      modelId: 'mock',
+      doGenerate: async () => {
+        await new Promise((resolve) => setTimeout(resolve, SLOW_MS));
+        return {
+          content: [{ type: 'text' as const, text: 'slow schedule done' }],
+          finishReason: { unified: 'stop' as const, raw: 'stop' },
+          usage: {
+            inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        };
+      },
+    });
+    const slowClient: RunnerDeps['llmClient'] = {
+      config: { provider: 'anthropic', model: 'mock' },
+      capabilities: {
+        toolUse: true,
+        promptCaching: false,
+        vision: false,
+        structuredOutputs: false,
+        streaming: false,
+      },
+      generateText: (args) =>
+        generateText({ ...args, model: slowModel } as Parameters<
+          typeof generateText
+        >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
+      streamText: () => {
+        throw new Error('not supported');
+      },
+      generateObject: () => {
+        throw new Error('not supported');
+      },
+    };
+    setActiveLlmClient(slowClient);
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const deps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient: slowClient,
+      embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+      registry,
+      authProvider: new LocalTrustProvider(),
+      close: async () => {},
+    };
+
+    const result = await runCronTick(deps, 5);
+
+    // Non-temporal proof of the fix: right when runCronTick returns, the
+    // schedule's fired job has NOT finished yet (last_status is still null —
+    // it only gets set once runScheduleTick's fire-and-forget executeJob call
+    // resolves, ~SLOW_MS later). If phase 7/curator were still gated behind
+    // runScheduleTick like before the fix, runCronTick could not have
+    // returned at this point at all — proving this schedule is still
+    // in-flight, right here, right now, is a stronger proof than any
+    // stopwatch/threshold comparison (no flake risk under CI load).
+    const schedAfterTick = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched!.id));
+    expect(schedAfterTick[0]?.lastStatus).toBeNull();
+
+    // Yet phase 7 (deliverCompletedRoots) already ran and delivered the
+    // unrelated root within this same tick — delivery did not wait on the
+    // still-running schedule.
+    expect(result.rootsDelivered).toBeGreaterThanOrEqual(1);
+    const delivered = await db
+      .select({ completedAt: agentJobs.completedAt, status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, rootJob!.id));
+    expect(delivered[0]?.completedAt).not.toBeNull();
+    expect(delivered[0]?.status).toBe('completed');
+
+    // Let the background schedule execution settle before the next test /
+    // teardown picks up the shared db, so it doesn't leak into later assertions.
+    await new Promise((resolve) => setTimeout(resolve, SLOW_MS + 200));
+    const schedSettled = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched!.id));
+    // Confirms the slow schedule really was executing (not e.g. silently
+    // dropped) — it did complete, just after this tick had already returned.
+    expect(schedSettled[0]?.lastStatus).toBe('success');
   });
 });

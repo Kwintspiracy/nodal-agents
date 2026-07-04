@@ -6,7 +6,11 @@
 //   3. resetOrphanedTasks   — recover in_progress tasks with no job
 //   4. unblockReadyTasks    — inject dep results for tasks whose deps are done
 //   5. executeReadyTasks    — claim and run up to 5 ready tasks
-//   6. runScheduleTick      — fire active agent_schedules whose next_run is due
+//   6. runScheduleTick      — fire active agent_schedules whose next_run is due.
+//                             Fire-and-forget from here (see note at the call
+//                             site, audit finding #20): a schedule that kicks
+//                             off a long-running orchestrator must not stall
+//                             phases 7/8 for everyone else.
 //   7. deliverCompletedRoots — compile and deliver results for finished root jobs
 
 import {
@@ -35,6 +39,14 @@ export interface CronTickResult {
   orphansReset: number;
   tasksUnblocked: number;
   tasksExecuted: number;
+  /**
+   * Best-effort. Schedule firing is decoupled from the rest of the tick (audit
+   * finding #20, see runCronTick) so this only counts schedules whose
+   * runScheduleTick call happened to resolve before the tick built this
+   * result — a slow-firing schedule that's still running when the tick
+   * returns is NOT counted here (it will still complete, just outside this
+   * tick's accounting).
+   */
   schedulesFired: number;
   rootsDelivered: number;
   curatorStaled: number;
@@ -60,6 +72,10 @@ export interface CronTickResult {
  * - Phase 4 (unblock) can benefit from Phase 1 (orphan reset) having freed tasks
  * - Phase 5 (execute) picks up tasks just unblocked by Phase 4
  * - Phase 7 (deliver) sees results from tasks completed by Phase 5
+ *
+ * Phase 6 (schedules) is the one exception: it is fire-and-forget, not
+ * sequenced — a long-running schedule must not stall phase 7 or the curator
+ * (audit finding #20). See the call site below for the full rationale.
  *
  * @param deps  RunnerDeps (db + llmClient + registry)
  * @param maxTasksPerTick  Max tasks to execute in Phase 5 (default 5)
@@ -94,7 +110,35 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   const orphansReset = await resetOrphanedTasks(deps.db);
   const tasksUnblocked = await unblockReadyTasks(deps.db);
   const tasksExecuted = await executeReadyTasks(deps.db, deps, maxTasksPerTick);
-  const schedulesFired = await runScheduleTick(deps.db, deps, maxTasksPerTick);
+
+  // Fire-and-forget, same shape as the pending-recovery phase above (line
+  // ~87): a schedule whose fired job runs a long orchestrator (observed live:
+  // an 8min planner fan-out) must not stall phase 7 (deliverCompletedRoots) or
+  // the curator for the rest of THIS tick (audit finding #20). Before this fix
+  // `await runScheduleTick(...)` sat directly in the blocking path, so every
+  // other root job's delivery — and the curator's memory maintenance — waited
+  // on that one slow schedule, and because ticker.ts's setInterval keeps
+  // firing every 120s regardless, ticks piled up concurrently behind it.
+  //
+  // The atomic claim inside runScheduleTick (conditional UPDATE on
+  // agent_schedules) is untouched and still the idempotency guard — an
+  // overlapping call from the next tick still can't double-fire the same
+  // schedule.
+  //
+  // schedulesFired below is therefore best-effort: it only reflects a count
+  // if runScheduleTick happens to resolve before this function returns, and
+  // stays 0 otherwise. That's honest (the tick genuinely doesn't know yet by
+  // the time it hands its result back), not a fallback value pretending
+  // certainty.
+  let schedulesFired = 0;
+  void runScheduleTick(deps.db, deps, maxTasksPerTick)
+    .then((count) => {
+      schedulesFired = count;
+    })
+    .catch((err) => {
+      console.warn('[cron] runScheduleTick failed (tick continues):', err);
+    });
+
   const rootsDelivered = await deliverCompletedRoots(deps.db);
   const curatorResult = await runCuratorTick(deps.db, deps);
 
