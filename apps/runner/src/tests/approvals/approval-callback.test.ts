@@ -74,14 +74,18 @@ async function insertPendingApproval(toolName = 'run_command'): Promise<string> 
   return row!.id;
 }
 
-function callbackUpdate(data: string, chatId: number | string): TelegramUpdate {
+function callbackUpdate(
+  data: string,
+  chatId: number | string,
+  chatType: string = 'private',
+): TelegramUpdate {
   return {
     update_id: 1,
     callback_query: {
       id: 'cbq-1',
       data,
       from: { id: 42, first_name: 'Q' },
-      message: { message_id: 555, chat: { id: Number(chatId), type: 'private' } },
+      message: { message_id: 555, chat: { id: Number(chatId), type: chatType } },
     },
   };
 }
@@ -141,6 +145,46 @@ describe('handleApprovalCallback — security boundary', () => {
     expect(ap!.resolvedBy).toBe('telegram');
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, seed.jobId)).limit(1);
     expect(job!.status).toBe('pending');
+  });
+
+  it('REJECTS a tap from a group chat — DM only (approval stays pending)', async () => {
+    const id = await insertPendingApproval();
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:a`, CHAT_ID, 'group'),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+    expect(r.handled).toBe(false);
+    if (r.handled) throw new Error('unreachable');
+    expect(r.reason).toBe('not_private_chat');
+    const [ap] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id))
+      .limit(1);
+    expect(ap!.status).toBe('pending'); // untouched
+  });
+
+  it('REJECTS a tap from a supergroup chat — DM only (approval stays pending)', async () => {
+    const id = await insertPendingApproval();
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:a`, CHAT_ID, 'supergroup'),
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+    expect(r.handled).toBe(false);
+    if (r.handled) throw new Error('unreachable');
+    expect(r.reason).toBe('not_private_chat');
+    const [ap] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id))
+      .limit(1);
+    expect(ap!.status).toBe('pending'); // untouched
   });
 
   it('REJECTS a tap from a different chat — approval stays pending', async () => {

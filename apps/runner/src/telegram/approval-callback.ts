@@ -63,6 +63,23 @@ export async function handleApprovalCallback(
     return { handled: false, reason: 'not_an_approval_callback' };
   }
 
+  // SECURITY (decision 2026-07-04): approvals are DM-only. A group/supergroup
+  // chat has multiple members who can tap the same inline button — the prior
+  // chat-id check below only verified the TAP CAME FROM the right chat, not
+  // that the right PERSON tapped it. Rather than try to identify "the right
+  // person" in a group, refuse group approvals outright: reject anything that
+  // isn't the bot's private chat with the requester, and do NOT resolve.
+  const chatType = cb.message?.chat?.type;
+  if (chatType !== 'private') {
+    await answerTelegramCallback(
+      botToken,
+      cb.id,
+      'Approvals can only be given in a private chat with the bot.',
+      true,
+    );
+    return { handled: false, reason: 'not_private_chat' };
+  }
+
   const tappedChatId = cb.message?.chat?.id;
   const messageId = cb.message?.message_id;
 

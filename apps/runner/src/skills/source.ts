@@ -52,11 +52,25 @@ const ALLOWED_HOSTS = new Set([
   'www.github.com',
   'raw.githubusercontent.com',
   'codeload.github.com',
+  // The GitHub Contents API — used by the subdir-fetch path (ghContents /
+  // downloadGithubSubdir in fetch.ts) to list and download a skill nested
+  // inside a monorepo without pulling the whole-repo tarball.
+  'api.github.com',
   'skills.sh',
   'www.skills.sh',
   'clawhub.ai',
   'www.clawhub.ai',
 ]);
+
+/**
+ * True if `hostname` is on the anti-SSRF allowlist. Exported so download code
+ * can re-check REDIRECT targets (the allowlist otherwise only guards the
+ * initial URL — an open redirect on an allowlisted host could otherwise be
+ * used to reach an internal address).
+ */
+export function isAllowedHost(hostname: string): boolean {
+  return ALLOWED_HOSTS.has(hostname);
+}
 
 function stripGitSuffix(repo: string): string {
   return repo.endsWith('.git') ? repo.slice(0, -4) : repo;

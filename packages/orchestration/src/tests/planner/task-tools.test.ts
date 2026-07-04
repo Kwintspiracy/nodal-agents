@@ -128,6 +128,46 @@ describe('generateTaskTools', () => {
       expect(row?.assignedAgentId).toBe(workerId);
     });
 
+    it('does NOT assign to an agent slug from a different entity', async () => {
+      const { entityId, plannerId, jobId } = await seedContext(db);
+      // Seed a second entity with an agent whose slug the planner does not own.
+      const [otherUser] = await db
+        .insert((await import('@nodal-agents/db')).users)
+        .values({ email: `test-pt-other-${Date.now()}@ex.com` })
+        .returning();
+      const [otherEntity] = await db
+        .insert((await import('@nodal-agents/db')).entities)
+        .values({ userId: otherUser!.id, name: 'Other', slug: `e-pt-other-${Date.now()}` })
+        .returning();
+      const [foreignAgent] = await db
+        .insert(agents)
+        .values({
+          entityId: otherEntity!.id,
+          name: 'Foreign Agent',
+          slug: `foreign-agent-${Date.now()}`,
+          personality: 'p',
+          role: 'agent',
+          active: true,
+        })
+        .returning();
+
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      const result = await createTask!.execute(
+        { title: 'Cross-entity assignment attempt', assigned_to: foreignAgent!.slug },
+        ctx,
+      );
+
+      const [row] = await db
+        .select({ assignedAgentId: agentTasks.assignedAgentId })
+        .from(agentTasks)
+        .where(eq(agentTasks.id, result.taskId));
+
+      // The foreign agent's slug must not resolve — task created unassigned.
+      expect(row?.assignedAgentId).toBeNull();
+    });
+
     it('sets rootJobId from context', async () => {
       const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
       const [createTask] = generateTaskTools(plannerId as AgentId, db);

@@ -87,13 +87,17 @@ export function generateTaskTools(
       inputSchema: createTaskSchema,
       riskLevel: 'write',
       execute: async (input: CreateTaskInput, ctx: ToolContext) => {
-        // Resolve assigned_to slug → agent_id
+        // Resolve assigned_to slug → agent_id, scoped to this job's entity —
+        // agents.slug is unique GLOBALLY, not per-entity, so an unscoped lookup
+        // would let an orchestrator hand a task to another entity's agent by
+        // guessing/reusing its slug. Not found (wrong entity or typo) → no
+        // assignment, same as an unknown slug.
         let assignedAgentId: string | null = null;
         if (input.assigned_to) {
           const agentRows = await db
             .select({ id: agents.id })
             .from(agents)
-            .where(eq(agents.slug, input.assigned_to))
+            .where(and(eq(agents.slug, input.assigned_to), eq(agents.entityId, ctx.entityId)))
             .limit(1);
           assignedAgentId = agentRows[0]?.id ?? null;
         }

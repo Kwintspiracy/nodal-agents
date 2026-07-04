@@ -1478,7 +1478,7 @@ export async function listDelegationRunsAction(
         .select({ id: agentJobs.id, name: agents.name })
         .from(agentJobs)
         .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-        .where(inArray(agentJobs.id, parentJobIds));
+        .where(and(eq(agentJobs.entityId, session.entityId), inArray(agentJobs.id, parentJobIds)));
       for (const p of pj) parentName.set(p.id, p.name ?? 'Agent');
     }
 
@@ -1572,7 +1572,7 @@ export async function getJobDetailAction(id: string): Promise<ActionResult<JobDe
       })
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .where(eq(agentJobs.parentJobId, id))
+      .where(and(eq(agentJobs.parentJobId, id), eq(agentJobs.entityId, session.entityId)))
       .orderBy(agentJobs.createdAt);
 
     return ok({
@@ -7357,7 +7357,7 @@ export async function getChatJobStatusAction(jobId: string): Promise<ActionResul
       })
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
-      .where(eq(agentJobs.parentJobId, jobId))
+      .where(and(eq(agentJobs.parentJobId, jobId), eq(agentJobs.entityId, session.entityId)))
       .orderBy(agentJobs.createdAt);
 
     const children = childRows.map((r) => ({

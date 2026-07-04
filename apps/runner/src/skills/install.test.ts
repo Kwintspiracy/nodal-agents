@@ -432,6 +432,159 @@ describe('downloadAndExtract — github subdir fetch', () => {
     const source = parseSkillSource('o/r/skills/x');
     await expect(downloadAndExtract(source)).rejects.toBeInstanceOf(SkillFetchError);
   });
+
+  it('re-validates the host on a Contents-API redirect (rejects an open redirect from api.github.com)', async () => {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/contents/skills/x?ref=main')) {
+        // ghContents must go through the manual-redirect + re-validation path too.
+        expect(init?.redirect).toBe('manual');
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'http://169.254.169.254/latest/meta-data' },
+        });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    }) as typeof fetch;
+
+    const source = parseSkillSource('https://github.com/o/r/tree/main/skills/x');
+    await expect(downloadAndExtract(source)).rejects.toThrow(/not allowed|non-allowlisted/i);
+  });
+
+  it('re-validates the host on a per-file redirect (rejects an open redirect from a download_url)', async () => {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/contents/skills/x?ref=main')) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: 'SKILL.md',
+              path: 'skills/x/SKILL.md',
+              type: 'file',
+              size: 40,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md',
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md') {
+        return new Response(null, { status: 302, headers: { location: 'http://localhost/secret' } });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    }) as typeof fetch;
+
+    const source = parseSkillSource('https://github.com/o/r/tree/main/skills/x');
+    await expect(downloadAndExtract(source)).rejects.toThrow(/not allowed|non-allowlisted/i);
+  });
+
+  it('still fetches ONLY the subdir when the flow doesn\'t hit a redirect (regression guard for the routing change)', async () => {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/contents/skills/y?ref=main')) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: 'SKILL.md',
+              path: 'skills/y/SKILL.md',
+              type: 'file',
+              size: 40,
+              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/y/SKILL.md',
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://raw.githubusercontent.com/o/r/main/skills/y/SKILL.md') {
+        return new Response('---\nname: test\ndescription: d\n---\nbody', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+
+    const source = parseSkillSource('https://github.com/o/r/tree/main/skills/y');
+    const { extractRoot, cleanup } = await downloadAndExtract(source);
+    try {
+      expect(await isFile(join(extractRoot, 'skills', 'y', 'SKILL.md'))).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ── download guards: streaming cap + redirect re-validation (anti-SSRF) ───────
+describe('downloadAndExtract — download guards', () => {
+  const origFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = origFetch;
+  });
+
+  it('rejects an oversized clawhub download WITHOUT buffering the whole body first', async () => {
+    // Stream a body far larger than MAX_ARCHIVE_BYTES (50 MB) in small chunks —
+    // if the guard buffered the whole response before checking size, this would
+    // either OOM or take a long time; the streaming cap must abort mid-stream.
+    const CHUNK = new Uint8Array(1024 * 1024).fill(0x41); // 1 MB
+    let sent = 0;
+    const TARGET_CHUNKS = 60; // 60 MB > 50 MB cap
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= TARGET_CHUNKS) {
+          controller.close();
+          return;
+        }
+        sent++;
+        controller.enqueue(CHUNK);
+      },
+    });
+    global.fetch = vi.fn(async () => new Response(stream, { status: 200 })) as typeof fetch;
+
+    const source = parseSkillSource('https://clawhub.ai/pub/big-skill');
+    await expect(downloadAndExtract(source)).rejects.toThrow(/too large/i);
+    // The guard must have aborted before streaming all 60 chunks.
+    expect(sent).toBeLessThan(TARGET_CHUNKS);
+  });
+
+  it('re-validates the host on EVERY redirect hop (rejects an open redirect to a non-allowlisted / internal host)', async () => {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://clawhub.ai/api/v1/download?slug=evil-skill') {
+        // Manual-redirect fetch must see this as a 302, not silently follow it.
+        expect(init?.redirect).toBe('manual');
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'http://169.254.169.254/latest/meta-data' },
+        });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    }) as typeof fetch;
+
+    const source = parseSkillSource('https://clawhub.ai/pub/evil-skill');
+    await expect(downloadAndExtract(source)).rejects.toThrow(/not allowed|non-allowlisted/i);
+  });
+
+  it('follows a redirect to another ALLOWLISTED host normally', async () => {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url === 'https://clawhub.ai/api/v1/download?slug=redirected-skill') {
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://www.clawhub.ai/api/v1/download-final?slug=redirected-skill' },
+        });
+      }
+      if (url === 'https://www.clawhub.ai/api/v1/download-final?slug=redirected-skill') {
+        const buf = makeZip([['SKILL.md', '---\nname: test\ndescription: d\n---\nbody']]);
+        return new Response(new Uint8Array(buf), { status: 200 });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    }) as typeof fetch;
+
+    const source = parseSkillSource('https://clawhub.ai/pub/redirected-skill');
+    const { extractRoot, cleanup } = await downloadAndExtract(source);
+    try {
+      expect(await isFile(join(extractRoot, 'SKILL.md'))).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 // ── accumulateDeclaredBytes pure helper ───────────────────────────────────────

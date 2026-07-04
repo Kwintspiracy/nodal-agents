@@ -11,7 +11,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve, relative, dirname, sep } from 'node:path';
 import { extract as tarExtract, type ReadEntry } from 'tar';
 import { unzipSync } from 'fflate';
-import { type SkillSource, candidateRefs, tarballUrl, clawhubDownloadUrl } from './source';
+import {
+  type SkillSource,
+  candidateRefs,
+  tarballUrl,
+  clawhubDownloadUrl,
+  isAllowedHost,
+} from './source';
 
 /** Hard cap on a downloaded archive (anti-abuse). */
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
@@ -38,21 +44,76 @@ export interface ExtractedRepo {
   cleanup: () => Promise<void>;
 }
 
+/**
+ * Read a response body up to `MAX_ARCHIVE_BYTES`, aborting the stream the
+ * moment the cumulative size crosses the cap instead of buffering the whole
+ * body first — a compromised (or merely huge) allowlisted host must not be
+ * able to OOM the runner by returning a multi-GB response before we ever get
+ * to check its size.
+ */
 async function readCapped(res: Response): Promise<Buffer> {
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.byteLength > MAX_ARCHIVE_BYTES) {
-    throw new SkillFetchError(
-      `Skill archive is too large (${buf.byteLength} bytes, max ${MAX_ARCHIVE_BYTES}).`,
-    );
+  const reader = res.body?.getReader();
+  if (!reader) {
+    // No streaming body available (e.g. an empty response) — nothing to cap.
+    return Buffer.from(await res.arrayBuffer());
   }
-  return buf;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > MAX_ARCHIVE_BYTES) {
+      await reader.cancel().catch(() => {
+        /* best-effort — we're already throwing */
+      });
+      throw new SkillFetchError(
+        `Skill archive is too large (exceeds ${MAX_ARCHIVE_BYTES} bytes). Aborted mid-download.`,
+      );
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((c) => Buffer.from(c)));
+}
+
+/** Hard cap on HTTP redirect hops (anti-abuse; also bounds SSRF-check cost). */
+const MAX_REDIRECTS = 5;
+
+/**
+ * Fetch a URL, following redirects MANUALLY so every hop — not just the
+ * initial URL — is re-checked against the anti-SSRF host allowlist. An
+ * allowlisted host with an open redirect could otherwise be used to reach an
+ * internal address (169.254.x.x, localhost, ...) via `redirect: 'follow'`.
+ */
+async function fetchAllowlisted(url: string, headers: Record<string, string>): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    let parsed: URL;
+    try {
+      parsed = new URL(current);
+    } catch {
+      throw new SkillFetchError(`Invalid redirect target: "${current}".`);
+    }
+    if (!isAllowedHost(parsed.hostname)) {
+      throw new SkillFetchError(
+        `Redirected to a non-allowlisted host: "${parsed.hostname}". Refusing to follow.`,
+      );
+    }
+    const res = await fetch(current, { redirect: 'manual', headers });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) throw new SkillFetchError(`Redirect response (${res.status}) missing Location.`);
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return res;
+  }
+  throw new SkillFetchError(`Too many redirects (max ${MAX_REDIRECTS}) fetching "${url}".`);
 }
 
 async function downloadToBuffer(url: string): Promise<Buffer> {
-  const res = await fetch(url, {
-    redirect: 'follow',
-    headers: { 'User-Agent': 'nodal-agents-skill-installer' },
-  });
+  const res = await fetchAllowlisted(url, { 'User-Agent': 'nodal-agents-skill-installer' });
   if (!res.ok) throw new SkillFetchError(`Download failed: HTTP ${res.status}.`);
   return readCapped(res);
 }
@@ -287,7 +348,7 @@ async function ghContents(
   ref: string,
 ): Promise<GhContentEntry[] | null> {
   const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURI(path)}?ref=${encodeURIComponent(ref)}`;
-  const res = await fetch(url, { headers: ghApiHeaders(), redirect: 'follow' });
+  const res = await fetchAllowlisted(url, ghApiHeaders());
   if (res.status === 404) return null;
   if (res.status === 403 || res.status === 429) {
     throw new SkillFetchError(
@@ -340,9 +401,8 @@ async function downloadGithubSubdir(
       if (abs !== destResolved && !abs.startsWith(destWithSep)) {
         throw new SkillFetchError(`Entry escapes the target directory: "${e.path}".`);
       }
-      const fileRes = await fetch(e.download_url, {
-        headers: { 'User-Agent': 'nodal-agents-skill-installer' },
-        redirect: 'follow',
+      const fileRes = await fetchAllowlisted(e.download_url, {
+        'User-Agent': 'nodal-agents-skill-installer',
       });
       if (!fileRes.ok)
         throw new SkillFetchError(`Download failed for "${e.path}": HTTP ${fileRes.status}.`);
@@ -396,9 +456,8 @@ export async function downloadAndExtract(source: SkillSource): Promise<Extracted
     let buf: Buffer | null = null;
     let usedRef: string | null = null;
     for (const ref of candidateRefs(source)) {
-      const res = await fetch(tarballUrl(source, ref), {
-        redirect: 'follow',
-        headers: { 'User-Agent': 'nodal-agents-skill-installer' },
+      const res = await fetchAllowlisted(tarballUrl(source, ref), {
+        'User-Agent': 'nodal-agents-skill-installer',
       });
       if (res.status === 404) continue;
       if (!res.ok) {

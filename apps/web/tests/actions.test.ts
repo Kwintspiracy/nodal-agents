@@ -106,6 +106,15 @@ function makeDbMixed(opts: { select?: unknown[]; insert?: unknown[]; update?: un
   };
 }
 
+/**
+ * Serialize a Drizzle `where()` condition for assertions on which columns/values
+ * it references. Real column objects carry a `table` back-reference (the table
+ * that owns them), which JSON.stringify can't follow — so it's dropped here.
+ */
+function serializeSqlCondition(cond: unknown): string {
+  return JSON.stringify(cond, (key, value) => (key === 'table' ? undefined : value));
+}
+
 // ─── Mock server.ts ───────────────────────────────────────────────────────────
 let currentDb = makeDb([]);
 
@@ -699,6 +708,109 @@ describe('getJobDetailAction — db path', () => {
       expect(r.data.agentSlug).toBe('concierge');
       expect(Array.isArray(r.data.children)).toBe(true);
     }
+  });
+
+  it('scopes the children-by-parentJobId query to the session entity (defense in depth)', async () => {
+    currentDb = makeDb([
+      {
+        job: {
+          id: 'cccccccc-0000-0000-0000-000000000001',
+          entityId: LOCAL_ENTITY_ID,
+          status: 'completed',
+          channel: 'api',
+          task: 'Test',
+          messages: [],
+          result: null,
+          error: null,
+          chainCount: 0,
+          turn: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalDurationMs: 0,
+          delegationDepth: 0,
+          systemPrompt: null,
+          parentJobId: null,
+          createdAt: new Date(),
+          completedAt: null,
+        },
+        agentName: 'Concierge',
+        agentSlug: 'concierge',
+      },
+    ]) as typeof currentDb;
+    const { getJobDetailAction } = await import('../src/lib/actions.ts');
+    await getJobDetailAction('cccccccc-0000-0000-0000-000000000001');
+
+    // Same chain object is returned for every select() call — its `where` mock
+    // accumulates every `.where()` call the action made, in order. The second
+    // one is the children-by-parentJobId query; assert it now carries an
+    // entity_id predicate bound to the session's entity (not just parentJobId).
+    const selectSpy = (currentDb as unknown as { select: ReturnType<typeof vi.fn> }).select;
+    const chainObj = selectSpy.mock.results[0]!.value as { where: ReturnType<typeof vi.fn> };
+    const childrenWhereArg = chainObj.where.mock.calls[1]?.[0];
+    const serialized = serializeSqlCondition(childrenWhereArg);
+    expect(serialized).toContain('"name":"entity_id"');
+    expect(serialized).toContain(LOCAL_ENTITY_ID);
+  });
+});
+
+describe('listDelegationRunsAction', () => {
+  it('scopes the parent-name-resolution query to the session entity (defense in depth)', async () => {
+    currentDb = makeDb([
+      {
+        id: 'dddddddd-0000-0000-0000-000000000001',
+        agentName: 'Worker',
+        agentSlug: 'worker',
+        agentAvatarUrl: null,
+        task: 'child task',
+        channel: 'api',
+        status: 'completed',
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        createdAt: new Date(),
+        completedAt: null,
+        parentJobId: 'dddddddd-0000-0000-0000-000000000002',
+      },
+    ]) as typeof currentDb;
+    const { listDelegationRunsAction } = await import('../src/lib/actions.ts');
+    const r = await listDelegationRunsAction({});
+    expect(r.ok).toBe(true);
+
+    // select() and selectDistinct() both resolve to the SAME chain object in
+    // this mock, so its `where` mock accumulates every `.where()` call the
+    // action made, in order: [0] rows query, [1] childParents (selectDistinct),
+    // [2] parent-name resolution (pj) — the one this fix scopes.
+    const selectSpy = (currentDb as unknown as { select: ReturnType<typeof vi.fn> }).select;
+    const chainObj = selectSpy.mock.results[0]!.value as { where: ReturnType<typeof vi.fn> };
+    const pjWhereArg = chainObj.where.mock.calls[2]?.[0];
+    const serialized = serializeSqlCondition(pjWhereArg);
+    expect(serialized).toContain('"name":"entity_id"');
+    expect(serialized).toContain(LOCAL_ENTITY_ID);
+  });
+});
+
+describe('getChatJobStatusAction', () => {
+  it('scopes the children-by-parentJobId query to the session entity (alignment with getJobDetailAction)', async () => {
+    currentDb = makeDb([
+      {
+        status: 'completed',
+        result: 'done',
+        agentName: 'Worker',
+        agentSlug: 'worker',
+      },
+    ]) as typeof currentDb;
+    const { getChatJobStatusAction } = await import('../src/lib/actions.ts');
+    const r = await getChatJobStatusAction('cccccccc-0000-0000-0000-000000000009');
+    expect(r.ok).toBe(true);
+
+    // Same shared-chain trick: [0] is the job-by-id query, [1] is the
+    // children-by-parentJobId query this fix scopes.
+    const selectSpy = (currentDb as unknown as { select: ReturnType<typeof vi.fn> }).select;
+    const chainObj = selectSpy.mock.results[0]!.value as { where: ReturnType<typeof vi.fn> };
+    const childrenWhereArg = chainObj.where.mock.calls[1]?.[0];
+    const serialized = serializeSqlCondition(childrenWhereArg);
+    expect(serialized).toContain('"name":"entity_id"');
+    expect(serialized).toContain(LOCAL_ENTITY_ID);
   });
 });
 
