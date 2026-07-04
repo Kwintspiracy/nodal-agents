@@ -139,8 +139,42 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
       console.warn('[cron] runScheduleTick failed (tick continues):', err);
     });
 
-  const rootsDelivered = await deliverCompletedRoots(deps.db);
-  const curatorResult = await runCuratorTick(deps.db, deps);
+  // deliverCompletedRoots already fail-isolates PER ROOT internally (a bad
+  // synthesis/telegram-send/maybeResumeParent for one root is caught and
+  // logged there, see deliver-results.ts), but a failure BEFORE that loop
+  // (e.g. the initial findUndeliveredRootJobIds query) would still throw
+  // uncaught and take down the rest of this tick — same class of bug as the
+  // curator one below. Guarded the same way, same reasoning: delivery/
+  // retention must never depend on each other's health.
+  let rootsDelivered = 0;
+  try {
+    rootsDelivered = await deliverCompletedRoots(deps.db);
+  } catch (err) {
+    console.warn('[cron] deliverCompletedRoots failed (tick continues):', err);
+  }
+
+  // The curator (Phase 1 lifecycle SQL + Phase 2 LLM passes) must never be
+  // able to crash the rest of the tick — retention (below) and every phase
+  // ABOVE this line already ran and their effects are committed; only the
+  // curator's own bookkeeping would be skipped for this tick. Caught the
+  // live bug this guards against: a raw Date interpolated into a `sql`
+  // fragment in transitionMemoryLifecycle (packages/memory/src/curator.ts)
+  // threw ERR_INVALID_ARG_TYPE against real Postgres (pglite's tests never
+  // caught it) and took the whole tick down every 120s.
+  let curatorResult: Awaited<ReturnType<typeof runCuratorTick>> = {
+    staled: 0,
+    archived: 0,
+    reactivated: 0,
+    consolidationDeferred: 0,
+    consolidationRan: 0,
+    memoryArchived: 0,
+    memoryCurationRan: 0,
+  };
+  try {
+    curatorResult = await runCuratorTick(deps.db, deps);
+  } catch (err) {
+    console.warn('[cron] runCuratorTick failed (tick continues):', err);
+  }
 
   // ─── Retention phase (OFF by default, opt-in via RETENTION_DAYS > 0) ─────────
   // Prune terminal jobs older than RETENTION_DAYS days. Runs LAST so it never

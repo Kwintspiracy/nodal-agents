@@ -40,6 +40,31 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
   };
 });
 
+// Toggle so a single test can force runCuratorTick to throw — proves the
+// tick.ts try/catch guard (audit finding, curator Date-bind bug) keeps the
+// rest of the tick (delivery, retention) running even when the curator dies.
+const { getCuratorShouldThrow, setCuratorShouldThrow } = vi.hoisted(() => {
+  let _throw = false;
+  return {
+    getCuratorShouldThrow: () => _throw,
+    setCuratorShouldThrow: (v: boolean) => {
+      _throw = v;
+    },
+  };
+});
+
+vi.mock('../run-curator.ts', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('../run-curator.ts')>();
+  return {
+    ...actual,
+    runCuratorTick: (...args: Parameters<typeof actual.runCuratorTick>) => {
+      if (getCuratorShouldThrow()) throw new Error('tick.test: simulated curator crash');
+      return actual.runCuratorTick(...args);
+    },
+  };
+});
+
 // ─── Mock LLM helpers ─────────────────────────────────────────────────────────
 
 function makeMockLlmClient(textResponse = 'Task complete.'): RunnerDeps['llmClient'] {
@@ -436,5 +461,56 @@ describe('runCronTick (integration)', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     expect(lastStatus).toBe('success');
+  });
+
+  it('a crashing curator does not crash the tick — delivery still runs', async () => {
+    // Root job whose only task is already done — ready for phase 7 delivery,
+    // independent of the curator entirely.
+    const [rootJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'root job unaffected by curator crash',
+        status: 'processing',
+        messages: [],
+      })
+      .returning();
+    await db.insert(agentTasks).values({
+      entityId: seed.entityId,
+      orchestratorId: seed.agentId,
+      assignedAgentId: seed.agentId,
+      title: 'Already-done task',
+      status: 'done',
+      result: 'done before this tick',
+      rootJobId: rootJob!.id,
+    });
+
+    setCuratorShouldThrow(true);
+    try {
+      const deps = makeDeps(db);
+      const result = await runCronTick(deps, 5);
+
+      // The tick resolved (didn't throw) and reports a neutral curator result
+      // instead of propagating the crash.
+      expect(result.curatorArchived).toBe(0);
+      expect(result.curatorStaled).toBe(0);
+      expect(result.curatorReactivated).toBe(0);
+      expect(result.curatorConsolidationDeferred).toBe(0);
+      expect(result.curatorConsolidationRan).toBe(0);
+
+      // Phase 7 (delivery), which runs BEFORE the curator in tick order, still
+      // completed and delivered the unrelated root within this same tick.
+      expect(result.rootsDelivered).toBeGreaterThanOrEqual(1);
+      const delivered = await db
+        .select({ completedAt: agentJobs.completedAt, status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, rootJob!.id));
+      expect(delivered[0]?.completedAt).not.toBeNull();
+      expect(delivered[0]?.status).toBe('completed');
+    } finally {
+      setCuratorShouldThrow(false);
+    }
   });
 });

@@ -9,7 +9,7 @@
 //   - NEVER touches source='manual' (facts the user entered by hand).
 //   - Archiving sets archived=true (reversible); there is no hard delete here.
 
-import { agentMemory, and, eq, sql, type AnyDrizzleDb } from '@nodal-agents/db';
+import { agentMemory, and, eq, lt, sql, type AnyDrizzleDb } from '@nodal-agents/db';
 import { computeFactHash } from './hash';
 
 export interface MemoryLifecycleResult {
@@ -38,7 +38,7 @@ export async function transitionMemoryLifecycle(
         sql`${agentMemory.source} IN ('agent','reflection')`,
         sql`${agentMemory.importance} <= ${opts.importanceMax}`,
         sql`coalesce(${agentMemory.accessCount}, 0) = 0`,
-        sql`${agentMemory.createdAt} < ${cutoff}`,
+        lt(agentMemory.createdAt, cutoff),
       ),
     )
     .returning({ id: agentMemory.id });
