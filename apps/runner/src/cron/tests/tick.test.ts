@@ -335,14 +335,22 @@ describe('runCronTick (integration)', () => {
       rootJobId: rootJob!.id,
     });
 
-    // LLM mock that sleeps before responding — the schedule's fired job will
-    // hit this inside executeJob.
-    const SLOW_MS = 500;
+    // LLM mock that BLOCKS on a gate the test controls — not a fixed sleep.
+    // Under load a fixed sleep still races the rest of the tick (if the tick's
+    // own DB-bound phases take longer than the sleep, the schedule can finish
+    // "by chance" before runCronTick returns, defeating the proof). A gate the
+    // test releases explicitly, AFTER already asserting the tick returned and
+    // delivered, removes that race entirely: the schedule's job cannot
+    // possibly finish before the test says so.
+    let releaseGate: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
     const slowModel = new MockLanguageModelV3({
       provider: 'mock',
       modelId: 'mock',
       doGenerate: async () => {
-        await new Promise((resolve) => setTimeout(resolve, SLOW_MS));
+        await gate;
         return {
           content: [{ type: 'text' as const, text: 'slow schedule done' }],
           finishReason: { unified: 'stop' as const, raw: 'stop' },
@@ -388,14 +396,12 @@ describe('runCronTick (integration)', () => {
 
     const result = await runCronTick(deps, 5);
 
-    // Non-temporal proof of the fix: right when runCronTick returns, the
-    // schedule's fired job has NOT finished yet (last_status is still null —
-    // it only gets set once runScheduleTick's fire-and-forget executeJob call
-    // resolves, ~SLOW_MS later). If phase 7/curator were still gated behind
-    // runScheduleTick like before the fix, runCronTick could not have
-    // returned at this point at all — proving this schedule is still
-    // in-flight, right here, right now, is a stronger proof than any
-    // stopwatch/threshold comparison (no flake risk under CI load).
+    // Non-temporal proof of the fix: runCronTick already RETURNED even though
+    // the schedule's fired job is still blocked on `gate` — it cannot possibly
+    // have finished (nothing releases the gate until below), so last_status
+    // being anything other than null here would be impossible unless the tick
+    // is genuinely not waiting on it. No stopwatch, no race: the job is
+    // deterministically stuck until the test says otherwise.
     const schedAfterTick = await db
       .select({ lastStatus: agentSchedules.lastStatus })
       .from(agentSchedules)
@@ -404,7 +410,7 @@ describe('runCronTick (integration)', () => {
 
     // Yet phase 7 (deliverCompletedRoots) already ran and delivered the
     // unrelated root within this same tick — delivery did not wait on the
-    // still-running schedule.
+    // still-blocked schedule.
     expect(result.rootsDelivered).toBeGreaterThanOrEqual(1);
     const delivered = await db
       .select({ completedAt: agentJobs.completedAt, status: agentJobs.status })
@@ -413,15 +419,22 @@ describe('runCronTick (integration)', () => {
     expect(delivered[0]?.completedAt).not.toBeNull();
     expect(delivered[0]?.status).toBe('completed');
 
-    // Let the background schedule execution settle before the next test /
-    // teardown picks up the shared db, so it doesn't leak into later assertions.
-    await new Promise((resolve) => setTimeout(resolve, SLOW_MS + 200));
-    const schedSettled = await db
-      .select({ lastStatus: agentSchedules.lastStatus })
-      .from(agentSchedules)
-      .where(eq(agentSchedules.id, sched!.id));
-    // Confirms the slow schedule really was executing (not e.g. silently
-    // dropped) — it did complete, just after this tick had already returned.
-    expect(schedSettled[0]?.lastStatus).toBe('success');
+    // Release the gate and wait for the background schedule execution to
+    // actually finish (poll, not a fixed sleep) — confirms it really was
+    // running (not silently dropped), it just completed AFTER this tick had
+    // already returned.
+    releaseGate!();
+    const deadline = Date.now() + 5000;
+    let lastStatus: string | null = null;
+    while (Date.now() < deadline) {
+      const rows = await db
+        .select({ lastStatus: agentSchedules.lastStatus })
+        .from(agentSchedules)
+        .where(eq(agentSchedules.id, sched!.id));
+      lastStatus = rows[0]?.lastStatus ?? null;
+      if (lastStatus !== null) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(lastStatus).toBe('success');
   });
 });
