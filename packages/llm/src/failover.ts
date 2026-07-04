@@ -81,6 +81,53 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
     throw new AllProvidersFailedError(clients.length, lastErr);
   }
 
+  /**
+   * Synchronous counterpart to runWithFailover, used for streamText.
+   *
+   * Unlike generateText/generateObject, streamText returns a StreamTextResult
+   * SYNCHRONOUSLY — the AI SDK starts the request in the background and only
+   * surfaces a failure later, through the stream itself (`onError`, or an
+   * error part on `fullStream`/`textStream`). By the time such a failure
+   * surfaces, the stream object is already in the caller's hands; swapping
+   * providers under them would mean discarding a stream someone may already
+   * be consuming, so that case is NOT covered here.
+   *
+   * What IS safe to fail over on, without turning the public (synchronous)
+   * signature into a Promise: an error thrown synchronously by `op` itself,
+   * before any stream object is produced — e.g. a client-side guard
+   * (validateIfMessages) that runs ahead of the SDK call. That is narrower
+   * than generateText's coverage (which spans the whole request/response
+   * cycle via withStaleRetry/withRetry), but it is the one failure class
+   * guaranteed to happen before any chunk is produced.
+   *
+   * Known limitation: a provider outage that only manifests once the stream
+   * starts (after this function has already returned) is NOT failed over —
+   * documented here and in failover.test.ts rather than silently pretended
+   * away.
+   */
+  function runStreamFailoverSync<T>(op: (client: NodalLlmClient) => T, label: string): T {
+    let lastErr: unknown;
+    for (let i = activeIndex; i < clients.length; i++) {
+      try {
+        const result = op(clients[i]!);
+        activeIndex = i; // stick to the provider that worked
+        return result;
+      } catch (err) {
+        lastErr = err;
+        if (!isFailoverWorthy(err)) throw err; // backup won't help → propagate
+        const next = i + 1;
+        if (next < clients.length) {
+          console.warn(
+            `[llm-failover] ${label}: ${clients[i]!.config.provider}/${clients[i]!.config.model} ` +
+              `failed (${errLabel(err)}) — failing over to ` +
+              `${clients[next]!.config.provider}/${clients[next]!.config.model}`,
+          );
+        }
+      }
+    }
+    throw new AllProvidersFailedError(clients.length, lastErr);
+  }
+
   const primary = clients[0]!;
   return {
     // Surface the primary's identity/capabilities; the chain is homogeneous in
@@ -93,9 +140,8 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
         (c) => c.generateText(args),
         'generateText',
       )) as NodalLlmClient['generateText'],
-    // Streaming keeps single-provider semantics (the runner loop uses
-    // generateText). Delegate to the currently-active provider.
-    streamText: ((args) => clients[activeIndex]!.streamText(args)) as NodalLlmClient['streamText'],
+    streamText: ((args) =>
+      runStreamFailoverSync((c) => c.streamText(args), 'streamText')) as NodalLlmClient['streamText'],
     generateObject: ((args) =>
       runWithFailover(
         (c) => c.generateObject(args),

@@ -38,6 +38,33 @@ function fakeClient(model: string, gen: () => Promise<{ text: string }>): NodalL
 
 const ARGS = { system: 's', messages: [] } as Parameters<GenText>[0];
 
+type StreamText = NodalLlmClient['streamText'];
+
+// A minimal fake client for streamText tests. `stream` drives streamText: it
+// returns a value synchronously or throws synchronously — mirroring the one
+// failure class runStreamFailoverSync can act on (see failover.ts).
+function fakeStreamClient(model: string, stream: () => unknown): NodalLlmClient {
+  return {
+    config: { provider: 'openrouter', model },
+    capabilities: {
+      toolUse: true,
+      promptCaching: false,
+      vision: false,
+      structuredOutputs: false,
+      streaming: true,
+    },
+    generateText: (() => {
+      throw new Error('generateText not used');
+    }) as unknown as GenText,
+    streamText: vi.fn(stream) as unknown as StreamText,
+    generateObject: (() => {
+      throw new Error('generateObject not used');
+    }) as NodalLlmClient['generateObject'],
+  } as unknown as NodalLlmClient;
+}
+
+const STREAM_ARGS = { system: 's', messages: [] } as Parameters<StreamText>[0];
+
 describe('createFailoverFromClients', () => {
   it('a single client is returned untouched (no failover wrapping)', () => {
     const only = fakeClient('solo', () => Promise.resolve({ text: 'x' }));
@@ -112,5 +139,63 @@ describe('createFailoverFromClients', () => {
 
     expect(primaryCalls).toBe(1); // primary tried only on the first call
     expect(backup.generateText).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createFailoverFromClients — streamText', () => {
+  it('fails over to the next provider when establishing the stream throws synchronously', () => {
+    const primary = fakeStreamClient('primary', () => {
+      throw new RetryExhaustedError(4, new Error('502'));
+    });
+    const backup = fakeStreamClient('backup', () => ({ marker: 'served-by-backup' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    // streamText is synchronous — no await. The RESULT proves the backup
+    // actually served the call.
+    const res = client.streamText(STREAM_ARGS) as unknown as { marker: string };
+    expect(res.marker).toBe('served-by-backup');
+    expect(primary.streamText).toHaveBeenCalledTimes(1);
+    expect(backup.streamText).toHaveBeenCalledTimes(1);
+  });
+
+  it('a deterministic error (MessageStructureError) propagates without failover for streamText', () => {
+    const primary = fakeStreamClient('primary', () => {
+      throw new MessageStructureError('unmatched_tool_use', {});
+    });
+    const backup = fakeStreamClient('backup', () => ({ marker: 'should-not-run' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    expect(() => client.streamText(STREAM_ARGS)).toThrow(MessageStructureError);
+    expect(backup.streamText).not.toHaveBeenCalled();
+  });
+
+  it('throws AllProvidersFailedError when every provider fails to establish the stream', () => {
+    const a = fakeStreamClient('a', () => {
+      throw new LLMTimeoutError('openrouter', 'a', 1000);
+    });
+    const b = fakeStreamClient('b', () => {
+      throw new RetryExhaustedError(4, new Error('503'));
+    });
+    const client = createFailoverFromClients([a, b]);
+
+    expect(() => client.streamText(STREAM_ARGS)).toThrow(AllProvidersFailedError);
+    expect(a.streamText).toHaveBeenCalledTimes(1);
+    expect(b.streamText).toHaveBeenCalledTimes(1);
+  });
+
+  it('is sticky: after failing over, the next streamText call starts at the working provider', () => {
+    let primaryCalls = 0;
+    const primary = fakeStreamClient('primary', () => {
+      primaryCalls += 1;
+      throw new RetryExhaustedError(4, new Error('502'));
+    });
+    const backup = fakeStreamClient('backup', () => ({ marker: 'backup' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    client.streamText(STREAM_ARGS); // call 1: primary fails → backup serves
+    client.streamText(STREAM_ARGS); // call 2: should start at backup, skip primary
+
+    expect(primaryCalls).toBe(1);
+    expect(backup.streamText).toHaveBeenCalledTimes(2);
   });
 });

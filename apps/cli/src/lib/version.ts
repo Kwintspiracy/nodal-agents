@@ -74,3 +74,38 @@ export async function getLatestVersion(): Promise<string | null> {
     return null;
   }
 }
+
+// ─── Version comparison ────────────────────────────────────────────────────────
+
+/**
+ * Parse a `major.minor.patch[-prerelease]` prefix into a comparable tuple.
+ * Returns null when the string doesn't start with `x.y.z` — callers must
+ * treat that as "can't compare" rather than guessing.
+ */
+function parseVersionTriple(v: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/**
+ * Returns true iff `candidate` is a STRICTLY newer version than `current`.
+ *
+ * Used to gate the "update available" notice in `up.ts` — a plain `!==`
+ * check also fires (and suggests a downgrade via `nodal-agents update`) when
+ * `candidate` is OLDER than `current`, e.g. a lagging registry mirror
+ * temporarily serving a stale `latest` dist-tag. Comparison is numeric on
+ * major/minor/patch; any pre-release suffix (`-beta.1`) is ignored — if the
+ * numeric triple is equal, we treat it as "not newer" rather than guess at
+ * pre-release ordering. Any parse failure on either side also returns false:
+ * in doubt, stay silent rather than mislead.
+ */
+export function isNewerVersion(candidate: string, current: string): boolean {
+  const a = parseVersionTriple(candidate);
+  const b = parseVersionTriple(current);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i]! > b[i]!;
+  }
+  return false;
+}

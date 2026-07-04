@@ -370,7 +370,9 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // The race against a short timer ensures this can't stall the output.
   void (async () => {
     try {
-      const { getInstalledVersion, getLatestVersion } = await import('../lib/version.ts');
+      const { getInstalledVersion, getLatestVersion, isNewerVersion } = await import(
+        '../lib/version.ts'
+      );
       const installed = getInstalledVersion();
       // Timeout already capped inside getLatestVersion() at 5 s; we add an
       // outer race of 3 s here so any internal delay can't push the notice
@@ -379,7 +381,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
         getLatestVersion(),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
       ]);
-      if (latest !== null && latest !== installed) {
+      // Strictly newer only — a `!==` check also fires (and would send the
+      // user toward `update`, i.e. a downgrade) when `latest` is OLDER, e.g. a
+      // lagging registry mirror.
+      if (latest !== null && isNewerVersion(latest, installed)) {
         console.log(chalk.cyan(`  ℹ v${latest} available — run \`nodal-agents update\``));
       }
     } catch {

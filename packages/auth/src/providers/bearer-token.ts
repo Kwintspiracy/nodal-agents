@@ -4,6 +4,7 @@
 
 import type { AuthProvider, AuthSession } from '../types.ts';
 import { LOCAL_USER_ID, LOCAL_ENTITY_ID } from './local-trust.ts';
+import { constantTimeEqual } from '../lib/constant-time.ts';
 
 export interface BearerTokenProviderOptions {
   /** The expected bearer token value (from ~/.nodalai/config.json). */
@@ -27,7 +28,9 @@ export class BearerTokenProvider implements AuthProvider {
     }
 
     const provided = parts[1];
-    if (provided !== this.#token) return Promise.resolve(null);
+    // Constant-time: a naive !== leaks how many leading bytes matched via
+    // response timing — a side channel on an API token guarding the LAN.
+    if (!provided || !constantTimeEqual(provided, this.#token)) return Promise.resolve(null);
 
     return Promise.resolve({ userId: LOCAL_USER_ID, entityId: LOCAL_ENTITY_ID });
   }
