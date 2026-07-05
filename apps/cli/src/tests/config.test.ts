@@ -1,7 +1,7 @@
 // config.test.ts — Zod validation + file I/O round-trip
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -204,5 +204,83 @@ describe('readConfig — serverActionsKey auto-mint', () => {
 
     const parsed = readConfig(configFile);
     expect(parsed?.serverActionsKey).toBe(key);
+  });
+});
+
+// ── authSecret auto-migration (M-4) ───────────────────────────────────────────
+
+describe('readConfig — authSecret auto-mint (M-4)', () => {
+  let tmpDir: string;
+  let configFile: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'nodalai-config-test-'));
+    configFile = join(tmpDir, 'config.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('mints a fresh authSecret when absent from config and persists it', () => {
+    // Write a config WITHOUT authSecret (simulates a pre-M-4 install, where
+    // AUTH_SECRET was derived from workerSecret instead).
+    writeFileSync(configFile, JSON.stringify(VALID_CONFIG, null, 2), 'utf-8');
+
+    const result = readConfig(configFile);
+    expect(result).not.toBeNull();
+    expect(result!.authSecret).toBeDefined();
+    expect(result!.authSecret!).toHaveLength(44);
+    expect(Buffer.from(result!.authSecret!, 'base64')).toHaveLength(32);
+
+    // Distinct from workerSecret — the whole point of M-4.
+    expect(result!.authSecret).not.toBe(result!.workerSecret);
+
+    // Persisted so the next boot sees the same key (no session churn on
+    // every restart).
+    const onDisk = JSON.parse(readFileSync(configFile, 'utf-8')) as Record<string, unknown>;
+    expect(onDisk['authSecret']).toBe(result!.authSecret);
+  });
+
+  it('preserves an existing authSecret across reads (stable across restarts)', () => {
+    const stableKey = Buffer.alloc(32, 0x24).toString('base64');
+    const cfgWithKey: Config = { ...VALID_CONFIG, authSecret: stableKey };
+    writeFileSync(configFile, JSON.stringify(cfgWithKey, null, 2), 'utf-8');
+
+    const first = readConfig(configFile);
+    const second = readConfig(configFile);
+
+    expect(first?.authSecret).toBe(stableKey);
+    expect(second?.authSecret).toBe(stableKey);
+  });
+});
+
+// ── config.json permissions (M-5) ─────────────────────────────────────────────
+
+describe('writeConfig — file permissions (M-5)', () => {
+  let tmpDir: string;
+  let configFile: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'nodalai-config-test-'));
+    configFile = join(tmpDir, 'config.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('writes config.json with mode 0600 (POSIX only — Windows ignores chmod)', () => {
+    writeConfig(VALID_CONFIG, configFile);
+
+    if (process.platform === 'win32') {
+      // NTFS ACLs, not POSIX mode bits, protect the file on Windows — no
+      // meaningful assertion here beyond "the write succeeded".
+      expect(readFileSync(configFile, 'utf-8').length).toBeGreaterThan(0);
+      return;
+    }
+
+    const mode = statSync(configFile).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 });

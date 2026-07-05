@@ -1,5 +1,6 @@
 // env.ts — build environment variable maps for runner and web processes
 
+import { randomBytes } from 'crypto';
 import type { Config } from './config.ts';
 import { getInstalledVersion } from './version.ts';
 
@@ -49,15 +50,44 @@ export function buildEnvForRunner(config: Config, databaseUrl: string): Record<s
  * Explicit `config.auth.mode` wins; otherwise we fall back to the legacy
  * mapping (loopback → local-trust, lan → local-auth).
  *
- * Refuses one dangerous combination: `bind=lan` (0.0.0.0) with an EXPLICIT
- * `auth.mode=local-trust`. local-trust is a zero-auth pass-through — every
- * runner route (including run_command's auto_approve path) would be reachable
- * unauthenticated by anyone on the LAN. The safe default (bind=lan with no
- * explicit mode) already resolves to local-auth; only an explicit override can
- * hit this. Fail loud (invariant #4) instead of silently exposing an RCE
- * surface.
+ * Refuses two dangerous combinations, both fail-loud (invariant #4) instead
+ * of silently exposing a weaker mode than the user configured:
+ *
+ * 1. `bind=lan` (0.0.0.0) with an EXPLICIT `auth.mode=local-trust`.
+ *    local-trust is a zero-auth pass-through — every runner route (including
+ *    run_command's auto_approve path) would be reachable unauthenticated by
+ *    anyone on the LAN. The safe default (bind=lan with no explicit mode)
+ *    already resolves to local-auth; only an explicit override can hit this.
+ *
+ * 2. F-11: `bearerToken` set in config.json. The docs (self-hosting.mdx)
+ *    document this as activating `AUTH_MODE=bearer-token` for headless/API
+ *    access, and the runner fully implements that mode (deps.ts,
+ *    server.ts requireRunnerAuth). But this function only ever derives
+ *    'local-trust' | 'local-auth' from `bind` — `bearerToken` was silently
+ *    ignored, so a user who set it (believing the runner now requires a
+ *    bearer token) would actually get local-trust behind a bare loopback
+ *    bind, or local-auth behind a LAN bind: zero-auth or the wrong auth,
+ *    with no signal. Worse, apps/web's `getAuthProvider()` still has an
+ *    explicit TODO scaffold that falls back to LocalTrustProvider for
+ *    bearer-token mode (see apps/web/src/lib/server.ts) — so even wiring
+ *    AUTH_MODE=bearer-token through here would leave the dashboard itself
+ *    unprotected. Completing that is a product decision, not a minimal
+ *    security fix; refuse to boot instead of shipping a false sense of
+ *    protection.
  */
 export function resolveAuthMode(config: Config): 'local-trust' | 'local-auth' {
+  if (config.bearerToken) {
+    throw new Error(
+      'Invalid config: "bearerToken" is set in config.json, which the docs describe as ' +
+        'activating AUTH_MODE=bearer-token — but that mode is not fully wired end-to-end yet ' +
+        "(the web dashboard's auth provider still falls back to no-auth for bearer-token mode; " +
+        'see apps/web/src/lib/server.ts getAuthProvider). Booting anyway would silently run in ' +
+        'local-trust or local-auth instead — NOT the bearer-token protection you configured. ' +
+        'Refused. Remove "bearerToken" from config.json until this is wired, or use ' +
+        '`bind`/`auth.mode` for local-trust/local-auth.',
+    );
+  }
+
   if (config.auth?.mode) {
     if (config.auth.mode === 'local-trust' && config.bind === 'lan') {
       throw new Error(
@@ -97,8 +127,16 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
     // The web itself doesn't bind on this — Next.js listens on 0.0.0.0 anyway.
     BIND: bind,
     NODE_ENV: 'production',
-    // AUTH_SECRET is required by better-auth in local-auth mode; harmless in local-trust.
-    AUTH_SECRET: config.workerSecret,
+    // AUTH_SECRET is required by better-auth in local-auth mode; harmless in
+    // local-trust. M-4: deliberately SEPARATE from workerSecret — the two
+    // used to share a value, so a leak of workerSecret (the runner's auth
+    // frontier) would also let an attacker forge a signed better-auth session
+    // cookie. readConfig() auto-mints authSecret, so this is set in every
+    // normal boot path; the random fallback below only guards a caller that
+    // somehow bypasses readConfig (ephemeral — would invalidate sessions on
+    // every restart, which is a symptom to fix at the config layer, not a
+    // reason to crash boot or fall back to workerSecret).
+    AUTH_SECRET: config.authSecret ?? randomBytes(32).toString('base64'),
     // WORKER_SECRET — same value as the runner — so sendTaskAction can sign
     // the POST /api/worker call. Without this the runner returns 403 and the
     // job stays pending forever (cron only scans task-board, not API jobs).

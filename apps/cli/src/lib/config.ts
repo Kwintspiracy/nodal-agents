@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { homedir } from 'os';
 import { join } from 'path';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'fs';
 import { randomBytes } from 'crypto';
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -52,6 +52,18 @@ export const ConfigSchema = z.object({
    * files; `readConfig` auto-mints + persists when absent.
    */
   serverActionsKey: z.string().length(44).optional(),
+  /**
+   * Base64-encoded 32-byte AES key used as better-auth's AUTH_SECRET (session
+   * cookie signing) for the web process. Deliberately SEPARATE from
+   * `workerSecret` (M-4): `workerSecret` is the runner's auth frontier — a
+   * leak of it must not also let an attacker forge a signed session cookie.
+   *
+   * Optional in the schema for back-compat with pre-existing config.json
+   * files; `readConfig` auto-mints + persists when absent. On an existing
+   * install this invalidates any active better-auth sessions ONCE (users
+   * re-login) — an acceptable one-time cost for closing the amplification.
+   */
+  authSecret: z.string().length(44).optional(),
   bind: z.enum(['loopback', 'lan']).default('loopback'),
   bearerToken: z.string().optional(),
   /**
@@ -108,6 +120,27 @@ export function readConfig(configFile: string = CONFIG_FILE): Config | null {
     writeConfig(parsed, configFile);
   }
 
+  // Auto-migrate: ensure authSecret exists and is DISTINCT from workerSecret
+  // (M-4). Pre-existing configs minted before this fix have no authSecret at
+  // all (better-auth fell back to workerSecret in env.ts); mint one now so
+  // the two secrets are separate going forward. This invalidates active
+  // better-auth sessions once — users re-login.
+  if (!parsed.authSecret) {
+    parsed = { ...parsed, authSecret: randomBytes(32).toString('base64') };
+    writeConfig(parsed, configFile);
+  }
+
+  // Best-effort tighten permissions on configs written before M-5. No-op on
+  // Windows (chmod doesn't map to NTFS ACLs) and non-fatal on any error —
+  // this is a defense-in-depth pass, not load-bearing for boot.
+  if (configFile === CONFIG_FILE) {
+    try {
+      chmodSync(configFile, 0o600);
+    } catch {
+      /* best-effort */
+    }
+  }
+
   return parsed;
 }
 
@@ -117,5 +150,9 @@ export function writeConfig(config: Config, configFile: string = CONFIG_FILE): v
   // When writing to the default location, ensure the .nodalai dir tree exists.
   // For custom test paths the caller is responsible for prepping the dir.
   if (configFile === CONFIG_FILE) ensureConfigDir();
-  writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf-8');
+  // M-5: config.json holds workerSecret/authSecret/LLM+OAuth secrets in
+  // plaintext. Mode 0600 restricts it to the owning user (POSIX only — on
+  // Windows the mode is ignored and the profile dir's NTFS ACL is what
+  // actually protects the file; there is no direct chmod equivalent here).
+  writeFileSync(configFile, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
 }

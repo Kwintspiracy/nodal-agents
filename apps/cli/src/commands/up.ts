@@ -25,7 +25,7 @@ import {
   waitForPidDead,
   type SpawnResult,
 } from '../lib/processes.ts';
-import { createClient } from '@nodal-agents/db';
+import { createClient, assertMasterKeyRestorable } from '@nodal-agents/db';
 
 async function killSilent(child: SpawnResult): Promise<void> {
   // Kill the whole process tree — see killProcessTree for the Windows
@@ -84,6 +84,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       ports: { web: 3000, runner: 3001, postgres: 25432 },
       workerSecret: randomBytes(32).toString('hex'),
       serverActionsKey: randomBytes(32).toString('base64'),
+      // M-4: authSecret is minted here (distinct from workerSecret) rather
+      // than left for readConfig()'s auto-mint, because this in-memory
+      // `config` is used directly below without a re-read.
+      authSecret: randomBytes(32).toString('base64'),
       // loopback derives auth: local-trust (no login/signup). Leave `auth`
       // unset so resolveAuthMode falls back to the loopback → local-trust map.
       bind: 'loopback',
@@ -276,6 +280,27 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     migrateSpinner.fail('Migration failed');
     await pg.stop();
     throw err;
+  }
+
+  // ── 3.5 Master-key sanity check (I-6) ─────────────────────────────────────
+  // Before anything touches encrypted rows: if ~/.nodalai/secrets.key is
+  // missing but the DB already has credentials / LLM keys encrypted with it,
+  // fail loud instead of letting the runner silently mint a replacement key
+  // (which would make all of that data permanently undecryptable). Runs here
+  // — earliest point where both the config dir and the DB are available —
+  // and BEFORE the seed step below or the runner boot (migrateLlmKeysToEncrypted
+  // also calls loadOrCreateMasterKey, but by then it'd be too late to warn).
+
+  {
+    const { db, close } = createClient(databaseUrl, { max: 1 });
+    try {
+      await assertMasterKeyRestorable(db);
+    } catch (err) {
+      await close();
+      await pg.stop();
+      throw err;
+    }
+    await close();
   }
 
   // ── 4. Seed default user + entity + agent (local-trust only) ─────────────

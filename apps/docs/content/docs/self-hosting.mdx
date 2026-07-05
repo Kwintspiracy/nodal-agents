@@ -111,16 +111,15 @@ You can enable email+password auth on a loopback install without switching to fu
 
 ### Bearer-token mode
 
-For programmatic or headless access, set `AUTH_MODE=bearer-token` and provide the token. The token lives at the top level of `config.json` as `bearerToken`:
-
-```json
-{
-  "bind": "loopback",
-  "bearerToken": "your-long-random-secret"
-}
-```
-
-Every request to the runner API must then carry `Authorization: Bearer your-long-random-secret`. Restart for the change to take effect.
+<Callout type="warn">
+Bearer-token mode is **not yet supported end-to-end**. The runner API honors
+`Authorization: Bearer …`, but the dashboard's bearer-token auth provider is
+still a scaffold that would fall back to no-auth — so enabling it would leave
+the web UI unprotected. To avoid that silent downgrade, `nodal-agents up` now
+**refuses to start** if `bearerToken` is present in `config.json`, with a clear
+error. Do not set `bearerToken` until this mode ships. For authenticated access
+today, use `auth.mode: "local-auth"` (email+password) above.
+</Callout>
 
 ## Update
 

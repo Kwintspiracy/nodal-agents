@@ -20,6 +20,16 @@ export function masterKeyPath(): string {
 }
 
 /**
+ * True when the master key file does not exist on disk yet.
+ * Used by callers (I-6) to distinguish "first boot, safe to mint a new key"
+ * from "key file lost/moved, but encrypted data already depends on it" —
+ * a distinction this module itself can't make since it has no DB access.
+ */
+export function masterKeyFileMissing(path: string = masterKeyPath()): boolean {
+  return !existsSync(path);
+}
+
+/**
  * Load the master key from disk, or generate + persist a new one if absent.
  * Cached after first call. Throws if the file exists but is malformed.
  */

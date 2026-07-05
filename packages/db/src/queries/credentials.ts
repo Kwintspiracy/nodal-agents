@@ -2,8 +2,8 @@
 // No Next.js imports, no 'use server', no revalidatePath.
 // Caller is responsible for access control (ownership checks, session validation).
 
-import { eq } from 'drizzle-orm';
-import { credentials } from '../schema/credentials.ts';
+import { eq, sql } from 'drizzle-orm';
+import { credentials, type CredentialRow } from '../schema/credentials.ts';
 import { encrypt, decrypt, isEncrypted } from '@nodal-agents/secrets';
 import { getProviderByCredentialType } from '@nodal-agents/shared';
 import type {
@@ -43,110 +43,26 @@ function decryptPayload(raw: string): OauthPayload {
  */
 const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60 * 1000;
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-/**
- * Decrypt a credential row WITHOUT touching the network.
- *
- * Use this for read-only paths (UI list, display) that must not trigger an
- * OAuth refresh roundtrip — refresh is for the use-time path only. Returns
- * `null` when the row doesn't exist; bubbles up decrypt errors (master-key
- * mismatch / tampered ciphertext) to the caller so it can decide whether to
- * surface them.
- */
-export async function decryptCredentialForDisplay(
-  db: Db,
-  credentialId: string,
-): Promise<DecryptedCredential | null> {
-  const [row] = await db.select().from(credentials).where(eq(credentials.id, credentialId));
-  if (!row) return null;
-  return {
-    id: row.id,
-    ownerUserId: row.ownerUserId,
-    name: row.name,
-    type: row.type as CredentialType,
-    payload: decryptPayload(row.payload),
-  };
-}
-
-/**
- * Fetch + decrypt a credential by id, refreshing the access token if it's
- * past or near the 60s expiry threshold.
- *
- * NO ownership check — caller is responsible for access control
- * (the runner trusts the credential_id from agent_connector_assignments).
- *
- * On refresh failure (provider revoked integration, expired refresh_token,
- * network blip, etc.) the function falls back to the stale payload — the
- * caller's API call will likely 401, which is the signal to surface "user
- * must reconnect". We log at `warn` level — these are expected user-facing
- * events, not developer bugs.
- */
-export async function getDecryptedCredentialById(
-  db: Db,
-  credentialId: string,
-): Promise<DecryptedCredential | null> {
-  const [row] = await db.select().from(credentials).where(eq(credentials.id, credentialId));
-  if (!row) return null;
-
-  let payload = decryptPayload(row.payload);
-  const credentialType = row.type as CredentialType;
-
-  // Auto-refresh path: if the token is past or near the expiry threshold AND
-  // the provider can refresh AND we have a refresh token, mint a new access
-  // token before handing the credential to the caller.
+function isPayloadExpiringSoon(payload: OauthPayload): boolean {
   const expiresAt = payload.expiresAt ? new Date(payload.expiresAt) : null;
-  const isExpiringSoon =
-    expiresAt !== null && expiresAt.getTime() - Date.now() < ACCESS_TOKEN_REFRESH_BUFFER_MS;
-
-  if (isExpiringSoon) {
-    const provider = getProviderByCredentialType(credentialType);
-    if (provider?.supportsRefresh && payload.refreshToken) {
-      try {
-        await refreshAndPersistCredential(db, credentialId);
-        // Re-read the row to pick up the updated payload (encrypted).
-        const [refreshedRow] = await db
-          .select()
-          .from(credentials)
-          .where(eq(credentials.id, credentialId));
-        if (refreshedRow) {
-          payload = decryptPayload(refreshedRow.payload);
-        }
-      } catch (err) {
-        // Non-fatal: fall through with the stale payload. The caller's next
-        // API call will 401 and the user will reconnect via /connectors.
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[getDecryptedCredentialById] auto-refresh failed: ${message}`);
-      }
-    }
-  }
-
-  return {
-    id: row.id,
-    ownerUserId: row.ownerUserId,
-    name: row.name,
-    type: credentialType,
-    payload,
-  };
+  return expiresAt !== null && expiresAt.getTime() - Date.now() < ACCESS_TOKEN_REFRESH_BUFFER_MS;
 }
 
 /**
- * Perform the OAuth refresh roundtrip.
- * Persists new access_token + expires_at + rotated refresh_token (RFC 6749 §10.4).
- * Throws on missing refresh_token or provider error.
- * Returns the freshly-minted access token (in memory only — DB row is encrypted).
+ * Perform the OAuth refresh POST and persist the result. Shared by the public
+ * `refreshAndPersistCredential` (always refreshes — manual "force refresh")
+ * and the auto-refresh path in `getDecryptedCredentialById` (only refreshes
+ * when still stale after the advisory lock is acquired).
+ *
+ * `dbOrTx` may be a plain `Db` or a transaction handle — both expose the same
+ * `.update()` query builder.
  */
-export async function refreshAndPersistCredential(
-  db: Db,
+async function doRefresh(
+  dbOrTx: Db,
   credentialId: string,
+  row: CredentialRow,
+  payload: OauthPayload,
 ): Promise<{ accessToken: string; expiresAt: Date | null }> {
-  const [row] = await db.select().from(credentials).where(eq(credentials.id, credentialId));
-  if (!row) {
-    throw new Error(`refreshAndPersistCredential: credential '${credentialId}' not found`);
-  }
-
-  const payload = decryptPayload(row.payload);
-
   const provider = getProviderByCredentialType(row.type as CredentialType);
   if (!provider) {
     throw new Error(`refreshAndPersistCredential: no provider for credential type '${row.type}'`);
@@ -251,10 +167,147 @@ export async function refreshAndPersistCredential(
   };
   const updatedEncrypted = encrypt(JSON.stringify(updatedPayload));
 
-  await db
+  await dbOrTx
     .update(credentials)
     .set({ payload: updatedEncrypted, updatedAt: new Date() })
     .where(eq(credentials.id, credentialId));
 
   return { accessToken: newAccessToken, expiresAt: newExpiresAt };
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Decrypt a credential row WITHOUT touching the network.
+ *
+ * Use this for read-only paths (UI list, display) that must not trigger an
+ * OAuth refresh roundtrip — refresh is for the use-time path only. Returns
+ * `null` when the row doesn't exist; bubbles up decrypt errors (master-key
+ * mismatch / tampered ciphertext) to the caller so it can decide whether to
+ * surface them.
+ */
+export async function decryptCredentialForDisplay(
+  db: Db,
+  credentialId: string,
+): Promise<DecryptedCredential | null> {
+  const [row] = await db.select().from(credentials).where(eq(credentials.id, credentialId));
+  if (!row) return null;
+  return {
+    id: row.id,
+    ownerUserId: row.ownerUserId,
+    name: row.name,
+    type: row.type as CredentialType,
+    payload: decryptPayload(row.payload),
+  };
+}
+
+/**
+ * Fetch + decrypt a credential by id, refreshing the access token if it's
+ * past or near the 60s expiry threshold.
+ *
+ * NO ownership check — caller is responsible for access control
+ * (the runner trusts the credential_id from agent_connector_assignments).
+ *
+ * On refresh failure (provider revoked integration, expired refresh_token,
+ * network blip, etc.) the function falls back to the stale payload — the
+ * caller's API call will likely 401, which is the signal to surface "user
+ * must reconnect". We log at `warn` level — these are expected user-facing
+ * events, not developer bugs.
+ */
+export async function getDecryptedCredentialById(
+  db: Db,
+  credentialId: string,
+): Promise<DecryptedCredential | null> {
+  const [row] = await db.select().from(credentials).where(eq(credentials.id, credentialId));
+  if (!row) return null;
+
+  let payload = decryptPayload(row.payload);
+  const credentialType = row.type as CredentialType;
+
+  // Auto-refresh path: if the token is past or near the expiry threshold AND
+  // the provider can refresh AND we have a refresh token, mint a new access
+  // token before handing the credential to the caller.
+  if (isPayloadExpiringSoon(payload)) {
+    const provider = getProviderByCredentialType(credentialType);
+    if (provider?.supportsRefresh && payload.refreshToken) {
+      try {
+        // M-3: two concurrent jobs can both observe "expiring soon" and both
+        // reach here at once. Without serialization they'd POST the SAME
+        // refresh_token — the provider (Airtable/Google) rotates it on the
+        // first request and 400s the second with invalid_grant, permanently
+        // bricking the credential. pg_advisory_xact_lock serializes access
+        // per-credential and auto-releases on COMMIT/ROLLBACK (transaction-
+        // scoped, not session-scoped — no lock leak). The loser re-reads the
+        // row after acquiring the lock: if the winner already refreshed it
+        // past the expiry threshold, it skips the network call entirely
+        // instead of burning the (now-rotated) refresh_token a second time.
+        payload = await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${credentialId}))`);
+          const [freshRow] = await tx
+            .select()
+            .from(credentials)
+            .where(eq(credentials.id, credentialId));
+          if (!freshRow) return payload;
+          const freshPayload = decryptPayload(freshRow.payload);
+          if (!isPayloadExpiringSoon(freshPayload)) {
+            // Already refreshed by the concurrent caller while we waited.
+            return freshPayload;
+          }
+          const refreshed = await doRefresh(tx, credentialId, freshRow, freshPayload);
+          return {
+            ...freshPayload,
+            accessToken: refreshed.accessToken,
+            expiresAt: refreshed.expiresAt ? refreshed.expiresAt.toISOString() : null,
+          };
+        });
+      } catch (err) {
+        // Non-fatal: fall through with the stale payload. The caller's next
+        // API call will 401 and the user will reconnect via /connectors.
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[getDecryptedCredentialById] auto-refresh failed: ${message}`);
+      }
+    }
+  }
+
+  return {
+    id: row.id,
+    ownerUserId: row.ownerUserId,
+    name: row.name,
+    type: credentialType,
+    payload,
+  };
+}
+
+/**
+ * Perform the OAuth refresh roundtrip. Always refreshes (used by the manual
+ * "force refresh" action) — unlike the auto-refresh path in
+ * `getDecryptedCredentialById`, this never skips the network call based on
+ * staleness.
+ *
+ * Persists new access_token + expires_at + rotated refresh_token (RFC 6749 §10.4).
+ * Throws on missing refresh_token or provider error.
+ * Returns the freshly-minted access token (in memory only — DB row is encrypted).
+ *
+ * M-3: wrapped in a transaction holding a per-credential advisory lock
+ * (`pg_advisory_xact_lock`, released on COMMIT/ROLLBACK) so a concurrent
+ * refresh of the SAME credential can't race this one. The row is re-read
+ * AFTER the lock is acquired, so if a concurrent caller already rotated the
+ * refresh_token while this call was waiting, the POST below uses the fresh
+ * one — never the stale value read before the lock.
+ */
+export async function refreshAndPersistCredential(
+  db: Db,
+  credentialId: string,
+): Promise<{ accessToken: string; expiresAt: Date | null }> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${credentialId}))`);
+
+    const [row] = await tx.select().from(credentials).where(eq(credentials.id, credentialId));
+    if (!row) {
+      throw new Error(`refreshAndPersistCredential: credential '${credentialId}' not found`);
+    }
+
+    const payload = decryptPayload(row.payload);
+    return doRefresh(tx, credentialId, row, payload);
+  });
 }

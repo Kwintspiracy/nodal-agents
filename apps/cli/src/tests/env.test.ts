@@ -12,6 +12,7 @@ const BASE_CONFIG: Config = {
   },
   ports: { web: 3000, runner: 3001, postgres: 25432 },
   workerSecret: 'a'.repeat(32),
+  authSecret: Buffer.alloc(32, 0x7a).toString('base64'),
   bind: 'loopback',
 };
 
@@ -31,11 +32,12 @@ describe('buildEnvForRunner', () => {
     expect(env['AUTH_MODE']).toBe('local-auth');
   });
 
-  it('does not inject BEARER_TOKEN even when bearerToken is in config', () => {
-    // bearerToken may still exist in old config.json files — must be ignored.
+  it('F-11: refuses to boot (fail-loud) instead of silently ignoring bearerToken', () => {
+    // Regression: bearerToken used to be silently ignored — the runner would
+    // boot in local-auth/local-trust while the user believed bearer-token
+    // protection was active. Must refuse instead of downgrading silently.
     const lanConfig: Config = { ...BASE_CONFIG, bind: 'lan', bearerToken: 'old-token' };
-    const env = buildEnvForRunner(lanConfig, DB_URL);
-    expect(env['BEARER_TOKEN']).toBeUndefined();
+    expect(() => buildEnvForRunner(lanConfig, DB_URL)).toThrow(/bearerToken/);
   });
 
   it('binds 127.0.0.1 for loopback', () => {
@@ -87,15 +89,31 @@ describe('buildEnvForWeb', () => {
     expect(env['NEXT_PUBLIC_AUTH_MODE']).toBe('local-auth');
   });
 
-  it('does not inject BEARER_TOKEN even when bearerToken is in config', () => {
+  it('F-11: refuses to boot (fail-loud) instead of silently ignoring bearerToken', () => {
     const lanConfig: Config = { ...BASE_CONFIG, bind: 'lan', bearerToken: 'old-token' };
-    const env = buildEnvForWeb(lanConfig, DB_URL);
-    expect(env['BEARER_TOKEN']).toBeUndefined();
+    expect(() => buildEnvForWeb(lanConfig, DB_URL)).toThrow(/bearerToken/);
   });
 
   it('always sets AUTH_SECRET (needed by better-auth in local-auth)', () => {
     const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
-    expect(env['AUTH_SECRET']).toBe(BASE_CONFIG.workerSecret);
+    expect(env['AUTH_SECRET']).toBe(BASE_CONFIG.authSecret);
+  });
+
+  it('M-4: AUTH_SECRET is distinct from WORKER_SECRET', () => {
+    // Regression for the audit finding: the two used to share workerSecret,
+    // so a leak of WORKER_SECRET (runner auth frontier) would also forge a
+    // valid better-auth session cookie.
+    const env = buildEnvForWeb(BASE_CONFIG, DB_URL);
+    expect(env['AUTH_SECRET']).not.toBe(env['WORKER_SECRET']);
+  });
+
+  it('M-4: falls back to a fresh (non-workerSecret) value when authSecret is absent', () => {
+    // Defensive path for a caller that bypasses readConfig()'s auto-mint.
+    // Must never fall back to workerSecret.
+    const cfg: Config = { ...BASE_CONFIG, authSecret: undefined };
+    const env = buildEnvForWeb(cfg, DB_URL);
+    expect(env['AUTH_SECRET']).toBeDefined();
+    expect(env['AUTH_SECRET']).not.toBe(cfg.workerSecret);
   });
 
   it('config.auth.mode overrides bind-derived auth mode', () => {
@@ -197,5 +215,26 @@ describe('resolveAuthMode', () => {
     expect(resolveAuthMode({ ...BASE_CONFIG, bind: 'lan', auth: { mode: 'local-auth' } })).toBe(
       'local-auth',
     );
+  });
+
+  it('F-11: refuses to boot when bearerToken is set, regardless of bind/auth.mode', async () => {
+    // The docs (self-hosting.mdx) document `bearerToken` as activating
+    // AUTH_MODE=bearer-token. This function never returns that value, so
+    // silently proceeding would boot in local-trust/local-auth instead of the
+    // protection the user configured. Must throw for every bind/auth combo.
+    const { resolveAuthMode } = await import('../lib/env.ts');
+    expect(() => resolveAuthMode({ ...BASE_CONFIG, bearerToken: 'secret-token' })).toThrow(
+      /bearerToken/,
+    );
+    expect(() =>
+      resolveAuthMode({ ...BASE_CONFIG, bind: 'lan', bearerToken: 'secret-token' }),
+    ).toThrow(/bearerToken/);
+    expect(() =>
+      resolveAuthMode({
+        ...BASE_CONFIG,
+        bearerToken: 'secret-token',
+        auth: { mode: 'local-auth' },
+      }),
+    ).toThrow(/bearerToken/);
   });
 });
