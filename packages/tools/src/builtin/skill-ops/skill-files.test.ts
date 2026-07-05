@@ -3,10 +3,11 @@
 // only read its assigned skills' bundles, never escape the skill folder).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, symlink, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, symlink, rm, stat, open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { skillFileReadTool, skillFileListTool, skillFileWriteTool } from './skill-files';
+import { MAX_READ_FILE_BYTES } from '../file-ops/workspace';
 import type { ToolContext } from '../../types';
 
 let STORE: string; // the skill store root (~/.nodalai/skills equivalent)
@@ -151,6 +152,51 @@ describe('skill_file_read — security boundary', () => {
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected failure');
     expect(r.reason).toContain('Invalid skill slug');
+  });
+
+  it('refuses a file above the 50 MiB hard cap, even with offset/limit', async () => {
+    const bigPath = join(STORE, SLUG, 'huge.bin');
+    const handle = await open(bigPath, 'w');
+    try {
+      const chunk = Buffer.alloc(1024 * 1024, 'x'); // 1 MiB, written repeatedly
+      const chunksNeeded = Math.ceil(MAX_READ_FILE_BYTES / (1024 * 1024)) + 1;
+      for (let i = 0; i < chunksNeeded; i++) await handle.write(chunk);
+    } finally {
+      await handle.close();
+    }
+    const info = await stat(bigPath);
+    expect(info.size).toBeGreaterThan(MAX_READ_FILE_BYTES);
+
+    const r = await skillFileReadTool.execute(
+      { skill: SLUG, path: 'huge.bin', offset: 1, limit: 100 },
+      ctx({ store: STORE, assigned: [SLUG] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected refusal above the hard cap');
+    expect(r.reason).toContain('50');
+    expect(r.reason.toLowerCase()).toMatch(/cap|too large|exceed/i);
+  }, 30000);
+
+  it('streams a windowed read for a file between 1 MiB and the hard cap, matching the reference slice', async () => {
+    const lineTemplate = 'ref-line-XXXXXX\n';
+    const lineBytes = Buffer.byteLength(lineTemplate, 'utf8');
+    const repeats = Math.ceil((1.5 * 1024 * 1024) / lineBytes);
+    let full = '';
+    for (let i = 0; i < repeats; i++) full += lineTemplate.replace('XXXXXX', String(i).padStart(6, '0'));
+    const mediumPath = join(STORE, SLUG, 'medium.txt');
+    await writeFile(mediumPath, full, 'utf8');
+
+    const reference = full.split('\n');
+    const r = await skillFileReadTool.execute(
+      { skill: SLUG, path: 'medium.txt', offset: 100, limit: 50 },
+      ctx({ store: STORE, assigned: [SLUG] }),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error(r.reason);
+    const startIdx = 99;
+    const endIdx = Math.min(reference.length, startIdx + 50);
+    expect(r.total_lines).toBe(reference.length);
+    expect(r.content).toBe(reference.slice(startIdx, endIdx).join('\n'));
   });
 
   it('reports skill_not_installed when the folder is absent', async () => {

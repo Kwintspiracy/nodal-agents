@@ -3,7 +3,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { resolveAndCheckPath, MAX_READ_BYTES, WorkspaceError } from './workspace';
+import { resolveAndCheckPath, MAX_READ_BYTES, MAX_READ_FILE_BYTES, WorkspaceError } from './workspace';
+import { readLinesWindowed, ReadLinesCapExceededError } from './read-lines';
 
 export const FileReadInputSchema = z.object({
   path: z
@@ -45,8 +46,8 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
   description:
     'Read the contents of a file in the agent workspace. Returns lines with start_line / ' +
     'end_line markers. Use `offset` and `limit` to paginate large files. Files above ~1 MiB ' +
-    'MUST be paginated — request smaller chunks. Use `file_search` first if you need to find ' +
-    'specific content.',
+    'MUST be paginated — request smaller chunks. Files above 50 MiB are refused outright, ' +
+    'even with offset/limit — use `file_search` to locate content, or split the file.',
   inputSchema: FileReadInputSchema,
   riskLevel: 'read',
   execute: async (input, ctx) => {
@@ -59,42 +60,56 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
           reason: `Path is a directory, not a file: "${input.path}". Use file_list.`,
         };
       }
+
+      // Absolute hard cap: refused no matter what, even with offset/limit —
+      // there is no safe way to serve any window without scanning the whole
+      // file once, and above this size that scan itself is the OOM risk.
+      if (info.size > MAX_READ_FILE_BYTES) {
+        return {
+          ok: false,
+          reason:
+            `File is ${info.size} bytes, exceeding the hard read cap of ${MAX_READ_FILE_BYTES} ` +
+            `bytes (50 MiB) — refusing to read it at all, even with offset/limit. Use ` +
+            `file_search to locate the content you need, or split the file into smaller pieces.`,
+        };
+      }
+
+      const offset = input.offset ?? 1;
+      const limit = input.limit ?? 500;
+      const startIdx = Math.max(0, offset - 1);
+
       if (info.size > MAX_READ_BYTES) {
-        const offset = input.offset ?? 1;
-        const limit = input.limit ?? 500;
-        // Streaming-by-line for huge files: read whole file (still capped by
-        // MAX_READ_BYTES check above — wait, no, that's the file size). We
-        // need to handle >1MB files. Read the whole thing for now and rely on
-        // line slicing. If perf becomes a problem, switch to a streaming
-        // reader. The LLM should paginate via offset/limit either way.
-        // For files much larger than MAX_READ_BYTES, force pagination by
-        // refusing the call without offset/limit:
         if (input.offset === undefined && input.limit === undefined) {
           return {
             ok: false,
             reason: `File is ${info.size} bytes (> ${MAX_READ_BYTES}). Call again with explicit offset and limit.`,
           };
         }
-        // Pagination provided — proceed but warn caller of partial read
-        const raw = await readFile(path, 'utf8');
-        const allLines = raw.split('\n');
-        const startIdx = Math.max(0, offset - 1);
-        const endIdx = Math.min(allLines.length, startIdx + limit);
-        const selectedContent = allLines.slice(startIdx, endIdx).join('\n');
+        // Bounded-memory streaming read for files between MAX_READ_BYTES and
+        // MAX_READ_FILE_BYTES — never loads the whole file into a string.
+        // maxBytes is a TOCTOU defense: the file could grow past the stat()
+        // check above between here and stream completion (concurrent writer
+        // on a shared workspace) — readLinesWindowed aborts if that happens.
+        const { windowLines, totalLines } = await readLinesWindowed(
+          path,
+          startIdx,
+          startIdx + limit,
+          undefined,
+          MAX_READ_FILE_BYTES,
+        );
+        const endIdx = Math.min(totalLines, startIdx + limit);
         return {
           ok: true,
-          content: selectedContent,
-          total_lines: allLines.length,
+          content: windowLines.join('\n'),
+          total_lines: totalLines,
           start_line: startIdx + 1,
           end_line: endIdx,
-          truncated: endIdx < allLines.length,
+          truncated: endIdx < totalLines,
         };
       }
+
       const raw = await readFile(path, 'utf8');
       const allLines = raw.split('\n');
-      const offset = input.offset ?? 1;
-      const limit = input.limit ?? 500;
-      const startIdx = Math.max(0, offset - 1);
       const endIdx = Math.min(allLines.length, startIdx + limit);
       const selectedContent = allLines.slice(startIdx, endIdx).join('\n');
       return {
@@ -107,6 +122,7 @@ export const fileReadTool: ToolDefinition<typeof FileReadInputSchema, FileReadOu
       };
     } catch (err) {
       if (err instanceof WorkspaceError) return { ok: false, reason: err.message };
+      if (err instanceof ReadLinesCapExceededError) return { ok: false, reason: err.message };
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return { ok: false, reason: `File not found: "${input.path}".` };
       }

@@ -9,6 +9,7 @@ export { fileSearchTool } from './file-search';
 export {
   WorkspaceError,
   MAX_READ_BYTES,
+  MAX_READ_FILE_BYTES,
   MAX_WRITE_BYTES,
   MAX_SEARCH_FILE_BYTES,
   resolveAndCheckPath,

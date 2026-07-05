@@ -25,7 +25,8 @@ import {
 } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '../../types';
-import { windowsPathViolation } from '../file-ops/workspace';
+import { windowsPathViolation, MAX_READ_FILE_BYTES } from '../file-ops/workspace';
+import { readLinesWindowed, ReadLinesCapExceededError } from '../file-ops/read-lines';
 
 /** Max bytes returned by a single skill_file_read call (same cap as file_read). */
 const MAX_READ_BYTES = 1024 * 1024;
@@ -194,8 +195,9 @@ export const skillFileReadTool: ToolDefinition<
     "Read a bundled file that ships with one of this agent's installed skills " +
     '(reference docs, templates, stylesheets, presets). Use this for on-demand ' +
     "loading of a skill's resources — the skill's instructions tell you which " +
-    'files to read. Paginate large files with offset/limit. This reads the ' +
-    "skill's own files only, never the agent workspace (use file_read for that).",
+    'files to read. Paginate large files with offset/limit. Files above 50 MiB ' +
+    'are refused outright, even with offset/limit — split the file instead. This ' +
+    "reads the skill's own files only, never the agent workspace (use file_read for that).",
   inputSchema: SkillFileReadInputSchema,
   riskLevel: 'read',
   execute: async (input, ctx) => {
@@ -209,17 +211,54 @@ export const skillFileReadTool: ToolDefinition<
           reason: `Path is a directory, not a file: "${input.path}". Use skill_file_list.`,
         };
       }
-      if (info.size > MAX_READ_BYTES && input.offset === undefined && input.limit === undefined) {
+
+      // Absolute hard cap: refused no matter what, even with offset/limit —
+      // mirrors file_read's MAX_READ_FILE_BYTES guard (see file-ops/workspace.ts).
+      if (info.size > MAX_READ_FILE_BYTES) {
         return {
           ok: false,
-          reason: `File is ${info.size} bytes (> ${MAX_READ_BYTES}). Call again with explicit offset and limit.`,
+          reason:
+            `File is ${info.size} bytes, exceeding the hard read cap of ${MAX_READ_FILE_BYTES} ` +
+            `bytes (50 MiB) — refusing to read it at all, even with offset/limit. Use ` +
+            `skill_file_list to find a narrower target, or split the file.`,
         };
       }
-      const raw = await readFile(path, 'utf8');
-      const allLines = raw.split('\n');
+
       const offset = input.offset ?? 1;
       const limit = input.limit ?? 500;
       const startIdx = Math.max(0, offset - 1);
+
+      if (info.size > MAX_READ_BYTES) {
+        if (input.offset === undefined && input.limit === undefined) {
+          return {
+            ok: false,
+            reason: `File is ${info.size} bytes (> ${MAX_READ_BYTES}). Call again with explicit offset and limit.`,
+          };
+        }
+        // Bounded-memory streaming read — never loads the whole file into a
+        // string. See file-ops/read-lines.ts for the parity contract. maxBytes
+        // guards against the file growing past the stat() check above between
+        // here and stream completion (TOCTOU on a concurrently-written skill folder).
+        const { windowLines, totalLines } = await readLinesWindowed(
+          path,
+          startIdx,
+          startIdx + limit,
+          undefined,
+          MAX_READ_FILE_BYTES,
+        );
+        const endIdx = Math.min(totalLines, startIdx + limit);
+        return {
+          ok: true,
+          content: windowLines.join('\n'),
+          total_lines: totalLines,
+          start_line: startIdx + 1,
+          end_line: endIdx,
+          truncated: endIdx < totalLines,
+        };
+      }
+
+      const raw = await readFile(path, 'utf8');
+      const allLines = raw.split('\n');
       const endIdx = Math.min(allLines.length, startIdx + limit);
       return {
         ok: true,
@@ -231,6 +270,7 @@ export const skillFileReadTool: ToolDefinition<
       };
     } catch (err) {
       if (err instanceof SkillFileError) return { ok: false, reason: err.message };
+      if (err instanceof ReadLinesCapExceededError) return { ok: false, reason: err.message };
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return { ok: false, reason: `File not found: "${input.path}".` };
       }

@@ -33,6 +33,20 @@ export const SHARED_WORKSPACE_LABEL = 'shared';
 export const MAX_READ_BYTES = 1024 * 1024;
 
 /**
+ * Absolute hard cap on any single file_read / skill_file_read call, no matter
+ * whether offset/limit is provided. Below MAX_READ_BYTES a file is read whole
+ * via readFile(); between MAX_READ_BYTES and this cap it is read through a
+ * bounded-memory streaming line reader (see file-ops/read-lines.ts) instead of
+ * ever materializing the whole file as a single string. Above this cap the
+ * call is refused outright — even with offset/limit — because there is no
+ * safe way to serve a single line-window request without knowing where line
+ * boundaries fall, which still requires scanning the whole file once. 50 MiB
+ * bounds that scan cost and guarantees no read tool can be used to OOM the
+ * runner regardless of how the caller paginates.
+ */
+export const MAX_READ_FILE_BYTES = 50 * 1024 * 1024;
+
+/**
  * Max bytes accepted by a single file_write call. Generative-AI workflows
  * don't realistically produce >1 MiB single-file outputs; capping prevents a
  * runaway loop from filling the disk.
