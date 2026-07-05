@@ -17,14 +17,24 @@ import { createShareFileTool } from './tools/share-file';
 import { createListPermissionsTool } from './tools/list-permissions';
 import { createExportFileTool } from './tools/export-file';
 
-export interface DriveAdapterOptions {
-  /**
-   * User's current OAuth2 access token for Google Drive.
-   * Token refresh is the runner's responsibility — if the token expires,
-   * tools throw DriveAdapterError({ code: 'drive_unauthorized' }).
-   */
-  accessToken: string;
-}
+export type DriveAdapterOptions =
+  | {
+      /**
+       * Static OAuth2 access token, captured once for the tools' lifetime.
+       * Fine for short-lived callers (tests, the UI operations grid). Jobs
+       * that may outlive the ~1h Google token TTL should pass getAccessToken
+       * instead (audit#2 M-12).
+       */
+      accessToken: string;
+    }
+  | {
+      /**
+       * Resolver called before every Drive API request — re-reads (and, via
+       * the runner's advisory-lock refresh path, refreshes) the credential
+       * from the DB instead of capturing one token for the tools' lifetime.
+       */
+      getAccessToken: () => Promise<string>;
+    };
 
 /**
  * Create all 12 Google Drive tools using the provided OAuth access token.
@@ -40,7 +50,9 @@ export interface DriveAdapterOptions {
 export function createDriveTools(
   opts: DriveAdapterOptions,
 ): ToolDefinition<z.ZodTypeAny, unknown>[] {
-  const drive = createDriveClient(opts.accessToken);
+  const getAccessToken =
+    'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
+  const drive = createDriveClient(getAccessToken);
 
   return [
     // Read tools (5)

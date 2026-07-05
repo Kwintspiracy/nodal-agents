@@ -27,14 +27,24 @@ import { createFormatTextTool } from './tools/format';
 import { createApplyNamedStyleTool } from './tools/format';
 import { createBatchUpdateTool } from './tools/format';
 
-export interface DocsAdapterOptions {
-  /**
-   * User's current OAuth2 access token for Google Docs.
-   * Token refresh is the runner's responsibility — if the token expires,
-   * tools throw DocsAdapterError({ code: 'docs_unauthorized' }).
-   */
-  accessToken: string;
-}
+export type DocsAdapterOptions =
+  | {
+      /**
+       * Static OAuth2 access token, captured once for the tools' lifetime.
+       * Fine for short-lived callers (tests, the UI operations grid). Jobs
+       * that may outlive the ~1h Google token TTL should pass getAccessToken
+       * instead (audit#2 M-12).
+       */
+      accessToken: string;
+    }
+  | {
+      /**
+       * Resolver called before every Docs API request — re-reads (and, via
+       * the runner's advisory-lock refresh path, refreshes) the credential
+       * from the DB instead of capturing one token for the tools' lifetime.
+       */
+      getAccessToken: () => Promise<string>;
+    };
 
 /**
  * Create all 14 Google Docs tools using the provided OAuth access token.
@@ -49,7 +59,9 @@ export interface DocsAdapterOptions {
  * Destructive (1): docs_delete_content_range
  */
 export function createDocsTools(opts: DocsAdapterOptions): ToolDefinition<z.ZodTypeAny, unknown>[] {
-  const docs = createDocsClient(opts.accessToken);
+  const getAccessToken =
+    'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
+  const docs = createDocsClient(getAccessToken);
 
   return [
     // Read tools (2)

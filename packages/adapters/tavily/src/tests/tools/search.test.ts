@@ -89,6 +89,36 @@ describe('makeTavilySearchTool', () => {
     expect(result.images[0]?.url).toBe('https://example.com/img.jpg');
     expect(result.images[0]?.description).toBe('Pizza photo');
     expect(result.responseTime).toBe(420);
+    expect(result.results[0]?.truncated).toBe(false);
+  });
+
+  // audit#2 F-17 (regression follow-up): search result content had the same
+  // uncapped-field vector as extract/crawl's rawContent — nothing guarantees
+  // a search snippet stays short.
+  it('caps result content at 15000 chars and sets truncated:true when huge', async () => {
+    const hugeContent = 'z'.repeat(20_000);
+    const mockSearch = vi.fn().mockResolvedValueOnce({
+      query: 'huge snippet',
+      results: [
+        {
+          title: 'Huge',
+          url: 'https://huge.example.com',
+          content: hugeContent,
+          score: 0.5,
+          publishedDate: '2024-01-01',
+        },
+      ],
+      images: [],
+      responseTime: 50,
+      requestId: 'req-huge-search',
+    });
+    const tool = makeTavilySearchTool(makeClient({ search: mockSearch }));
+
+    const result = await tool.execute({ query: 'huge snippet' }, mockCtx);
+
+    expect(result.results[0]?.truncated).toBe(true);
+    expect(result.results[0]?.content.length).toBeLessThan(hugeContent.length);
+    expect(result.results[0]?.content).toContain('[...content truncated at 15000 chars...]');
   });
 
   it('uses default values when optional fields are omitted', async () => {
@@ -201,6 +231,27 @@ describe('makeTavilyExtractTool', () => {
     expect(result.failedResults[0]?.url).toBe('https://broken.example.com');
     expect(result.failedResults[0]?.error).toBe('Connection timeout');
     expect(result.responseTime).toBe(312);
+    expect(result.results[0]?.truncated).toBe(false);
+  });
+
+  // audit#2 F-17: rawContent must be capped like gmail/drive/notion fields —
+  // before the fix there was no cap at all, so this would have failed (no
+  // truncation, full-length content, no truncated flag).
+  it('caps rawContent at 15000 chars and sets truncated:true when the page is huge', async () => {
+    const hugeContent = 'x'.repeat(20_000);
+    const mockExtract = vi.fn().mockResolvedValueOnce({
+      results: [{ url: 'https://big.example.com', title: 'Big page', rawContent: hugeContent }],
+      failedResults: [],
+      responseTime: 200,
+      requestId: 'req-huge',
+    });
+    const tool = makeTavilyExtractTool(makeClient({ extract: mockExtract }));
+
+    const result = await tool.execute({ urls: ['https://big.example.com'] }, mockCtx);
+
+    expect(result.results[0]?.truncated).toBe(true);
+    expect(result.results[0]?.rawContent.length).toBeLessThan(hugeContent.length);
+    expect(result.results[0]?.rawContent).toContain('[...content truncated at 15000 chars...]');
   });
 
   it('defaults extractDepth to basic when omitted', async () => {
@@ -289,8 +340,28 @@ describe('makeTavilyCrawlTool', () => {
     expect(result.results).toHaveLength(2);
     expect(result.results[0]?.url).toBe('https://docs.example.com/intro');
     expect(result.results[0]?.rawContent).toBe('Introduction content');
+    expect(result.results[0]?.truncated).toBe(false);
     expect(result.results[1]?.url).toBe('https://docs.example.com/guide');
     expect(result.responseTime).toBe(890);
+  });
+
+  // audit#2 F-17: same cap as tavily_extract — before the fix this would have
+  // failed (no truncation, full-length content, no truncated flag).
+  it('caps rawContent at 15000 chars and sets truncated:true when a crawled page is huge', async () => {
+    const hugeContent = 'y'.repeat(18_000);
+    const mockCrawl = vi.fn().mockResolvedValueOnce({
+      baseUrl: 'https://big.example.com',
+      results: [{ url: 'https://big.example.com/page', rawContent: hugeContent }],
+      responseTime: 300,
+      requestId: 'req-crawl-huge',
+    });
+    const tool = makeTavilyCrawlTool(makeClient({ crawl: mockCrawl }));
+
+    const result = await tool.execute({ url: 'https://big.example.com' }, mockCtx);
+
+    expect(result.results[0]?.truncated).toBe(true);
+    expect(result.results[0]?.rawContent.length).toBeLessThan(hugeContent.length);
+    expect(result.results[0]?.rawContent).toContain('[...content truncated at 15000 chars...]');
   });
 
   it('defaults maxDepth to 1 and limit to 10 when omitted', async () => {

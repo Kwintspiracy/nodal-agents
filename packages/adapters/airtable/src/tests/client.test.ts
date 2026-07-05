@@ -23,12 +23,12 @@ function makeErrorResponse(status: number, message: string): Response {
 
 describe('createAirtableClient — instantiation', () => {
   it('creates a client without throwing', () => {
-    expect(() => createAirtableClient(FAKE_TOKEN)).not.toThrow();
+    expect(() => createAirtableClient(async () => FAKE_TOKEN)).not.toThrow();
   });
 
   it('creates distinct client instances per call', () => {
-    const a = createAirtableClient('token-a');
-    const b = createAirtableClient('token-b');
+    const a = createAirtableClient(async () => 'token-a');
+    const b = createAirtableClient(async () => 'token-b');
     expect(a).not.toBe(b);
   });
 });
@@ -49,7 +49,7 @@ describe('createAirtableClient — Authorization header', () => {
       }),
     );
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await client.get('/meta/bases');
 
     expect(capturedHeaders.length).toBeGreaterThan(0);
@@ -67,7 +67,7 @@ describe('createAirtableClient — Authorization header', () => {
       }),
     );
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await client.post('/appXXX/tblXXX', { records: [] });
 
     expect(capturedHeaders[0]?.['authorization']).toBe(`Bearer ${FAKE_TOKEN}`);
@@ -89,10 +89,10 @@ describe('createAirtableClient — Authorization header', () => {
       'patXXXXXXXXXXXXXX.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
 
     vi.stubGlobal('fetch', makeStub(capturedA));
-    await createAirtableClient(OAUTH_TOKEN).get('/meta/bases');
+    await createAirtableClient(async () => OAUTH_TOKEN).get('/meta/bases');
 
     vi.stubGlobal('fetch', makeStub(capturedB));
-    await createAirtableClient(PAT).get('/meta/bases');
+    await createAirtableClient(async () => PAT).get('/meta/bases');
 
     vi.restoreAllMocks();
 
@@ -100,6 +100,39 @@ describe('createAirtableClient — Authorization header', () => {
     expect(capturedB[0]).toBe(`Bearer ${PAT}`);
     expect(capturedA[0]?.startsWith('Bearer ')).toBe(true);
     expect(capturedB[0]?.startsWith('Bearer ')).toBe(true);
+  });
+
+  // audit#2 M-12: Airtable OAuth2 access tokens live ~60min; a job can run
+  // far longer (IDLE_RESET is 4h). Before the fix, createAirtableClient
+  // captured a single accessToken string at construction — a resolver was
+  // never called again, so a mid-job token refresh could never reach a
+  // request. This test would have failed before the fix: there was no
+  // getAccessToken parameter at all, so the SECOND request could not possibly
+  // observe a different token than the first.
+  it('re-invokes getAccessToken on every request, not just at construction', async () => {
+    let calls = 0;
+    const getAccessToken = async (): Promise<string> => {
+      calls++;
+      return `token-${calls}`;
+    };
+
+    const capturedHeaders: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        const h = Object.fromEntries(new Headers(init?.headers).entries());
+        capturedHeaders.push(h['authorization'] ?? '');
+        return Promise.resolve(makeOkResponse({ bases: [] }));
+      }),
+    );
+
+    const client = createAirtableClient(getAccessToken);
+    await client.get('/meta/bases');
+    await client.get('/meta/bases');
+
+    expect(calls).toBe(2);
+    expect(capturedHeaders[0]).toBe('Bearer token-1');
+    expect(capturedHeaders[1]).toBe('Bearer token-2');
   });
 });
 
@@ -111,7 +144,7 @@ describe('createAirtableClient — error mapping', () => {
   it('throws AirtableApiError with unauthorized on 401', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeErrorResponse(401, 'Unauthorized')));
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await expect(client.get('/meta/bases')).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof AirtableApiError &&
@@ -123,7 +156,7 @@ describe('createAirtableClient — error mapping', () => {
   it('throws AirtableApiError with not_found on 404', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeErrorResponse(404, 'Not found')));
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await expect(client.get('/appXXX/tblXXX/recXXX')).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof AirtableApiError && err.code === 'airtable_not_found' && err.status === 404,
@@ -136,7 +169,7 @@ describe('createAirtableClient — error mapping', () => {
       vi.fn().mockResolvedValue(makeErrorResponse(422, 'Invalid field value')),
     );
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await expect(client.post('/appXXX/tblXXX', {})).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof AirtableApiError &&
@@ -151,7 +184,7 @@ describe('createAirtableClient — error mapping', () => {
       vi.fn().mockResolvedValue(makeErrorResponse(500, 'Internal Server Error')),
     );
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await expect(client.get('/meta/bases')).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof AirtableApiError && err.code === 'airtable_transient' && err.status === 500,
@@ -164,7 +197,7 @@ describe('createAirtableClient — error mapping', () => {
       vi.fn().mockResolvedValue(makeErrorResponse(503, 'Service Unavailable')),
     );
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await expect(client.get('/meta/bases')).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof AirtableApiError && err.code === 'airtable_transient' && err.status === 503,
@@ -174,7 +207,7 @@ describe('createAirtableClient — error mapping', () => {
   it('throws AirtableApiError with client_error on 400', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeErrorResponse(400, 'Bad request')));
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await expect(client.get('/meta/bases')).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof AirtableApiError &&
@@ -186,9 +219,32 @@ describe('createAirtableClient — error mapping', () => {
   it('wraps network errors in AirtableApiError', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network failure')));
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await expect(client.get('/meta/bases')).rejects.toSatisfy(
       (err: unknown) => err instanceof AirtableApiError && err.code === 'airtable_unknown',
+    );
+  });
+
+  // audit#2 M-15: an endpoint that accepts the connection but never responds
+  // must time out with a clear error instead of hanging the tool call forever.
+  it('times out and throws a clear AirtableApiError when the endpoint never responds', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+          });
+        });
+      }),
+    );
+
+    const client = createAirtableClient(async () => FAKE_TOKEN, { timeoutMs: 30 });
+    await expect(client.get('/meta/bases')).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof AirtableApiError &&
+        err.code === 'airtable_transient' &&
+        /timed out/i.test(err.message),
     );
   });
 });
@@ -213,7 +269,7 @@ describe('createAirtableClient — URL building', () => {
       }),
     );
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await client.get('/meta/bases');
 
     expect(capturedUrls[0]).toContain('api.airtable.com/v0/meta/bases');
@@ -230,7 +286,7 @@ describe('createAirtableClient — URL building', () => {
       }),
     );
 
-    const client = createAirtableClient(FAKE_TOKEN);
+    const client = createAirtableClient(async () => FAKE_TOKEN);
     await client.get('/appXXX/tblXXX');
 
     expect(capturedUrls[0]).toContain('api.airtable.com/v0/appXXX/tblXXX');

@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   connect: vi.fn(async () => {}),
   listTools: vi.fn(),
   close: vi.fn(async () => {}),
+  transportClose: vi.fn(async () => {}),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -14,14 +15,19 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   },
 }));
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: class {},
+  StreamableHTTPClientTransport: class {
+    close = h.transportClose;
+  },
 }));
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   // Capturing the constructor args lets the stdio test inspect what the
   // adapter passed to the SDK without actually spawning a subprocess.
-  StdioClientTransport: vi.fn().mockImplementation(function (this: { args: unknown }, a: unknown) {
-    this.args = a;
-  }),
+  StdioClientTransport: vi
+    .fn()
+    .mockImplementation(function (this: { args: unknown; close: unknown }, a: unknown) {
+      this.args = a;
+      this.close = h.transportClose;
+    }),
 }));
 
 import { buildMcpRequest, connectMcp } from '../client.ts';
@@ -195,5 +201,98 @@ describe('connectMcp', () => {
     expect(arg.env.SHARED_KEY).toBe('user-value');
 
     delete process.env['SHARED_KEY'];
+  });
+});
+
+// audit#2 M-15: establishing the transport has no built-in SDK timeout —
+// unlike listTools, which the SDK itself bounds. A server/command that never
+// completes the handshake must not hang connectMcp (and the job) forever.
+//
+// Default bound is 120s, NOT 30s: a regression report found that connecting
+// to a stdio MCP server via npx/uvx on a cold cache (first launch, or a
+// community server with heavy deps like Playwright pulling a browser binary)
+// can legitimately take well over 30s. 120s bounds the hang without breaking
+// that central use case (MCP/community skill catalog). MCP_CONNECT_TIMEOUT_MS
+// overrides the default for servers that need even longer.
+describe('connectMcp — connect timeout (M-15)', () => {
+  beforeEach(() => {
+    h.connect.mockClear();
+    h.listTools.mockReset();
+    h.close.mockClear();
+    h.transportClose.mockClear();
+  });
+
+  afterEach(() => {
+    // Restore the default (immediately-resolving) connect implementation so
+    // later tests in this file aren't affected by the "never resolves" stub.
+    h.connect.mockImplementation(async () => {});
+    delete process.env['MCP_CONNECT_TIMEOUT_MS'];
+    vi.useRealTimers();
+  });
+
+  it('rejects with a clear timeout error and closes the transport when connect() never resolves (http)', async () => {
+    vi.useFakeTimers();
+    h.connect.mockImplementation(() => new Promise(() => {}));
+
+    const promise = connectMcp({ transport: 'http', url: 'https://x.example.com/api/mcp' });
+    const assertion = expect(promise).rejects.toThrow(/timed out/i);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await assertion;
+
+    expect(h.transportClose).toHaveBeenCalledOnce();
+  });
+
+  it('rejects with a clear timeout error and closes the transport (kills the subprocess) when connect() never resolves (stdio)', async () => {
+    vi.useFakeTimers();
+    h.connect.mockImplementation(() => new Promise(() => {}));
+
+    const promise = connectMcp({
+      transport: 'stdio',
+      command: 'some-hanging-command',
+      args: [],
+      env: {},
+    });
+    const assertion = expect(promise).rejects.toThrow(/timed out/i);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await assertion;
+
+    expect(h.transportClose).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT time out a connect() that resolves within 60s (would have failed under the old 30s bound)', async () => {
+    vi.useFakeTimers();
+    let resolveConnect: () => void = () => {};
+    h.connect.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConnect = resolve;
+        }),
+    );
+    h.listTools.mockResolvedValue({ tools: [] });
+
+    const promise = connectMcp({ transport: 'http', url: 'https://x.example.com/api/mcp' });
+
+    // Simulate a slow-but-legitimate cold start (e.g. npx pulling a package)
+    // finishing at 60s — well past the old 30s cutoff, well within the new
+    // 120s one.
+    await vi.advanceTimersByTimeAsync(60_000);
+    resolveConnect();
+
+    const conn = await promise;
+    expect(conn.tools).toEqual([]);
+    expect(h.transportClose).not.toHaveBeenCalled();
+  });
+
+  it('MCP_CONNECT_TIMEOUT_MS overrides the default connect timeout', async () => {
+    process.env['MCP_CONNECT_TIMEOUT_MS'] = '5000';
+    vi.useFakeTimers();
+    h.connect.mockImplementation(() => new Promise(() => {}));
+
+    const promise = connectMcp({ transport: 'http', url: 'https://x.example.com/api/mcp' });
+    const assertion = expect(promise).rejects.toThrow(/timed out/i);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
+
+    expect(h.transportClose).toHaveBeenCalledOnce();
   });
 });

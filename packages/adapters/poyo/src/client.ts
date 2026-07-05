@@ -10,6 +10,12 @@ import { mapPoyoHttpError, PoyoApiError } from './errors.ts';
 
 const DEFAULT_BASE_URL = 'https://api.poyo.ai';
 
+// audit#2 M-15: submit/status are quick request/response calls (the actual
+// generation runs async and is polled separately via status()) — an endpoint
+// that accepts the connection but never responds must not hang the tool call
+// forever. 30s is generous for a simple submit/status round trip.
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 /** A generated artifact (image/video/…) returned by a finished task. */
 export type PoyoFile = {
   url: string;
@@ -38,7 +44,29 @@ export type PoyoClientOptions = {
   baseUrl?: string;
   /** Inject a fetch implementation (tests). Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
+  /** Per-request timeout in ms (audit#2 M-15). Defaults to 30s. */
+  timeoutMs?: number;
 };
+
+/** Wrap a fetch call so a request that never responds fails loud instead of hanging. */
+async function fetchWithTimeout(
+  doFetch: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  try {
+    return await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      throw new PoyoApiError(
+        'poyo_transient',
+        `Poyo request to ${url} timed out after ${timeoutMs}ms`,
+      );
+    }
+    throw err;
+  }
+}
 
 /**
  * Create a thin Poyo client. The API key is captured in the closure and sent
@@ -47,15 +75,21 @@ export type PoyoClientOptions = {
 export function createPoyoClient(accessToken: string, options: PoyoClientOptions = {}): PoyoClient {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const doFetch = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const authHeader = { Authorization: `Bearer ${accessToken}` };
 
   return {
     async submit(model, input) {
-      const res = await doFetch(`${baseUrl}/api/generate/submit`, {
-        method: 'POST',
-        headers: { ...authHeader, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, input }),
-      });
+      const res = await fetchWithTimeout(
+        doFetch,
+        `${baseUrl}/api/generate/submit`,
+        {
+          method: 'POST',
+          headers: { ...authHeader, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, input }),
+        },
+        timeoutMs,
+      );
       if (!res.ok) {
         throw mapPoyoHttpError(res.status, await safeText(res));
       }
@@ -68,10 +102,15 @@ export function createPoyoClient(accessToken: string, options: PoyoClientOptions
     },
 
     async status(taskId) {
-      const res = await doFetch(`${baseUrl}/api/generate/status/${encodeURIComponent(taskId)}`, {
-        method: 'GET',
-        headers: { ...authHeader },
-      });
+      const res = await fetchWithTimeout(
+        doFetch,
+        `${baseUrl}/api/generate/status/${encodeURIComponent(taskId)}`,
+        {
+          method: 'GET',
+          headers: { ...authHeader },
+        },
+        timeoutMs,
+      );
       if (!res.ok) {
         throw mapPoyoHttpError(res.status, await safeText(res));
       }

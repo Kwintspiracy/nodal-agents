@@ -17,14 +17,25 @@ import {
 // Calendars + free/busy (2)
 import { createListCalendarsTool, createFindFreeSlotsTool } from './tools/calendars';
 
-export interface GoogleCalendarAdapterOptions {
-  /**
-   * User's current OAuth2 access token for Google Calendar.
-   * Token refresh is the runner's responsibility — if the token expires,
-   * tools throw GoogleCalendarAdapterError({ code: 'gcal_unauthorized' }).
-   */
-  accessToken: string;
-}
+export type GoogleCalendarAdapterOptions =
+  | {
+      /**
+       * Static OAuth2 access token, captured once for the tools' lifetime.
+       * Fine for short-lived callers (tests, the UI operations grid). Jobs
+       * that may outlive the ~1h Google token TTL should pass getAccessToken
+       * instead (audit#2 M-12).
+       */
+      accessToken: string;
+    }
+  | {
+      /**
+       * Resolver called before every Calendar API request — re-reads (and,
+       * via the runner's advisory-lock refresh path, refreshes) the
+       * credential from the DB instead of capturing one token for the
+       * tools' lifetime.
+       */
+      getAccessToken: () => Promise<string>;
+    };
 
 /**
  * Create all 7 Google Calendar tools using the provided OAuth access token.
@@ -39,7 +50,9 @@ export interface GoogleCalendarAdapterOptions {
 export function createGoogleCalendarTools(
   opts: GoogleCalendarAdapterOptions,
 ): ToolDefinition<z.ZodTypeAny, unknown>[] {
-  const calendar = createGoogleCalendarClient(opts.accessToken);
+  const getAccessToken =
+    'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
+  const calendar = createGoogleCalendarClient(getAccessToken);
 
   return [
     // Read tools (4)

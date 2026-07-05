@@ -107,6 +107,17 @@ export function makeApifyWebBrowseTool(
 
 // ── apify_run_actor ───────────────────────────────────────────────────────────
 
+// Default cap on how long apify_run_actor blocks waiting for the run to
+// finish. Without a `waitSecs`, apify-client's `.call()` waits INDEFINITELY —
+// a long-running or stuck actor (the incident that motivated this fix: a
+// 30-min actor) would pend the tool call, and the job, forever (audit#2
+// M-15). 30 minutes covers the vast majority of actor runs while still being
+// a bound instead of no bound at all; a longer-running actor keeps executing
+// on Apify's side after this — use apify_get_run / apify_get_dataset_items to
+// check on it later.
+const DEFAULT_RUN_WAIT_SECS = 1800;
+const MAX_RUN_WAIT_SECS = 3600;
+
 const RunActorInput = z.object({
   actorId: z
     .string()
@@ -119,6 +130,15 @@ const RunActorInput = z.object({
     .describe(
       'Input object to pass to the actor. Structure depends on the actor. Omit to use actor defaults.',
     ),
+  waitSecs: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_RUN_WAIT_SECS)
+    .optional()
+    .describe(
+      `Max seconds to wait for the run to finish before returning with its current status (default ${DEFAULT_RUN_WAIT_SECS}, capped at ${MAX_RUN_WAIT_SECS}). The run keeps going on Apify's side even if this elapses — use apify_get_run to check on it later.`,
+    ),
 });
 
 export type RunActorOutput = {
@@ -128,9 +148,9 @@ export type RunActorOutput = {
 };
 
 /**
- * Calls client.actor(actorId).call(input) which blocks until the run finishes.
- * The SDK handles polling internally — this tool will not return until the actor
- * run reaches a terminal state (SUCCEEDED, FAILED, ABORTED, etc.).
+ * Calls client.actor(actorId).call(input, { waitSecs }) which blocks until the
+ * run finishes OR waitSecs elapses, whichever comes first. Without waitSecs
+ * the SDK polls indefinitely (audit#2 M-15) — always pass a bound.
  */
 export function makeApifyRunActorTool(
   client: ApifyClient,
@@ -138,12 +158,14 @@ export function makeApifyRunActorTool(
   return {
     name: 'apify_run_actor',
     description:
-      'Start an Apify actor run and wait for it to finish (blocking). Returns the run ID, output dataset ID, and final status. This tool consumes Apify platform credits — use apify_get_dataset_items to retrieve results after the run succeeds.',
+      'Start an Apify actor run and wait for it to finish (blocking, bounded — default 30 min, override with waitSecs). Returns the run ID, output dataset ID, and final status (which may still be RUNNING if the wait elapsed first). This tool consumes Apify platform credits — use apify_get_dataset_items to retrieve results after the run succeeds.',
     inputSchema: RunActorInput,
     riskLevel: 'write',
     async execute(input) {
       try {
-        const run = await client.actor(input.actorId).call(input.input);
+        const run = await client.actor(input.actorId).call(input.input, {
+          waitSecs: input.waitSecs ?? DEFAULT_RUN_WAIT_SECS,
+        });
         return {
           runId: run.id,
           datasetId: run.defaultDatasetId,

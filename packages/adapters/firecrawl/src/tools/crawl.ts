@@ -14,6 +14,7 @@ import { z } from 'zod';
 import type { ToolDefinition } from '@nodal-agents/tools';
 import type { FirecrawlClient } from '../client.ts';
 import { wrapFirecrawlError } from '../errors.ts';
+import { capField } from './scrape.ts';
 
 // ── firecrawl_crawl_start ─────────────────────────────────────────────────────
 
@@ -68,6 +69,7 @@ export type CrawlDocument = {
   url?: string;
   markdown?: string;
   html?: string;
+  truncated: boolean;
 };
 
 export type CrawlStatusOutput = {
@@ -95,11 +97,16 @@ export function makeFirecrawlCrawlStatusTool(
           status: job.status,
           total: job.total,
           completed: job.completed,
-          data: (job.data ?? []).map((doc) => ({
-            ...(doc.metadata?.url !== undefined && { url: doc.metadata.url as string }),
-            ...(doc.markdown !== undefined && { markdown: doc.markdown }),
-            ...(doc.html !== undefined && { html: doc.html }),
-          })),
+          data: (job.data ?? []).map((doc) => {
+            const md = capField(doc.markdown);
+            const html = capField(doc.html);
+            return {
+              ...(doc.metadata?.url !== undefined && { url: doc.metadata.url as string }),
+              ...(md.content !== undefined && { markdown: md.content }),
+              ...(html.content !== undefined && { html: html.content }),
+              truncated: md.truncated || html.truncated,
+            };
+          }),
         };
       } catch (err) {
         throw wrapFirecrawlError(err);

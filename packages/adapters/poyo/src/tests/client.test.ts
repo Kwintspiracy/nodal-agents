@@ -59,6 +59,46 @@ describe('createPoyoClient — submit', () => {
   });
 });
 
+// audit#2 M-15: a fetch that accepts the connection but never responds must
+// time out with a clear error instead of hanging the tool call forever.
+describe('createPoyoClient — timeout (M-15)', () => {
+  function hangingFetchImpl(): typeof fetch {
+    return vi.fn((_url, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+        });
+      });
+    }) as unknown as typeof fetch;
+  }
+
+  it('submit() times out and throws a clear PoyoApiError when the endpoint never responds', async () => {
+    const client = createPoyoClient(TOKEN, {
+      fetchImpl: hangingFetchImpl(),
+      baseUrl: BASE,
+      timeoutMs: 30,
+    });
+
+    await expect(client.submit('gpt-4o-image', { prompt: 'x' })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof PoyoApiError && e.code === 'poyo_transient' && /timed out/i.test(e.message),
+    );
+  });
+
+  it('status() times out and throws a clear PoyoApiError when the endpoint never responds', async () => {
+    const client = createPoyoClient(TOKEN, {
+      fetchImpl: hangingFetchImpl(),
+      baseUrl: BASE,
+      timeoutMs: 30,
+    });
+
+    await expect(client.status('task-abc')).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof PoyoApiError && e.code === 'poyo_transient' && /timed out/i.test(e.message),
+    );
+  });
+});
+
 describe('createPoyoClient — status', () => {
   it('GETs the task and normalises files[].file_url → files[].url', async () => {
     const body = {

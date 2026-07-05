@@ -33,14 +33,24 @@ import { createSetBasicFilterTool } from './tools/filters';
 import { createClearBasicFilterTool } from './tools/filters';
 import { createSortRangeTool } from './tools/filters';
 
-export interface SheetsAdapterOptions {
-  /**
-   * User's current OAuth2 access token for Google Sheets.
-   * Token refresh is the runner's responsibility — if the token expires,
-   * tools throw SheetsAdapterError({ code: 'sheets_unauthorized' }).
-   */
-  accessToken: string;
-}
+export type SheetsAdapterOptions =
+  | {
+      /**
+       * Static OAuth2 access token, captured once for the tools' lifetime.
+       * Fine for short-lived callers (tests, the UI operations grid). Jobs
+       * that may outlive the ~1h Google token TTL should pass getAccessToken
+       * instead (audit#2 M-12).
+       */
+      accessToken: string;
+    }
+  | {
+      /**
+       * Resolver called before every Sheets API request — re-reads (and, via
+       * the runner's advisory-lock refresh path, refreshes) the credential
+       * from the DB instead of capturing one token for the tools' lifetime.
+       */
+      getAccessToken: () => Promise<string>;
+    };
 
 /**
  * Create all 20 Google Sheets tools using the provided OAuth access token.
@@ -59,7 +69,9 @@ export interface SheetsAdapterOptions {
 export function createSheetsTools(
   opts: SheetsAdapterOptions,
 ): ToolDefinition<z.ZodTypeAny, unknown>[] {
-  const sheets = createSheetsClient(opts.accessToken);
+  const getAccessToken =
+    'getAccessToken' in opts ? opts.getAccessToken : async () => opts.accessToken;
+  const sheets = createSheetsClient(getAccessToken);
 
   return [
     // Read tools (5)

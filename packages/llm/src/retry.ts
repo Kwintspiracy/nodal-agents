@@ -11,8 +11,11 @@ import {
 // 429 = transient rate-limit (billing 429 is caught before this set, see isQuotaError)
 // 500/502/503 = upstream server errors (transient)
 // 408 = Request Timeout (transport/gateway timeout — transient, different from our AbortSignal timeout)
+// 504 = Gateway Timeout (reverse-proxy/gateway gave up waiting on the upstream — transient,
+//   same family as 502/503; audit#2 M-13. Was missing, so a transient gateway timeout failed
+//   the call outright instead of retrying.)
 // 529 = Overloaded (Anthropic/MiniMax native — transient capacity pressure, not a quota)
-const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 529]);
+const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504, 529]);
 
 /**
  * Determines if an error is a billing/quota-exhausted 429 vs a transient

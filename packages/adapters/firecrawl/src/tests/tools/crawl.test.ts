@@ -123,12 +123,57 @@ describe('makeFirecrawlCrawlStatusTool', () => {
     expect(result.data[0]).toEqual({
       url: 'https://example.com/page1',
       markdown: '# Page 1',
+      truncated: false,
     });
     expect(result.data[1]).toEqual({
       url: 'https://example.com/page2',
       markdown: '# Page 2',
       html: '<h1>Page 2</h1>',
+      truncated: false,
     });
+  });
+
+  // audit#2 F-17: markdown must be capped like gmail/drive/notion fields —
+  // before the fix there was no cap at all, so this would have failed (no
+  // truncation, full-length markdown, no truncated flag).
+  it('caps a document markdown at 15000 chars and sets truncated:true when huge', async () => {
+    const client = getClient();
+    const hugeMarkdown = '# '.repeat(10_000); // 20,000 chars
+    vi.spyOn(client, 'getCrawlStatus').mockResolvedValue({
+      id: 'crawl-job-huge',
+      status: 'completed',
+      total: 1,
+      completed: 1,
+      data: [{ markdown: hugeMarkdown, metadata: { url: 'https://big.example.com' } }],
+    });
+
+    const tool = makeFirecrawlCrawlStatusTool(client);
+    const result = await tool.execute({ id: 'crawl-job-huge' }, CTX);
+
+    expect(result.data[0]?.truncated).toBe(true);
+    expect(result.data[0]?.markdown?.length).toBeLessThan(hugeMarkdown.length);
+    expect(result.data[0]?.markdown).toContain('[...content truncated at 15000 chars...]');
+  });
+
+  // audit#2 F-17 (regression follow-up): html is typically larger than
+  // markdown for the same page — must be capped too, not just markdown.
+  it('caps a document html at 15000 chars and sets truncated:true when huge', async () => {
+    const client = getClient();
+    const hugeHtml = '<p>x</p>'.repeat(3000); // 24,000 chars
+    vi.spyOn(client, 'getCrawlStatus').mockResolvedValue({
+      id: 'crawl-job-huge-html',
+      status: 'completed',
+      total: 1,
+      completed: 1,
+      data: [{ html: hugeHtml, metadata: { url: 'https://big.example.com' } }],
+    });
+
+    const tool = makeFirecrawlCrawlStatusTool(client);
+    const result = await tool.execute({ id: 'crawl-job-huge-html' }, CTX);
+
+    expect(result.data[0]?.truncated).toBe(true);
+    expect(result.data[0]?.html?.length).toBeLessThan(hugeHtml.length);
+    expect(result.data[0]?.html).toContain('[...content truncated at 15000 chars...]');
   });
 
   it('passes job id to SDK getCrawlStatus', async () => {

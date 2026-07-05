@@ -5,6 +5,29 @@ import type { ToolDefinition } from '@nodal-agents/tools';
 import type { FirecrawlClient } from '../client.ts';
 import { wrapFirecrawlError } from '../errors.ts';
 
+// audit#2 F-17: unlike gmail/drive/notion, markdown/html were returned
+// unbounded — a large scraped page could burn the agent's whole token budget
+// on a single tool result. Same cap + truncated flag pattern used by
+// packages/adapters/google-drive/src/tools/read-file.ts.
+//
+// html is capped too (not just markdown): it's a selectable format
+// (formats:['html']) and is typically LARGER than markdown for the same
+// page, so leaving it uncapped would just move the budget-burn vector
+// sideways instead of closing it.
+const CHAR_CAP = 15000;
+
+/** Cap a text field at CHAR_CAP chars, if present. Shared across scrape.ts/crawl.ts for markdown AND html. */
+export function capField(text: string | undefined): { content?: string; truncated: boolean } {
+  if (text === undefined) return { truncated: false };
+  const truncated = text.length > CHAR_CAP;
+  return {
+    content: truncated
+      ? text.slice(0, CHAR_CAP) + `\n\n[...content truncated at ${CHAR_CAP} chars...]`
+      : text,
+    truncated,
+  };
+}
+
 // ── firecrawl_scrape ──────────────────────────────────────────────────────────
 
 const ScrapeInput = z.object({
@@ -21,6 +44,7 @@ export type ScrapeOutput = {
   markdown?: string;
   html?: string;
   links?: string[];
+  truncated: boolean;
 };
 
 export function makeFirecrawlScrapeTool(
@@ -37,11 +61,14 @@ export function makeFirecrawlScrapeTool(
         const doc = await client.scrape(input.url, {
           formats: input.formats as ('markdown' | 'html' | 'links')[],
         });
+        const md = capField(doc.markdown);
+        const html = capField(doc.html);
         return {
           url: input.url,
-          ...(doc.markdown !== undefined && { markdown: doc.markdown }),
-          ...(doc.html !== undefined && { html: doc.html }),
+          ...(md.content !== undefined && { markdown: md.content }),
+          ...(html.content !== undefined && { html: html.content }),
           ...(doc.links !== undefined && { links: doc.links as string[] }),
+          truncated: md.truncated || html.truncated,
         };
       } catch (err) {
         throw wrapFirecrawlError(err);

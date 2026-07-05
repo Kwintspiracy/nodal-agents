@@ -72,7 +72,7 @@ describe('makeApifyRunActorTool', () => {
     ).not.toThrow();
   });
 
-  it('calls client.actor(actorId).call(input) with correct arguments', async () => {
+  it('calls client.actor(actorId).call(input, { waitSecs }) with correct arguments', async () => {
     const actorCall = vi.fn().mockResolvedValue(makeRunResult());
     const actorFn = vi.fn().mockReturnValue({ call: actorCall });
     const client = { actor: actorFn } as unknown as ApifyClient;
@@ -84,10 +84,10 @@ describe('makeApifyRunActorTool', () => {
     );
 
     expect(actorFn).toHaveBeenCalledWith('apify/web-scraper');
-    expect(actorCall).toHaveBeenCalledWith({ url: 'https://example.com' });
+    expect(actorCall).toHaveBeenCalledWith({ url: 'https://example.com' }, { waitSecs: 1800 });
   });
 
-  it('calls client.actor(actorId).call(undefined) when input is omitted', async () => {
+  it('calls client.actor(actorId).call(undefined, { waitSecs }) when input is omitted', async () => {
     const actorCall = vi.fn().mockResolvedValue(makeRunResult());
     const actorFn = vi.fn().mockReturnValue({ call: actorCall });
     const client = { actor: actorFn } as unknown as ApifyClient;
@@ -95,7 +95,44 @@ describe('makeApifyRunActorTool', () => {
 
     await tool.execute({ actorId: 'apify/web-scraper' }, ctx);
 
-    expect(actorCall).toHaveBeenCalledWith(undefined);
+    expect(actorCall).toHaveBeenCalledWith(undefined, { waitSecs: 1800 });
+  });
+
+  // audit#2 M-15: without a waitSecs bound, apify-client's .call() waits
+  // INDEFINITELY for the run to finish — a stuck/long actor would pend the
+  // tool call (and the job) forever. This asserts a bound is ALWAYS passed.
+  it('passes a default waitSecs bound of 1800s so the call can never wait forever', async () => {
+    const actorCall = vi.fn().mockResolvedValue(makeRunResult());
+    const actorFn = vi.fn().mockReturnValue({ call: actorCall });
+    const client = { actor: actorFn } as unknown as ApifyClient;
+    const tool = makeApifyRunActorTool(client);
+
+    await tool.execute({ actorId: 'apify/web-scraper' }, ctx);
+
+    const [, options] = actorCall.mock.calls[0] as [unknown, { waitSecs?: number } | undefined];
+    expect(typeof options?.waitSecs).toBe('number');
+    expect(options?.waitSecs).toBeGreaterThan(0);
+  });
+
+  it('passes a caller-supplied waitSecs through to .call()', async () => {
+    const actorCall = vi.fn().mockResolvedValue(makeRunResult());
+    const actorFn = vi.fn().mockReturnValue({ call: actorCall });
+    const client = { actor: actorFn } as unknown as ApifyClient;
+    const tool = makeApifyRunActorTool(client);
+
+    await tool.execute({ actorId: 'apify/web-scraper', waitSecs: 60 }, ctx);
+
+    expect(actorCall).toHaveBeenCalledWith(undefined, { waitSecs: 60 });
+  });
+
+  it('rejects a waitSecs above the 3600s cap at the schema level', () => {
+    const tool = makeApifyRunActorTool(makeClient());
+    expect(() =>
+      tool.inputSchema.parse({ actorId: 'apify/web-scraper', waitSecs: 3601 }),
+    ).toThrow();
+    expect(() =>
+      tool.inputSchema.parse({ actorId: 'apify/web-scraper', waitSecs: 3600 }),
+    ).not.toThrow();
   });
 
   it('returns runId, datasetId, and status from the run result', async () => {

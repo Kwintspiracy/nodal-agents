@@ -64,6 +64,20 @@ describe('withRetry', () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  it('retries on 504 (Gateway Timeout — audit#2 M-13)', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(makeHttpError(504, 'Gateway Timeout'))
+      .mockResolvedValue('ok');
+
+    const promise = withRetry(fn, { maxRetries: 3, baseDelayMs: 10 });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
   it('retries on "Invalid JSON response" EVEN with a 200 status (transient malformed body)', async () => {
     // The exact shape that killed JobHunter baee450d: a corrupted body returned
     // with statusCode 200, which the old logic treated as non-retryable.

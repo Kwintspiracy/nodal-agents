@@ -11,6 +11,69 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+// audit#2 M-15: establishing the transport (HTTP handshake, or spawning a
+// stdio subprocess) has no built-in timeout in the SDK — unlike client
+// requests (listTools included), which the SDK itself bounds via
+// DEFAULT_REQUEST_TIMEOUT_MSEC (60s). A server that accepts the connection
+// but never completes the handshake, or a stdio command that spawns but
+// never signals ready, would hang connectMcp — and the job — forever.
+//
+// Default raised from an initial 30s to 120s after a regression report:
+// connecting to a stdio MCP server via `npx`/`uvx` on a COLD cache (first
+// launch, or a community server with heavy deps like Playwright pulling a
+// browser binary) can legitimately take well over 30s — sometimes several
+// minutes. Before M-15, this had no bound at all and eventually succeeded;
+// a 30s cutoff would have broken that central use case (the MCP/community
+// skill catalog) instead of just bounding a genuine infinite hang. 120s
+// bounds the hang while leaving room for a cold warmup. Override via
+// MCP_CONNECT_TIMEOUT_MS for servers that legitimately need longer.
+const DEFAULT_CONNECT_TIMEOUT_MS = 120_000;
+
+function resolveConnectTimeoutMs(): number {
+  const raw = process.env['MCP_CONNECT_TIMEOUT_MS'];
+  const parsed = raw !== undefined ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CONNECT_TIMEOUT_MS;
+}
+
+// Explicit, defense-in-depth bound for listTools, matching (not tightening)
+// the SDK's own DEFAULT_REQUEST_TIMEOUT_MSEC — a server that computes its
+// capabilities dynamically can legitimately take 30-60s here too.
+const LIST_TOOLS_TIMEOUT_MS = 60_000;
+
+/**
+ * Race a promise against a timeout, closing the given transport (killing the
+ * stdio subprocess / releasing the HTTP transport) if the timeout wins so a
+ * hung connect attempt doesn't leak resources.
+ */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+  onTimeout: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      onTimeout();
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
+/** Best-effort transport teardown after a connect timeout — never throws. */
+function safeCloseTransport(transport: { close?: () => Promise<void> }): void {
+  transport.close?.()?.catch(() => {
+    // best-effort cleanup (releases the HTTP transport / kills the spawned
+    // stdio subprocess) — the connect attempt is already being reported as
+    // failed via the timeout error, so a close failure here is not fatal.
+  });
+}
+
 export type McpAuthScheme = 'header' | 'query' | 'bearer';
 
 /**
@@ -112,13 +175,19 @@ export function buildMcpRequest(
  */
 export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection> {
   const client = new Client({ name: 'nodal-agents', version: '0.1.0' }, { capabilities: {} });
+  const connectTimeoutMs = resolveConnectTimeoutMs();
 
   if (opts.transport === 'http') {
     const target = buildMcpRequest(opts);
     const transport = new StreamableHTTPClientTransport(target.url, {
       requestInit: { headers: target.headers },
     });
-    await client.connect(transport);
+    await withTimeout(
+      client.connect(transport),
+      connectTimeoutMs,
+      `MCP connect (${target.url.hostname})`,
+      () => safeCloseTransport(transport),
+    );
   } else {
     // Merge user env on top of process.env so PATH (and OS-level vars the
     // MCP server may need, e.g. HOME, APPDATA, LOCALAPPDATA) reach the
@@ -137,10 +206,15 @@ export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection
       args: opts.args,
       env: { ...baseEnv, ...opts.env },
     });
-    await client.connect(transport);
+    await withTimeout(
+      client.connect(transport),
+      connectTimeoutMs,
+      `MCP connect (${opts.command})`,
+      () => safeCloseTransport(transport),
+    );
   }
 
-  const listed = await client.listTools();
+  const listed = await client.listTools(undefined, { timeout: LIST_TOOLS_TIMEOUT_MS });
   const tools: McpToolDescriptor[] = (listed.tools ?? []).map((t) => ({
     name: t.name,
     description: typeof t.description === 'string' ? t.description : undefined,

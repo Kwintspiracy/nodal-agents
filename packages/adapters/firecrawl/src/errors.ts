@@ -65,11 +65,32 @@ export function mapFirecrawlHttpError(status: number, message: string): Firecraw
 }
 
 /**
- * Wrap any unknown thrown value in a FirecrawlApiError.
- * Used as the catch handler in every tool execute().
+ * Wrap any unknown thrown value (including @mendable/firecrawl-js SDK errors)
+ * in a FirecrawlApiError. Used as the catch handler in every tool execute().
+ *
+ * The v2 SDK (FirecrawlClient, used here) throws `SdkError` — name
+ * 'FirecrawlSdkError' — carrying a `status` property (number | undefined) set
+ * from the HTTP response status (see throwForBadResponse/normalizeAxiosError
+ * in the SDK). Before this fix, mapFirecrawlHttpError was never called from
+ * here, so every SDK error — 429, 401, 5xx included — fell through to the
+ * generic `err instanceof Error` branch and lost its status (audit#2 F-15),
+ * same class of bug the Apify adapter's wrapApifyError already avoids by
+ * reading the SDK's `statusCode` property.
  */
 export function wrapFirecrawlError(err: unknown): FirecrawlApiError {
   if (err instanceof FirecrawlApiError) return err;
+
+  if (
+    err !== null &&
+    typeof err === 'object' &&
+    'status' in err &&
+    typeof (err as { status: unknown }).status === 'number'
+  ) {
+    const sdkErr = err as { status: number; message?: string };
+    const message = sdkErr.message ?? `Firecrawl API error ${sdkErr.status}`;
+    return mapFirecrawlHttpError(sdkErr.status, message);
+  }
+
   if (err instanceof Error) return new FirecrawlApiError('firecrawl_unknown', err.message);
   return new FirecrawlApiError('firecrawl_unknown', String(err));
 }

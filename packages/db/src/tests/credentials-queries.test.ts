@@ -246,4 +246,44 @@ describe('refreshAndPersistCredential', () => {
 
     fetchMock.mockRestore();
   });
+
+  // audit#2 M-15: this call runs inside a transaction holding a per-credential
+  // pg_advisory_xact_lock — a token endpoint that accepts the connection but
+  // never responds must not hang the transaction (and the lock) forever.
+  it('passes an AbortSignal to the token endpoint fetch', async () => {
+    const row = await insertCredential(db, userId);
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ access_token: 'fresh-token', expires_in: 7200 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await refreshAndPersistCredential(db, row.id);
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(requestInit.signal).toBeInstanceOf(AbortSignal);
+
+    fetchMock.mockRestore();
+  });
+
+  it('rejects with a clear "timed out" error when the token endpoint never responds', async () => {
+    const row = await insertCredential(db, userId);
+
+    // Simulate exactly what fetch throws when AbortSignal.timeout() fires —
+    // this proves the catch/rewrap logic in doRefresh(), without needing to
+    // wait out a real 30s timer.
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      );
+
+    await expect(refreshAndPersistCredential(db, row.id)).rejects.toThrow(
+      /timed out after 30000ms/,
+    );
+
+    fetchMock.mockRestore();
+  });
 });

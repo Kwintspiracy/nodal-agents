@@ -60,12 +60,18 @@ export function validateEmbeddingDimension(
 
 // ─── Defaults ──────────────────────────────────────────────────────────────────
 
+// mxbai-embed-large is Ollama's most commonly available embedding model, but it
+// natively outputs 1024-dim vectors — NOT the 1536 the pgvector column expects
+// (audit#2 M-14). Every call with the default model is therefore guaranteed to
+// throw via validateEmbeddingDimension below (fail-loud, not a silent
+// mismatch), until the operator configures EMBEDDING_MODEL to a model that
+// actually outputs 1536 dims, or sets EMBEDDING_PROVIDER=openai/keyword. This
+// is a real out-of-the-box gap, not a bug in the guard: no widely-available
+// Ollama embedding model natively emits 1536 dims today.
 const OLLAMA_DEFAULT_MODEL = 'mxbai-embed-large';
-const OLLAMA_DEFAULT_DIMENSIONS = 1024;
 const OLLAMA_DEFAULT_BASE_URL = 'http://localhost:11434';
 
 const OPENAI_DEFAULT_MODEL = 'text-embedding-3-small';
-const OPENAI_DEFAULT_DIMENSIONS = 1536;
 
 // ─── Factory ───────────────────────────────────────────────────────────────────
 
@@ -89,7 +95,14 @@ export function createEmbeddingClient(config: EmbeddingProviderConfig): Embeddin
         validateEmbeddingDimension(result.embedding, 'ollama', model);
         return result.embedding;
       },
-      dimensions: OLLAMA_DEFAULT_DIMENSIONS,
+      // Not a per-provider guess (audit#2 M-14): validateEmbeddingDimension
+      // above throws on any embed() call that doesn't produce exactly
+      // EXPECTED_EMBEDDING_DIM, so the only dimension a caller can ever
+      // observe from a successful call — for ANY real provider/model — is
+      // EXPECTED_EMBEDDING_DIM. Reporting the model's native dimension here
+      // (e.g. mxbai-embed-large's actual 1024) would describe a value that
+      // can never actually reach the caller without throwing first.
+      dimensions: EXPECTED_EMBEDDING_DIM,
     };
   }
 
@@ -107,7 +120,7 @@ export function createEmbeddingClient(config: EmbeddingProviderConfig): Embeddin
         validateEmbeddingDimension(result.embedding, 'openai', model);
         return result.embedding;
       },
-      dimensions: OPENAI_DEFAULT_DIMENSIONS,
+      dimensions: EXPECTED_EMBEDDING_DIM,
     };
   }
 

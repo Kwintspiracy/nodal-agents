@@ -1063,6 +1063,7 @@ async function runJob(
         if (!entry) continue; // no adapter for this catalog slug — skip silently
 
         let accessToken: string | null = null;
+        let credentialIdForResolver: string | null = null;
         if (entry.credentialType === 'api_key') {
           // PAT / api_key path: decrypt connectors.api_key directly.
           if (!ca.apiKey) continue;
@@ -1077,11 +1078,33 @@ async function runJob(
           const decrypted = await getDecryptedCredentialById(db, ca.credentialId);
           if (!decrypted) continue;
           accessToken = decrypted.payload.accessToken;
+          credentialIdForResolver = ca.credentialId;
         }
 
         if (!accessToken) continue;
 
-        const allTools = entry.toolFactory(accessToken);
+        // M-12: some OAuth providers issue short-lived access tokens (Google
+        // ~1h, Airtable ~60min) while a job can run far longer (IDLE_RESET is
+        // 4h). For adapters registered with toolFactoryWithResolver (the 5
+        // Google adapters + airtable-oauth), pass a resolver that re-reads —
+        // and, via getDecryptedCredentialById's existing advisory-lock
+        // refresh — refreshes the credential before every network call,
+        // instead of the one-shot accessToken resolved above. Other adapters
+        // (notion-oauth — long-lived, no refresh; api_key entries — static
+        // PAT/API key) are unaffected — toolFactoryWithResolver is undefined
+        // for them.
+        const allTools =
+          entry.toolFactoryWithResolver && credentialIdForResolver
+            ? entry.toolFactoryWithResolver(async () => {
+                const fresh = await getDecryptedCredentialById(db, credentialIdForResolver);
+                if (!fresh) {
+                  throw new Error(
+                    `Credential ${credentialIdForResolver} was removed mid-job — reconnect the connector.`,
+                  );
+                }
+                return fresh.payload.accessToken;
+              })
+            : entry.toolFactory(accessToken);
         const enabled = ca.enabledOperations;
         const filtered =
           enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));

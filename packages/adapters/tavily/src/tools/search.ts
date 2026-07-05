@@ -5,6 +5,24 @@ import type { ToolDefinition, ToolContext } from '@nodal-agents/tools';
 import type { TavilyClient } from '../client.ts';
 import { wrapTavilyError } from '../errors.ts';
 
+// audit#2 F-17: unlike gmail/drive/notion, rawContent (extract/crawl) and
+// content (search) were returned unbounded — a large extracted/crawled page
+// or a verbose search snippet could burn the agent's whole token budget on a
+// single tool result. Same cap + truncated flag pattern used by
+// packages/adapters/google-drive/src/tools/read-file.ts.
+const CHAR_CAP = 15000;
+
+/** Cap a text field at CHAR_CAP chars. Shared by search/extract/crawl below — each names the field itself. */
+function capText(text: string): { content: string; truncated: boolean } {
+  const truncated = text.length > CHAR_CAP;
+  return {
+    content: truncated
+      ? text.slice(0, CHAR_CAP) + `\n\n[...content truncated at ${CHAR_CAP} chars...]`
+      : text,
+    truncated,
+  };
+}
+
 // ── tavily_search ─────────────────────────────────────────────────────────────
 
 const SearchInput = z.object({
@@ -39,6 +57,7 @@ export type SearchOutput = {
     content: string;
     score: number;
     publishedDate: string;
+    truncated: boolean;
   }>;
   images: Array<{ url: string; description?: string }>;
   responseTime: number;
@@ -64,13 +83,17 @@ export function makeTavilySearchTool(
         return {
           query: response.query,
           answer: response.answer,
-          results: (response.results ?? []).map((r) => ({
-            title: r.title,
-            url: r.url,
-            content: r.content,
-            score: r.score,
-            publishedDate: r.publishedDate,
-          })),
+          results: (response.results ?? []).map((r) => {
+            const c = capText(r.content);
+            return {
+              title: r.title,
+              url: r.url,
+              content: c.content,
+              score: r.score,
+              publishedDate: r.publishedDate,
+              truncated: c.truncated,
+            };
+          }),
           images: (response.images ?? []).map((img) => ({
             url: img.url,
             description: img.description,
@@ -103,6 +126,7 @@ export type ExtractOutput = {
     url: string;
     title: string | null;
     rawContent: string;
+    truncated: boolean;
   }>;
   failedResults: Array<{
     url: string;
@@ -126,11 +150,10 @@ export function makeTavilyExtractTool(
           extractDepth: input.extractDepth ?? 'basic',
         });
         return {
-          results: (response.results ?? []).map((r) => ({
-            url: r.url,
-            title: r.title,
-            rawContent: r.rawContent,
-          })),
+          results: (response.results ?? []).map((r) => {
+            const c = capText(r.rawContent);
+            return { url: r.url, title: r.title, rawContent: c.content, truncated: c.truncated };
+          }),
           failedResults: (response.failedResults ?? []).map((f) => ({
             url: f.url,
             error: f.error,
@@ -169,6 +192,7 @@ export type CrawlOutput = {
   results: Array<{
     url: string;
     rawContent: string;
+    truncated: boolean;
   }>;
   responseTime: number;
 };
@@ -190,10 +214,10 @@ export function makeTavilyCrawlTool(
         });
         return {
           baseUrl: response.baseUrl,
-          results: (response.results ?? []).map((r) => ({
-            url: r.url,
-            rawContent: r.rawContent,
-          })),
+          results: (response.results ?? []).map((r) => {
+            const c = capText(r.rawContent);
+            return { url: r.url, rawContent: c.content, truncated: c.truncated };
+          }),
           responseTime: response.responseTime,
         };
       } catch (err) {

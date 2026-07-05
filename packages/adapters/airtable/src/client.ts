@@ -6,6 +6,11 @@ import { mapAirtableHttpError, wrapAirtableError, AirtableApiError } from './err
 
 const BASE_URL = 'https://api.airtable.com/v0';
 
+// audit#2 M-15: an endpoint that accepts the connection but never responds
+// must not hang the tool call forever. 30s is generous for a normal Airtable
+// REST call.
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 export type AirtableClient = {
   get: (
     path: string,
@@ -17,14 +22,34 @@ export type AirtableClient = {
   delete: (path: string) => Promise<unknown>;
 };
 
+export type AirtableClientOptions = {
+  /** Per-request timeout in ms (audit#2 M-15). Defaults to 30s. */
+  timeoutMs?: number;
+};
+
 /**
- * Create a thin Airtable API client.
+ * Create a thin Airtable API client. The token is resolved lazily — before
+ * every request — instead of captured once at construction time.
+ *
+ * Airtable OAuth2 access tokens live ~60min; a job can run far longer than
+ * that (IDLE_RESET is 4h). Capturing a single token at setup meant a job
+ * outliving that window got a spurious 401 even though the underlying
+ * credential was still valid and refreshable (audit#2 M-12 — same root cause
+ * as the 5 Google adapters, just without google-auth-library's refreshHandler
+ * extension point: this client hand-rolls its own fetch, so it simply calls
+ * getAccessToken() again right before building each request's headers).
+ *
  * Both OAuth access tokens and Personal Access Tokens use the same
- * `Authorization: Bearer <token>` wire format — the client doesn't care which.
+ * `Authorization: Bearer <token>` wire format — the client doesn't care which
+ * (a PAT caller just passes a resolver that always returns the same string).
  */
-export function createAirtableClient(accessToken: string): AirtableClient {
-  const headers = (): Record<string, string> => ({
-    Authorization: `Bearer ${accessToken}`,
+export function createAirtableClient(
+  getAccessToken: () => Promise<string>,
+  options: AirtableClientOptions = {},
+): AirtableClient {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const headers = async (): Promise<Record<string, string>> => ({
+    Authorization: `Bearer ${await getAccessToken()}`,
     'Content-Type': 'application/json',
   });
 
@@ -33,10 +58,17 @@ export function createAirtableClient(accessToken: string): AirtableClient {
     try {
       response = await fetch(url, {
         method,
-        headers: headers(),
+        headers: await headers(),
         ...(body !== undefined && { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new AirtableApiError(
+          'airtable_transient',
+          `Airtable request to ${url} timed out after ${timeoutMs}ms`,
+        );
+      }
       throw wrapAirtableError(err);
     }
 

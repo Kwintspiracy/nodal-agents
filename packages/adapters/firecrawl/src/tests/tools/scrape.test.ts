@@ -91,10 +91,120 @@ describe('makeFirecrawlScrapeTool', () => {
     );
   });
 
+  // audit#2 F-15: the v2 SDK (FirecrawlClient) throws SdkError with a `status`
+  // property set from the real HTTP response status. Before the fix,
+  // wrapFirecrawlError never read it, so a 429 collapsed to firecrawl_unknown
+  // — this test would have failed pre-fix (code would be 'firecrawl_unknown').
+  it('maps a 429 SDK error (status property) to firecrawl_rate_limited, not firecrawl_unknown', async () => {
+    const client = getClient();
+    vi.spyOn(client, 'scrape').mockRejectedValue({ status: 429, message: 'Rate limit exceeded' });
+
+    const tool = makeFirecrawlScrapeTool(client);
+    await expect(
+      tool.execute({ url: 'https://example.com', formats: ['markdown'] }, CTX),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof FirecrawlApiError &&
+        err.code === 'firecrawl_rate_limited' &&
+        err.status === 429,
+    );
+  });
+
+  it('maps a 401 SDK error (status property) to firecrawl_unauthorized', async () => {
+    const client = getClient();
+    vi.spyOn(client, 'scrape').mockRejectedValue({ status: 401, message: 'Invalid API key' });
+
+    const tool = makeFirecrawlScrapeTool(client);
+    await expect(
+      tool.execute({ url: 'https://example.com', formats: ['markdown'] }, CTX),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof FirecrawlApiError &&
+        err.code === 'firecrawl_unauthorized' &&
+        err.status === 401,
+    );
+  });
+
   it('has riskLevel read and correct name', () => {
     const tool = makeFirecrawlScrapeTool(getClient());
     expect(tool.name).toBe('firecrawl_scrape');
     expect(tool.riskLevel).toBe('read');
+  });
+
+  it('sets truncated:false for markdown under the 15000-char cap', async () => {
+    const client = getClient();
+    vi.spyOn(client, 'scrape').mockResolvedValue({ markdown: '# short page' });
+
+    const tool = makeFirecrawlScrapeTool(client);
+    const result = await tool.execute(
+      { url: 'https://example.com', formats: ['markdown'] },
+      CTX,
+    );
+
+    expect(result.truncated).toBe(false);
+    expect(result.markdown).toBe('# short page');
+  });
+
+  // audit#2 F-17: markdown must be capped like gmail/drive/notion fields —
+  // before the fix there was no cap at all, so this would have failed (no
+  // truncation, full-length markdown, no truncated flag).
+  it('caps markdown at 15000 chars and sets truncated:true when huge', async () => {
+    const client = getClient();
+    const hugeMarkdown = '# '.repeat(10_000); // 20,000 chars
+    vi.spyOn(client, 'scrape').mockResolvedValue({ markdown: hugeMarkdown });
+
+    const tool = makeFirecrawlScrapeTool(client);
+    const result = await tool.execute(
+      { url: 'https://example.com', formats: ['markdown'] },
+      CTX,
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.markdown?.length).toBeLessThan(hugeMarkdown.length);
+    expect(result.markdown).toContain('[...content truncated at 15000 chars...]');
+  });
+
+  // audit#2 F-17 (regression follow-up): html is a selectable format
+  // (formats:['html']) and is typically LARGER than markdown for the same
+  // page — leaving it uncapped just moves the budget-burn vector sideways.
+  // Before this fix there was no cap on html at all.
+  it('caps html at 15000 chars and sets truncated:true when huge', async () => {
+    const client = getClient();
+    const hugeHtml = '<p>x</p>'.repeat(3000); // 24,000 chars
+    vi.spyOn(client, 'scrape').mockResolvedValue({ html: hugeHtml });
+
+    const tool = makeFirecrawlScrapeTool(client);
+    const result = await tool.execute({ url: 'https://example.com', formats: ['html'] }, CTX);
+
+    expect(result.truncated).toBe(true);
+    expect(result.html?.length).toBeLessThan(hugeHtml.length);
+    expect(result.html).toContain('[...content truncated at 15000 chars...]');
+  });
+
+  it('sets truncated:false for html under the 15000-char cap', async () => {
+    const client = getClient();
+    vi.spyOn(client, 'scrape').mockResolvedValue({ html: '<h1>short</h1>' });
+
+    const tool = makeFirecrawlScrapeTool(client);
+    const result = await tool.execute({ url: 'https://example.com', formats: ['html'] }, CTX);
+
+    expect(result.truncated).toBe(false);
+    expect(result.html).toBe('<h1>short</h1>');
+  });
+
+  it('truncated is true when EITHER markdown or html is huge, even if the other is short', async () => {
+    const client = getClient();
+    const hugeMarkdown = '# '.repeat(10_000);
+    vi.spyOn(client, 'scrape').mockResolvedValue({ markdown: hugeMarkdown, html: '<p>short</p>' });
+
+    const tool = makeFirecrawlScrapeTool(client);
+    const result = await tool.execute(
+      { url: 'https://example.com', formats: ['markdown', 'html'] },
+      CTX,
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.html).toBe('<p>short</p>'); // untouched — only markdown was oversized
   });
 });
 

@@ -25,17 +25,23 @@ describe('createEmbeddingClient — Ollama path (unit, network not required)', (
     // Just check it constructs without throwing — no real network call
     const client = createEmbeddingClient({ provider: 'ollama' });
     expect(client).toBeDefined();
-    expect(client.dimensions).toBe(1024);
+    // audit#2 M-14: dimensions must NOT be a per-provider guess (the default
+    // model, mxbai-embed-large, actually emits 1024 dims). Every real embed()
+    // call is guarded by validateEmbeddingDimension, so the only dimension a
+    // caller can ever observe from a SUCCESSFUL call is EXPECTED_EMBEDDING_DIM
+    // — anything else throws before it gets here. Before the fix this
+    // asserted 1024, describing a value no successful call could ever return.
+    expect(client.dimensions).toBe(EXPECTED_EMBEDDING_DIM);
     expect(typeof client.embed).toBe('function');
   });
 
-  it('respects custom baseURL and model', () => {
+  it('respects custom baseURL and model, and still reports EXPECTED_EMBEDDING_DIM (M-14)', () => {
     const client = createEmbeddingClient({
       provider: 'ollama',
       baseURL: 'http://localhost:11434',
       model: 'nomic-embed-text',
     });
-    expect(client.dimensions).toBe(1024);
+    expect(client.dimensions).toBe(EXPECTED_EMBEDDING_DIM);
     expect(client).toBeDefined();
   });
 
@@ -43,7 +49,7 @@ describe('createEmbeddingClient — Ollama path (unit, network not required)', (
     // Verify that the client is constructed with the correct structure.
     // Real network call tested separately via OLLAMA_URL integration test.
     const client = createEmbeddingClient({ provider: 'ollama' });
-    expect(client.dimensions).toBe(1024);
+    expect(client.dimensions).toBe(EXPECTED_EMBEDDING_DIM);
     expect(typeof client.embed).toBe('function');
   });
 });

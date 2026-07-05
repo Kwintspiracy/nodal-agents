@@ -55,6 +55,38 @@ describe('ADAPTER_REGISTRY', () => {
     },
   );
 
+  // M-12: adapters whose OAuth token can expire mid-job (the 5 Google
+  // adapters, ~1h TTL, + airtable-oauth, ~60min TTL) vs jobs that can run for
+  // hours must expose toolFactoryWithResolver so the runner can re-read the
+  // credential before every network call instead of a one-shot token.
+  const RESOLVER_SLUGS = [
+    'google-drive',
+    'gmail',
+    'google-calendar',
+    'google-sheets',
+    'google-docs',
+    'airtable-oauth',
+  ] as const;
+
+  it.each(RESOLVER_SLUGS)(
+    'entry "%s": toolFactoryWithResolver is callable and returns non-empty array',
+    async (slug) => {
+      const entry = ADAPTER_REGISTRY[slug];
+      expect(entry!.toolFactoryWithResolver).toBeDefined();
+      const tools = entry!.toolFactoryWithResolver!(async () => 'mock-access-token');
+      expect(Array.isArray(tools)).toBe(true);
+      expect(tools.length).toBeGreaterThan(0);
+    },
+  );
+
+  it.each(EXPECTED_SLUGS.filter((s) => !(RESOLVER_SLUGS as readonly string[]).includes(s)))(
+    'entry "%s": has no toolFactoryWithResolver (static token is correct for this credential type)',
+    (slug) => {
+      const entry = ADAPTER_REGISTRY[slug];
+      expect(entry!.toolFactoryWithResolver).toBeUndefined();
+    },
+  );
+
   it.each(EXPECTED_SLUGS)(
     'entry "%s": every operation descriptor has slug, name, risk, requiresApproval',
     (slug) => {

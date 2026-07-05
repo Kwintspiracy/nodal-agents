@@ -133,7 +133,22 @@ async function doRefresh(
     };
   }
 
-  const response = await fetch(tokenUrl, requestInit);
+  // audit#2 M-15: this call runs INSIDE a transaction holding a per-credential
+  // pg_advisory_xact_lock (see getDecryptedCredentialById / callers below) — a
+  // token endpoint that accepts the connection but never responds would hang
+  // the transaction, and with it the advisory lock, blocking every other
+  // concurrent refresh attempt for this credential indefinitely.
+  let response: Response;
+  try {
+    response = await fetch(tokenUrl, { ...requestInit, signal: AbortSignal.timeout(30_000) });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      throw new Error(
+        `refreshAndPersistCredential: token endpoint ${tokenUrl} timed out after 30000ms`,
+      );
+    }
+    throw err;
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(

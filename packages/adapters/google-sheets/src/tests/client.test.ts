@@ -3,9 +3,19 @@
 import { describe, it, expect } from 'vitest';
 import { createSheetsClient } from '../client';
 
+/** Minimal shape of the OAuth2Client fields this suite inspects. */
+type InspectableAuth = {
+  refreshHandler?: () => Promise<{ access_token: string; expiry_date: number }>;
+};
+
+function authOf(sheets: ReturnType<typeof createSheetsClient>): InspectableAuth {
+  return (sheets as unknown as { context: { _options: { auth: InspectableAuth } } }).context
+    ._options.auth;
+}
+
 describe('createSheetsClient', () => {
   it('returns a sheets_v4.Sheets instance with a spreadsheets resource', () => {
-    const sheets = createSheetsClient('fake_access_token');
+    const sheets = createSheetsClient(async () => 'fake_access_token');
     expect(sheets).toBeDefined();
     expect(typeof sheets.spreadsheets).toBe('object');
     expect(typeof sheets.spreadsheets.values).toBe('object');
@@ -15,19 +25,38 @@ describe('createSheetsClient', () => {
   });
 
   it('creates distinct instances per call', () => {
-    const a = createSheetsClient('token_a');
-    const b = createSheetsClient('token_b');
+    const a = createSheetsClient(async () => 'token_a');
+    const b = createSheetsClient(async () => 'token_b');
     expect(a).not.toBe(b);
   });
 
-  it('accepts any string as accessToken (validation is API-side)', () => {
-    expect(() => createSheetsClient('any-token')).not.toThrow();
+  it('accepts any resolver returning a string (validation is API-side)', () => {
+    expect(() => createSheetsClient(async () => 'any-token')).not.toThrow();
   });
 
   it('exposes batchUpdate and get on spreadsheets', () => {
-    const sheets = createSheetsClient('token');
+    const sheets = createSheetsClient(async () => 'token');
     expect(typeof sheets.spreadsheets.batchUpdate).toBe('function');
     expect(typeof sheets.spreadsheets.get).toBe('function');
     expect(typeof sheets.spreadsheets.create).toBe('function');
+  });
+
+  // M-12: same fix as gmail's client — see that suite for the full rationale.
+  it('registers a refreshHandler that re-invokes getAccessToken on every resolution', async () => {
+    let calls = 0;
+    const getAccessToken = async (): Promise<string> => {
+      calls++;
+      return `token-${calls}`;
+    };
+    const sheets = createSheetsClient(getAccessToken);
+    const auth = authOf(sheets);
+    expect(typeof auth.refreshHandler).toBe('function');
+
+    const first = await auth.refreshHandler!();
+    expect(first.access_token).toBe('token-1');
+    const second = await auth.refreshHandler!();
+    expect(second.access_token).toBe('token-2');
+    expect(calls).toBe(2);
+    expect(first.expiry_date).toBeLessThan(Date.now());
   });
 });
