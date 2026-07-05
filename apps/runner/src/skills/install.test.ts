@@ -5,7 +5,7 @@
 // filter, and skill content size cap. The full network+DB install is live.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, chmod, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
@@ -345,6 +345,93 @@ describe('archive extraction security guards (zip)', () => {
   it('allows a normal zip (all guards pass)', async () => {
     const buf = makeZip([['SKILL.md', '---\nname: test\ndescription: d\n---\nbody']]);
     await expect(_extractArchiveBuffer(buf, destDir, workDir)).resolves.toBeUndefined();
+  });
+
+  it('extracts multiple entries (including a nested subdirectory) with correct contents', async () => {
+    // Non-regression for the streaming rewrite: several entries processed in
+    // one push loop, one of them nested, must still land at the right paths
+    // with the right bytes.
+    const buf = makeZip([
+      ['SKILL.md', '---\nname: test\ndescription: d\n---\nbody'],
+      ['assets/logo.svg', '<svg></svg>'],
+      ['scripts/run.sh', '#!/bin/sh\necho hi'],
+    ]);
+    await expect(_extractArchiveBuffer(buf, destDir, workDir)).resolves.toBeUndefined();
+    expect(await readFile(join(destDir, 'SKILL.md'), 'utf8')).toContain('name: test');
+    expect(await readFile(join(destDir, 'assets/logo.svg'), 'utf8')).toBe('<svg></svg>');
+    expect(await readFile(join(destDir, 'scripts/run.sh'), 'utf8')).toContain('echo hi');
+  });
+
+  it('throws SkillFetchError on a COMPRESSED decompression bomb (small zip, huge inflated output)', async () => {
+    // The existing MAX_EXTRACTED_BYTES test above uses a STORED (uncompressed)
+    // oversized entry — it proves the byte-counting works, but not that the
+    // guard actually fires DURING decompression rather than after fully
+    // inflating (which is exactly the H-4 bug: unzipSync inflated everything
+    // before the cap was ever checked). This test uses a highly-compressible
+    // payload (all zeros — near the practical ~1032:1 ceiling for a single
+    // DEFLATE stream) so the zip on disk/in-memory stays tiny while the
+    // declared decompressed size is well over the cap, without ever actually
+    // materialising tens of GB in the test process.
+    const oversizeBy = 10 * 1024 * 1024; // cap + 10 MB decompressed
+    const payloadSize = MAX_EXTRACTED_BYTES + oversizeBy;
+    const bombPayload = new Uint8Array(payloadSize); // all zeros by default
+    const buf = makeZip([['bomb.bin', bombPayload]]);
+
+    // Sanity check: this really is "small compressed, huge decompressed" —
+    // not just a big stored entry (that case is already covered above).
+    expect(buf.length).toBeLessThan(payloadSize / 100);
+
+    await expect(_extractArchiveBuffer(buf, destDir, workDir)).rejects.toThrow(
+      /decompression bomb/i,
+    );
+    // Nothing should have been written: the guard must fire — and abort —
+    // before the (still-inflating) entry is ever flushed to disk.
+    expect(await readdir(destDir)).toHaveLength(0);
+  });
+
+  it('throws "invalid or corrupt zip" instead of silently reporting zero entries', async () => {
+    // A streaming Unzip that never finds a local-file-header signature just
+    // never calls onfile and resolves with 0 entries — unlike the old
+    // unzipSync, which threw "invalid zip data" for the same input. Left
+    // unguarded, that silently downgrades a corrupt archive into a
+    // misleading "No SKILL.md found" a few layers up the install flow.
+    // "PK" magic bytes (so dispatch still routes here) followed by garbage
+    // that matches no zip signature fflate recognises.
+    const buf = Buffer.from([0x50, 0x4b, 0x00, 0x00, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x02]);
+    await expect(_extractArchiveBuffer(buf, destDir, workDir)).rejects.toThrow(
+      /invalid or corrupt zip/i,
+    );
+  });
+
+  it('awaits an in-flight write before throwing when a LATER entry trips a violation (no unhandled rejection)', async () => {
+    // Regression for a write race: a valid entry processed before a later
+    // violating one schedules its write into pendingWrites but doesn't await
+    // it inline (push() is synchronous, writeFile() isn't). If the violation
+    // throws before those writes are drained, the still-in-flight write can
+    // race the caller's eventual workDir cleanup (downloadAndExtract's
+    // rm(workDir)) and surface as an unhandled rejection — a real crash risk
+    // under a slow disk (Node 15+ terminates on unhandled rejections).
+    const buf = makeZip([
+      ['SKILL.md', '---\nname: test\ndescription: d\n---\nbody'], // valid, written first
+      ['../escape.txt', 'danger'], // 2nd entry trips the zip-slip guard
+    ]);
+
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      await expect(_extractArchiveBuffer(buf, destDir, workDir)).rejects.toBeInstanceOf(
+        SkillFetchError,
+      );
+      // Give any orphaned promise a tick to reject before we check.
+      await new Promise((r) => setImmediate(r));
+      expect(unhandled).toHaveLength(0);
+      // The valid entry's write must have actually completed (been awaited),
+      // not left dangling — proof pendingWrites was drained before the throw.
+      expect(await readFile(join(destDir, 'SKILL.md'), 'utf8')).toContain('name: test');
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
   });
 });
 

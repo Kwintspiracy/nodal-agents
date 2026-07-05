@@ -10,7 +10,7 @@ import type { Stats } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, dirname, sep } from 'node:path';
 import { extract as tarExtract, type ReadEntry } from 'tar';
-import { unzipSync } from 'fflate';
+import { Unzip, UnzipInflate, type UnzipFile } from 'fflate';
 import {
   type SkillSource,
   candidateRefs,
@@ -118,38 +118,125 @@ async function downloadToBuffer(url: string): Promise<Buffer> {
   return readCapped(res);
 }
 
-/** Extract a zip with zip-slip protection: reject `..` / absolute entries. */
+/**
+ * Bytes of (still-compressed) archive input fed to fflate's streaming `Unzip`
+ * per `push()` call. `unzipSync` decompresses every entry to completion
+ * before we ever see a byte of output, so a decompression bomb (a small
+ * DEFLATE stream that inflates to many GB — a single, non-nested DEFLATE
+ * stream can reach ~1032:1 on all-zero input) OOMs the process long before
+ * the MAX_EXTRACTED_BYTES check below ever runs. Feeding the compressed
+ * bytes in small chunks instead bounds the output producible by any ONE
+ * `push()` call to roughly `chunk size * ~1032`, so the running-total check
+ * gets to fire and abort BETWEEN chunks, capping the worst-case overshoot at
+ * ~16.5 MB (16 KB * 1032) past MAX_EXTRACTED_BYTES instead of tens of GB.
+ */
+const ZIP_PUSH_CHUNK_BYTES = 16 * 1024;
+
+/**
+ * Extract a zip with zip-slip protection and a decompression-bomb guard.
+ *
+ * Uses fflate's streaming, push-based `Unzip` rather than `unzipSync` — see
+ * ZIP_PUSH_CHUNK_BYTES for why. This brings the zip path to parity with the
+ * tar.gz path below, which already bounds declared entry sizes before
+ * writing any bytes to disk.
+ */
 async function unzipBufferTo(buf: Buffer, destDir: string): Promise<void> {
-  const files = unzipSync(new Uint8Array(buf));
   const rootResolved = resolve(destDir);
   const rootWithSep = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
   let entryCount = 0;
   let totalBytes = 0;
-  for (const [name, data] of Object.entries(files)) {
-    if (name.endsWith('/')) continue; // directory entry
+  // Recorded rather than thrown directly: fflate's UnzipInflate wraps entry
+  // decompression in its own try/catch and re-delivers a thrown error to
+  // `ondata` a second time, so a throw from inside these callbacks isn't
+  // guaranteed to propagate cleanly out of unzip.push(). Instead every
+  // callback becomes a no-op once a violation is recorded, and we throw
+  // explicitly once feeding stops — the same pattern the tar filter below
+  // uses, and for the same reason (node-tar has an analogous constraint).
+  let violation: SkillFetchError | null = null;
+  const pendingWrites: Promise<void>[] = [];
+
+  const unzip = new Unzip();
+  unzip.register(UnzipInflate); // decode DEFLATE entries; stored (type 0) works via fflate's built-in default
+
+  unzip.onfile = (file: UnzipFile) => {
+    if (violation) return;
+    if (file.name.endsWith('/')) return; // directory entry
+
     entryCount++;
     if (entryCount > MAX_ENTRIES) {
-      throw new SkillFetchError(
+      violation = new SkillFetchError(
         `Archive contains too many entries (max ${MAX_ENTRIES}). Aborting extraction.`,
       );
+      return;
     }
-    const relNorm = name.replace(/\\/g, '/');
+
+    const relNorm = file.name.replace(/\\/g, '/');
     if (relNorm.startsWith('/') || relNorm.split('/').includes('..')) {
-      throw new SkillFetchError(`Unsafe path in archive: "${name}".`);
+      violation = new SkillFetchError(`Unsafe path in archive: "${file.name}".`);
+      return;
     }
     const abs = resolve(join(destDir, relNorm));
     if (abs !== rootResolved && !abs.startsWith(rootWithSep)) {
-      throw new SkillFetchError(`Archive entry escapes the target: "${name}".`);
+      violation = new SkillFetchError(`Archive entry escapes the target: "${file.name}".`);
+      return;
     }
-    totalBytes += data.byteLength;
-    if (totalBytes > MAX_EXTRACTED_BYTES) {
-      throw new SkillFetchError(
-        `Extracted archive exceeds size limit (${totalBytes} bytes, max ${MAX_EXTRACTED_BYTES}). ` +
-          `Possible decompression bomb.`,
-      );
-    }
-    await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, Buffer.from(data));
+
+    const chunks: Buffer[] = [];
+    file.ondata = (err, data, final) => {
+      if (violation) return;
+      if (err) {
+        violation = new SkillFetchError(`Corrupt archive entry "${file.name}": ${err.message}`);
+        return;
+      }
+      if (data && data.byteLength) {
+        totalBytes += data.byteLength;
+        if (totalBytes > MAX_EXTRACTED_BYTES) {
+          violation = new SkillFetchError(
+            `Extracted archive exceeds size limit (${totalBytes} bytes, max ${MAX_EXTRACTED_BYTES}). ` +
+              `Possible decompression bomb.`,
+          );
+          return;
+        }
+        chunks.push(Buffer.from(data));
+      }
+      if (final && !violation) {
+        const fileData = Buffer.concat(chunks);
+        pendingWrites.push(mkdir(dirname(abs), { recursive: true }).then(() => writeFile(abs, fileData)));
+      }
+    };
+    file.start();
+  };
+
+  // Feed the archive in bounded chunks (see ZIP_PUSH_CHUNK_BYTES) instead of
+  // one `push(buf, true)` call, so decompression output stays bounded per call.
+  const total = buf.length;
+  for (let offset = 0; offset < total && !violation; offset += ZIP_PUSH_CHUNK_BYTES) {
+    const end = Math.min(offset + ZIP_PUSH_CHUNK_BYTES, total);
+    unzip.push(new Uint8Array(buf.subarray(offset, end)), end >= total);
+  }
+  if (total === 0) unzip.push(new Uint8Array(0), true);
+
+  if (violation) {
+    // A valid entry earlier in the archive may already have a write in
+    // flight (pushed to pendingWrites) by the time a later entry trips the
+    // violation — push() is synchronous but writeFile() isn't. Let those
+    // settle before throwing so we never leave a write racing the caller's
+    // cleanup() (which rm()s workDir) — that race can otherwise surface as
+    // an unhandled rejection. We don't care whether they succeeded: we're
+    // about to reject the whole extraction either way.
+    await Promise.allSettled(pendingWrites);
+    throw violation;
+  }
+  await Promise.all(pendingWrites);
+
+  // unzipSync surfaced "invalid zip data" for a corrupt/non-zip buffer;
+  // the streaming Unzip instead just never calls onfile and resolves with
+  // zero entries, which downstream turns into a misleading "No SKILL.md
+  // found" rather than the real "this isn't a valid zip" error. A zip with
+  // zero FILE entries is unusable as a skill source either way (directory-
+  // only or genuinely empty archives included), so treat it as corrupt.
+  if (entryCount === 0) {
+    throw new SkillFetchError('Invalid or corrupt zip archive (no entries found).');
   }
 }
 
