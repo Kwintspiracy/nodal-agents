@@ -73,7 +73,14 @@ export async function resolveApprovalDecision(
   const [job] = await deps.db.select().from(agentJobs).where(eq(agentJobs.id, jobId)).limit(1);
   if (!job) return { ok: false, code: 'job_not_found' };
 
-  await deps.db
+  // Conditional on status='pending' (F-14): the SELECT above only checked
+  // pending at read time — two concurrent resolutions (e.g. a dashboard click
+  // racing a Telegram button tap) can both pass that check before either
+  // writes. Making the UPDATE itself conditional closes the race at the
+  // data layer: only the first writer's row is affected; the loser sees
+  // rowCount 0 and is told `already_resolved` instead of silently
+  // overwriting the decision that already won.
+  const updated = await deps.db
     .update(approvalRequests)
     .set({
       status: input.decision === 'approve' ? 'approved' : 'rejected',
@@ -81,7 +88,18 @@ export async function resolveApprovalDecision(
       resolvedBy: input.resolvedBy,
       notes: input.notes ?? null,
     })
-    .where(eq(approvalRequests.id, input.approvalRequestId));
+    .where(and(eq(approvalRequests.id, input.approvalRequestId), eq(approvalRequests.status, 'pending')))
+    .returning({ id: approvalRequests.id });
+
+  if (updated.length === 0) {
+    // Lost the race — re-read to report the status the winner left behind.
+    const [current] = await deps.db
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, input.approvalRequestId))
+      .limit(1);
+    return { ok: false, code: 'already_resolved', status: current?.status ?? null };
+  }
 
   // Back to pending so executeJob picks it up. Approval does NOT bump chain_count
   // — the human acted on an already-proposed action, not a new LLM chain call.

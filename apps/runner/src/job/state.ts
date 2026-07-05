@@ -125,8 +125,10 @@ interface RunStats {
 }
 
 // Terminal statuses — a row already in one of these must not be overwritten by
-// completeJob / failJob (Leg 3: conditional terminal writers).
-const TERMINAL_STATUSES: JobStatus[] = ['completed', 'failed', 'cancelled'];
+// completeJob / failJob (Leg 3: conditional terminal writers). Exported so
+// other modules (e.g. the Telegram workspace pruner, F-13) can tell a
+// finished job from one still in flight without re-deriving the list.
+export const TERMINAL_STATUSES: JobStatus[] = ['completed', 'failed', 'cancelled'];
 
 /**
  * Generic, user-facing explanation for a failure that carried no other message.

@@ -11,15 +11,16 @@
 //   - reply to a previous bot msg  → continuation
 // Anything else in a group is ignored to avoid the bot replying to every line.
 
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, inArray } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { getTelegramFile, type TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
+import { TERMINAL_STATUSES } from '../job/state.ts';
 
 export interface HandleResult {
   /** A job was created — caller should triggerWorker after txn commits. */
@@ -244,7 +245,100 @@ export async function attachInboundPhoto(args: {
     })
     .where(eq(agentJobs.id, jobId));
 
+  // Best-effort, bounded cleanup of this chat's workspace tree (F-13) — without
+  // it, `telegram/<chatId>/` grows unbounded forever. A prune failure must never
+  // fail the photo attach that already succeeded.
+  await pruneTelegramWorkspace(dir, db).catch((err) => {
+    console.warn(
+      `[telegram] workspace prune failed for ${dir}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  });
+
   return filePath;
+}
+
+/** Keep at most this many files per chat's telegram/<chatId>/ directory. */
+const TELEGRAM_WORKSPACE_MAX_FILES = 200;
+/** Delete files older than this, regardless of the count cap. */
+const TELEGRAM_WORKSPACE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+interface PrunableFile {
+  path: string;
+  /** Parsed from the `<jobId>.<ext>` filename — '' when it doesn't look like one. */
+  jobId: string;
+  mtimeMs: number;
+}
+
+/**
+ * Prune a chat's telegram/<chatId>/ image tree: delete anything older than
+ * TELEGRAM_WORKSPACE_MAX_AGE_MS, then — if still over the count cap — delete
+ * the oldest survivors until back under TELEGRAM_WORKSPACE_MAX_FILES. Runs
+ * best-effort on every inbound photo (F-13); a prune failure only logs.
+ *
+ * NEVER deletes a file whose job hasn't reached a terminal state yet: a job
+ * can sit queued behind an approval, a delegation, or plain backlog for a
+ * while before `hydrateForLlm` ever reads its inbound image out of the
+ * `messages` JSONB. Pruning by raw age/count alone could delete that file out
+ * from under a job that hasn't run yet — a silent, unrecoverable image loss.
+ * A file whose job no longer exists in the DB at all (purged) has no such
+ * risk and stays eligible.
+ */
+export async function pruneTelegramWorkspace(dir: string, db: RunnerDeps['db']): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const fileNames = entries.filter((e) => e.isFile()).map((e) => e.name);
+
+  const stats = await Promise.all(
+    fileNames.map(async (name) => {
+      const path = join(dir, name);
+      try {
+        const st = await stat(path);
+        // Filename is `<jobId>.<ext>` (see attachInboundPhoto) — everything
+        // before the LAST dot is the id.
+        const lastDot = name.lastIndexOf('.');
+        const jobId = lastDot > 0 ? name.slice(0, lastDot) : '';
+        return { path, jobId, mtimeMs: st.mtimeMs };
+      } catch {
+        // Deleted concurrently between readdir and stat — ignore.
+        return null;
+      }
+    }),
+  );
+  let candidates = stats.filter((s): s is PrunableFile => s !== null);
+
+  const jobIds = [...new Set(candidates.map((c) => c.jobId).filter((id) => id.length > 0))];
+  if (jobIds.length > 0) {
+    const rows = await db
+      .select({ id: agentJobs.id, status: agentJobs.status })
+      .from(agentJobs)
+      .where(inArray(agentJobs.id, jobIds));
+    const activeJobIds = new Set(
+      rows
+        .filter((r) => r.status === null || !(TERMINAL_STATUSES as string[]).includes(r.status))
+        .map((r) => r.id),
+    );
+    candidates = candidates.filter((c) => !activeJobIds.has(c.jobId));
+  }
+
+  const now = Date.now();
+  const stillFresh: typeof candidates = [];
+  for (const f of candidates) {
+    if (now - f.mtimeMs > TELEGRAM_WORKSPACE_MAX_AGE_MS) {
+      await unlink(f.path).catch(() => {});
+    } else {
+      stillFresh.push(f);
+    }
+  }
+  candidates = stillFresh;
+
+  if (candidates.length > TELEGRAM_WORKSPACE_MAX_FILES) {
+    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    const excess = candidates.length - TELEGRAM_WORKSPACE_MAX_FILES;
+    for (const f of candidates.slice(0, excess)) {
+      await unlink(f.path).catch(() => {});
+    }
+  }
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

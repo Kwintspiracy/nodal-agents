@@ -25,12 +25,21 @@ export interface TelegramSendOpts {
    * is attached to the LAST chunk only, so the buttons sit under the final message.
    */
   inlineKeyboard?: TelegramInlineKeyboard;
+  /**
+   * Resume a previously-failed chunked send: skip chunks before this index
+   * instead of resending them. A caller that retries after catching a
+   * `DeliveryError` should pass `err.partialProgress.sentChunks` here so
+   * already-delivered chunks aren't duplicated (F-4).
+   */
+  startChunkIndex?: number;
 }
 
 interface TelegramApiResponse<T = unknown> {
   ok: boolean;
   result?: T;
   description?: string;
+  /** Present on 429 responses: `retry_after` is Telegram's requested backoff, in seconds. */
+  parameters?: { retry_after?: number };
 }
 
 interface TelegramSendResult {
@@ -57,10 +66,45 @@ interface TelegramGetMeResult {
 /** Telegram hard limit per message is 4096 chars; stay under it with a margin. */
 const TELEGRAM_MAX_CHARS = 3900;
 
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+/**
+ * Hard-split a string into chunks of at most `max` UTF-16 code units, without
+ * cutting a surrogate pair (an emoji or other astral character spans 2 units;
+ * splitting between them corrupts both resulting chunks — F-16).
+ */
+function hardSplit(line: string, max: number): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    let end = Math.min(i + max, line.length);
+    // If the cut falls between a high surrogate and its low surrogate, back
+    // off by one unit — unless that would produce an empty chunk (only
+    // possible when `max` itself is smaller than a single surrogate pair).
+    if (
+      end < line.length &&
+      end - 1 > i &&
+      isHighSurrogate(line.charCodeAt(end - 1)) &&
+      isLowSurrogate(line.charCodeAt(end))
+    ) {
+      end -= 1;
+    }
+    out.push(line.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+
 /**
  * Split text into Telegram-sized chunks (≤ TELEGRAM_MAX_CHARS), preferring to
  * break on paragraph/line boundaries so a message is never cut mid-line. A
- * single line longer than the limit is hard-split. Returns [text] when it fits.
+ * single line longer than the limit is hard-split (surrogate-pair safe).
+ * Returns [text] when it fits.
  */
 function chunkForTelegram(text: string, max = TELEGRAM_MAX_CHARS): string[] {
   if (text.length <= max) return [text];
@@ -73,10 +117,14 @@ function chunkForTelegram(text: string, max = TELEGRAM_MAX_CHARS): string[] {
         chunks.push(current);
         current = '';
       }
-      for (let i = 0; i < line.length; i += max) chunks.push(line.slice(i, i + max));
+      chunks.push(...hardSplit(line, max));
       continue;
     }
-    if (current.length + line.length + 1 > max) {
+    // Only count the '\n' separator once `current` actually holds something —
+    // otherwise a first line of exactly `max` chars overcounts by 1 and pushes
+    // a spurious empty chunk before it (Telegram rejects an empty message — F-16).
+    const sepLen = current ? 1 : 0;
+    if (current.length + sepLen + line.length > max) {
       chunks.push(current);
       current = line;
     } else {
@@ -87,24 +135,68 @@ function chunkForTelegram(text: string, max = TELEGRAM_MAX_CHARS): string[] {
   return chunks;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Bounded retries for a single chunk on 429 — Telegram's own requested backoff is honored. */
+const MAX_RATE_LIMIT_RETRIES = 3;
+/** Fallback wait when Telegram's 429 response carries no `retry_after`. */
+const DEFAULT_RATE_LIMIT_BACKOFF_MS = 1000;
+/**
+ * Hard ceiling on how long a single 429 retry will wait, regardless of what
+ * Telegram's `retry_after` asks for. Never trust an externally-supplied
+ * duration unbounded — a large or malformed value must not stall the caller
+ * for minutes across up to MAX_RATE_LIMIT_RETRIES retries.
+ */
+const MAX_RETRY_AFTER_MS = 60_000;
+
+async function sendOneChunkWithRetry(opts: TelegramSendOpts): Promise<{ messageId: number }> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await sendOneTelegramMessage(opts);
+    } catch (err) {
+      const isRateLimited = err instanceof DeliveryError && err.code === 'telegram_rate_limited';
+      if (!isRateLimited || attempt >= MAX_RATE_LIMIT_RETRIES) throw err;
+      const waitMs =
+        (err as DeliveryError).retryAfterMs ?? DEFAULT_RATE_LIMIT_BACKOFF_MS * (attempt + 1);
+      await sleep(waitMs);
+    }
+  }
+}
+
 /**
  * Send a message to a Telegram chat. Text longer than Telegram's 4096-char limit
  * is automatically split into multiple messages (on line boundaries) — without
  * this, a long message fails with "Bad Request: message is too long" and the
  * delivery is silently lost. Returns the LAST message's id.
+ *
+ * A 429 on any chunk is retried with Telegram's own `retry_after` backoff
+ * (bounded) rather than failing the whole send immediately. If a chunk still
+ * fails (rate-limit retries exhausted, or any other error), the thrown
+ * `DeliveryError` carries `partialProgress` — chunks already delivered are NOT
+ * resent; a caller that retries should pass `startChunkIndex` to resume (F-4).
  */
 export async function sendTelegramMessage(opts: TelegramSendOpts): Promise<{ messageId: number }> {
   const parts = chunkForTelegram(opts.text);
+  const start = opts.startChunkIndex ?? 0;
   let last = { messageId: 0 };
-  for (let i = 0; i < parts.length; i += 1) {
+  for (let i = start; i < parts.length; i += 1) {
     // Attach the inline keyboard to the final chunk only — buttons belong under
     // the last message, not repeated on every chunk.
     const isLast = i === parts.length - 1;
-    last = await sendOneTelegramMessage({
-      ...opts,
-      text: parts[i] as string,
-      inlineKeyboard: isLast ? opts.inlineKeyboard : undefined,
-    });
+    try {
+      last = await sendOneChunkWithRetry({
+        ...opts,
+        text: parts[i] as string,
+        inlineKeyboard: isLast ? opts.inlineKeyboard : undefined,
+      });
+    } catch (err) {
+      if (err instanceof DeliveryError) {
+        err.partialProgress = { sentChunks: i, totalChunks: parts.length };
+      }
+      throw err;
+    }
   }
   return last;
 }
@@ -164,7 +256,12 @@ async function sendOneTelegramMessage(opts: TelegramSendOpts): Promise<{ message
       throw new DeliveryError('telegram_unauthorized', `telegram_unauthorized: ${desc}`);
     }
     if (response.status === 429) {
-      throw new DeliveryError('telegram_rate_limited', `telegram_rate_limited: ${desc}`);
+      const err = new DeliveryError('telegram_rate_limited', `telegram_rate_limited: ${desc}`);
+      const retryAfterSec = json.parameters?.retry_after;
+      if (typeof retryAfterSec === 'number') {
+        err.retryAfterMs = Math.min(retryAfterSec * 1000, MAX_RETRY_AFTER_MS);
+      }
+      throw err;
     }
     if (response.status === 400 && desc.toLowerCase().includes('chat not found')) {
       throw new DeliveryError('telegram_chat_not_found', `telegram_chat_not_found: ${desc}`);
@@ -490,9 +587,71 @@ export interface TelegramFileDownload {
 }
 
 /**
+ * Hard cap on an inbound Telegram file download — matches the Bot API's own
+ * ceiling for files a bot can fetch via getFile/download. Without this, a
+ * malicious or misbehaving upstream (or a server lying about Content-Length)
+ * could force an unbounded `arrayBuffer()` read into memory (F-13).
+ */
+const TELEGRAM_MAX_FILE_BYTES = 20 * 1024 * 1024; // 20 MB
+
+/** Read a Response body up to `maxBytes`, throwing `telegram_file_too_large` if exceeded. */
+async function readBoundedBody(res: Response, maxBytes: number): Promise<Uint8Array> {
+  const contentLengthHeader = res.headers.get('content-length');
+  if (contentLengthHeader !== null) {
+    const declared = Number(contentLengthHeader);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      throw new DeliveryError(
+        'telegram_file_too_large',
+        `telegram_file_too_large: declared size ${declared} bytes exceeds cap of ${maxBytes} bytes`,
+      );
+    }
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    // No streaming body available — fall back to a single read, still capped.
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > maxBytes) {
+      throw new DeliveryError(
+        'telegram_file_too_large',
+        `telegram_file_too_large: ${buf.byteLength} bytes exceeds cap of ${maxBytes} bytes`,
+      );
+    }
+    return new Uint8Array(buf);
+  }
+
+  // Stream and enforce the cap on actual bytes read — Content-Length can be
+  // absent or wrong; this is the real backstop against an oversized download.
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new DeliveryError(
+        'telegram_file_too_large',
+        `telegram_file_too_large: exceeded cap of ${maxBytes} bytes while streaming`,
+      );
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
+/**
  * Download a Telegram file by its file_id: getFile resolves the file_path, then
  * we GET it from the file endpoint. Returns the raw bytes + a best-effort
  * extension. The bot token is the credential — redacted from any error message.
+ * The download is capped at TELEGRAM_MAX_FILE_BYTES (F-13) — fails loud with
+ * `telegram_file_too_large` rather than silently truncating or OOMing.
  */
 export async function getTelegramFile(
   botToken: string,
@@ -527,7 +686,7 @@ export async function getTelegramFile(
       `telegram_request_failed: file download HTTP ${res.status}`,
     );
   }
-  const bytes = new Uint8Array(await res.arrayBuffer());
+  const bytes = await readBoundedBody(res, TELEGRAM_MAX_FILE_BYTES);
   const ext = (filePath.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
   return { bytes, ext };
 }

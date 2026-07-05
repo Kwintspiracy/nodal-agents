@@ -1,13 +1,17 @@
 // handler.test.ts — handleTelegramUpdate creates jobs from updates,
 // filters group chat noise, and routes /ask <slug> to the right agent.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { mkdtemp, writeFile, utimes, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
-import { handleTelegramUpdate } from '../../telegram/handler.ts';
+import { handleTelegramUpdate, pruneTelegramWorkspace } from '../../telegram/handler.ts';
+import type { RunnerDeps } from '../../deps.ts';
 
 let db: TestDb;
 let seed: { userId: string; entityId: string; agentId: string };
@@ -243,5 +247,113 @@ describe('handleTelegramUpdate — /ask command', () => {
     // Cross-entity routing must be denied — agents in another workspace are
     // not reachable.
     expect(result).toEqual({ skipped: 'ask_unknown_agent' });
+  });
+});
+
+describe('pruneTelegramWorkspace — F-13 bounded cleanup', () => {
+  let workDir: string;
+
+  afterEach(async () => {
+    if (workDir) await rm(workDir, { recursive: true, force: true });
+  });
+
+  it('never deletes the file of a job that has not reached a terminal state, even past the age cap', async () => {
+    workDir = await mkdtemp(join(tmpdir(), 'nodalai-telegram-prune-'));
+
+    // Two jobs: one still in flight (queued behind e.g. an approval), one done.
+    const [activeJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 'active job',
+        status: 'awaiting_approval',
+      })
+      .returning();
+    const [doneJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 'done job',
+        status: 'completed',
+      })
+      .returning();
+
+    const activeFile = join(workDir, `${activeJob!.id}.jpg`);
+    const doneFile = join(workDir, `${doneJob!.id}.jpg`);
+    await writeFile(activeFile, Buffer.from([1, 2, 3]));
+    await writeFile(doneFile, Buffer.from([4, 5, 6]));
+
+    // Backdate BOTH files well past the age cap (30 days) — the only thing
+    // that should save the active job's file is its job status, not its age.
+    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    await utimes(activeFile, fortyDaysAgo, fortyDaysAgo);
+    await utimes(doneFile, fortyDaysAgo, fortyDaysAgo);
+
+    await pruneTelegramWorkspace(workDir, db as unknown as RunnerDeps['db']);
+
+    const remaining = await readdir(workDir);
+    // Before the fix: age alone decided deletion, and BOTH files (equally
+    // old) would have been removed — including the active job's image.
+    expect(remaining).toContain(`${activeJob!.id}.jpg`);
+    expect(remaining).not.toContain(`${doneJob!.id}.jpg`);
+  });
+
+  it('deletes a file whose job no longer exists in the DB at all (purged)', async () => {
+    workDir = await mkdtemp(join(tmpdir(), 'nodalai-telegram-prune-'));
+    const orphanFile = join(workDir, `00000000-0000-0000-0000-000000000000.jpg`);
+    await writeFile(orphanFile, Buffer.from([1, 2, 3]));
+    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    await utimes(orphanFile, fortyDaysAgo, fortyDaysAgo);
+
+    await pruneTelegramWorkspace(workDir, db as unknown as RunnerDeps['db']);
+
+    const remaining = await readdir(workDir);
+    expect(remaining).not.toContain('00000000-0000-0000-0000-000000000000.jpg');
+  });
+
+  it('enforces the 200-file cap among terminal jobs, evicting the oldest first', async () => {
+    workDir = await mkdtemp(join(tmpdir(), 'nodalai-telegram-prune-'));
+
+    const TOTAL = 205; // 5 over the module's TELEGRAM_WORKSPACE_MAX_FILES cap
+    const jobs = await db
+      .insert(agentJobs)
+      .values(
+        Array.from({ length: TOTAL }, (_, i) => ({
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          channel: 'telegram' as const,
+          task: `done job ${i}`,
+          status: 'completed' as const,
+        })),
+      )
+      .returning({ id: agentJobs.id });
+    expect(jobs.length).toBe(TOTAL);
+
+    const now = Date.now();
+    for (const [i, job] of jobs.entries()) {
+      const file = join(workDir, `${job.id}.jpg`);
+      await writeFile(file, Buffer.from([i % 256]));
+      // index 0 = oldest, index TOTAL-1 = newest — strictly increasing mtime.
+      const mtime = new Date(now - (TOTAL - i) * 1000);
+      await utimes(file, mtime, mtime);
+    }
+
+    await pruneTelegramWorkspace(workDir, db as unknown as RunnerDeps['db']);
+
+    const remainingNames = new Set(await readdir(workDir));
+    expect(remainingNames.size).toBe(200);
+    // The 5 oldest (lowest index) were evicted; the 200 newest survive.
+    const oldest5 = jobs.slice(0, 5);
+    const newest200 = jobs.slice(5);
+    for (const job of oldest5) {
+      expect(remainingNames.has(`${job.id}.jpg`)).toBe(false);
+    }
+    for (const job of newest200) {
+      expect(remainingNames.has(`${job.id}.jpg`)).toBe(true);
+    }
   });
 });

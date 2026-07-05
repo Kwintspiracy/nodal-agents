@@ -52,6 +52,104 @@ const BACKOFF_INITIAL_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
 
 /**
+ * A poison update (one that throws deterministically while being handled)
+ * must not stall the poller forever (M-16): since offset never advances past
+ * an update that keeps failing, and getUpdates keeps returning it first, the
+ * bot goes mute for ALL chats — not just the one that sent the bad message.
+ * After this many attempts, the update is dead-lettered: logged loudly with
+ * full context (never a silent drop — invariant #4) and skipped by advancing
+ * the offset past it, so the rest of the queue keeps flowing.
+ *
+ * 5 (not 3): a transient blip (DB pool exhaustion, a Postgres restart, a
+ * network hiccup) must have room to resolve itself before an update is given
+ * up on permanently. With the per-update exponential backoff below, 5
+ * attempts spans ~15s of retries before dead-lettering — long enough to ride
+ * out a passing incident, short enough to still shed a genuine poison
+ * message quickly.
+ */
+const MAX_UPDATE_ATTEMPTS = 5;
+
+/**
+ * Backoff for a given update's Nth retry attempt — deterministic and strictly
+ * increasing from `attempts` alone, NOT from the poll-loop's shared `backoffMs`
+ * (which tracks a different concern: transient `getUpdates` failures against
+ * Telegram itself, and gets reset by whichever update happens to succeed
+ * next). Conflating the two meant a per-update backoff wasn't guaranteed to
+ * grow — this is scoped purely to "how long has THIS update been failing".
+ */
+function perUpdateBackoffMs(attempts: number): number {
+  return Math.min(BACKOFF_INITIAL_MS * 2 ** (attempts - 1), BACKOFF_MAX_MS);
+}
+
+// Node's own socket-level error codes — the TCP connection to Postgres itself
+// dropped, refused, or timed out. Nothing to do with any query's content.
+const NODE_NETWORK_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EPIPE',
+  'EAI_AGAIN',
+]);
+
+// `packages/db` uses the `postgres` (postgres.js) driver (see
+// packages/db/src/client.ts). Verified against its installed source
+// (node_modules/postgres/src/connection.js): a dropped/torn-down/timed-out
+// pool connection rejects the in-flight query with one of these `.code`
+// values — again, about the CONNECTION, never the query's content.
+const POSTGRES_JS_CONNECTION_ERROR_CODES = new Set([
+  'CONNECT_TIMEOUT',
+  'CONNECTION_DESTROYED',
+  'CONNECTION_CLOSED',
+  'CONNECTION_ENDED',
+]);
+
+// Postgres server-side SQLSTATE codes (the `C`/code field of a wire-protocol
+// ErrorResponse — see errorFields in the same source) for genuine infra
+// conditions: the server itself unavailable, restarting, or shedding load.
+// The `08` class is `connection_exception` (08000/08001/08003/08004/08006/…).
+const POSTGRES_SQLSTATE_INFRA_CODES = new Set([
+  '57P01', // admin_shutdown
+  '57P02', // crash_shutdown
+  '57P03', // cannot_connect_now
+  '53300', // too_many_connections
+  '53400', // configuration_limit_exceeded
+]);
+
+/**
+ * Classify an error as infrastructure-transient (DB connection refused/reset,
+ * pool exhaustion, Postgres restarting, a network blip) versus a deterministic
+ * failure caused by the CONTENT of the update itself (a message shape the
+ * handler chokes on, a parsing bug, ...).
+ *
+ * This distinction matters because `getTelegramUpdates` talks to Telegram, not
+ * the DB — during a DB blip it keeps succeeding and handing back the same
+ * batch, so EVERY update in flight fails at `db.transaction(...)` for a
+ * reason that has nothing to do with any one update_id. Counting that toward
+ * M-16's per-update dead-letter threshold would permanently drop a perfectly
+ * legitimate message the moment Postgres hiccups for ~15s — worse than the
+ * bug M-16 set out to fix.
+ *
+ * Bias: when a specific error code's classification is genuinely ambiguous,
+ * this list errs toward INCLUDING it as transient — losing a real message to
+ * infra flakiness is worse than retrying a genuine poison update a few extra
+ * rounds. An error that matches NOTHING here falls through to the existing
+ * deterministic/dead-letter path (M-16's proven, bounded behavior) instead of
+ * retrying forever on a total unknown.
+ */
+function isTransientInfraError(err: unknown): boolean {
+  if (!err || typeof err !== 'object' || !('code' in err)) return false;
+  const code = String((err as { code: unknown }).code);
+  if (NODE_NETWORK_ERROR_CODES.has(code)) return true;
+  if (POSTGRES_JS_CONNECTION_ERROR_CODES.has(code)) return true;
+  if (code.startsWith('08')) return true; // SQLSTATE class 08: connection_exception
+  if (POSTGRES_SQLSTATE_INFRA_CODES.has(code)) return true;
+  return false;
+}
+
+/**
  * Run the poll loop until `signal` is aborted or the bot token is rejected.
  * Resolves only when the loop exits — callers (the manager) keep this promise
  * so they can await all pollers on shutdown.
@@ -61,6 +159,20 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
   const longPoll = opts.longPollSeconds ?? 25;
   let offset = opts.startOffset;
   let backoffMs = BACKOFF_INITIAL_MS;
+  // Separate from `backoffMs`: that variable is reset to BACKOFF_INITIAL_MS
+  // every time `getTelegramUpdates` (a Telegram API call) succeeds — which it
+  // keeps doing throughout a DB-only outage, since Telegram itself is fine.
+  // Reusing `backoffMs` for DB/infra-transient errors would get its escalation
+  // wiped every single outer-loop iteration, capping the effective backoff at
+  // BACKOFF_INITIAL_MS forever instead of growing toward BACKOFF_MAX_MS during
+  // a prolonged outage. `dbBackoffMs` tracks DB health specifically: it grows
+  // on a transient-infra error and resets only when a DB operation actually
+  // succeeds again.
+  let dbBackoffMs = BACKOFF_INITIAL_MS;
+  // Per-update_id failure count (M-16). Bounded: an entry is removed the moment
+  // its update either succeeds or is dead-lettered, so this never accumulates
+  // beyond "currently-failing updates we haven't given up on yet".
+  const failureCounts = new Map<number, number>();
 
   while (!signal.aborted) {
     let updates: TelegramUpdate[];
@@ -118,18 +230,79 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
             .update(agents)
             .set({ telegramOffset: newOffset, updatedAt: new Date() })
             .where(eq(agents.id, agentId));
+          // A DB write just succeeded — the DB is healthy again.
+          dbBackoffMs = BACKOFF_INITIAL_MS;
         } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const chatId = update.callback_query.message?.chat?.id ?? 'unknown';
+
+          if (isTransientInfraError(err)) {
+            // The DB/infra itself is the problem, not this update's content —
+            // never count this toward the per-update dead-letter threshold
+            // (it would unfairly condemn whichever update happens to be first
+            // in the queue during a blip). Back off on `dbBackoffMs` — NOT the
+            // outer `backoffMs`, which gets reset every time the (unrelated)
+            // Telegram fetch succeeds and would never let this escalate — and
+            // retry the same batch once the outer loop comes back around.
+            console.warn(
+              `[telegram-poller agent=${agentId}] callback update_id=${update.update_id} chat=${chatId} transient infra error: ${errMsg}; backing off ${dbBackoffMs}ms`,
+            );
+            await sleepWithAbort(dbBackoffMs, signal);
+            dbBackoffMs = Math.min(dbBackoffMs * 2, BACKOFF_MAX_MS);
+            break;
+          }
+
+          const attempts = (failureCounts.get(update.update_id) ?? 0) + 1;
+
+          if (attempts >= MAX_UPDATE_ATTEMPTS) {
+            console.error(
+              `[telegram-poller agent=${agentId}] callback update_id=${update.update_id} chat=${chatId} DEAD-LETTERED after ${attempts} attempts, skipping: ${errMsg}`,
+            );
+            // Advance past the poison update ourselves — the normal in-handler
+            // offset write never ran because the handler itself threw. This
+            // write can ALSO fail if the DB happens to go down at this exact
+            // moment — never silently declare a drop we couldn't persist.
+            try {
+              await deps.db
+                .update(agents)
+                .set({ telegramOffset: newOffset, updatedAt: new Date() })
+                .where(eq(agents.id, agentId));
+              dbBackoffMs = BACKOFF_INITIAL_MS;
+            } catch (advanceErr) {
+              console.error(
+                `[telegram-poller agent=${agentId}] callback update_id=${update.update_id} chat=${chatId} failed to persist dead-letter offset advance: ${
+                  advanceErr instanceof Error ? advanceErr.message : String(advanceErr)
+                }; will retry`,
+              );
+              await sleepWithAbort(dbBackoffMs, signal);
+              dbBackoffMs = Math.min(dbBackoffMs * 2, BACKOFF_MAX_MS);
+              break;
+            }
+            // Safe to `continue` to the next update in this batch: we are
+            // deliberately skipping THIS one, not silently jumping past one
+            // still pending retry.
+            failureCounts.delete(update.update_id);
+            offset = newOffset;
+            continue;
+          }
+
+          failureCounts.set(update.update_id, attempts);
           console.error(
-            `[telegram-poller agent=${agentId}] callback update_id=${update.update_id} failed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+            `[telegram-poller agent=${agentId}] callback update_id=${update.update_id} chat=${chatId} failed (attempt ${attempts}/${MAX_UPDATE_ATTEMPTS}): ${errMsg}`,
           );
-          await sleepWithAbort(backoffMs, signal);
-          backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
-          continue;
+          await sleepWithAbort(perUpdateBackoffMs(attempts), signal);
+          // `break`, not `continue`: `offset` is shared across this whole batch.
+          // If a LATER update in `updates` were processed and succeeded next, it
+          // would write `offset` past this one's still-unresolved update_id —
+          // Telegram's offset semantics are "confirm everything below this id",
+          // so that later update would PERMANENTLY erase this one from the queue
+          // (silent drop, invariant #4) without ever reaching MAX_UPDATE_ATTEMPTS.
+          // Stopping the batch here just delays the rest by one poll cycle —
+          // they're re-fetched (not lost) once this one is retried or dead-lettered.
+          break;
         }
+        failureCounts.delete(update.update_id);
         offset = newOffset;
-        backoffMs = BACKOFF_INITIAL_MS;
         continue;
       }
 
@@ -155,21 +328,84 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
           createdJobId = result.jobId;
           createdPhoto = result.photo;
         });
+        // The transaction just committed — the DB is healthy again.
+        dbBackoffMs = BACKOFF_INITIAL_MS;
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const chatId = update.message?.chat?.id ?? 'unknown';
+
+        if (isTransientInfraError(err)) {
+          // The DB/infra itself is the problem, not this update's content —
+          // never count this toward the per-update dead-letter threshold (it
+          // would unfairly condemn whichever update happens to be first in
+          // the queue during a blip). Back off on `dbBackoffMs` — NOT the
+          // outer `backoffMs`, which gets reset every time the (unrelated)
+          // Telegram fetch succeeds and would never let this escalate — and
+          // retry the same batch once the outer loop comes back around —
+          // exactly like before M-16 existed, this update is never lost, only
+          // delayed until the DB recovers.
+          console.warn(
+            `[telegram-poller agent=${agentId}] update_id=${update.update_id} chat=${chatId} transient infra error: ${errMsg}; backing off ${dbBackoffMs}ms`,
+          );
+          await sleepWithAbort(dbBackoffMs, signal);
+          dbBackoffMs = Math.min(dbBackoffMs * 2, BACKOFF_MAX_MS);
+          break;
+        }
+
+        const attempts = (failureCounts.get(update.update_id) ?? 0) + 1;
+
+        if (attempts >= MAX_UPDATE_ATTEMPTS) {
+          // Give up on this update — a message that fails deterministically
+          // K times in a row would otherwise wedge the offset forever, going
+          // mute for every chat this bot serves (M-16). Log loudly with full
+          // context (never a silent drop) and skip it: advance offset past it.
+          console.error(
+            `[telegram-poller agent=${agentId}] update_id=${update.update_id} chat=${chatId} DEAD-LETTERED after ${attempts} attempts, skipping: ${errMsg}`,
+          );
+          // This write can ALSO fail if the DB happens to go down at this
+          // exact moment — never silently declare a drop we couldn't persist.
+          try {
+            await deps.db
+              .update(agents)
+              .set({ telegramOffset: newOffset, updatedAt: new Date() })
+              .where(eq(agents.id, agentId));
+            dbBackoffMs = BACKOFF_INITIAL_MS;
+          } catch (advanceErr) {
+            console.error(
+              `[telegram-poller agent=${agentId}] update_id=${update.update_id} chat=${chatId} failed to persist dead-letter offset advance: ${
+                advanceErr instanceof Error ? advanceErr.message : String(advanceErr)
+              }; will retry`,
+            );
+            await sleepWithAbort(dbBackoffMs, signal);
+            dbBackoffMs = Math.min(dbBackoffMs * 2, BACKOFF_MAX_MS);
+            break;
+          }
+          // Safe to `continue`: we are deliberately skipping THIS update, not
+          // silently jumping past a later one still pending retry.
+          failureCounts.delete(update.update_id);
+          offset = newOffset;
+          continue;
+        }
+
+        failureCounts.set(update.update_id, attempts);
         console.error(
-          `[telegram-poller agent=${agentId}] handle update_id=${update.update_id} failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[telegram-poller agent=${agentId}] update_id=${update.update_id} chat=${chatId} failed (attempt ${attempts}/${MAX_UPDATE_ATTEMPTS}): ${errMsg}`,
         );
         // Don't advance offset; next loop will retry the same update.
-        // Backoff to avoid hot-looping on a poison message.
-        await sleepWithAbort(backoffMs, signal);
-        backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
-        continue;
+        await sleepWithAbort(perUpdateBackoffMs(attempts), signal);
+        // `break`, not `continue`: `offset` is shared across this whole batch.
+        // If we instead moved on to the NEXT update and it succeeded, it would
+        // write `offset` past THIS update's still-unresolved id — Telegram's
+        // offset semantics confirm everything below it, so this update would be
+        // permanently erased from the queue (silent drop, invariant #4) without
+        // ever reaching MAX_UPDATE_ATTEMPTS. Stopping the batch here only delays
+        // the rest by one poll cycle — they're re-fetched, never lost, once this
+        // one is retried or dead-lettered.
+        break;
       }
 
+      failureCounts.delete(update.update_id);
       offset = newOffset;
-      backoffMs = BACKOFF_INITIAL_MS;
 
       // Inbound photo: download it (network — out of the txn) and attach it to
       // the job BEFORE the worker runs, so the agent sees the image. Best-effort:
