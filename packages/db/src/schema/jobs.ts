@@ -110,8 +110,21 @@ export const agentJobs = pgTable(
       sql`${table.createdAt} DESC`,
     ),
     index('idx_agent_jobs_parent_job_id').on(table.parentJobId),
-    index('idx_jobs_parent').on(table.parentJobId),
+    // idx_jobs_parent (F-20, audit #2) was an exact duplicate of
+    // idx_agent_jobs_parent_job_id above — same column, same order, both from
+    // migration 0000. Dropped in migration 0054; kept this one (matches the
+    // idx_agent_jobs_* naming convention used everywhere else on this table).
     index('idx_jobs_status').on(table.status, table.createdAt),
+    // DB-3 (audit #2): findUndeliveredRootJobIds (cron/deliver-results.ts)
+    // joins on this column filtered to IS NULL every tick; the cron recovery
+    // scans (findPendingJobsToRecover, resetOrphanedJobs, failStalePendingJobs
+    // in cron/reset-orphans.ts) also filter by status without an entity_id,
+    // which idx_jobs_status (kept above) still serves — completed rows vastly
+    // outnumber the still-open ones, so a partial index keyed on the open set
+    // stays small regardless of table growth.
+    index('idx_agent_jobs_completed_at_null')
+      .on(table.completedAt)
+      .where(sql`${table.completedAt} IS NULL`),
     check(
       'agent_jobs_status_check',
       sql`${table.status} IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')`,

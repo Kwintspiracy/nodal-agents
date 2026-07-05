@@ -111,7 +111,14 @@ export const mcpConnections = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('idx_mcp_connections_entity').on(table.entityId)],
+  (table) => [
+    index('idx_mcp_connections_entity').on(table.entityId),
+    // R5 (audit #2 follow-up): the pglite test DDL (packages/db/src/tests/
+    // helpers.ts) already assumed a per-entity unique slug here — same class
+    // of phantom-constraint bug as DB-2/F-18. entityId is NOT NULL on this
+    // table, so a plain UNIQUE (no NULLS NOT DISTINCT needed) is correct.
+    uniqueIndex('mcp_connections_entity_slug_unique').on(table.entityId, table.slug),
+  ],
 );
 
 export type McpConnectionRow = typeof mcpConnections.$inferSelect;

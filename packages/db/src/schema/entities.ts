@@ -103,6 +103,12 @@ export const entityMembers = pgTable(
       'entity_members_role_check',
       sql`${table.role} IN ('owner', 'admin', 'member', 'viewer')`,
     ),
+    // R5 (audit #2 follow-up, found while sweeping helpers.ts for the SAME
+    // class of phantom constraint): the pglite test DDL already assumed a
+    // user can only be a member of an entity once — this table had no such
+    // constraint in the real schema/migrations. Both columns are NOT NULL, so
+    // a plain UNIQUE is correct (no NULLS NOT DISTINCT needed).
+    uniqueIndex('entity_members_entity_user_unique').on(table.entityId, table.userId),
   ],
 );
 

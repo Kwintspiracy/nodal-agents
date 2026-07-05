@@ -270,7 +270,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       action text NOT NULL CHECK (action IN ('auto_approve','require_approval','block')),
       condition_json jsonb DEFAULT '{}',
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now()
+      updated_at timestamptz DEFAULT now(),
+      UNIQUE NULLS NOT DISTINCT (entity_id, agent_id, tool_name)
     );
 
     CREATE TABLE IF NOT EXISTS agent_memory (
@@ -458,7 +459,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       webhook_url text,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
-      UNIQUE (entity_id, slug)
+      UNIQUE NULLS NOT DISTINCT (entity_id, slug)
     );
 
     CREATE TABLE IF NOT EXISTS agent_assignments (

@@ -775,31 +775,50 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     // primary so it can't appear twice, and drop any link that equals it.
     patch['fallbackChain'] = fallbackChain.filter((link) => link.keyId !== llmKeyId);
 
-    await db.update(agents).set(patch).where(eq(agents.id, id));
+    // Whole mutation is one transaction (F-19, audit #2 + R4 follow-up): the
+    // agent patch, the sub-agent rewrite, and the system_prompt invalidation
+    // used to be separate statements. A crash after the patch but before the
+    // sub-agent rewrite left name/personality/model committed with the OLD
+    // sub-agent list (or none, mid-rewrite) — an inconsistent agent. Wrapping
+    // the entire block in `tx` (pattern used elsewhere, e.g. packages/db/src/
+    // repos/retention.ts) means a throw at any point rolls back everything:
+    // either the full edit lands, or the agent is untouched.
+    await db.transaction(async (tx) => {
+      await tx.update(agents).set(patch).where(eq(agents.id, id));
 
-    // Rewrite sub-agent assignments atomically: delete existing, insert new
-    await db.delete(agentAssignments).where(eq(agentAssignments.orchestratorId, id));
-    if (role !== 'worker' && subAgentIds.length > 0) {
-      await db.insert(agentAssignments).values(
-        subAgentIds.map((subId) => ({
-          orchestratorId: id,
-          subAgentId: subId,
-          entityId: session.entityId,
-        })),
-      );
-    }
+      // Rewrite sub-agent assignments: delete existing, insert new.
+      await tx.delete(agentAssignments).where(eq(agentAssignments.orchestratorId, id));
+      if (role !== 'worker' && subAgentIds.length > 0) {
+        await tx
+          .insert(agentAssignments)
+          .values(
+            subAgentIds.map((subId) => ({
+              orchestratorId: id,
+              subAgentId: subId,
+              entityId: session.entityId,
+            })),
+          )
+          // F-18 (audit #2): the same sub-agent could be submitted twice in one
+          // form payload (or race with another edit) and hit the new
+          // UNIQUE(orchestrator_id, sub_agent_id) constraint — dedup at the DB
+          // layer instead of throwing.
+          .onConflictDoNothing({
+            target: [agentAssignments.orchestratorId, agentAssignments.subAgentId],
+          });
+      }
 
-    // Invalidate cached system_prompt for active (in-flight) jobs only.
-    // Completed/failed/cancelled jobs keep their historical prompt for audit.
-    await db
-      .update(agentJobs)
-      .set({ systemPrompt: null, updatedAt: new Date() })
-      .where(
-        and(
-          eq(agentJobs.agentId, id),
-          notInArray(agentJobs.status, ['completed', 'failed', 'cancelled']),
-        ),
-      );
+      // Invalidate cached system_prompt for active (in-flight) jobs only.
+      // Completed/failed/cancelled jobs keep their historical prompt for audit.
+      await tx
+        .update(agentJobs)
+        .set({ systemPrompt: null, updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentJobs.agentId, id),
+            notInArray(agentJobs.status, ['completed', 'failed', 'cancelled']),
+          ),
+        );
+    });
 
     revalidatePath('/agents');
     return ok(undefined);
@@ -3854,32 +3873,24 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
           ),
         );
     } else {
-      // UPSERT (insert or update the existing row)
-      const existing = await db
-        .select({ id: approvalRules.id })
-        .from(approvalRules)
-        .where(
-          and(
-            eq(approvalRules.entityId, session.entityId),
-            eq(approvalRules.agentId, agentId),
-            eq(approvalRules.toolName, toolName),
-          ),
-        )
-        .limit(1);
-
-      if (existing.length > 0 && existing[0]) {
-        await db
-          .update(approvalRules)
-          .set({ action, updatedAt: new Date() })
-          .where(eq(approvalRules.id, existing[0].id));
-      } else {
-        await db.insert(approvalRules).values({
+      // UPSERT on the (entity_id, agent_id, tool_name) unique constraint
+      // (DB-1, audit #2). The old select-then-branch left a race window where
+      // two concurrent calls could both miss the SELECT and insert divergent
+      // rows for the same scope — matchApprovalRule's `.find()` would then pick
+      // whichever the SELECT happened to return first, a non-deterministic
+      // gate. onConflictDoUpdate makes this atomic: one canonical row survives.
+      await db
+        .insert(approvalRules)
+        .values({
           entityId: session.entityId,
           agentId,
           toolName,
           action,
+        })
+        .onConflictDoUpdate({
+          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+          set: { action, updatedAt: new Date() },
         });
-      }
     }
 
     revalidatePath(`/agents/${agentId}/edit`);
@@ -3951,25 +3962,38 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    // Always delete the existing row first to avoid duplicates (no unique constraint)
-    await db
-      .delete(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, session.entityId),
-          eq(approvalRules.agentId, agentId),
-          eq(approvalRules.toolName, 'run_command'),
-        ),
-      );
+    // Delete-then-insert wrapped in a transaction (R2, audit #2 follow-up):
+    // approval_rules now carries a UNIQUE(entity_id, agent_id, tool_name)
+    // constraint (DB-1) — two overlapping calls (double-click, two tabs) could
+    // both pass the delete and then race on the insert, throwing on the
+    // constraint instead of leaving one clean row. db.transaction plus
+    // onConflictDoUpdate makes the whole toggle atomic and idempotent.
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            eq(approvalRules.agentId, agentId),
+            eq(approvalRules.toolName, 'run_command'),
+          ),
+        );
 
-    if (enabled) {
-      await db.insert(approvalRules).values({
-        entityId: session.entityId,
-        agentId,
-        toolName: 'run_command',
-        action: 'auto_approve',
-      });
-    }
+      if (enabled) {
+        await tx
+          .insert(approvalRules)
+          .values({
+            entityId: session.entityId,
+            agentId,
+            toolName: 'run_command',
+            action: 'auto_approve',
+          })
+          .onConflictDoUpdate({
+            target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+            set: { action: 'auto_approve', updatedAt: new Date() },
+          });
+      }
+    });
 
     revalidatePath(`/agents/${agentId}/edit`);
     return ok(undefined);
@@ -7045,35 +7069,48 @@ export async function setRootAgentAction(raw: unknown): Promise<ActionResult<voi
       .where(eq(entities.id, session.entityId));
 
     // ── Sync approval_rules for meta-tools ────────────────────────────────────
-    // Step 1: clear any existing meta-tool rules for this entity (covers both
-    // the previous ROOT agent's rules and the current one).
-    await db
-      .delete(approvalRules)
-      .where(
-        and(
-          eq(approvalRules.entityId, session.entityId),
-          inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
-        ),
-      );
-
-    // Step 2: insert new rules according to autonomy level.
-    if (grants.autonomy === 'propose_confirm') {
-      // Each enabled meta-tool requires explicit user approval before execution.
-      const tools = enabledMetaTools(grants as RootGrants);
-      if (tools.length > 0) {
-        await db.insert(approvalRules).values(
-          tools.map((toolName) => ({
-            entityId: session.entityId,
-            agentId: rootAgentId,
-            toolName,
-            action: 'require_approval' as const,
-          })),
+    // Delete-then-insert wrapped in a transaction (R2, audit #2 follow-up):
+    // approval_rules now carries a UNIQUE(entity_id, agent_id, tool_name)
+    // constraint (DB-1) — an overlapping call could pass the delete and then
+    // hit that constraint on insert. db.transaction plus onConflictDoUpdate
+    // (per-row, since this is a batch insert) makes the whole sync atomic.
+    await db.transaction(async (tx) => {
+      // Step 1: clear any existing meta-tool rules for this entity (covers both
+      // the previous ROOT agent's rules and the current one).
+      await tx
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            inArray(approvalRules.toolName, META_TOOL_NAMES as unknown as string[]),
+          ),
         );
+
+      // Step 2: insert new rules according to autonomy level.
+      if (grants.autonomy === 'propose_confirm') {
+        // Each enabled meta-tool requires explicit user approval before execution.
+        const tools = enabledMetaTools(grants as RootGrants);
+        if (tools.length > 0) {
+          await tx
+            .insert(approvalRules)
+            .values(
+              tools.map((toolName) => ({
+                entityId: session.entityId,
+                agentId: rootAgentId,
+                toolName,
+                action: 'require_approval' as const,
+              })),
+            )
+            .onConflictDoUpdate({
+              target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+              set: { action: 'require_approval', updatedAt: new Date() },
+            });
+        }
       }
-    }
-    // destructive_gate inserts require_approval only for destructive meta-tools;
-    // none exist in the MVT toolset yet.
-    // fully_autonomous: no approval rules — all meta-tools execute without gating.
+      // destructive_gate inserts require_approval only for destructive meta-tools;
+      // none exist in the MVT toolset yet.
+      // fully_autonomous: no approval rules — all meta-tools execute without gating.
+    });
 
     revalidatePath('/settings');
     return ok(undefined);

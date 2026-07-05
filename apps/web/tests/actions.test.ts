@@ -75,7 +75,7 @@ function chain(rows: unknown[]): unknown {
 
 function makeDb(rows: unknown[] = []) {
   const c = chain(rows);
-  return {
+  const db = {
     select: vi.fn().mockReturnValue(c),
     selectDistinct: vi.fn().mockReturnValue(c),
     insert: vi.fn().mockReturnValue(c),
@@ -86,7 +86,13 @@ function makeDb(rows: unknown[] = []) {
     // rowCount; an empty-array resolved promise is enough for unit tests
     // that only care that execute was called.
     execute: vi.fn().mockResolvedValue([]),
+    // transaction() (F-19, audit #2 — updateAgentAction's sub-agent rewrite):
+    // the mock has no real atomicity to offer, so it just hands the callback
+    // this same chainable db as `tx` — enough for tests that only assert on
+    // the calls/values a real transaction's tx would have received.
+    transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(db)),
   };
+  return db;
 }
 
 /**
@@ -96,14 +102,16 @@ function makeDb(rows: unknown[] = []) {
  * `rows` for every chain, which conflates the two and fails one of them.
  */
 function makeDbMixed(opts: { select?: unknown[]; insert?: unknown[]; update?: unknown[] }) {
-  return {
+  const db = {
     select: vi.fn().mockReturnValue(chain(opts.select ?? [])),
     selectDistinct: vi.fn().mockReturnValue(chain(opts.select ?? [])),
     insert: vi.fn().mockReturnValue(chain(opts.insert ?? [])),
     delete: vi.fn().mockReturnValue(chain([])),
     update: vi.fn().mockReturnValue(chain(opts.update ?? [])),
     execute: vi.fn().mockResolvedValue([]),
+    transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(db)),
   };
+  return db;
 }
 
 /**
@@ -3040,6 +3048,7 @@ function makeDbSeq(selectSequence: unknown[][], insertRows: unknown[] = []) {
     insert: vi.fn().mockReturnValue(insertChain),
     delete: vi.fn().mockReturnValue(chainOnce([])),
     update: vi.fn().mockReturnValue(chainOnce([])),
+    transaction: vi.fn((cb: (tx: unknown) => unknown) => cb(db)),
   };
   return db;
 }

@@ -15,6 +15,7 @@ import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { agents, entities, entityMembers, approvalRules, eq, and, inArray } from '@nodal-agents/db';
 import { META_TOOL_NAMES } from '@nodal-agents/shared';
+import type * as NodalMemory from '@nodal-agents/memory';
 
 // ─── Module-level state ───────────────────────────────────────────────────────
 
@@ -61,8 +62,7 @@ vi.mock('../src/lib/cli-config.ts', () => ({
 
 // memory package has its own complex chain — stub the public API directly.
 vi.mock('@nodal-agents/memory', async () => {
-  const actual =
-    await vi.importActual<typeof import('@nodal-agents/memory')>('@nodal-agents/memory');
+  const actual = await vi.importActual<typeof NodalMemory>('@nodal-agents/memory');
   return {
     ...actual,
     listMemories: vi.fn(),
@@ -362,5 +362,37 @@ describe('setRootAgentAction — write paths', () => {
 
     await setRootAgentAction({ grants: { ...ALL_ON, autonomy: 'fully_autonomous' } });
     expect((await metaRules()).length).toBe(0);
+  });
+
+  it('re-syncing the same propose_confirm grants twice in a row leaves exactly ONE row per meta-tool — R2 (audit #2 follow-up)', async () => {
+    // The delete-then-insert is now wrapped in db.transaction + onConflictDoUpdate
+    // (approval_rules carries a UNIQUE(entity_id, agent_id, tool_name) constraint
+    // since DB-1) — re-syncing must stay canonical, never duplicate a row per tool.
+    await setRoot(_orchestratorId);
+    const { setRootAgentAction } = await import('../src/lib/actions.ts');
+    const grants = {
+      createAgent: true,
+      updateAgent: false,
+      attachAgent: false,
+      createSkill: false,
+      updateSkill: false,
+      assignSkill: false,
+      createMcp: false,
+      attachMcp: false,
+      createConnector: false,
+      attachConnector: false,
+      manageSchedules: false,
+      autonomy: 'propose_confirm' as const,
+    };
+
+    const first = await setRootAgentAction({ grants });
+    expect(first.ok).toBe(true);
+    const second = await setRootAgentAction({ grants });
+    expect(second.ok).toBe(true);
+
+    const rules = await metaRules();
+    expect(rules).toHaveLength(1);
+    expect(rules[0]?.toolName).toBe('create_agent');
+    expect(rules[0]?.action).toBe('require_approval');
   });
 });

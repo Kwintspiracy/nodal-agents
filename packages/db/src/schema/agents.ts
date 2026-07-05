@@ -11,6 +11,7 @@ import {
   jsonb,
   index,
   check,
+  unique,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
@@ -103,7 +104,18 @@ export const agentAssignments = pgTable(
     instructions: text('instructions'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  () => [],
+  (table) => [
+    // F-18 (audit #2): no index beyond the PK meant updateAgentAction's
+    // delete-then-insert (apps/web/src/lib/actions.ts) could race and leave the
+    // same sub-agent attached twice under one orchestrator (duplicated in the
+    // team-block). The unique index's leading column (orchestrator_id) also
+    // serves the hot read path (team-block.ts, assign-tools.ts, detach-agent.ts
+    // all look up by orchestratorId alone) — no separate index needed.
+    unique('agent_assignments_orchestrator_sub_agent_unique').on(
+      table.orchestratorId,
+      table.subAgentId,
+    ),
+  ],
 );
 
 export type AgentAssignmentRow = typeof agentAssignments.$inferSelect;

@@ -10,6 +10,7 @@ import {
   timestamp,
   index,
   check,
+  unique,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
@@ -69,6 +70,13 @@ export const agentPlugins = pgTable(
       'agent_plugins_hook_check',
       sql`${table.hook} IN ('pre_task','post_task','pre_tool','post_tool','on_memory_save')`,
     ),
+    // R5 (audit #2 follow-up): the pglite test DDL (packages/db/src/tests/
+    // helpers.ts) already assumed a per-entity unique slug here — same class
+    // of phantom-constraint bug as DB-2/F-18 (test mock ahead of the real
+    // schema/migration). entityId is nullable (no `.notNull()` above), so
+    // NULLS NOT DISTINCT closes the same NULL-entity gap as DB-1's
+    // approval_rules constraint.
+    unique('agent_plugins_entity_slug_unique').on(table.entityId, table.slug).nullsNotDistinct(),
   ],
 );
 

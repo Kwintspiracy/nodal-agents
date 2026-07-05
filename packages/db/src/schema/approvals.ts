@@ -1,6 +1,6 @@
 // approval_requests + approval_rules tables
 
-import { pgTable, text, uuid, jsonb, timestamp, index, check } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, jsonb, timestamp, index, check, unique } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -69,6 +69,17 @@ export const approvalRules = pgTable(
       'approval_rules_action_check',
       sql`${table.action} IN ('auto_approve','require_approval','block')`,
     ),
+    // DB-1 (audit #2): one canonical rule per (entity, agent-or-null, tool) —
+    // without this, two concurrent setAgentApprovalRuleAction calls (or any
+    // direct insert) can leave two rows for the same scope with DIVERGENT
+    // actions, and matchApprovalRule's `.find()` picks whichever the SELECT
+    // happens to return first — a non-deterministic approval gate. agentId IS
+    // NULL marks an entity-wide rule (e.g. the run_command LAN master-switch),
+    // so a plain UNIQUE would treat two NULL rows as distinct and let the
+    // duplicate back in; NULLS NOT DISTINCT (PG15+) closes that gap.
+    unique('approval_rules_entity_agent_tool_unique')
+      .on(table.entityId, table.agentId, table.toolName)
+      .nullsNotDistinct(),
   ],
 );
 

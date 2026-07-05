@@ -595,4 +595,147 @@ describe('UNIQUE constraints', () => {
         .values({ entityId: seed.entityId, agentId: seed.agentId, skillId: sk!.id }),
     ).rejects.toThrow();
   });
+
+  it('agent_assignments: rejects duplicate (orchestrator_id, sub_agent_id) — F-18, audit #2', async () => {
+    const [orch] = await db
+      .insert(schema.agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Unique Assign Orch ${Date.now()}`,
+        slug: `unique-assign-orch-${Date.now()}`,
+        personality: 'test',
+        role: 'orchestrator',
+      })
+      .returning();
+    const [sub] = await db
+      .insert(schema.agents)
+      .values({
+        entityId: seed.entityId,
+        name: `Unique Assign Sub ${Date.now()}`,
+        slug: `unique-assign-sub-${Date.now()}`,
+        personality: 'test',
+      })
+      .returning();
+    await db.insert(schema.agentAssignments).values({
+      entityId: seed.entityId,
+      orchestratorId: orch!.id,
+      subAgentId: sub!.id,
+    });
+    await expect(
+      db.insert(schema.agentAssignments).values({
+        entityId: seed.entityId,
+        orchestratorId: orch!.id,
+        subAgentId: sub!.id,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('approval_rules: rejects duplicate (entity_id, agent_id, tool_name) — DB-1, audit #2', async () => {
+    const toolName = `unique-approval-tool-${Date.now()}`;
+    await db.insert(schema.approvalRules).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      toolName,
+      action: 'require_approval',
+    });
+    await expect(
+      db.insert(schema.approvalRules).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        toolName,
+        action: 'block',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('approval_rules: rejects duplicate (entity_id, NULL agent_id, tool_name) — NULLS NOT DISTINCT, DB-1', async () => {
+    // agentId=NULL marks an entity-wide rule (e.g. the run_command LAN
+    // master-switch). A plain UNIQUE treats two NULLs as distinct and would
+    // silently let a second, divergent entity-wide rule back in — this is
+    // exactly the gap NULLS NOT DISTINCT (PG15+) closes.
+    const toolName = `unique-approval-wide-tool-${Date.now()}`;
+    await db.insert(schema.approvalRules).values({
+      entityId: seed.entityId,
+      agentId: null,
+      toolName,
+      action: 'auto_approve',
+    });
+    await expect(
+      db.insert(schema.approvalRules).values({
+        entityId: seed.entityId,
+        agentId: null,
+        toolName,
+        action: 'require_approval',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('agent_plugins: rejects duplicate (entity_id, slug) — R5, audit #2 follow-up', async () => {
+    const slug = `unique-plugin-${Date.now()}`;
+    await db.insert(schema.agentPlugins).values({
+      entityId: seed.entityId,
+      name: 'Plugin A',
+      slug,
+      pluginType: 'webhook',
+      hook: 'pre_task',
+    });
+    await expect(
+      db.insert(schema.agentPlugins).values({
+        entityId: seed.entityId,
+        name: 'Plugin B',
+        slug,
+        pluginType: 'webhook',
+        hook: 'pre_task',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('agent_plugins: rejects duplicate (NULL entity_id, slug) — NULLS NOT DISTINCT, R5', async () => {
+    const slug = `unique-plugin-wide-${Date.now()}`;
+    await db.insert(schema.agentPlugins).values({
+      entityId: null,
+      name: 'Plugin A',
+      slug,
+      pluginType: 'webhook',
+      hook: 'pre_task',
+    });
+    await expect(
+      db.insert(schema.agentPlugins).values({
+        entityId: null,
+        name: 'Plugin B',
+        slug,
+        pluginType: 'webhook',
+        hook: 'pre_task',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('mcp_connections: rejects duplicate (entity_id, slug) — R5, audit #2 follow-up', async () => {
+    const slug = `unique-mcp-conn-${Date.now()}`;
+    await db.insert(schema.mcpConnections).values({
+      entityId: seed.entityId,
+      slug,
+    });
+    await expect(
+      db.insert(schema.mcpConnections).values({
+        entityId: seed.entityId,
+        slug,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('entity_members: rejects duplicate (entity_id, user_id) — found sweeping helpers.ts for R5, audit #2 follow-up', async () => {
+    const [extraUser] = await db
+      .insert(schema.users)
+      .values({ email: `dup-member-${Date.now()}@example.com` })
+      .returning();
+    await db
+      .insert(schema.entityMembers)
+      .values({ entityId: seed.entityId, userId: extraUser!.id, role: 'member' });
+    await expect(
+      db
+        .insert(schema.entityMembers)
+        .values({ entityId: seed.entityId, userId: extraUser!.id, role: 'admin' }),
+    ).rejects.toThrow();
+  });
 });

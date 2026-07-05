@@ -31,11 +31,12 @@ import type { ExecuteJobResult } from '../job/execute.ts';
  * agent_jobs.completed_at excludes delivered roots up front, so the caller's
  * loop only ever iterates roots that genuinely still need work.
  *
- * Note: there is no index on agent_tasks.root_job_id or agent_jobs.completed_at
- * today (checked packages/db/src/schema/tasks.ts + jobs.ts) — the join to
- * agent_jobs itself is cheap (keyed on the PK), but the FROM agent_tasks side
- * is still a full scan until such an index exists. Flagging, not adding a
- * migration for it here (out of scope for this fix).
+ * `idx_agent_tasks_root_job_id` (agent_tasks.root_job_id) and
+ * `idx_agent_jobs_completed_at_null` (agent_jobs.completed_at WHERE NULL) —
+ * added by migration 0054 (audit #2, DB-3) — back this exact query: the FROM
+ * agent_tasks side now hits the root_job_id index instead of a full scan, and
+ * the join's `completed_at IS NULL` filter hits the partial index (kept small
+ * since completed roots vastly outnumber open ones).
  *
  * Exported (not just inlined in deliverCompletedRoots) so the bound-scan
  * behavior itself is directly testable, independent of the per-row loop's own

@@ -9,6 +9,7 @@ import {
   jsonb,
   timestamp,
   index,
+  unique,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
@@ -151,7 +152,14 @@ export const agentSkillAssignments = pgTable(
     filesWritable: boolean('files_writable').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  () => [],
+  (table) => [
+    // DB-2 (audit #2): the table had no index beyond the PK, so assignSkillRepo's
+    // check-then-insert (packages/db/src/repos/skills.ts) could race and leave
+    // the same skill assigned twice to one agent. The unique index's leading
+    // column (agent_id) also serves the hot read path (execute.ts loads all
+    // skills for an agent) — no separate index needed on top of it.
+    unique('agent_skill_assignments_agent_skill_unique').on(table.agentId, table.skillId),
+  ],
 );
 
 export type AgentSkillAssignmentRow = typeof agentSkillAssignments.$inferSelect;

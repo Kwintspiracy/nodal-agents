@@ -188,7 +188,11 @@ export async function assignSkillRepo(
     .where(and(eq(agents.id, input.agentId), eq(agents.entityId, entityId)));
   if (!agent) return { error: 'agent_not_found' };
 
-  // Idempotent: skip if already assigned.
+  // Idempotent: skip if already assigned. The SELECT-then-INSERT still has a
+  // race window (two concurrent calls can both miss it), so the INSERT itself
+  // also carries `onConflictDoNothing` on the (agent_id, skill_id) unique
+  // constraint (DB-2, audit #2) — belt-and-suspenders dedup at the DB layer,
+  // not just the app layer.
   const [existing] = await db
     .select({ id: agentSkillAssignments.id })
     .from(agentSkillAssignments)
@@ -200,11 +204,16 @@ export async function assignSkillRepo(
     );
   if (existing) return { error: 'already_assigned' };
 
-  await db.insert(agentSkillAssignments).values({
-    entityId,
-    skillId: input.skillId,
-    agentId: input.agentId,
-  });
+  await db
+    .insert(agentSkillAssignments)
+    .values({
+      entityId,
+      skillId: input.skillId,
+      agentId: input.agentId,
+    })
+    .onConflictDoNothing({
+      target: [agentSkillAssignments.agentId, agentSkillAssignments.skillId],
+    });
 
   return { ok: true };
 }

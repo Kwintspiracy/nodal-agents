@@ -61,6 +61,10 @@ export const agentTasks = pgTable(
     index('idx_agent_tasks_orchestrator_status').on(table.orchestratorId, table.status),
     index('idx_agent_tasks_status').on(table.status),
     index('idx_agent_tasks_assigned').on(table.assignedAgentId),
+    // DB-3 (audit #2): findUndeliveredRootJobIds (apps/runner/src/cron/
+    // deliver-results.ts) scans `WHERE root_job_id IS NOT NULL` on every cron
+    // tick and had no index to support it — full scan on the hottest task table.
+    index('idx_agent_tasks_root_job_id').on(table.rootJobId),
     check(
       'agent_tasks_status_check',
       sql`${table.status} IN ('todo','in_progress','done','cancelled','blocked')`,

@@ -6,7 +6,7 @@
 //   8: anti-loop guards (ChainCounters from @nodal-agents/orchestration)
 //   9: tool whitelist explicit per agent (computeToolWhitelist)
 
-import { eq, and, isNull } from '@nodal-agents/db';
+import { eq, and, isNull, sql } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
@@ -1203,10 +1203,23 @@ async function runJob(
   }
 
   // ── 8. Load approval rules ────────────────────────────────────────────────────
+  // Deterministic order (audit #2 DB-1): most specific first (agent-scoped
+  // before entity-wide, exact tool before wildcard), then id as a stable
+  // tiebreaker. matchApprovalRule (packages/tools/src/execute.ts) already
+  // picks the single row for the tier it needs via `.find()` — the
+  // UNIQUE(entity_id, agent_id, tool_name) constraint on approval_rules means
+  // at most one row can exist per tier going forward — but an unordered SELECT
+  // would still make `.find()`'s result depend on physical row order for any
+  // pre-existing/seeded state. Sorting removes that dependency outright.
   const ruleRows = await db
     .select()
     .from(approvalRules)
-    .where(eq(approvalRules.entityId, job.entityId ?? ''));
+    .where(eq(approvalRules.entityId, job.entityId ?? ''))
+    .orderBy(
+      sql`${approvalRules.agentId} IS NULL`,
+      sql`${approvalRules.toolName} = '*'`,
+      approvalRules.id,
+    );
 
   let approvalRuleList: ApprovalRule[] = ruleRows.map((r) => ({
     id: r.id,
