@@ -25,6 +25,7 @@ import {
 } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition } from '../../types';
+import { windowsPathViolation } from '../file-ops/workspace';
 
 /** Max bytes returned by a single skill_file_read call (same cap as file_read). */
 const MAX_READ_BYTES = 1024 * 1024;
@@ -103,6 +104,13 @@ export async function resolveWithinSkill(realRoot: string, requestedPath: string
   const lexical = isAbsolute(requestedPath)
     ? resolvePath(requestedPath)
     : resolvePath(realRoot, requestedPath);
+
+  // Reject dangerous Windows path shapes (UNC, device names, ADS) BEFORE the
+  // stat() probing below — same rationale as file-ops/workspace.ts.
+  const violation = windowsPathViolation(requestedPath, lexical);
+  if (violation) {
+    throw new SkillFileError('path_escape', violation);
+  }
 
   // Walk up to the deepest existing ancestor, then realpath it — catches
   // symlink escapes on any segment that exists on disk while still allowing

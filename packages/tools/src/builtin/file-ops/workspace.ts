@@ -199,6 +199,77 @@ export async function resolveAndCheckPath(
   );
 }
 
+// ─── windowsPathViolation ─────────────────────────────────────────────────────
+
+/**
+ * Pure guard (no I/O) run BEFORE the `stat()` probing loop below. Catches
+ * Windows-specific path shapes that are dangerous to even `stat()`:
+ *
+ *   1. UNC / protocol-relative path (`\\host\share\x`, `//host/share/x`) — all
+ *      platforms, checked against BOTH `requestedPath` and `lexical`. No
+ *      legitimate workspace path ever starts with two leading
+ *      slashes/backslashes; `stat()`-ing one triggers an SMB connection (and
+ *      an NTLM auth handshake — a credential leak) before the boundary check
+ *      below would otherwise reject it.
+ *   2. Reserved device name (`CON`, `NUL`, `COM1`, `LPT1`, …) at ANY segment
+ *      — win32 only. Windows treats these as devices regardless of position
+ *      or extension (`NUL.txt`, `nul. `); opening one can hang.
+ *   3. Alternate Data Stream marker (`file.txt:hidden`, `foo::$DATA`) — win32
+ *      only. A `:` after the optional drive letter opens a hidden NTFS stream
+ *      instead of the real file.
+ *
+ * Checks 2 and 3 are win32-ONLY: `CON`/`NUL` and `:` are perfectly legal
+ * filenames on POSIX, so gating them there would break Linux/macOS for no
+ * reason. The `platform` param is injectable so tests are deterministic
+ * regardless of the CI host's actual OS.
+ *
+ * IMPORTANT: checks 2 and 3 run over `requestedPath` (the caller-supplied
+ * input) ONLY, never `lexical` (the fully-resolved path, which is prefixed by
+ * the workspace/skill ROOT the user/admin configured). If the root itself
+ * happens to contain a segment like "con" or a colon, that is not the
+ * agent's doing and must not lock every file in the workspace out — the root
+ * is trusted, only the path the agent supplies is untrusted input. The UNC
+ * check has no such exception: a UNC path is never legitimate no matter
+ * which side of the join it comes from, so it still checks both.
+ *
+ * Returns a human-readable violation reason, or `null` if the path is clean.
+ */
+export function windowsPathViolation(
+  requestedPath: string,
+  lexical: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const UNC_RE = /^[\\/]{2}/;
+  if (UNC_RE.test(requestedPath) || UNC_RE.test(lexical)) {
+    return `Path "${requestedPath}" looks like a UNC/network path (starts with two slashes), which is never a valid workspace path.`;
+  }
+
+  if (platform !== 'win32') return null;
+
+  const DEVICE_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+  for (const seg of requestedPath.split(/[\\/]+/).filter(Boolean)) {
+    // Windows reserves the device name at the segment's leading component
+    // regardless of how many extensions follow, and regardless of trailing
+    // dots/spaces: "aux.config.js", "con.txt.bak", "nul.tar.gz", "con. " all
+    // resolve to their device. This DOES mean a project file literally named
+    // "aux.config.js" is unreachable through this guard — but that mirrors
+    // real Windows behavior (such a file is unreachable through the normal
+    // filesystem API on an actual Windows box too), so this is an accepted,
+    // OS-faithful trade-off rather than an over-eager guard.
+    const base = (seg.split('.')[0] ?? '').replace(/\s+$/, '');
+    if (DEVICE_RE.test(base)) {
+      return `Path segment "${seg}" is a reserved Windows device name ("${base.toUpperCase()}"), never a legitimate workspace target.`;
+    }
+  }
+
+  const withoutDriveLetter = requestedPath.replace(/^[a-zA-Z]:/, '');
+  if (withoutDriveLetter.includes(':')) {
+    return `Path "${requestedPath}" contains an Alternate Data Stream marker (":"), which is never a legitimate workspace target.`;
+  }
+
+  return null;
+}
+
 // ─── resolveUnderRoot (private) ──────────────────────────────────────────────
 
 /**
@@ -229,6 +300,14 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
   const lexical = isAbsolute(requestedPath)
     ? resolvePath(requestedPath)
     : resolvePath(realRoot, requestedPath);
+
+  // Reject dangerous Windows path shapes (UNC, device names, ADS) BEFORE the
+  // stat() probing below — stat()-ing a UNC path triggers an SMB/NTLM
+  // handshake, which is itself the leak we're guarding against.
+  const violation = windowsPathViolation(requestedPath, lexical);
+  if (violation) {
+    throw new WorkspaceError('path_traversal_blocked', violation);
+  }
 
   // Walk up to find the deepest existing ancestor of the lexical path, then
   // realpath() that. This lets us validate paths whose intermediate directories

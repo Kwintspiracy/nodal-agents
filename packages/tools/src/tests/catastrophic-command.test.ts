@@ -21,6 +21,38 @@ describe('isCatastrophicCommand — catches machine-wide destruction', () => {
     'reboot',
     'init 0',
     'echo x > /dev/sda',
+    // Windows
+    'format C: /y',
+    'format /q /y D:',
+    'Remove-Item -Recurse -Force C:\\',
+    'Remove-Item -r -Force C:\\',
+    'del /f /s /q C:\\*',
+    'rd /s /q C:\\',
+    'rmdir /s /q D:\\',
+    'Stop-Computer -Force',
+    'Restart-Computer',
+    'diskpart',
+    // newline as statement separator (dodges the segment `^rm` anchor otherwise)
+    'echo start\nrm -rf / --no-preserve-root',
+    'echo hi\nformat C:',
+    // interpreter/wrapper bypass — command token isn't first in the segment
+    'cmd /c format C:',
+    'powershell -Command "format C:"',
+    'format.com C:',
+    'format.exe /q D:',
+    'cmd /c del /s /q C:',
+    // PowerShell's `rm` alias (for Remove-Item) against a Windows drive root
+    'rm -r -Force C:\\',
+    'rm -Recurse -Force C:\\',
+    // disk cmdlets
+    'Format-Volume -DriveLetter C',
+    'Clear-Disk -Number 0',
+    'Initialize-Disk -Number 0',
+    // dd bypassing the device check via a shell line-continuation
+    'dd if=/dev/zero \\\nof=/dev/sda',
+    // `rm` wrapped in an interpreter — command token isn't first in the segment
+    'cmd /c rm -rf /',
+    'cmd /c rm -Recurse -Force C:\\',
   ];
   for (const cmd of catastrophic) {
     it(`flags: ${cmd}`, () => {
@@ -42,6 +74,18 @@ describe('isCatastrophicCommand — leaves ordinary commands alone', () => {
     'cat /etc/hostname',
     'echo "rm -rf /" # just a comment about it', // mentions but inside a quoted echo string
     'dd if=input.bin of=output.bin',
+    // Windows false-positive traps: "format" appears but not as the command word
+    'clang-format C:\\src\\main.c',
+    'git format-patch -1',
+    'dotnet format',
+    'Format-Table',
+    'Remove-Item .\\build -Recurse -Force',
+    'del build\\out.txt',
+    'rd /s /q .\\node_modules',
+    'Stop-Process -Name node',
+    'Get-Content C:\\file.txt',
+    'echo just formatting text',
+    'npm rm foo', // "rm" token present, but no recursive+force flags and no root target
     '',
   ];
   for (const cmd of safe) {

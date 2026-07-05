@@ -113,6 +113,16 @@ describe('skill_file_read — security boundary', () => {
     expect(r.reason).toContain('outside the skill folder');
   });
 
+  it('blocks a UNC path before it can trigger an SMB/NTLM handshake', async () => {
+    const r = await skillFileReadTool.execute(
+      { skill: SLUG, path: '\\\\attacker\\share\\secret.key' },
+      ctx({ store: STORE, assigned: [SLUG] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected failure');
+    expect(r.reason).toMatch(/UNC|network path/i);
+  });
+
   it('refuses a skill the agent does not hold', async () => {
     const r = await skillFileReadTool.execute(
       { skill: SLUG, path: 'SKILL.md' },
