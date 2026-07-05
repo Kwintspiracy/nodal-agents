@@ -43,12 +43,28 @@ vi.mock('@nodal-agents/llm', async (importOriginal) => {
 // Toggle so a single test can force runCuratorTick to throw — proves the
 // tick.ts try/catch guard (audit finding, curator Date-bind bug) keeps the
 // rest of the tick (delivery, retention) running even when the curator dies.
-const { getCuratorShouldThrow, setCuratorShouldThrow } = vi.hoisted(() => {
+// callCount lets other tests prove runCuratorTick was actually invoked (not
+// skipped) without caring whether it threw.
+const {
+  getCuratorShouldThrow,
+  setCuratorShouldThrow,
+  bumpCuratorCallCount,
+  getCuratorCallCount,
+  resetCuratorCallCount,
+} = vi.hoisted(() => {
   let _throw = false;
+  let _calls = 0;
   return {
     getCuratorShouldThrow: () => _throw,
     setCuratorShouldThrow: (v: boolean) => {
       _throw = v;
+    },
+    bumpCuratorCallCount: () => {
+      _calls += 1;
+    },
+    getCuratorCallCount: () => _calls,
+    resetCuratorCallCount: () => {
+      _calls = 0;
     },
   };
 });
@@ -59,8 +75,38 @@ vi.mock('../run-curator.ts', async (importOriginal) => {
   return {
     ...actual,
     runCuratorTick: (...args: Parameters<typeof actual.runCuratorTick>) => {
+      bumpCuratorCallCount();
       if (getCuratorShouldThrow()) throw new Error('tick.test: simulated curator crash');
       return actual.runCuratorTick(...args);
+    },
+  };
+});
+
+// Toggle so a single test can force resetOrphanedJobs (Phase 1, the FIRST
+// phase in runCronTick) to throw — proves finding H-2 (audit): a throw this
+// early used to propagate out of runCronTick and skip every phase after it
+// (schedules, delivery, curator, retention), not just the two phases the
+// prior fix (3cc2789) guarded.
+const { getResetOrphanedJobsShouldThrow, setResetOrphanedJobsShouldThrow } = vi.hoisted(() => {
+  let _throw = false;
+  return {
+    getResetOrphanedJobsShouldThrow: () => _throw,
+    setResetOrphanedJobsShouldThrow: (v: boolean) => {
+      _throw = v;
+    },
+  };
+});
+
+vi.mock('../reset-orphans.ts', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('../reset-orphans.ts')>();
+  return {
+    ...actual,
+    resetOrphanedJobs: (...args: Parameters<typeof actual.resetOrphanedJobs>) => {
+      if (getResetOrphanedJobsShouldThrow()) {
+        throw new Error('tick.test: simulated resetOrphanedJobs crash');
+      }
+      return actual.resetOrphanedJobs(...args);
     },
   };
 });
@@ -511,6 +557,66 @@ describe('runCronTick (integration)', () => {
       expect(delivered[0]?.status).toBe('completed');
     } finally {
       setCuratorShouldThrow(false);
+    }
+  });
+
+  it('finding H-2: a crashing early phase (resetOrphanedJobs) does not crash the tick — later phases still run', async () => {
+    // Root job whose only task is already done — ready for phase 7 delivery,
+    // completely independent of resetOrphanedJobs (Phase 1, the very first
+    // phase in runCronTick).
+    const [rootJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'root job unaffected by phase 1 crash',
+        status: 'processing',
+        messages: [],
+      })
+      .returning();
+    await db.insert(agentTasks).values({
+      entityId: seed.entityId,
+      orchestratorId: seed.agentId,
+      assignedAgentId: seed.agentId,
+      title: 'Already-done task',
+      status: 'done',
+      result: 'done before this tick',
+      rootJobId: rootJob!.id,
+    });
+
+    setResetOrphanedJobsShouldThrow(true);
+    resetCuratorCallCount();
+    try {
+      const deps = makeDeps(db);
+
+      // Before the H-2 fix, this await would REJECT — the throw from
+      // resetOrphanedJobs propagated straight out of runCronTick, past every
+      // later phase (recovery, unblock, execute, schedules, delivery,
+      // curator, retention). Asserting the promise resolves is itself part
+      // of the proof; the fallback value below is the rest.
+      const result = await runCronTick(deps, 5);
+
+      // Phase 1 failed and reports its documented fallback (0), not a crash.
+      expect(result.orphanJobsReset).toBe(0);
+
+      // Yet phase 7 (delivery), which runs well AFTER the crashing phase 1
+      // in tick order, still ran and delivered the unrelated root within
+      // this same tick — proof the later phases were not skipped.
+      expect(result.rootsDelivered).toBeGreaterThanOrEqual(1);
+      const delivered = await db
+        .select({ completedAt: agentJobs.completedAt, status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, rootJob!.id));
+      expect(delivered[0]?.completedAt).not.toBeNull();
+      expect(delivered[0]?.status).toBe('completed');
+
+      // The curator (the LAST guarded phase before retention) was actually
+      // invoked — a call-count spy, not just a shape check — proof it was
+      // not skipped either.
+      expect(getCuratorCallCount()).toBeGreaterThanOrEqual(1);
+    } finally {
+      setResetOrphanedJobsShouldThrow(false);
     }
   });
 });

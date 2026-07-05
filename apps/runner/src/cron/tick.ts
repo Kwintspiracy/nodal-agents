@@ -58,6 +58,30 @@ export interface CronTickResult {
   retentionToolCallsDeleted: number;
 }
 
+// ─── guardPhase ───────────────────────────────────────────────────────────────
+
+/**
+ * Run one cron phase in isolation: a throw is caught, logged, and swallowed
+ * so it can never take down the rest of the tick. Returns `fallback` when
+ * `fn` throws.
+ *
+ * Audit finding H-2: a previous fix (commit 3cc2789) only guarded
+ * deliverCompletedRoots and runCuratorTick, leaving phases 1/3/4/5 as bare
+ * `await`s — a throw from ANY of those still propagated out of
+ * runCronTick and skipped every phase after it (schedules, delivery,
+ * curator, retention), silently, every 120s. This helper closes that gap
+ * for every phase that fits its shape (see the pending-recovery loop below
+ * for the one phase that doesn't and is guarded explicitly instead).
+ */
+async function guardPhase<T>(label: string, fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    console.warn(`[cron] ${label} failed (tick continues):`, err);
+    return fallback;
+  }
+}
+
 // ─── runCronTick ──────────────────────────────────────────────────────────────
 
 /**
@@ -81,7 +105,7 @@ export interface CronTickResult {
  * @param maxTasksPerTick  Max tasks to execute in Phase 5 (default 5)
  */
 export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promise<CronTickResult> {
-  const orphanJobsReset = await resetOrphanedJobs(deps.db);
+  const orphanJobsReset = await guardPhase('resetOrphanedJobs', () => resetOrphanedJobs(deps.db), 0);
 
   // Recover stale pending jobs by driving them through executeJob in this
   // process. We deliberately call executeJob directly (no HTTP roundtrip
@@ -98,18 +122,47 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   // are abandoned tasks the user has moved on from, and silently
   // resurrecting a 4-day-old request would create surprise jobs the
   // user has no context for (caught live 2026-05-26, job 03cd4304).
-  const pendingIds = await findPendingJobsToRecover(deps.db);
-  for (const id of pendingIds) {
-    void executeJob(id as JobId, deps).catch((err) => {
-      console.warn('[cron] pending recovery failed for', id, err);
-    });
+  //
+  // Guarded explicitly (doesn't fit guardPhase's shape): the per-item
+  // `void executeJob(...).catch()` fire-and-forget is already isolated
+  // per job, but the `findPendingJobsToRecover` query itself can still
+  // throw — if it does, `pendingRecovered` stays 0 and the tick continues.
+  let pendingRecovered = 0;
+  try {
+    const pendingIds = await findPendingJobsToRecover(deps.db);
+    for (const id of pendingIds) {
+      void executeJob(id as JobId, deps).catch((err) => {
+        console.warn('[cron] pending recovery failed for', id, err);
+      });
+    }
+    pendingRecovered = pendingIds.length;
+  } catch (err) {
+    console.warn('[cron] findPendingJobsToRecover failed (tick continues):', err);
   }
-  const pendingRecovered = pendingIds.length;
-  const stalePendingFailed = await failStalePendingJobs(deps.db);
+  const stalePendingFailed = await guardPhase(
+    'failStalePendingJobs',
+    () => failStalePendingJobs(deps.db),
+    0,
+  );
 
-  const orphansReset = await resetOrphanedTasks(deps.db);
-  const tasksUnblocked = await unblockReadyTasks(deps.db);
-  const tasksExecuted = await executeReadyTasks(deps.db, deps, maxTasksPerTick);
+  const orphansReset = await guardPhase('resetOrphanedTasks', () => resetOrphanedTasks(deps.db), 0);
+  const tasksUnblocked = await guardPhase('unblockReadyTasks', () => unblockReadyTasks(deps.db), 0);
+  // Phase 5 stays INDEPENDENT of Phase 4's success — do NOT gate it on
+  // `tasksUnblocked` or skip it when unblockReadyTasks threw. Two reasons:
+  // (1) executeReadyTasks re-checks dep readiness itself (execute-ready.ts:77,
+  //     all deps 'done') AND injects each done sibling's result via loadRunMemory
+  //     (execute-ready.ts:333, keyed on rootJobId), so a dependent task still
+  //     sees its dependency outputs even if Phase 4 didn't populate context.deps
+  //     this tick — the only loss is the "## Data from previous steps" framing,
+  //     not the data (audit H-2 review, adversarial axe 2).
+  // (2) Coupling Phase 5 to Phase 4 would reintroduce a stall: a permanent
+  //     unblockReadyTasks failure would then also freeze no-dep task execution
+  //     forever — strictly worse than the cosmetic framing degradation above.
+  const tasksExecuted = await guardPhase(
+    'executeReadyTasks',
+    () => executeReadyTasks(deps.db, deps, maxTasksPerTick),
+    0,
+  );
 
   // Fire-and-forget, same shape as the pending-recovery phase above (line
   // ~87): a schedule whose fired job runs a long orchestrator (observed live:

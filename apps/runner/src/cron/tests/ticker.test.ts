@@ -4,9 +4,42 @@
 //   - stop() prevents further ticks
 //   - onError callback called on tick error, ticker continues
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { startCronTicker } from '../ticker.ts';
 import type { RunnerDeps } from '../../deps.ts';
+
+// Finding H-2 (audit): runCronTick now isolates every phase internally (see
+// tick.test.ts), so it no longer rejects even when deps.db is a broken stub
+// — every phase's throw is caught and logged, and the tick resolves with
+// fallback counts. That's the fix working as intended, but it means this
+// file can no longer exercise the ticker's onError wiring by handing it
+// deliberately-broken deps and waiting for runCronTick to throw "for free".
+// Mock '../tick.ts' instead so this file tests ONLY the ticker's own
+// catch/continue plumbing (`runCronTick(deps, 5).catch(onError)` in
+// ticker.ts), independently of tick.ts's internal resilience.
+const { getTickShouldThrow, setTickShouldThrow } = vi.hoisted(() => {
+  let _throw = false;
+  return {
+    getTickShouldThrow: () => _throw,
+    setTickShouldThrow: (v: boolean) => {
+      _throw = v;
+    },
+  };
+});
+
+vi.mock('../tick.ts', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('../tick.ts')>();
+  return {
+    ...actual,
+    runCronTick: (...args: Parameters<typeof actual.runCronTick>) => {
+      if (getTickShouldThrow()) {
+        return Promise.reject(new Error('ticker.test: simulated runCronTick rejection'));
+      }
+      return actual.runCronTick(...args);
+    },
+  };
+});
 
 // ─── Minimal deps stub ────────────────────────────────────────────────────────
 
@@ -52,24 +85,29 @@ describe('startCronTicker', () => {
     const errors: unknown[] = [];
     const deps = makeStubDeps();
 
-    // startCronTicker calls runCronTick which will fail on empty db {}
-    // onError must be called, not re-thrown
-    const ticker = startCronTicker(deps, {
-      intervalMs: 30, // very short for fast test
-      onError: (e) => {
-        errors.push(e);
-      },
-    });
+    setTickShouldThrow(true);
+    try {
+      // The mocked runCronTick (above) rejects unconditionally while this
+      // flag is set — onError must be called, not re-thrown.
+      const ticker = startCronTicker(deps, {
+        intervalMs: 30, // very short for fast test
+        onError: (e) => {
+          errors.push(e);
+        },
+      });
 
-    // Wait for at least one tick to fire and fail
-    await new Promise((resolve) => setTimeout(resolve, 150));
+      // Wait for at least one tick to fire and fail
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
-    ticker.stop();
+      ticker.stop();
 
-    // runCronTick with stub deps (empty db) should have thrown, onError should have been called
-    expect(errors.length).toBeGreaterThan(0);
-    // The ticker must still be alive after errors (no re-throw)
-    // Verified: stop() called above without error proves ticker survived
+      // runCronTick rejected, onError should have been called
+      expect(errors.length).toBeGreaterThan(0);
+      // The ticker must still be alive after errors (no re-throw)
+      // Verified: stop() called above without error proves ticker survived
+    } finally {
+      setTickShouldThrow(false);
+    }
   });
 
   it('returns a handle with a stop method', () => {
