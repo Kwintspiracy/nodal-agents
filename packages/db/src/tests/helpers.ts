@@ -531,6 +531,16 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
+    -- ── entity_settings (migration 0055 — M-2, audit #2) ─────────────────────
+
+    CREATE TABLE IF NOT EXISTS entity_settings (
+      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      key text NOT NULL,
+      value text NOT NULL DEFAULT '',
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (entity_id, key)
+    );
+
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS sessions (

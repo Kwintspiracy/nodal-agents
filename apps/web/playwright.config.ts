@@ -8,7 +8,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * Playwright config for Nodal-Agents web e2e.
  *
  * Tests assume a local Nodal-Agents stack is already running (web + runner + DB).
- * Bring it up with `nodal-agents up --dev` or `nodal-agents up` before `pnpm e2e`.
+ * Bring it up with `pnpm e2e:up` (wraps `nodal-agents up` — add `-- --dev` for
+ * HMR) before `pnpm e2e`. Plain `nodal-agents up`/`nodal-agents up --dev` also
+ * work EXCEPT for the OAuth specs below, which need `pnpm e2e:up` specifically.
+ *
+ * OAuth e2e specs (oauth-flow, notion-oauth, credentials-reuse, airtable-oauth)
+ * drive the callback route with a synthetic "mock-" authorization code instead
+ * of a real provider round-trip. That bypass is OFF by default (I-9, audit #2)
+ * — `pnpm e2e:up` (tests/e2e/up-with-oauth-mock.mjs) sets
+ * NODALAI_ALLOW_OAUTH_MOCK=1 for you before spawning `nodal-agents up`, so
+ * those specs work with no extra manual step. This flag is NEVER set by a
+ * plain `nodal-agents up` — never set it yourself outside e2e.
  *
  * Auth: global-setup creates/logs-in the sentinel user `e2e-playwright@nodalai.local`
  * and saves the session cookie to tests/e2e/.auth/user.json. Every project loads

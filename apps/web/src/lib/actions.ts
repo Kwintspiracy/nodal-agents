@@ -24,6 +24,8 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { realpath as fsRealpath } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import ipaddr from 'ipaddr.js';
 import {
   eq,
   and,
@@ -52,6 +54,7 @@ import {
   agentWorkspaces,
   entities,
   entityMembers,
+  users,
   createAgentRepo,
   createSkillRepo,
   assignSkillRepo,
@@ -129,6 +132,29 @@ async function getSession() {
   }
   const session = await requireAuth(req, provider);
   return applyActiveEntity(session, req);
+}
+
+/**
+ * Guard for actions that rewrite host-wide config (~/.nodalai/config.json —
+ * auth mode, network bind). A plain owner-of-entity check is NOT enough here:
+ * these settings apply to the whole host process, not to one workspace, and
+ * `entityMembers.role` defaults every member to 'owner' on the entity they
+ * were invited into — so an owner check doesn't distinguish "owns this
+ * workspace" from "owns this install". We only allow the action when the
+ * host has at most one local-auth user account (the mono-user case = the
+ * person who ran `nodal-agents init`). With 2+ accounts, refuse — that
+ * config must be edited directly on the server.
+ */
+async function assertMonoUserHostInstall(): Promise<ActionResult<never> | null> {
+  const db = getDb();
+  const rows = await db.select({ id: users.id }).from(users).limit(2);
+  if (rows.length > 1) {
+    return fail(
+      'multi_user_host',
+      'This action changes configuration for the entire host and is only allowed on a single-user install. With multiple accounts, edit ~/.nodalai/config.json directly on the server.',
+    );
+  }
+  return null;
 }
 
 // ─── Workspaces (entities) ──────────────────────────────────────────────────────
@@ -3425,9 +3451,11 @@ export async function assignCredentialAction(
     revalidatePath('/connectors');
     return ok(undefined);
   } catch (err) {
+    // I-10 (audit #2): log the real detail server-side only — never return
+    // err.message to the UI, it can carry internal detail (driver errors,
+    // paths, connection strings) the client has no business seeing.
     console.error('[assignCredentialAction]', err);
-    const detail = err instanceof Error ? err.message : String(err);
-    return fail('db_error', `Failed to assign credential: ${detail}`);
+    return fail('db_error', 'Failed to assign credential');
   }
 }
 
@@ -3510,9 +3538,10 @@ export async function createOrAssignOAuthConnectorAction(
     revalidatePath('/connectors');
     return ok({ connectorId: row.id });
   } catch (err) {
+    // I-10 (audit #2): same rationale as assignCredentialAction above — never
+    // forward err.message to the client.
     console.error('[createOrAssignOAuthConnectorAction]', err);
-    const detail = err instanceof Error ? err.message : String(err);
-    return fail('db_error', `Failed to assign credential: ${detail}`);
+    return fail('db_error', 'Failed to assign credential');
   }
 }
 
@@ -5960,6 +5989,8 @@ export async function updateAuthSettingsAction(
 ): Promise<ActionResult<{ requiresRestart: boolean }>> {
   try {
     await getSession();
+    const guard = await assertMonoUserHostInstall();
+    if (guard) return guard;
     const parsed = UpdateAuthSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
@@ -6084,6 +6115,8 @@ export async function updateNetworkSettingsAction(
 ): Promise<ActionResult<{ requiresRestart: boolean }>> {
   try {
     await getSession();
+    const guard = await assertMonoUserHostInstall();
+    if (guard) return guard;
     const parsed = UpdateNetworkSchema.safeParse(raw);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
@@ -6399,6 +6432,165 @@ export async function deleteLlmKeyAction(id: string): Promise<ActionResult<void>
   }
 }
 
+// ─── SSRF guard for user-supplied LLM baseUrl (F-1, audit #2) ────────────────
+//
+// A custom baseUrl is a legitimate feature (ollama / self-hosted proxies on
+// the LAN), so we do NOT block private-network hosts (loopback, 10/8,
+// 172.16/12, 192.168/16). We DO block cloud instance-metadata endpoints and
+// link-local addresses: there is no legitimate reason an LLM endpoint lives
+// there, and it's the classic SSRF target (cloud IMDS serves IAM credentials
+// with no auth check).
+//
+// Round 2 fixes (post-review PoCs):
+//   - Hand-rolled regexes on the raw string missed an IPv4-mapped IPv6
+//     literal (`[::ffff:169.254.169.254]`) — `ipaddr.js` parses BOTH families
+//     and lets us extract the IPv4 embedded in an IPv6 literal before
+//     classifying, so the mapped form is caught the same as the plain IPv4
+//     form. `range()==='linkLocal'` covers 169.254.0.0/16 AND fe80::/10 by
+//     construction (no more hand-maintained CIDR regexes).
+//   - Alibaba (100.100.100.200) and Oracle Cloud (192.0.0.192) run their IMDS
+//     on addresses ipaddr.js classifies as ordinary 'unicast' (not
+//     link-local) — blocked via an explicit address list alongside the
+//     metadata hostnames.
+//   - A baseUrl that itself passes the guard could still 302 to a blocked
+//     address; both fetch call sites now use `redirect: 'manual'` and
+//     revalidate the `Location` target through this same guard before
+//     following it (see `ssrfSafeFetch` below) — at most one hop.
+//
+// Round 3 fixes (post-review PoCs):
+//   - fd00:ec2::254 (AWS IMDSv2's IPv6 metadata address) is a unique-local
+//     /128 — `range()==='uniqueLocal'`, never 'linkLocal' — so it needs its
+//     own explicit-address entry, same as the Alibaba/Oracle IPv4s. Matched
+//     against ipaddr.js's NORMALIZED toString() (not the raw input string)
+//     so every spelling of the same address (case, zero-expansion) matches.
+//   - The IPv4-mapped unwrap only recognized ONE of several IPv6 encodings
+//     that embed a dangerous IPv4 address in their trailing bits: the
+//     deprecated IPv4-compatible form (::a9fe:a9fe, no `ffff` marker),
+//     NAT64/RFC6145 (::ffff:0:169.254.169.254), and 6to4 (2002:a9fe:a9fe::)
+//     all carry it too. `extractEmbeddedIPv4Candidates` extracts unconditionally
+//     from the trailing 32 bits (covers the first three) and — for the 6to4
+//     prefix specifically — from bits 16-47, closing the whole class at once
+//     instead of adding cases one PoC at a time.
+//
+// Limitation (documented, not closed): for a DNS hostname we resolve once
+// here to check the address, then let fetch() re-resolve independently. An
+// attacker who fully controls the DNS response for that hostname could
+// return a benign address for this check and a blocked one moments later
+// ("DNS rebinding"). Closing that fully would require pinning the actual
+// fetch to the address resolved here (custom Agent/dispatcher) — not done.
+// Literal-IP inputs and the well-known metadata hostnames/addresses below are
+// fully covered regardless of DNS behavior.
+const BLOCKED_SSRF_HOSTNAMES = new Set(['metadata.google.internal', 'metadata.azure.com']);
+
+/**
+ * Full literal addresses that are dangerous but aren't classified
+ * 'linkLocal' by ipaddr.js's `range()`: cloud IMDS endpoints on ordinary
+ * 'unicast' IPv4 (Alibaba, Oracle), and AWS IMDSv2's IPv6 address
+ * (fd00:ec2::254 — 'uniqueLocal', NOT link-local; blocking the whole
+ * uniqueLocal range would break legitimate private IPv6 LAN usage, so only
+ * this exact address is listed). Pre-normalized via ipaddr.js's own
+ * toString() at module load so every literal spelling of the same address
+ * (case, zero-expansion, compression) matches at lookup time.
+ */
+const BLOCKED_SSRF_EXACT_ADDRESSES = new Set(
+  ['100.100.100.200', '192.0.0.192', 'fd00:ec2::254'].map((ip) => ipaddr.parse(ip).toString()),
+);
+
+function isLinkLocalOrBlocked(
+  addr: import('ipaddr.js').IPv4 | import('ipaddr.js').IPv6,
+): boolean {
+  if (BLOCKED_SSRF_EXACT_ADDRESSES.has(addr.toString())) return true;
+  return addr.range() === 'linkLocal';
+}
+
+/**
+ * IPv4 addresses embedded inside an IPv6 literal, across every encoding that
+ * places one there. IPv4-mapped (::ffff:a.b.c.d), the deprecated IPv4-compatible
+ * form (::a.b.c.d), and NAT64/RFC6145 (::ffff:0:a.b.c.d) all carry it in the
+ * trailing 32 bits regardless of the prefix in front of it — extracting
+ * unconditionally (rather than gating on `isIPv4MappedAddress()`, which only
+ * recognizes the first of the three) catches all of them at once. 6to4
+ * (2002::/16) carries it instead in bits 16-47.
+ */
+function extractEmbeddedIPv4Candidates(
+  v6: import('ipaddr.js').IPv6,
+): import('ipaddr.js').IPv4[] {
+  const bytes = v6.toByteArray();
+  const candidates = [ipaddr.fromByteArray(bytes.slice(12, 16)) as import('ipaddr.js').IPv4];
+  if (bytes[0] === 0x20 && bytes[1] === 0x02) {
+    candidates.push(ipaddr.fromByteArray(bytes.slice(2, 6)) as import('ipaddr.js').IPv4);
+  }
+  return candidates;
+}
+
+function isBlockedSsrfAddress(host: string): boolean {
+  if (!ipaddr.isValid(host)) return false;
+  const parsed = ipaddr.parse(host);
+  if (parsed.kind() === 'ipv4') {
+    return isLinkLocalOrBlocked(parsed);
+  }
+  const v6 = parsed as import('ipaddr.js').IPv6;
+  if (isLinkLocalOrBlocked(v6)) return true;
+  return extractEmbeddedIPv4Candidates(v6).some((candidate) => isLinkLocalOrBlocked(candidate));
+}
+
+/** Returns an error message if `rawUrl` targets a blocked endpoint, else null. */
+async function assertSsrfSafeUrl(rawUrl: string): Promise<string | null> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return 'Invalid URL';
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+  if (BLOCKED_SSRF_HOSTNAMES.has(hostname.toLowerCase())) {
+    return 'This endpoint is not reachable (blocked cloud metadata hostname).';
+  }
+  if (ipaddr.isValid(hostname)) {
+    if (isBlockedSsrfAddress(hostname)) {
+      return 'This endpoint is not reachable (link-local / cloud metadata address).';
+    }
+    return null;
+  }
+  try {
+    const resolved = await dnsLookup(hostname, { all: true });
+    for (const { address } of resolved) {
+      if (isBlockedSsrfAddress(address)) {
+        return 'This endpoint is not reachable (resolves to a link-local / cloud metadata address).';
+      }
+    }
+  } catch {
+    // Resolution failure here isn't a security decision — let the real fetch
+    // fail on its own and surface its own (generic) connection error.
+  }
+  return null;
+}
+
+/**
+ * fetch() with SSRF-safe redirect handling (F-1, audit #2 round 2). A baseUrl
+ * that itself passes `assertSsrfSafeUrl` could still respond with a 3xx that
+ * points at a blocked address — the default `redirect: 'follow'` would reach
+ * it without ever being revalidated. This disables auto-follow, reads the
+ * `Location` header of a 3xx response, revalidates THAT target through the
+ * same guard, and follows it at most once (an SSRF-blocked or missing
+ * Location target throws, which every caller here treats as a connection
+ * failure — never followed).
+ */
+async function ssrfSafeFetch(url: string, init: RequestInit): Promise<Response> {
+  const res = await fetch(url, { ...init, redirect: 'manual' });
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get('location');
+    if (!location) return res;
+    const target = new URL(location, url).toString();
+    const ssrfError = await assertSsrfSafeUrl(target);
+    if (ssrfError) {
+      throw new Error(`Redirect target blocked: ${ssrfError}`);
+    }
+    return fetch(target, { ...init, redirect: 'manual' });
+  }
+  return res;
+}
+
 const PROVIDER_TEST_CONFIG: Record<
   LlmProvider,
   {
@@ -6451,6 +6643,8 @@ async function fetchProviderModelIds(
     // OpenRouter's validated path is /auth/key — not a model list endpoint.
     if (provider === 'openrouter') return [];
 
+    if (await assertSsrfSafeUrl(effectiveBase)) return [];
+
     const headers: Record<string, string> = { Accept: 'application/json' };
     let url = `${effectiveBase}${cfg.path}`;
 
@@ -6463,7 +6657,7 @@ async function fetchProviderModelIds(
       url = `${url}?key=${encodeURIComponent(apiKey ?? '')}`;
     }
 
-    const res = await fetch(url, { method: 'GET', headers });
+    const res = await ssrfSafeFetch(url, { method: 'GET', headers });
     if (!res.ok) return [];
 
     const data = (await res.json()) as Record<string, unknown>;
@@ -6542,6 +6736,11 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
       return fail('validation_failed', `baseUrl is required for ${provider}`);
     }
 
+    const ssrfError = await assertSsrfSafeUrl(effectiveBase);
+    if (ssrfError) {
+      return fail('validation_failed', ssrfError);
+    }
+
     const headers: Record<string, string> = { Accept: 'application/json' };
     let url = `${effectiveBase}${cfg.path}`;
 
@@ -6555,14 +6754,12 @@ export async function testLlmKeyAction(raw: unknown): Promise<ActionResult<{ mes
       url = `${url}?key=${encodeURIComponent(apiKey ?? '')}`;
     }
 
-    const res = await fetch(url, { method: 'GET', headers });
+    const res = await ssrfSafeFetch(url, { method: 'GET', headers });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      const truncated = body.slice(0, 200);
-      return fail(
-        'connection_failed',
-        redactKey(`${provider} responded ${res.status}: ${truncated}`, apiKey),
-      );
+      // F-1 (audit #2): the remote body is NEVER reflected back to the UI —
+      // it could contain anything the endpoint chooses to return, including
+      // data from an internal service reached via SSRF. Status code only.
+      return fail('connection_failed', `${provider} responded with status ${res.status}.`);
     }
 
     // Parse a model count where possible. We don't fail on parse error — a 200
@@ -6732,18 +6929,20 @@ export async function listAgentConnectorsAction(
   }
 }
 
-// ─── Install Notes (machine-global setting) ──────────────────────────────────
+// ─── Install Notes (per-workspace setting) ───────────────────────────────────
 //
-// Operator-authored text injected into every agent's system prompt as
-// `### Install notes (from the operator)` inside the `## Runtime` block.
-// Applies live — no restart required. Useful for machine-specifics that
-// auto-detection can't capture (e.g. "ComfyUI runs on :8188").
+// Operator-authored text injected into the system prompt of every agent
+// BELONGING TO THIS ENTITY as `### Install notes (from the operator)` inside
+// the `## Runtime` block. Applies live — no restart required. Useful for
+// machine-specifics that auto-detection can't capture (e.g. "ComfyUI runs on
+// :8188"). Scoped per entity (M-2, audit #2): notes written for one workspace
+// must never be injected into another workspace's agents.
 
 export async function getInstallNotesAction(): Promise<ActionResult<string>> {
   try {
-    await getSession();
+    const session = await getSession();
     const db = getDb();
-    const notes = await getInstallNotes(db);
+    const notes = await getInstallNotes(db, session.entityId);
     return ok(notes);
   } catch (err) {
     console.error('[getInstallNotesAction]', err);
@@ -6753,13 +6952,25 @@ export async function getInstallNotesAction(): Promise<ActionResult<string>> {
 
 export async function setInstallNotesAction(notes: string): Promise<ActionResult<void>> {
   try {
-    await getSession();
+    const session = await getSession();
     const parsed = z.string().max(4000).safeParse(notes);
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
-    await setInstallNotes(db, parsed.data);
+    // Owner-gated: install notes are injected into every agent's prompt for
+    // this workspace, so any non-owner member writing here is effectively
+    // steering every agent's behavior on that owner's behalf.
+    const [member] = await db
+      .select({ role: entityMembers.role })
+      .from(entityMembers)
+      .where(
+        and(eq(entityMembers.userId, session.userId), eq(entityMembers.entityId, session.entityId)),
+      );
+    if (!member || member.role !== 'owner') {
+      return fail('forbidden', 'Only the workspace owner can set install notes.');
+    }
+    await setInstallNotes(db, session.entityId, parsed.data);
     revalidatePath('/settings');
     return ok(undefined);
   } catch (err) {
@@ -6881,7 +7092,7 @@ export async function getRootSystemPromptAction(): Promise<ActionResult<string>>
             : 'Linux',
       networkMode: (process.env['BIND'] === '0.0.0.0' ? 'lan' : 'loopback') as 'loopback' | 'lan',
       authMode: process.env['AUTH_MODE'] ?? 'local-trust',
-      installNotes: await getInstallNotes(db),
+      installNotes: await getInstallNotes(db, session.entityId),
     };
 
     const prompt = await buildSystemPrompt(agent, db, { origin: 'dashboard', deployment });

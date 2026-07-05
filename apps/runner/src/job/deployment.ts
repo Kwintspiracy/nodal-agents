@@ -72,9 +72,12 @@ export async function getDeploymentContext(
   const containerized =
     existsSync('/.dockerenv') || !!process.env['NODALAI_CONTAINER'] || undefined;
 
-  // Guard: app_settings table may not exist on older installs (pre-migration 0045).
-  // A missing table is not a fatal error — just omit install notes gracefully.
-  const installNotes = await getInstallNotes(db).catch(() => '');
+  // Guard: entity_settings table may not exist on older installs (pre-migration
+  // 0055). A missing table is not a fatal error — just omit install notes
+  // gracefully. Install notes are entity-scoped (M-2, audit #2): without an
+  // entityId we have no isolation boundary to read against, so we omit them
+  // rather than fall back to a global value that could leak across entities.
+  const installNotes = entityId ? await getInstallNotes(db, entityId).catch(() => '') : '';
 
   // Workspace timezone (authoritative for "now" + scheduling). Stored on the
   // entity, captured from the browser at onboarding; null → server's zone.

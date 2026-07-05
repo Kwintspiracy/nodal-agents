@@ -1582,6 +1582,50 @@ describe('assignCredentialAction — Brique 34 v3', () => {
     const r = await assignCredentialAction(existingConnectorId, null);
     expect(r.ok).toBe(true);
   });
+
+  it('I-10 (audit #2): a DB error detail is never reflected to the client', async () => {
+    const existingConnectorId = 'aaaaaaaa-0000-0000-0000-000000000094';
+    const db = makeDb([
+      { id: existingConnectorId, slug: 'google-drive', authType: 'oauth2' },
+    ]) as unknown as { update: unknown };
+    // Simulate an internal error carrying detail (host/port/relation names)
+    // that must never reach the UI.
+    db.update = vi.fn(() => {
+      throw new Error('relation "connectors" does not exist at 10.0.0.5:5432');
+    });
+    currentDb = db as typeof currentDb;
+
+    const { assignCredentialAction } = await import('../src/lib/actions.ts');
+    const r = await assignCredentialAction(existingConnectorId, null);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.message).not.toContain('10.0.0.5');
+      expect(r.message).not.toContain('relation "connectors"');
+      expect(r.code).toBe('db_error');
+    }
+  });
+});
+
+describe('createOrAssignOAuthConnectorAction — I-10 error detail leak (audit #2)', () => {
+  it('a DB error detail is never reflected to the client', async () => {
+    const credentialId = 'aaaaaaaa-0000-0000-0000-000000000095';
+    const db = makeDb([
+      { id: credentialId, ownerUserId: '00000000-0000-0000-0000-000000000001', type: 'google-oauth' },
+    ]) as unknown as { insert: unknown };
+    db.insert = vi.fn(() => {
+      throw new Error('duplicate key value violates unique constraint at 10.0.0.5:5432');
+    });
+    currentDb = db as typeof currentDb;
+
+    const { createOrAssignOAuthConnectorAction } = await import('../src/lib/actions.ts');
+    const r = await createOrAssignOAuthConnectorAction('google-drive', credentialId);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.message).not.toContain('10.0.0.5');
+      expect(r.message).not.toContain('duplicate key value');
+      expect(r.code).toBe('db_error');
+    }
+  });
 });
 
 describe('saveApiKeyConnectorAction — new api_key providers (regression)', () => {
@@ -4250,10 +4294,12 @@ describe('testLlmKeyAction', () => {
     }
   });
 
-  it('SECURITY: apiKey is REDACTED in non-2xx response bodies', async () => {
+  it('SECURITY (F-1, audit #2): the remote response body is never reflected on non-2xx, apiKey included', async () => {
     const SECRET = 'sk-leaked-in-body-do-not-echo';
     // Provider echoes back the key in its 401 response (some do). The action
-    // must scrub it before returning to the UI.
+    // must never forward that body to the UI at all — not even redacted —
+    // since a body reached via a malicious/misconfigured baseUrl could
+    // contain anything (F-1 hardens against reflecting internal responses).
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -4269,7 +4315,8 @@ describe('testLlmKeyAction', () => {
       expect(r.ok).toBe(false);
       if (r.ok) return;
       expect(r.message).not.toContain(SECRET);
-      expect(r.message).toContain('[REDACTED]');
+      expect(r.message).not.toContain('Invalid key');
+      expect(r.message).toContain('401');
     } finally {
       vi.unstubAllGlobals();
     }

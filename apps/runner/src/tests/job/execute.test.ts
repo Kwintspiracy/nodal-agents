@@ -1164,6 +1164,164 @@ describe('executeJob', () => {
     );
   });
 
+  // ─── F-12 (audit #2): history bounded by char budget, not turn count ───────
+  //
+  // Before this fix, history was capped at HISTORY_LIMIT=20 TURNS regardless
+  // of size — 20 large turns could still overflow the model's context window.
+  // History is now bounded by a char budget (thread-history.ts's convention),
+  // dropping the OLDEST turns first.
+  //
+  // Round 2 (post-review): per-message head+tail truncation is a LAST RESORT
+  // — applied only if the conversation STILL exceeds the budget after
+  // dropping every older turn it can. It is NOT an unconditional per-turn
+  // cap: a short conversation that fits comfortably under budget must carry
+  // every turn INTACT, including one large paste, or a user pasting a big
+  // block of code/text into the chat would see it silently chopped even
+  // though there was no overflow risk at all.
+
+  it('runChatTurn: a single large turn passes INTACT when the whole conversation fits under budget', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    // A short conversation (2 small prior pairs) plus ONE ~5000-char pasted
+    // turn — total well under the 16KB budget, so nothing should be trimmed
+    // OR truncated.
+    const base = new Date('2026-01-01T00:00:00Z').getTime();
+    await db.insert(chatMessages).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: 'hi',
+        createdAt: new Date(base),
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'assistant',
+        content: 'hello',
+        createdAt: new Date(base + 1_000),
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: `PASTE-HEAD-${'z'.repeat(5000)}-PASTE-TAIL`,
+        createdAt: new Date(base + 2_000),
+      },
+    ]);
+
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient([{ text: 'got it' }], capturedPrompts);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    const result = await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'follow-up after the paste',
+    });
+    expect(result.ok).toBe(true);
+
+    const promptStr = JSON.stringify(capturedPrompts[0]);
+    // The full 5000-char run survives UNBROKEN — no truncation marker, no
+    // gap between head and tail.
+    expect(promptStr).toContain('PASTE-HEAD-' + 'z'.repeat(5000) + '-PASTE-TAIL');
+    expect(promptStr).not.toContain('[…truncated…]');
+  });
+
+  it('runChatTurn: 20 heavy prior turns are trimmed under budget by dropping the OLDEST first', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    // 20 prior (user, assistant) pairs of ~1KB each — well over the 16KB
+    // history budget, so only the most recent handful should survive.
+    const base = new Date('2026-01-01T00:00:00Z').getTime();
+    for (let i = 0; i < 20; i++) {
+      const t = new Date(base + i * 60_000);
+      await db.insert(chatMessages).values([
+        {
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          conversationId: conv.id,
+          role: 'user',
+          content: `TURN-${i}-` + 'x'.repeat(1000),
+          createdAt: t,
+        },
+        {
+          entityId: seed.entityId,
+          agentId: seed.agentId,
+          conversationId: conv.id,
+          role: 'assistant',
+          content: `TURN-${i}-REPLY-` + 'x'.repeat(1000),
+          createdAt: new Date(t.getTime() + 30_000),
+        },
+      ]);
+    }
+
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient([{ text: 'ok' }], capturedPrompts);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    const result = await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'new message after 20 heavy prior turns',
+    });
+    expect(result.ok).toBe(true);
+
+    const promptStr = JSON.stringify(capturedPrompts[0]);
+
+    // Oldest turns dropped — nowhere near enough budget to keep them.
+    expect(promptStr).not.toContain('TURN-0-');
+    expect(promptStr).not.toContain('TURN-1-');
+    // The most recent turns survive, fully intact (no truncation needed —
+    // each individual message is small; only whole OLDER turns were cut).
+    expect(promptStr).toContain('TURN-19-REPLY-' + 'x'.repeat(1000));
+  });
+
+  it('runChatTurn: a single turn that ALONE exceeds the budget is truncated head+tail as a last resort', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: '' })
+      .returning({ id: conversations.id });
+    if (!conv) throw new Error('failed to create conversation');
+
+    // No prior history at all — the CURRENT message itself is bigger than
+    // the entire 16KB budget on its own (e.g. a huge first paste in a fresh
+    // conversation). runChatTurn persists it as the user turn BEFORE loading
+    // history (step 1b), so it becomes the sole history row; dropping older
+    // turns can't help (there are none), so truncation must still fire to
+    // avoid overflowing the model's context window.
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient([{ text: 'ok' }], capturedPrompts);
+    const { runChatTurn } = await import('../../chat/run-chat-turn.ts');
+    const result = await runChatTurn({
+      deps: makeDeps(llmClient),
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: `HEAD-MARKER-${'y'.repeat(20_000)}-TAIL-MARKER`,
+    });
+    expect(result.ok).toBe(true);
+
+    const promptStr = JSON.stringify(capturedPrompts[0]);
+    expect(promptStr).toContain('HEAD-MARKER-');
+    expect(promptStr).toContain('-TAIL-MARKER');
+    expect(promptStr).toContain('[…truncated…]');
+    expect(promptStr).not.toContain('y'.repeat(2000));
+  });
+
   it('delivery guard: persistent plain-text on a Telegram job fails loud (telegram_not_delivered), nothing sent', async () => {
     await db
       .update(agents)

@@ -10,7 +10,8 @@
     "lint": "eslint src",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:up": "node tests/e2e/up-with-oauth-mock.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -30,6 +31,7 @@
     "@nodal-agents/tools": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
     "cron-parser": "^5.5.0",
+    "ipaddr.js": "^2.4.0",
     "next": "^16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",

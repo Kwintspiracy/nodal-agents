@@ -19,6 +19,20 @@ import {
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 
+/**
+ * Escape ILIKE metacharacters (`%`, `_`, `\`) so a `slugOrName` value is
+ * matched LITERALLY against `name` — F-10 (audit #2). These resolvers intend
+ * an EXACT (case-insensitive) name match, same semantics as the `slug` `eq`
+ * branch they're OR'd with; without escaping, a name containing `%` or `_`
+ * is interpreted as a wildcard pattern (e.g. "Sales%" matches any name
+ * starting with "Sales"), silently resolving to the wrong row within the
+ * entity. Postgres' default ILIKE escape character is `\`, so prefixing each
+ * metacharacter with it is sufficient — no explicit ESCAPE clause needed.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 /** Resolve an agent by slug OR name within an entity. */
 export async function resolveAgentId(
   db: AnyDrizzleDb,
@@ -31,7 +45,7 @@ export async function resolveAgentId(
     .where(
       and(
         eq(agents.entityId, entityId),
-        or(eq(agents.slug, slugOrName), ilike(agents.name, slugOrName)),
+        or(eq(agents.slug, slugOrName), ilike(agents.name, escapeLikePattern(slugOrName))),
       ),
     )
     .limit(1);
@@ -50,7 +64,7 @@ export async function resolveMcpServerId(
     .where(
       and(
         eq(mcpServers.entityId, entityId),
-        or(eq(mcpServers.slug, slugOrName), ilike(mcpServers.name, slugOrName)),
+        or(eq(mcpServers.slug, slugOrName), ilike(mcpServers.name, escapeLikePattern(slugOrName))),
       ),
     )
     .limit(1);
@@ -69,7 +83,7 @@ export async function resolveSkillId(
     .where(
       and(
         eq(agentSkills.entityId, entityId),
-        or(eq(agentSkills.slug, slugOrName), ilike(agentSkills.name, slugOrName)),
+        or(eq(agentSkills.slug, slugOrName), ilike(agentSkills.name, escapeLikePattern(slugOrName))),
       ),
     )
     .limit(1);
@@ -88,7 +102,7 @@ export async function resolveConnectorId(
     .where(
       and(
         eq(connectors.entityId, entityId),
-        or(eq(connectors.slug, slugOrName), ilike(connectors.name, slugOrName)),
+        or(eq(connectors.slug, slugOrName), ilike(connectors.name, escapeLikePattern(slugOrName))),
       ),
     )
     .limit(1);

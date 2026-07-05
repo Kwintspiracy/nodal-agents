@@ -50,9 +50,14 @@ const MAX_TURNS = 8;
  * p75 ≈ 3K), so the old 4K budget held barely 1–2 exchanges before dropping the
  * foundational turns — the agent looked like it "lost the thread".
  */
-const BUDGET_CHARS = 16_000;
-/** Per-message char cap — any single turn longer than this is truncated (head + tail). */
-const PER_TURN_MAX_CHARS = 2_400;
+export const BUDGET_CHARS = 16_000;
+/**
+ * Per-message char cap — any single turn longer than this is truncated (head
+ * + tail). Exported (with `truncate` below) so other history-loading call
+ * sites needing the same token-budget-proxy behavior — e.g. run-chat-turn.ts
+ * (F-12, audit #2) — reuse it instead of re-implementing it.
+ */
+export const PER_TURN_MAX_CHARS = 2_400;
 /**
  * Idle reset GAP. A silence of at least this long between two consecutive turns
  * (or between the most recent prior turn and now) starts a FRESH conversation —
@@ -342,7 +347,7 @@ function extractAssistantReply(row: {
  * launch ComfyUI and tell me when it's ready"). The old head-only slice dropped
  * exactly that tail, so the next turn lost the instruction it was replying to.
  */
-function truncate(s: string): string {
+export function truncate(s: string): string {
   if (s.length <= PER_TURN_MAX_CHARS) return s;
   const head = Math.floor(PER_TURN_MAX_CHARS * 0.7);
   const tail = PER_TURN_MAX_CHARS - head;

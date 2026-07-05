@@ -304,4 +304,98 @@ describe('POST /api/agent — entity authorization (bearer-token mode)', () => {
       .where(eq(agentJobs.id, body.jobId));
     expect(rows[0]?.agentId).toBe(agentYId);
   });
+
+  // ─── F-2 (audit #2): parentJobId cross-entity injection ────────────────────
+  //
+  // Without an entity check on parentJobId, an untrusted bearer-token caller
+  // for entity X could attach a new job as the child of entity Y's job, so
+  // that when the new job completes, maybeResumeParent (execute.ts) injects
+  // its result into entity Y's job — a cross-entity result injection.
+
+  it('untrusted session caller cannot attach a new job as the child of another entity\'s job', async () => {
+    const [entityYParentJob] = await dbB
+      .insert(agentJobs)
+      .values({
+        entityId: entityY,
+        agentId: agentYId,
+        channel: 'api',
+        task: 'entity Y parent job, awaiting delegation',
+        status: 'awaiting_delegation',
+      })
+      .returning({ id: agentJobs.id });
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({
+          task: 'cross-entity parentJobId attempt',
+          agentSlug: seedXAgentSlug,
+          parentJobId: entityYParentJob!.id,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('parent_job_entity_mismatch');
+
+    // No child job was created pointing at entity Y's job.
+    const rows = await dbB
+      .select()
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, entityYParentJob!.id));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('untrusted session caller CAN attach a new job as the child of its OWN entity\'s job', async () => {
+    const [ownParentJob] = await dbB
+      .insert(agentJobs)
+      .values({
+        entityId: seedX.entityId,
+        agentId: seedX.agentId,
+        channel: 'api',
+        task: 'own entity parent job, awaiting delegation',
+        status: 'awaiting_delegation',
+      })
+      .returning({ id: agentJobs.id });
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({
+          task: 'own-entity parentJobId attempt',
+          agentSlug: seedXAgentSlug,
+          parentJobId: ownParentJob!.id,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { jobId: string };
+    const rows = await dbB
+      .select({ parentJobId: agentJobs.parentJobId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, body.jobId));
+    expect(rows[0]?.parentJobId).toBe(ownParentJob!.id);
+  });
+
+  it('a non-existent parentJobId is refused for an untrusted caller', async () => {
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({
+          task: 'bogus parentJobId',
+          agentSlug: seedXAgentSlug,
+          parentJobId: '00000000-0000-0000-0000-000000000000',
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('parent_job_not_found');
+  });
 });

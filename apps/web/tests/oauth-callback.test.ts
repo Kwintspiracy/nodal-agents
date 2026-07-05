@@ -315,6 +315,92 @@ describe('GET /api/oauth/[provider]/callback — happy path', () => {
   });
 });
 
+describe('GET /api/oauth/[provider]/callback — I-8 open-redirect guard on returnTo', () => {
+  it('an external https:// returnTo is ignored — falls back to /credentials?created=..., never redirects off-origin', async () => {
+    const { cookieValue, state } = await buildValidCookie({
+      slug: SLUG,
+      entityId: _testEntityId,
+      returnTo: 'https://evil.example/steal',
+    });
+    const req = buildCallbackRequest({
+      origin: ORIGIN,
+      slug: SLUG,
+      code: 'AUTH_CODE_OPEN_REDIRECT',
+      state,
+      cookieValue,
+    });
+
+    const fetchMock = mockSuccessfulGoogleFetch({ email: 'redirect-guard@example.com' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+    const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+
+    vi.unstubAllGlobals();
+
+    expect(response.status).toBe(302);
+    const location = response.headers.get('location') ?? '';
+    expect(location).not.toContain('evil.example');
+    expect(location.startsWith(`${ORIGIN}/credentials?created=`)).toBe(true);
+  });
+
+  it('a protocol-relative //evil.example returnTo is ignored', async () => {
+    const { cookieValue, state } = await buildValidCookie({
+      slug: SLUG,
+      entityId: _testEntityId,
+      returnTo: '//evil.example/steal',
+    });
+    const req = buildCallbackRequest({
+      origin: ORIGIN,
+      slug: SLUG,
+      code: 'AUTH_CODE_PROTOCOL_RELATIVE',
+      state,
+      cookieValue,
+    });
+
+    const fetchMock = mockSuccessfulGoogleFetch({ email: 'protocol-relative@example.com' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+    const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+
+    vi.unstubAllGlobals();
+
+    expect(response.status).toBe(302);
+    const location = response.headers.get('location') ?? '';
+    expect(location).not.toContain('evil.example');
+    expect(location.startsWith(`${ORIGIN}/credentials?created=`)).toBe(true);
+  });
+
+  it('a legitimate internal returnTo with query params still works and gets credentialId appended', async () => {
+    const { cookieValue, state } = await buildValidCookie({
+      slug: SLUG,
+      entityId: _testEntityId,
+      returnTo: '/connectors?connectorSlug=google-drive',
+    });
+    const req = buildCallbackRequest({
+      origin: ORIGIN,
+      slug: SLUG,
+      code: 'AUTH_CODE_INTERNAL_RETURNTO',
+      state,
+      cookieValue,
+    });
+
+    const fetchMock = mockSuccessfulGoogleFetch({ email: 'internal-returnto@example.com' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+    const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+
+    vi.unstubAllGlobals();
+
+    expect(response.status).toBe(302);
+    const location = response.headers.get('location') ?? '';
+    expect(location).toContain('connectorSlug=google-drive');
+    expect(location).toContain('credentialId=');
+  });
+});
+
 describe('GET /api/oauth/[provider]/callback — error cases', () => {
   it('redirects to /connectors?oauth_error=state_mismatch when query state ≠ cookie state', async () => {
     const { cookieValue } = await buildValidCookie({ slug: SLUG, entityId: _testEntityId });
@@ -390,6 +476,89 @@ describe('GET /api/oauth/[provider]/callback — error cases', () => {
     expect(response.status).toBe(302);
     const location = response.headers.get('location') ?? '';
     expect(location).toContain('oauth_error=unknown_provider');
+  });
+
+  it('I-9 (audit #2): a "mock-" code is NOT bypassed outside test/e2e (NODE_ENV=production, no opt-in flag)', async () => {
+    const originalNodeEnv = process.env['NODE_ENV'];
+    const originalFlag = process.env['NODALAI_ALLOW_OAUTH_MOCK'];
+    process.env['NODE_ENV'] = 'production';
+    delete process.env['NODALAI_ALLOW_OAUTH_MOCK'];
+
+    try {
+      const { cookieValue, state } = await buildValidCookie({ slug: SLUG, entityId: _testEntityId });
+      const req = buildCallbackRequest({
+        origin: ORIGIN,
+        slug: SLUG,
+        code: 'mock-should-not-bypass',
+        state,
+        cookieValue,
+      });
+
+      // No mock covers the real token endpoint — if the bypass fired it would
+      // never call fetch at all and redirect straight to a created credential.
+      const fetchMock = vi.fn().mockResolvedValue(new Response('nope', { status: 401 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+      const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+
+      vi.unstubAllGlobals();
+
+      // The real token exchange was attempted (and failed, since it 401s).
+      expect(fetchMock).toHaveBeenCalled();
+      expect(response.status).toBe(302);
+      const location = response.headers.get('location') ?? '';
+      expect(location).toContain('oauth_error=token_exchange_failed');
+    } finally {
+      process.env['NODE_ENV'] = originalNodeEnv;
+      if (originalFlag === undefined) delete process.env['NODALAI_ALLOW_OAUTH_MOCK'];
+      else process.env['NODALAI_ALLOW_OAUTH_MOCK'] = originalFlag;
+    }
+  });
+
+  it('I-9 (audit #2): a "mock-" code IS bypassed when NODALAI_ALLOW_OAUTH_MOCK=1 is explicitly set', async () => {
+    const originalNodeEnv = process.env['NODE_ENV'];
+    const originalFlag = process.env['NODALAI_ALLOW_OAUTH_MOCK'];
+    process.env['NODE_ENV'] = 'production';
+    process.env['NODALAI_ALLOW_OAUTH_MOCK'] = '1';
+
+    try {
+      const { cookieValue, state } = await buildValidCookie({ slug: SLUG, entityId: _testEntityId });
+      const req = buildCallbackRequest({
+        origin: ORIGIN,
+        slug: SLUG,
+        code: 'mock-explicit-optin',
+        state,
+        cookieValue,
+      });
+
+      // accountInfo (userinfo) is still fetched after the bypass mints tokens —
+      // only the TOKEN endpoint call is skipped.
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ email: 'bypass@example.com', name: 'Bypass User' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { GET } = await import('@/app/api/oauth/[provider]/callback/route.ts');
+      const response = await GET(req, { params: Promise.resolve({ provider: SLUG }) });
+
+      vi.unstubAllGlobals();
+
+      // Every fetch call made was the accountInfo lookup, never the token endpoint.
+      for (const call of fetchMock.mock.calls) {
+        expect(String(call[0])).not.toContain('token');
+      }
+      expect(response.status).toBe(302);
+      const location = response.headers.get('location') ?? '';
+      expect(location).toContain('/credentials?created=');
+    } finally {
+      process.env['NODE_ENV'] = originalNodeEnv;
+      if (originalFlag === undefined) delete process.env['NODALAI_ALLOW_OAUTH_MOCK'];
+      else process.env['NODALAI_ALLOW_OAUTH_MOCK'] = originalFlag;
+    }
   });
 
   it('forwards the provider OAuth error code and error_description as detail', async () => {

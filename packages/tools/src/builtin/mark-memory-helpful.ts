@@ -57,6 +57,17 @@ export const markMemoryHelpfulTool: ToolDefinition<
         };
       }
       const target = matches[0]!;
+      // F-9 (audit #2): a user-authored (source='manual') or importance-locked
+      // memory is the user's own call, not the agent's to overturn — same
+      // authority chain the curator respects (agent → curator → user, user
+      // always wins). Refuse instead of silently re-weighting it.
+      if (target.source === 'manual' || target.importance_locked) {
+        return {
+          marked: false,
+          reason:
+            'This memory was set by the user (manual or importance-locked) — the agent cannot adjust its importance.',
+        };
+      }
       const newImportance = Math.min(5, target.importance + 1);
       if (newImportance === target.importance) {
         // Already at the cap — no-op write, still return success so the LLM moves on.

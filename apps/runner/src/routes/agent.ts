@@ -91,6 +91,30 @@ export async function agentRoute(
     agentId = defaultAgentRows[0]?.id ?? null;
   }
 
+  // F-2 (audit #2): a caller-supplied parentJobId must belong to THIS
+  // request's own entity before we attach a new job as its child. Without
+  // this check, a bearer-token caller for entity B could pass a parentJobId
+  // from entity A's job that is sitting in `awaiting_delegation`, then let
+  // this new job complete to have its result injected into entity A's job
+  // via maybeResumeParent (execute.ts) — a cross-entity result injection.
+  if (parentJobId) {
+    const [parentJob] = await deps.db
+      .select({ entityId: agentJobs.entityId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJobId))
+      .limit(1);
+    if (!parentJob) {
+      return c.json({ error: 'parent_job_not_found' }, 400);
+    }
+    // entityId is null only for a trusted system/internal caller with no user
+    // session attached (cron / WORKER_SECRET without a forwarded cookie) —
+    // that caller already holds WORKER_SECRET, a pre-existing trust boundary
+    // stronger than anything checkable per-request here.
+    if (entityId && parentJob.entityId !== entityId) {
+      return c.json({ error: 'parent_job_entity_mismatch' }, 403);
+    }
+  }
+
   // Create the job row
   const [job] = await deps.db
     .insert(agentJobs)

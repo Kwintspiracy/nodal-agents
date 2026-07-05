@@ -33,7 +33,11 @@ function makeCtx(): ToolContext {
   };
 }
 
-async function seedMemory(fact: string, importance = 3) {
+async function seedMemory(
+  fact: string,
+  importance = 3,
+  opts: { source?: 'agent' | 'manual' | 'reflection'; importanceLocked?: boolean } = {},
+) {
   const [row] = await db
     .insert(agentMemory)
     .values({
@@ -42,7 +46,8 @@ async function seedMemory(fact: string, importance = 3) {
       fact,
       category: 'context',
       importance,
-      source: 'agent',
+      source: opts.source ?? 'agent',
+      importanceLocked: opts.importanceLocked ?? false,
     })
     .returning();
   return row!;
@@ -89,6 +94,48 @@ describe('mark_memory_helpful', () => {
     if (result.marked) throw new Error('expected marked: false');
     expect(result.reason).toContain('Ambiguous');
   });
+
+  // ─── F-9 (audit #2): provenance guard ──────────────────────────────────────
+
+  it('F-9: refuses to bump importance on a source=manual memory (user-authored)', async () => {
+    const seeded = await seedMemory('user wants weekly digest on Fridays', 3, { source: 'manual' });
+    const result = await markMemoryHelpfulTool.execute(
+      { fact_substring: 'weekly digest' },
+      makeCtx(),
+    );
+    expect(result.marked).toBe(false);
+    if (result.marked) throw new Error('expected marked: false');
+    expect(result.reason).toContain('user');
+    const [row] = await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id));
+    expect(row?.importance).toBe(3);
+  });
+
+  it('F-9: refuses to bump importance on an importance_locked memory (agent-authored but user-pinned)', async () => {
+    const seeded = await seedMemory('user prefers dark mode', 3, {
+      source: 'agent',
+      importanceLocked: true,
+    });
+    const result = await markMemoryHelpfulTool.execute({ fact_substring: 'dark mode' }, makeCtx());
+    expect(result.marked).toBe(false);
+    if (result.marked) throw new Error('expected marked: false');
+    expect(result.reason).toContain('locked');
+    const [row] = await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id));
+    expect(row?.importance).toBe(3);
+  });
+
+  it('a normal agent-authored, unlocked memory is unaffected by the provenance guard', async () => {
+    const seeded = await seedMemory('user prefers TypeScript strict mode', 3, {
+      source: 'agent',
+      importanceLocked: false,
+    });
+    const result = await markMemoryHelpfulTool.execute(
+      { fact_substring: 'TypeScript strict' },
+      makeCtx(),
+    );
+    expect(result).toMatchObject({ marked: true, newImportance: 4 });
+    const [row] = await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id));
+    expect(row?.importance).toBe(4);
+  });
 });
 
 // ─── mark_memory_outdated ────────────────────────────────────────────────────
@@ -132,5 +179,45 @@ describe('mark_memory_outdated', () => {
     await db.update(agentMemory).set({ archived: true }).where(eq(agentMemory.id, seeded.id));
     const result = await markMemoryOutdatedTool.execute({ fact_substring: 'Paris' }, makeCtx());
     expect(result.archived).toBe(false);
+  });
+
+  // ─── F-9 (audit #2): provenance guard ──────────────────────────────────────
+
+  it('F-9: refuses to archive a source=manual memory (user-authored)', async () => {
+    const seeded = await seedMemory('user birthday is March 3rd', 3, { source: 'manual' });
+    const result = await markMemoryOutdatedTool.execute(
+      { fact_substring: 'birthday is March' },
+      makeCtx(),
+    );
+    expect(result.archived).toBe(false);
+    if (result.archived) throw new Error('expected archived: false');
+    expect(result.reason).toContain('user');
+    const [row] = await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id));
+    expect(row?.archived).toBe(false);
+  });
+
+  it('F-9: refuses to archive an importance_locked memory (agent-authored but user-pinned)', async () => {
+    const seeded = await seedMemory('user lives in Lyon', 3, {
+      source: 'agent',
+      importanceLocked: true,
+    });
+    const result = await markMemoryOutdatedTool.execute({ fact_substring: 'lives in Lyon' }, makeCtx());
+    expect(result.archived).toBe(false);
+    if (result.archived) throw new Error('expected archived: false');
+    expect(result.reason).toContain('locked');
+    const [row] = await db.select().from(agentMemory).where(eq(agentMemory.id, seeded.id));
+    expect(row?.archived).toBe(false);
+  });
+
+  it('a normal agent-authored, unlocked memory is unaffected by the provenance guard', async () => {
+    const seeded = await seedMemory('user lives in Marseille', 3, {
+      source: 'agent',
+      importanceLocked: false,
+    });
+    const result = await markMemoryOutdatedTool.execute(
+      { fact_substring: 'lives in Marseille' },
+      makeCtx(),
+    );
+    expect(result).toMatchObject({ archived: true, id: seeded.id });
   });
 });

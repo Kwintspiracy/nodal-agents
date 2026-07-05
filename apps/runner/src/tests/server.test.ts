@@ -498,6 +498,63 @@ describe('requireRunnerAuth — bearer-token mode (fail-closed on empty entityId
   });
 });
 
+// ─── F-3 (audit #2): POST /api/cron restricted to trusted callers ───────────
+//
+// A tick is a GLOBAL system operation, not scoped to any one entity.
+// requireRunnerAuth authenticates a plain session bearer-token caller (any
+// entity's own API user) onto this route — that's correct AUTHENTICATION but
+// the wrong AUTHORIZATION model: an ordinary entity user should not be able
+// to force a global tick. Only trusted callers (local-trust, or a valid
+// WORKER_SECRET bearer) may.
+
+describe('POST /api/cron — F-3 restricted to trusted callers', () => {
+  let cronBearerApp: ReturnType<typeof createApp>;
+  const cronBearerEnv: RunnerEnv = {
+    ...testEnv,
+    AUTH_MODE: 'bearer-token',
+    BEARER_TOKEN: 'token',
+  };
+
+  beforeAll(async () => {
+    const registry = createToolRegistry();
+    registerBuiltins(registry);
+    const llmClient = createLlmClient({ provider: 'anthropic', model: 'test', apiKey: 'k' });
+    const embeddingClient = createEmbeddingClient({ provider: 'keyword' });
+    const deps: RunnerDeps = {
+      db: db as RunnerDeps['db'],
+      llmClient,
+      embeddingClient,
+      registry,
+      // A perfectly valid session with a real, non-empty entityId — an
+      // ordinary authenticated entity user, not a system caller.
+      authProvider: {
+        getSession: async () => ({ userId: 'some-user', entityId: 'some-entity' }),
+      },
+      close: async () => {},
+    };
+    cronBearerApp = createApp(deps, cronBearerEnv);
+  });
+
+  it('an untrusted session bearer-token caller (real entity, own session) is refused with 403', async () => {
+    const res = await cronBearerApp.fetch(
+      new Request('http://localhost/api/cron', { method: 'POST' }),
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('forbidden');
+  });
+
+  it('a trusted WORKER_SECRET bearer still reaches the handler (200)', async () => {
+    const res = await cronBearerApp.fetch(
+      new Request('http://localhost/api/cron', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cronBearerEnv.WORKER_SECRET}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
 // ─── startBackfillBackground — finding M-17 ──────────────────────────────────
 //
 // The memory-embedding backfill used to run sequentially, unbounded, BEFORE

@@ -36,23 +36,26 @@ function constantTimeEqual(a: string, b: string): boolean {
 /**
  * Merge credentialId into an existing URL's query string.
  * If `returnTo` already has query params they are preserved.
+ *
+ * I-8 (audit #2): `returnTo` MUST resolve to an internal, same-origin path.
+ * Honoring an absolute or protocol-relative `returnTo` here is an open
+ * redirect — and since we then append `credentialId` to it, it would also
+ * leak that id to whatever host the value points at. Anything that isn't
+ * confirmed same-origin after resolution falls back to the default
+ * `/credentials?created=...` destination instead of being followed.
  */
 function buildRedirectUrl(
   returnTo: string | undefined,
   credentialId: string,
   origin: string,
 ): string {
-  if (returnTo) {
+  if (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')) {
     try {
-      // returnTo may be relative (e.g. /connectors?connected=google-drive)
-      const base = returnTo.startsWith('http') ? returnTo : `${origin}${returnTo}`;
-      const url = new URL(base);
-      url.searchParams.set('credentialId', credentialId);
-      // Return as path+query if it was a relative URL originally
-      if (!returnTo.startsWith('http')) {
-        return `${url.pathname}${url.search}`;
+      const resolved = new URL(returnTo, origin);
+      if (resolved.origin === new URL(origin).origin) {
+        resolved.searchParams.set('credentialId', credentialId);
+        return `${resolved.pathname}${resolved.search}`;
       }
-      return url.toString();
     } catch {
       // Fall through to default
     }
@@ -180,8 +183,18 @@ export async function GET(
   // deterministic mock response so Playwright tests can exercise the full callback
   // path (state verification, credential persistence, redirect) without real provider
   // credentials. Real provider codes never start with "mock-".
+  //
+  // I-9 (audit #2): this bypass must NEVER be reachable outside test/e2e runs — a
+  // "mock-" prefixed `code` is otherwise attacker-controlled input, so leaving this
+  // active in prod/dev would let anyone mint a fake credential without ever talking
+  // to the real provider. It requires an explicit opt-in: vitest sets NODE_ENV=test
+  // automatically; Playwright e2e runs against a REAL locally-started server, so
+  // that server must be started with NODALAI_ALLOW_OAUTH_MOCK=1 for the e2e specs
+  // in tests/e2e/*.spec.ts to work (see playwright.config.ts).
+  const oauthMockBypassEnabled =
+    process.env['NODE_ENV'] === 'test' || process.env['NODALAI_ALLOW_OAUTH_MOCK'] === '1';
   let tokenResponse: TokenResponse;
-  const isTestBypass = code.startsWith('mock-');
+  const isTestBypass = oauthMockBypassEnabled && code.startsWith('mock-');
   if (isTestBypass) {
     tokenResponse = {
       access_token: `mock-at-${Date.now()}`,

@@ -13,11 +13,21 @@ import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
+import { BUDGET_CHARS as HISTORY_BUDGET_CHARS, truncate as truncateHeadTail } from '../job/thread-history.ts';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
 
-const HISTORY_LIMIT = 20;
+// F-12 (audit #2): the old HISTORY_LIMIT=20 bounded history by TURN COUNT, not
+// size — 20 large turns (verbose replies, or several escalation blocks with
+// job task/result text) could still overflow the model's context window,
+// surfacing as an opaque llm_error after burning an LLM call. History is now
+// bounded by a char budget (a token-count proxy, same approach and constant
+// as thread-history.ts's loadThreadHistory) with head+tail per-message
+// truncation, dropping the OLDEST turns first until under budget.
+// HISTORY_CANDIDATE_LIMIT is just a raw-read safety cap on the SQL query —
+// the real boundary is the budget trim below.
+const HISTORY_CANDIDATE_LIMIT = 200;
 const DEFAULT_MODEL = 'claude-sonnet-4-6-20260217';
 const TITLE_MAX = 60;
 
@@ -91,6 +101,97 @@ function buildDispatchOutput(
   if (status === 'cancelled') return 'Cancelled by the user.';
   // pending / processing / awaiting_approval / awaiting_delegation
   return 'Still running — no result yet. Do NOT dispatch it again; wait for it to finish.';
+}
+
+/**
+ * Sum of text length across all history blocks (F-12, audit #2) — a char
+ * count proxy for token budget, same convention as thread-history.ts's
+ * `totalChars`. Only counts the parts that actually carry conversation text
+ * (string content, `text` parts, and the escalation tool-call's
+ * `instruction`); synthetic tool-result acks contribute negligible size and
+ * are ignored, matching thread-history.ts's rationale.
+ */
+function totalHistoryChars(blocks: ReadonlyArray<ReadonlyArray<ModelMessage>>): number {
+  let total = 0;
+  for (const block of blocks) {
+    for (const msg of block) {
+      const content = msg.content;
+      if (typeof content === 'string') {
+        total += content.length;
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      for (const p of content) {
+        if (!p || typeof p !== 'object') continue;
+        const part = p as { type?: unknown; text?: unknown; input?: unknown };
+        if (part.type === 'text' && typeof part.text === 'string') {
+          total += part.text.length;
+        } else if (part.type === 'tool-call' && part.input && typeof part.input === 'object') {
+          const instruction = (part.input as { instruction?: unknown }).instruction;
+          if (typeof instruction === 'string') total += instruction.length;
+        }
+      }
+    }
+  }
+  return total;
+}
+
+interface HistoryRow {
+  role: string;
+  content: string;
+  jobId: string | null;
+  jobTask: string | null;
+  jobStatus: string | null;
+  jobResult: string | null;
+  jobError: string | null;
+}
+
+/**
+ * Build one "block" (1 or 2 ModelMessages) for a single history row.
+ * `truncateFn` is a parameter — NOT always `truncateHeadTail` — so the caller
+ * controls whether per-message truncation applies (F-12, audit #2 round 2:
+ * it's a last resort when the budget is exceeded even after dropping older
+ * turns, never an unconditional per-turn cap; pass the identity function to
+ * keep a turn fully intact).
+ */
+function buildHistoryBlock(r: HistoryRow, truncateFn: (s: string) => string): ModelMessage[] {
+  if (r.role === 'assistant' && r.jobId) {
+    const toolCallId = `hist-${r.jobId}`;
+    const ackText = r.content ? truncateFn(r.content) : '';
+    return [
+      {
+        role: 'assistant',
+        content: [
+          ...(ackText ? [{ type: 'text' as const, text: ackText }] : []),
+          {
+            type: 'tool-call' as const,
+            toolCallId,
+            toolName: 'run_task',
+            input: { instruction: truncateFn(r.jobTask ?? '') },
+          },
+        ],
+      },
+      // The tool-result reflects the dispatched job's REAL current outcome, so
+      // the orchestrator knows whether a prior delegation is done / running /
+      // failed and what it produced — never a static "dispatched" that hides
+      // completion and drives re-dispatch loops on sequential work.
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result' as const,
+            toolCallId,
+            toolName: 'run_task',
+            output: {
+              type: 'text' as const,
+              value: truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError)),
+            },
+          },
+        ],
+      },
+    ];
+  }
+  return [{ role: r.role as 'user' | 'assistant', content: truncateFn(r.content) }];
 }
 
 export async function runChatTurn(opts: {
@@ -196,43 +297,37 @@ export async function runChatTurn(opts: {
     .leftJoin(agentJobs, eq(chatMessages.jobId, agentJobs.id))
     .where(eq(chatMessages.conversationId, conversationId))
     .orderBy(desc(chatMessages.createdAt))
-    .limit(HISTORY_LIMIT);
-  const messages: ModelMessage[] = [];
-  for (const r of rows.reverse()) {
-    if (r.role === 'assistant' && r.jobId) {
-      const toolCallId = `hist-${r.jobId}`;
-      messages.push({
-        role: 'assistant',
-        content: [
-          ...(r.content ? [{ type: 'text' as const, text: r.content }] : []),
-          {
-            type: 'tool-call' as const,
-            toolCallId,
-            toolName: 'run_task',
-            input: { instruction: r.jobTask ?? '' },
-          },
-        ],
-      });
-      // The tool-result reflects the dispatched job's REAL current outcome, so
-      // the orchestrator knows whether a prior delegation is done / running /
-      // failed and what it produced — never a static "dispatched" that hides
-      // completion and drives re-dispatch loops on sequential work.
-      const outcome = buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError);
-      messages.push({
-        role: 'tool',
-        content: [
-          {
-            type: 'tool-result' as const,
-            toolCallId,
-            toolName: 'run_task',
-            output: { type: 'text' as const, value: outcome },
-          },
-        ],
-      });
-    } else {
-      messages.push({ role: r.role as 'user' | 'assistant', content: r.content });
-    }
+    .limit(HISTORY_CANDIDATE_LIMIT);
+
+  // Build one "block" (1 or 2 ModelMessages) per row, so the budget trim
+  // below can drop a whole block at a time — never split an escalation's
+  // tool-call from its tool-result. `truncateFn` is a parameter (not always
+  // `truncateHeadTail`) — see the round-2 fix below: per-message truncation
+  // is a LAST RESORT, not an unconditional per-turn cap (F-12, audit #2
+  // round 2 — an unconditional cap chopped a single large paste mid-turn
+  // even when the whole conversation fit comfortably under budget).
+  const chronologicalRows = rows.reverse();
+  let remainingRows = chronologicalRows;
+  let blocks = remainingRows.map((r) => buildHistoryBlock(r, (s) => s));
+
+  // Drop the OLDEST blocks (front of the chronological array) until the
+  // total size is under budget — the same char-budget-as-token-proxy
+  // approach as thread-history.ts's loadThreadHistory. Always keep at least
+  // the single most recent turn — it's never simply dropped, only (as a
+  // last resort below) truncated.
+  while (blocks.length > 1 && totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
+    blocks = blocks.slice(1);
+    remainingRows = remainingRows.slice(1);
   }
+
+  // Last resort: only rebuild with per-message head+tail truncation if
+  // what's left STILL exceeds the budget (e.g. the single most recent turn
+  // is itself gigantic). A conversation that fits under budget as-is keeps
+  // every turn intact, however large a single message is.
+  if (totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
+    blocks = remainingRows.map((r) => buildHistoryBlock(r, truncateHeadTail));
+  }
+  const messages: ModelMessage[] = blocks.flatMap((b) => b);
 
   // 5. One LLM call. The agent may reply in text (pure conversation) and/or call
   //    run_task to escalate an action into a real job. Guarded: some providers

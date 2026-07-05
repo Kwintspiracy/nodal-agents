@@ -64,6 +64,17 @@ export const markMemoryOutdatedTool: ToolDefinition<
         };
       }
       const target = matches[0]!;
+      // F-9 (audit #2): a user-authored (source='manual') or importance-locked
+      // memory is the user's own call, not the agent's to overturn — same
+      // authority chain the curator respects (agent → curator → user, user
+      // always wins). Refuse instead of silently archiving it.
+      if (target.source === 'manual' || target.importance_locked) {
+        return {
+          archived: false,
+          reason:
+            'This memory was set by the user (manual or importance-locked) — the agent cannot mark it outdated. Ask the user if it needs updating.',
+        };
+      }
       await ctx.db
         .update(agentMemory)
         .set({ archived: true, validTo: new Date(), updatedAt: new Date() })

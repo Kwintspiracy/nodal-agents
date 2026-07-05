@@ -35,6 +35,8 @@ export type { PruneResult } from './repos/retention.ts';
 export {
   getAppSetting,
   setAppSetting,
+  getEntitySetting,
+  setEntitySetting,
   getInstallNotes,
   setInstallNotes,
   INSTALL_NOTES_KEY,

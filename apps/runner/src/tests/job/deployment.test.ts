@@ -9,14 +9,20 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { getDeploymentContext } from '../../job/deployment.ts';
 
-// Fake DB that returns a fixed install_notes value.
+// Fake DB that returns a fixed install_notes value. `where()` needs to
+// support BOTH call shapes used by getDeploymentContext: entity_settings
+// reads chain `.limit(n)`, the entities-timezone read chains `.catch(fn)`
+// directly on the (unresolved) query — so `where()` returns a real Promise
+// (thenable/catchable) with a `.limit` method attached to it.
 function makeFakeDb(installNotes = ''): Parameters<typeof getDeploymentContext>[0] {
   return {
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve(installNotes ? [{ value: installNotes }] : []),
-        }),
+        where: () => {
+          const promise = Promise.resolve([]) as Promise<unknown[]> & { limit?: unknown };
+          promise.limit = () => Promise.resolve(installNotes ? [{ value: installNotes }] : []);
+          return promise;
+        },
       }),
     }),
     insert: () => ({
@@ -81,17 +87,26 @@ describe('getDeploymentContext', () => {
     expect(ctx.authMode).toBe('local-auth');
   });
 
-  it('installNotes from DB when set', async () => {
+  it('installNotes from DB when set and an entityId is given', async () => {
     delete process.env['BIND'];
-    const ctx = await getDeploymentContext(makeFakeDb('ComfyUI runs on :8188'));
+    const ctx = await getDeploymentContext(makeFakeDb('ComfyUI runs on :8188'), 'entity-a');
     expect(ctx.installNotes).toBe('ComfyUI runs on :8188');
   });
 
   it('installNotes absent from result when DB returns empty', async () => {
     delete process.env['BIND'];
-    const ctx = await getDeploymentContext(makeFakeDb(''));
+    const ctx = await getDeploymentContext(makeFakeDb(''), 'entity-a');
     // Empty string → not included in result (or installNotes is falsy)
     expect(ctx.installNotes === '' || ctx.installNotes === undefined).toBe(true);
+  });
+
+  it('M-2: installNotes is omitted (never a cross-entity fallback) when no entityId is given', async () => {
+    delete process.env['BIND'];
+    // Even though the fake DB WOULD return a value for any query, no entityId
+    // means no isolation boundary to scope the read to — omit rather than
+    // risk leaking another entity's notes.
+    const ctx = await getDeploymentContext(makeFakeDb('ComfyUI runs on :8188'));
+    expect(ctx.installNotes).toBeUndefined();
   });
 
   it('CRITICAL: does NOT throw when DATABASE_URL is absent (proxy-bypass guarantee)', async () => {
