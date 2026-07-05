@@ -231,6 +231,18 @@ describe('meta-tool gating via root agent + grants', () => {
     expect(names.has('create_skill'), 'create_skill should be present').toBe(true);
   });
 
+  // M-6: without this, propose_confirm (no approval_rules row) let a meta-tool
+  // execute silently — the DB-seeded rule from setRootAgentAction was the ONLY
+  // enforcement, contradicting the "propose & confirm" contract. Every meta-tool
+  // must be safe-by-default at the CODE layer too.
+  it('every meta-tool declares defaultApproval=require_approval (M-6)', () => {
+    for (const tool of META_TOOLS) {
+      expect(tool.defaultApproval, `${tool.name} must be safe-by-default`).toBe(
+        'require_approval',
+      );
+    }
+  });
+
   it('parseRootGrants falls back to defaults for empty object (matching DB default {})', () => {
     // entities.rootGrants defaults to '{}' — parseRootGrants must handle this gracefully.
     const grants = parseRootGrants({});
@@ -246,5 +258,23 @@ describe('meta-tool gating via root agent + grants', () => {
     // retroactively), unlike the original grants which default true.
     expect(grants.createMcp).toBe(false);
     expect(grants.createConnector).toBe(false);
+  });
+});
+
+// R1: a `destructive` tool with no `defaultApproval` never hits the gate when
+// no rule matches (effectiveAction stays undefined → execute) — the same hole
+// M-6 fixed for meta-tools, but for ANY builtin tool marked destructive. Found
+// live on xlsx_delete_rows. This iterates the REAL registry (every builtin,
+// not just meta-tools) so a future destructive tool can't reintroduce the gap.
+describe('destructive builtin tools are safe-by-default (R1)', () => {
+  it('every riskLevel=destructive tool declares defaultApproval=require_approval', () => {
+    const registry = makeRegistry();
+    const destructiveTools = registry.list({ riskLevels: ['destructive'] });
+    expect(destructiveTools.length).toBeGreaterThan(0); // sanity: the filter actually matched something
+    for (const tool of destructiveTools) {
+      expect(tool.defaultApproval, `${tool.name} (riskLevel=destructive) must be safe-by-default`).toBe(
+        'require_approval',
+      );
+    }
   });
 });

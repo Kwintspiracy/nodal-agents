@@ -44,6 +44,7 @@ export const createSkillTool: ToolDefinition<typeof CreateSkillInput, CreateSkil
     SKILL_AUTHORING_GUIDE,
   inputSchema: CreateSkillInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     // Reject foreign/invented tool references before persisting (fail loud).
     const lint = await lintSkillContent(ctx.db, ctx.entityId, input.content);

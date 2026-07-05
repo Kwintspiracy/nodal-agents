@@ -432,6 +432,7 @@ export const xlsxDeleteRowsTool: ToolDefinition<typeof XlsxDeleteRowsInput, Xlsx
       'with xlsx_read first. Requires an explicit approval rule or agent-level overwrite consent.',
     inputSchema: XlsxDeleteRowsInput,
     riskLevel: 'destructive',
+    defaultApproval: 'require_approval',
     execute: async (input, ctx) => {
       const load = await loadWorkbook(ctx, input.path);
       if (!load.ok) return load;

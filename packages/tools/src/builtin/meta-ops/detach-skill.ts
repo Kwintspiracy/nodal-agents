@@ -21,6 +21,7 @@ export const detachSkillTool: ToolDefinition<typeof DetachSkillInput, DetachSkil
     'Idempotent: ok even if the skill was not assigned.',
   inputSchema: DetachSkillInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const skillId = await resolveSkillId(ctx.db, ctx.entityId, input.skillSlug);
     if (!skillId)

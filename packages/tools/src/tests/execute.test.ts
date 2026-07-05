@@ -508,6 +508,7 @@ describe('executeTool — fully_autonomous workspace', () => {
   it('fully_autonomous relaxes a safe-by-default skill-script tool too', async () => {
     const skillScript = makeSimpleTool({
       name: 'run_skill_script',
+      riskLevel: 'destructive',
       defaultApproval: 'require_approval',
     });
     const res = await executeTool(skillScript, { value: 'go' }, makeCtx(), autonomousOpts());
@@ -587,12 +588,87 @@ describe('executeTool — destructive_gate workspace', () => {
     expect(res.outcome).toBe('awaiting_approval');
   });
 
-  it('auto-approves a non-destructive safe-by-default skill script', async () => {
+  // M-8: run_skill_script's content is opaque (an authorized skill's own script
+  // could still shell out to something destructive without ever calling
+  // run_command), so under destructive_gate it must stay gated — it declares
+  // riskLevel 'destructive' like run_command, and (unlike run_command) has no
+  // command string to inspect, so it can't be judged "ordinary" and auto-run.
+  it('STILL gates run_skill_script (opaque content — cannot judge ordinary vs heavy)', async () => {
     const skillScript = makeSimpleTool({
       name: 'run_skill_script',
+      riskLevel: 'destructive',
       defaultApproval: 'require_approval',
     });
     const res = await executeTool(skillScript, { value: 'go' }, makeCtx(), gateOpts());
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('an explicit auto_approve rule still overrides the run_skill_script gate', async () => {
+    const skillScript = makeSimpleTool({
+      name: 'run_skill_script',
+      riskLevel: 'destructive',
+      defaultApproval: 'require_approval',
+    });
+    const rule: ApprovalRule = {
+      id: 'skill-script-yolo',
+      toolName: 'run_skill_script',
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+    const res = await executeTool(skillScript, { value: 'go' }, makeCtx(), gateOpts([rule]));
+    expect(res.outcome).toBe('success');
+  });
+});
+
+// M-6: meta-tools (create_agent, create_skill, …) declare
+// defaultApproval='require_approval' so propose_confirm (no approval_rules row)
+// gates them at the CODE layer, not just via a DB-seeded rule. Stand-in tool
+// mirrors the real createAgentTool's declared posture (name/riskLevel/
+// defaultApproval) — the real values are locked in gating.test.ts.
+describe('executeTool — meta-tool safe-by-default posture (M-6)', () => {
+  function makeMetaTool(): ToolDefinition<z.ZodObject<{ value: z.ZodString }>, string> {
+    return makeSimpleTool({
+      name: 'create_agent',
+      riskLevel: 'write',
+      defaultApproval: 'require_approval',
+    });
+  }
+
+  it('propose_confirm (no rule) gates the meta-tool', async () => {
+    const res = await executeTool(makeMetaTool(), { value: 'go' }, makeCtx(), makeOpts());
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('destructive_gate (no rule) auto-approves the meta-tool (ordinary "write" work)', async () => {
+    const res = await executeTool(
+      makeMetaTool(),
+      { value: 'go' },
+      makeCtx(),
+      { ...makeOpts(), autonomy: 'destructive_gate' },
+    );
+    expect(res.outcome).toBe('success');
+  });
+
+  it('fully_autonomous (no rule) auto-approves the meta-tool', async () => {
+    const res = await executeTool(
+      makeMetaTool(),
+      { value: 'go' },
+      makeCtx(),
+      { ...makeOpts(), autonomy: 'fully_autonomous' },
+    );
+    expect(res.outcome).toBe('success');
+  });
+
+  it('an explicit auto_approve rule executes the meta-tool even under propose_confirm', async () => {
+    const rule: ApprovalRule = {
+      id: 'meta-tool-yolo',
+      toolName: 'create_agent',
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+    const res = await executeTool(makeMetaTool(), { value: 'go' }, makeCtx(), makeOpts([rule]));
     expect(res.outcome).toBe('success');
   });
 });

@@ -25,6 +25,7 @@ export const assignSkillTool: ToolDefinition<typeof AssignSkillInput, AssignSkil
     'Idempotent: safe to call even if the skill is already assigned.',
   inputSchema: AssignSkillInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     // Resolve skillSlug → skillId within this entity
     const [skillRow] = await ctx.db

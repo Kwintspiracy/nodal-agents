@@ -71,6 +71,7 @@ export const createAgentTool: ToolDefinition<typeof CreateAgentInput, CreateAgen
     'Fails with a clear error if the slug is already taken or a subAgentSlug is not found.',
   inputSchema: CreateAgentInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     // Resolve subAgentSlugs → IDs within this entity (if provided)
     let subAgentIds: string[] = [];

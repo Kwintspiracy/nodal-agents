@@ -23,6 +23,7 @@ export const detachAgentTool: ToolDefinition<typeof DetachAgentInput, DetachAgen
     'NOT deleted — only the assignment under you. Reversible with attach_agent. Idempotent.',
   inputSchema: DetachAgentInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const subAgentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!subAgentId)

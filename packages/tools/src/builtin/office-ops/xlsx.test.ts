@@ -378,8 +378,9 @@ describe('xlsx_delete_rows', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('has riskLevel destructive', () => {
+  it('is destructive + approval-gated by default (safe posture)', () => {
     expect(xlsxDeleteRowsTool.riskLevel).toBe('destructive');
+    expect(xlsxDeleteRowsTool.defaultApproval).toBe('require_approval');
   });
 });
 

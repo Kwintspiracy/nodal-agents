@@ -54,6 +54,7 @@ export const createConnectorTool: ToolDefinition<
     'Fails with a clear error for an unknown slug or a non-api_key slug.',
   inputSchema: CreateConnectorInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const provisioning = ctx.provisioning;
     if (!provisioning) {

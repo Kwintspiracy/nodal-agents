@@ -25,6 +25,7 @@ export const attachMcpTool: ToolDefinition<typeof AttachMcpInput, AttachMcpOutpu
     'Idempotent. This is the step that actually makes an MCP usable — creating it is not enough.',
   inputSchema: AttachMcpInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const mcpId = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
     if (!mcpId) {

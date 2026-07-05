@@ -325,13 +325,29 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
     expect(pending!.executedAt).toBeNull();
   });
 
-  it('run_skill_script under destructive_gate + lanCommandYolo=true → the master switch no longer forces approval', async () => {
+  it('run_skill_script under fully_autonomous + lanCommandYolo=true → the master switch no longer forces approval', async () => {
     // Sanity check on the OTHER side of the switch: once the owner opts the
-    // workspace in, execute.ts step 8b skips the inject entirely, so
-    // destructive_gate's own relaxation (isHeavy=false for run_skill_script)
-    // applies again and the tool runs without a human. Proves the fix gates
-    // on the switch, not on the tool unconditionally.
-    await db.update(entities).set({ lanCommandYolo: true }).where(eq(entities.id, seed.entityId));
+    // workspace in, execute.ts step 8b skips the inject entirely, so the
+    // workspace's own autonomy relaxation applies again and the tool runs
+    // without a human. Proves the fix gates on the switch, not on the tool
+    // unconditionally.
+    //
+    // Uses fully_autonomous here (not destructive_gate): audit fix M-8 made
+    // run_skill_script's content-opaque posture unconditional under
+    // destructive_gate (isHeavy = riskLevel === 'destructive', always true for
+    // this tool — a skill script can shell out to anything without ever
+    // calling run_command, so destructive_gate can no longer judge it
+    // "ordinary" and relax it). fully_autonomous is the one level that still
+    // relaxes EVERY require_approval unconditionally (no riskLevel check), so
+    // it's the one this master-switch test needs to isolate the switch's own
+    // effect from that unrelated M-8 change.
+    await db
+      .update(entities)
+      .set({
+        lanCommandYolo: true,
+        rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'fully_autonomous' },
+      })
+      .where(eq(entities.id, seed.entityId));
 
     try {
       const job = await createJob();
@@ -368,7 +384,13 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
         .where(eq(approvalRequests.jobId, job.id));
       expect(pendingApprovals.find((r) => r.status === 'pending')).toBeUndefined();
     } finally {
-      await db.update(entities).set({ lanCommandYolo: false }).where(eq(entities.id, seed.entityId));
+      await db
+        .update(entities)
+        .set({
+          lanCommandYolo: false,
+          rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' },
+        })
+        .where(eq(entities.id, seed.entityId));
     }
   });
 

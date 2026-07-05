@@ -172,6 +172,7 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
     '("daily"/"weekdays"/"weekends"/[0-6]) to limit which days. Fails if the agent is not found.',
   inputSchema: CreateScheduleInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!agentId)
@@ -244,6 +245,7 @@ export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, Sche
     'name / notify / days. Fails if no schedule with that name exists.',
   inputSchema: UpdateScheduleInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const hasTimes = input.atTimes && input.atTimes.length > 0;
     const hasInterval = input.everyMinutes !== undefined;
@@ -330,6 +332,7 @@ export const toggleScheduleTool: ToolDefinition<typeof ToggleScheduleInput, Sche
     'Pause (active=false) or resume (active=true) a schedule. Fails if it does not exist.',
   inputSchema: ToggleScheduleInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const [row] = await ctx.db
       .select({

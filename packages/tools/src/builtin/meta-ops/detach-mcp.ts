@@ -21,6 +21,7 @@ export const detachMcpTool: ToolDefinition<typeof DetachMcpInput, DetachMcpOutpu
     'Reversible with attach_mcp. Idempotent.',
   inputSchema: DetachMcpInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const mcpId = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
     if (!mcpId)

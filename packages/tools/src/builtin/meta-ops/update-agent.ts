@@ -39,6 +39,7 @@ export const updateAgentTool: ToolDefinition<typeof UpdateAgentInput, UpdateAgen
     'Fails if no agent with that slug exists (use create_agent to make one).',
   inputSchema: UpdateAgentInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     if (!input.model && !input.personality && !input.name) {
       return {

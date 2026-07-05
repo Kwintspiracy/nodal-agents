@@ -31,6 +31,7 @@ export const attachConnectorTool: ToolDefinition<
     'Idempotent. This is the step that actually makes a connector usable — creating it is not enough.',
   inputSchema: AttachConnectorInput,
   riskLevel: 'write',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const connectorId = await resolveConnectorId(ctx.db, ctx.entityId, input.connectorSlug);
     if (!connectorId) {
