@@ -95,7 +95,7 @@ Two approaches: (1) **anchored** via \`file_edit\` with a stable anchor as \`old
 
 ## Reference — Obsidian Flavored Markdown (kepano/obsidian-skills)
 
-Obsidian extends CommonMark + GFM with wikilinks, embeds, callouts, properties, comments and other syntaxes. Reference to open when you write a structured note for Quentin.
+Obsidian extends CommonMark + GFM with wikilinks, embeds, callouts, properties, comments and other syntaxes. Reference to open when you write a structured note for the user.
 
 ### Note creation workflow
 

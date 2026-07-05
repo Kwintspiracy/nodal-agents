@@ -180,6 +180,35 @@ Body content here.
     const { frontmatter } = parseSkillMarkdown('---\nname: ok-skill\n---\nbody');
     expect(() => validateFrontmatter(frontmatter)).toThrow(FrontmatterError);
   });
+
+  // I-16: an oversized (but otherwise well-formed) frontmatter block must
+  // never reach the YAML parser at all — it's refused cleanly (empty
+  // frontmatter → validateFrontmatter fails loud), never a hang or a crash.
+  it('refuses an oversized frontmatter block without parsing it', () => {
+    const hugeYaml = `name: oversize\ndescription: x\nfiller: "${'a'.repeat(70 * 1024)}"`;
+    const { frontmatter } = parseSkillMarkdown(`---\n${hugeYaml}\n---\nbody`);
+    expect(frontmatter.name).toBeUndefined();
+    expect(() => validateFrontmatter(frontmatter)).toThrow(FrontmatterError);
+  });
+
+  // I-16: a classic YAML anchor/alias "billion laughs" expansion must be
+  // refused cleanly (via the yaml library's maxAliasCount guard, explicitly
+  // pinned here) — never a hang, never an unhandled crash.
+  it('refuses a YAML alias-bomb frontmatter without hanging', () => {
+    const bombYaml = [
+      'a: &a ["x","x","x","x","x","x","x","x","x","x"]',
+      'b: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]',
+      'c: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b,*b]',
+      'd: &d [*c,*c,*c,*c,*c,*c,*c,*c,*c,*c]',
+      'e: &e [*d,*d,*d,*d,*d,*d,*d,*d,*d,*d]',
+      'name: bomb',
+      'description: x',
+    ].join('\n');
+    const { frontmatter } = parseSkillMarkdown(`---\n${bombYaml}\n---\nbody`);
+    // The alias-count guard throws inside parseYaml; caught → empty frontmatter.
+    expect(frontmatter.name).toBeUndefined();
+    expect(() => validateFrontmatter(frontmatter)).toThrow(FrontmatterError);
+  });
 });
 
 describe('detectScripts', () => {
@@ -229,6 +258,20 @@ describe('detectScripts', () => {
     const paths = scripts.map((s) => s.path);
     expect(paths).toContain('scripts/extract.py');
     expect(paths).not.toContain('plugins/mirror/scripts/extract.py');
+  });
+
+  // F-5: .js/.mjs/.cjs are executable via Node — must appear in the consent
+  // inventory shown at install time, same as .py/.sh.
+  it('detects Node scripts by extension (.js/.mjs/.cjs)', async () => {
+    await writeFile(join(dir, 'scripts', 'build.js'), 'console.log(1)\n', 'utf8');
+    await writeFile(join(dir, 'scripts', 'run.mjs'), 'console.log(2)\n', 'utf8');
+    await writeFile(join(dir, 'scripts', 'legacy.cjs'), 'console.log(3)\n', 'utf8');
+
+    const scripts = await detectScripts(dir);
+    const byPath = new Map(scripts.map((s) => [s.path, s.language]));
+    expect(byPath.get('scripts/build.js')).toBe('node');
+    expect(byPath.get('scripts/run.mjs')).toBe('node');
+    expect(byPath.get('scripts/legacy.cjs')).toBe('node');
   });
 
   it('returns an empty array for a knowledge-only skill', async () => {
@@ -563,6 +606,52 @@ describe('downloadAndExtract — github subdir fetch', () => {
 
     const source = parseSkillSource('https://github.com/o/r/tree/main/skills/x');
     await expect(downloadAndExtract(source)).rejects.toThrow(/not allowed|non-allowlisted/i);
+  });
+
+  it('bounds an oversized subdir file download instead of trusting the declared `size` (I-15)', async () => {
+    // The GitHub Contents API entry declares a tiny `size`, but the actual
+    // response body streams far more — a compromised or lying allowlisted
+    // host must still be bounded by the REAL bytes read, not the declared
+    // field. Same streaming-abort guard as the archive download path.
+    const CHUNK = new Uint8Array(1024 * 1024).fill(0x41); // 1 MB
+    let sent = 0;
+    const TARGET_CHUNKS = 60; // 60 MB > 50 MB archive cap
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/contents/skills/z?ref=main')) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: 'huge.bin',
+              path: 'skills/z/huge.bin',
+              type: 'file',
+              size: 10, // lies — API declares a tiny size
+              download_url: 'https://raw.githubusercontent.com/o/r/main/skills/z/huge.bin',
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://raw.githubusercontent.com/o/r/main/skills/z/huge.bin') {
+        const stream = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (sent >= TARGET_CHUNKS) {
+              controller.close();
+              return;
+            }
+            sent++;
+            controller.enqueue(CHUNK);
+          },
+        });
+        return new Response(stream, { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+
+    const source = parseSkillSource('https://github.com/o/r/tree/main/skills/z');
+    await expect(downloadAndExtract(source)).rejects.toThrow(/too large/i);
+    // The guard must have aborted before streaming all 60 chunks.
+    expect(sent).toBeLessThan(TARGET_CHUNKS);
   });
 
   it('still fetches ONLY the subdir when the flow doesn\'t hit a redirect (regression guard for the routing change)', async () => {

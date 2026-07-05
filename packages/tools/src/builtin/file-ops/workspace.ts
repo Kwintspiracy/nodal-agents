@@ -323,51 +323,69 @@ async function resolveUnderRoot(workspaceRoot: string, requestedPath: string): P
     throw new WorkspaceError('path_traversal_blocked', violation);
   }
 
-  // Walk up to find the deepest existing ancestor of the lexical path, then
-  // realpath() that. This lets us validate paths whose intermediate directories
-  // don't exist yet (e.g. file_write with create_dirs:true creating
-  // `nested/dir/new.txt` from scratch) while still catching symlink escapes on
-  // any segment that DOES exist on disk.
-  let probe = lexical;
-  while (true) {
-    try {
-      await stat(probe);
-      break;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw new WorkspaceError(
-          'workspace_invalid',
-          `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
-        );
-      }
-    }
-    const parent = resolvePath(probe, '..');
-    if (parent === probe) {
-      // Reached filesystem root without finding anything — should be impossible
-      // because the workspace root itself exists (verified above via realpath).
-      throw new WorkspaceError(
-        'path_traversal_blocked',
-        `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
-      );
-    }
-    probe = parent;
-  }
-  const realProbe = await realpath(probe);
-  const remainder = lexical.slice(probe.length);
-  const canonical = realProbe + remainder;
-
   // Boundary check: canonical MUST start with realRoot + path separator
   // (or equal realRoot itself). Without the separator suffix, "/work" would
   // accidentally match "/workplace/secret".
   const rootWithSep = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
-  if (canonical !== realRoot && !canonical.startsWith(rootWithSep)) {
-    throw new WorkspaceError(
-      'path_traversal_blocked',
-      `Path "${requestedPath}" resolves to "${canonical}", outside the workspace "${realRoot}".`,
-    );
+
+  /**
+   * Walk up to find the deepest existing ancestor of the lexical path, then
+   * realpath() that. This lets us validate paths whose intermediate directories
+   * don't exist yet (e.g. file_write with create_dirs:true creating
+   * `nested/dir/new.txt` from scratch) while still catching symlink escapes on
+   * any segment that DOES exist on disk.
+   *
+   * F-23 (TOCTOU hardening): the not-yet-existing suffix is necessarily
+   * checked lexically only (there's nothing on disk yet to realpath) — a
+   * symlink planted at one of its segments AFTER this walk has run still
+   * escapes detection by a single pass. This helper is therefore re-run a
+   * second time, as late as possible, right before resolveUnderRoot returns
+   * (see below) so a plant landing mid-resolution is still caught by fresh
+   * stat()/realpath() calls. This narrows, but cannot fully close, the
+   * window: a plant landing between the final call below and the caller's
+   * own fs syscall is a residual race that only O_NOFOLLOW at every call
+   * site's actual open/write could close — out of scope for this hardening.
+   */
+  async function probeCanonical(): Promise<string> {
+    let probe = lexical;
+    while (true) {
+      try {
+        await stat(probe);
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw new WorkspaceError(
+            'workspace_invalid',
+            `Failed to stat path while resolving "${requestedPath}": ${(err as Error).message}`,
+          );
+        }
+      }
+      const parent = resolvePath(probe, '..');
+      if (parent === probe) {
+        // Reached filesystem root without finding anything — should be impossible
+        // because the workspace root itself exists (verified above via realpath).
+        throw new WorkspaceError(
+          'path_traversal_blocked',
+          `Cannot resolve "${requestedPath}" — walked past the filesystem root.`,
+        );
+      }
+      probe = parent;
+    }
+    const realProbe = await realpath(probe);
+    const remainder = lexical.slice(probe.length);
+    const canonical = realProbe + remainder;
+
+    if (canonical !== realRoot && !canonical.startsWith(rootWithSep)) {
+      throw new WorkspaceError(
+        'path_traversal_blocked',
+        `Path "${requestedPath}" resolves to "${canonical}", outside the workspace "${realRoot}".`,
+      );
+    }
+    return canonical;
   }
 
-  return canonical;
+  await probeCanonical();
+  return probeCanonical();
 }
 
 // ─── Convenience: get first workspace root (for tools that need the root) ──────

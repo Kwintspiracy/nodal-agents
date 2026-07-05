@@ -3,7 +3,7 @@
 // checks that must run BEFORE any stat() touches the filesystem).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAndCheckPath, windowsPathViolation } from './workspace';
@@ -126,6 +126,34 @@ describe('resolveAndCheckPath — UNC path is rejected before stat() ever runs',
     await expect(
       resolveAndCheckPath(ctx([{ label: 'work', path: ROOT }]), '\\\\attacker\\share\\secret'),
     ).rejects.toMatchObject({ code: 'path_traversal_blocked' });
+  });
+});
+
+describe('resolveAndCheckPath — F-23: TOCTOU hardening on the not-yet-existing suffix', () => {
+  it('rejects a symlinked intermediate directory even when the final leaf does not exist yet', async () => {
+    // Shape of the F-23 concern: an intermediate path segment is a symlink
+    // escaping the workspace, and the final segment (the file being written)
+    // does not exist yet — the normal shape of a file_write create with
+    // create_dirs. The re-verification pass must still catch this via
+    // realpath() on the symlinked ancestor.
+    const outsideDir = await mkdtemp(join(tmpdir(), 'nodal-outside-'));
+    const linkPath = join(ROOT, 'escape-link');
+    try {
+      await symlink(outsideDir, linkPath, 'junction');
+    } catch {
+      // Symlink/junction creation unsupported in this environment — the guard
+      // itself is still in place; only the test fixture differs by platform.
+      await rm(outsideDir, { recursive: true, force: true });
+      return;
+    }
+
+    try {
+      await expect(
+        resolveAndCheckPath(ctx([{ label: 'work', path: ROOT }]), 'escape-link/new-file.txt'),
+      ).rejects.toMatchObject({ code: 'path_traversal_blocked' });
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 });
 

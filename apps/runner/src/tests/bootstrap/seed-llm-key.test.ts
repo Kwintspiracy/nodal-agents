@@ -15,6 +15,7 @@ import {
   _setMasterKeyForTests,
   _resetMasterKeyCacheForTests,
   decrypt,
+  encrypt,
 } from '@nodal-agents/secrets';
 import { seedDefaultLlmKey } from '../../bootstrap/seed-llm-key.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -209,6 +210,77 @@ describe('seedDefaultLlmKey (Brique 25 guard)', () => {
 
     const [afterCount] = await (db as TestDb).select({ n: count() }).from(entityLlmKeys);
     expect(afterCount?.n).toBe(0);
+  });
+
+  // F-22 regression (reviewer-caught): an agent left with llmKeyId=NULL when
+  // the entity ALREADY has a default key must NOT be silently re-wired. That
+  // NULL can come from a user's deliberate key rotation/detachment
+  // (deleteLlmKeyAction relies on ON DELETE SET NULL to preserve the agent
+  // rather than delete it) and is indistinguishable, from this function's
+  // point of view, from a stranded post-crash state. Re-wiring it anyway
+  // would silently override the user's choice onto a provider they never
+  // picked for that agent — a silent smart fallback (invariant #4).
+  it('does NOT re-wire a voluntarily-detached agent when the entity already has a default key', async () => {
+    const { db } = await spinUpTestDb();
+
+    const [user] = await db
+      .insert(users)
+      .values({ email: `detach-${Date.now()}@example.com` })
+      .returning();
+    if (!user) throw new Error('seed user');
+
+    const [entity] = await db
+      .insert(entities)
+      .values({ userId: user.id, name: 'DE', slug: `de-${Date.now()}` })
+      .returning();
+    if (!entity) throw new Error('seed entity');
+
+    // The entity already went through a normal seed boot: the default env
+    // key exists (as `seedDefaultLlmKey` itself would have created it).
+    const [defaultKey] = await db
+      .insert(entityLlmKeys)
+      .values({
+        entityId: entity.id,
+        provider: 'openai-compatible',
+        apiKey: encrypt('default-key'),
+        apiKeyLast4: '-key',
+        nickname: 'Default (env)',
+        isActive: true,
+      })
+      .returning();
+    if (!defaultKey) throw new Error('seed default key');
+
+    // A second key the user added, then deleted/rotated — ON DELETE SET NULL
+    // is what actually produces an agent's llmKeyId=NULL in that case; we
+    // model the resulting end state directly rather than exercising the
+    // delete action here.
+    const [agent] = await db
+      .insert(agents)
+      .values({
+        entityId: entity.id,
+        name: 'DetachedAgent',
+        slug: `detached-agent-${Date.now()}`,
+        personality: 'test',
+        llmKeyId: null, // voluntarily detached, not a crash artifact
+      })
+      .returning();
+    if (!agent) throw new Error('seed agent');
+
+    await seedDefaultLlmKey(db as TestDb, makeEnv('local-trust'));
+
+    // No second key should have been inserted — the entity is already seeded.
+    const [afterCount] = await (db as TestDb)
+      .select({ n: count() })
+      .from(entityLlmKeys)
+      .where(eq(entityLlmKeys.entityId, entity.id));
+    expect(afterCount?.n).toBe(1);
+
+    // The voluntarily-detached agent must stay NULL, not be silently rewired.
+    const [agentRow] = await (db as TestDb)
+      .select({ llmKeyId: agents.llmKeyId })
+      .from(agents)
+      .where(eq(agents.id, agent.id));
+    expect(agentRow?.llmKeyId).toBeNull();
   });
 
   it('idempotent: does not seed a second key when one already exists', async () => {

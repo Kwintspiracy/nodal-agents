@@ -32,6 +32,16 @@ export class FrontmatterError extends Error {
 const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
 /**
+ * Hard cap on the frontmatter YAML block, checked BEFORE handing it to the
+ * parser (Finding I-16). A community SKILL.md is untrusted input: an
+ * oversized-but-syntactically-valid block could still cost real parse
+ * time/memory even though the `yaml` library's own `maxAliasCount` guard
+ * (default 100, active on every parse() call below) already bounds the
+ * classic anchor/alias "billion laughs" expansion.
+ */
+export const MAX_FRONTMATTER_YAML_BYTES = 64 * 1024;
+
+/**
  * Derive a filesystem/DB-safe slug from a skill name. The open spec asks for
  * lowercase-hyphen names, but the wider community ships "ComfyUI", "PDF Tools",
  * etc. We keep the original name for display and slugify a safe identifier:
@@ -58,12 +68,22 @@ export function parseSkillMarkdown(content: string): ParsedSkillMd {
   const body = m[2] ?? '';
 
   let raw: Record<string, unknown> = {};
-  try {
-    const parsed = parseYaml(yamlText) as unknown;
-    if (parsed && typeof parsed === 'object') raw = parsed as Record<string, unknown>;
-  } catch {
-    // Malformed YAML → empty frontmatter; validateFrontmatter() will fail loud
-    // on the missing required name.
+  if (Buffer.byteLength(yamlText, 'utf8') > MAX_FRONTMATTER_YAML_BYTES) {
+    // Oversized frontmatter — never hand it to the YAML parser at all. Falls
+    // through with empty frontmatter, same as malformed YAML below:
+    // validateFrontmatter() fails loud on the missing required `name`.
+  } else {
+    try {
+      // maxAliasCount defaults to 100 inside the `yaml` library and is passed
+      // explicitly here to document that the anchor/alias bomb guard is a
+      // deliberate, relied-upon default — not an accident of not overriding it.
+      const parsed = parseYaml(yamlText, { maxAliasCount: 100 }) as unknown;
+      if (parsed && typeof parsed === 'object') raw = parsed as Record<string, unknown>;
+    } catch {
+      // Malformed YAML (or an alias-bomb tripping maxAliasCount) → empty
+      // frontmatter; validateFrontmatter() will fail loud on the missing
+      // required name.
+    }
   }
 
   const fm: SkillFrontmatter = { raw };

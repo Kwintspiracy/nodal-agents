@@ -31,6 +31,13 @@ const EXT_LANGUAGE: Record<string, string> = {
   '.rb': 'ruby',
   '.pl': 'perl',
   '.php': 'php',
+  // F-5: .js/.mjs/.cjs are executable via Node just like .py/.sh — the
+  // detector previously missed them entirely, understating the consent
+  // inventory shown at install time. 'node' matches the runtime name
+  // shebangLanguage() already uses for "#!/usr/bin/env node".
+  '.js': 'node',
+  '.mjs': 'node',
+  '.cjs': 'node',
 };
 
 function shebangLanguage(firstLine: string): string | null {

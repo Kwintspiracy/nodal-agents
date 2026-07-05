@@ -5,7 +5,24 @@
 // env so existing agents (which were created against the env-based singleton)
 // continue to work without manual setup.
 //
-// Idempotent: skipped when the table already has rows for the entity.
+// Atomic (Finding F-22): the key insert and the initial agent-wiring UPDATE
+// used to be two separate statements — a throw between them on a prior boot
+// stranded agents permanently (the next boot saw keyCount > 0 and skipped
+// wiring entirely). Both statements now run inside a single `db.transaction`,
+// so that intermediate state is impossible: either both commit or neither
+// does, and the next boot's `keyCount > 0` check is a reliable "already fully
+// seeded" signal again.
+//
+// IMPORTANT — this function only ever wires an agent ONCE, the first time the
+// entity's default key is created. It deliberately does NOT re-wire agents
+// with llmKeyId=NULL on later boots: an agent can end up NULL either because
+// it was never seeded, or because the user deliberately deleted/rotated the
+// key it pointed at (ON DELETE SET NULL preserves the agent on key deletion —
+// see deleteLlmKeyAction). Those two cases are indistinguishable from here,
+// and re-wiring on every boot would silently override the user's deliberate
+// detachment onto a provider they never chose for that agent — a silent
+// smart fallback (invariant #4). So: seed once, atomically, and never touch
+// agents.llmKeyId again after that.
 //
 // Guard logic (Brique 25):
 //   - bearer-token mode: skip (multi-tenant, admins manage keys via UI)
@@ -22,6 +39,11 @@ export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promi
   // bearer-token mode = multi-tenant; admins manage keys via UI, never auto-seed.
   if (env.AUTH_MODE === 'bearer-token') return;
   if (!env.LLM_PROVIDER || !env.LLM_MODEL) return;
+  // Narrowing `env.LLM_PROVIDER` above doesn't persist into the transaction
+  // closure below (TS widens captured properties back to their declared
+  // type inside callbacks) — hoist it to a local const so the insert below
+  // still sees `string`, not `string | undefined`.
+  const llmProvider = env.LLM_PROVIDER;
 
   // Resolve target entity: must be exactly 1 in DB.
   // - local-trust: LOCAL_ENTITY_ID is the sole entity → always exactly 1
@@ -42,32 +64,39 @@ export async function seedDefaultLlmKey(db: AnyDrizzleDb, env: RunnerEnv): Promi
     .from(entityLlmKeys)
     .where(eq(entityLlmKeys.entityId, targetEntityId));
 
-  if ((keyCountRow?.n ?? 0) > 0) return; // already seeded
+  // Already seeded (or the user manages keys manually from here) — never
+  // re-wire agents.llmKeyId again, see the file-level comment above.
+  if ((keyCountRow?.n ?? 0) > 0) return;
 
   const plaintextKey = env.LLM_API_KEY ?? '';
-  const [newKey] = await db
-    .insert(entityLlmKeys)
-    .values({
-      entityId: targetEntityId,
-      provider: env.LLM_PROVIDER,
-      apiKey: encrypt(plaintextKey),
-      apiKeyLast4: last4(plaintextKey),
-      baseUrl: env.LLM_BASE_URL ?? null,
-      nickname: 'Default (env)',
-      isActive: true,
-    })
-    .returning({ id: entityLlmKeys.id });
 
-  if (!newKey) return;
+  await db.transaction(async (tx) => {
+    const [newKey] = await tx
+      .insert(entityLlmKeys)
+      .values({
+        entityId: targetEntityId,
+        provider: llmProvider,
+        apiKey: encrypt(plaintextKey),
+        apiKeyLast4: last4(plaintextKey),
+        baseUrl: env.LLM_BASE_URL ?? null,
+        nickname: 'Default (env)',
+        isActive: true,
+      })
+      .returning({ id: entityLlmKeys.id });
 
-  // Wire any existing agents in this entity that don't yet have an llmKeyId
-  // — keeps prior-Brique-24 agents working out of the box.
-  await db
-    .update(agents)
-    .set({ llmKeyId: newKey.id, updatedAt: new Date() })
-    .where(and(eq(agents.entityId, targetEntityId), isNull(agents.llmKeyId)));
+    if (!newKey) {
+      throw new Error('seedDefaultLlmKey: key insert returned no row — rolling back');
+    }
 
-  console.warn(
-    `[runner] seeded default LLM key ${newKey.id} from env (entityId=${targetEntityId})`,
-  );
+    const wired = await tx
+      .update(agents)
+      .set({ llmKeyId: newKey.id, updatedAt: new Date() })
+      .where(and(eq(agents.entityId, targetEntityId), isNull(agents.llmKeyId)))
+      .returning({ id: agents.id });
+
+    console.warn(
+      `[runner] seeded default LLM key ${newKey.id} from env (entityId=${targetEntityId}), ` +
+        `wired ${wired.length} agent(s)`,
+    );
+  });
 }

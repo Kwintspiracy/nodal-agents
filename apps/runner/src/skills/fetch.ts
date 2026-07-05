@@ -493,8 +493,13 @@ async function downloadGithubSubdir(
       });
       if (!fileRes.ok)
         throw new SkillFetchError(`Download failed for "${e.path}": HTTP ${fileRes.status}.`);
+      // I-15: don't trust the Contents API's declared `size` — a compromised
+      // or lying allowlisted host could serve a body far larger than
+      // advertised. readCapped() aborts mid-stream the moment the ACTUAL
+      // bytes read cross MAX_ARCHIVE_BYTES, same guard as the archive
+      // download path above.
       await mkdir(dirname(abs), { recursive: true });
-      await writeFile(abs, Buffer.from(await fileRes.arrayBuffer()));
+      await writeFile(abs, await readCapped(fileRes));
     }
   };
 

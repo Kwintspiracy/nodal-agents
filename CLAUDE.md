@@ -22,7 +22,7 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 5. **Tests assert real results** — body of LLM request, DB row, tool_result content. Never just call counts.
 6. **No per-user hardcoded values** — IDs / URLs / tokens via memory or user config.
 7. **Always use official SDKs** when available (`@anthropic-ai/sdk`, `googleapis`, `@notionhq/client`, etc.).
-8. **Anti-loop guards baked in** (max 5 chains, max 50 tool calls/turn, max 3 delegation depth).
+8. **Anti-loop guards baked in** (max 15 chains, max 50 tool calls/turn, max 3 delegation depth). Raised from the original 5 on 2026-05-19 (`packages/orchestration/src/chain-counters.ts`) once sequential-delegation workflows needed more resumes than a runaway-detection cap calibrated without empirical data allowed; the `failed_delegations_count` cap and `maxDelegationDepth` guards absorbed the actual runaway risk, so `chain_count` could safely become a resume budget instead.
 9. **Tool whitelist explicit per agent** — no defaults, list calculated from DB per job.
 10. **No native browser dialogs** — `window.confirm` / `window.alert` / `window.prompt` are banned. Use `<ConfirmDialog />` (`apps/web/src/components/ConfirmDialog.tsx`) for confirmations and the Sonner toaster for notifications. Enforced by ESLint `no-restricted-globals` in `apps/web/eslint.config.mjs`.
 

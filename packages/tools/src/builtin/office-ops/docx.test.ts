@@ -145,6 +145,13 @@ describe('docx_read', () => {
 // ─── docx_append_paragraphs ───────────────────────────────────────────────────
 
 describe('docx_append_paragraphs', () => {
+  // I-12: rebuilds the whole document from a plain-text extraction (formatting
+  // is lost), so it must be gated as destructive, not a plain write.
+  it('is classified riskLevel=destructive with defaultApproval=require_approval', () => {
+    expect(docxAppendParagraphsTool.riskLevel).toBe('destructive');
+    expect(docxAppendParagraphsTool.defaultApproval).toBe('require_approval');
+  });
+
   it('appends paragraphs — resulting document contains original + new text', async () => {
     await docxCreateTool.execute(
       { path: 'app.docx', paragraphs: [{ text: 'Original content.' }], overwrite: false },

@@ -264,7 +264,10 @@ async function main(): Promise<void> {
 // pathToFileURL(process.argv[1]) converts the script path to a file:// URL
 // so we can compare it against import.meta.url of this module.
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  void main();
+  main().catch((err) => {
+    console.error('[runner] boot failed:', err);
+    process.exit(1);
+  });
 }
 
 export { createRunnerDeps, parseEnv };

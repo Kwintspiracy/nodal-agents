@@ -174,7 +174,11 @@ export const docxAppendParagraphsTool: ToolDefinition<typeof DocxAppendInput, Do
     'docx_create to produce fully-formatted documents and docx_append_paragraphs only ' +
     'when plain-text continuity is sufficient.',
   inputSchema: DocxAppendInput,
-  riskLevel: 'write',
+  // I-12: rebuilds the whole document from plain-text extraction, discarding
+  // the original formatting (fonts, tables, images, headers/footers) — that's
+  // destructive to existing content, not a plain write.
+  riskLevel: 'destructive',
+  defaultApproval: 'require_approval',
   execute: async (input, ctx) => {
     const readResult = await readWorkspaceBinary(ctx, input.path);
     if (!readResult.ok) return readResult;
