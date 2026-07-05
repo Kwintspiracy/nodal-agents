@@ -4221,3 +4221,84 @@ describe('reliability guards', () => {
     expect(row?.status).toBe('completed');
   });
 });
+
+// ─── F-8: tool-call heartbeat ─────────────────────────────────────────────────
+//
+// resetOrphanedJobs (reset-orphans.ts) reaps any 'processing' job whose
+// updated_at is more than 5 minutes stale — legitimate for a genuinely dead
+// job, fatal for one that's actively blocked on a single SLOW tool call (image
+// gen, MCP call, external API) with no other write touching updated_at in the
+// meantime. The LLM call already had a heartbeat (Leg 5); the serial tool-
+// execution loop did not. This test swaps `web_search`'s execute for one held
+// open by the test (via a manually-resolved promise) — same name, riskLevel,
+// and inputSchema as the real builtin (already always-on + auto-approve), so
+// no whitelist wiring is needed, only the timing is test-controlled. Fake
+// timers drive the 60s heartbeat interval deterministically without a real
+// multi-minute wait.
+
+describe('F-8: tool-call heartbeat keeps a long single tool call from being reaped', () => {
+  it('bumps updated_at via the heartbeat while the tool call is still blocked, then completes normally', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    try {
+      const job = await createTestJob(db, seed);
+
+      let resolveSlowTool: (() => void) | undefined;
+      const slowToolPromise = new Promise<void>((resolve) => {
+        resolveSlowTool = resolve;
+      });
+
+      const llmClient = makeMockLlmClient([
+        { toolCalls: [{ toolCallId: 'tc-slow', toolName: 'web_search', args: { query: 'test' } }] },
+        { toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }] },
+      ]);
+      const deps = makeDeps(llmClient);
+
+      // Override web_search's execute only — keep its real name/riskLevel/
+      // inputSchema so it stays always-on and auto-approved exactly like the
+      // production tool.
+      const builtinWebSearch = deps.registry.get('web_search')!;
+      deps.registry.register({
+        ...builtinWebSearch,
+        execute: async () => {
+          await slowToolPromise;
+          return { results: [] };
+        },
+      });
+
+      const [before] = await db
+        .select({ updatedAt: agentJobs.updatedAt })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      const beforeUpdatedAt = before!.updatedAt!.getTime();
+
+      const jobPromise = executeJob(job.id as JobId, deps, testEnv);
+
+      // Drive real microtasks forward (the turn reaching the tool call, the
+      // interval being registered) and past the first 60s heartbeat tick —
+      // while slowToolPromise is still unresolved, i.e. the tool call is
+      // still genuinely blocked.
+      await vi.advanceTimersByTimeAsync(65_000);
+
+      const [mid] = await db
+        .select({ updatedAt: agentJobs.updatedAt, status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      expect(mid?.status).toBe('processing');
+      expect(mid!.updatedAt!.getTime()).toBeGreaterThan(beforeUpdatedAt);
+
+      // Now let the tool resolve and the job run to completion.
+      resolveSlowTool!();
+      await vi.advanceTimersByTimeAsync(0);
+      const result = await jobPromise;
+
+      expect(result.status).toBe('completed');
+      const [after] = await db
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, job.id));
+      expect(after?.status).toBe('completed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

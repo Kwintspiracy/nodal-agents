@@ -2664,9 +2664,28 @@ async function runJob(
         // Non-delegation tool
         // Reuse the result if this read was already run in the parallel pre-pass;
         // otherwise execute now (writes, single-tool turns, mixed turns).
-        const toolResult =
-          preExecuted.get(call.id) ??
-          (await executeTool(toolDef, call.input, sharedToolCtx, sharedToolOpts));
+        let toolResult: Awaited<ReturnType<typeof executeTool>>;
+        const preResult = preExecuted.get(call.id);
+        if (preResult) {
+          toolResult = preResult;
+        } else {
+          // F-8 — heartbeat while THIS ONE tool call runs. A single slow tool
+          // (image gen, MCP call, external API) can block here for minutes
+          // with nothing else touching `updated_at` in the meantime — without
+          // this, the orphan reaper's 5-min staleness window
+          // (reset-orphans.ts resetOrphanedJobs) reaps a job that is still
+          // alive, mid-tool-call. Same pattern as the LLM-call heartbeat
+          // above (Leg 5): 60s interval, well inside the 5-min window,
+          // cleared in `finally` so it never leaks past this call.
+          const toolHbInterval = setInterval(() => {
+            void touchJob(db, jobId as string).catch(() => {});
+          }, 60_000);
+          try {
+            toolResult = await executeTool(toolDef, call.input, sharedToolCtx, sharedToolOpts);
+          } finally {
+            clearInterval(toolHbInterval);
+          }
+        }
 
         if (toolResult.outcome === 'awaiting_approval') {
           const awaitingMarker = `[AWAITING_APPROVAL] tool_call_id=${call.id}`;

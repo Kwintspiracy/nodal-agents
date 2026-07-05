@@ -10,6 +10,56 @@ import { rowToMemory } from './crud';
 import type { MemoryRow } from './crud';
 import { touchMemories } from './access-tracking';
 
+// ─── pgvector runtime detection (finding M-18) ─────────────────────────────────
+//
+// `vectorSearch` below assumes the pgvector extension is installed (it casts
+// the query embedding to `::vector` and uses the `<=>` cosine-distance
+// operator). Prod installs without pgvector never get that type at all —
+// packages/db/src/migrate.ts's `patchVectorAsText` rewrites `agent_memory.
+// embedding` from `vector(N)` to plain `text` when the CLI's `up` command
+// couldn't `CREATE EXTENSION vector`. The embed() call above is guarded (falls
+// back to keyword on failure), but vectorSearch was NOT — so an opt-in
+// EMBEDDING_PROVIDER=openai config (1536 dims, passes validateEmbeddingDimension)
+// threw on every single searchMemories call against such a database, with an
+// opaque Postgres error (`type "vector" does not exist`) instead of a clean
+// degrade. Detected once per process (the extension can't appear/disappear
+// mid-run) and cached; missing pgvector degrades to keyword search, same as a
+// failed embed() call, with a one-time warning.
+let pgvectorAvailableCache: boolean | null = null;
+let warnedPgvectorMissing = false;
+
+async function isPgvectorAvailable(db: AnyDrizzleDb): Promise<boolean> {
+  if (pgvectorAvailableCache !== null) return pgvectorAvailableCache;
+
+  let available: boolean;
+  try {
+    const result = await db.execute(sql`SELECT 1 FROM pg_extension WHERE extname = 'vector'`);
+    available = ((result as { rows?: unknown[] }).rows?.length ?? 0) > 0;
+  } catch {
+    // Detection itself failed — treat as unavailable rather than risk the
+    // ::vector cast throwing next (fail loud once via the warning below, then
+    // degrade quietly on every subsequent call).
+    available = false;
+  }
+
+  pgvectorAvailableCache = available;
+  if (!available && !warnedPgvectorMissing) {
+    warnedPgvectorMissing = true;
+    console.warn(
+      '[memory/search] pgvector extension not available on this database — vector search ' +
+        'DISABLED, degrading to keyword search for every query. Install pgvector to enable ' +
+        'semantic memory search.',
+    );
+  }
+  return available;
+}
+
+/** Test-only: reset/force the cached pgvector-availability detection. */
+export function _setPgvectorAvailableForTests(value: boolean | null): void {
+  pgvectorAvailableCache = value;
+  if (value === null) warnedPgvectorMissing = false;
+}
+
 export async function searchMemories(
   db: AnyDrizzleDb,
   embeddingClient: EmbeddingClient,
@@ -44,7 +94,7 @@ export async function searchMemories(
 
   let results: MemoryRow[];
 
-  if (embedding !== null) {
+  if (embedding !== null && (await isPgvectorAvailable(db))) {
     results = await vectorSearch(db, embedding, {
       entityId,
       agentId,

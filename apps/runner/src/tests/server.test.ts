@@ -1,16 +1,48 @@
 ﻿// server.test.ts — boot Hono, /health returns 200
 // Minimal smoke test to verify server starts and responds.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createLlmClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import { createEmbeddingClient } from '@nodal-agents/llm';
-import { createApp } from '../server.ts';
+import type { EmbeddingClient } from '@nodal-agents/llm';
+import { createMemory } from '@nodal-agents/memory';
+import { createApp, startBackfillBackground } from '../server.ts';
+import { _resetGuardedTickForTests } from '../cron/guarded-tick.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
+
+// Finding R3 (audit2): POST /api/cron now goes through the SAME guarded entry
+// point (cron/guarded-tick.ts's runCronTickGuarded) as the in-process ticker,
+// so an external managed cron that overlaps itself is skipped exactly like an
+// overlapping in-process tick would be. Gate the underlying tick.ts's
+// runCronTick (leaving everything else real) so a describe block below can
+// prove the route enforces this shared guard end-to-end over real HTTP.
+const { getCronGate, setCronGate } = vi.hoisted(() => {
+  let _gate: Promise<void> | null = null;
+  return {
+    getCronGate: () => _gate,
+    setCronGate: (p: Promise<void> | null) => {
+      _gate = p;
+    },
+  };
+});
+
+vi.mock('../cron/tick.ts', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('../cron/tick.ts')>();
+  return {
+    ...actual,
+    runCronTick: async (...args: Parameters<typeof actual.runCronTick>) => {
+      const gate = getCronGate();
+      if (gate) await gate;
+      return actual.runCronTick(...args);
+    },
+  };
+});
 
 let db: TestDb;
 let app: ReturnType<typeof createApp>;
@@ -463,5 +495,127 @@ describe('requireRunnerAuth — bearer-token mode (fail-closed on empty entityId
       }),
     );
     expect(res.status).toBe(401);
+  });
+});
+
+// ─── startBackfillBackground — finding M-17 ──────────────────────────────────
+//
+// The memory-embedding backfill used to run sequentially, unbounded, BEFORE
+// serve() in main() — a slow provider (openai) + a large table stalled the
+// whole boot with no health endpoint reachable. It now fires as a background
+// task, AFTER serve(). These tests assert the non-blocking contract directly:
+// the function returns synchronously (not a Promise the caller could await
+// away the point of the fix), the backfill still runs to completion in the
+// background, and a rejection never escapes as an unhandled rejection.
+
+describe('startBackfillBackground', () => {
+  it('returns synchronously (void, not a Promise) while the backfill keeps running in the background', async () => {
+    let started = false;
+    let finished = false;
+    const slowEmbeddingClient: EmbeddingClient = {
+      embed: async (text: string) => {
+        started = true;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        finished = true;
+        return Array.from({ length: 1536 }, (_, i) => ((text.charCodeAt(i % text.length) + i) % 100) / 100);
+      },
+      dimensions: 1536,
+    };
+
+    const seed = await seedMinimal(db);
+    await createMemory(db, {
+      entity_id: seed.entityId,
+      fact: 'Row backing the non-blocking backfill test.',
+      category: 'context',
+      importance: 3,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const returnValue = startBackfillBackground({
+      db: db as RunnerDeps['db'],
+      embeddingClient: slowEmbeddingClient,
+    });
+
+    // The call itself did not wait for embed() to run at all.
+    expect(returnValue).toBeUndefined();
+    expect(started).toBe(false);
+    expect(finished).toBe(false);
+
+    // But the backfill DOES eventually run to completion in the background.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(started).toBe(true);
+    expect(finished).toBe(true);
+  });
+
+  it('a rejected backfill is caught — never surfaces as an unhandled rejection', async () => {
+    // Break at the OUTER level (the initial select, which backfill.ts does NOT
+    // wrap in a try/catch — only the per-row loop is guarded, on purpose: a
+    // failure finding candidates at all is a real setup problem, not a
+    // per-row retry case). This exercises startBackfillBackground's own
+    // .catch(), independent of the per-row guard inside backfillEmbeddings.
+    const brokenDb = {
+      select: () => {
+        throw new Error('db select boom');
+      },
+    } as unknown as RunnerDeps['db'];
+
+    expect(() =>
+      startBackfillBackground({ db: brokenDb, embeddingClient: createEmbeddingClient({ provider: 'keyword' }) }),
+    ).not.toThrow();
+
+    // Give the background task time to run and (safely) fail. If the
+    // rejection weren't caught, this would surface as an unhandled rejection
+    // and fail the test run.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+});
+
+// ─── POST /api/cron — shared guard with the ticker (finding R3) ─────────────
+//
+// Before this fix, only the in-process ticker (ticker.ts) had the M-7
+// re-entrancy guard — this HTTP route called runCronTick directly with no
+// protection, so an external managed cron (Vercel/Fly) firing faster than a
+// slow tick completes was exposed to the same concurrent pile-up. The route
+// now delegates to the exact same `runCronTickGuarded` singleton the ticker
+// uses (cron/guarded-tick.ts), so this test proves the ROUTE itself enforces
+// the shared guard over real HTTP — not just that the ticker does.
+
+describe('POST /api/cron — shared guard with the in-process ticker (finding R3)', () => {
+  it('a second request while one is in flight is skipped (skipped:true, zero counts)', async () => {
+    _resetGuardedTickForTests();
+
+    let releaseGate!: () => void;
+    setCronGate(
+      new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      }),
+    );
+
+    try {
+      // First request starts a tick and gets stuck on the gate.
+      const firstReqPromise = app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
+
+      // Yield a turn so the handler actually reaches runCronTickGuarded and
+      // sets `running = true` before the second request is dispatched.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Second request arrives while the first is still stuck on the gate —
+      // simulates an external scheduler firing again before the previous
+      // invocation returned.
+      const secondRes = await app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
+      expect(secondRes.status).toBe(200);
+      const secondBody = (await secondRes.json()) as { ok: boolean; skipped: boolean };
+      expect(secondBody.skipped).toBe(true);
+
+      // Release the first request and confirm it completed normally.
+      releaseGate();
+      const firstRes = await firstReqPromise;
+      const firstBody = (await firstRes.json()) as { ok: boolean; skipped: boolean };
+      expect(firstBody.skipped).toBe(false);
+    } finally {
+      setCronGate(null);
+      _resetGuardedTickForTests();
+    }
   });
 });

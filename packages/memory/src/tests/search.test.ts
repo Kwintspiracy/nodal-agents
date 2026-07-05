@@ -331,6 +331,128 @@ describe('searchMemories — vector search', () => {
   });
 });
 
+// ─── pgvector runtime detection (finding M-18) ─────────────────────────────────
+//
+// packages/db/src/migrate.ts's `patchVectorAsText` rewrites `agent_memory.
+// embedding` from `vector(N)` to plain `text` on databases without the
+// pgvector extension (confirmed live on the dev Postgres instance — pgvector
+// is NOT installed there). vectorSearch's `::vector` cast / `<=>` operator
+// throw on such a database. Before this fix, an opt-in EMBEDDING_PROVIDER=
+// openai config would throw on every single searchMemories call once a real
+// (non-null) embedding came back — the embed() guard above only covers a
+// failing *embed call*, not a vector-incapable database. These tests force
+// the "pgvector unavailable" branch via the test-only setter (the pglite
+// test db actually HAS pgvector loaded — see helpers.ts — so faking the
+// column type or dropping the extension mid-suite would corrupt the shared
+// test db for other tests; the setter exercises the exact runtime branch
+// without touching the db itself).
+describe('searchMemories — pgvector runtime detection (finding M-18)', () => {
+  afterEach(async () => {
+    // Reset to auto-detect so later tests in this file/suite see the real
+    // (pgvector-available) test db again.
+    const { _setPgvectorAvailableForTests } = await import('../search');
+    _setPgvectorAvailableForTests(null);
+  });
+
+  it('does NOT throw when pgvector is unavailable — degrades to keyword search', async () => {
+    const { _setPgvectorAvailableForTests } = await import('../search');
+    _setPgvectorAvailableForTests(false);
+
+    const vectorClient = makeVectorClient(1536);
+
+    // Must not throw — this is the exact scenario that threw an opaque
+    // Postgres error ("type vector does not exist") before the fix.
+    const results = await searchMemories(db, vectorClient, {
+      query: 'notion',
+      entityId: seed.entityId,
+    });
+
+    // Keyword fallback still finds the seeded "Notion API" memory.
+    expect(results.some((m) => m.fact.toLowerCase().includes('notion'))).toBe(true);
+  });
+
+  it('warns once when pgvector is detected unavailable, not on every call', async () => {
+    // Force REAL detection (not the direct-cache setter, which would skip the
+    // detection code path — and the warning — entirely). Wrap the real db so
+    // its pg_extension lookup returns no rows, simulating a database without
+    // pgvector while every other query still passes through normally.
+    const { _setPgvectorAvailableForTests } = await import('../search');
+    _setPgvectorAvailableForTests(null);
+    const noVectorDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === 'execute') {
+          return async () => ({ rows: [] });
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as typeof db;
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const vectorClient = makeVectorClient(1536);
+
+      await searchMemories(noVectorDb, vectorClient, { query: 'notion', entityId: seed.entityId });
+      const warnCallsAfterFirst = warnSpy.mock.calls.filter(([msg]) =>
+        String(msg).includes('pgvector extension not available'),
+      ).length;
+      expect(warnCallsAfterFirst).toBe(1);
+
+      await searchMemories(noVectorDb, vectorClient, { query: 'notion', entityId: seed.entityId });
+      const warnCallsAfterSecond = warnSpy.mock.calls.filter(([msg]) =>
+        String(msg).includes('pgvector extension not available'),
+      ).length;
+      // Still just the one warning — the cache prevents re-detecting (and
+      // re-warning) on every call.
+      expect(warnCallsAfterSecond).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('the keyword-only provider (embed returns null) is unaffected — never checks pgvector', async () => {
+    const { _setPgvectorAvailableForTests } = await import('../search');
+    // Force-set to a value that would be wrong if it were ever consulted —
+    // proves the keyword provider path short-circuits before the check.
+    _setPgvectorAvailableForTests(false);
+
+    const keywordOnlyClient: EmbeddingClient = { embed: async () => null, dimensions: null };
+    const results = await searchMemories(db, keywordOnlyClient, {
+      query: 'notion',
+      entityId: seed.entityId,
+    });
+    expect(results.some((m) => m.fact.toLowerCase().includes('notion'))).toBe(true);
+  });
+
+  it('vector search still works normally when pgvector IS available (no regression)', async () => {
+    const { _setPgvectorAvailableForTests } = await import('../search');
+    _setPgvectorAvailableForTests(true);
+
+    const vectorClient = makeVectorClient(1536);
+    const { db: vDb } = await spinUpTestDb();
+    const vSeed = await seedMinimal(vDb);
+
+    const fact = 'The M-18 regression check uses embedded Postgres on port 25436.';
+    const created = await createMemory(
+      vDb,
+      {
+        entity_id: vSeed.entityId,
+        fact,
+        category: 'context',
+        importance: 3,
+        source: 'agent',
+        skill_tags: [],
+      },
+      vectorClient,
+    );
+
+    const results = await searchMemories(vDb, vectorClient, {
+      query: fact,
+      entityId: vSeed.entityId,
+    });
+    expect(results.some((m) => m.id === created.id)).toBe(true);
+  });
+});
+
 // ─── keywordSearchMemories (embedding-free, for query_memory tool) ─────────────
 
 describe('keywordSearchMemories', () => {

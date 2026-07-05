@@ -233,4 +233,74 @@ describe('pruneOldJobs', () => {
     expect(result.jobsDeleted).toBe(0);
     expect(result.toolCallsDeleted).toBe(0);
   });
+
+  // Finding F-7: a single inArray(...) DELETE over a large, unbatched id list
+  // can exceed Postgres's bind-parameter limit (~65535). Rather than seeding
+  // tens of thousands of rows in a unit test to hit that literal limit, this
+  // proves the actual mechanism that protects against it — the batching loop
+  // — with a small batchSize so the backlog spans several batches. The same
+  // loop logic applies unchanged at the real default (batchSize=1000).
+  it('batches the delete across multiple rounds and still prunes everything with correct counts', async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+
+    // 10 prunable jobs, one tool_call each — with batchSize=3 this spans 4
+    // rounds (3+3+3+1), proving the loop doesn't stop after the first batch
+    // and correctly aggregates counts across rounds.
+    const jobIds: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const [job] = await freshDb
+        .insert(schema.agentJobs)
+        .values({
+          entityId: freshSeed.entityId,
+          agentId: freshSeed.agentId,
+          channel: 'api',
+          task: `batch-ret-${i}`,
+          status: 'completed',
+          completedAt: oldDate,
+        })
+        .returning();
+      if (!job) throw new Error('seed job failed');
+      jobIds.push(job.id);
+      await freshDb
+        .insert(schema.toolCalls)
+        .values({ entityId: freshSeed.entityId, jobId: job.id, toolName: `tool_${i}` });
+    }
+
+    const result = await pruneOldJobs(freshDb, 30, 3);
+
+    expect(result.jobsDeleted).toBe(10);
+    expect(result.toolCallsDeleted).toBe(10);
+
+    const remaining = await freshDb
+      .select()
+      .from(schema.agentJobs)
+      .where(inArray(schema.agentJobs.id, jobIds));
+    expect(remaining.length).toBe(0);
+  });
+
+  it('a batchSize larger than the backlog behaves exactly like the unbatched default (regression)', async () => {
+    const { db: freshDb } = await spinUpTestDb();
+    const freshSeed = await seedMinimal(freshDb);
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+
+    const [job] = await freshDb
+      .insert(schema.agentJobs)
+      .values({
+        entityId: freshSeed.entityId,
+        agentId: freshSeed.agentId,
+        channel: 'api',
+        task: 'single-batch',
+        status: 'completed',
+        completedAt: oldDate,
+      })
+      .returning();
+    if (!job) throw new Error('seed job failed');
+
+    const result = await pruneOldJobs(freshDb, 30);
+    expect(result.jobsDeleted).toBe(1);
+    expect(result.toolCallsDeleted).toBe(0);
+  });
 });

@@ -32,10 +32,26 @@ export interface PruneResult {
  *
  * Returns the count of pruned jobs and their associated tool_calls.
  *
+ * Finding F-7: on a large backlog, collecting every prunable job id and
+ * passing them all to a single `inArray(...)` DELETE (and the `inArray(...)`
+ * COUNT before it) can exceed Postgres's bind-parameter limit (~65535),
+ * stalling retention permanently the moment the backlog crosses that size.
+ * Batched instead: each iteration selects up to `batchSize` prunable ids,
+ * counts + deletes just that batch (one transaction per batch, not one giant
+ * transaction spanning the whole backlog), and loops until nothing prunable
+ * remains. A batch smaller than `batchSize` means the backlog is cleared.
+ *
  * @param db            Drizzle db instance (any driver).
  * @param retentionDays Number of days to keep. 0 or negative = no-op.
+ * @param batchSize     Max job ids per DELETE. Default 1000 — comfortably
+ *                       under the bind-parameter limit even counting the
+ *                       tool_calls lookup's own `inArray` on the same ids.
  */
-export async function pruneOldJobs(db: AnyDrizzleDb, retentionDays: number): Promise<PruneResult> {
+export async function pruneOldJobs(
+  db: AnyDrizzleDb,
+  retentionDays: number,
+  batchSize = 1000,
+): Promise<PruneResult> {
   if (retentionDays <= 0) {
     return { jobsDeleted: 0, toolCallsDeleted: 0 };
   }
@@ -44,35 +60,52 @@ export async function pruneOldJobs(db: AnyDrizzleDb, retentionDays: number): Pro
   // The cutoff expression: now() - make_interval(days => $retentionDays)
   const cutoffExpr = sql`now() - make_interval(days => ${retentionDays})`;
 
-  // Find the job IDs to prune first so we can count their tool_calls.
-  // We do this inside a transaction so the count and delete are atomic.
-  return db.transaction(async (tx) => {
-    // Collect prunable job ids
-    const prunableRows = await tx
-      .select({ id: agentJobs.id })
-      .from(agentJobs)
-      .where(
-        sql`${agentJobs.status} IN ('completed','failed','cancelled')
-            AND ${agentJobs.completedAt} < ${cutoffExpr}`,
-      );
+  let jobsDeleted = 0;
+  let toolCallsDeleted = 0;
 
-    if (prunableRows.length === 0) {
-      return { jobsDeleted: 0, toolCallsDeleted: 0 };
-    }
+  for (;;) {
+    // Find the job IDs to prune first so we can count their tool_calls.
+    // We do this inside a transaction so the count and delete are atomic.
+    const batch = await db.transaction(async (tx) => {
+      // Collect one batch of prunable job ids — never the whole backlog.
+      const prunableRows = await tx
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(
+          sql`${agentJobs.status} IN ('completed','failed','cancelled')
+              AND ${agentJobs.completedAt} < ${cutoffExpr}`,
+        )
+        .limit(batchSize);
 
-    const jobIds = prunableRows.map((r) => r.id);
+      if (prunableRows.length === 0) {
+        return null;
+      }
 
-    // Count tool_calls before deletion (they'll cascade away with the jobs).
-    const [tcCountRow] = await tx
-      .select({ n: sql<number>`count(*)::int` })
-      .from(toolCalls)
-      .where(inArray(toolCalls.jobId, jobIds));
+      const jobIds = prunableRows.map((r) => r.id);
 
-    const toolCallsDeleted = tcCountRow?.n ?? 0;
+      // Count tool_calls before deletion (they'll cascade away with the jobs).
+      const [tcCountRow] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(toolCalls)
+        .where(inArray(toolCalls.jobId, jobIds));
 
-    // Delete the jobs — cascades to tool_calls + approval_requests automatically.
-    await tx.delete(agentJobs).where(inArray(agentJobs.id, jobIds));
+      const batchToolCallsDeleted = tcCountRow?.n ?? 0;
 
-    return { jobsDeleted: jobIds.length, toolCallsDeleted };
-  });
+      // Delete the jobs — cascades to tool_calls + approval_requests automatically.
+      await tx.delete(agentJobs).where(inArray(agentJobs.id, jobIds));
+
+      return { jobsDeleted: jobIds.length, toolCallsDeleted: batchToolCallsDeleted };
+    });
+
+    if (batch === null) break;
+
+    jobsDeleted += batch.jobsDeleted;
+    toolCallsDeleted += batch.toolCallsDeleted;
+
+    // A partial batch (fewer rows than requested) means there's nothing left
+    // to prune — stop instead of issuing one more (empty) round-trip.
+    if (batch.jobsDeleted < batchSize) break;
+  }
+
+  return { jobsDeleted, toolCallsDeleted };
 }

@@ -3,40 +3,75 @@
 //   - startCronTicker → tick fires within intervalMs
 //   - stop() prevents further ticks
 //   - onError callback called on tick error, ticker continues
+//   - a `skipped:true` result (re-entrancy guard) logs a warning, not an error
+//
+// The re-entrancy guard (M-7/R3) and the stuck-tick watchdog (R1) no longer
+// live in ticker.ts — they moved to guarded-tick.ts's `runCronTickGuarded`,
+// shared with the HTTP /api/cron route (routes/cron.ts). Those mechanisms
+// are tested directly and more thoroughly in cron/tests/guarded-tick.test.ts.
+// This file only tests ticker.ts's OWN remaining responsibility: firing
+// `runCronTickGuarded` on an interval, handling its resolved/rejected
+// outcomes, and the handle lifecycle (stop()).
 
 import { describe, it, expect, vi } from 'vitest';
 import { startCronTicker } from '../ticker.ts';
 import type { RunnerDeps } from '../../deps.ts';
+import type { GuardedTickResult } from '../guarded-tick.ts';
 
-// Finding H-2 (audit): runCronTick now isolates every phase internally (see
-// tick.test.ts), so it no longer rejects even when deps.db is a broken stub
-// — every phase's throw is caught and logged, and the tick resolves with
-// fallback counts. That's the fix working as intended, but it means this
-// file can no longer exercise the ticker's onError wiring by handing it
-// deliberately-broken deps and waiting for runCronTick to throw "for free".
-// Mock '../tick.ts' instead so this file tests ONLY the ticker's own
-// catch/continue plumbing (`runCronTick(deps, 5).catch(onError)` in
-// ticker.ts), independently of tick.ts's internal resilience.
-const { getTickShouldThrow, setTickShouldThrow } = vi.hoisted(() => {
-  let _throw = false;
+const { getMode, setMode, getCallCount, getLastMaxTickMs, recordCall } = vi.hoisted(() => {
+  let _mode: 'resolve' | 'skip' | 'throw' = 'resolve';
+  let _callCount = 0;
+  let _lastMaxTickMs: number | undefined;
   return {
-    getTickShouldThrow: () => _throw,
-    setTickShouldThrow: (v: boolean) => {
-      _throw = v;
+    getMode: () => _mode,
+    setMode: (m: 'resolve' | 'skip' | 'throw') => {
+      _mode = m;
+    },
+    getCallCount: () => _callCount,
+    getLastMaxTickMs: () => _lastMaxTickMs,
+    recordCall: (maxTickMs: number | undefined) => {
+      _callCount++;
+      _lastMaxTickMs = maxTickMs;
     },
   };
 });
 
-vi.mock('../tick.ts', async (importOriginal) => {
+vi.mock('../guarded-tick.ts', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('../tick.ts')>();
+  const actual = await importOriginal<typeof import('../guarded-tick.ts')>();
   return {
     ...actual,
-    runCronTick: (...args: Parameters<typeof actual.runCronTick>) => {
-      if (getTickShouldThrow()) {
-        return Promise.reject(new Error('ticker.test: simulated runCronTick rejection'));
+    runCronTickGuarded: async (
+      _deps: unknown,
+      _maxTasksPerTick?: number,
+      maxTickMs?: number,
+    ): Promise<GuardedTickResult> => {
+      recordCall(maxTickMs);
+      const zero: GuardedTickResult = {
+        orphanJobsReset: 0,
+        pendingRecovered: 0,
+        stalePendingFailed: 0,
+        orphansReset: 0,
+        tasksUnblocked: 0,
+        tasksExecuted: 0,
+        schedulesFired: 0,
+        rootsDelivered: 0,
+        curatorStaled: 0,
+        curatorArchived: 0,
+        curatorReactivated: 0,
+        curatorConsolidationDeferred: 0,
+        curatorConsolidationRan: 0,
+        retentionJobsDeleted: 0,
+        retentionToolCallsDeleted: 0,
+        skipped: false,
+      };
+      if (getMode() === 'throw') {
+        throw new Error('ticker.test: simulated runCronTickGuarded rejection');
       }
-      return actual.runCronTick(...args);
+      if (getMode() === 'skip') {
+        return { ...zero, skipped: true };
+      }
+      return zero;
     },
   };
 });
@@ -81,14 +116,12 @@ describe('startCronTicker', () => {
     }).not.toThrow();
   });
 
-  it('onError callback is called on tick error, ticker continues', async () => {
+  it('onError callback is called when runCronTickGuarded rejects, ticker continues', async () => {
     const errors: unknown[] = [];
     const deps = makeStubDeps();
 
-    setTickShouldThrow(true);
+    setMode('throw');
     try {
-      // The mocked runCronTick (above) rejects unconditionally while this
-      // flag is set — onError must be called, not re-thrown.
       const ticker = startCronTicker(deps, {
         intervalMs: 30, // very short for fast test
         onError: (e) => {
@@ -101,13 +134,48 @@ describe('startCronTicker', () => {
 
       ticker.stop();
 
-      // runCronTick rejected, onError should have been called
       expect(errors.length).toBeGreaterThan(0);
-      // The ticker must still be alive after errors (no re-throw)
-      // Verified: stop() called above without error proves ticker survived
     } finally {
-      setTickShouldThrow(false);
+      setMode('resolve');
     }
+  });
+
+  it('logs a warning (not onError) when a tick is skipped by the re-entrancy guard', async () => {
+    const errors: unknown[] = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const deps = makeStubDeps();
+
+    setMode('skip');
+    try {
+      const ticker = startCronTicker(deps, {
+        intervalMs: 30,
+        onError: (e) => {
+          errors.push(e);
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      ticker.stop();
+
+      // A skipped result is NOT an error — onError must not fire for it.
+      expect(errors.length).toBe(0);
+      const loggedSkip = warnSpy.mock.calls.some(([msg]) => String(msg).includes('skipped'));
+      expect(loggedSkip).toBe(true);
+    } finally {
+      setMode('resolve');
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('forwards opts.maxTickMs through to runCronTickGuarded', async () => {
+    const deps = makeStubDeps();
+    const ticker = startCronTicker(deps, { intervalMs: 30, onError: () => {}, maxTickMs: 42_000 });
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    ticker.stop();
+
+    expect(getCallCount()).toBeGreaterThan(0);
+    expect(getLastMaxTickMs()).toBe(42_000);
   });
 
   it('returns a handle with a stop method', () => {

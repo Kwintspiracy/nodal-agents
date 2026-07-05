@@ -23,6 +23,22 @@ import { seedDefaultSkills } from './bootstrap/seed-default-skills.ts';
 import { AuthError } from '@nodal-agents/auth';
 import { isValidWorkerSecret } from './lib/worker-secret.ts';
 import './lib/runner-auth-context.ts';
+import type { RunnerDeps } from './deps.ts';
+
+// ─── startBackfillBackground ──────────────────────────────────────────────────
+
+/**
+ * Fire the memory-embedding backfill as a background task — never awaited
+ * from main(). Finding M-17: a slow/unbounded backfill (EMBEDDING_PROVIDER=
+ * openai + a large agent_memory table) must never delay /api/health becoming
+ * reachable. Exported so tests can assert the non-blocking contract directly
+ * (the function itself returns void, not a Promise the caller could await).
+ */
+export function startBackfillBackground(deps: Pick<RunnerDeps, 'db' | 'embeddingClient'>): void {
+  void backfillMemoryEmbeddings(deps.db, deps.embeddingClient).catch((err) => {
+    console.warn('[runner] memory embedding backfill failed (will retry next boot):', err);
+  });
+}
 
 // ─── createApp ────────────────────────────────────────────────────────────────
 
@@ -169,13 +185,11 @@ async function main(): Promise<void> {
 
   // Catalog seeding — every install gets the same system skills. Idempotent,
   // respects user overrides. Agents are NOT seeded: every agent is created by
-  // the user.
+  // the user. Kept blocking (unlike the backfill below): the catalog is a
+  // small, fixed-size list bundled with the product (packages/catalog), not
+  // something that scales with a user's data — a handful of local queries,
+  // no external network call, sub-second in practice.
   await seedDefaultSkills(deps.db, runnerEnv);
-
-  // One-shot: generate embeddings for memory rows written before Sprint 1's
-  // inline embedding generation existed (idempotent — zero-row pass once caught
-  // up). Search still finds un-backfilled rows via the keyword fallback.
-  await backfillMemoryEmbeddings(deps.db, deps.embeddingClient);
 
   const app = createApp(deps, runnerEnv);
 
@@ -185,10 +199,20 @@ async function main(): Promise<void> {
   // Start the in-process cron ticker (default: every 2 min).
   // Disable with CRON_TICKER_ENABLED=false if using an external managed cron.
   const cronTickerEnabled = process.env['CRON_TICKER_ENABLED'] !== 'false';
+  // R1 watchdog ceiling — how long a single tick may run before the ticker
+  // forces `running` back to false and lets the loop continue (see ticker.ts
+  // for the full rationale). Read directly from process.env (not the Zod
+  // RunnerEnv) — same lightweight pattern as CRON_TICKER_ENABLED above, a
+  // rarely-touched operational knob, not core config.
+  const cronTickMaxMsRaw = Number(process.env['CRON_TICK_MAX_MS']);
+  const cronTickMaxMs =
+    Number.isFinite(cronTickMaxMsRaw) && cronTickMaxMsRaw > 0 ? cronTickMaxMsRaw : 15 * 60_000;
   // Pass runnerEnv to the ticker so it can re-attempt seedDefaultLlmKey on
   // each tick — covers the local-auth case where the first user signs up
   // AFTER the runner boot-time seed has already run and skipped on 0 entities.
-  const ticker = cronTickerEnabled ? startCronTicker(deps, { runnerEnv }) : null;
+  const ticker = cronTickerEnabled
+    ? startCronTicker(deps, { runnerEnv, maxTickMs: cronTickMaxMs })
+    : null;
   if (cronTickerEnabled) {
     console.warn('[runner] cron ticker started (120s interval)');
   }
@@ -212,6 +236,18 @@ async function main(): Promise<void> {
       console.warn(`[runner] listening on http://${hostname}:${info.port}`);
     },
   );
+
+  // One-shot: generate embeddings for memory rows written before Sprint 1's
+  // inline embedding generation existed (idempotent — zero-row pass once
+  // caught up). Search still finds un-backfilled rows via the keyword
+  // fallback, so this is safe to run in the background. Finding M-17: this
+  // used to run SEQUENTIALLY, unbounded, BEFORE serve() — with
+  // EMBEDDING_PROVIDER=openai and a large table, that stalled the whole boot
+  // (the health endpoint wasn't reachable yet) for however long the backlog
+  // took. Firing it here, after serve(), means /api/health is already up by
+  // the time this starts; a slow or failing backfill degrades to "search
+  // still works via keyword" instead of "runner never comes up".
+  startBackfillBackground(deps);
 
   // Graceful shutdown
   const shutdown = async (): Promise<void> => {
