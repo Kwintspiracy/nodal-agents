@@ -4,11 +4,11 @@
 import { mkdtemp, writeFile, utimes, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import { handleTelegramUpdate, pruneTelegramWorkspace } from '../../telegram/handler.ts';
 import type { RunnerDeps } from '../../deps.ts';
@@ -20,6 +20,44 @@ beforeAll(async () => {
   const result = await spinUpTestDb();
   db = result.db;
   seed = await seedMinimal(db);
+});
+
+// The job-creation / routing / filter tests below are not about H-1 authorization
+// — so make the chats they use already-authorized, turning the new inbound
+// allowlist check into a pass-through for them. The authorization behavior
+// itself is covered by its own describe block (with a fresh agent) at the end.
+beforeEach(async () => {
+  await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+  await db.insert(telegramAllowedChats).values([
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '1',
+      role: 'owner',
+      status: 'active',
+    },
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '555',
+      role: 'member',
+      status: 'active',
+    },
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '999',
+      role: 'member',
+      status: 'active',
+    },
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '-100123',
+      role: 'member',
+      status: 'active',
+    },
+  ]);
 });
 
 function privateMessage(text: string, chatId = 555): TelegramUpdate {
@@ -355,5 +393,130 @@ describe('pruneTelegramWorkspace — F-13 bounded cleanup', () => {
     for (const job of newest200) {
       expect(remainingNames.has(`${job.id}.jpg`)).toBe(true);
     }
+  });
+});
+
+describe('handleTelegramUpdate — H-1 inbound authorization', () => {
+  // A fresh agent per test so the top-level beforeEach (which seeds seed.agentId's
+  // allowlist) never interferes: these tests own their bot's allowlist entirely.
+  async function freshBot(): Promise<string> {
+    const [row] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Auth Bot',
+        slug: `auth-bot-${Date.now()}-${Math.floor(performance.now())}`,
+        personality: 'p',
+        role: 'agent',
+        active: true,
+      })
+      .returning({ id: agents.id });
+    return row!.id;
+  }
+
+  function dm(text: string, chatId: number): TelegramUpdate {
+    return {
+      update_id: 1,
+      message: {
+        message_id: 1,
+        chat: { id: chatId, type: 'private' },
+        from: { id: 7, first_name: 'Bob', username: 'bob', is_bot: false },
+        text,
+      },
+    };
+  }
+
+  const call = (agentId: string, update: TelegramUpdate) =>
+    handleTelegramUpdate({
+      update,
+      receivingAgentId: agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'auth_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+  it('first private DM with no owner claims ownership AND creates a job', async () => {
+    const agentId = await freshBot();
+    const result = await call(agentId, dm('hi', 4001));
+    expect(result.jobId).toBeDefined();
+
+    const rows = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.agentId, agentId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.role).toBe('owner');
+    expect(rows[0]?.status).toBe('active');
+    expect(rows[0]?.chatId).toBe('4001');
+  });
+
+  it('an unknown chat when an owner exists creates NO job and asks the owner', async () => {
+    const agentId = await freshBot();
+    // Owner claims first.
+    await call(agentId, dm('owner here', 4001));
+    // A stranger DMs.
+    const result = await call(agentId, dm('let me in', 4002));
+
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('awaiting_authorization');
+    expect(result.pendingAuth).toMatchObject({
+      ownerChatId: '4001',
+      requesterChatId: '4002',
+      requesterName: 'Bob',
+    });
+
+    // A pending row exists for the stranger; no job was created for chat 4002.
+    const [pending] = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.chatId, '4002'));
+    expect(pending?.status).toBe('pending');
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.chatId, '4002'));
+    expect(jobs).toHaveLength(0);
+  });
+
+  it('a repeat DM from an already-pending chat does NOT re-ask the owner', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('owner here', 4001));
+    await call(agentId, dm('let me in', 4002)); // first ask
+    const again = await call(agentId, dm('please?', 4002)); // repeat
+
+    expect(again.jobId).toBeUndefined();
+    expect(again.skipped).toBe('awaiting_authorization');
+    expect(again.pendingAuth).toBeUndefined(); // no re-spam
+  });
+
+  it('an active member chat creates a job', async () => {
+    const agentId = await freshBot();
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId,
+      chatId: '4003',
+      role: 'member',
+      status: 'active',
+    });
+    const result = await call(agentId, dm('hello', 4003));
+    expect(result.jobId).toBeDefined();
+  });
+
+  it('a group message with no owner is skipped (ownership needs a DM first)', async () => {
+    const agentId = await freshBot();
+    const result = await handleTelegramUpdate({
+      update: {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          chat: { id: -4009, type: 'group' },
+          from: { id: 7, first_name: 'Bob', is_bot: false },
+          text: '/start',
+        },
+      },
+      receivingAgentId: agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'auth_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('no_owner_group');
   });
 });

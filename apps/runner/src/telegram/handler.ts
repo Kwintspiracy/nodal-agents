@@ -15,7 +15,7 @@ import { writeFile, mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { eq, and, inArray } from '@nodal-agents/db';
-import { agentJobs, agents } from '@nodal-agents/db';
+import { agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
 import { getTelegramFile, type TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -40,7 +40,27 @@ export interface HandleResult {
     | 'group_filter'
     | 'ask_no_text'
     | 'ask_unknown_agent'
-    | 'mention_no_text';
+    | 'mention_no_text'
+    | 'awaiting_authorization'
+    | 'no_owner_group';
+  /**
+   * H-1: an UNKNOWN chat messaged a bot that already has an owner. No job is
+   * created; instead the poller (after the txn commits) sends the owner an
+   * inline-button card to allow/deny this chat, and tells the requester it is
+   * pending. Present only when THIS message was the one that opened the request
+   * (a repeat DM from an already-pending chat sets `skipped` without this, so
+   * the owner is not spammed).
+   */
+  pendingAuth?: {
+    /** telegram_allowed_chats row id — the callback approves/denies this row. */
+    allowedChatId: string;
+    /** Owner's chat id — where the confirmation card is sent. */
+    ownerChatId: string;
+    /** The new chat asking for access — where the "pending" note is sent. */
+    requesterChatId: string;
+    /** Display name for the owner's card. */
+    requesterName: string;
+  };
 }
 
 export async function handleTelegramUpdate(args: {
@@ -96,6 +116,89 @@ export async function handleTelegramUpdate(args: {
     const replyToBot = message.reply_to_message?.from?.is_bot === true;
     if (!isCommand && !isMention && !replyToBot) return { skipped: 'group_filter' };
   }
+
+  // ── H-1: inbound authorization ──────────────────────────────────────────────
+  // A Telegram bot's username is discoverable, so a stranger who DMs it must NOT
+  // be able to spawn a job with this agent's tools/connectors. Only chats on the
+  // per-bot allowlist may proceed. The FIRST private DM to a bot with no owner
+  // claims ownership (the person who set it up); any other unknown chat is held
+  // pending and the owner is asked to confirm before it is allowed.
+  const chatIdStr = String(chatId);
+  const [known] = await tx
+    .select({ status: telegramAllowedChats.status })
+    .from(telegramAllowedChats)
+    .where(
+      and(
+        eq(telegramAllowedChats.agentId, receivingAgentId),
+        eq(telegramAllowedChats.chatId, chatIdStr),
+      ),
+    )
+    .limit(1);
+
+  if (!known) {
+    const [owner] = await tx
+      .select({ chatId: telegramAllowedChats.chatId })
+      .from(telegramAllowedChats)
+      .where(
+        and(
+          eq(telegramAllowedChats.agentId, receivingAgentId),
+          eq(telegramAllowedChats.role, 'owner'),
+          eq(telegramAllowedChats.status, 'active'),
+        ),
+      )
+      .limit(1);
+
+    if (!owner) {
+      // No owner yet. Ownership can only be claimed from a private DM — a group
+      // can't bootstrap it (the owner must DM the bot first).
+      if (chatType !== 'private') return { skipped: 'no_owner_group' };
+      await tx
+        .insert(telegramAllowedChats)
+        .values({
+          entityId: receivingAgentEntityId,
+          agentId: receivingAgentId,
+          chatId: chatIdStr,
+          role: 'owner',
+          status: 'active',
+          requesterName: senderName,
+        })
+        .onConflictDoNothing();
+      // Fall through: the owner's own first message proceeds to a job.
+    } else {
+      // Owner exists → a new contact needs the owner's confirmation. Record it
+      // pending and signal the poller to ask; this message creates NO job.
+      const [pending] = await tx
+        .insert(telegramAllowedChats)
+        .values({
+          entityId: receivingAgentEntityId,
+          agentId: receivingAgentId,
+          chatId: chatIdStr,
+          role: 'member',
+          status: 'pending',
+          requesterName: senderName,
+        })
+        .onConflictDoNothing()
+        .returning({ id: telegramAllowedChats.id });
+      return {
+        skipped: 'awaiting_authorization',
+        // Signal a confirmation only when WE inserted the row — a repeat DM from
+        // an already-pending chat hits the unique constraint (no row) and must
+        // not re-spam the owner.
+        pendingAuth: pending
+          ? {
+              allowedChatId: pending.id,
+              ownerChatId: owner.chatId,
+              requesterChatId: chatIdStr,
+              requesterName: senderName,
+            }
+          : undefined,
+      };
+    }
+  } else if (known.status !== 'active') {
+    // Already pending the owner's decision — drop silently (no re-ask).
+    return { skipped: 'awaiting_authorization' };
+  }
+  // Authorized (active member/owner, or ownership just claimed) → continue.
 
   // /ask <slug> <text> routes to a different agent in the same entity.
   let targetAgentId = receivingAgentId;

@@ -10,8 +10,13 @@
 // On other errors: exponential backoff (1s → 30s) then retry.
 
 import { eq } from '@nodal-agents/db';
-import { agents } from '@nodal-agents/db';
-import { getTelegramUpdates, DeliveryError, type TelegramUpdate } from '@nodal-agents/delivery';
+import { agents, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  getTelegramUpdates,
+  sendTelegramMessage,
+  DeliveryError,
+  type TelegramUpdate,
+} from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import {
@@ -21,6 +26,11 @@ import {
   type HandleResult,
 } from './handler.ts';
 import { handleApprovalCallback } from './approval-callback.ts';
+import {
+  handleAuthCallback,
+  parseAuthCallbackData,
+  buildAuthConfirmKeyboard,
+} from './auth-callback.ts';
 
 export interface PollerOpts {
   agentId: string;
@@ -219,13 +229,19 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       // advancement so we retry the same tap.
       if (update.callback_query) {
         try {
-          await handleApprovalCallback({
-            update,
-            receivingAgentId: agentId,
-            botToken,
-            deps,
-            env,
-          });
+          // Route by callback_data prefix: `tgauth:` = an inbound-chat
+          // authorization decision (H-1); anything else = an approval tap.
+          if (parseAuthCallbackData(update.callback_query.data)) {
+            await handleAuthCallback({ update, receivingAgentId: agentId, botToken, deps });
+          } else {
+            await handleApprovalCallback({
+              update,
+              receivingAgentId: agentId,
+              botToken,
+              deps,
+              env,
+            });
+          }
           await deps.db
             .update(agents)
             .set({ telegramOffset: newOffset, updatedAt: new Date() })
@@ -308,6 +324,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
 
       let createdJobId: string | undefined;
       let createdPhoto: HandleResult['photo'];
+      let createdPendingAuth: HandleResult['pendingAuth'];
 
       try {
         // Atomic: create job + advance offset. If anything throws, the txn
@@ -327,6 +344,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
 
           createdJobId = result.jobId;
           createdPhoto = result.photo;
+          createdPendingAuth = result.pendingAuth;
         });
         // The transaction just committed — the DB is healthy again.
         dbBackoffMs = BACKOFF_INITIAL_MS;
@@ -432,10 +450,52 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
       if (createdJobId) {
         triggerJobWorker(createdJobId, env);
       }
+
+      // H-1: an unknown chat asked for access — ask the owner to confirm (out of
+      // the txn: network I/O). Best-effort with a safety net: if the owner card
+      // can't be sent, delete the pending row so a later message re-asks rather
+      // than leaving the requester stuck in limbo forever.
+      if (createdPendingAuth) {
+        await sendAuthConfirmation(botToken, createdPendingAuth).catch(async (err) => {
+          console.warn(
+            `[telegram-poller agent=${agentId}] auth-confirm send failed for chat ${
+              createdPendingAuth!.requesterChatId
+            }: ${err instanceof Error ? err.message : String(err)}; clearing pending row`,
+          );
+          await deps.db
+            .delete(telegramAllowedChats)
+            .where(eq(telegramAllowedChats.id, createdPendingAuth!.allowedChatId))
+            .catch(() => {});
+        });
+      }
     }
   }
 
   return { reason: 'aborted', finalOffset: offset };
+}
+
+/**
+ * Send the owner an inline-button card to allow/deny a new chat, and tell the
+ * requester their request is pending. The owner card is the load-bearing send —
+ * if it throws, the caller clears the pending row so the request can re-open.
+ * The requester note is best-effort and never blocks.
+ */
+async function sendAuthConfirmation(
+  botToken: string,
+  pending: NonNullable<HandleResult['pendingAuth']>,
+): Promise<void> {
+  await sendTelegramMessage({
+    botToken,
+    chatId: pending.ownerChatId,
+    text: `👤 ${pending.requesterName} (chat ${pending.requesterChatId}) souhaite parler à ce bot. Autoriser ?`,
+    inlineKeyboard: buildAuthConfirmKeyboard(pending.allowedChatId),
+  });
+  // Let the requester know they're waiting — best-effort, never fatal.
+  await sendTelegramMessage({
+    botToken,
+    chatId: pending.requesterChatId,
+    text: 'Votre demande a été transmise au propriétaire du bot pour autorisation. Vous pourrez écrire dès qu’elle est acceptée.',
+  }).catch(() => {});
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

@@ -549,6 +549,23 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       PRIMARY KEY (entity_id, key)
     );
 
+    -- ── telegram_allowed_chats (migration 0057 — H-1 inbound authorization) ──
+
+    CREATE TABLE IF NOT EXISTS telegram_allowed_chats (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      chat_id text NOT NULL,
+      role text NOT NULL DEFAULT 'member',
+      status text NOT NULL DEFAULT 'pending',
+      requester_name text,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      CONSTRAINT telegram_allowed_chats_agent_chat_unique UNIQUE (agent_id, chat_id),
+      CONSTRAINT telegram_allowed_chats_role_check CHECK (role IN ('owner','member')),
+      CONSTRAINT telegram_allowed_chats_status_check CHECK (status IN ('active','pending'))
+    );
+
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS sessions (

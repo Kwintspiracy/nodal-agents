@@ -393,6 +393,13 @@
       "when": 1783600000000,
       "tag": "0056_agents_skills_entity_scoped_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1783700000000,
+      "tag": "0057_telegram_allowed_chats",
+      "breakpoints": true
     }
   ]
 }

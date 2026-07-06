@@ -64,6 +64,24 @@ delivered that message (or the budget is spent), the job suspends. You resolve
 the approval from the dashboard; the job then resumes and executes the approved
 action.
 
+## Who can talk to your bot
+
+A Telegram bot's username is public, so anyone who finds it could message it. To
+keep strangers from putting your agent to work, each bot has an allowlist:
+
+- **You claim it by DMing it first.** The first private message to a freshly
+  connected bot registers _that_ chat as the bot's **owner** — you. From then on
+  your messages go straight through.
+- **A new person is held for your approval.** If someone the bot doesn't know
+  messages it, no job runs. Instead you (the owner) get a card in your own chat —
+  _"👤 Name wants to talk to this bot. Allow?"_ — with **✅ Autoriser** /
+  **❌ Refuser** buttons. Only you can decide. Allow them once and their future
+  messages go through; refuse and they stay blocked. The person is told their
+  request is pending, so nobody is left wondering.
+
+Groups work the same way: the bot only acts in a group once you've approved that
+group. You must DM the bot to claim ownership before any group can be approved.
+
 ## Group chat tip
 
 If you want to address a specific agent in a group, use:
