@@ -56,6 +56,35 @@ describe('compactOldToolResults', () => {
     expect(part && 'toolCallId' in part ? part.toolCallId : undefined).toBe('a');
   });
 
+  it('also elides the LARGE input of an evicted tool-call, keeps small + recent inputs (E3)', () => {
+    const bigInput = { content: 'x'.repeat(5000) }; // a big write-content argument
+    const smallInput = { path: 'a.txt' };
+    const asstWith = (id: string, input: unknown): ModelMessage => ({
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: id, toolName: 'write_content', input }],
+    });
+    const messages: ModelMessage[] = [
+      { role: 'user', content: 'go' },
+      asstWith('a', bigInput), // old + large → input elided
+      tool('a'),
+      asstWith('b', smallInput), // old but small → kept
+      tool('b'),
+      asstWith('c', bigInput), // recent → kept (not evicted)
+      tool('c'),
+    ];
+    const { messages: out } = compactOldToolResults(messages, 1); // keep only the last tool msg (c)
+
+    const inputOf = (m: ModelMessage): unknown => {
+      const p = Array.isArray(m.content)
+        ? m.content.find((x) => x.type === 'tool-call')
+        : undefined;
+      return p && p.type === 'tool-call' ? p.input : undefined;
+    };
+    expect(inputOf(out[1]!)).toBe('[earlier tool-call arguments elided to fit the context window]');
+    expect(inputOf(out[3]!)).toEqual(smallInput); // small input kept verbatim
+    expect(inputOf(out[5]!)).toEqual(bigInput); // recent tool-call kept intact
+  });
+
   it('is a no-op when tool messages <= keep', () => {
     const messages: ModelMessage[] = [{ role: 'user', content: 'go' }, asst('a'), tool('a')];
     expect(compactOldToolResults(messages, 3).evicted).toBe(0);

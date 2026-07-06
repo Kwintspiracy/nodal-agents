@@ -3,7 +3,7 @@
 // Idempotency is enforced by a conditional UPDATE (status='todo') so two
 // concurrent ticks can never claim the same task twice.
 
-import { and, asc, desc, eq, ne, inArray, isNotNull } from '@nodal-agents/db';
+import { and, asc, desc, eq, inArray, notInArray, isNotNull } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { executeJob } from '../job/execute.ts';
@@ -134,7 +134,10 @@ export async function executeReadyTasks(
     // — for the detached task-board model — what inline assign_ gave for free:
     // every sub-run sees what the others in this run have produced, not just its
     // explicit depends_on edges.
-    const runMemory = task.rootJobId ? await loadRunMemory(db, task.rootJobId, task.id) : '';
+    const explicitDepIds = (task.dependsOn ?? []) as string[];
+    const runMemory = task.rootJobId
+      ? await loadRunMemory(db, task.rootJobId, task.id, explicitDepIds)
+      : '';
     const taskText = buildTaskText(task, runMemory);
 
     // Invariant 8 (delegation depth): the create_task/task-board path must
@@ -352,7 +355,13 @@ async function loadRunMemory(
   db: AnyDrizzleDb,
   rootJobId: string,
   selfTaskId: string,
+  excludeIds: string[] = [],
 ): Promise<string> {
+  // Exclude the task itself AND its EXPLICIT deps (E2, audit followup): a
+  // `done` dependency is already injected verbatim in `context.deps` /
+  // "Data from previous steps", so also listing it here as shared-run memory
+  // duplicates its (potentially large, unbounded) result in the same prompt.
+  const excluded = [selfTaskId, ...excludeIds];
   const siblings = await db
     .select({ title: agentTasks.title, result: agentTasks.result, createdAt: agentTasks.createdAt })
     .from(agentTasks)
@@ -360,7 +369,7 @@ async function loadRunMemory(
       and(
         eq(agentTasks.rootJobId, rootJobId),
         eq(agentTasks.status, 'done'),
-        ne(agentTasks.id, selfTaskId),
+        notInArray(agentTasks.id, excluded),
       ),
     )
     .orderBy(asc(agentTasks.createdAt));

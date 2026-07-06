@@ -19,6 +19,7 @@ export * from './entities/llm-key';
 export * from './types/operation';
 export * from './oauth/providers';
 export * from './root-agent';
+export * from './system-prompt-cache';
 export * from './connector-catalog';
 export * from './community-skill-catalog';
 export * from './model-catalog';

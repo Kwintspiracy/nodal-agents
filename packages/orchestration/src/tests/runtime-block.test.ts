@@ -230,7 +230,7 @@ describe('buildSystemPrompt — runtime block integration', () => {
     expect(prompt).not.toContain('## Runtime');
   });
 
-  it('runtime block appears after personality and before built-in capabilities', async () => {
+  it('runtime block sits in the VOLATILE tail after the cache boundary (E1)', async () => {
     const { entityId } = await seedEntity(db);
     const agent = await seedAgent(db, entityId);
     const deployment: DeploymentContext = {
@@ -241,11 +241,16 @@ describe('buildSystemPrompt — runtime block integration', () => {
     const prompt = await buildSystemPrompt(agent, db, { origin: 'api', deployment });
 
     const personalityIdx = prompt.indexOf('You are a test agent.');
-    const runtimeIdx = prompt.indexOf('## Runtime');
     const builtinIdx = prompt.indexOf('## Built-in capabilities');
+    const boundaryIdx = prompt.indexOf('[[[NODAL_SYSTEM_CACHE_BOUNDARY]]]');
+    const runtimeIdx = prompt.indexOf('## Runtime');
 
+    // E1: the live-timestamp runtime block moved to the VOLATILE tail so the
+    // stable prefix (personality → built-in → skills) caches across jobs. Order
+    // is now: personality < built-in < cache-boundary < runtime.
     expect(personalityIdx).toBeGreaterThanOrEqual(0);
-    expect(runtimeIdx).toBeGreaterThan(personalityIdx);
-    expect(builtinIdx).toBeGreaterThan(runtimeIdx);
+    expect(builtinIdx).toBeGreaterThan(personalityIdx);
+    expect(boundaryIdx).toBeGreaterThan(builtinIdx);
+    expect(runtimeIdx).toBeGreaterThan(boundaryIdx);
   });
 });

@@ -19,6 +19,7 @@
 // stays cheap AND well under the token budget, exactly like Cowork.
 
 import type { ModelMessage } from 'ai';
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
 
 const EPHEMERAL = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
 
@@ -49,18 +50,51 @@ export function withAnthropicPromptCaching<T extends object>(args: T): T {
         )
       : original;
 
-  // Promote a top-level `system` string to a cached system message so the (large,
-  // stable) system prompt is cached too. Anthropic-only transform.
+  // Promote a top-level `system` string to cached system message(s). If the
+  // prompt carries SYSTEM_PROMPT_CACHE_BOUNDARY (E1), split it: the STABLE prefix
+  // gets the ephemeral breakpoint (reused across the agent's jobs), and the
+  // VOLATILE tail (live timestamp, per-job memory/context) rides as a SECOND,
+  // UNCACHED system message so it never invalidates the cached prefix. Without
+  // the marker, the whole system is cached as one block (unchanged behavior).
   if (typeof view.system === 'string' && view.system.length > 0) {
-    const systemMsg = {
-      role: 'system',
-      content: view.system,
-      providerOptions: EPHEMERAL,
-    } as unknown as ModelMessage;
+    const boundary = view.system.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY);
+    const systemMsgs: ModelMessage[] =
+      boundary >= 0
+        ? [
+            {
+              role: 'system',
+              content: view.system.slice(0, boundary),
+              providerOptions: EPHEMERAL,
+            } as unknown as ModelMessage,
+            {
+              role: 'system',
+              content: view.system.slice(boundary + SYSTEM_PROMPT_CACHE_BOUNDARY.length),
+            } as unknown as ModelMessage,
+          ]
+        : [
+            {
+              role: 'system',
+              content: view.system,
+              providerOptions: EPHEMERAL,
+            } as unknown as ModelMessage,
+          ];
     const rest = { ...args } as { system?: unknown };
     delete rest.system;
-    return { ...(rest as T), messages: [systemMsg, ...messages] } as T;
+    return { ...(rest as T), messages: [...systemMsgs, ...messages] } as T;
   }
 
   return { ...args, messages } as T;
+}
+
+/**
+ * Strip the E1 cache boundary marker from a plain `system` string. Applied on
+ * the NON-caching path (non-Anthropic providers) so the marker — which only the
+ * Anthropic split consumes — never leaks into the prompt those providers see.
+ */
+export function stripSystemCacheBoundary<T extends object>(args: T): T {
+  const view = args as { system?: unknown };
+  if (typeof view.system !== 'string' || !view.system.includes(SYSTEM_PROMPT_CACHE_BOUNDARY)) {
+    return args;
+  }
+  return { ...args, system: view.system.split(SYSTEM_PROMPT_CACHE_BOUNDARY).join('\n\n') } as T;
 }

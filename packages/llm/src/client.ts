@@ -11,7 +11,7 @@ import { withRetry } from './retry';
 import { generateWithToolChoiceFloor } from './tool-choice-floor';
 
 import { buildAnthropicModel } from './providers/anthropic';
-import { withAnthropicPromptCaching } from './providers/anthropic-cache';
+import { withAnthropicPromptCaching, stripSystemCacheBoundary } from './providers/anthropic-cache';
 import { buildOpenAIModel } from './providers/openai';
 import { buildOllamaModel } from './providers/ollama';
 import { buildOpenAICompatibleModel } from './providers/openai-compatible';
@@ -293,7 +293,9 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
   const clientGenerateText: NodalLlmClient['generateText'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
     const toolChoice = (args as { toolChoice?: unknown }).toolChoice;
-    const prepared = cachingOn ? withAnthropicPromptCaching(args) : args;
+    // Caching path splits on the E1 boundary; non-caching path strips it so the
+    // marker never leaks into a non-Anthropic provider's prompt.
+    const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
     // tool_choice floor: if the provider rejects a forced tool_choice value
     // (some OpenRouter routes reject it), retry once with 'auto' — logged.
     return generateWithToolChoiceFloor(
@@ -330,18 +332,21 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
     // streamText returns a StreamTextResult synchronously (not a Promise).
     // Streaming semantics differ from generateText (timeout would have to be
     // per-chunk, not total) — left untouched here. Add when a streaming user
-    // surfaces a hang in the wild.
-    return streamText({ ...args, model } as Parameters<typeof streamText>[0]);
+    // surfaces a hang in the wild. Strip the E1 boundary marker (this path
+    // doesn't apply Anthropic caching, so the marker must not reach the model).
+    const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
+    return streamText({ ...prepared, model } as Parameters<typeof streamText>[0]);
   };
 
   const clientGenerateObject: NodalLlmClient['generateObject'] = async (args) => {
     validateIfMessages(args as { messages?: unknown });
+    const prepared = cachingOn ? withAnthropicPromptCaching(args) : stripSystemCacheBoundary(args);
     return withRetry(
       () =>
         withStaleRetry(
           (timeoutMs) =>
             generateObject({
-              ...args,
+              ...prepared,
               model,
               timeout: timeoutMs,
               maxRetries: 0,

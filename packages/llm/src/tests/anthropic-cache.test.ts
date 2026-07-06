@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ModelMessage } from 'ai';
-import { withAnthropicPromptCaching } from '../providers/anthropic-cache';
+import { withAnthropicPromptCaching, stripSystemCacheBoundary } from '../providers/anthropic-cache';
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
 
 const EPHEMERAL = { anthropic: { cacheControl: { type: 'ephemeral' } } };
 
@@ -17,6 +18,32 @@ describe('withAnthropicPromptCaching', () => {
     expect(first.role).toBe('system');
     expect((first as { content?: unknown }).content).toBe('You are a helpful agent.');
     expect(first.providerOptions).toEqual(EPHEMERAL);
+  });
+
+  it('splits on the cache boundary: stable prefix cached, volatile tail NOT cached (E1)', () => {
+    const system = `STABLE PREFIX${SYSTEM_PROMPT_CACHE_BOUNDARY}VOLATILE TAIL`;
+    const out = withAnthropicPromptCaching({
+      system,
+      messages: [{ role: 'user', content: 'hi' }] as ModelMessage[],
+    });
+
+    expect((out as { system?: unknown }).system).toBeUndefined();
+    const [m0, m1] = out.messages as Array<ModelMessage & { providerOptions?: unknown }>;
+    // Stable prefix → first system message, WITH the ephemeral breakpoint.
+    expect(m0!.role).toBe('system');
+    expect((m0 as { content?: unknown }).content).toBe('STABLE PREFIX');
+    expect(m0!.providerOptions).toEqual(EPHEMERAL);
+    // Volatile tail → second system message, NO cache control (it changes per job).
+    expect(m1!.role).toBe('system');
+    expect((m1 as { content?: unknown }).content).toBe('VOLATILE TAIL');
+    expect(m1!.providerOptions).toBeUndefined();
+  });
+
+  it('stripSystemCacheBoundary removes the marker for the non-caching path', () => {
+    const system = `A${SYSTEM_PROMPT_CACHE_BOUNDARY}B`;
+    const out = stripSystemCacheBoundary({ system, messages: [] });
+    expect((out as { system: string }).system).toBe('A\n\nB');
+    expect((out as { system: string }).system).not.toContain('NODAL_SYSTEM_CACHE_BOUNDARY');
   });
 
   it('puts a sliding cache breakpoint on the LAST message only', () => {

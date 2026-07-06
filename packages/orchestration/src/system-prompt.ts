@@ -22,6 +22,7 @@ import {
 } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
@@ -488,18 +489,26 @@ export async function buildSystemPrompt(
 
   const wrap = (s: string): string => (s ? '\n\n' + s : '');
 
-  return (
+  // Assembled in two halves separated by SYSTEM_PROMPT_CACHE_BOUNDARY (E1, audit
+  // followup). Everything BEFORE the boundary is STABLE across an agent's jobs
+  // (personality, baseline, capabilities, workspaces, skills, etiquette) — the
+  // caching layer gives it its own ephemeral breakpoint so it is reused across
+  // jobs. Everything AFTER is VOLATILE (live timestamp in runtimeBlock, per-task
+  // memory ranking, per-job jobContext) and stays fresh. Previously the volatile
+  // timestamp sat 3rd, so every job's whole system prompt differed and NOTHING
+  // cached across jobs. Providers without caching strip the marker before send.
+  const stable =
     personality +
     wrap(baselineBlock) +
-    runtimeBlock +
     '\n\n' +
     builtinBlock +
     workspacesBlock +
-    memoryBlock +
     skillsBlock +
     wrap(discoverabilityBlock) +
     wrap(channelBlock) +
-    wrap(subAgentBlock) +
-    jobContextBlock
-  );
+    wrap(subAgentBlock);
+
+  const volatile = runtimeBlock + memoryBlock + jobContextBlock;
+
+  return volatile.trim().length > 0 ? stable + SYSTEM_PROMPT_CACHE_BOUNDARY + volatile : stable;
 }

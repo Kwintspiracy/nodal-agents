@@ -272,16 +272,25 @@ export function truncateForContext(value: string): string {
 
 const EVICTED_TOOL_RESULT_MARKER =
   '[earlier tool result elided to fit the context window — re-run the tool if you need this data again]';
+const EVICTED_TOOL_INPUT_MARKER = '[earlier tool-call arguments elided to fit the context window]';
+
+// Only elide a tool-call's INPUT when it's actually large — small args (the
+// common case) cost nothing to keep and eliding them would lose useful signal.
+const TOOL_INPUT_ELIDE_THRESHOLD = 2_000;
 
 /**
- * Context compaction (Guard 1c). Replaces the OUTPUT of tool-result parts in all
- * but the last `keepRecentToolMessages` tool messages with a short marker. Stale
- * tool output is the dominant consumer of a long job's context (often 70%+); the
- * agent has usually acted on it already, so evicting it shrinks every subsequent
- * prompt — preventing context-window overflow and bounding cost — while keeping
- * the recent turns intact. Structure-safe: toolCallId/toolName are preserved, so
- * tool_use↔tool_result pairing (and message-structure validation) is unaffected.
- * Returns the new array + the number of results evicted (0 ⇒ nothing changed).
+ * Context compaction (Guard 1c). In all but the last `keepRecentToolMessages`
+ * tool messages, replaces the OUTPUT of tool-result parts with a short marker —
+ * AND elides the large INPUT of the matching tool-CALL parts in the assistant
+ * messages (E3, audit followup). Stale tool output is the dominant consumer of a
+ * long job's context, but a big tool ARGUMENT (e.g. a `write-content` payload)
+ * was re-sent in full on every subsequent turn because only outputs were evicted.
+ * The agent has usually acted on both already, so eliding them shrinks every
+ * later prompt — preventing context-window overflow and bounding cost — while
+ * keeping the recent turns intact. Structure-safe: toolCallId/toolName are
+ * preserved on both sides, so tool_use↔tool_result pairing (and message-structure
+ * validation) is unaffected. Returns the new array + the number of results
+ * evicted (0 ⇒ nothing changed).
  */
 export function compactOldToolResults(
   messages: readonly ModelMessage[],
@@ -294,16 +303,44 @@ export function compactOldToolResults(
   const evictCount = toolMsgIdx.length - keepRecentToolMessages;
   if (evictCount <= 0) return { messages: [...messages], evicted: 0 };
   const evictIdx = new Set(toolMsgIdx.slice(0, evictCount));
+
+  // First pass: the toolCallIds whose RESULTS we're evicting — their matching
+  // tool-CALL inputs are then safe to elide too (the pair is being retired).
+  const evictedCallIds = new Set<string>();
+  for (const i of evictIdx) {
+    const m = messages[i];
+    if (!m || m.role !== 'tool' || !Array.isArray(m.content)) continue;
+    for (const p of m.content) {
+      if (p.type === 'tool-result') evictedCallIds.add(p.toolCallId);
+    }
+  }
+
   let evicted = 0;
   const out = messages.map((m, i): ModelMessage => {
-    if (!evictIdx.has(i) || m.role !== 'tool' || !Array.isArray(m.content)) return m;
-    const content = m.content.map((p) => {
-      if (p.type !== 'tool-result') return p;
-      if (p.output.type === 'text' && p.output.value === EVICTED_TOOL_RESULT_MARKER) return p;
-      evicted += 1;
-      return { ...p, output: { type: 'text' as const, value: EVICTED_TOOL_RESULT_MARKER } };
-    });
-    return { ...m, content };
+    // Evict tool-result OUTPUTS in the old tool messages.
+    if (evictIdx.has(i) && m.role === 'tool' && Array.isArray(m.content)) {
+      const content = m.content.map((p) => {
+        if (p.type !== 'tool-result') return p;
+        if (p.output.type === 'text' && p.output.value === EVICTED_TOOL_RESULT_MARKER) return p;
+        evicted += 1;
+        return { ...p, output: { type: 'text' as const, value: EVICTED_TOOL_RESULT_MARKER } };
+      });
+      return { ...m, content };
+    }
+    // Elide large tool-call INPUTS whose result was evicted, wherever they live.
+    if (m.role === 'assistant' && Array.isArray(m.content)) {
+      let changed = false;
+      const content = m.content.map((p) => {
+        if (p.type !== 'tool-call' || !evictedCallIds.has(p.toolCallId)) return p;
+        const size =
+          typeof p.input === 'string' ? p.input.length : JSON.stringify(p.input ?? '').length;
+        if (size < TOOL_INPUT_ELIDE_THRESHOLD) return p;
+        changed = true;
+        return { ...p, input: EVICTED_TOOL_INPUT_MARKER };
+      });
+      return changed ? { ...m, content } : m;
+    }
+    return m;
   });
   return { messages: out, evicted };
 }
