@@ -379,6 +379,53 @@ describe('cancelJobAction', () => {
   });
 });
 
+describe('Telegram allowlist actions (H-1)', () => {
+  const ID = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+  it('revoke REFUSES the owner (disconnect the bot instead)', async () => {
+    currentDb = makeDb([{ id: ID, role: 'owner', agentId: ID }]) as typeof currentDb;
+    const { revokeTelegramChatAction } = await import('../src/lib/actions.ts');
+    const r = await revokeTelegramChatAction(ID);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('revoke deletes a member chat', async () => {
+    currentDb = makeDb([{ id: ID, role: 'member', agentId: ID }]) as typeof currentDb;
+    const { revokeTelegramChatAction } = await import('../src/lib/actions.ts');
+    const r = await revokeTelegramChatAction(ID);
+    expect(r.ok).toBe(true);
+    expect(
+      (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete,
+    ).toHaveBeenCalled();
+  });
+
+  it('resolve REFUSES a non-pending chat', async () => {
+    currentDb = makeDb([{ id: ID, status: 'active', agentId: ID }]) as typeof currentDb;
+    const { resolveTelegramChatAction } = await import('../src/lib/actions.ts');
+    const r = await resolveTelegramChatAction(ID, 'approve');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('resolve approves a pending chat (activates it)', async () => {
+    currentDb = makeDb([{ id: ID, status: 'pending', agentId: ID }]) as typeof currentDb;
+    const { resolveTelegramChatAction } = await import('../src/lib/actions.ts');
+    const r = await resolveTelegramChatAction(ID, 'approve');
+    expect(r.ok).toBe(true);
+    expect(
+      (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update,
+    ).toHaveBeenCalled();
+  });
+
+  it('rejects an invalid uuid', async () => {
+    const { revokeTelegramChatAction } = await import('../src/lib/actions.ts');
+    const r = await revokeTelegramChatAction('bad-id');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
 // ─── DB path tests ────────────────────────────────────────────────────────────
 
 describe('createAgentAction — db path', () => {

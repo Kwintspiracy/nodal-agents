@@ -42,6 +42,7 @@ import {
   connectors,
   credentials,
   approvalRequests,
+  telegramAllowedChats,
   approvalRules,
   agentSkills,
   agentSkillAssignments,
@@ -1953,6 +1954,168 @@ export async function disconnectAgentTelegramAction(agentId: string): Promise<Ac
   } catch (err) {
     console.error('[disconnectAgentTelegramAction]', err);
     return fail('db_error', 'Failed to disconnect Telegram');
+  }
+}
+
+// ─── Telegram inbound allowlist (H-1) ─────────────────────────────────────────
+
+export interface TelegramAllowedChatView {
+  id: string;
+  chatId: string;
+  role: 'owner' | 'member';
+  status: 'active' | 'pending';
+  requesterName: string | null;
+  createdAt: string | null;
+}
+
+/** List the inbound-chat allowlist for an agent's bot (entity-scoped). */
+export async function getTelegramAllowedChatsAction(
+  agentId: string,
+): Promise<ActionResult<TelegramAllowedChatView[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const rows = await db
+      .select({
+        id: telegramAllowedChats.id,
+        chatId: telegramAllowedChats.chatId,
+        role: telegramAllowedChats.role,
+        status: telegramAllowedChats.status,
+        requesterName: telegramAllowedChats.requesterName,
+        createdAt: telegramAllowedChats.createdAt,
+      })
+      .from(telegramAllowedChats)
+      .where(
+        and(
+          eq(telegramAllowedChats.agentId, agentId),
+          eq(telegramAllowedChats.entityId, session.entityId),
+        ),
+      )
+      .orderBy(desc(telegramAllowedChats.createdAt));
+
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        chatId: r.chatId,
+        role: r.role as 'owner' | 'member',
+        status: r.status as 'active' | 'pending',
+        requesterName: r.requesterName,
+        createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
+      })),
+    );
+  } catch (err) {
+    console.error('[getTelegramAllowedChatsAction]', err);
+    return fail('db_error', 'Failed to load authorized chats');
+  }
+}
+
+/**
+ * Revoke a chat's access (delete the allowlist row), entity-scoped. Refuses to
+ * revoke the OWNER — disconnect the bot instead, otherwise the next stranger to
+ * DM would claim ownership.
+ */
+export async function revokeTelegramChatAction(chatRowId: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(chatRowId).success) {
+      return fail('validation_failed', 'Invalid id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: telegramAllowedChats.id,
+        role: telegramAllowedChats.role,
+        agentId: telegramAllowedChats.agentId,
+      })
+      .from(telegramAllowedChats)
+      .where(
+        and(
+          eq(telegramAllowedChats.id, chatRowId),
+          eq(telegramAllowedChats.entityId, session.entityId),
+        ),
+      );
+    if (!row) return fail('not_found', 'Chat not found');
+    if (row.role === 'owner') {
+      return fail('validation_failed', 'Cannot revoke the owner — disconnect the bot instead.');
+    }
+
+    await db
+      .delete(telegramAllowedChats)
+      .where(
+        and(
+          eq(telegramAllowedChats.id, chatRowId),
+          eq(telegramAllowedChats.entityId, session.entityId),
+        ),
+      );
+    revalidatePath(`/agents/${row.agentId}/telegram`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[revokeTelegramChatAction]', err);
+    return fail('db_error', 'Failed to revoke chat');
+  }
+}
+
+/** Approve (→ active) or deny (delete) a PENDING inbound chat, entity-scoped. */
+export async function resolveTelegramChatAction(
+  chatRowId: string,
+  decision: 'approve' | 'deny',
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(chatRowId).success) {
+      return fail('validation_failed', 'Invalid id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: telegramAllowedChats.id,
+        status: telegramAllowedChats.status,
+        agentId: telegramAllowedChats.agentId,
+      })
+      .from(telegramAllowedChats)
+      .where(
+        and(
+          eq(telegramAllowedChats.id, chatRowId),
+          eq(telegramAllowedChats.entityId, session.entityId),
+        ),
+      );
+    if (!row) return fail('not_found', 'Chat not found');
+    if (row.status !== 'pending') return fail('validation_failed', 'This chat is not pending');
+
+    if (decision === 'approve') {
+      await db
+        .update(telegramAllowedChats)
+        .set({ status: 'active', updatedAt: new Date() })
+        .where(
+          and(
+            eq(telegramAllowedChats.id, chatRowId),
+            eq(telegramAllowedChats.entityId, session.entityId),
+          ),
+        );
+    } else {
+      await db
+        .delete(telegramAllowedChats)
+        .where(
+          and(
+            eq(telegramAllowedChats.id, chatRowId),
+            eq(telegramAllowedChats.entityId, session.entityId),
+          ),
+        );
+    }
+    revalidatePath(`/agents/${row.agentId}/telegram`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[resolveTelegramChatAction]', err);
+    return fail('db_error', 'Failed to update chat');
   }
 }
 

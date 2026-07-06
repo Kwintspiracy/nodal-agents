@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getAgentTelegramConfigAction } from '@/lib/actions.ts';
+import { getAgentTelegramConfigAction, getTelegramAllowedChatsAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import TelegramConfigForm from './TelegramConfigForm.tsx';
+import TelegramAllowlist from './TelegramAllowlist.tsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,8 @@ export default async function AgentTelegramPage({ params }: { params: Promise<{ 
   }
 
   const cfg = result.data;
+  const allowlistResult = await getTelegramAllowedChatsAction(id);
+  const allowedChats = allowlistResult.ok ? allowlistResult.data : [];
 
   return (
     <PageShell title="Telegram" subtitle={cfg.agentSlug}>
@@ -36,6 +39,10 @@ export default async function AgentTelegramPage({ params }: { params: Promise<{ 
         </div>
 
         <TelegramConfigForm agentId={cfg.agentId} initialConfig={cfg} />
+
+        {cfg.status === 'connected' && (
+          <TelegramAllowlist agentId={cfg.agentId} chats={allowedChats} />
+        )}
 
         <div className="bg-paper border border-rule-2 rounded-xl px-5 py-4 space-y-1">
           <p className="text-xs font-medium text-ink-3 uppercase tracking-wide">
