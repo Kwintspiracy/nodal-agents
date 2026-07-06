@@ -71,6 +71,7 @@ export type OrchestrationErrorCode =
   | 'turn_limit_exceeded'
   | 'parent_not_found'
   | 'parent_wrong_status'
+  | 'parent_not_delegatable'
   | 'missing_tool_use_id'
   | 'child_agent_not_found'
   | 'delegation_no_entity'

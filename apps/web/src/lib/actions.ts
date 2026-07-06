@@ -1711,11 +1711,26 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
       return fail('already_terminal', `Job is already ${current}`);
     }
 
-    // Recursive cascade: the target job + every non-terminal descendant.
-    // entity_id is re-asserted on the UPDATE side too so a buggy CTE can
-    // never escape the caller's workspace. The status filter spares
-    // completed/failed/cancelled descendants — we don't rewrite history
-    // for jobs that already finished before the cancel hit.
+    // Recursive cascade in ONE atomic statement: the target job + every
+    // non-terminal descendant, PLUS the detached task-board work and pending
+    // approvals hanging off that same set (B2, audit followup). Data-modifying
+    // CTEs always run to completion in Postgres even when the primary query
+    // doesn't read them, so all three writes land together off one descendants
+    // walk. entity_id is re-asserted on every UPDATE so a buggy CTE can never
+    // escape the caller's workspace; status filters spare rows that already
+    // finished before the cancel hit.
+    //
+    // Why the extra two cascades:
+    //  - agent_tasks: a planner's create_task rows are DETACHED from the job
+    //    graph (they carry root_job_id, not parent_job_id), so the recursive
+    //    walk above never reaches them. Without this, the cron tick keeps
+    //    spawning + running their child jobs AFTER the user cancelled — work
+    //    they explicitly stopped wanting.
+    //  - approval_requests: a still-pending approval is expired so a late
+    //    "Approve" tap (stale Telegram card / reopened tab) can't resurrect the
+    //    job and run its gated tool. ('expired' is the terminal state the
+    //    status CHECK allows — no 'cancelled'.) Belt-and-suspenders with the
+    //    status guard now in approvals/resolve.ts.
     await db.execute(sql`
       WITH RECURSIVE descendants AS (
         SELECT id FROM agent_jobs WHERE id = ${id}
@@ -1723,12 +1738,28 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
         SELECT j.id
         FROM agent_jobs j
         INNER JOIN descendants d ON j.parent_job_id = d.id
+      ),
+      cancelled_jobs AS (
+        UPDATE agent_jobs
+        SET status = 'cancelled', updated_at = now()
+        WHERE id IN (SELECT id FROM descendants)
+          AND entity_id = ${session.entityId}
+          AND status NOT IN ('completed', 'failed', 'cancelled')
+        RETURNING id
+      ),
+      cancelled_tasks AS (
+        UPDATE agent_tasks
+        SET status = 'cancelled', updated_at = now()
+        WHERE root_job_id IN (SELECT id FROM descendants)
+          AND entity_id = ${session.entityId}
+          AND status IN ('todo', 'in_progress')
+        RETURNING id
       )
-      UPDATE agent_jobs
-      SET status = 'cancelled', updated_at = now()
-      WHERE id IN (SELECT id FROM descendants)
+      UPDATE approval_requests
+      SET status = 'expired', resolved_at = now(), resolved_by = 'system:job_cancelled'
+      WHERE job_id IN (SELECT id FROM descendants)
         AND entity_id = ${session.entityId}
-        AND status NOT IN ('completed', 'failed', 'cancelled')
+        AND status = 'pending'
     `);
 
     revalidatePath('/jobs');
@@ -2018,9 +2049,7 @@ export async function listMemoriesAction(
  * "usage"). Only covers non-archived rows — keywordSearch filters
  * archived=false, so the Archived tab keeps its existing client-side filter.
  */
-export async function searchMemoriesAction(
-  query: string,
-): Promise<ActionResult<MemoryListRow[]>> {
+export async function searchMemoriesAction(query: string): Promise<ActionResult<MemoryListRow[]>> {
   try {
     const session = await getSession();
     const trimmed = query.trim();
@@ -4326,7 +4355,10 @@ export async function createSkillAction(raw: unknown): Promise<ActionResult<{ id
     );
     if ('error' in result) {
       if (result.error === 'slug_reserved') {
-        return fail('validation_failed', `"${parsed.data.slug}" is a reserved system skill slug — choose a different slug`);
+        return fail(
+          'validation_failed',
+          `"${parsed.data.slug}" is a reserved system skill slug — choose a different slug`,
+        );
       }
       return fail('conflict', 'A skill with this slug already exists');
     }
@@ -6530,9 +6562,7 @@ const BLOCKED_SSRF_EXACT_ADDRESSES = new Set(
   ['100.100.100.200', '192.0.0.192', 'fd00:ec2::254'].map((ip) => ipaddr.parse(ip).toString()),
 );
 
-function isLinkLocalOrBlocked(
-  addr: import('ipaddr.js').IPv4 | import('ipaddr.js').IPv6,
-): boolean {
+function isLinkLocalOrBlocked(addr: import('ipaddr.js').IPv4 | import('ipaddr.js').IPv6): boolean {
   if (BLOCKED_SSRF_EXACT_ADDRESSES.has(addr.toString())) return true;
   return addr.range() === 'linkLocal';
 }
@@ -6546,9 +6576,7 @@ function isLinkLocalOrBlocked(
  * recognizes the first of the three) catches all of them at once. 6to4
  * (2002::/16) carries it instead in bits 16-47.
  */
-function extractEmbeddedIPv4Candidates(
-  v6: import('ipaddr.js').IPv6,
-): import('ipaddr.js').IPv4[] {
+function extractEmbeddedIPv4Candidates(v6: import('ipaddr.js').IPv6): import('ipaddr.js').IPv4[] {
   const bytes = v6.toByteArray();
   const candidates = [ipaddr.fromByteArray(bytes.slice(12, 16)) as import('ipaddr.js').IPv4];
   if (bytes[0] === 0x20 && bytes[1] === 0x02) {

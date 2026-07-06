@@ -15,6 +15,10 @@ import type { JobId } from '@nodal-agents/orchestration';
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
+// Root-job statuses that mean "don't spawn any more task-board children" — a
+// cancelled/completed/failed root has no live work to fan out (B2 cancel-race).
+const CANCELLED_OR_TERMINAL = new Set(['cancelled', 'completed', 'failed']);
+
 // ─── executeReadyTasks ────────────────────────────────────────────────────────
 
 /**
@@ -145,10 +149,25 @@ export async function executeReadyTasks(
     let childDepth = 0;
     if (task.rootJobId) {
       const [creatorRow] = await db
-        .select({ delegationDepth: agentJobs.delegationDepth })
+        .select({ delegationDepth: agentJobs.delegationDepth, status: agentJobs.status })
         .from(agentJobs)
         .where(eq(agentJobs.id, task.rootJobId))
         .limit(1);
+
+      // Cancel-race guard (B2, audit followup): the candidate query filters
+      // `todo`, and cancelJobAction now cascades `todo`→`cancelled` — but a task
+      // this tick CLAIMED (`in_progress`) in the tiny window before the cancel
+      // landed would still spawn a child here. If the root job is now terminal
+      // (typically cancelled), don't spawn: mark the task cancelled and skip, so
+      // "tick after cancel = 0 child spawned" holds even under that race.
+      if (creatorRow && CANCELLED_OR_TERMINAL.has(creatorRow.status ?? '')) {
+        await db
+          .update(agentTasks)
+          .set({ status: 'cancelled', result: 'root job cancelled', updatedAt: new Date() })
+          .where(eq(agentTasks.id, task.id));
+        continue;
+      }
+
       childDepth = (creatorRow?.delegationDepth ?? 0) + 1;
     }
 

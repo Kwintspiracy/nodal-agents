@@ -355,6 +355,28 @@ describe('cancelJobAction', () => {
     expect(text).toContain('descendants');
     expect(text).toContain('parent_job_id');
   });
+
+  it('cascade also stops detached tasks and expires pending approvals (B2)', async () => {
+    // The same statement must cascade off the descendants set into agent_tasks
+    // (a planner's create_task children are detached — root_job_id, not
+    // parent_job_id — so the recursive walk alone never reaches them) and into
+    // approval_requests (a pending approval is expired so a late tap can't
+    // resurrect the job). A regression stripping either leaves the cancel
+    // half-honored: work keeps spawning or an approval can still resume.
+    currentDb = makeDb([{ status: 'processing' }]) as typeof currentDb;
+    const { cancelJobAction } = await import('../src/lib/actions.ts');
+    const r = await cancelJobAction('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(r.ok).toBe(true);
+
+    const executeSpy = (currentDb as unknown as { execute: ReturnType<typeof vi.fn> }).execute;
+    const text = JSON.stringify(executeSpy.mock.calls[0]?.[0]);
+    // Tasks cascade: detached children off the same descendants set.
+    expect(text).toContain('agent_tasks');
+    expect(text).toContain('root_job_id');
+    // Approvals cascade: pending approvals expired so a late tap can't resurrect.
+    expect(text).toContain('approval_requests');
+    expect(text).toContain('expired');
+  });
 });
 
 // ─── DB path tests ────────────────────────────────────────────────────────────
@@ -1611,7 +1633,11 @@ describe('createOrAssignOAuthConnectorAction — I-10 error detail leak (audit #
   it('a DB error detail is never reflected to the client', async () => {
     const credentialId = 'aaaaaaaa-0000-0000-0000-000000000095';
     const db = makeDb([
-      { id: credentialId, ownerUserId: '00000000-0000-0000-0000-000000000001', type: 'google-oauth' },
+      {
+        id: credentialId,
+        ownerUserId: '00000000-0000-0000-0000-000000000001',
+        type: 'google-oauth',
+      },
     ]) as unknown as { insert: unknown };
     db.insert = vi.fn(() => {
       throw new Error('duplicate key value violates unique constraint at 10.0.0.5:5432');
@@ -1757,9 +1783,7 @@ describe('resolveApprovalAction', () => {
   });
 
   it('proceeds to the runner when the approval belongs to the caller entity', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000096' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000096' }]) as typeof currentDb;
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({

@@ -1,7 +1,7 @@
 // router/resume.ts — inject child result into parent and resume
 // Called when a child job completes (by cron or worker completing a child job).
 
-import { eq } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 import type { AgentId, EntityId, JobId, AnyDrizzleDb, AgentJob } from '../types';
@@ -236,6 +236,13 @@ export async function resumeDelegated(
   // self-chain step — invariant 8 caps this at maxChains (15) to prevent runaway
   // orchestrators that delegate forever instead of returning a result.
   const nextChainCount = (parent.chainCount ?? 0) + 1;
+  // Conditional on status STILL being 'awaiting_delegation' (B4, audit
+  // followup). The read-time check above (step 2) can go stale: the user may
+  // cancel the parent in the window between that read and this write. An
+  // unconditional UPDATE would resurrect the cancelled parent back to
+  // 'pending' and re-trigger it. Guarding the write closes that TOCTOU — cancel
+  // wins, 0 rows land, and we return the terminal no-op snapshot exactly like
+  // the read-time terminal branch does.
   const [updated] = await db
     .update(agentJobs)
     .set({
@@ -246,10 +253,37 @@ export async function resumeDelegated(
       lastFailedDelegationSlug: nextLastFailedSlug,
       updatedAt: new Date(),
     })
-    .where(eq(agentJobs.id, parentJobId as string))
+    .where(
+      and(eq(agentJobs.id, parentJobId as string), eq(agentJobs.status, 'awaiting_delegation')),
+    )
     .returning();
 
   if (!updated) {
+    // Lost the race to a concurrent cancel (or another resume). Re-read: a
+    // terminal parent is a legal race (return a no-op snapshot so the caller's
+    // executeJob re-entry exits via its own guard); anything else is a real
+    // corruption and must fail loud.
+    const [current] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, parentJobId as string))
+      .limit(1);
+    if (current?.status && TERMINAL_PARENT_STATUSES.has(current.status)) {
+      return {
+        id: parent.id as JobId,
+        agentId: parent.agentId as AgentId | null,
+        entityId: parent.entityId as EntityId | null,
+        status: current.status,
+        messages: Array.isArray(parent.messages) ? (parent.messages as unknown[]) : [],
+        pendingDelegation: null,
+        chainCount: parent.chainCount ?? 0,
+        delegationDepth: parent.delegationDepth ?? 0,
+        parentJobId: parent.parentJobId as JobId | null,
+        task: parent.task,
+        channel: parent.channel,
+        chatId: parent.chatId,
+      };
+    }
     throw new OrchestrationError('parent_not_found', `Failed to update parent job ${parentJobId}`);
   }
 

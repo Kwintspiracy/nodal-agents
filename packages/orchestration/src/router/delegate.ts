@@ -1,9 +1,15 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq, and } from '@nodal-agents/db';
+import { eq, and, notInArray } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
+
+// Job statuses that must never be overwritten — a cancelled/completed/failed
+// child row is already final. Mirrors apps/runner/src/job/state.ts
+// TERMINAL_STATUSES; kept local because orchestration must not depend on the
+// runner app.
+const TERMINAL_JOB_STATUSES = ['completed', 'failed', 'cancelled'];
 import type {
   AgentId,
   EntityId,
@@ -124,6 +130,15 @@ export async function handleDelegation(
   //    tool-result; without persisting here, the parent re-enters executeJob
   //    seeing only the tool-result with no user input or its own tool_call,
   //    and the LLM blindly re-delegates because it has no context.
+  // Conditional on the parent still being `processing` (B3, audit followup):
+  // the parent was `processing` when it hit the assign_* tool. If the user
+  // cancelled it while we were resolving the child agent + inserting the child
+  // row, an unconditional write here would silently RESURRECT the cancelled
+  // job into `awaiting_delegation` and spawn a child that runs to completion —
+  // work the user explicitly stopped wanting. Making the write conditional lets
+  // cancel win: 0 rows → the just-created child is an orphan; cancel it and
+  // fail loud so executeJob's terminal-guarded failJob leaves the parent
+  // `cancelled` (it never overwrites a terminal row).
   const [updatedParent] = await db
     .update(agentJobs)
     .set({
@@ -132,11 +147,23 @@ export async function handleDelegation(
       messages: parentJob.messages,
       updatedAt: new Date(),
     })
-    .where(eq(agentJobs.id, parentJob.id as string))
+    .where(and(eq(agentJobs.id, parentJob.id as string), eq(agentJobs.status, 'processing')))
     .returning();
 
   if (!updatedParent) {
-    throw new OrchestrationError('parent_not_found', `Parent job not found: ${parentJob.id}`);
+    // Don't leave the child we just inserted running with no parent to return
+    // to — flip it to cancelled (guarded to non-terminal so we never rewrite a
+    // row that already finished).
+    await db
+      .update(agentJobs)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(eq(agentJobs.id, childJob.id), notInArray(agentJobs.status, TERMINAL_JOB_STATUSES)),
+      );
+    throw new OrchestrationError(
+      'parent_not_delegatable',
+      `Parent job ${parentJob.id} is no longer processing (cancelled?) — delegation aborted`,
+    );
   }
 
   return {

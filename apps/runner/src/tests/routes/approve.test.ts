@@ -1,7 +1,7 @@
 ﻿// approve.test.ts — awaiting_approval → processing on POST
 // Asserts that approving/rejecting an approval request sets the right DB state.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
@@ -77,6 +77,18 @@ beforeAll(async () => {
   };
 
   app = createApp(deps, testEnv);
+});
+
+// Reset the seed job to `awaiting_approval` before EACH test: resolving an
+// approval now legitimately requires the job to still be awaiting it (B1), and
+// each resolve flips it to `pending`. Without this reset the second test would
+// see the status the first left behind — a pre-existing isolation gap the B1
+// guard exposed. This is a precondition of the flow, not assertion data.
+beforeEach(async () => {
+  await db
+    .update(agentJobs)
+    .set({ status: 'awaiting_approval', chainCount: 0 })
+    .where(eq(agentJobs.id, seed.jobId));
 });
 
 describe('POST /api/approve', () => {
@@ -368,6 +380,11 @@ describe('POST /api/approve — entity authorization (bearer-token mode)', () =>
   });
 
   it('trusted WORKER_SECRET caller keeps unchanged unscoped resolution', async () => {
+    // jobW is 'pending' by default (asserted untouched by the cross-entity test
+    // above); a successful resolve now requires it to be awaiting the approval
+    // (B1), so put it in that state first — this test's precondition.
+    await dbZ.update(agentJobs).set({ status: 'awaiting_approval' }).where(eq(agentJobs.id, jobW));
+
     const [approval] = await dbZ
       .insert(approvalRequests)
       .values({

@@ -2,11 +2,11 @@
 // UPDATE itself (F-14). Two concurrent resolutions of the same approval must
 // not both "win" — only one flips the row, the other is told already_resolved.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests } from '@nodal-agents/db';
+import { approvalRequests, agentJobs } from '@nodal-agents/db';
 import { resolveApprovalDecision } from '../../approvals/resolve.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -62,6 +62,17 @@ beforeAll(async () => {
   db = result.db;
   const minimal = await seedMinimal(db);
   seed = { entityId: minimal.entityId, agentId: minimal.agentId, jobId: minimal.jobId };
+});
+
+// A successful resolve now requires the job to still be `awaiting_approval`
+// (B1) and flips it to `pending`. Reset before each test so the shared seed
+// job's status doesn't leak between tests — precondition of the flow, not
+// assertion data.
+beforeEach(async () => {
+  await db
+    .update(agentJobs)
+    .set({ status: 'awaiting_approval' })
+    .where(eq(agentJobs.id, seed.jobId));
 });
 
 describe('resolveApprovalDecision — atomic claim (F-14)', () => {
@@ -134,6 +145,42 @@ describe('resolveApprovalDecision — atomic claim (F-14)', () => {
     const winnerDecision = (winners[0] as { decision: 'approve' | 'reject' }).decision;
     expect(row?.status).toBe(winnerDecision === 'approve' ? 'approved' : 'rejected');
     expect(row?.resolvedBy).toBe(winnerDecision === 'approve' ? 'telegram' : 'api');
+  });
+
+  it('B1: a late approval on a CANCELLED job is refused — the job is not resurrected', async () => {
+    // The user cancelled the job while an approval sat pending; a stale
+    // "Approve" tap (old Telegram card / reopened tab) must NOT flip the
+    // cancelled job back to pending and run its gated tool.
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'rm -rf important' },
+        status: 'pending',
+      })
+      .returning();
+
+    // Simulate the cancel that landed after the approval was created.
+    await db.update(agentJobs).set({ status: 'cancelled' }).where(eq(agentJobs.id, seed.jobId));
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval!.id,
+      decision: 'approve',
+      resolvedBy: 'telegram',
+    });
+
+    // Refused, and the reported status is the one the job actually holds.
+    expect(result).toMatchObject({ ok: false, code: 'job_not_resumable', status: 'cancelled' });
+
+    // The job stayed cancelled — never resurrected to pending.
+    const [row] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+    expect(row?.status).toBe('cancelled');
   });
 
   it('resolving an unknown approval id returns approval_not_found', async () => {

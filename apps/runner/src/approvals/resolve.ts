@@ -34,7 +34,7 @@ export type ResolveApprovalResult =
   | { ok: true; jobId: string; decision: ApprovalDecision; chatId: string | null }
   | {
       ok: false;
-      code: 'approval_not_found' | 'already_resolved' | 'job_not_found';
+      code: 'approval_not_found' | 'already_resolved' | 'job_not_found' | 'job_not_resumable';
       status?: string | null;
     };
 
@@ -88,7 +88,9 @@ export async function resolveApprovalDecision(
       resolvedBy: input.resolvedBy,
       notes: input.notes ?? null,
     })
-    .where(and(eq(approvalRequests.id, input.approvalRequestId), eq(approvalRequests.status, 'pending')))
+    .where(
+      and(eq(approvalRequests.id, input.approvalRequestId), eq(approvalRequests.status, 'pending')),
+    )
     .returning({ id: approvalRequests.id });
 
   if (updated.length === 0) {
@@ -101,12 +103,33 @@ export async function resolveApprovalDecision(
     return { ok: false, code: 'already_resolved', status: current?.status ?? null };
   }
 
-  // Back to pending so executeJob picks it up. Approval does NOT bump chain_count
-  // — the human acted on an already-proposed action, not a new LLM chain call.
-  await deps.db
+  // Back to pending so executeJob picks it up — but ONLY if the job is still
+  // `awaiting_approval` (B1, audit followup). A job the user cancelled while an
+  // approval sat pending is now `cancelled`; a late "Approve" tap (stale
+  // Telegram card, reopened tab) must NOT resurrect it and run the gated —
+  // possibly destructive — tool. Conditioning the resume on the awaiting state
+  // makes cancel win: the UPDATE touches 0 rows and we report it instead of
+  // triggering the worker. (The approval row is already marked resolved above;
+  // that's harmless — the decision was genuinely made, the job just isn't there
+  // to run it.) Approval does NOT bump chain_count — the human acted on an
+  // already-proposed action, not a new LLM chain call.
+  const resumed = await deps.db
     .update(agentJobs)
     .set({ status: 'pending', updatedAt: new Date() })
-    .where(eq(agentJobs.id, jobId));
+    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'awaiting_approval')))
+    .returning({ id: agentJobs.id });
+
+  if (resumed.length === 0) {
+    // Re-read to report the status the job actually holds now (typically
+    // `cancelled`) — fail loud so the caller can tell the user the tap did
+    // nothing because the job is no longer running.
+    const [current] = await deps.db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .limit(1);
+    return { ok: false, code: 'job_not_resumable', status: current?.status ?? null };
+  }
 
   void triggerWorker(jobId, runnerEnv);
 
