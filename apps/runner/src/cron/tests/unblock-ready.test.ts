@@ -161,3 +161,24 @@ describe('unblockReadyTasks', () => {
     expect(count).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('unblockReadyTasks — D4: a deleted dependency terminalizes the task', () => {
+  it('blocks a todo task whose dependency row no longer exists', async () => {
+    // A dep id that was validated at create time but has since been
+    // cascade-deleted (its agent/entity removed) — the row is simply gone.
+    const missingDepId = '00000000-0000-0000-0000-0000000000d4';
+    const task = await createTask({ status: 'todo', dependsOn: [missingDepId] });
+
+    const count = await unblockReadyTasks(db);
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    // The task is terminalized (blocked) — NOT left in 'todo' forever, which
+    // would keep the root job non-terminal and stall delivery.
+    const [row] = await db
+      .select({ status: agentTasks.status, result: agentTasks.result })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, task.id));
+    expect(row?.status).toBe('blocked');
+    expect(row?.result ?? '').toMatch(/removed/i);
+  });
+});

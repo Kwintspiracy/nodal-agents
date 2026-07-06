@@ -59,7 +59,29 @@ export async function unblockReadyTasks(db: AnyDrizzleDb): Promise<number> {
       .from(agentTasks)
       .where(inArray(agentTasks.id, depIds));
 
-    if (depRows.length !== depIds.length) continue; // some deps don't exist yet
+    if (depRows.length !== depIds.length) {
+      // A dependency ROW IS GONE. Deps are validated to exist at create_task
+      // time (C1), so a missing one here means it was cascade-deleted (its agent
+      // or entity was removed) — it will never come back. Terminalize this task
+      // as `blocked` instead of leaving it `todo` forever (D4, audit followup):
+      // otherwise the root job never becomes terminal and deliverCompletedRoots
+      // never fires — a silent stall, exactly the class OR-4/this file guards.
+      const foundIds = new Set(depRows.map((d) => d.id));
+      const missing = depIds.filter((id) => !foundIds.has(id));
+      const updated = await db
+        .update(agentTasks)
+        .set({
+          status: 'blocked',
+          result: `Blocked: ${
+            missing.length > 1 ? 'dependencies were' : 'a dependency was'
+          } removed before this task could run (${missing.join(', ')}).`,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(agentTasks.id, task.id), eq(agentTasks.status, 'todo')))
+        .returning({ id: agentTasks.id });
+      unblocked += updated.length;
+      continue;
+    }
 
     const stillPending = depRows.filter(
       (d) => d.status !== 'done' && d.status !== 'blocked' && d.status !== 'cancelled',

@@ -7,8 +7,41 @@
 //                         no recent activity → marked `failed`
 
 import { and, eq, gte, inArray, isNull, lt, or } from '@nodal-agents/db';
-import { agentJobs, agentTasks } from '@nodal-agents/db';
+import { agentJobs, agentTasks, approvalRequests } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { sendTelegramMessage } from '@nodal-agents/delivery';
+import { failJob } from '../job/state.ts';
+import { resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
+import type { RunnerDeps } from '../deps.ts';
+
+// User-facing failure notices for the cron reapers. These are the deliberate,
+// minimal exceptions to invariant #2 that invariant #4 (no silent failures)
+// requires: a job the reaper finalizes must never leave the user with nothing.
+const ORPHAN_RESET_NOTICE =
+  "⚠️ Cette tâche a été interrompue (le service a redémarré ou s'est arrêté en cours d'exécution) et n'a pas pu être terminée. Relancez-la si besoin.";
+const STALE_PENDING_NOTICE =
+  "⚠️ Cette tâche n'a jamais été prise en charge par un worker (démarrage manqué) et a été abandonnée. Relancez-la si besoin.";
+const APPROVAL_EXPIRED_NOTICE =
+  '⚠️ Cette action attendait votre approbation mais le délai a expiré sans réponse. La tâche a été arrêtée ; relancez-la si vous souhaitez la reprendre.';
+
+/**
+ * Best-effort: deliver a finalized job's failure notice to its Telegram chat so
+ * the reaper's outcome is never silent (D1, audit followup). No-ops for jobs
+ * with no bot/chat (dashboard/api/cron). A delivery failure only logs.
+ */
+async function notifyJobFailure(db: AnyDrizzleDb, jobId: string, notice: string): Promise<void> {
+  try {
+    const target = await resolveTelegramDeliveryTarget(db as unknown as RunnerDeps['db'], jobId);
+    if (!target) return;
+    await sendTelegramMessage({ botToken: target.botToken, chatId: target.chatId, text: notice });
+  } catch (err) {
+    console.warn(
+      `[reset-orphans] failed to deliver failure notice for job ${jobId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
 
 // ─── resetOrphanedTasks ───────────────────────────────────────────────────────
 
@@ -197,20 +230,29 @@ export async function resetOrphanedJobs(db: AnyDrizzleDb, staleMinutes = 5): Pro
     await db.update(agentJobs).set({ updatedAt: new Date() }).where(inArray(agentJobs.id, toBump));
   }
 
-  if (toReset.length > 0) {
-    const now = new Date();
-    await db
-      .update(agentJobs)
-      .set({
-        status: 'failed',
-        error: 'orphan_job_reset',
-        completedAt: now,
-        updatedAt: now,
-      })
-      .where(inArray(agentJobs.id, toReset));
+  // Finalize each via failJob rather than one blanket UPDATE (D1/D2, audit
+  // followup). failJob is (a) conditional on the row NOT being terminal, so a
+  // job that legitimately finished between the snapshot above and now is NOT
+  // clobbered from completed→failed (D2 — the old bulk UPDATE keyed only on id),
+  // and (b) fills the user-facing `result` with an explanation so the outcome is
+  // never silent (D1). Then deliver that notice to the job's channel.
+  let reset = 0;
+  for (const jobId of toReset) {
+    const landed = await failJob(
+      db,
+      jobId,
+      'orphan_job_reset',
+      undefined,
+      undefined,
+      ORPHAN_RESET_NOTICE,
+    );
+    if (landed) {
+      reset += 1;
+      await notifyJobFailure(db, jobId, ORPHAN_RESET_NOTICE);
+    }
   }
 
-  return toReset.length;
+  return reset;
 }
 
 // ─── pending recovery ─────────────────────────────────────────────────────────
@@ -290,16 +332,77 @@ export async function failStalePendingJobs(
   staleSeconds = 5 * 60,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - staleSeconds * 1000);
+  // Select the candidates, then finalize each via failJob so the user gets a
+  // `result` explanation AND a channel notice — never a silent abandon (D1).
+  // failJob's non-terminal guard also protects against a job that flipped out of
+  // pending between this select and the write.
+  const stale = await db
+    .select({ id: agentJobs.id })
+    .from(agentJobs)
+    .where(and(eq(agentJobs.status, 'pending'), lt(agentJobs.updatedAt, cutoff)));
+
+  let failed = 0;
+  for (const { id } of stale) {
+    const landed = await failJob(
+      db,
+      id,
+      'stale_pending_abandoned',
+      undefined,
+      undefined,
+      STALE_PENDING_NOTICE,
+    );
+    if (landed) {
+      failed += 1;
+      await notifyJobFailure(db, id, STALE_PENDING_NOTICE);
+    }
+  }
+  return failed;
+}
+
+// ─── approval TTL ───────────────────────────────────────────────────────────────
+
+/**
+ * Expire pending approvals whose TTL (`expires_at`, default now + 1h) has passed
+ * and finalize the jobs waiting on them (D3, audit followup). The column was set
+ * at creation but NOTHING ever acted on it, so an approval no one answered left
+ * its job stuck in `awaiting_approval` forever. Marks the approval `expired`,
+ * fails the still-waiting job with a user-facing notice, and delivers it.
+ *
+ * @returns count of jobs failed for an expired approval
+ */
+export async function expireStaleApprovals(db: AnyDrizzleDb): Promise<number> {
   const now = new Date();
-  const result = await db
-    .update(agentJobs)
-    .set({
-      status: 'failed',
-      error: 'stale_pending_abandoned',
-      completedAt: now,
-      updatedAt: now,
-    })
-    .where(and(eq(agentJobs.status, 'pending'), lt(agentJobs.updatedAt, cutoff)))
-    .returning({ id: agentJobs.id });
-  return result.length;
+  const expired = await db
+    .update(approvalRequests)
+    .set({ status: 'expired', resolvedAt: now, resolvedBy: 'system:ttl_expired' })
+    .where(and(eq(approvalRequests.status, 'pending'), lt(approvalRequests.expiresAt, now)))
+    .returning({ jobId: approvalRequests.jobId });
+
+  let failed = 0;
+  for (const { jobId } of expired) {
+    // Only finalize a job that is STILL awaiting this approval — never touch one
+    // that already moved on (approved elsewhere, cancelled, completed). failJob's
+    // own non-terminal guard is the backstop; this keeps us from failing a live
+    // `pending`/`processing` job that merely had a stale approval row.
+    const [job] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId))
+      .limit(1);
+    if (job?.status !== 'awaiting_approval') continue;
+
+    const landed = await failJob(
+      db,
+      jobId,
+      'approval_expired',
+      undefined,
+      undefined,
+      APPROVAL_EXPIRED_NOTICE,
+    );
+    if (landed) {
+      failed += 1;
+      await notifyJobFailure(db, jobId, APPROVAL_EXPIRED_NOTICE);
+    }
+  }
+  return failed;
 }

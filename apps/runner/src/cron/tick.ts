@@ -16,6 +16,7 @@
 import {
   resetOrphanedJobs,
   resetOrphanedTasks,
+  expireStaleApprovals,
   findPendingJobsToRecover,
   failStalePendingJobs,
 } from './reset-orphans.ts';
@@ -36,6 +37,7 @@ export interface CronTickResult {
   orphanJobsReset: number;
   pendingRecovered: number;
   stalePendingFailed: number;
+  approvalsExpired: number;
   orphansReset: number;
   tasksUnblocked: number;
   tasksExecuted: number;
@@ -105,7 +107,11 @@ async function guardPhase<T>(label: string, fn: () => Promise<T>, fallback: T): 
  * @param maxTasksPerTick  Max tasks to execute in Phase 5 (default 5)
  */
 export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promise<CronTickResult> {
-  const orphanJobsReset = await guardPhase('resetOrphanedJobs', () => resetOrphanedJobs(deps.db), 0);
+  const orphanJobsReset = await guardPhase(
+    'resetOrphanedJobs',
+    () => resetOrphanedJobs(deps.db),
+    0,
+  );
 
   // Recover stale pending jobs by driving them through executeJob in this
   // process. We deliberately call executeJob directly (no HTTP roundtrip
@@ -142,6 +148,15 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
   const stalePendingFailed = await guardPhase(
     'failStalePendingJobs',
     () => failStalePendingJobs(deps.db),
+    0,
+  );
+
+  // Expire approvals whose TTL passed and finalize the jobs waiting on them
+  // (D3) — otherwise an unanswered approval leaves its job in awaiting_approval
+  // forever.
+  const approvalsExpired = await guardPhase(
+    'expireStaleApprovals',
+    () => expireStaleApprovals(deps.db),
     0,
   );
 
@@ -263,6 +278,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     orphanJobsReset,
     pendingRecovered,
     stalePendingFailed,
+    approvalsExpired,
     orphansReset,
     tasksUnblocked,
     tasksExecuted,

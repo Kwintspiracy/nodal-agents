@@ -10,12 +10,13 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agentTasks } from '@nodal-agents/db';
+import { agentJobs, agentTasks, approvalRequests } from '@nodal-agents/db';
 import {
   resetOrphanedTasks,
   resetOrphanedJobs,
   findPendingJobsToRecover,
   failStalePendingJobs,
+  expireStaleApprovals,
 } from '../reset-orphans.ts';
 
 let db: TestDb;
@@ -238,12 +239,15 @@ describe('resetOrphanedJobs', () => {
     expect(count).toBeGreaterThanOrEqual(1);
 
     const [row] = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
 
     expect(row?.status).toBe('failed');
     expect(row?.error).toBe('orphan_job_reset');
+    // D1: the reaper fills a user-facing result — never a silent failure.
+    expect((row?.result ?? '').length).toBeGreaterThan(0);
+    expect(row?.result).toMatch(/interrompue/i);
   });
 
   // F1 regression — Leg 4: orphan reap must stamp completedAt so the row
@@ -623,5 +627,65 @@ describe('failStalePendingJobs', () => {
       expect(after?.status).toBe(j.status);
       expect(after?.error).toBeNull();
     }
+  });
+});
+
+describe('expireStaleApprovals (D3)', () => {
+  it('expires a past-TTL pending approval and fails its awaiting_approval job', async () => {
+    const job = await createJob({ status: 'awaiting_approval' });
+    const past = new Date(Date.now() - 60 * 1000);
+    const [appr] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: job.id,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'ls' },
+        status: 'pending',
+        expiresAt: past,
+      })
+      .returning({ id: approvalRequests.id });
+
+    const failed = await expireStaleApprovals(db);
+    expect(failed).toBeGreaterThanOrEqual(1);
+
+    // Approval marked expired.
+    const [a] = await db
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, appr!.id));
+    expect(a?.status).toBe('expired');
+
+    // Job finalized (not stuck awaiting_approval forever) with a user-facing result.
+    const [j] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(j?.status).toBe('failed');
+    expect(j?.error).toBe('approval_expired');
+    expect((j?.result ?? '').length).toBeGreaterThan(0);
+  });
+
+  it('does NOT touch a pending approval whose TTL is still in the future', async () => {
+    const job = await createJob({ status: 'awaiting_approval' });
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    await db.insert(approvalRequests).values({
+      entityId: seed.entityId,
+      jobId: job.id,
+      agentId: seed.agentId,
+      toolName: 'run_command',
+      toolInput: { command: 'ls' },
+      status: 'pending',
+      expiresAt: future,
+    });
+
+    await expireStaleApprovals(db);
+
+    const [j] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(j?.status).toBe('awaiting_approval'); // untouched
   });
 });
