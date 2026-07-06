@@ -11,6 +11,23 @@ const BASE_URL = 'https://api.airtable.com/v0';
 // REST call.
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+// audit#2 I-13: Airtable rate-limits at 5 req/s per base and returns 429 with
+// a Retry-After header — without a retry, a legitimate burst fails outright.
+/** Bounded retries for a single request on 429. */
+const MAX_RATE_LIMIT_RETRIES = 3;
+/** Fallback backoff when the 429 response carries no Retry-After: 1s, 2s, 4s. */
+const DEFAULT_RATE_LIMIT_BACKOFF_MS = 1000;
+/**
+ * Hard ceiling on how long a single 429 retry will wait, regardless of what
+ * Retry-After asks for. Never trust an externally-supplied duration
+ * unbounded — same pattern as the F-4 Telegram fix (packages/delivery).
+ */
+const MAX_RETRY_AFTER_MS = 60_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export type AirtableClient = {
   get: (
     path: string,
@@ -54,47 +71,63 @@ export function createAirtableClient(
   });
 
   async function request(method: string, url: string, body?: unknown): Promise<unknown> {
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method,
-        headers: await headers(),
-        ...(body !== undefined && { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === 'TimeoutError') {
-        throw new AirtableApiError(
-          'airtable_transient',
-          `Airtable request to ${url} timed out after ${timeoutMs}ms`,
-        );
+    // audit#2 I-13: loop (rather than recurse) so the token — re-resolved by
+    // headers() below — and the per-attempt AbortSignal.timeout (M-15) both
+    // stay fresh on every retry, not just the first attempt.
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method,
+          headers: await headers(),
+          ...(body !== undefined && { body: JSON.stringify(body) }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'TimeoutError') {
+          throw new AirtableApiError(
+            'airtable_transient',
+            `Airtable request to ${url} timed out after ${timeoutMs}ms`,
+          );
+        }
+        throw wrapAirtableError(err);
       }
-      throw wrapAirtableError(err);
-    }
 
-    let data: unknown;
-    try {
-      data = await response.json();
-    } catch {
-      data = {};
-    }
-
-    if (!response.ok) {
-      const errBody = data as { error?: { message?: string } | string; message?: string };
-      let message: string;
-      if (typeof errBody?.error === 'object' && errBody.error !== null) {
-        message = errBody.error.message ?? response.statusText;
-      } else if (typeof errBody?.error === 'string') {
-        message = errBody.error;
-      } else if (errBody?.message) {
-        message = errBody.message;
-      } else {
-        message = response.statusText;
+      if (response.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+        const retryAfterHeader = response.headers.get('retry-after');
+        const retryAfterSec = retryAfterHeader !== null ? Number(retryAfterHeader) : NaN;
+        const waitMs =
+          Number.isFinite(retryAfterSec) && retryAfterSec >= 0
+            ? Math.min(retryAfterSec * 1000, MAX_RETRY_AFTER_MS)
+            : DEFAULT_RATE_LIMIT_BACKOFF_MS * 2 ** attempt;
+        await sleep(waitMs);
+        continue;
       }
-      throw mapAirtableHttpError(response.status, message);
-    }
 
-    return data;
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        const errBody = data as { error?: { message?: string } | string; message?: string };
+        let message: string;
+        if (typeof errBody?.error === 'object' && errBody.error !== null) {
+          message = errBody.error.message ?? response.statusText;
+        } else if (typeof errBody?.error === 'string') {
+          message = errBody.error;
+        } else if (errBody?.message) {
+          message = errBody.message;
+        } else {
+          message = response.statusText;
+        }
+        throw mapAirtableHttpError(response.status, message);
+      }
+
+      return data;
+    }
   }
 
   function buildUrl(

@@ -21,6 +21,17 @@ function makeErrorResponse(status: number, message: string): Response {
   });
 }
 
+function makeRateLimitedResponse(retryAfterSec?: number): Response {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (retryAfterSec !== undefined) {
+    headers['retry-after'] = String(retryAfterSec);
+  }
+  return new Response(JSON.stringify({ error: { message: 'Rate limit exceeded' } }), {
+    status: 429,
+    headers,
+  });
+}
+
 describe('createAirtableClient — instantiation', () => {
   it('creates a client without throwing', () => {
     expect(() => createAirtableClient(async () => FAKE_TOKEN)).not.toThrow();
@@ -246,6 +257,155 @@ describe('createAirtableClient — error mapping', () => {
         err.code === 'airtable_transient' &&
         /timed out/i.test(err.message),
     );
+  });
+});
+
+// audit#2 I-13: Airtable rate-limits at 5 req/s per base and returns 429 with
+// a Retry-After header. These tests would have failed before the fix: request()
+// mapped any 429 straight to airtable_rate_limited with no retry at all.
+describe('createAirtableClient — 429 rate limit retry (I-13)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('retries a 429 honoring Retry-After and succeeds, re-reading the token on the retry', async () => {
+    vi.useFakeTimers();
+
+    let tokenCalls = 0;
+    const getAccessToken = async (): Promise<string> => {
+      tokenCalls++;
+      return `token-${tokenCalls}`;
+    };
+
+    let fetchCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          return Promise.resolve(makeRateLimitedResponse(1));
+        }
+        return Promise.resolve(makeOkResponse({ records: [{ id: 'rec1' }] }));
+      }),
+    );
+
+    const client = createAirtableClient(getAccessToken);
+    const promise = client.get('/appXXX/tblXXX');
+
+    // First attempt resolves immediately with 429, scheduling the 1s backoff.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchCalls).toBe(1);
+
+    // Must not retry before the full Retry-After has elapsed.
+    await vi.advanceTimersByTimeAsync(900);
+    expect(fetchCalls).toBe(1);
+
+    // Past the 1s Retry-After, the retry fires and succeeds.
+    await vi.advanceTimersByTimeAsync(200);
+    const result = await promise;
+
+    expect(fetchCalls).toBe(2);
+    expect(result).toEqual({ records: [{ id: 'rec1' }] });
+    // getAccessToken (M-12) is re-invoked once per attempt, not just at the first.
+    expect(tokenCalls).toBe(2);
+  });
+
+  it('caps an excessive Retry-After at 60s instead of trusting it unbounded', async () => {
+    vi.useFakeTimers();
+
+    let fetchCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          return Promise.resolve(makeRateLimitedResponse(3600)); // 1 hour — must be capped
+        }
+        return Promise.resolve(makeOkResponse({ records: [] }));
+      }),
+    );
+
+    const client = createAirtableClient(async () => FAKE_TOKEN);
+    const promise = client.get('/appXXX/tblXXX');
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchCalls).toBe(1);
+
+    // Just under the 60s cap: must not have retried yet.
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(fetchCalls).toBe(1);
+
+    // Past the 60s cap: retries even though Airtable asked for a full hour.
+    await vi.advanceTimersByTimeAsync(2_000);
+    const result = await promise;
+    expect(fetchCalls).toBe(2);
+    expect(result).toEqual({ records: [] });
+  });
+
+  it('falls back to exponential backoff (1s, 2s, 4s) when Retry-After is absent', async () => {
+    vi.useFakeTimers();
+
+    const callTimestamps: number[] = [];
+    let fetchCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() => {
+        fetchCalls++;
+        callTimestamps.push(Date.now());
+        if (fetchCalls <= 3) {
+          return Promise.resolve(makeRateLimitedResponse());
+        }
+        return Promise.resolve(makeOkResponse({ records: [] }));
+      }),
+    );
+
+    const client = createAirtableClient(async () => FAKE_TOKEN);
+    const promise = client.get('/appXXX/tblXXX');
+
+    // Run every scheduled backoff timer to completion rather than
+    // hand-stepping the virtual clock — advancing in near-exact per-step
+    // increments is brittle against JSON-parsing microtask drift between
+    // attempts, whereas the escalating delay itself is what matters here.
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(fetchCalls).toBe(4);
+    expect(result).toEqual({ records: [] });
+    // Backoff escalates ~1s, ~2s, ~4s between successive attempts.
+    expect(callTimestamps[1]! - callTimestamps[0]!).toBeGreaterThanOrEqual(1000);
+    expect(callTimestamps[2]! - callTimestamps[1]!).toBeGreaterThanOrEqual(2000);
+    expect(callTimestamps[3]! - callTimestamps[2]!).toBeGreaterThanOrEqual(4000);
+  });
+
+  it('throws airtable_rate_limited once 429 retries (max 3) are exhausted', async () => {
+    vi.useFakeTimers();
+
+    let tokenCalls = 0;
+    const getAccessToken = async (): Promise<string> => {
+      tokenCalls++;
+      return FAKE_TOKEN;
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() => Promise.resolve(makeRateLimitedResponse())),
+    );
+
+    const client = createAirtableClient(getAccessToken);
+    const pending = client.get('/appXXX/tblXXX');
+    const assertion = expect(pending).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof AirtableApiError &&
+        err.code === 'airtable_rate_limited' &&
+        err.status === 429,
+    );
+
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    // 1 initial attempt + 3 retries = 4 attempts, each re-reading the token.
+    expect(tokenCalls).toBe(4);
   });
 });
 
