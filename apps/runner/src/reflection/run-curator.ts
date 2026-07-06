@@ -27,6 +27,7 @@ import {
 } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import { z } from 'zod';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 
 const CURATOR_TRACE = '[curator]';
@@ -265,16 +266,26 @@ export async function runCuratorConsolidation(
         } else {
           // TODO(follow-up): in 'auto' mode, inherit the archived skills' assignments
           // so consolidation never strips capability.
-          const res = await createSkillRepo(db, entityId, {
-            slug: parsed.data.slug,
-            name: parsed.data.name,
-            content: parsed.data.content,
-            description: parsed.data.description,
-            createdBy: 'agent',
-            createdByAgentId: null,
-          });
+          // P2b (F-6 follow-up): refuse a slug reserved by the system
+          // catalog — the curator must not shadow a system skill.
+          const res = await createSkillRepo(
+            db,
+            entityId,
+            {
+              slug: parsed.data.slug,
+              name: parsed.data.name,
+              content: parsed.data.content,
+              description: parsed.data.description,
+              createdBy: 'agent',
+              createdByAgentId: null,
+            },
+            systemSkillSlugs,
+          );
           if ('error' in res) {
-            outcomeText = `error: slug "${parsed.data.slug}" already taken`;
+            outcomeText =
+              res.error === 'slug_reserved'
+                ? `error: slug "${parsed.data.slug}" is a reserved system skill slug — choose a different slug`
+                : `error: slug "${parsed.data.slug}" already taken`;
           } else {
             created += 1;
             outcomeText = `created umbrella skill "${parsed.data.slug}"`;

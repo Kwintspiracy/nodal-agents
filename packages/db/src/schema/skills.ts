@@ -23,8 +23,8 @@ export const agentSkills = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
-    name: text('name').notNull().unique(),
-    slug: text('slug').notNull().unique(),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
     content: text('content').notNull(),
     active: boolean('active').default(true),
     description: text('description'),
@@ -68,6 +68,19 @@ export const agentSkills = pgTable(
     index('idx_agent_skills_entity_id').on(table.entityId),
     index('idx_skills_active').on(table.active, table.slug),
     index('idx_agent_skills_is_community').on(table.isCommunity),
+    // F-6 (audit #2): slug AND name were UNIQUE GLOBALLY — a 2nd workspace/
+    // entity installing the same community skill (e.g. slug 'comfyui') or
+    // creating a skill with the same display name crashed the insert, and in
+    // multi-user mode let one entity squat/enumerate another's slugs or
+    // names. Scoped to (entity_id, slug) / (entity_id, name): every real
+    // insert always sets entityId (createSkillRepo takes it as a required
+    // param; the system-skill seeder and community-skill installer both pass
+    // it too — no production path leaves it NULL), but the column itself is
+    // nullable, so NULLS NOT DISTINCT closes the same NULL-entity gap as
+    // DB-1/agent_plugins (multiple (NULL, 'x') rows would otherwise all
+    // satisfy a plain UNIQUE).
+    unique('agent_skills_entity_slug_unique').on(table.entityId, table.slug).nullsNotDistinct(),
+    unique('agent_skills_entity_name_unique').on(table.entityId, table.name).nullsNotDistinct(),
   ],
 );
 

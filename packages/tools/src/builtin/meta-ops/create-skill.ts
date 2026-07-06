@@ -4,6 +4,7 @@
 
 import { z } from 'zod';
 import { createSkillRepo } from '@nodal-agents/db';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 import type { ToolDefinition } from '../../types';
 import { lintSkillContent } from './lint-skill-content';
 
@@ -52,17 +53,27 @@ export const createSkillTool: ToolDefinition<typeof CreateSkillInput, CreateSkil
       return { ok: false, error: lint.error };
     }
 
-    const result = await createSkillRepo(ctx.db, ctx.entityId, {
-      slug: input.slug,
-      name: input.name,
-      content: input.content,
-      description: input.description,
-    });
+    // P2b (F-6 follow-up): refuse a slug reserved by the system catalog — an
+    // agent must not be able to shadow a system skill with its own.
+    const result = await createSkillRepo(
+      ctx.db,
+      ctx.entityId,
+      {
+        slug: input.slug,
+        name: input.name,
+        content: input.content,
+        description: input.description,
+      },
+      systemSkillSlugs,
+    );
 
     if ('error' in result) {
       return {
         ok: false,
-        error: `Skill slug "${input.slug}" is already taken. Choose a different slug.`,
+        error:
+          result.error === 'slug_reserved'
+            ? `Skill slug "${input.slug}" is reserved by a system skill. Choose a different slug.`
+            : `Skill slug "${input.slug}" is already taken. Choose a different slug.`,
       };
     }
 

@@ -273,6 +273,105 @@ describe('handleDelegation', () => {
     expect(pending?.sideToolResults?.[0]?.tool_use_id).toBe('tu_deferred_001');
   });
 
+  it('fails loud with delegation_no_entity when the parent job has no entity — not a misleading child_agent_not_found (F-6 follow-up)', async () => {
+    // parentJob.entityId is typed EntityId | null. A bare `as string` cast
+    // would silently produce `entity_id = NULL` (matches nothing in
+    // Postgres), surfacing as child_agent_not_found regardless of whether
+    // the child agent actually exists — masking the real problem.
+    const { orchId, workerSlug, parentJobId } = await seedContext(db);
+    const parentJobNoEntity = makeParentJob(parentJobId, orchId, null as unknown as string);
+
+    await expect(
+      handleDelegation(
+        parentJobNoEntity,
+        workerSlug,
+        'tu_test_no_entity',
+        { task: 'should fail loud' },
+        [],
+        db,
+      ),
+    ).rejects.toThrow(OrchestrationError);
+
+    try {
+      await handleDelegation(
+        parentJobNoEntity,
+        workerSlug,
+        'tu_test_no_entity_2',
+        { task: 'should fail loud' },
+        [],
+        db,
+      );
+      expect.unreachable('handleDelegation should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(OrchestrationError);
+      expect((err as InstanceType<typeof OrchestrationError>).code).toBe('delegation_no_entity');
+    }
+  });
+
+  it('resolves the child agent within the PARENT job entity — not another entity sharing the same slug (F-6, audit #2)', async () => {
+    // agents.slug is now unique per (entity_id, slug), not globally — two
+    // entities can legitimately have a worker with the same slug. An
+    // unscoped lookup would resolve to whichever row Postgres happens to
+    // return, letting entity A's job delegate into entity B's agent.
+    const { entityId: entityA, orchId: orchA, parentJobId } = await seedContext(db);
+    const sharedSlug = `shared-worker-slug-${Date.now()}`;
+
+    // Rename entity A's own worker to the shared slug so it's the "right"
+    // target, then create an unrelated entity B with a DIFFERENT agent using
+    // the SAME slug.
+    const [ownWorker] = await db
+      .insert(agents)
+      .values({
+        entityId: entityA,
+        name: 'Entity A Shared-Slug Worker',
+        slug: sharedSlug,
+        personality: 'p',
+        role: 'agent',
+        active: true,
+      })
+      .returning();
+
+    const [userB] = await db
+      .insert((await import('@nodal-agents/db')).users)
+      .values({ email: `test-d-b-${Date.now()}@ex.com` })
+      .returning();
+    const [entityB] = await db
+      .insert((await import('@nodal-agents/db')).entities)
+      .values({ userId: userB!.id, name: 'T-B', slug: `e-d-b-${Date.now()}` })
+      .returning();
+    const [otherWorker] = await db
+      .insert(agents)
+      .values({
+        entityId: entityB!.id,
+        name: 'Entity B Shared-Slug Worker',
+        slug: sharedSlug,
+        personality: 'p',
+        role: 'agent',
+        active: true,
+      })
+      .returning();
+
+    const parentJob = makeParentJob(parentJobId, orchA, entityA);
+
+    const result = await handleDelegation(
+      parentJob,
+      sharedSlug,
+      'tu_test_cross_entity',
+      { task: 'must stay in entity A' },
+      [],
+      db,
+    );
+
+    const [childRow] = await db
+      .select({ agentId: agentJobs.agentId, entityId: agentJobs.entityId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, result.childJobId as string));
+
+    expect(childRow?.agentId).toBe(ownWorker!.id);
+    expect(childRow?.agentId).not.toBe(otherWorker!.id);
+    expect(childRow?.entityId).toBe(entityA);
+  });
+
   it('throws OrchestrationError if child agent slug does not exist', async () => {
     const { entityId, orchId, parentJobId } = await seedContext(db);
     const parentJob = makeParentJob(parentJobId, orchId, entityId);

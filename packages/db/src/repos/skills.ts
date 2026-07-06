@@ -29,17 +29,34 @@ export interface CreateSkillInput {
   createdByAgentId?: string | null;
 }
 
-export type CreateSkillResult = { id: string } | { error: 'slug_taken' };
+export type CreateSkillResult = { id: string } | { error: 'slug_taken' | 'slug_reserved' };
 
 /**
  * Insert a new skill within an entity.
- * Returns `{ error: 'slug_taken' }` on unique-constraint violation.
+ * Returns `{ error: 'slug_taken' }` on unique-constraint violation, or
+ * `{ error: 'slug_reserved' }` when `slug` collides with a system-catalog
+ * slug (`reservedSlugs`, e.g. `systemSkillSlugs` from `@nodal-agents/catalog`).
+ *
+ * P2b (F-6 follow-up): before F-6's composite (entity_id, slug) unique, the
+ * global slug constraint made it IMPOSSIBLE for any user/agent to ever create
+ * a skill sharing a catalog slug — the DB rejected it outright. Relaxing that
+ * constraint reopened the door, and a same-slug row in another entity could
+ * be mistaken for the real system skill by any cross-entity check that
+ * trusts slug string membership alone (see assignSkillRepo below, and
+ * listSkillsAction / getSkillByIdAction in apps/web). Refusing the slug here,
+ * at the single creation choke point, closes the vector at the source —
+ * callers pass their own reserved list (packages/db must not import the
+ * product catalog); empty/omitted ⇒ no reservation (back-compat).
  */
 export async function createSkillRepo(
   db: AnyDrizzleDb,
   entityId: string,
   input: CreateSkillInput,
+  reservedSlugs: string[] = [],
 ): Promise<CreateSkillResult> {
+  if (reservedSlugs.includes(input.slug)) {
+    return { error: 'slug_reserved' };
+  }
   try {
     const [row] = await db
       .insert(agentSkills)
@@ -167,6 +184,15 @@ export async function assignSkillRepo(
   systemSkillSlugs: string[],
 ): Promise<AssignSkillResult> {
   // Confirm the skill exists and is accessible to this entity.
+  // P2b (F-6 follow-up): the cross-entity branch requires BOTH slug
+  // membership AND createdBy='system' — slug alone is no longer proof of
+  // provenance now that slugs are unique per entity, not globally. Without
+  // the createdBy check, another entity could create its OWN skill sharing a
+  // catalog slug and have it treated as the real system skill here — a
+  // cross-tenant content injection (this entity's agent would run whatever
+  // that impostor row contains). createdBy is not forgeable by any
+  // user/agent-facing path (seedDefaultSkills is the only writer of
+  // createdBy='system'; createSkillRepo also refuses a reserved slug outright).
   const [skill] = await db
     .select({ id: agentSkills.id })
     .from(agentSkills)
@@ -175,7 +201,9 @@ export async function assignSkillRepo(
         eq(agentSkills.id, input.skillId),
         or(
           eq(agentSkills.entityId, entityId),
-          systemSkillSlugs.length > 0 ? inArray(agentSkills.slug, systemSkillSlugs) : undefined,
+          systemSkillSlugs.length > 0
+            ? and(inArray(agentSkills.slug, systemSkillSlugs), eq(agentSkills.createdBy, 'system'))
+            : undefined,
         ),
       ),
     );

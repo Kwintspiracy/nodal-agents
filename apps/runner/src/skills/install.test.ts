@@ -19,7 +19,16 @@ import {
 } from './source';
 import { parseSkillMarkdown, validateFrontmatter, FrontmatterError } from './frontmatter';
 import { detectScripts } from './detect-scripts';
-import { pickManifest, SkillInstallError, buildContent, MAX_SKILL_CONTENT_BYTES } from './install';
+import {
+  pickManifest,
+  SkillInstallError,
+  buildContent,
+  MAX_SKILL_CONTENT_BYTES,
+  installCommunitySkill,
+} from './install';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import { eq, and, agentSkills } from '@nodal-agents/db';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 import {
   _extractArchiveBuffer,
   accumulateDeclaredBytes,
@@ -956,5 +965,102 @@ describe('installCommunitySkill — content cap rejects oversized SKILL.md', () 
     }
     expect(thrown).toBeInstanceOf(SkillInstallError);
     expect(thrown?.message).toBe(expectedMsg);
+  });
+});
+
+// ── installCommunitySkill — system-skill squat closure (P2b, F-6 follow-up) ──
+//
+// Real pglite DB (spinUpTestDb) + mocked network (single clawhub fetch, same
+// pattern as the "downloadAndExtract — download guards" tests above).
+
+describe('installCommunitySkill — system-skill squat closure (P2b, F-6 follow-up)', () => {
+  const origFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = origFetch;
+  });
+
+  function mockClawhubSkill(slug: string, skillMdName: string) {
+    global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url === `https://clawhub.ai/api/v1/download?slug=${slug}`) {
+        const buf = makeZip([
+          ['SKILL.md', `---\nname: ${skillMdName}\ndescription: test skill\n---\nbody`],
+        ]);
+        return new Response(new Uint8Array(buf), { status: 200 });
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    }) as typeof fetch;
+  }
+
+  it('the reinstall/UPDATE branch cannot reach a non-community existing row (mirrors a system-skill row) — proves the sub-case is unreachable', async () => {
+    // A "system-skill-shaped" row: isCommunity=false, no `source` — exactly
+    // how seedDefaultSkills writes every catalog skill. Uses a slug that is
+    // NOT in the real catalog, to isolate this guard from the reservedSlugs
+    // check added below (which would otherwise throw first).
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+    const fakeSystemSlug = `fake-system-row-${Date.now()}`;
+
+    await db.insert(agentSkills).values({
+      entityId: seed.entityId,
+      name: 'Fake System Row',
+      slug: fakeSystemSlug,
+      content: '# original system content — must survive untouched',
+      createdBy: 'system',
+      isCommunity: false,
+    });
+
+    mockClawhubSkill('attempted-takeover', fakeSystemSlug);
+    const store = await mkdtemp(join(tmpdir(), 'nodal-p2b-store-'));
+    try {
+      await expect(
+        installCommunitySkill({
+          db: db as never,
+          source: 'https://clawhub.ai/pub/attempted-takeover',
+          skillStoreDir: store,
+          entityId: seed.entityId,
+        }),
+      ).rejects.toThrow(/already exists from a different source/);
+
+      // The existing row's content and provenance are untouched.
+      const rows = await db
+        .select({ content: agentSkills.content, createdBy: agentSkills.createdBy })
+        .from(agentSkills)
+        .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, fakeSystemSlug)));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.content).toBe('# original system content — must survive untouched');
+      expect(rows[0]?.createdBy).toBe('system');
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to install a community skill under a real system-catalog slug, in a fresh entity with no pre-existing row', async () => {
+    expect(systemSkillSlugs.length).toBeGreaterThan(0);
+    const reservedSlug = systemSkillSlugs[0]!;
+
+    const { db } = await spinUpTestDb();
+    const seed = await seedMinimal(db);
+
+    mockClawhubSkill('squat-attempt', reservedSlug);
+    const store = await mkdtemp(join(tmpdir(), 'nodal-p2b-store-2-'));
+    try {
+      await expect(
+        installCommunitySkill({
+          db: db as never,
+          source: 'https://clawhub.ai/pub/squat-attempt',
+          skillStoreDir: store,
+          entityId: seed.entityId,
+        }),
+      ).rejects.toThrow(/reserved by a system skill/);
+
+      const rows = await db
+        .select({ id: agentSkills.id })
+        .from(agentSkills)
+        .where(and(eq(agentSkills.entityId, seed.entityId), eq(agentSkills.slug, reservedSlug)));
+      expect(rows).toHaveLength(0);
+    } finally {
+      await rm(store, { recursive: true, force: true });
+    }
   });
 });

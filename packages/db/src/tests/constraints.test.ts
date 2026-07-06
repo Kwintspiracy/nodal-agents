@@ -455,6 +455,106 @@ describe('UNIQUE constraints', () => {
     ).rejects.toThrow();
   });
 
+  it('agents: allows the same slug in two different entities — F-6, audit #2', async () => {
+    // Previously slug was UNIQUE GLOBALLY: a 2nd entity/workspace creating an
+    // agent with a slug already used by ANY other entity crashed the insert.
+    // Composite (entity_id, slug) fixes this — prove both rows coexist.
+    const slug = `shared-agent-slug-${Date.now()}`;
+    const [otherUser] = await db
+      .insert(schema.users)
+      .values({ email: `f6-agent-user-${Date.now()}@example.com` })
+      .returning();
+    const [otherEntity] = await db
+      .insert(schema.entities)
+      .values({ userId: otherUser!.id, name: 'F-6 Other Entity', slug: `f6-other-${Date.now()}` })
+      .returning();
+
+    const [agentA] = await db
+      .insert(schema.agents)
+      .values({ entityId: seed.entityId, name: 'Shared Slug A', slug, personality: 'test' })
+      .returning();
+    const [agentB] = await db
+      .insert(schema.agents)
+      .values({ entityId: otherEntity!.id, name: 'Shared Slug B', slug, personality: 'test' })
+      .returning();
+
+    expect(agentA).toBeDefined();
+    expect(agentB).toBeDefined();
+    expect(agentA?.id).not.toBe(agentB?.id);
+
+    const rows = await db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.id).sort()).toEqual([agentA!.id, agentB!.id].sort());
+  });
+
+  it('agent_skills: rejects duplicate slug within the same entity — F-6, audit #2', async () => {
+    const slug = `unique-skill-slug-${Date.now()}`;
+    await db.insert(schema.agentSkills).values({
+      entityId: seed.entityId,
+      name: `Unique Skill Slug A ${Date.now()}`,
+      slug,
+      content: '# A',
+    });
+    await expect(
+      db.insert(schema.agentSkills).values({
+        entityId: seed.entityId,
+        name: `Unique Skill Slug B ${Date.now()}`,
+        slug,
+        content: '# B',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('agent_skills: rejects duplicate name within the same entity — F-6, audit #2', async () => {
+    const name = `Unique Skill Name ${Date.now()}`;
+    await db.insert(schema.agentSkills).values({
+      entityId: seed.entityId,
+      name,
+      slug: `unique-skill-name-a-${Date.now()}`,
+      content: '# A',
+    });
+    await expect(
+      db.insert(schema.agentSkills).values({
+        entityId: seed.entityId,
+        name,
+        slug: `unique-skill-name-b-${Date.now()}`,
+        content: '# B',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('agent_skills: allows the same slug AND name in two different entities — F-6, audit #2', async () => {
+    // The exact crash this fix closes: two entities/workspaces installing the
+    // same community skill (same slug, same display name) must both succeed.
+    const slug = `shared-skill-slug-${Date.now()}`;
+    const name = `Shared Skill Name ${Date.now()}`;
+    const [otherUser] = await db
+      .insert(schema.users)
+      .values({ email: `f6-skill-user-${Date.now()}@example.com` })
+      .returning();
+    const [otherEntity] = await db
+      .insert(schema.entities)
+      .values({ userId: otherUser!.id, name: 'F-6 Skill Entity', slug: `f6-skill-e-${Date.now()}` })
+      .returning();
+
+    const [skillA] = await db
+      .insert(schema.agentSkills)
+      .values({ entityId: seed.entityId, name, slug, content: '# A' })
+      .returning();
+    const [skillB] = await db
+      .insert(schema.agentSkills)
+      .values({ entityId: otherEntity!.id, name, slug, content: '# B' })
+      .returning();
+
+    expect(skillA).toBeDefined();
+    expect(skillB).toBeDefined();
+    expect(skillA?.id).not.toBe(skillB?.id);
+
+    const rows = await db.select().from(schema.agentSkills).where(eq(schema.agentSkills.slug, slug));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.id).sort()).toEqual([skillA!.id, skillB!.id].sort());
+  });
+
   it('agent_mcp_servers: rejects a duplicate (agent_id, mcp_server_id)', async () => {
     // Backs the assign/unassign UPSERT — without this unique index the
     // onConflictDoUpdate in setAgentMcpServerAssignmentAction throws.

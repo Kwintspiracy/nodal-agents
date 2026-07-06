@@ -28,6 +28,7 @@ import {
 } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import { z } from 'zod';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { buildReflectionSystemPrompt } from './prompt.ts';
 
@@ -328,16 +329,27 @@ export async function runReflection(
           // umbrellas, steer remaining lessons into patches of existing skills.
           outcomeText = `error: new-skill cap (${maxNewSkills}) reached for this pass — PATCH an existing skill with update_skill instead of creating another.`;
         } else {
-          const res = await createSkillRepo(db, entityId, {
-            slug: parsed.data.slug,
-            name: parsed.data.name,
-            content: parsed.data.content,
-            description: parsed.data.description,
-            createdBy: 'agent',
-            createdByAgentId: agentId,
-          });
+          // P2b (F-6 follow-up): refuse a slug reserved by the system
+          // catalog — the reflection model must not be able to shadow a
+          // system skill with an agent-authored one sharing its slug.
+          const res = await createSkillRepo(
+            db,
+            entityId,
+            {
+              slug: parsed.data.slug,
+              name: parsed.data.name,
+              content: parsed.data.content,
+              description: parsed.data.description,
+              createdBy: 'agent',
+              createdByAgentId: agentId,
+            },
+            systemSkillSlugs,
+          );
           if ('error' in res) {
-            outcomeText = `error: slug "${parsed.data.slug}" already taken`;
+            outcomeText =
+              res.error === 'slug_reserved'
+                ? `error: slug "${parsed.data.slug}" is a reserved system skill slug — choose a different slug`
+                : `error: slug "${parsed.data.slug}" already taken`;
           } else {
             created += 1;
             // Auto-assign the new skill to the authoring agent when mode='auto'.

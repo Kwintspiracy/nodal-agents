@@ -305,6 +305,57 @@ describe('POST /api/agent — entity authorization (bearer-token mode)', () => {
     expect(rows[0]?.agentId).toBe(agentYId);
   });
 
+  // ─── P2a (F-6, audit #2 follow-up): ambiguous global slug fails loud ───────
+  //
+  // agents.slug is unique per (entity_id, slug), not globally (F-6) — two
+  // entities CAN legitimately share a slug. A trusted caller with no session
+  // has no entity to scope by, so a shared slug is now genuinely ambiguous.
+  // Silently picking one row (the pre-F-6 behavior above) would violate
+  // invariant #4 (no silent smart fallbacks) — the route must fail loud.
+
+  it('trusted WORKER_SECRET caller gets ambiguous_agent_slug (400) when 2+ entities share the slug — no job created', async () => {
+    const sharedSlug = `shared-across-entities-${crypto.randomUUID()}`;
+
+    const [entityZRow] = await dbB
+      .insert(entities)
+      .values({ userId: seedX.userId, name: 'Entity Z', slug: `entity-z-${crypto.randomUUID()}` })
+      .returning();
+    const entityZ = entityZRow!.id;
+
+    await dbB.insert(agents).values({
+      entityId: entityY,
+      name: 'Shared Agent Y',
+      slug: sharedSlug,
+      personality: 'You are shared agent Y.',
+      active: true,
+    });
+    await dbB.insert(agents).values({
+      entityId: entityZ,
+      name: 'Shared Agent Z',
+      slug: sharedSlug,
+      personality: 'You are shared agent Z.',
+      active: true,
+    });
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
+        body: JSON.stringify({ task: 'ambiguous global lookup', agentSlug: sharedSlug }),
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('ambiguous_agent_slug');
+
+    const rows = await dbB
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.task, 'ambiguous global lookup'));
+    expect(rows).toHaveLength(0);
+  });
+
   // ─── F-2 (audit #2): parentJobId cross-entity injection ────────────────────
   //
   // Without an entity check on parentJobId, an untrusted bearer-token caller

@@ -19,6 +19,7 @@ import {
   isEncrypted,
 } from '@nodal-agents/secrets';
 import { LOCAL_ENTITY_ID } from '@nodal-agents/auth';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 
 beforeAll(() => {
   process.env['DATABASE_URL'] = 'postgres://placeholder:5432/placeholder';
@@ -1869,6 +1870,7 @@ describe('listSkillsAction', () => {
         description: 'Helpful Notion stuff',
         active: true,
         requiredBuiltins: ['save_memory'],
+        createdBy: 'user',
         createdAt: new Date(),
         updatedAt: new Date(),
         skillId,
@@ -1883,6 +1885,59 @@ describe('listSkillsAction', () => {
       expect(r.data[0]!.assignmentCount).toBe(3);
       expect(r.data[0]!.requiredBuiltins).toEqual(['save_memory']);
     }
+  });
+
+  // P2b (F-6 follow-up): isSystem must reflect createdBy — the actual
+  // provenance column — not slug string membership. Before this fix, a
+  // same-entity custom skill that merely shared a catalog slug (createdBy=
+  // 'user') would have been mislabeled isSystem:true; a genuine system row
+  // must still report isSystem:true regardless of its slug.
+  it('reports isSystem:false for a user-created skill, even one sharing a catalog-looking slug', async () => {
+    const skillId = 'aaaaaaaa-0000-0000-0000-000000000103';
+    currentDb = makeDb([
+      {
+        id: skillId,
+        name: 'Impostor',
+        slug: 'web-search', // looks like a system slug
+        content: 'not the real thing',
+        description: null,
+        active: true,
+        requiredBuiltins: [],
+        createdBy: 'user',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        skillId,
+        c: '0',
+      },
+    ]) as typeof currentDb;
+    const { listSkillsAction } = await import('../src/lib/actions.ts');
+    const r = await listSkillsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data[0]!.isSystem).toBe(false);
+  });
+
+  it('reports isSystem:true for a genuine system skill (createdBy=system)', async () => {
+    const skillId = 'aaaaaaaa-0000-0000-0000-000000000104';
+    currentDb = makeDb([
+      {
+        id: skillId,
+        name: 'Web Search',
+        slug: 'web-search',
+        content: 'the real thing',
+        description: null,
+        active: true,
+        requiredBuiltins: [],
+        createdBy: 'system',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        skillId,
+        c: '0',
+      },
+    ]) as typeof currentDb;
+    const { listSkillsAction } = await import('../src/lib/actions.ts');
+    const r = await listSkillsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data[0]!.isSystem).toBe(true);
   });
 });
 
@@ -1920,6 +1975,29 @@ describe('createSkillAction', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data.id).toBe(id);
+  });
+
+  // P2b (F-6 follow-up): a slug reserved by the system catalog is refused
+  // outright — closes the squat vector at the creation choke point, before
+  // any DB write.
+  it('rejects a slug reserved by the system catalog', async () => {
+    expect(systemSkillSlugs.length).toBeGreaterThan(0);
+    const reservedSlug = systemSkillSlugs[0]!;
+    currentDb = makeDb([]) as typeof currentDb;
+    const { createSkillAction } = await import('../src/lib/actions.ts');
+    const r = await createSkillAction({
+      slug: reservedSlug,
+      name: 'Squat Attempt',
+      content: 'Do X.',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('validation_failed');
+      expect(r.message).toContain(reservedSlug);
+    }
+    // The mocked db's insert chain was never reached with a real write path
+    // that would matter here — the point is the repo call itself returns
+    // slug_reserved before any insert semantics are exercised.
   });
 });
 

@@ -23,7 +23,7 @@ export const agents = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
-    slug: text('slug').notNull().unique(),
+    slug: text('slug').notNull(),
     personality: text('personality').notNull(),
     model: text('model').default('claude-sonnet-4-6-20260217'),
     llmKeyId: uuid('llm_key_id').references(() => entityLlmKeys.id, { onDelete: 'set null' }),
@@ -80,6 +80,16 @@ export const agents = pgTable(
       sql`${table.orchestratorMode} IN ('router', 'planner') OR ${table.orchestratorMode} IS NULL`,
     ),
     check('agents_max_tokens_per_job_check', sql`${table.maxTokensPerJob} >= 0`),
+    // F-6 (audit #2): slug was UNIQUE GLOBALLY, so a 2nd workspace/entity
+    // installing the same community skill's companion agent (or any agent
+    // sharing a slug with another entity's agent) would crash the insert —
+    // and, in multi-user mode, let one entity enumerate/squat another's
+    // slugs. Scoped to (entity_id, slug): every real insert always sets
+    // entityId (createAgentRepo takes it as a required param — no production
+    // path leaves it NULL), but the column itself is nullable, so
+    // NULLS NOT DISTINCT closes the same NULL-entity gap as DB-1/agent_plugins
+    // (multiple (NULL, 'x') rows would otherwise all satisfy a plain UNIQUE).
+    unique('agents_entity_slug_unique').on(table.entityId, table.slug).nullsNotDistinct(),
   ],
 );
 

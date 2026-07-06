@@ -1,7 +1,7 @@
 // router/delegate.ts — suspend parent job, create child job
 // Called by the runner when it catches DelegationPendingError from an assign_* tool.
 
-import { eq } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
 import type {
@@ -41,11 +41,27 @@ export async function handleDelegation(
   sideToolResults: SideToolResult[],
   db: AnyDrizzleDb,
 ): Promise<DelegationResult> {
-  // 1. Find the child agent by slug (always DB lookup, never hardcoded)
+  // 1. Find the child agent by slug (always DB lookup, never hardcoded).
+  // F-6 (audit #2): slug is now unique per (entity_id, slug), not globally —
+  // an unscoped lookup could match a DIFFERENT entity's agent sharing the
+  // same slug (cross-entity delegation). Scope to the parent job's own
+  // entity.
+  //
+  // parentJob.entityId is typed `EntityId | null`; a bare `as string` cast
+  // here would silently generate `entity_id = NULL` (matches nothing in
+  // Postgres) on the rare row that somehow has none, surfacing as a
+  // misleading `child_agent_not_found` instead of the real problem. Fail
+  // loud with a distinct error instead (invariant #4).
+  if (parentJob.entityId == null) {
+    throw new OrchestrationError(
+      'delegation_no_entity',
+      `Cannot delegate: parent job ${parentJob.id} has no entity`,
+    );
+  }
   const childAgentRows = await db
     .select({ id: agents.id, entityId: agents.entityId, model: agents.model })
     .from(agents)
-    .where(eq(agents.slug, childSlug))
+    .where(and(eq(agents.slug, childSlug), eq(agents.entityId, parentJob.entityId)))
     .limit(1);
 
   const childAgent = childAgentRows[0];

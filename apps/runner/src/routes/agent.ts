@@ -50,6 +50,15 @@ export async function agentRoute(
   // cross-entity) slug resolution below — its entity is always its own
   // session's, taken from the auth context requireRunnerAuth already
   // verified (never null, since that path requires a session to pass).
+  //
+  // P2a (F-6, audit #2 — resolved): agents.slug moved from a global unique
+  // constraint to unique per (entity_id, slug). The entityId===null branch
+  // below (trusted caller, no session — cron/internal/Telegram dispatch) does
+  // a genuinely global slug scan; if two entities legitimately share a slug,
+  // resolving an arbitrary row would be a silent correctness bug (violates
+  // invariant #4 — no silent smart fallbacks). Decision: fail loud instead —
+  // see the `ambiguous_agent_slug` check below. The nominal case (a single
+  // agent holds that slug install-wide) is unchanged.
   const callerTrusted = c.get('callerTrusted');
   let entityId: string | null;
   if (callerTrusted) {
@@ -67,14 +76,31 @@ export async function agentRoute(
       conditions.push(eq(agents.entityId, entityId));
     }
 
+    // Fetch up to 2 rows (not just 1) when entityId is null: the only way to
+    // tell a genuinely global scan apart from the normal single-match case
+    // without a second query. Entity-scoped lookups can never be ambiguous
+    // (entityId + slug is unique by constraint), so 1 is enough there.
     const agentRows = await deps.db
       .select({ id: agents.id })
       .from(agents)
       .where(and(...conditions))
-      .limit(1);
+      .limit(entityId ? 1 : 2);
 
     if (agentRows.length === 0) {
       return c.json({ error: 'agent_not_found', agentSlug }, 400);
+    }
+    if (!entityId && agentRows.length > 1) {
+      return c.json(
+        {
+          error: 'ambiguous_agent_slug',
+          agentSlug,
+          message:
+            `Multiple agents across different workspaces share the slug "${agentSlug}" and no ` +
+            'entity/session was provided to disambiguate. Pass an explicit entityId, or route ' +
+            'this request through an authenticated session.',
+        },
+        400,
+      );
     }
     agentId = agentRows[0]?.id ?? null;
   } else {

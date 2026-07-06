@@ -20,11 +20,32 @@
 // Guard: skip in bearer-token mode (multi-tenant SaaS — admins manage the
 // catalog explicitly) and when the DB has no entity yet (fresh pre-signup
 // boot — the cron ticker re-attempts later). Otherwise seed: `agent_skills`
-// rows are matched by globally-unique slug, so there is one install-wide set
-// of system skills. The oldest entity is the bookkeeping owner for any rows
-// inserted fresh; existing rows refresh in place regardless of entity.
+// rows are matched by slug scoped to the bookkeeping owner entity (see F-6,
+// audit #2 — slug is unique per (entity_id, slug), not globally, since
+// 2026-07), so there is one install-wide set of system skills. The oldest
+// entity is the bookkeeping owner for any rows inserted fresh; existing rows
+// refresh in place under that same entity.
+//
+// SECURITY (F-6 follow-up, P2b): system skills are made assignable to OTHER
+// entities via assignSkillRepo's `systemSkillSlugs` check. Relaxing the
+// global slug unique constraint (F-6) opened a squat vector — another entity
+// could create its OWN skill whose slug collides with a catalog slug, and a
+// THIRD entity could then attach_skill that impostor row believing it's the
+// real system skill. Closed by stamping `createdBy: 'system'` on every row
+// this seeder writes (below) and requiring BOTH slug membership AND
+// createdBy='system' at every cross-entity system-skill check
+// (listSkillsAction, getSkillByIdAction, assignSkillRepo) — createdBy is not
+// forgeable by any user-facing path (create_skill / createSkillRepo always
+// default it to 'user' unless explicitly overridden by the reflection/
+// curator passes, which pass 'agent', never 'system'). createSkillRepo also
+// refuses a user/agent-supplied slug that collides with the catalog outright
+// (reservedSlugs param), closing the vector at the source too.
+//
+// Existing installs self-heal: this seeder runs on every boot and the UPDATE
+// branches below now also stamp createdBy='system', so a pre-F-6 row missing
+// the flag gets it on the next restart.
 
-import { eq } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
 import { agentSkills, entities } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { RunnerEnv } from '../env.ts';
@@ -49,13 +70,20 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
   let updatedFull = 0;
 
   for (const skill of systemSkills) {
+    // F-6 (audit #2): slug is unique per (entity_id, slug), not globally —
+    // an unscoped lookup could find a DIFFERENT entity's user-authored skill
+    // that happens to share this catalog slug and overwrite its content,
+    // mistaking it for the system skill. Scope to the bookkeeping owner
+    // (targetEntityId): the real system-skill row, if it exists, always
+    // lives there (this seeder only ever inserts under targetEntityId), so
+    // scoping cannot miss it — it can only avoid touching a foreign row.
     const [existing] = await db
       .select({
         id: agentSkills.id,
         contentOverridden: agentSkills.contentOverridden,
       })
       .from(agentSkills)
-      .where(eq(agentSkills.slug, skill.slug))
+      .where(and(eq(agentSkills.slug, skill.slug), eq(agentSkills.entityId, targetEntityId)))
       .limit(1);
 
     if (!existing) {
@@ -69,6 +97,10 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
         contentOverridden: false,
         requiredBuiltins: skill.requiredBuiltins ?? [],
         active: true,
+        // P2b (F-6 follow-up): stamps this row as the ground-truth system
+        // skill — every cross-entity system-skill check requires this flag,
+        // not just slug string membership (see security note above).
+        createdBy: 'system',
       });
       created++;
       continue;
@@ -85,6 +117,7 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
           // not edit-prone, safe to update even when content is overridden.
           description: skill.description,
           requiredBuiltins: skill.requiredBuiltins ?? [],
+          createdBy: 'system',
           updatedAt: new Date(),
         })
         .where(eq(agentSkills.id, existing.id));
@@ -98,6 +131,7 @@ export async function seedDefaultSkills(db: AnyDrizzleDb, env: RunnerEnv): Promi
           defaultContent: skill.content,
           description: skill.description,
           requiredBuiltins: skill.requiredBuiltins ?? [],
+          createdBy: 'system',
           updatedAt: new Date(),
         })
         .where(eq(agentSkills.id, existing.id));

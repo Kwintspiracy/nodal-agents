@@ -103,6 +103,7 @@ export async function uninstallSkillRoute(
       db: deps.db,
       slug: parsed.data.slug,
       skillStoreDir: skillStoreDir(parsed.data.entityId),
+      entityId: parsed.data.entityId,
     });
     return c.json({ ok: true }, 200);
   } catch (err) {

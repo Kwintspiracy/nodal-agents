@@ -45,6 +45,124 @@ async function rowsForPair() {
     );
 }
 
+describe('assignSkillRepo — system skill squat closure (P2b, F-6 follow-up)', () => {
+  it('refuses to attach a foreign-entity skill that only matches by slug — createdBy must also be "system"', async () => {
+    // Entity B creates its OWN custom skill sharing a "reserved" catalog
+    // slug (createdBy defaults to 'user'). Entity C's agent must NOT be able
+    // to attach it via the cross-entity systemSkillSlugs branch — slug
+    // string membership alone is no longer proof of provenance now that
+    // slugs are unique per entity, not globally (F-6).
+    const reservedSlug = `fake-system-slug-${Date.now()}`;
+
+    const [userB] = await db
+      .insert(schema.users)
+      .values({ email: `p2b-user-b-${Date.now()}@example.com` })
+      .returning();
+    const [entityB] = await db
+      .insert(schema.entities)
+      .values({ userId: userB!.id, name: 'P2B Entity B', slug: `p2b-entity-b-${Date.now()}` })
+      .returning();
+    const [impostorSkill] = await db
+      .insert(schema.agentSkills)
+      .values({
+        entityId: entityB!.id,
+        name: 'Impostor Skill',
+        slug: reservedSlug,
+        content: '# impostor — not the real system skill',
+        // createdBy omitted → defaults to 'user'.
+      })
+      .returning();
+
+    const [userC] = await db
+      .insert(schema.users)
+      .values({ email: `p2b-user-c-${Date.now()}@example.com` })
+      .returning();
+    const [entityC] = await db
+      .insert(schema.entities)
+      .values({ userId: userC!.id, name: 'P2B Entity C', slug: `p2b-entity-c-${Date.now()}` })
+      .returning();
+    const [agentC] = await db
+      .insert(schema.agents)
+      .values({
+        entityId: entityC!.id,
+        name: 'P2B Agent C',
+        slug: `p2b-agent-c-${Date.now()}`,
+        personality: 'test',
+      })
+      .returning();
+
+    const result = await assignSkillRepo(
+      db,
+      entityC!.id,
+      { skillId: impostorSkill!.id, agentId: agentC!.id },
+      [reservedSlug],
+    );
+
+    expect(result).toEqual({ error: 'skill_not_found' });
+
+    const rows = await db
+      .select({ id: schema.agentSkillAssignments.id })
+      .from(schema.agentSkillAssignments)
+      .where(
+        and(
+          eq(schema.agentSkillAssignments.agentId, agentC!.id),
+          eq(schema.agentSkillAssignments.skillId, impostorSkill!.id),
+        ),
+      );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('still allows attaching the REAL system skill (createdBy=system) cross-entity via the same slug list', async () => {
+    const realSlug = `real-system-slug-${Date.now()}`;
+
+    const [userSys] = await db
+      .insert(schema.users)
+      .values({ email: `p2b-user-sys-${Date.now()}@example.com` })
+      .returning();
+    const [entitySys] = await db
+      .insert(schema.entities)
+      .values({ userId: userSys!.id, name: 'P2B System Owner', slug: `p2b-sys-${Date.now()}` })
+      .returning();
+    const [realSystemSkill] = await db
+      .insert(schema.agentSkills)
+      .values({
+        entityId: entitySys!.id,
+        name: 'Real System Skill',
+        slug: realSlug,
+        content: '# the real one',
+        createdBy: 'system',
+      })
+      .returning();
+
+    const [userD] = await db
+      .insert(schema.users)
+      .values({ email: `p2b-user-d-${Date.now()}@example.com` })
+      .returning();
+    const [entityD] = await db
+      .insert(schema.entities)
+      .values({ userId: userD!.id, name: 'P2B Entity D', slug: `p2b-entity-d-${Date.now()}` })
+      .returning();
+    const [agentD] = await db
+      .insert(schema.agents)
+      .values({
+        entityId: entityD!.id,
+        name: 'P2B Agent D',
+        slug: `p2b-agent-d-${Date.now()}`,
+        personality: 'test',
+      })
+      .returning();
+
+    const result = await assignSkillRepo(
+      db,
+      entityD!.id,
+      { skillId: realSystemSkill!.id, agentId: agentD!.id },
+      [realSlug],
+    );
+
+    expect(result).toEqual({ ok: true });
+  });
+});
+
 describe('assignSkillRepo — dedup (DB-2, audit #2)', () => {
   it('repeated assignment of the same (agent, skill) leaves exactly ONE row', async () => {
     const first = await assignSkillRepo(db, entityId, { agentId, skillId }, []);

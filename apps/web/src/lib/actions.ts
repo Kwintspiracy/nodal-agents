@@ -4175,6 +4175,7 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         isCommunity: agentSkills.isCommunity,
         source: agentSkills.source,
         installedScripts: agentSkills.installedScripts,
+        createdBy: agentSkills.createdBy,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
       })
@@ -4183,8 +4184,17 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
       // surface them alongside the user's own skills (by canonical slug) so
       // they're visible even when the session entity differs from the seed
       // owner (e.g. a LAN-mode signup). Custom skills stay entity-scoped.
+      //
+      // P2b (F-6 follow-up): the cross-entity branch requires BOTH slug
+      // membership AND createdBy='system' — since slugs are now unique per
+      // entity (not globally), another entity's user-created skill could
+      // share a catalog slug; without the createdBy check it would leak into
+      // every OTHER entity's Library mislabeled as a system skill.
       .where(
-        or(eq(agentSkills.entityId, session.entityId), inArray(agentSkills.slug, systemSkillSlugs)),
+        or(
+          eq(agentSkills.entityId, session.entityId),
+          and(inArray(agentSkills.slug, systemSkillSlugs), eq(agentSkills.createdBy, 'system')),
+        ),
       )
       .orderBy(desc(agentSkills.updatedAt));
 
@@ -4253,7 +4263,10 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         id: r.id,
         name: r.name,
         slug: r.slug,
-        isSystem: systemSkillSlugs.includes(r.slug),
+        // P2b (F-6 follow-up): ground truth is createdBy, not slug string
+        // membership — a same-entity custom skill sharing a catalog slug
+        // must never display as "system" in its own owner's Library.
+        isSystem: r.createdBy === 'system',
         systemKind: skillKindOfSlug(r.slug),
         content: r.content,
         defaultContent: r.defaultContent,
@@ -4297,13 +4310,24 @@ export async function createSkillAction(raw: unknown): Promise<ActionResult<{ id
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const db = getDb();
-    const result = await createSkillRepo(db, session.entityId, {
-      slug: parsed.data.slug,
-      name: parsed.data.name,
-      content: parsed.data.content,
-      description: parsed.data.description ?? null,
-    });
+    // P2b (F-6 follow-up): refuse a slug reserved by the system catalog
+    // outright — closes the squat vector at the source (see assignSkillRepo
+    // and seed-default-skills.ts for the full rationale).
+    const result = await createSkillRepo(
+      db,
+      session.entityId,
+      {
+        slug: parsed.data.slug,
+        name: parsed.data.name,
+        content: parsed.data.content,
+        description: parsed.data.description ?? null,
+      },
+      systemSkillSlugs,
+    );
     if ('error' in result) {
+      if (result.error === 'slug_reserved') {
+        return fail('validation_failed', `"${parsed.data.slug}" is a reserved system skill slug — choose a different slug`);
+      }
       return fail('conflict', 'A skill with this slug already exists');
     }
     revalidatePath('/skills');
@@ -4629,18 +4653,24 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
         isCommunity: agentSkills.isCommunity,
         source: agentSkills.source,
         installedScripts: agentSkills.installedScripts,
+        createdBy: agentSkills.createdBy,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
       })
       .from(agentSkills)
       // Visible if it's the user's own skill or an install-wide system skill
       // (read-only for non-owners; edit/delete stay entity-scoped below).
+      //
+      // P2b (F-6 follow-up): the cross-entity branch requires BOTH slug
+      // membership AND createdBy='system' (see listSkillsAction for the full
+      // rationale — otherwise another entity's same-slug custom skill would
+      // be readable, cross-tenant, as if it were the real system skill).
       .where(
         and(
           eq(agentSkills.id, id),
           or(
             eq(agentSkills.entityId, session.entityId),
-            inArray(agentSkills.slug, systemSkillSlugs),
+            and(inArray(agentSkills.slug, systemSkillSlugs), eq(agentSkills.createdBy, 'system')),
           ),
         ),
       );
@@ -4650,7 +4680,8 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       id: row.id,
       name: row.name,
       slug: row.slug,
-      isSystem: systemSkillSlugs.includes(row.slug),
+      // Ground truth is createdBy, not slug string membership.
+      isSystem: row.createdBy === 'system',
       systemKind: skillKindOfSlug(row.slug),
       content: row.content,
       defaultContent: row.defaultContent,
@@ -4741,6 +4772,7 @@ export async function getAgentAttachedSkillsAction(
         isCommunity: agentSkills.isCommunity,
         source: agentSkills.source,
         installedScripts: agentSkills.installedScripts,
+        createdBy: agentSkills.createdBy,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
         scriptsAuthorized: agentSkillAssignments.scriptsAuthorized,
@@ -4761,7 +4793,9 @@ export async function getAgentAttachedSkillsAction(
         id: r.id,
         name: r.name,
         slug: r.slug,
-        isSystem: systemSkillSlugs.includes(r.slug),
+        // P2b (F-6 follow-up): ground truth is createdBy, not slug string
+        // membership (see listSkillsAction above for the full rationale).
+        isSystem: r.createdBy === 'system',
         systemKind: skillKindOfSlug(r.slug),
         content: r.content,
         defaultContent: r.defaultContent,

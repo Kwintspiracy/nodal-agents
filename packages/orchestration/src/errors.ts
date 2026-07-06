@@ -73,6 +73,7 @@ export type OrchestrationErrorCode =
   | 'parent_wrong_status'
   | 'missing_tool_use_id'
   | 'child_agent_not_found'
+  | 'delegation_no_entity'
   | 'cycle_detected'
   | 'missing_dependency'
   | 'task_board_error';

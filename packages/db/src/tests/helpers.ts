@@ -96,7 +96,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
       name text NOT NULL,
-      slug text NOT NULL UNIQUE,
+      slug text NOT NULL,
       personality text NOT NULL,
       model text DEFAULT 'claude-sonnet-4-6-20260217',
       llm_key_id uuid REFERENCES entity_llm_keys(id) ON DELETE SET NULL,
@@ -118,7 +118,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       memory_token_budget integer NOT NULL DEFAULT 1500,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now()
+      updated_at timestamptz DEFAULT now(),
+      -- F-6 (audit #2, migration 0056): slug moved from a global UNIQUE to
+      -- unique per (entity_id, slug), NULLS NOT DISTINCT.
+      UNIQUE NULLS NOT DISTINCT (entity_id, slug)
     );
 
     -- FK from entities.root_agent_id → agents.id (added after agents table exists)
@@ -315,8 +318,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE TABLE IF NOT EXISTS agent_skills (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
-      name text NOT NULL UNIQUE,
-      slug text NOT NULL UNIQUE,
+      name text NOT NULL,
+      slug text NOT NULL,
       content text NOT NULL,
       active boolean DEFAULT true,
       description text,
@@ -335,7 +338,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       patch_count integer NOT NULL DEFAULT 0,
       archived_at timestamptz,
       created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now()
+      updated_at timestamptz DEFAULT now(),
+      -- F-6 (audit #2, migration 0056): slug and name moved from global
+      -- UNIQUE to unique per (entity_id, slug) / (entity_id, name),
+      -- NULLS NOT DISTINCT.
+      UNIQUE NULLS NOT DISTINCT (entity_id, slug),
+      UNIQUE NULLS NOT DISTINCT (entity_id, name)
     );
 
     CREATE TABLE IF NOT EXISTS skill_versions (

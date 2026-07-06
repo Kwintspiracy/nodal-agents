@@ -386,6 +386,13 @@
       "when": 1783500000000,
       "tag": "0055_entity_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1783600000000,
+      "tag": "0056_agents_skills_entity_scoped_unique",
+      "breakpoints": true
     }
   ]
 }

@@ -8,7 +8,8 @@
 
 import { cp, rm, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join, basename, sep } from 'node:path';
-import { eq, agentSkills, type AnyDrizzleDb } from '@nodal-agents/db';
+import { eq, and, agentSkills, type AnyDrizzleDb } from '@nodal-agents/db';
+import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { parseSkillSource } from './source';
 import { downloadAndExtract, findSkillManifests, isFile } from './fetch';
 import { parseSkillMarkdown, validateFrontmatter } from './frontmatter';
@@ -140,6 +141,22 @@ export async function installCommunitySkill(
     const { frontmatter, body } = parseSkillMarkdown(text);
     const { slug, name, description } = validateFrontmatter(frontmatter);
 
+    // P2b (F-6 follow-up): refuse a slug reserved by the system catalog
+    // outright, in ANY entity — before any insert/update. Not reachable as a
+    // takeover of a REAL system row today (the collision guard below already
+    // blocks that: a system-skill row is always isCommunity=false and has no
+    // `source`, so `!existing.isCommunity || existing.source !== source.raw`
+    // is always true for it and the reinstall branch always throws first).
+    // This closes the door for coherence — a community skill should never be
+    // installable under a catalog slug in the first place, in ANY entity,
+    // not just the one that happens to hold the real system row.
+    if (systemSkillSlugs.includes(slug)) {
+      throw new SkillInstallError(
+        `"${slug}" is reserved by a system skill and cannot be used for a community-installed ` +
+          `skill. Rename the skill (its SKILL.md frontmatter "name") to use a different slug.`,
+      );
+    }
+
     // A repo whose chosen SKILL.md sits at the root may bundle OTHER skills
     // (e.g. a plugins/ mirror shipping its own SKILL.md). Those subtrees belong
     // to a different skill — exclude them from the copy + script scan so we
@@ -153,7 +170,11 @@ export async function installCommunitySkill(
     const scripts = await detectScripts(skillDirAbs, isExcluded);
     const fileCount = await countFilesIn(skillDirAbs, isExcluded);
 
-    // Collision handling: only overwrite a prior install of the SAME source.
+    // Collision handling: only overwrite a prior install of the SAME source,
+    // scoped to THIS entity — slug is unique per (entity_id, slug), not
+    // globally (F-6, audit #2), so an unscoped lookup here would find another
+    // entity's skill row sharing the slug and silently overwrite its content
+    // on "reinstall".
     const [existing] = await opts.db
       .select({
         id: agentSkills.id,
@@ -161,7 +182,7 @@ export async function installCommunitySkill(
         source: agentSkills.source,
       })
       .from(agentSkills)
-      .where(eq(agentSkills.slug, slug))
+      .where(and(eq(agentSkills.slug, slug), eq(agentSkills.entityId, opts.entityId)))
       .limit(1);
 
     let reinstalled = false;
@@ -247,6 +268,8 @@ export interface UninstallSkillOptions {
   db: AnyDrizzleDb;
   slug: string;
   skillStoreDir: string;
+  /** Entity that must own the skill being uninstalled. */
+  entityId: string;
 }
 
 /**
@@ -258,10 +281,13 @@ export async function uninstallCommunitySkill(opts: UninstallSkillOptions): Prom
   if (!SLUG_RE.test(opts.slug)) {
     throw new SkillInstallError(`Invalid skill slug "${opts.slug}".`);
   }
+  // F-6 (audit #2): slug is unique per (entity_id, slug), not globally — an
+  // unscoped lookup here would let entity A uninstall (and delete the files
+  // of) entity B's same-slug skill.
   const [existing] = await opts.db
     .select({ id: agentSkills.id, isCommunity: agentSkills.isCommunity })
     .from(agentSkills)
-    .where(eq(agentSkills.slug, opts.slug))
+    .where(and(eq(agentSkills.slug, opts.slug), eq(agentSkills.entityId, opts.entityId)))
     .limit(1);
   if (!existing) {
     throw new SkillInstallError(`No skill installed with slug "${opts.slug}".`);
