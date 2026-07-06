@@ -23,6 +23,12 @@ export interface MemoryLifecycleResult {
  * what's actually been used" signal — sounder than a one-shot importance guess.
  * Reversible (archived=true). Only source IN ('agent','reflection') is eligible;
  * user-entered facts are never archived by the curator.
+ *
+ * NEVER archives a fact the user has pinned (importance_locked=true) — the
+ * deterministic sweep must honor a user pin exactly as the LLM re-score phase
+ * (updateAgentMemoryImportance) already does. Without this, a starred/pinned
+ * agent memory that is low-importance, unaccessed and old would be silently
+ * archived, regressing the 0.7.0 pin feature (H1, audit followup).
  */
 export async function transitionMemoryLifecycle(
   db: AnyDrizzleDb,
@@ -38,6 +44,7 @@ export async function transitionMemoryLifecycle(
         sql`${agentMemory.source} IN ('agent','reflection')`,
         sql`${agentMemory.importance} <= ${opts.importanceMax}`,
         sql`coalesce(${agentMemory.accessCount}, 0) = 0`,
+        sql`coalesce(${agentMemory.importanceLocked}, false) = false`,
         lt(agentMemory.createdAt, cutoff),
       ),
     )
@@ -130,7 +137,9 @@ export async function updateAgentMemoryImportance(
   entityId: string,
   memoryId: string,
   importance: number,
-): Promise<{ ok: true } | { error: MemoryCuratorError | 'invalid_importance' | 'importance_locked' }> {
+): Promise<
+  { ok: true } | { error: MemoryCuratorError | 'invalid_importance' | 'importance_locked' }
+> {
   if (!Number.isInteger(importance) || importance < 1 || importance > 5) {
     return { error: 'invalid_importance' };
   }

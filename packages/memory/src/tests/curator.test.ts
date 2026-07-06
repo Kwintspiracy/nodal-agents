@@ -107,6 +107,26 @@ describe('transitionMemoryLifecycle — deterministic usage-based archival', () 
     expect(await isArchived(recent)).toBe(false);
     expect(await isArchived(userEntered)).toBe(false);
   });
+
+  it('NEVER archives a user-pinned fact, even when otherwise archivable (H1)', async () => {
+    await db.delete(agentMemory);
+    // Identical to the archivable case above (agent, low importance, unused, old)
+    // EXCEPT the user pinned it — the deterministic sweep must honor the pin, or
+    // it silently regresses the 0.7.0 star/pin feature.
+    const pinned = await insertFact({
+      fact: 'agent fact the user pinned',
+      source: 'agent',
+      importance: 2,
+      accessCount: 0,
+      createdAt: OLD,
+      importanceLocked: true,
+    });
+
+    const res = await transitionMemoryLifecycle(db, { staleDays: 60, importanceMax: 2 });
+
+    expect(res.archived).toBe(0);
+    expect(await isArchived(pinned)).toBe(false);
+  });
 });
 
 describe('archiveAgentMemory — provenance-guarded', () => {
