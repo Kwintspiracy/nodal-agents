@@ -1,6 +1,7 @@
 // planner/task-tools.test.ts — create_task and list_tasks DB tests
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentTasks, agentJobs } from '@nodal-agents/db';
@@ -206,6 +207,144 @@ describe('generateTaskTools', () => {
         .where(eq(agentTasks.id, second.taskId));
 
       expect(row?.dependsOn).toContain(first.taskId);
+    });
+
+    it('rejects depends_on referencing a non-existent task ID and creates no row', async () => {
+      const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      const ghostId = randomUUID();
+
+      // C1 (audit followup): a hallucinated/typo'd dependency ID must reject
+      // the creation loud, not insert a task that freezes forever waiting on
+      // a dependency that will never resolve.
+      await expect(
+        createTask!.execute(
+          { title: 'Depends on ghost', assigned_to: workerSlug, depends_on: [ghostId] },
+          ctx,
+        ),
+      ).rejects.toThrow(/missing_dependency/);
+
+      const rows = await db
+        .select({ id: agentTasks.id })
+        .from(agentTasks)
+        .where(eq(agentTasks.title, 'Depends on ghost'));
+      expect(rows).toHaveLength(0);
+    });
+
+    it('rejects depends_on that would join a dependency cycle and creates no row', async () => {
+      const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      // Simulate a pre-existing cycle between two tasks: `depends_on` is a
+      // plain uuid[] with no FK/cycle enforcement, so nothing stops two rows
+      // from referencing each other directly (e.g. legacy data, or a bug in
+      // a path other than create_task). A new task depending on both must
+      // still be rejected.
+      const idX = randomUUID();
+      const idY = randomUUID();
+      await db.insert(agentTasks).values({
+        id: idX,
+        entityId,
+        orchestratorId: plannerId,
+        title: 'Cyclic X',
+        dependsOn: [idY],
+      });
+      await db.insert(agentTasks).values({
+        id: idY,
+        entityId,
+        orchestratorId: plannerId,
+        title: 'Cyclic Y',
+        dependsOn: [idX],
+      });
+
+      await expect(
+        createTask!.execute(
+          { title: 'Joins the cycle', assigned_to: workerSlug, depends_on: [idX, idY] },
+          ctx,
+        ),
+      ).rejects.toThrow(/cycle_detected/);
+
+      const rows = await db
+        .select({ id: agentTasks.id })
+        .from(agentTasks)
+        .where(eq(agentTasks.title, 'Joins the cycle'));
+      expect(rows).toHaveLength(0);
+    });
+
+    it('rejects depends_on referencing a task from a DIFFERENT entity', async () => {
+      // F1 (audit followup): dependency resolution must be entity-scoped, like
+      // assigned_to already is. A cross-entity ref is treated as non-existent —
+      // this closes a cross-tenant existence oracle AND stops an entity-A task
+      // from freezing forever on an entity-B task it can never observe finish.
+      const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
+
+      // Seed a second entity and a task inside it.
+      const [otherUser] = await db
+        .insert((await import('@nodal-agents/db')).users)
+        .values({ email: `test-pt-dep-other-${Date.now()}@ex.com` })
+        .returning();
+      const [otherEntity] = await db
+        .insert((await import('@nodal-agents/db')).entities)
+        .values({ userId: otherUser!.id, name: 'OtherDep', slug: `e-pt-dep-other-${Date.now()}` })
+        .returning();
+      const foreignTaskId = randomUUID();
+      await db.insert(agentTasks).values({
+        id: foreignTaskId,
+        entityId: otherEntity!.id,
+        orchestratorId: plannerId,
+        title: 'Foreign entity task',
+      });
+
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      // The foreign task EXISTS in the DB, but not in this entity → must reject
+      // as missing_dependency (not leak its existence, not create a frozen row).
+      await expect(
+        createTask!.execute(
+          { title: 'Depends across tenant', assigned_to: workerSlug, depends_on: [foreignTaskId] },
+          ctx,
+        ),
+      ).rejects.toThrow(/missing_dependency/);
+
+      const rows = await db
+        .select({ id: agentTasks.id })
+        .from(agentTasks)
+        .where(eq(agentTasks.title, 'Depends across tenant'));
+      expect(rows).toHaveLength(0);
+    });
+
+    it('schema rejects a non-UUID dependency id and an over-long depends_on', async () => {
+      // F3 (audit followup): depends_on is validated at the tool boundary
+      // (executeTool parses inputSchema before execute runs). A typo'd,
+      // non-UUID id must surface as a clean validation error — not a raw
+      // Postgres "invalid input syntax for type uuid" from the id column — and
+      // the array is bounded to cap a fan-out DoS.
+      const [createTask] = generateTaskTools('planner-x' as AgentId, db);
+
+      const nonUuid = createTask!.inputSchema.safeParse({
+        title: 'Bad dep id',
+        assigned_to: 'w',
+        depends_on: ['not-a-uuid'],
+      });
+      expect(nonUuid.success).toBe(false);
+
+      const tooMany = createTask!.inputSchema.safeParse({
+        title: 'Too many deps',
+        assigned_to: 'w',
+        depends_on: Array.from({ length: 51 }, () => randomUUID()),
+      });
+      expect(tooMany.success).toBe(false);
+
+      const ok = createTask!.inputSchema.safeParse({
+        title: 'Fine',
+        assigned_to: 'w',
+        depends_on: [randomUUID(), randomUUID()],
+      });
+      expect(ok.success).toBe(true);
     });
   });
 

@@ -5,7 +5,7 @@ import { spinUpTestDb } from '@nodal-agents/db/test-utils';
 import { agents, agentTasks } from '@nodal-agents/db';
 import { validateDependencies, checkAllDepsResolved } from '../../planner/dependencies';
 import { OrchestrationError } from '../../errors';
-import type { TaskId } from '../../types';
+import type { TaskId, EntityId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 
 let db: TestDb;
@@ -64,10 +64,12 @@ async function createTask(
 
 describe('validateDependencies', () => {
   it('passes when depends_on is empty', async () => {
-    await seedContext(db);
+    const { entityId } = await seedContext(db);
     const newTaskId = 'new-task-00' as TaskId;
     // Should not throw
-    await expect(validateDependencies(newTaskId, [], db)).resolves.toBeUndefined();
+    await expect(
+      validateDependencies(newTaskId, [], entityId as EntityId, db),
+    ).resolves.toBeUndefined();
   });
 
   it('passes when all referenced tasks exist', async () => {
@@ -75,24 +77,39 @@ describe('validateDependencies', () => {
     const task1 = await createTask(db, entityId, agentId, 'Dep Task A');
     const newTaskId = 'new-task-01' as TaskId;
     await expect(
-      validateDependencies(newTaskId, [task1.id as TaskId], db),
+      validateDependencies(newTaskId, [task1.id as TaskId], entityId as EntityId, db),
     ).resolves.toBeUndefined();
   });
 
   it('throws missing_dependency when referenced task does not exist', async () => {
+    const { entityId } = await seedContext(db);
     const newTaskId = 'new-task-02' as TaskId;
     const nonExistentId = '00000000-0000-0000-0000-000000000099' as TaskId;
 
-    await expect(validateDependencies(newTaskId, [nonExistentId], db)).rejects.toThrow(
-      OrchestrationError,
-    );
+    await expect(
+      validateDependencies(newTaskId, [nonExistentId], entityId as EntityId, db),
+    ).rejects.toThrow(OrchestrationError);
 
     try {
-      await validateDependencies(newTaskId, [nonExistentId], db);
+      await validateDependencies(newTaskId, [nonExistentId], entityId as EntityId, db);
     } catch (err) {
       const e = err as OrchestrationError;
       expect(e.code).toBe('missing_dependency');
     }
+  });
+
+  it('throws missing_dependency when the dep exists but in a DIFFERENT entity', async () => {
+    // F1 (audit followup): dependency lookup is entity-scoped. A task that
+    // exists platform-wide but not in the caller's entity must read as missing,
+    // never resolve — closing the cross-tenant oracle and cross-entity freeze.
+    const { entityId } = await seedContext(db);
+    const other = await seedContext(db);
+    const foreignTask = await createTask(db, other.entityId, other.agentId, 'Foreign Dep');
+    const newTaskId = 'new-task-03' as TaskId;
+
+    await expect(
+      validateDependencies(newTaskId, [foreignTask.id as TaskId], entityId as EntityId, db),
+    ).rejects.toThrow(/missing_dependency/);
   });
 
   it('throws cycle_detected for direct cycle (A → B → A)', async () => {
@@ -107,7 +124,7 @@ describe('validateDependencies', () => {
     // We simulate by testing: newTaskId=taskB.id, dependsOn=[taskA.id]
     // taskA already depends on taskB, so taskB → taskA → taskB = cycle
     await expect(
-      validateDependencies(taskB.id as TaskId, [taskA.id as TaskId], db),
+      validateDependencies(taskB.id as TaskId, [taskA.id as TaskId], entityId as EntityId, db),
     ).rejects.toThrow(OrchestrationError);
   });
 });

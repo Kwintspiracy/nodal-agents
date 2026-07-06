@@ -2,9 +2,11 @@
 // These are dynamically generated per agent. Never hardcoded agent names.
 
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { eq, and, inArray } from '@nodal-agents/db';
 import { agentTasks, agents } from '@nodal-agents/db';
-import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId } from '../types';
+import { validateDependencies } from './dependencies';
+import type { AgentId, AnyDrizzleDb, ToolDefinition, TaskId, EntityId } from '../types';
 import type { ToolContext } from '@nodal-agents/tools';
 
 // ─── create_task schema ───────────────────────────────────────────────────────
@@ -18,7 +20,8 @@ const createTaskSchema = z.object({
     .optional()
     .describe('Task priority (default: medium).'),
   depends_on: z
-    .array(z.string())
+    .array(z.string().uuid())
+    .max(50)
     .optional()
     .describe(
       'Array of task IDs that must complete before this task starts. Use list_tasks to get IDs.',
@@ -103,12 +106,21 @@ export function generateTaskTools(
           assignedAgentId = agentRows[0]?.id ?? null;
         }
 
-        // Validate depends_on references exist (best-effort — DB FK not enforced for uuid arrays)
-        const dependsOn = (input.depends_on ?? []) as string[];
+        // Validate depends_on references exist and introduce no cycle BEFORE
+        // touching the DB (C1, audit followup). Uuid arrays have no FK
+        // enforcement, so a hallucinated ID, a typo, or a cyclic reference
+        // would otherwise insert silently — the task (and its root job) then
+        // freezes forever: never picked up by the cron tick, never marked
+        // `blocked`, never reaped by the watchdog. Fail loud instead so the
+        // LLM gets a clear, actionable tool error and can retry.
+        const dependsOn = (input.depends_on ?? []) as TaskId[];
+        const newTaskId = randomUUID() as TaskId;
+        await validateDependencies(newTaskId, dependsOn, ctx.entityId as EntityId, db);
 
         const [task] = await db
           .insert(agentTasks)
           .values({
+            id: newTaskId as string,
             entityId: ctx.entityId,
             orchestratorId: orchestratorAgentId as string,
             title: input.title,

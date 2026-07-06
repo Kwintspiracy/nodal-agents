@@ -1,10 +1,10 @@
 // planner/dependencies.ts — dependency validation for task board tasks
 // Validates that depends_on references exist and contain no cycles.
 
-import { eq, inArray } from '@nodal-agents/db';
+import { eq, and, inArray } from '@nodal-agents/db';
 import { agentTasks } from '@nodal-agents/db';
 import { OrchestrationError } from '../errors';
-import type { TaskId, AnyDrizzleDb } from '../types';
+import type { TaskId, EntityId, AnyDrizzleDb } from '../types';
 
 // ─── validateDependencies ─────────────────────────────────────────────────────
 
@@ -12,26 +12,39 @@ import type { TaskId, AnyDrizzleDb } from '../types';
  * Validate that all dependency task IDs in `taskIds` exist in the DB,
  * and that they form no cycles (direct or transitive).
  *
+ * Every lookup is scoped to `entityId`: a task may only depend on tasks
+ * of its own entity (F1, audit followup). Cross-entity refs are treated as
+ * NON-EXISTENT, which both closes a cross-tenant existence oracle (the error
+ * lists the missing IDs) and prevents an entity-A task from freezing on an
+ * entity-B task it can never observe reach a terminal state.
+ *
  * Throws OrchestrationError with code:
- *   - 'missing_dependency' if any referenced task ID does not exist
+ *   - 'missing_dependency' if any referenced task ID does not exist in the entity
  *   - 'cycle_detected'     if adding these dependencies would create a cycle
  *
  * @param newTaskId   The ID of the task being created (not yet in DB)
  * @param dependsOn   The depends_on array from the create_task input
+ * @param entityId    Entity the new task belongs to — deps are scoped to it
  * @param db          Drizzle DB handle
  */
 export async function validateDependencies(
   newTaskId: TaskId,
   dependsOn: TaskId[],
+  entityId: EntityId,
   db: AnyDrizzleDb,
 ): Promise<void> {
   if (dependsOn.length === 0) return;
 
-  // 1. Check all referenced IDs exist
+  // 1. Check all referenced IDs exist WITHIN this entity
   const foundRows = await db
     .select({ id: agentTasks.id })
     .from(agentTasks)
-    .where(inArray(agentTasks.id, dependsOn as string[]));
+    .where(
+      and(
+        inArray(agentTasks.id, dependsOn as string[]),
+        eq(agentTasks.entityId, entityId as string),
+      ),
+    );
 
   const foundIds = new Set(foundRows.map((r: { id: string }) => r.id));
   const missing = dependsOn.filter((id) => !foundIds.has(id as string));
@@ -49,7 +62,9 @@ export async function validateDependencies(
   const taskRows = await db
     .select({ id: agentTasks.id, dependsOn: agentTasks.dependsOn })
     .from(agentTasks)
-    .where(inArray(agentTasks.id, allIds as string[]));
+    .where(
+      and(inArray(agentTasks.id, allIds as string[]), eq(agentTasks.entityId, entityId as string)),
+    );
 
   // adjacency: taskId → [deps...]
   const graph = new Map<string, string[]>();
