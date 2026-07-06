@@ -333,7 +333,14 @@ export async function attachInboundPhoto(args: {
   const filePath = join(dir, `${jobId}.${ext}`);
   await writeFile(filePath, download.bytes);
 
-  await db
+  // Conditional on the job still being `pending` (G1, audit followup). The photo
+  // download is out-of-txn network I/O (up to 30s); in that window the worker (or
+  // a cron pickup) can claim the job — claimJob flips it pending→processing and
+  // starts reading `messages`. An UNCONDITIONAL overwrite here would then clobber
+  // the in-flight conversation. Guarding on `pending` makes claim win: if the job
+  // already moved on, we do NOT overwrite; we log loudly (never a silent
+  // corruption/loss — invariant #4) so the missed image is diagnosable.
+  const attached = await db
     .update(agentJobs)
     .set({
       messages: [
@@ -346,7 +353,15 @@ export async function attachInboundPhoto(args: {
         },
       ],
     })
-    .where(eq(agentJobs.id, jobId));
+    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'pending')))
+    .returning({ id: agentJobs.id });
+
+  if (attached.length === 0) {
+    console.warn(
+      `[telegram] inbound photo for job ${jobId} arrived after the job left 'pending' ` +
+        `(claimed/worker started); image saved to ${filePath} but not attached to the transcript.`,
+    );
+  }
 
   // Best-effort, bounded cleanup of this chat's workspace tree (F-13) — without
   // it, `telegram/<chatId>/` grows unbounded forever. A prune failure must never
