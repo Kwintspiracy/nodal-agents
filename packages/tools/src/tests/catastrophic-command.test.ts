@@ -61,6 +61,86 @@ describe('isCatastrophicCommand — catches machine-wide destruction', () => {
   }
 });
 
+describe('isCatastrophicCommand — A1: repeated-slash bypass', () => {
+  // Same catastrophic commands as above, but with doubled/tripled path
+  // separators — a naive single-slash regex dodges these while the shell
+  // (which collapses repeated separators) runs them exactly the same.
+  const catastrophic = [
+    'rm -rf //',
+    'rm -rf ///',
+    'rm -rf //*',
+    'echo x > //dev/sda',
+    'echo x > ///dev/sda',
+    'dd if=/dev/zero of=//dev/sda',
+    'dd if=/dev/zero of=///dev/sda',
+    'Remove-Item -Recurse -Force C:\\\\',
+    'rm -r -Force C:\\\\',
+    'format C://',
+    'del /f /s /q C:\\\\*',
+  ];
+  for (const cmd of catastrophic) {
+    it(`flags: ${cmd}`, () => {
+      expect(isCatastrophicCommand(cmd)).toBe(true);
+    });
+  }
+});
+
+describe('isCatastrophicCommand — A2: generic interpreter inline-eval bypass', () => {
+  // Wrapping in a general-purpose interpreter's inline-eval flag hands the
+  // classifier an opaque payload that could do anything (including rm -rf).
+  // The payload is undecidable, so ANY such invocation must gate — dangerous
+  // payload and anodyne payload alike.
+  const dangerousPayload = [
+    'python -c "import os; os.system(\'rm -rf /\')"',
+    'python3 -c "import os; os.system(\'rm -rf /\')"',
+    "node -e \"require('child_process').execSync('rm -rf /')\"",
+    'sh -c "rm -rf /"',
+    'bash -c "rm -rf /"',
+    'powershell -Command "Remove-Item -Recurse -Force C:\\"',
+  ];
+  const anodynePayload = [
+    'python -c "print(1)"',
+    'python3 -c "print(1)"',
+    'node -e "console.log(1)"',
+    'node --eval "console.log(1)"',
+    'sh -c "echo hi"',
+    'bash -c "echo hi"',
+    'zsh -c "echo hi"',
+    'powershell -Command "Get-Date"',
+    'pwsh -Command "Get-Date"',
+    'perl -e "print 1"',
+    'ruby -e "puts 1"',
+    'php -r "echo 1;"',
+    // extra bypass shapes: nested wrapper, sudo, absolute path, `env`
+    'cmd /c python -c "print(1)"',
+    'sudo python3 -c "print(1)"',
+    '/usr/bin/python3 -c "print(1)"',
+    'env python3 -c "print(1)"',
+  ];
+  for (const cmd of [...dangerousPayload, ...anodynePayload]) {
+    it(`flags: ${cmd}`, () => {
+      expect(isCatastrophicCommand(cmd)).toBe(true);
+    });
+  }
+});
+
+describe('isCatastrophicCommand — A2 non-regression: interpreter without inline flag', () => {
+  const safe = [
+    'python script.py',
+    'python3 script.py',
+    'node server.js',
+    'node build.js',
+    'bash deploy.sh',
+    'sh setup.sh',
+    'python3 -m http.server',
+  ];
+  for (const cmd of safe) {
+    it(`allows: ${cmd}`, () => {
+      expect(isCatastrophicCommand(cmd)).toBe(false);
+    });
+  }
+});
+
 describe('isCatastrophicCommand — leaves ordinary commands alone', () => {
   const safe = [
     'ls -la',

@@ -40,6 +40,20 @@ function stripQuotes(token: string): string {
   return token.replace(/^["']|["']$/g, '');
 }
 
+/**
+ * Collapse repeated path separators (`//` → `/`, `\\` → `\`) before any
+ * pattern below runs. Every device/root/wildcard-target regex in this file
+ * is written for a SINGLE separator (`\/dev\/sda`, `^[a-z]:\\?\*?$`, …); a
+ * doubled or tripled separator (`rm -rf //`, `of=//dev/sda`, `C:\\`) reaches
+ * the exact same target once the shell runs it, but dodges those regexes
+ * outright. Normalizing here — once, up front — means every check below
+ * stays a simple single-separator pattern instead of each needing its own
+ * `/+` variant.
+ */
+function normalizeSlashes(s: string): string {
+  return s.replace(/\/{2,}/g, '/').replace(/\\{2,}/g, '\\');
+}
+
 // Interpreter/wrapper leaders that hand their remaining argument straight to
 // a real shell — `cmd /c <cmd>`, `powershell -Command <cmd>`, `sudo <cmd>`,
 // `sh -c <cmd>`, `bash -c <cmd>`. Recognizing exactly these (and only these)
@@ -79,6 +93,99 @@ function stripWrapperPrefix(tokens: string[]): string[] {
   return tokens.slice(i);
 }
 
+// Leaders that hand off to whatever comes after them UNCHANGED — they carry
+// no language/interpreter of their own, so it's always safe to look past
+// them at the real command word. Distinct from WRAPPER_LEADER: those either
+// ARE an interpreter of interest (sh, bash, powershell) or fully consume a
+// following flag; these are consumed themselves (plus their own flags / env
+// assignments) purely to reach the token underneath (`sudo <cmd>`, `env
+// FOO=bar <cmd>`, `cmd /c <cmd>`).
+const PASSTHROUGH_LEADERS = new Set(['sudo', 'env', 'cmd', 'cmd.exe']);
+
+/** Last path segment, lowercased, `.exe`/`.com` suffix dropped — so
+ * `/usr/bin/python3`, `C:\Python311\python.exe`, and `"python3"` all reduce
+ * to the same bare interpreter name as a plain `python3`. */
+function interpreterBasename(token: string): string {
+  const t = stripQuotes(token);
+  const base = t.split(/[\\/]/).pop() ?? t;
+  return base.replace(/\.(exe|com)$/i, '').toLowerCase();
+}
+
+/** Skip leading pass-through leaders (`sudo`, `env`, `cmd`/`cmd.exe`) — each
+ * one's own env-var assignments and a single flag token — so the interpreter
+ * check below sees the real interpreter even when wrapped once, e.g.
+ * `cmd /c python -c "…"`, `sudo python3 -c "…"`, `env FOO=bar python3 -c "…"`. */
+function skipPassthroughLeaders(tokens: string[]): string[] {
+  let i = 0;
+  while (i < tokens.length && PASSTHROUGH_LEADERS.has(interpreterBasename(tokens[i] ?? ''))) {
+    i += 1;
+    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i] ?? '')) i += 1;
+    if (i < tokens.length && /^[-/]/.test(tokens[i] ?? '')) i += 1;
+  }
+  return tokens.slice(i);
+}
+
+type InterpreterKind = 'python' | 'node' | 'perl' | 'ruby' | 'php' | 'shell' | 'powershell';
+
+/** Classifies a bare interpreter name (already basename'd) into the kind of
+ * inline-eval flag it accepts, or `null` if it isn't a recognized
+ * general-purpose interpreter at all. */
+function interpreterKind(name: string): InterpreterKind | null {
+  if (name === 'py' || /^python[0-9.]*$/.test(name)) return 'python';
+  if (/^node(js)?$/.test(name)) return 'node';
+  if (/^perl[0-9.]*$/.test(name)) return 'perl';
+  if (/^ruby[0-9.]*$/.test(name)) return 'ruby';
+  if (/^php[0-9.]*$/.test(name)) return 'php';
+  if (['sh', 'bash', 'zsh', 'ksh', 'dash', 'ash'].includes(name)) return 'shell';
+  if (name === 'powershell' || name === 'pwsh') return 'powershell';
+  return null;
+}
+
+/** True when `flag` (lowercased) is the inline-eval flag for `kind` — the
+ * flag that hands the interpreter an opaque program as an ARGUMENT rather
+ * than a script FILE (`-c`, `-e`, `-Command`, …). Deliberately narrow: `-m`,
+ * `-File`, a bare script path, etc. run a named module/file, not arbitrary
+ * inline text, so they're left to the normal (non-catastrophic) path. */
+function isInlineEvalFlag(kind: InterpreterKind, flag: string): boolean {
+  switch (kind) {
+    case 'python':
+      return flag === '-c';
+    case 'node':
+      return flag === '-e' || flag === '--eval' || flag === '-p' || flag === '--print';
+    case 'perl':
+    case 'ruby':
+      return flag === '-e';
+    case 'php':
+      return flag === '-r';
+    case 'shell':
+      return flag === '-c';
+    case 'powershell':
+      // PowerShell accepts any unambiguous prefix of a parameter name
+      // (`-Com`, `-Comm`, …); match the prefix rather than the full word.
+      return /^-com/.test(flag) || /^-enc/.test(flag);
+    default:
+      return false;
+  }
+}
+
+/**
+ * True when `tokens` invoke a general-purpose interpreter with the flag that
+ * hands it an inline, opaque program (`python -c "…"`, `node -e "…"`,
+ * `sh -c "…"`, `powershell -Command "…"`, …) — with or without one
+ * pass-through leader (`sudo`/`env`/`cmd /c`) in front. The payload is
+ * UNDECIDABLE from here (it could do anything, including a bare `rm -rf /`),
+ * so this never tries to inspect it — matching alone forces the approval
+ * gate, regardless of whether the payload looks dangerous or perfectly
+ * anodyne. This is the fix for the "wrap it in an interpreter" bypass class.
+ */
+function hasInlineInterpreterEval(tokens: string[]): boolean {
+  const rest = skipPassthroughLeaders(tokens);
+  if (rest.length === 0) return false;
+  const kind = interpreterKind(interpreterBasename(rest[0] ?? ''));
+  if (!kind) return false;
+  return rest.slice(1).some((t) => isInlineEvalFlag(kind, stripQuotes(t).toLowerCase()));
+}
+
 /**
  * True when `token` (already whitespace-split, quotes stripped) targets an
  * entire Windows drive or the whole machine: a bare drive root (`C:`, `C:\`,
@@ -102,7 +209,7 @@ function isWindowsRootOrWildcardTarget(token: string): boolean {
  */
 export function isCatastrophicCommand(cmd: string): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  const c = cmd.trim();
+  const c = normalizeSlashes(cmd.trim());
 
   if (
     FORK_BOMB.test(c) ||
@@ -129,6 +236,16 @@ export function isCatastrophicCommand(cmd: string): boolean {
     // `powershell -Command "format C:"` glues a quote onto the token next to
     // it after a plain whitespace split.
     const tokens = s.split(/\s+/).map(stripQuotes);
+
+    // Wrapping the payload in a general-purpose interpreter's inline-eval
+    // flag (`python -c`, `node -e`, `sh -c`, `powershell -Command`, …) hands
+    // the classifier an opaque program that could do anything the payload
+    // wants — including a plain `rm -rf /` that would otherwise be caught
+    // below. Undecidable payload → always gate, never "safe" (checked on the
+    // RAW tokens, before wrapper-unwrapping, so it also catches this nested
+    // one level deep, e.g. `cmd /c python -c "…"`).
+    if (hasInlineInterpreterEval(tokens)) return true;
+
     // The command actually being invoked, after peeling off a recognized
     // interpreter wrapper (see stripWrapperPrefix doc comment). Used to
     // ANCHOR the three command checks below on its first token — this is
@@ -216,6 +333,6 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
 export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   if (isCatastrophicCommand(cmd)) return true;
-  const c = cmd.trim();
+  const c = normalizeSlashes(cmd.trim());
   return DESTRUCTIVE_PATTERNS.some((re) => re.test(c));
 }
