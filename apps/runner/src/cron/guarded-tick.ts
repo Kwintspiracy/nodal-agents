@@ -67,6 +67,22 @@ const ZERO_RESULT: CronTickResult = {
 // Module-level — deliberately shared by every caller (ticker + HTTP route).
 let running = false;
 
+// Ticks that the watchdog abandoned but which are still executing in the
+// background. A tick that legitimately runs longer than the watchdog ceiling
+// (executeReadyTasks runs up to 5 agent jobs INLINE, and a single job can
+// legitimately take tens of minutes — longer than any fixed ceiling) is
+// abandoned so callers keep working, but its background work (DB, billed LLM
+// calls, Telegram sends) keeps running. Without a bound, a steady supply of
+// slow ticks would let abandoned ticks stack without limit — the exact
+// unbounded-concurrency class the re-entrancy guard was meant to prevent,
+// reintroduced by the watchdog. We cap how many abandoned ticks may be in
+// flight at once; while at the cap, new ticks are skipped (back-pressure) until
+// enough drain. A genuinely hung tick (never settles) is bounded separately by
+// the DB-level lock_timeout / idle_in_transaction_session_timeout in
+// packages/db/src/client.ts, so this cap cannot wedge cron permanently.
+let outstandingAbandoned = 0;
+const MAX_OUTSTANDING_ABANDONED = 2;
+
 // ─── runCronTickGuarded ───────────────────────────────────────────────────────
 
 /**
@@ -77,14 +93,24 @@ let running = false;
  * @param deps           RunnerDeps (db + llmClient + registry)
  * @param maxTasksPerTick  Max tasks to execute in Phase 5 (default 5)
  * @param maxTickMs      Hard ceiling on a single tick's runtime, ms. Default
- *                        15 minutes.
+ *                        30 minutes — above the longest legitimate inline job
+ *                        runtime we've observed (~28min analysis jobs), so the
+ *                        watchdog only fires on a genuinely stuck tick, not a
+ *                        slow-but-progressing one. A tick that does trip it is
+ *                        additionally bounded by MAX_OUTSTANDING_ABANDONED.
  */
 export async function runCronTickGuarded(
   deps: RunnerDeps,
   maxTasksPerTick = 5,
-  maxTickMs = 15 * 60_000,
+  maxTickMs = 30 * 60_000,
 ): Promise<GuardedTickResult> {
   if (running) {
+    return { ...ZERO_RESULT, skipped: true };
+  }
+  // Back-pressure: too many watchdog-abandoned ticks are still executing in the
+  // background. Starting another now would grow system-wide concurrency
+  // unbounded. Skip until enough drain.
+  if (outstandingAbandoned >= MAX_OUTSTANDING_ABANDONED) {
     return { ...ZERO_RESULT, skipped: true };
   }
 
@@ -94,12 +120,17 @@ export async function runCronTickGuarded(
   const tickPromise = runCronTick(deps, maxTasksPerTick);
   // Independent of the race below — guarantees this promise is never left
   // unhandled, even if it settles long after the watchdog already reset
-  // `running` (finding R1).
-  tickPromise.catch((err) => {
-    if (watchdogFired) {
-      console.error('[cron] previously-stuck tick finally settled (after watchdog reset):', err);
-    }
-  });
+  // `running` (finding R1). Also decrements the abandoned-tick counter once the
+  // abandoned promise finally settles (success or failure), freeing a slot.
+  tickPromise
+    .catch((err) => {
+      if (watchdogFired) {
+        console.error('[cron] previously-stuck tick finally settled (after watchdog reset):', err);
+      }
+    })
+    .finally(() => {
+      if (watchdogFired) outstandingAbandoned--;
+    });
 
   const watchdog = new Promise<'timeout'>((resolve) => {
     const timer = setTimeout(() => {
@@ -114,9 +145,14 @@ export async function runCronTickGuarded(
   try {
     const outcome = await Promise.race([tickPromise, watchdog]);
     if (outcome === 'timeout') {
+      // Count this abandoned tick against the concurrency cap; the .finally on
+      // tickPromise above decrements it when the background work eventually
+      // settles.
+      outstandingAbandoned++;
       console.error(
         `[cron] tick exceeded ${maxTickMs}ms — a tick is stuck, forcing reset so callers keep working. ` +
-          'The stuck call is abandoned (not joined) and left to settle on its own; every cron phase is idempotent.',
+          `The stuck call is abandoned (not joined) and left to settle on its own; every cron phase is idempotent. ` +
+          `(${outstandingAbandoned}/${MAX_OUTSTANDING_ABANDONED} abandoned ticks now in flight)`,
       );
       return { ...ZERO_RESULT, skipped: false };
     }
@@ -126,7 +162,8 @@ export async function runCronTickGuarded(
   }
 }
 
-/** Test-only: force the shared `running` flag back to a known state. */
+/** Test-only: force the shared guard state back to a known baseline. */
 export function _resetGuardedTickForTests(): void {
   running = false;
+  outstandingAbandoned = 0;
 }

@@ -2363,21 +2363,37 @@ async function runJob(
         // serial loop would enforce.
         const batch = callsToProcess.slice(0, DEFAULT_LIMITS.maxToolCallsPerTurn);
         trace('parallel_tool_prepass', { turn, count: batch.length, concurrency: toolConcurrency });
-        for (let i = 0; i < batch.length; i += toolConcurrency) {
-          const wave = batch.slice(i, i + toolConcurrency);
-          const results = await Promise.all(
-            wave.map(async (c) => {
-              const def = toolMap.get(c.name);
-              if (!def) return { id: c.id, r: null };
-              return {
-                id: c.id,
-                r: await executeTool(def, c.input, sharedToolCtx, sharedToolOpts),
-              };
-            }),
-          );
-          for (const { id, r } of results) if (r) preExecuted.set(id, r);
-          // Heartbeat after each wave so a long batch isn't reaped as orphaned.
-          await touchJob(db, jobId as string);
+        // F-8 (parallel path) — heartbeat for the WHOLE pre-pass, not just
+        // between waves. `Promise.all` blocks until the slowest call in a wave
+        // resolves; a single in-flight read (Apify run up to 30min, a slow MCP
+        // or scrape) then leaves nothing touching `updated_at` while the wave is
+        // in flight, and the orphan reaper's 5-min window (resetOrphanedJobs)
+        // reaps a job that is still alive — a false 'failed' plus silent loss of
+        // the completed work. The between-wave touchJob below is insufficient
+        // precisely because it only fires once a wave has already resolved. Same
+        // 60s interval / finally-cleared pattern as the serial path (Leg 5).
+        const prepassHbInterval = setInterval(() => {
+          void touchJob(db, jobId as string).catch(() => {});
+        }, 60_000);
+        try {
+          for (let i = 0; i < batch.length; i += toolConcurrency) {
+            const wave = batch.slice(i, i + toolConcurrency);
+            const results = await Promise.all(
+              wave.map(async (c) => {
+                const def = toolMap.get(c.name);
+                if (!def) return { id: c.id, r: null };
+                return {
+                  id: c.id,
+                  r: await executeTool(def, c.input, sharedToolCtx, sharedToolOpts),
+                };
+              }),
+            );
+            for (const { id, r } of results) if (r) preExecuted.set(id, r);
+            // Immediate bump between waves (on top of the interval above).
+            await touchJob(db, jobId as string);
+          }
+        } finally {
+          clearInterval(prepassHbInterval);
         }
       }
 
