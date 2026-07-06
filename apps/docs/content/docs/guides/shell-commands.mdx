@@ -61,6 +61,37 @@ workspace switch makes all agent Yolo rules dormant instantly.
 
 Only the workspace owner can change the workspace-level switch.
 
+## The safety floor — commands that never auto-run
+
+A small, fixed set of commands is treated as **catastrophic** and can never be
+auto-approved — **not even in Yolo mode**. They always force a human decision,
+and a few are refused **even if you click Approve**, because a single tap should
+not be able to greenlight machine-wide destruction. When one is refused, the
+agent (and you) receive a plain-language explanation of _why_ it was blocked, so
+nothing fails silently.
+
+Two kinds sit on this floor:
+
+- **Machine-wide destroyers** — wiping the disk root, formatting a drive,
+  repartitioning, powering off/rebooting the machine (`rm -rf /`, `mkfs`,
+  `format`, `diskpart`, `shutdown`, and the Windows equivalents). These are
+  refused even after approval.
+- **Inline interpreter code** — running arbitrary code passed _on the command
+  line_ to a general-purpose interpreter: `python -c "…"`, `node -e "…"`,
+  `perl -e`, `ruby -e`, `php -r`, `sh -c`, `bash -c`, `powershell -Command`, and
+  the like. The code inside the quotes is an opaque program that could do
+  anything — including hide a `rm -rf /` — so it cannot be safety-checked. These
+  are refused even after approval.
+
+  **This does not block scripts.** To run a script, put it in a **file** and run
+  the file — `python my_script.py`, `node build.js`, `bash deploy.sh`. Only the
+  _inline-code_ form (`-c` / `-e` / `-Command` …) is on the floor.
+
+This floor is deliberately narrow: ordinary dangerous commands (deleting a
+project folder, killing a process, installing a package) are **not** on it —
+they stay governed by the normal approval gate and your autonomy settings. The
+floor is the last-resort circuit breaker, not a general safety net.
+
 ## Command environment
 
 - Shell: `cmd.exe` on Windows, `/bin/sh` on Unix. Shell features (`&&`, `|`,

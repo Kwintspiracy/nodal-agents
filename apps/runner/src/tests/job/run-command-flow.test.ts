@@ -277,7 +277,7 @@ describe('run_command — E2E runner integration', () => {
   // ── Test 1: APPROVAL PATH ─────────────────────────────────────────────────
   it('APPROVAL PATH: no rule → job suspends; on approval-resume the spawned stdout reaches the agent', async () => {
     const MARKER = `rc-marker-${Date.now()}-approval`;
-    const COMMAND = `node -e "process.stdout.write('${MARKER}')"`;
+    const COMMAND = `node emit.js ${MARKER}`;
 
     const job = await createJob();
 
@@ -368,6 +368,74 @@ describe('run_command — E2E runner integration', () => {
       .from(approvalRequests)
       .where(eq(approvalRequests.id, approvalRow!.id));
     expect(updatedApproval[0]?.executedAt).not.toBeNull();
+  });
+
+  // ── Test 1b: INLINE-EVAL HARD FLOOR (A2) ──────────────────────────────────
+  it('INLINE-EVAL FLOOR: `node -e` suspends, and is REFUSED even after approval, with an explanation', async () => {
+    const MARKER_IE = `rc-marker-${Date.now()}-inline`;
+    // Inline interpreter eval — the payload is opaque, so this is catastrophic:
+    // it must gate AND stay refused even after a human approves (owner decision).
+    const COMMAND = `node -e "process.stdout.write('${MARKER_IE}')"`;
+
+    const job = await createJob();
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-ie-1',
+            toolName: 'run_command',
+            args: { purpose: 'run a command for the test', command: COMMAND },
+          },
+        ],
+      },
+      // A second turn is provided in case the loop re-enters; the job should
+      // fail before consuming it.
+      {
+        toolCalls: [
+          { toolCallId: 'tc-ie-2', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    // Phase 1: even an inline-eval must gate (never auto-run under Yolo).
+    const suspendResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(suspendResult.status).toBe('awaiting_approval');
+
+    const approvalRows = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, job.id));
+    const approvalRow = approvalRows.find(
+      (r) => r.toolName === 'run_command' && r.status === 'pending',
+    );
+    expect(approvalRow).toBeDefined();
+
+    // A human approves it anyway (stale-tap / careless click).
+    await db
+      .update(approvalRequests)
+      .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
+      .where(eq(approvalRequests.id, approvalRow!.id));
+    await db
+      .update(agentJobs)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(agentJobs.id, job.id));
+
+    // Phase 2: the hard floor refuses it regardless — job fails, NOT completes.
+    const resumeResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(resumeResult).toMatchObject({
+      status: 'failed',
+      error: 'catastrophic_command_refused',
+    });
+
+    // The user gets a clear, inline-eval-specific explanation (the WHY). The job
+    // failing at the floor — before executeTool is ever called — is itself the
+    // proof it did not run; the message text is the user-facing "why".
+    const jobRow = await db
+      .select({ result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(jobRow[0]?.result ?? '').toMatch(/interpréteur/i);
+    expect(jobRow[0]?.result ?? '').toMatch(/refus/i);
   });
 
   // ── Test 2: YOLO PATH ─────────────────────────────────────────────────────

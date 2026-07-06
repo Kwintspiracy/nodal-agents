@@ -53,6 +53,7 @@ import {
   createSendVoiceTool,
   listWorkspaceMcpToolNames,
   isCatastrophicCommand,
+  isInlineInterpreterEvalCommand,
   matchApprovalRule,
 } from '@nodal-agents/tools';
 import type {
@@ -1444,16 +1445,27 @@ async function runJob(
           // BEFORE calling executeTool, and fail the job loud with a message the
           // user can actually act on — pure UX, the command still never executes
           // either way.
+          const resumeCommand = String(
+            (req.toolInput as { command?: unknown } | null)?.command ?? '',
+          );
           const isCatastrophicResume =
-            req.toolName === 'run_command' &&
-            isCatastrophicCommand(
-              String((req.toolInput as { command?: unknown } | null)?.command ?? ''),
-            );
+            req.toolName === 'run_command' && isCatastrophicCommand(resumeCommand);
 
           if (isCatastrophicResume) {
-            catastrophicRefusalMessage =
-              'Cette commande est jugée catastrophique (destruction machine-wide) et reste ' +
-              "refusée même après approbation, par sécurité. Elle n'a pas été exécutée.";
+            // Tailor the explanation so the user understands the WHY (A2). An
+            // inline interpreter one-liner (`python -c`, `node -e`, …) is refused
+            // because its payload is opaque and can't be safety-checked — a
+            // different reason from the machine-wide destroyers (`rm -rf /`,
+            // `mkfs`, `shutdown`). Both are hard-floor: refused even after
+            // approval, by design.
+            catastrophicRefusalMessage = isInlineInterpreterEvalCommand(resumeCommand)
+              ? 'Cette commande exécute du code en ligne via un interpréteur (python -c, node -e, ' +
+                'sh -c, …). Son contenu ne peut pas être vérifié automatiquement, donc elle est ' +
+                "bloquée par sécurité et reste refusée même après approbation. Elle n'a pas été " +
+                'exécutée. Pour lancer un script, passez par un FICHIER (ex. `python mon_script.py`) ' +
+                'plutôt que par du code en ligne.'
+              : 'Cette commande est jugée catastrophique (destruction machine-wide) et reste ' +
+                "refusée même après approbation, par sécurité. Elle n'a pas été exécutée.";
             replacementOutput = toResultOutput({ error: catastrophicRefusalMessage });
             trace('resume_catastrophic_command_refused', { toolName: req.toolName });
           } else {
@@ -1505,9 +1517,6 @@ async function runJob(
                   autonomy: workspaceAutonomy,
                   onApprovalRequired: (req: ApprovalGateRequest) =>
                     notifyApprovalCreated(deps, req),
-                  // Human already approved this exact call — don't re-gate an
-                  // approved `python -c`/`node -e` on the inline-eval floor.
-                  preApproved: true,
                 },
               );
               if (execResult.outcome === 'success') {

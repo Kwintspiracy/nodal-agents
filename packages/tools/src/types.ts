@@ -231,15 +231,6 @@ export interface ExecuteOptions {
    * updating job status and polling. Returns void — execution stops here.
    */
   onApprovalRequired: (req: ApprovalGateRequest) => Promise<void>;
-  /**
-   * Set by the resume-execution step: this exact call was ALREADY reviewed and
-   * approved by a human. Skips the inline interpreter-eval approval floor
-   * (`python -c`, `node -e`, …) so an approved one-liner actually runs instead
-   * of re-gating forever. The catastrophic hardline floor is NOT affected here
-   * — the runner refuses a catastrophic command on resume before it ever
-   * reaches executeTool, so it never gets this far.
-   */
-  preApproved?: boolean;
 }
 
 // ─── Approval rule shape (mirrors shared ApprovalRule) ────────────────────────
