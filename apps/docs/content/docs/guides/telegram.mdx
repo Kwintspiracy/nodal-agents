@@ -31,7 +31,9 @@ Telegram update is turned into an `agent_jobs` row inside a database transaction
 that also advances the offset cursor. A crash mid-update does not drop the
 message or create a duplicate job.
 
-In **private chats** every message triggers a job.
+In **private chats** every message from an authorized chat triggers a job (see
+[Who can talk to your bot](#who-can-talk-to-your-bot) — the first DM claims
+ownership; unknown chats are held for the owner's approval).
 
 In **group chats** the bot only responds when clearly addressed:
 
