@@ -87,6 +87,11 @@ Two kinds sit on this floor:
   the file — `python my_script.py`, `node build.js`, `bash deploy.sh`. Only the
   _inline-code_ form (`-c` / `-e` / `-Command` …) is on the floor.
 
+  The same applies to **piping code into an interpreter** — `curl … | bash`,
+  `echo '…' | python` — and to **`awk` programs that shell out** (`awk
+'BEGIN{system(…)}'`): the executed code is opaque, so these are on the floor
+  too. Piping _data_ into a script (`cat data | python analyze.py`) is fine.
+
 This floor is deliberately narrow: ordinary dangerous commands (deleting a
 project folder, killing a process, installing a package) are **not** on it —
 they stay governed by the normal approval gate and your autonomy settings. The

