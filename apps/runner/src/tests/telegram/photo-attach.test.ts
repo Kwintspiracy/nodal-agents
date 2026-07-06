@@ -12,6 +12,7 @@ import type { RunnerDeps } from '../../deps.ts';
 // The photo download + filesystem writes are external I/O — stub them so the
 // test exercises only the conditional DB write.
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return {
     ...actual,
@@ -19,6 +20,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   };
 });
 vi.mock('node:fs/promises', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,

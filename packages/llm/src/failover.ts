@@ -128,20 +128,29 @@ export function createFailoverFromClients(clients: NodalLlmClient[]): NodalLlmCl
     throw new AllProvidersFailedError(clients.length, lastErr);
   }
 
-  const primary = clients[0]!;
   return {
-    // Surface the primary's identity/capabilities; the chain is homogeneous in
-    // the capability that matters here (tool use). Failover is for outages, not
-    // capability switching.
-    config: primary.config,
-    capabilities: primary.capabilities,
+    // Surface the CURRENTLY ACTIVE provider's identity/capabilities, not a frozen
+    // snapshot of the primary (F2, audit followup). `activeIndex` moves on
+    // failover (sticky-forward), and the runner reads `config.model` to compute
+    // the per-model cost cap ($) and the context window for compaction — with a
+    // frozen primary config those were computed for the WRONG model after a
+    // failover. Getters keep them in lockstep with whichever provider is serving.
+    get config() {
+      return clients[activeIndex]!.config;
+    },
+    get capabilities() {
+      return clients[activeIndex]!.capabilities;
+    },
     generateText: ((args) =>
       runWithFailover(
         (c) => c.generateText(args),
         'generateText',
       )) as NodalLlmClient['generateText'],
     streamText: ((args) =>
-      runStreamFailoverSync((c) => c.streamText(args), 'streamText')) as NodalLlmClient['streamText'],
+      runStreamFailoverSync(
+        (c) => c.streamText(args),
+        'streamText',
+      )) as NodalLlmClient['streamText'],
     generateObject: ((args) =>
       runWithFailover(
         (c) => c.generateObject(args),

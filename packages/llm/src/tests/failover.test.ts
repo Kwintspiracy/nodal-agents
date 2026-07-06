@@ -86,6 +86,23 @@ describe('createFailoverFromClients', () => {
     expect(backup.generateText).toHaveBeenCalledTimes(1);
   });
 
+  it('config reflects the ACTIVE provider after a failover, not the frozen primary (F2)', async () => {
+    const primary = fakeClient('primary-model', () =>
+      Promise.reject(new RetryExhaustedError(4, new Error('502'))),
+    );
+    const backup = fakeClient('backup-model', () => Promise.resolve({ text: 'ok' }));
+    const client = createFailoverFromClients([primary, backup]);
+
+    // Before any call the active provider is the primary.
+    expect(client.config.model).toBe('primary-model');
+
+    await client.generateText(ARGS); // sticks to backup
+
+    // After the failover, config.model must be the backup's — the runner reads
+    // this to size the cost cap ($) and the compaction context window per model.
+    expect(client.config.model).toBe('backup-model');
+  });
+
   it('fails over on LLMTimeoutError and on QuotaExhaustedError', async () => {
     const timeoutPrimary = fakeClient('p', () =>
       Promise.reject(new LLMTimeoutError('openrouter', 'p', 300000)),

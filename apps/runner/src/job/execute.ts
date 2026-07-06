@@ -169,8 +169,16 @@ async function resolveSearchBackend(
     let key: string;
     try {
       key = decrypt(row.apiKey);
-    } catch {
-      continue; // tampered / wrong master key — treat as no backend
+    } catch (err) {
+      // Log loudly (F3, invariant #4) — a wrong/rotated master key silently
+      // disabling web search reads downstream as "the agent has no search tool".
+      console.error(
+        `[execute] search connector '${slug}' api_key failed to decrypt ` +
+          `(tampered, or wrong/rotated master key): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+      continue;
     }
     const entry = ADAPTER_REGISTRY[slug];
     if (!entry) continue;
@@ -649,25 +657,13 @@ async function runJob(
     return { status: 'failed', error: 'chain_limit_exceeded' };
   }
 
-  // Invariant 8: delegationDepth is persisted per-job (bumped by handleDelegation
-  // on the CHILD row — parentDepth + 1, see packages/orchestration/src/router/
-  // delegate.ts:62) but was never actually compared to the max. ChainCounters
-  // tracks depth in-memory only and is recreated at 0 on every runJob call
-  // (line ~1248), so it never saw the persisted value either — the "depth 3"
-  // cap (invariant #8) was inert. A cycle of orchestrators delegating to each
-  // other would recurse unboundedly. Guard on the persisted column, mirroring
-  // the chainCount guard above.
-  if ((job.delegationDepth ?? 0) >= DEFAULT_LIMITS.maxDelegationDepth) {
-    await failJob(db, jobId as string, 'delegation_depth_exceeded', {
-      inputTokens: job.inputTokens ?? 0,
-      outputTokens: job.outputTokens ?? 0,
-      effectiveInputTokens: job.effectiveInputTokens ?? job.inputTokens ?? 0,
-      totalCostUsd: job.totalCostUsd ?? 0,
-      turn: job.turn ?? 0,
-      totalDurationMs: 0,
-    });
-    return { status: 'failed', error: 'delegation_depth_exceeded' };
-  }
+  // Invariant 8 (delegation depth): the persisted delegationDepth cap is NOT
+  // enforced here at entry — doing so failed a legitimate max-depth leaf job
+  // before it ran a single tool (F1, audit followup). Enforcement moved to the
+  // delegation point (the `assign_` branch below): a job at max depth may run
+  // its own tools, it just can't delegate further. The in-memory ChainCounters
+  // depth cap (reset to 0 each runJob) never saw the persisted value, so the
+  // assign_ pre-check is the real bound against unbounded orchestrator cycles.
 
   // The job transcript, declared up-front so EVERY failure path (early validation
   // failures AND the in-loop guards / catch) persists it via failJob — a failed
@@ -1070,8 +1066,20 @@ async function runJob(
           if (!ca.apiKey) continue;
           try {
             accessToken = decrypt(ca.apiKey);
-          } catch {
-            continue; // tampered / wrong master key — skip this connector silently
+          } catch (err) {
+            // Log loudly, never skip silently (F3, audit followup / invariant #4).
+            // A single tampered row is one bad connector; a CORRUPT/ROTATED master
+            // key makes EVERY connector fail here, the agent ends up tool-less, and
+            // the LLM's next tool call surfaces as a misleading "whitelist
+            // violation" with no hint the real cause was decryption. This log is
+            // the breadcrumb that distinguishes the two.
+            console.error(
+              `[execute] connector '${ca.slug}' (${ca.connectorId}) api_key failed to decrypt ` +
+                `(tampered row, or wrong/rotated master key): ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+            );
+            continue;
           }
         } else {
           // OAuth path: token lives in credentials.payload.accessToken.
@@ -1169,8 +1177,16 @@ async function runJob(
             let decryptedKey: string;
             try {
               decryptedKey = decrypt(ms.apiKey);
-            } catch {
-              continue; // tampered key — skip silently
+            } catch (err) {
+              // Log loudly (F3, invariant #4) — a wrong/rotated master key
+              // silently dropping an MCP server surfaces later as a missing tool.
+              console.error(
+                `[execute] MCP server '${ms.slug}' api_key failed to decrypt ` +
+                  `(tampered, or wrong/rotated master key): ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+              );
+              continue;
             }
             toolset = await createMcpTools({
               transport: 'http',
@@ -2476,6 +2492,34 @@ async function runJob(
 
         if (call.name.startsWith('assign_')) {
           const childSlug = call.name.replace(/^assign_/, '').replace(/_/g, '-');
+
+          // Delegation-depth cap (F1, audit followup). A job already AT the max
+          // persisted depth is a leaf: it may do its OWN work, but delegating
+          // would spawn a child one level too deep. Refuse the delegation with a
+          // tool_result the LLM can react to (do it itself / return_result) —
+          // do NOT fail the whole job. The old entry guard failed a max-depth
+          // job before it ran a single tool; the in-memory ChainCounters cap
+          // only bounds per-run delegations and resets to 0 each runJob, so it
+          // never saw this persisted chain depth. THIS is the real enforcement.
+          if ((job.delegationDepth ?? 0) >= DEFAULT_LIMITS.maxDelegationDepth) {
+            toolResultBlocks.push({
+              type: 'tool-result',
+              toolCallId: call.id,
+              toolName: call.name,
+              output: toResultOutput({
+                error: `delegation_depth_exceeded: this job is already at the maximum delegation depth (${DEFAULT_LIMITS.maxDelegationDepth}) and cannot delegate further. Do the work yourself with your own tools, or call return_result with status='blocked' explaining what you could not complete.`,
+              }),
+            });
+            for (const sr of sideToolResults) {
+              toolResultBlocks.push({
+                type: 'tool-result',
+                toolCallId: sr.tool_use_id,
+                toolName: sr.toolName,
+                output: toResultOutput({ error: sr.content }),
+              });
+            }
+            continue;
+          }
 
           // Unified-orchestrator commit guard. A job that already fanned out via
           // create_task is a PLANNER job — its completion runs through the task

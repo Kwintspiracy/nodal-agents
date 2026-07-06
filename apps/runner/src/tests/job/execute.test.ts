@@ -14,6 +14,7 @@ import { eq, and } from '@nodal-agents/db';
 import {
   agentJobs,
   agents,
+  agentAssignments,
   approvalRequests,
   approvalRules,
   agentMemory,
@@ -369,16 +370,53 @@ describe('executeJob', () => {
 
   // ─── Invariant 8: delegation depth guard ──────────────────────────────────
 
-  it('fails loud with delegation_depth_exceeded when job.delegationDepth is at the max (3)', async () => {
-    // Regression: DEFAULT_LIMITS.maxDelegationDepth is 3, but nothing ever
-    // compared the PERSISTED job.delegationDepth column to it — ChainCounters
-    // tracks depth in memory only and is recreated at 0 on every runJob call,
-    // so a cycle of orchestrators delegating to each other recursed unboundedly.
+  it('a job at max delegation depth RUNS but its delegation is refused, not killed (F1)', async () => {
+    // F1: a job already at DEFAULT_LIMITS.maxDelegationDepth (3) is a leaf — it
+    // must still do its OWN work; only DELEGATING further is refused. The old
+    // guard failed such a job before it ran a single tool.
+    // A FRESH orchestrator (not seed.agentId — don't pollute the shared seed for
+    // later tests) with a real child worker, so `assign_<slug>` is a genuine
+    // whitelisted tool (otherwise it's just an unavailable-tool nudge and never
+    // reaches the depth-cap pre-check).
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'F1 Orchestrator',
+        slug: `f1-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    const childSlug = `f1-child-${ts}`;
+    const [child] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'F1 Child',
+        slug: childSlug,
+        personality: 'child',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: child!.id,
+      entityId: seed.entityId,
+    });
+    const assignTool = `assign_${childSlug.replace(/-/g, '_')}`;
+
     const [job] = await db
       .insert(agentJobs)
       .values({
         entityId: seed.entityId,
-        agentId: seed.agentId,
+        agentId: orch!.id,
         channel: 'api',
         task: 'delegate again',
         status: 'pending',
@@ -389,21 +427,35 @@ describe('executeJob', () => {
       .returning();
     if (!job) throw new Error('Failed to create depth-exceeded test job');
 
-    // The LLM must never be called — the guard fires before the first turn.
-    const llmClient = makeMockLlmClient([]);
+    // Turn 1: the LLM tries to delegate — must be REFUSED with a tool_result,
+    // not kill the job. Turn 2: it does the sensible thing and returns a result
+    // → the job COMPLETES.
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'tc-a', toolName: assignTool, args: { task: 'sub' } }] },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error).toBe('delegation_depth_exceeded');
-    }
+    // The job ran and completed — it was NOT failed at entry.
+    expect(result.status).toBe('completed');
 
-    const rows = await db
-      .select({ status: agentJobs.status, error: agentJobs.error })
+    // No child job was spawned — the delegation was refused, not performed.
+    const children = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.parentJobId, job.id));
+    expect(children).toHaveLength(0);
+
+    // The refusal reached the transcript as a tool_result the LLM could react to.
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    expect(rows[0]?.status).toBe('failed');
-    expect(rows[0]?.error).toBe('delegation_depth_exceeded');
+    expect(JSON.stringify(row?.messages ?? [])).toContain('delegation_depth_exceeded');
   });
 
   it('a job BELOW the delegation depth max (0) is not blocked by the depth guard', async () => {
@@ -423,7 +475,11 @@ describe('executeJob', () => {
     if (!job) throw new Error('Failed to create depth-0 test job');
 
     const llmClient = makeMockLlmClient([
-      { toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }] },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
     ]);
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
@@ -3043,7 +3099,7 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
     await approvalDb.delete(approvalRules).where(eq(approvalRules.entityId, approvalSeed.entityId));
   });
 
-  it('Fix #11: totalCostUsd is NOT lost across a suspend/resume — the triggering turn\'s cost survives the approval checkpoint', async () => {
+  it("Fix #11: totalCostUsd is NOT lost across a suspend/resume — the triggering turn's cost survives the approval checkpoint", async () => {
     // Regression for the audit finding: saveCheckpoint at the suspendForApproval
     // site omitted totalCostUsd, so the in-memory accumulator (seeded from the
     // costed LLM turn that emitted the gated call) never reached the DB row —
@@ -4407,7 +4463,11 @@ describe('F-8: tool-call heartbeat keeps a long single tool call from being reap
 
       const llmClient = makeMockLlmClient([
         { toolCalls: [{ toolCallId: 'tc-slow', toolName: 'web_search', args: { query: 'test' } }] },
-        { toolCalls: [{ toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } }] },
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
       ]);
       const deps = makeDeps(llmClient);
 
