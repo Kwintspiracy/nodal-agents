@@ -13,7 +13,7 @@
 //   execute.test.ts ~L2632–2681        (approval suspend→resume drive)
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -192,6 +192,14 @@ beforeAll(async () => {
   // Create a real temp workspace directory (run_command needs a real cwd).
   workspaceDir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-rcflow-')));
 
+  // A tiny helper script the auto-run tests invoke as `node emit.js <marker>`.
+  // Using a script FILE (not `node -e "…"`) is deliberate: inline interpreter
+  // eval (`node -e`, `python -c`, …) now always forces the approval gate even
+  // under an auto_approve rule (A2), so an auto-run test must use a plain
+  // script invocation. `node -e` is exercised on purpose by the APPROVAL PATH
+  // test, which proves inline eval suspends then runs once approved.
+  await writeFile(join(workspaceDir, 'emit.js'), "process.stdout.write(process.argv[2] || '');\n");
+
   // Insert the command-execution skill with requiredBuiltins: ['run_command'].
   // name and slug must be unique across the DB — suffix with Date.now().
   const ts = Date.now();
@@ -365,7 +373,7 @@ describe('run_command — E2E runner integration', () => {
   // ── Test 2: YOLO PATH ─────────────────────────────────────────────────────
   it('YOLO PATH: auto_approve rule → command runs inline without suspension', async () => {
     const MARKER2 = `rc-marker-${Date.now()}-yolo`;
-    const COMMAND2 = `node -e "process.stdout.write('${MARKER2}')"`;
+    const COMMAND2 = `node emit.js ${MARKER2}`;
 
     // Insert an auto_approve rule for run_command on this entity.
     const [ruleRow] = await db
@@ -453,7 +461,9 @@ describe('run_command — E2E runner integration', () => {
 
   it('LAN GATE (workspace Yolo OFF): auto_approve rule is overridden → job suspends for approval', async () => {
     const MARKER3 = `rc-marker-${Date.now()}-langate-off`;
-    const COMMAND3 = `node -e "process.stdout.write('${MARKER3}')"`;
+    // Plain script invocation so the ONLY reason this suspends is the LAN gate
+    // (an inline `node -e` would also gate via A2, masking a LAN-gate regression).
+    const COMMAND3 = `node emit.js ${MARKER3}`;
 
     // Workspace has NOT opted in (the master switch is off).
     await db.update(entities).set({ lanCommandYolo: false }).where(eq(entities.id, seed.entityId));
@@ -512,7 +522,7 @@ describe('run_command — E2E runner integration', () => {
 
   it('LAN GATE (workspace Yolo ON): auto_approve rule is honored → command runs inline', async () => {
     const MARKER4 = `rc-marker-${Date.now()}-langate-on`;
-    const COMMAND4 = `node -e "process.stdout.write('${MARKER4}')"`;
+    const COMMAND4 = `node emit.js ${MARKER4}`;
 
     // Workspace HAS opted in (the master switch is on).
     await db.update(entities).set({ lanCommandYolo: true }).where(eq(entities.id, seed.entityId));
@@ -684,10 +694,7 @@ describe('run_command — E2E runner integration', () => {
     // phase-1 suspend, which writes an audit row without executing). If the
     // command had actually run — or if executeTool had been called again and
     // re-gated — a second row would exist.
-    const rcAuditRows = await db
-      .select()
-      .from(toolCalls)
-      .where(eq(toolCalls.jobId, job.id));
+    const rcAuditRows = await db.select().from(toolCalls).where(eq(toolCalls.jobId, job.id));
     expect(rcAuditRows.filter((r) => r.toolName === 'run_command').length).toBe(1);
   });
 });

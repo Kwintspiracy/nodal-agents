@@ -237,14 +237,11 @@ export function isCatastrophicCommand(cmd: string): boolean {
     // it after a plain whitespace split.
     const tokens = s.split(/\s+/).map(stripQuotes);
 
-    // Wrapping the payload in a general-purpose interpreter's inline-eval
-    // flag (`python -c`, `node -e`, `sh -c`, `powershell -Command`, …) hands
-    // the classifier an opaque program that could do anything the payload
-    // wants — including a plain `rm -rf /` that would otherwise be caught
-    // below. Undecidable payload → always gate, never "safe" (checked on the
-    // RAW tokens, before wrapper-unwrapping, so it also catches this nested
-    // one level deep, e.g. `cmd /c python -c "…"`).
-    if (hasInlineInterpreterEval(tokens)) return true;
+    // NOTE: inline interpreter-eval (`python -c`, `node -e`, …) is NOT
+    // catastrophic — it is handled by isInlineInterpreterEvalCommand below,
+    // which forces the APPROVAL gate (a human can greenlight a legit
+    // `python -c`) rather than the hard floor that refuses even after
+    // approval. See that function's doc comment.
 
     // The command actually being invoked, after peeling off a recognized
     // interpreter wrapper (see stripWrapperPrefix doc comment). Used to
@@ -300,6 +297,33 @@ export function isCatastrophicCommand(cmd: string): boolean {
     }
   }
 
+  return false;
+}
+
+/**
+ * True when `cmd` invokes a general-purpose interpreter with its inline-eval
+ * flag (`python -c`, `node -e`, `sh -c`, `powershell -Command`, …) in ANY of
+ * its shell segments — with or without one pass-through leader (`sudo`/`env`/
+ * `cmd /c`) in front.
+ *
+ * This is a SEPARATE, softer tier from `isCatastrophicCommand`. The payload of
+ * an inline eval is undecidable (it could smuggle a `rm -rf /`), so under Yolo
+ * it must never auto-run — but a human who SEES the payload on the approval card
+ * can legitimately greenlight `python -c "print(1)"`. So the gate uses this to
+ * force `require_approval` even under an auto_approve rule, while the
+ * resume-after-approval path checks ONLY `isCatastrophicCommand` — meaning an
+ * approved inline eval runs (matches audit A2's "remonter au gate", not a hard
+ * block that would kill every legit interpreter one-liner).
+ */
+export function isInlineInterpreterEvalCommand(cmd: string): boolean {
+  if (typeof cmd !== 'string' || cmd.trim() === '') return false;
+  const c = normalizeSlashes(cmd.trim());
+  for (const seg of c.split(/[;&|\n\r]+/)) {
+    const s = seg.trim();
+    if (!s) continue;
+    const tokens = s.split(/\s+/).map(stripQuotes);
+    if (hasInlineInterpreterEval(tokens)) return true;
+  }
   return false;
 }
 

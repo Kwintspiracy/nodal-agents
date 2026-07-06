@@ -2,7 +2,11 @@
 
 import { approvalRequests, toolCalls } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
-import { isCatastrophicCommand, isDestructiveOrHeavyCommand } from './catastrophic-command';
+import {
+  isCatastrophicCommand,
+  isDestructiveOrHeavyCommand,
+  isInlineInterpreterEvalCommand,
+} from './catastrophic-command';
 import type { z } from 'zod';
 import type {
   ToolDefinition,
@@ -111,6 +115,23 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     effectiveAction !== 'block' &&
     effectiveAction !== 'require_approval' &&
     isCatastrophicCommand(String((validatedInput as { command?: unknown })?.command ?? ''))
+  ) {
+    effectiveAction = 'require_approval';
+  }
+
+  // ── Inline interpreter-eval gate (A2, audit followup) ───────────────────────
+  // `python -c`, `node -e`, `sh -c`, `powershell -Command`, … hand run_command
+  // an opaque program the classifier can't inspect — under Yolo it could smuggle
+  // a catastrophic op past every pattern above. Force a human to SEE the payload
+  // even under an auto_approve rule. Unlike the catastrophic floor this is only a
+  // gate: the resume-after-approval path checks ONLY isCatastrophicCommand, so a
+  // reviewer can approve a legit `python -c` and it runs.
+  if (
+    tool.name === 'run_command' &&
+    !opts.preApproved &&
+    effectiveAction !== 'block' &&
+    effectiveAction !== 'require_approval' &&
+    isInlineInterpreterEvalCommand(String((validatedInput as { command?: unknown })?.command ?? ''))
   ) {
     effectiveAction = 'require_approval';
   }

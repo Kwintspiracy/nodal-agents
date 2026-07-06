@@ -1,7 +1,11 @@
 // catastrophic-command.test.ts — the run_command hardline floor detector.
 
 import { describe, it, expect } from 'vitest';
-import { isCatastrophicCommand, isDestructiveOrHeavyCommand } from '../catastrophic-command';
+import {
+  isCatastrophicCommand,
+  isDestructiveOrHeavyCommand,
+  isInlineInterpreterEvalCommand,
+} from '../catastrophic-command';
 
 describe('isCatastrophicCommand — catches machine-wide destruction', () => {
   const catastrophic = [
@@ -85,11 +89,13 @@ describe('isCatastrophicCommand — A1: repeated-slash bypass', () => {
   }
 });
 
-describe('isCatastrophicCommand — A2: generic interpreter inline-eval bypass', () => {
+describe('isInlineInterpreterEvalCommand — A2: generic interpreter inline-eval forces the gate', () => {
   // Wrapping in a general-purpose interpreter's inline-eval flag hands the
   // classifier an opaque payload that could do anything (including rm -rf).
-  // The payload is undecidable, so ANY such invocation must gate — dangerous
-  // payload and anodyne payload alike.
+  // The payload is undecidable, so ANY such invocation must force the APPROVAL
+  // gate — dangerous payload and anodyne payload alike. (This is a softer tier
+  // than the catastrophic floor: a human CAN approve it, see the tier test
+  // below.)
   const dangerousPayload = [
     'python -c "import os; os.system(\'rm -rf /\')"',
     'python3 -c "import os; os.system(\'rm -rf /\')"',
@@ -118,8 +124,29 @@ describe('isCatastrophicCommand — A2: generic interpreter inline-eval bypass',
     'env python3 -c "print(1)"',
   ];
   for (const cmd of [...dangerousPayload, ...anodynePayload]) {
-    it(`flags: ${cmd}`, () => {
-      expect(isCatastrophicCommand(cmd)).toBe(true);
+    it(`gates: ${cmd}`, () => {
+      expect(isInlineInterpreterEvalCommand(cmd)).toBe(true);
+    });
+  }
+});
+
+describe('A2 tier: interpreter inline-eval is APPROVABLE, not the hard floor', () => {
+  // The whole point of the softer tier: an anodyne interpreter one-liner forces
+  // a human to look (isInlineInterpreterEvalCommand = true) but is NOT
+  // catastrophic — so once a reviewer approves it, the resume path (which
+  // checks only isCatastrophicCommand) lets it run. A hard block here would kill
+  // every legit `python -c`/`node -e` even with explicit approval.
+  const approvableInlineEval = [
+    'python -c "print(1)"',
+    'python3 -c "print(1)"',
+    'node -e "console.log(1)"',
+    'perl -e "print 1"',
+    'ruby -e "puts 1"',
+    'php -r "echo 1;"',
+  ];
+  for (const cmd of approvableInlineEval) {
+    it(`not catastrophic (approvable): ${cmd}`, () => {
+      expect(isCatastrophicCommand(cmd)).toBe(false);
     });
   }
 });
@@ -137,6 +164,8 @@ describe('isCatastrophicCommand — A2 non-regression: interpreter without inlin
   for (const cmd of safe) {
     it(`allows: ${cmd}`, () => {
       expect(isCatastrophicCommand(cmd)).toBe(false);
+      // …and doesn't spuriously force the gate either (no inline-eval flag).
+      expect(isInlineInterpreterEvalCommand(cmd)).toBe(false);
     });
   }
 });

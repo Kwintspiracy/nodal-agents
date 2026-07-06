@@ -1503,7 +1503,11 @@ async function runJob(
                 {
                   approvalRules: resumeApprovalRules,
                   autonomy: workspaceAutonomy,
-                  onApprovalRequired: (req: ApprovalGateRequest) => notifyApprovalCreated(deps, req),
+                  onApprovalRequired: (req: ApprovalGateRequest) =>
+                    notifyApprovalCreated(deps, req),
+                  // Human already approved this exact call — don't re-gate an
+                  // approved `python -c`/`node -e` on the inline-eval floor.
+                  preApproved: true,
                 },
               );
               if (execResult.outcome === 'success') {
@@ -1988,7 +1992,9 @@ async function runJob(
       )?.['openrouter'] as Record<string, unknown> | undefined;
       const rawCost = (orMeta?.['usage'] as Record<string, unknown> | undefined)?.['cost'];
       const reportedCostUsd =
-        typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0 ? rawCost : undefined;
+        typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
+          ? rawCost
+          : undefined;
       // Fix #21: OpenRouter is the only provider that self-reports cost above.
       // Every native/BYOK provider (DeepSeek/MiniMax/Anthropic-direct/OpenAI/
       // Google/Groq/Mistral/Ollama) leaves it unset — without this fallback
@@ -1997,7 +2003,12 @@ async function runJob(
       // for a model with no catalogued price yet.
       const callCostUsd =
         reportedCostUsd ??
-        estimateModelCostUsd(llmClient.config.provider, llmClient.config.model, promptTok, completionT);
+        estimateModelCostUsd(
+          llmClient.config.provider,
+          llmClient.config.model,
+          promptTok,
+          completionT,
+        );
       totalCostUsd += callCostUsd;
       // Capture the upstream provider name (P0-B: served-upstream observability).
       // OpenRouter sets providerMetadata.openrouter.provider to the upstream that

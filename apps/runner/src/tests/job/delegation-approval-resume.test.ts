@@ -15,7 +15,7 @@
 // delegation-parallel-tools.test.ts.
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -205,6 +205,9 @@ beforeAll(async () => {
 
   // command-execution skill + workspace for the child (run_command needs a cwd).
   workspaceDir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-dar-')));
+  // Auto-run tests invoke this as `node emit.js NORMOK` — a plain script call,
+  // since inline `node -e` now always gates via A2 (inline interpreter eval).
+  await writeFile(join(workspaceDir, 'emit.js'), "process.stdout.write(process.argv[2] || '');\n");
   const [skill] = await db
     .insert(agentSkills)
     .values({
@@ -264,7 +267,7 @@ async function createJob(agentId: string, parentJobId?: string): Promise<{ id: s
   return job;
 }
 
-const NORMAL_CMD = `node -e "process.stdout.write('NORMOK')"`;
+const NORMAL_CMD = `node emit.js NORMOK`;
 const HEAVY_CMD = `rm ./nonexistent-dar-marker`; // matches isDestructiveOrHeavyCommand; harmless if spawned
 
 // ─── 1. destructive_gate relaxation on a worker's run_command ────────────────
