@@ -39,6 +39,12 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
+      # SEC-1: block a hardcoded secret from reaching the public repo. Runs on
+      # the tracked tree at HEAD (works on the shallow checkout); annotate a
+      # vetted fixture with `secrets:allow` to suppress a false positive.
+      - name: Secret scan
+        run: pnpm secrets:check
+
       - name: Architecture check
         run: pnpm deps:check
 

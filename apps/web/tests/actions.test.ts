@@ -4469,7 +4469,7 @@ describe('testLlmKeyAction', () => {
   });
 
   it('SECURITY: apiKey is REDACTED in error messages (security invariant #2)', async () => {
-    const SECRET = 'sk-ant-this-is-a-real-secret-do-not-leak';
+    const SECRET = 'sk-ant-this-is-a-real-secret-do-not-leak'; // secrets:allow (fake test fixture)
     // First-line defense: mock fetch to throw with the apiKey embedded in the
     // error message. The action MUST scrub it before returning.
     const fetchMock = vi

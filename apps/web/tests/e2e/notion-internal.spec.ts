@@ -47,7 +47,7 @@ test.describe('Notion Internal Integration (api_key) — regression', () => {
     await expect(apiKeyInput).toBeVisible({ timeout: 5_000 });
 
     // ── 3. Fill in a test API key ─────────────────────────────────────────────
-    const TEST_API_KEY = 'secret_test_internal_integration_key_e2e';
+    const TEST_API_KEY = 'secret_test_internal_integration_key_e2e'; // secrets:allow (fake placeholder)
     await apiKeyInput.fill(TEST_API_KEY);
 
     // ── 4. Submit ─────────────────────────────────────────────────────────────

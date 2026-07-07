@@ -77,7 +77,7 @@ test.describe('Test A — LLM key add + test connection + save', () => {
     await page.locator('#llm-base-url').fill('https://api.anthropic.com/v1');
 
     // Fill API key (dummy value — test will fail with a real "fail" badge)
-    await page.locator('#llm-api-key').fill('sk-ant-e2e-test-key-placeholder');
+    await page.locator('#llm-api-key').fill('sk-ant-e2e-test-key-placeholder'); // secrets:allow (fake placeholder)
 
     // Fill default model
     await page.locator('#llm-default-model').fill('claude-haiku-4-5-20251001');

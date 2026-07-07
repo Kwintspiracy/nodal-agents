@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages",
+    "secrets:check": "node scripts/check-no-secrets.mjs",
     "pack:build": "node scripts/build-pack.mjs"
   },
   "devDependencies": {

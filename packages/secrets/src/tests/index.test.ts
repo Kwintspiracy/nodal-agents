@@ -94,7 +94,7 @@ describe('@nodal-agents/secrets', () => {
       ['empty', ''],
       ['1 char', 'x'],
       ['16 chars', 'sk-ant-test12345'],
-      ['typical key', 'sk-ant-api03-1234567890abcdefghijklmnop'],
+      ['typical key', 'sk-ant-api03-1234567890abcdefghijklmnop'], // secrets:allow (fake fixture)
       ['1k chars', 'a'.repeat(1000)],
       ['utf-8 multibyte', '🔐 secret avec accents éàù 你好'],
     ])('round-trips %s', (_label, plaintext) => {
