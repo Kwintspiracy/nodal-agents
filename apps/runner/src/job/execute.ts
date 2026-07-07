@@ -54,7 +54,6 @@ import {
   createSendVoiceTool,
   listWorkspaceMcpToolNames,
   isCatastrophicCommand,
-  isInlineInterpreterEvalCommand,
   matchApprovalRule,
 } from '@nodal-agents/tools';
 import type {
@@ -1519,20 +1518,16 @@ async function runJob(
             req.toolName === 'run_command' && isCatastrophicCommand(resumeCommand);
 
           if (isCatastrophicResume) {
-            // Tailor the explanation so the user understands the WHY (A2). An
-            // inline interpreter one-liner (`python -c`, `node -e`, …) is refused
-            // because its payload is opaque and can't be safety-checked — a
-            // different reason from the machine-wide destroyers (`rm -rf /`,
-            // `mkfs`, `shutdown`). Both are hard-floor: refused even after
-            // approval, by design.
-            catastrophicRefusalMessage = isInlineInterpreterEvalCommand(resumeCommand)
-              ? 'Cette commande exécute du code en ligne via un interpréteur (python -c, node -e, ' +
-                'sh -c, …). Son contenu ne peut pas être vérifié automatiquement, donc elle est ' +
-                "bloquée par sécurité et reste refusée même après approbation. Elle n'a pas été " +
-                'exécutée. Pour lancer un script, passez par un FICHIER (ex. `python mon_script.py`) ' +
-                'plutôt que par du code en ligne.'
-              : 'Cette commande est jugée catastrophique (destruction machine-wide) et reste ' +
-                "refusée même après approbation, par sécurité. Elle n'a pas été exécutée.";
+            // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)
+            // reach here now — refused even after approval, by design (the
+            // last-resort circuit breaker). Inline interpreter-eval (`python -c`,
+            // `… | python`) is NO LONGER catastrophic: it is approvable and
+            // executes in the `else` branch once a human OKs it (ComfyUI
+            // regression fix, 2026-07).
+            catastrophicRefusalMessage =
+              'Cette commande est jugée catastrophique (destruction machine-wide : rm -rf /, ' +
+              "mkfs, shutdown…) et reste refusée même après approbation, par sécurité. Elle n'a " +
+              'pas été exécutée.';
             replacementOutput = toResultOutput({ error: catastrophicRefusalMessage });
             trace('resume_catastrophic_command_refused', { toolName: req.toolName });
           } else {

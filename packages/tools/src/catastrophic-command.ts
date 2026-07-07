@@ -257,9 +257,7 @@ export function isCatastrophicCommand(cmd: string): boolean {
     INIT_RUNLEVEL.test(c) ||
     OVERWRITE_DEVICE.test(c) ||
     DISKPART.test(c) ||
-    DISK_CMDLET.test(c) ||
-    AWK_CODE_EXEC.test(c) ||
-    hasPipeIntoBareInterpreter(c)
+    DISK_CMDLET.test(c)
   ) {
     return true;
   }
@@ -277,16 +275,17 @@ export function isCatastrophicCommand(cmd: string): boolean {
     // it after a plain whitespace split.
     const tokens = s.split(/\s+/).map(stripQuotes);
 
-    // Wrapping the payload in a general-purpose interpreter's inline-eval flag
-    // (`python -c`, `node -e`, `sh -c`, `powershell -Command`, …) hands the
-    // classifier an opaque program that could do anything — including a plain
-    // `rm -rf /` that would otherwise be caught below. The payload is
-    // undecidable, so this is a HARD-FLOOR match: refused even after a human
-    // approval (owner's call, audit followup A2). Checked on the RAW tokens,
-    // before wrapper-unwrapping, so it also catches this nested one level deep
-    // (`cmd /c python -c "…"`). isInlineInterpreterEvalCommand shares this
-    // detection so the runner can explain WHY a given refusal fired.
-    if (hasInlineInterpreterEval(tokens)) return true;
+    // NOTE (ComfyUI regression, 2026-07): inline interpreter-eval (`python -c`,
+    // `node -e`, `sh -c`, `… | python`, awk-code) is NO LONGER on the
+    // catastrophic hard floor. It is opaque but not inherently machine-wide
+    // destructive — and hard-refusing it (even after approval) broke the
+    // ubiquitous `curl … | python -c "json.load(...)"` idiom, systematically
+    // killing legitimate workflows. It is now classed as DESTRUCTIVE/heavy
+    // (isInlineInterpreterEvalCommand → isDestructiveOrHeavyCommand): gated for a
+    // human at propose_confirm/destructive_gate, auto-run under fully_autonomous
+    // (the owner's explicit "run everything" trust), and — crucially —
+    // APPROVABLE (it executes after a human OK). Only the deterministic
+    // machine-destroyers above stay refused-even-after-approval.
 
     // The command actually being invoked, after peeling off a recognized
     // interpreter wrapper (see stripWrapperPrefix doc comment). Used to
@@ -346,22 +345,22 @@ export function isCatastrophicCommand(cmd: string): boolean {
 }
 
 /**
- * True when `cmd` invokes a general-purpose interpreter with its inline-eval
- * flag (`python -c`, `node -e`, `sh -c`, `powershell -Command`, …) in ANY of
- * its shell segments — with or without one pass-through leader (`sudo`/`env`/
- * `cmd /c`) in front.
+ * True when `cmd` runs an OPAQUE interpreter program the classifier can't
+ * inspect: an inline-eval flag (`python -c`, `node -e`, `sh -c`,
+ * `powershell -Command`, …), a pipe into a bare interpreter (`… | python`,
+ * `curl … | bash`), or awk executing code (`awk '…system…'`). With or without
+ * one pass-through leader (`sudo`/`env`/`cmd /c`) in front.
  *
- * Inline eval is part of the catastrophic hard floor (`isCatastrophicCommand`
- * returns true for it too): the payload is an opaque program that can't be
- * safety-checked, so it is refused even after a human approval (owner's call,
- * A2). This predicate exists SO THE RUNNER CAN EXPLAIN WHY a refusal fired —
- * an inline-eval refusal gets a tailored message ("interpreter one-liner whose
- * content can't be verified") rather than the generic "machine-wide
- * destruction" one used for `rm -rf /` / `mkfs` / `shutdown`.
+ * This class is NO LONGER catastrophic (ComfyUI regression fix, 2026-07): it is
+ * treated as DESTRUCTIVE/heavy — gated for a human at propose_confirm/
+ * destructive_gate, auto-run under fully_autonomous, and APPROVABLE (it runs
+ * after a human OK, unlike the machine-destroyers). The runner also uses this
+ * predicate to tailor its approval-card wording.
  */
 export function isInlineInterpreterEvalCommand(cmd: string): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
   const c = normalizeSlashes(cmd.trim());
+  if (AWK_CODE_EXEC.test(c) || hasPipeIntoBareInterpreter(c)) return true;
   for (const seg of c.split(/[;&|\n\r]+/)) {
     const s = seg.trim();
     if (!s) continue;
@@ -400,7 +399,11 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
  */
 export function isDestructiveOrHeavyCommand(cmd: string): boolean {
   if (typeof cmd !== 'string' || cmd.trim() === '') return false;
-  if (isCatastrophicCommand(cmd)) return true;
+  // Catastrophic (machine-destroyers) and opaque interpreter-eval both keep
+  // their gate under destructive_gate. Inline-eval is no longer catastrophic
+  // (approvable), but it stays "heavy" here so destructive_gate still asks a
+  // human before running an un-inspectable one-liner.
+  if (isCatastrophicCommand(cmd) || isInlineInterpreterEvalCommand(cmd)) return true;
   const c = normalizeSlashes(cmd.trim());
   return DESTRUCTIVE_PATTERNS.some((re) => re.test(c));
 }

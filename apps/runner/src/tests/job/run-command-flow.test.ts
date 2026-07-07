@@ -193,11 +193,11 @@ beforeAll(async () => {
   workspaceDir = await realpath(await mkdtemp(join(tmpdir(), 'nodal-rcflow-')));
 
   // A tiny helper script the auto-run tests invoke as `node emit.js <marker>`.
-  // Using a script FILE (not `node -e "…"`) is deliberate: inline interpreter
-  // eval (`node -e`, `python -c`, …) now always forces the approval gate even
-  // under an auto_approve rule (A2), so an auto-run test must use a plain
-  // script invocation. `node -e` is exercised on purpose by the APPROVAL PATH
-  // test, which proves inline eval suspends then runs once approved.
+  // A script FILE keeps the auto-run tests focused on the RULE path (an
+  // auto_approve rule → runs inline). Inline interpreter eval (`node -e`,
+  // `python -c`, …) is exercised by the INLINE-EVAL test, which proves it gates
+  // for a human and then RUNS once approved — it is no longer refused (ComfyUI
+  // regression fix). Only true machine-destroyers stay refused after approval.
   await writeFile(join(workspaceDir, 'emit.js'), "process.stdout.write(process.argv[2] || '');\n");
 
   // Insert the command-execution skill with requiredBuiltins: ['run_command'].
@@ -371,10 +371,12 @@ describe('run_command — E2E runner integration', () => {
   });
 
   // ── Test 1b: INLINE-EVAL HARD FLOOR (A2) ──────────────────────────────────
-  it('INLINE-EVAL FLOOR: `node -e` suspends, and is REFUSED even after approval, with an explanation', async () => {
+  it('INLINE-EVAL: `node -e` suspends (gates), then RUNS once approved (no longer refused)', async () => {
     const MARKER_IE = `rc-marker-${Date.now()}-inline`;
-    // Inline interpreter eval — the payload is opaque, so this is catastrophic:
-    // it must gate AND stay refused even after a human approves (owner decision).
+    // Inline interpreter eval (`node -e`) is opaque but NO LONGER catastrophic
+    // (ComfyUI regression fix, 2026-07): it gates for a human, and once approved
+    // it RUNS — it is not refused-after-approval. Only true machine-destroyers
+    // (`rm -rf /`, `mkfs`, …) stay refused even after approval.
     const COMMAND = `node -e "process.stdout.write('${MARKER_IE}')"`;
 
     const job = await createJob();
@@ -397,7 +399,7 @@ describe('run_command — E2E runner integration', () => {
       },
     ]);
 
-    // Phase 1: even an inline-eval must gate (never auto-run under Yolo).
+    // Phase 1: inline-eval still gates (require_approval at the default autonomy).
     const suspendResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
     expect(suspendResult.status).toBe('awaiting_approval');
 
@@ -410,7 +412,7 @@ describe('run_command — E2E runner integration', () => {
     );
     expect(approvalRow).toBeDefined();
 
-    // A human approves it anyway (stale-tap / careless click).
+    // A human approves it.
     await db
       .update(approvalRequests)
       .set({ status: 'approved', resolvedAt: new Date(), resolvedBy: 'test' })
@@ -420,22 +422,30 @@ describe('run_command — E2E runner integration', () => {
       .set({ status: 'pending', updatedAt: new Date() })
       .where(eq(agentJobs.id, job.id));
 
-    // Phase 2: the hard floor refuses it regardless — job fails, NOT completes.
+    // Phase 2: resume → the approved inline-eval RUNS → job completes.
     const resumeResult = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
-    expect(resumeResult).toMatchObject({
-      status: 'failed',
-      error: 'catastrophic_command_refused',
-    });
+    expect(resumeResult.status).toBe('completed');
 
-    // The user gets a clear, inline-eval-specific explanation (the WHY). The job
-    // failing at the floor — before executeTool is ever called — is itself the
-    // proof it did not run; the message text is the user-facing "why".
+    // CORE: the spawned `node -e` stdout MARKER reaches the agent's messages —
+    // proof it actually executed (not refused).
     const jobRow = await db
-      .select({ result: agentJobs.result })
+      .select({ messages: agentJobs.messages })
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
-    expect(jobRow[0]?.result ?? '').toMatch(/interpréteur/i);
-    expect(jobRow[0]?.result ?? '').toMatch(/refus/i);
+    const messages = jobRow[0]?.messages as Array<{ role: string; content: unknown }>;
+    let foundMarker = false;
+    for (const msg of messages) {
+      if (msg.role !== 'tool') continue;
+      for (const block of msg.content as Array<Record<string, unknown>>) {
+        if (block['type'] !== 'tool-result') continue;
+        const output = block['output'] as { type: string; value: unknown } | undefined;
+        const rawValue =
+          output?.type === 'text' ? output.value : JSON.stringify(output?.value ?? null);
+        const valueStr = typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue);
+        if (block['toolName'] === 'run_command' && valueStr.includes(MARKER_IE)) foundMarker = true;
+      }
+    }
+    expect(foundMarker).toBe(true);
   });
 
   // ── Test 2: YOLO PATH ─────────────────────────────────────────────────────
