@@ -426,4 +426,70 @@ describe('selectMemoriesForInjection — backward-compat ordering (no usable que
     // → same code path (and ordering) as no query at all.
     expect(out.map((m) => m.id)).toEqual([high.id, low.id]);
   });
+
+  // M-1 (deep audit): injecting a memory counts as USING it — access_count must
+  // bump, or the curator's "access_count = 0 → archive" sweep devalues facts that
+  // are actively being injected.
+  it('bumps access_count / last_accessed_at for the injected memories (M-1)', async () => {
+    await db.delete(agentMemory);
+    const m = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'comfyui workflow settings the agent relies on',
+      category: 'context',
+      importance: 3,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    const before = await db.select().from(agentMemory).where(eqColumn(m.id));
+    expect(before[0]?.accessCount ?? 0).toBe(0);
+
+    const out = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 1500,
+      query: 'comfyui workflow',
+    });
+    expect(out.map((x) => x.id)).toContain(m.id);
+
+    const after = await db.select().from(agentMemory).where(eqColumn(m.id));
+    expect(after[0]?.accessCount ?? 0).toBeGreaterThanOrEqual(1);
+    expect(after[0]?.lastAccessedAt).not.toBeNull();
+  });
+
+  // M-2 (deep audit): a multi-word task query must OR its terms — a partially
+  // on-topic memory should beat a high-importance off-topic one. plainto_tsquery
+  // (AND every term) collapsed ts_rank to 0 for all rows, silently degrading the
+  // "FTS-authoritative" order to importance-only.
+  it('ORs multi-word queries so a partial-topic match beats a high-importance off-topic one (M-2)', async () => {
+    await db.delete(agentMemory);
+    const onTopic = await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'comfyui checkpoint sdxl base model path',
+      category: 'context',
+      importance: 1,
+      source: 'agent',
+      skill_tags: [],
+    });
+    await createMemory(db, {
+      entity_id: seed.entityId,
+      agent_id: seed.agentId,
+      fact: 'unrelated billing preferences note',
+      category: 'context',
+      importance: 5,
+      source: 'agent',
+      skill_tags: [],
+    });
+
+    // No single memory contains ALL the query words → plainto(AND) would match
+    // nothing and fall back to importance (the off-topic importance-5 note first).
+    // OR must surface the on-topic memory despite its lower importance.
+    const out = await selectMemoriesForInjection(db, {
+      entityId: seed.entityId,
+      maxChars: 5000,
+      query: 'generate comfyui image woman photorealistic',
+    });
+    expect(out[0]?.id).toBe(onTopic.id);
+  });
 });

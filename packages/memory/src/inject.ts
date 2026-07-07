@@ -16,6 +16,7 @@ import { agentMemory } from '@nodal-agents/db';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { rowToMemory } from './crud';
 import type { MemoryRow } from './crud';
+import { touchMemories } from './access-tracking';
 
 // ─── selectMemoriesUnderBudget ────────────────────────────────────────────────
 
@@ -304,12 +305,22 @@ export async function selectMemoriesForInjection(
   const rawQuery = opts.query ?? '';
   const tokens = tokenizeQuery(rawQuery);
 
+  let packed: AgentMemory[];
   if (tokens.length > 0) {
     // search_tsv is a generated column, not expressible in the Drizzle schema
     // builder (migration 0051) — reference it via raw SQL, same as
     // agent_jobs.search_tsv in search-history.ts.
     const tsv = sql`"agent_memory"."search_tsv"`;
-    const tsq = sql`plainto_tsquery('english', ${rawQuery})`;
+    // M-2 (deep audit): OR the query tokens (to_tsquery) instead of
+    // plainto_tsquery, which ANDs EVERY term — on a multi-word task almost
+    // nothing matches, ts_rank collapses to 0 for all rows, and the
+    // "FTS-authoritative" order silently degrades to importance-only (relevance
+    // was cosmetic). tokenizeQuery has already reduced the query to
+    // letters/numbers, so ' | '-joining can't inject tsquery syntax. No `@@`
+    // filter on purpose: a non-matching memory keeps its importance-ranked
+    // baseline slot instead of vanishing — relevant facts float to the top,
+    // importance/recency break ties among the rest.
+    const tsq = sql`to_tsquery('english', ${tokens.join(' | ')})`;
 
     const candidates = await db
       .select()
@@ -323,17 +334,32 @@ export async function selectMemoriesForInjection(
       .limit(MAX_CANDIDATES);
 
     const memories = candidates.map((row) => rowToMemory(row as MemoryRow));
-    // FTS order is authoritative — pack as-is, do not re-rank by importance.
-    return packUnderBudget(memories, opts.maxChars);
+    // Relevance order is authoritative — pack as-is, do not re-rank by importance.
+    packed = packUnderBudget(memories, opts.maxChars);
+  } else {
+    const candidates = await db
+      .select()
+      .from(agentMemory)
+      .where(baseConditions)
+      .orderBy(desc(agentMemory.importance), desc(agentMemory.lastAccessedAt))
+      .limit(MAX_CANDIDATES);
+
+    const memories = candidates.map((row) => rowToMemory(row as MemoryRow));
+    packed = selectMemoriesUnderBudget(memories, opts.maxChars, opts.query);
   }
 
-  const candidates = await db
-    .select()
-    .from(agentMemory)
-    .where(baseConditions)
-    .orderBy(desc(agentMemory.importance), desc(agentMemory.lastAccessedAt))
-    .limit(MAX_CANDIDATES);
+  // M-1 (deep audit): injection IS usage. Bump access_count/last_accessed_at for
+  // the facts actually injected so the curator's "access_count = 0 → archive"
+  // sweep stops devaluing memories that ARE being used. Before this, only
+  // query_memory bumped access, leaving the DOMINANT injection path invisible to
+  // curation — useful facts got archived precisely because they were being
+  // auto-injected (never explicitly queried). touchMemories swallows per-row
+  // failures, so a racing delete can't break prompt assembly.
+  await touchMemories(
+    db,
+    packed.map((m) => m.id),
+    opts.entityId,
+  );
 
-  const memories = candidates.map((row) => rowToMemory(row as MemoryRow));
-  return selectMemoriesUnderBudget(memories, opts.maxChars, opts.query);
+  return packed;
 }
