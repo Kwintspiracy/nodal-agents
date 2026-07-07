@@ -103,6 +103,9 @@ export async function resolveAgentLlmClient(
         model,
         apiKey: plaintextKey || undefined,
         baseURL: row.baseUrl ?? undefined,
+        // É-3: per-model context window for a custom/local endpoint the catalog
+        // can't know — used as a fallback in modelContextWindow (catalog wins).
+        contextWindow: row.contextWindow ?? undefined,
       });
     }
 

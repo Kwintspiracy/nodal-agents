@@ -87,6 +87,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       api_key_last4 text NOT NULL DEFAULT '',
       base_url text,
       nickname text,
+      context_window integer,
       is_active boolean NOT NULL DEFAULT true,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()

@@ -87,6 +87,11 @@ export default function LlmKeyForm(props: Props) {
 
   const [provider, setProvider] = useState<LlmProvider>(defaultProvider);
   const [baseUrl, setBaseUrl] = useState<string>(initial?.baseUrl ?? '');
+  // É-3: optional context window for a custom/local model. Kept as a string for
+  // the text input; blank ⇒ auto-detect at save (LM Studio etc.) or fall back.
+  const [contextWindow, setContextWindow] = useState<string>(
+    initial?.contextWindow != null ? String(initial.contextWindow) : '',
+  );
   const [apiKey, setApiKey] = useState<string>('');
   const [isActive, setIsActive] = useState<boolean>(initial?.isActive ?? true);
   const [testResult, setTestResult] = useState<TestResult>({ state: 'idle' });
@@ -146,12 +151,15 @@ export default function LlmKeyForm(props: Props) {
     }
 
     startTransition(async () => {
+      const cwTrimmed = contextWindow.trim();
+      const cwValue = cwTrimmed.length > 0 ? Number(cwTrimmed) : undefined;
       if (isEdit && initial) {
         const r = await updateLlmKeyAction({
           id: initial.id,
           provider,
           baseUrl: baseUrl || undefined,
           apiKey: apiKey || undefined,
+          contextWindow: cwValue,
           isActive,
         });
         if (!r.ok) {
@@ -165,6 +173,7 @@ export default function LlmKeyForm(props: Props) {
           provider,
           baseUrl: baseUrl || undefined,
           apiKey: apiKey || undefined,
+          contextWindow: cwValue,
           isActive,
         });
         if (!r.ok) {
@@ -241,6 +250,32 @@ export default function LlmKeyForm(props: Props) {
           className={inputMonoCls}
         />
       </div>
+
+      {(provider === 'openai-compatible' || provider === 'ollama') && (
+        <div>
+          <label className={labelCls} htmlFor="llm-context-window">
+            Context window
+            <span className="ml-2 normal-case font-sans text-[12px] tracking-normal text-ink-4">
+              optional
+            </span>
+          </label>
+          <input
+            id="llm-context-window"
+            type="number"
+            min={1}
+            step={1}
+            value={contextWindow}
+            onChange={(e) => setContextWindow(e.target.value)}
+            placeholder="auto-detected — e.g. 8192"
+            className={inputMonoCls}
+          />
+          <p className="mt-1.5 text-[12px] text-ink-4">
+            The model&rsquo;s maximum context in tokens. Leave blank to auto-detect it from the
+            endpoint (LM Studio); set it by hand if detection fails. Used to compact long
+            conversations before the model overflows.
+          </p>
+        </div>
+      )}
 
       <div>
         <label className={labelCls} htmlFor="llm-api-key">

@@ -12,11 +12,14 @@ export {
   ProviderConfigError,
   LLMTimeoutError,
   AllProvidersFailedError,
+  isContextOverflowError,
 } from './errors';
 export type { MessageStructureErrorCode } from './errors';
 
 // Client factory
 export { createLlmClient } from './client';
+
+export { probeContextWindow } from './probe-context';
 
 // Provider failover (opt-in chain: primary + fallbacks)
 export { createFailoverLlmClient } from './failover';

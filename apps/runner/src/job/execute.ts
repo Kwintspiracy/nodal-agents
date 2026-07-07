@@ -36,6 +36,7 @@ import {
   QuotaExhaustedError,
   MessageStructureError,
   AllProvidersFailedError,
+  isContextOverflowError,
   validateMessageStructure,
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
@@ -1815,7 +1816,11 @@ async function runJob(
   // window, nothing else". Verified vs Hermes (per-tool payload caps + caching,
   // no early compaction) and Cowork (no compaction while context fits the window).
   const compactionThreshold = (() => {
-    const ctxWindow = modelContextWindow(llmClient.config.provider, llmClient.config.model);
+    const ctxWindow = modelContextWindow(
+      llmClient.config.provider,
+      llmClient.config.model,
+      llmClient.config.contextWindow,
+    );
     const fracRaw = Number(process.env['LLM_COMPACTION_FRACTION']);
     const frac = Number.isFinite(fracRaw) && fracRaw > 0 && fracRaw < 1 ? fracRaw : 0.7;
     const absRaw = Number(process.env['LLM_COMPACTION_TOKENS']);
@@ -3450,6 +3455,25 @@ async function runJob(
         messages,
       );
       return { status: 'failed', error: `message_structure_invalid:${err.code}` };
+    }
+
+    // É-3 garde: the prompt overflowed the model's REAL context window. With the
+    // per-model window (auto-detected or user-set) compaction normally fires in
+    // time; reaching here means the configured/default window was larger than
+    // the model can actually take — so fail LOUD with an actionable code instead
+    // of the previous silent death. Diagnostic code (dashboard/logs), not the
+    // agent's channel voice — invariant #2 untouched.
+    if (isContextOverflowError(err)) {
+      const win = modelContextWindow(
+        llmClient.config.provider,
+        llmClient.config.model,
+        llmClient.config.contextWindow,
+      );
+      const code =
+        `context_window_exceeded:${llmClient.config.model} ` +
+        `(configured ~${win} tokens — set the model's real context window in LLM providers)`;
+      await failJob(db, jobId as string, code, runStats(), messages);
+      return { status: 'failed', error: code };
     }
 
     // AI SDK throws when the model calls a tool not in the allowed list. The

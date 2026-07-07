@@ -144,3 +144,30 @@ export class ProviderConfigError extends Error {
     this.name = 'ProviderConfigError';
   }
 }
+
+// ─── Context-window overflow detection (É-3) ───────────────────────────────────
+
+/**
+ * Best-effort classifier: does this provider error mean the prompt exceeded the
+ * model's context window? Matches the phrasing the major providers and local
+ * runtimes (LM Studio/Ollama) use. É-3 garde: when a model's real window is
+ * smaller than configured, compaction can't save it — so instead of a silent
+ * death we surface this LOUD with an actionable message (set the window in the
+ * LLM provider settings). Substring match on the message is deliberately broad;
+ * a false positive only changes the error label, never the fact that it failed.
+ */
+export function isContextOverflowError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes('context length') ||
+    msg.includes('context window') ||
+    msg.includes('context_length_exceeded') ||
+    msg.includes('maximum context') ||
+    msg.includes('exceed context') ||
+    msg.includes('exceeds context') ||
+    msg.includes('prompt is too long') ||
+    msg.includes('too many tokens') ||
+    (msg.includes('reduce') && msg.includes('length') && msg.includes('token'))
+  );
+}

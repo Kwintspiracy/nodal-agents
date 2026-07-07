@@ -67,6 +67,13 @@ export interface ProviderConfig {
    * Defaults to true when the provider supports it.
    */
   cachingEnabled?: boolean;
+  /**
+   * Real context window (tokens) for a custom/local model the catalog can't
+   * know — É-3. Auto-detected from the endpoint or set by the user, stored on
+   * the entity_llm_keys row. Used ONLY as a fallback: a catalogued model's own
+   * window always wins. Undefined ⇒ fall back to DEFAULT_CONTEXT_WINDOW.
+   */
+  contextWindow?: number;
 }
 
 // ─── NodalLlmClient ────────────────────────────────────────────────────────────

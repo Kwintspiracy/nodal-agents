@@ -93,6 +93,7 @@ import { mergeNodalaiConfig, readNodalaiConfig } from './cli-config.ts';
 import { CONNECTOR_CATALOG, type ConnectorAuthType } from './connector-catalog.ts';
 import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG } from '@nodal-agents/shared';
+import { probeContextWindow } from '@nodal-agents/llm';
 import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
 import { connectMcp } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
@@ -6451,6 +6452,12 @@ export type LlmKeyUiRow = {
    */
   apiKeyLast4: string | null;
   /**
+   * Stored context window (tokens) for a custom/local model (É-3). Null ⇒ the
+   * runner uses the catalogued value or DEFAULT_CONTEXT_WINDOW. Surfaced so the
+   * edit form shows the auto-detected/entered value.
+   */
+  contextWindow: number | null;
+  /**
    * Number of active agents in this entity that reference this key via
    * `agents.llm_key_id`. Surfaced in the /llm-providers row so the user sees
    * blast radius before deactivating or deleting a key.
@@ -6467,11 +6474,16 @@ const optionalBaseUrl = z
 
 // An LLM provider key is now JUST credentials — provider + API key + base URL +
 // active. The model is chosen per-agent; capability comes from the code catalog.
+// contextWindow (É-3): tokens for a custom/local model the catalog can't know.
+// Optional — blank means "auto-detect from the endpoint, else use the default".
+const optionalContextWindow = z.number().int().positive().max(20_000_000).nullish();
+
 const CreateLlmKeySchema = z.object({
   provider: z.enum(PROVIDER_VALUES),
   baseUrl: optionalBaseUrl,
   apiKey: z.string().optional(),
   nickname: z.string().max(120).nullish(),
+  contextWindow: optionalContextWindow,
   isActive: z.boolean().default(true),
 });
 
@@ -6482,8 +6494,28 @@ const UpdateLlmKeySchema = z.object({
   // apiKey absent → keep existing. Empty string also means "keep existing".
   apiKey: z.string().optional(),
   nickname: z.string().max(120).nullish(),
+  contextWindow: optionalContextWindow,
   isActive: z.boolean(),
 });
+
+/**
+ * Resolve the context window to store for an LLM key (É-3): an explicit
+ * user-entered value wins; otherwise, for a custom/local endpoint, best-effort
+ * probe it (LM Studio etc.); else null (the runner falls back to the catalogued
+ * value or DEFAULT_CONTEXT_WINDOW). Cloud providers have no baseUrl → null here,
+ * and their window comes from the code catalog regardless.
+ */
+async function resolveKeyContextWindow(opts: {
+  provided?: number | null;
+  baseUrl?: string | null;
+}): Promise<number | null> {
+  if (typeof opts.provided === 'number' && opts.provided > 0) return Math.floor(opts.provided);
+  if (opts.baseUrl) {
+    const probed = await probeContextWindow({ baseURL: opts.baseUrl });
+    if (probed && probed > 0) return probed;
+  }
+  return null;
+}
 
 const TestLlmKeySchema = z.object({
   provider: z.enum(PROVIDER_VALUES),
@@ -6514,6 +6546,7 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         provider: entityLlmKeys.provider,
         baseUrl: entityLlmKeys.baseUrl,
         nickname: entityLlmKeys.nickname,
+        contextWindow: entityLlmKeys.contextWindow,
         isActive: entityLlmKeys.isActive,
         hasApiKey: sql<boolean>`(${entityLlmKeys.apiKey} <> '')`,
         apiKeyLast4: entityLlmKeys.apiKeyLast4,
@@ -6547,6 +6580,7 @@ export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> 
         provider: r.provider,
         baseUrl: r.baseUrl,
         nickname: r.nickname,
+        contextWindow: r.contextWindow ?? null,
         isActive: r.isActive,
         hasApiKey: Boolean(r.hasApiKey),
         apiKeyLast4: r.apiKeyLast4 ? r.apiKeyLast4 : null,
@@ -6588,6 +6622,10 @@ export async function createLlmKeyAction(raw: unknown): Promise<ActionResult<{ i
     }
 
     const plaintextKey = parsed.data.apiKey ?? '';
+    const contextWindow = await resolveKeyContextWindow({
+      provided: parsed.data.contextWindow,
+      baseUrl: parsed.data.baseUrl,
+    });
     const [row] = await db
       .insert(entityLlmKeys)
       .values({
@@ -6597,6 +6635,7 @@ export async function createLlmKeyAction(raw: unknown): Promise<ActionResult<{ i
         apiKeyLast4: last4(plaintextKey),
         baseUrl: parsed.data.baseUrl,
         nickname: parsed.data.nickname ?? null,
+        contextWindow,
         isActive: parsed.data.isActive,
       })
       .returning({ id: entityLlmKeys.id });
@@ -6625,6 +6664,11 @@ export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<voi
       .where(and(eq(entityLlmKeys.id, id), eq(entityLlmKeys.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'LLM provider not found');
 
+    const contextWindow = await resolveKeyContextWindow({
+      provided: parsed.data.contextWindow,
+      baseUrl,
+    });
+
     // Build patch: apiKey is included only if a non-empty value was provided.
     // Empty string / undefined → keep existing key (so users can edit other
     // fields without re-typing the secret).
@@ -6632,6 +6676,7 @@ export async function updateLlmKeyAction(raw: unknown): Promise<ActionResult<voi
       provider,
       baseUrl,
       nickname: nickname ?? null,
+      contextWindow,
       isActive,
       updatedAt: new Date(),
     };

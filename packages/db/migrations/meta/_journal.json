@@ -400,6 +400,13 @@
       "when": 1783700000000,
       "tag": "0057_telegram_allowed_chats",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1783800000000,
+      "tag": "0058_entity_llm_keys_context_window",
+      "breakpoints": true
     }
   ]
 }

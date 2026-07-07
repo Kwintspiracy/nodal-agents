@@ -21,6 +21,24 @@ describe('modelContextWindow', () => {
     expect(modelContextWindow('openai-compatible', 'local-model')).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 
+  // É-3: a stored per-model window (auto-detected/user-set) rescues local models.
+  it('uses the stored window for an unknown model instead of the default', () => {
+    expect(modelContextWindow('openai-compatible', 'local-gemma', 8192)).toBe(8192);
+    expect(modelContextWindow('ollama', 'llama-local', 16384)).toBe(16384);
+  });
+
+  it('the catalogued window always wins over a stored value', () => {
+    // A catalogued model must NOT be overridden by a stale stored window.
+    expect(modelContextWindow('anthropic', 'claude-opus-4-8', 8192)).toBe(200_000);
+  });
+
+  it('ignores a non-positive/invalid stored window and falls back to the default', () => {
+    expect(modelContextWindow('openai-compatible', 'x', 0)).toBe(DEFAULT_CONTEXT_WINDOW);
+    expect(modelContextWindow('openai-compatible', 'x', -5)).toBe(DEFAULT_CONTEXT_WINDOW);
+    expect(modelContextWindow('openai-compatible', 'x', null)).toBe(DEFAULT_CONTEXT_WINDOW);
+    expect(modelContextWindow('openai-compatible', 'x', Number.NaN)).toBe(DEFAULT_CONTEXT_WINDOW);
+  });
+
   it('every catalogued model declares a positive context window', () => {
     // Guards against adding a model without its window — compaction would then
     // silently fall back to the conservative default for it.

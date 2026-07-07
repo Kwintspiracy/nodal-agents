@@ -399,19 +399,38 @@ export function findModelCatalogEntry(
 }
 
 /**
- * Conservative fallback context window (tokens) for models with no catalogued
- * value (custom / unknown). Small on purpose: compacting a bit early is cheap;
- * overflowing is a hard failure.
+ * Last-resort context window (tokens) for a model with NO catalogued value AND
+ * no configured/probed value (É-3). It is deliberately large, NOT small: the
+ * compaction trigger is window-relative (0.7 × window), so a too-SMALL default
+ * would over-compact a big custom model and collapse its prompt cache (the
+ * DeepSeek-1M regression the runner's compaction comment warns about). A
+ * too-LARGE default instead risks a local 8-16K model overflowing before
+ * compaction fires — which is exactly why É-3 threads a per-model override
+ * (auto-detected or user-set) through `storedWindow` below, so this default is
+ * only ever hit when nothing better is known.
  */
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
 
 /**
- * The model's context window in tokens — the catalogued value, or the
- * conservative default for custom/unknown models. The runner uses this to decide
- * when to compact the conversation before the window overflows.
+ * The model's context window in tokens, by priority:
+ *   1. the catalogued value (authoritative for known cloud models);
+ *   2. `storedWindow` — a per-model value auto-detected from a local endpoint or
+ *      set by the user (entity_llm_keys.context_window), for custom/unknown
+ *      models the catalog can't know (É-3);
+ *   3. DEFAULT_CONTEXT_WINDOW.
+ * The runner uses this to decide when to compact before the window overflows.
  */
-export function modelContextWindow(provider: string, modelId: string): number {
-  return findModelCatalogEntry(provider, modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+export function modelContextWindow(
+  provider: string,
+  modelId: string,
+  storedWindow?: number | null,
+): number {
+  const catalogued = findModelCatalogEntry(provider, modelId)?.contextWindow;
+  if (catalogued !== undefined) return catalogued;
+  if (typeof storedWindow === 'number' && Number.isFinite(storedWindow) && storedWindow > 0) {
+    return storedWindow;
+  }
+  return DEFAULT_CONTEXT_WINDOW;
 }
 
 /**

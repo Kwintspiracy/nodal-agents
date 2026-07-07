@@ -1,6 +1,6 @@
 // entity_llm_keys table — per-entity LLM provider API key configuration
 
-import { pgTable, text, uuid, boolean, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, boolean, integer, timestamp, index } from 'drizzle-orm/pg-core';
 import { entities } from './entities.ts';
 
 export const entityLlmKeys = pgTable(
@@ -20,6 +20,11 @@ export const entityLlmKeys = pgTable(
     apiKeyLast4: text('api_key_last4').notNull().default(''),
     baseUrl: text('base_url'),
     nickname: text('nickname'),
+    // Real context window (tokens) for a custom/local model the catalog can't
+    // know (É-3). Auto-detected from the endpoint at save time or set by the
+    // user; NULL ⇒ fall back to the catalogued value or DEFAULT_CONTEXT_WINDOW.
+    // Used window-relative to trigger compaction before the model overflows.
+    contextWindow: integer('context_window'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
