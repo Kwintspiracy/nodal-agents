@@ -641,22 +641,18 @@ describe('executeTool — meta-tool safe-by-default posture (M-6)', () => {
   });
 
   it('destructive_gate (no rule) auto-approves the meta-tool (ordinary "write" work)', async () => {
-    const res = await executeTool(
-      makeMetaTool(),
-      { value: 'go' },
-      makeCtx(),
-      { ...makeOpts(), autonomy: 'destructive_gate' },
-    );
+    const res = await executeTool(makeMetaTool(), { value: 'go' }, makeCtx(), {
+      ...makeOpts(),
+      autonomy: 'destructive_gate',
+    });
     expect(res.outcome).toBe('success');
   });
 
   it('fully_autonomous (no rule) auto-approves the meta-tool', async () => {
-    const res = await executeTool(
-      makeMetaTool(),
-      { value: 'go' },
-      makeCtx(),
-      { ...makeOpts(), autonomy: 'fully_autonomous' },
-    );
+    const res = await executeTool(makeMetaTool(), { value: 'go' }, makeCtx(), {
+      ...makeOpts(),
+      autonomy: 'fully_autonomous',
+    });
     expect(res.outcome).toBe('success');
   });
 

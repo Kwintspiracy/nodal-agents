@@ -104,7 +104,11 @@ describe('OR-4: blocked/cancelled dependency must not stall the dependent task f
 
     const rootRow = (
       await db
-        .select({ completedAt: agentJobs.completedAt, status: agentJobs.status, result: agentJobs.result })
+        .select({
+          completedAt: agentJobs.completedAt,
+          status: agentJobs.status,
+          result: agentJobs.result,
+        })
         .from(agentJobs)
         .where(eq(agentJobs.id, rootJob.id))
     )[0];

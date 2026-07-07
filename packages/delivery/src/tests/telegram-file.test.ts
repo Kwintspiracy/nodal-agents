@@ -15,7 +15,11 @@ function jsonResponse(status: number, body: object): Response {
 }
 
 /** A fetch Response whose body streams `totalBytes` in `chunkSize`-byte pieces. */
-function streamingResponse(totalBytes: number, chunkSize: number, contentLength?: number): Response {
+function streamingResponse(
+  totalBytes: number,
+  chunkSize: number,
+  contentLength?: number,
+): Response {
   let sent = 0;
   const stream = new ReadableStream<Uint8Array>({
     pull(controller) {

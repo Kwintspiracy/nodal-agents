@@ -302,14 +302,10 @@ describe('job-google-oauth-refresh: M-12 — token resolved per-call, not once a
     // credential resolver ran, not on the tool's result.
     const client = makeMockLlmClient([
       {
-        toolCalls: [
-          { toolCallId: 'tc-1', toolName: 'drive_list_files', args: { pageSize: 5 } },
-        ],
+        toolCalls: [{ toolCallId: 'tc-1', toolName: 'drive_list_files', args: { pageSize: 5 } }],
       },
       {
-        toolCalls: [
-          { toolCallId: 'tc-2', toolName: 'drive_list_files', args: { pageSize: 5 } },
-        ],
+        toolCalls: [{ toolCallId: 'tc-2', toolName: 'drive_list_files', args: { pageSize: 5 } }],
       },
       {
         toolCalls: [

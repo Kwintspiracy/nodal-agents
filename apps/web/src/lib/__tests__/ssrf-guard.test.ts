@@ -199,23 +199,20 @@ describe('SSRF guard on LLM baseUrl (F-1)', () => {
     ['fd00:ec2::254', 'canonical lowercase compressed form'],
     ['FD00:EC2::254', 'uppercase'],
     ['fd00:ec2:0:0:0:0:0:254', 'fully expanded form'],
-  ])(
-    'testLlmKeyAction refuses the AWS IMDSv2 IPv6 metadata address (%s — %s)',
-    async (ip) => {
-      const { testLlmKeyAction } = await import('../actions.ts');
-      const fetchSpy = vi.fn();
-      vi.stubGlobal('fetch', fetchSpy);
+  ])('testLlmKeyAction refuses the AWS IMDSv2 IPv6 metadata address (%s — %s)', async (ip) => {
+    const { testLlmKeyAction } = await import('../actions.ts');
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
 
-      const result = await testLlmKeyAction({
-        provider: 'openai-compatible',
-        baseUrl: `http://[${ip}]/`,
-        apiKey: 'sk-test',
-      });
+    const result = await testLlmKeyAction({
+      provider: 'openai-compatible',
+      baseUrl: `http://[${ip}]/`,
+      apiKey: 'sk-test',
+    });
 
-      expect(result.ok).toBe(false);
-      expect(fetchSpy).not.toHaveBeenCalled();
-    },
-  );
+    expect(result.ok).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 
   it('testLlmKeyAction refuses the deprecated IPv4-compatible IPv6 form of the metadata address', async () => {
     const { testLlmKeyAction } = await import('../actions.ts');

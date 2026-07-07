@@ -201,7 +201,10 @@ describe('mark_memory_outdated', () => {
       source: 'agent',
       importanceLocked: true,
     });
-    const result = await markMemoryOutdatedTool.execute({ fact_substring: 'lives in Lyon' }, makeCtx());
+    const result = await markMemoryOutdatedTool.execute(
+      { fact_substring: 'lives in Lyon' },
+      makeCtx(),
+    );
     expect(result.archived).toBe(false);
     if (result.archived) throw new Error('expected archived: false');
     expect(result.reason).toContain('locked');

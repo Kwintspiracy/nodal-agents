@@ -167,8 +167,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     const blockedCount = taskRows.filter((t) => t.status === 'blocked').length;
     const rootStatus: 'completed' | 'failed' | 'cancelled' =
       doneCount > 0 ? 'completed' : blockedCount > 0 ? 'failed' : 'cancelled';
-    const rootError =
-      rootStatus === 'failed' ? `all_tasks_failed (${taskRows.length})` : null;
+    const rootError = rootStatus === 'failed' ? `all_tasks_failed (${taskRows.length})` : null;
 
     // Atomic claim: only deliver if root job completedAt is still NULL AND
     // the root hasn't been raced into a terminal status (cancelled by the

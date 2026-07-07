@@ -84,7 +84,7 @@ export function describeGatedAction(toolName: string, toolInput: unknown): strin
   // The default case below dumps the whole input as JSON — for create_connector
   // / create_mcp / attach_mcp that would print the API key / stdio env values in
   // clear. run_command's `command` is not a secret field, so it is untouched.
-  const input = (redactSecretsForAudit(toolInput ?? {})) as Record<string, unknown>;
+  const input = redactSecretsForAudit(toolInput ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v ?? null));
   switch (toolName) {
     case 'run_command':

@@ -591,45 +591,48 @@ describe('keywordSearchMemories', () => {
   });
 
   // ── P3.5: ts_rank dominates; `sort` only breaks ties among equal-relevance rows ──
-  it('ts_rank DOMINATES the order — a strongly-relevant, low-importance fact still ' +
-    "beats a barely-relevant, high-importance one under sort: 'importance'", async () => {
-    const { db: freshDb } = await spinUpTestDb();
-    const freshSeed = await seedMinimal(freshDb);
+  it(
+    'ts_rank DOMINATES the order — a strongly-relevant, low-importance fact still ' +
+      "beats a barely-relevant, high-importance one under sort: 'importance'",
+    async () => {
+      const { db: freshDb } = await spinUpTestDb();
+      const freshSeed = await seedMinimal(freshDb);
 
-    // Strong match: all 4 query terms present, repeated → high ts_rank. Importance 1.
-    const stronglyRelevant = await createMemory(freshDb, {
-      entity_id: freshSeed.entityId,
-      fact: 'deploy deploy staging staging server server now now',
-      category: 'context',
-      importance: 1,
-      source: 'agent',
-      skill_tags: [],
-    });
-    // Weak match: only 1 of the 4 query terms present → low (nonzero) ts_rank. Importance 5.
-    const weaklyRelevantHighImportance = await createMemory(freshDb, {
-      entity_id: freshSeed.entityId,
-      fact: 'deploy something else entirely unrelated',
-      category: 'context',
-      importance: 5,
-      source: 'agent',
-      skill_tags: [],
-    });
+      // Strong match: all 4 query terms present, repeated → high ts_rank. Importance 1.
+      const stronglyRelevant = await createMemory(freshDb, {
+        entity_id: freshSeed.entityId,
+        fact: 'deploy deploy staging staging server server now now',
+        category: 'context',
+        importance: 1,
+        source: 'agent',
+        skill_tags: [],
+      });
+      // Weak match: only 1 of the 4 query terms present → low (nonzero) ts_rank. Importance 5.
+      const weaklyRelevantHighImportance = await createMemory(freshDb, {
+        entity_id: freshSeed.entityId,
+        fact: 'deploy something else entirely unrelated',
+        category: 'context',
+        importance: 5,
+        source: 'agent',
+        skill_tags: [],
+      });
 
-    // Even asking for 'importance' sort, the weak-but-important fact does NOT
-    // win — ts_rank is the primary ORDER BY key; importance is only the
-    // tiebreaker for equal-relevance rows (see keywordOrderBy in search.ts).
-    const results = await keywordSearchMemories(freshDb, {
-      query: 'deploy staging server now',
-      entityId: freshSeed.entityId,
-      sort: 'importance',
-    });
+      // Even asking for 'importance' sort, the weak-but-important fact does NOT
+      // win — ts_rank is the primary ORDER BY key; importance is only the
+      // tiebreaker for equal-relevance rows (see keywordOrderBy in search.ts).
+      const results = await keywordSearchMemories(freshDb, {
+        query: 'deploy staging server now',
+        entityId: freshSeed.entityId,
+        sort: 'importance',
+      });
 
-    expect(results[0]?.id).toBe(stronglyRelevant.id);
-    expect(results.some((m) => m.id === weaklyRelevantHighImportance.id)).toBe(true);
-    expect(results.findIndex((m) => m.id === weaklyRelevantHighImportance.id)).toBeGreaterThan(
-      results.findIndex((m) => m.id === stronglyRelevant.id),
-    );
-  });
+      expect(results[0]?.id).toBe(stronglyRelevant.id);
+      expect(results.some((m) => m.id === weaklyRelevantHighImportance.id)).toBe(true);
+      expect(results.findIndex((m) => m.id === weaklyRelevantHighImportance.id)).toBeGreaterThan(
+        results.findIndex((m) => m.id === stronglyRelevant.id),
+      );
+    },
+  );
 
   it("'sort' still governs the tiebreak between rows of EQUAL relevance", async () => {
     const { db: freshDb } = await spinUpTestDb();

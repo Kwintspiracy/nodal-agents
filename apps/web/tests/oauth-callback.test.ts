@@ -485,7 +485,10 @@ describe('GET /api/oauth/[provider]/callback — error cases', () => {
     delete process.env['NODALAI_ALLOW_OAUTH_MOCK'];
 
     try {
-      const { cookieValue, state } = await buildValidCookie({ slug: SLUG, entityId: _testEntityId });
+      const { cookieValue, state } = await buildValidCookie({
+        slug: SLUG,
+        entityId: _testEntityId,
+      });
       const req = buildCallbackRequest({
         origin: ORIGIN,
         slug: SLUG,
@@ -523,7 +526,10 @@ describe('GET /api/oauth/[provider]/callback — error cases', () => {
     process.env['NODALAI_ALLOW_OAUTH_MOCK'] = '1';
 
     try {
-      const { cookieValue, state } = await buildValidCookie({ slug: SLUG, entityId: _testEntityId });
+      const { cookieValue, state } = await buildValidCookie({
+        slug: SLUG,
+        entityId: _testEntityId,
+      });
       const req = buildCallbackRequest({
         origin: ORIGIN,
         slug: SLUG,

@@ -9,8 +9,8 @@ type InspectableAuth = {
 };
 
 function authOf(gmail: ReturnType<typeof createGmailClient>): InspectableAuth {
-  return (gmail as unknown as { context: { _options: { auth: InspectableAuth } } }).context
-    ._options.auth;
+  return (gmail as unknown as { context: { _options: { auth: InspectableAuth } } }).context._options
+    .auth;
 }
 
 describe('createGmailClient', () => {

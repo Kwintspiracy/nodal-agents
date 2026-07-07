@@ -182,7 +182,8 @@ describe('skill_file_read — security boundary', () => {
     const lineBytes = Buffer.byteLength(lineTemplate, 'utf8');
     const repeats = Math.ceil((1.5 * 1024 * 1024) / lineBytes);
     let full = '';
-    for (let i = 0; i < repeats; i++) full += lineTemplate.replace('XXXXXX', String(i).padStart(6, '0'));
+    for (let i = 0; i < repeats; i++)
+      full += lineTemplate.replace('XXXXXX', String(i).padStart(6, '0'));
     const mediumPath = join(STORE, SLUG, 'medium.txt');
     await writeFile(mediumPath, full, 'utf8');
 

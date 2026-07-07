@@ -454,7 +454,10 @@ describe('LAN Yolo master-switch — code-execution tools beyond run_command', (
       // Restore the shared fixture state for any test that runs after this one.
       await db
         .update(entities)
-        .set({ rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' }, lanCommandYolo: false })
+        .set({
+          rootGrants: { ...DEFAULT_ROOT_GRANTS, autonomy: 'destructive_gate' },
+          lanCommandYolo: false,
+        })
         .where(eq(entities.id, seed.entityId));
     }
   });

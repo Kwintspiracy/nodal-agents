@@ -103,7 +103,8 @@ async function fetchAllowlisted(url: string, headers: Record<string, string>): P
     const res = await fetch(current, { redirect: 'manual', headers });
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get('location');
-      if (!location) throw new SkillFetchError(`Redirect response (${res.status}) missing Location.`);
+      if (!location)
+        throw new SkillFetchError(`Redirect response (${res.status}) missing Location.`);
       current = new URL(location, current).toString();
       continue;
     }
@@ -201,7 +202,9 @@ async function unzipBufferTo(buf: Buffer, destDir: string): Promise<void> {
       }
       if (final && !violation) {
         const fileData = Buffer.concat(chunks);
-        pendingWrites.push(mkdir(dirname(abs), { recursive: true }).then(() => writeFile(abs, fileData)));
+        pendingWrites.push(
+          mkdir(dirname(abs), { recursive: true }).then(() => writeFile(abs, fileData)),
+        );
       }
     };
     file.start();

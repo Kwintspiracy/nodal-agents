@@ -39,7 +39,9 @@ describe('createSkillRepo — reserved slug refusal (P2b, F-6 follow-up)', () =>
     const rows = await db
       .select({ id: schema.agentSkills.id })
       .from(schema.agentSkills)
-      .where(and(eq(schema.agentSkills.entityId, entityId), eq(schema.agentSkills.slug, reservedSlug)));
+      .where(
+        and(eq(schema.agentSkills.entityId, entityId), eq(schema.agentSkills.slug, reservedSlug)),
+      );
     expect(rows).toHaveLength(0);
   });
 

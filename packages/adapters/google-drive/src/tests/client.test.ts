@@ -9,8 +9,8 @@ type InspectableAuth = {
 };
 
 function authOf(drive: ReturnType<typeof createDriveClient>): InspectableAuth {
-  return (drive as unknown as { context: { _options: { auth: InspectableAuth } } }).context
-    ._options.auth;
+  return (drive as unknown as { context: { _options: { auth: InspectableAuth } } }).context._options
+    .auth;
 }
 
 describe('createDriveClient', () => {

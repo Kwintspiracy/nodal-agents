@@ -96,10 +96,7 @@ describe('assertMasterKeyRestorable', () => {
     );
 
     // restore to empty so it doesn't leak into other tests
-    await db
-      .update(entityLlmKeys)
-      .set({ apiKey: '' })
-      .where(eq(entityLlmKeys.entityId, entityId));
+    await db.update(entityLlmKeys).set({ apiKey: '' }).where(eq(entityLlmKeys.entityId, entityId));
   });
 
   it('does not flag a plaintext (pre-Brique-26) LLM key as encrypted', async () => {
@@ -112,9 +109,6 @@ describe('assertMasterKeyRestorable', () => {
       assertMasterKeyRestorable(db, { keyPath: missingKeyPath() }),
     ).resolves.toBeUndefined();
 
-    await db
-      .update(entityLlmKeys)
-      .set({ apiKey: '' })
-      .where(eq(entityLlmKeys.entityId, entityId));
+    await db.update(entityLlmKeys).set({ apiKey: '' }).where(eq(entityLlmKeys.entityId, entityId));
   });
 });

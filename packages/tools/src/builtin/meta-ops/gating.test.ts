@@ -237,9 +237,7 @@ describe('meta-tool gating via root agent + grants', () => {
   // must be safe-by-default at the CODE layer too.
   it('every meta-tool declares defaultApproval=require_approval (M-6)', () => {
     for (const tool of META_TOOLS) {
-      expect(tool.defaultApproval, `${tool.name} must be safe-by-default`).toBe(
-        'require_approval',
-      );
+      expect(tool.defaultApproval, `${tool.name} must be safe-by-default`).toBe('require_approval');
     }
   });
 
@@ -272,9 +270,10 @@ describe('destructive builtin tools are safe-by-default (R1)', () => {
     const destructiveTools = registry.list({ riskLevels: ['destructive'] });
     expect(destructiveTools.length).toBeGreaterThan(0); // sanity: the filter actually matched something
     for (const tool of destructiveTools) {
-      expect(tool.defaultApproval, `${tool.name} (riskLevel=destructive) must be safe-by-default`).toBe(
-        'require_approval',
-      );
+      expect(
+        tool.defaultApproval,
+        `${tool.name} (riskLevel=destructive) must be safe-by-default`,
+      ).toBe('require_approval');
     }
   });
 });

@@ -60,7 +60,7 @@ describe('file_read — small file (< 1 MiB): unchanged behavior', () => {
 });
 
 describe('file_read — medium file (1 MiB < size <= 50 MiB): streaming window matches reference', () => {
-  it('offset/limit window matches raw.split(\'\\n\').slice(...) exactly, incl. trailing newline + CRLF', async () => {
+  it("offset/limit window matches raw.split('\\n').slice(...) exactly, incl. trailing newline + CRLF", async () => {
     const p = join(WORKSPACE, 'medium.txt');
     // Build ~2 MiB of content: many CRLF lines plus a final trailing '\n'.
     const lineTemplate = 'row-XXXXXX,value,data,more,columns,here\r\n';

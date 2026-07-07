@@ -123,7 +123,8 @@ export async function updateMemory(
   if (updates.fact !== undefined) payload['fact'] = updates.fact;
   if (updates.category !== undefined) payload['category'] = updates.category;
   if (updates.importance !== undefined) payload['importance'] = updates.importance;
-  if (updates.importance_locked !== undefined) payload['importanceLocked'] = updates.importance_locked;
+  if (updates.importance_locked !== undefined)
+    payload['importanceLocked'] = updates.importance_locked;
   if (updates.skill_tags !== undefined) payload['skillTags'] = updates.skill_tags;
   if (updates.archived !== undefined) payload['archived'] = updates.archived;
   if (updates.valid_to !== undefined) {

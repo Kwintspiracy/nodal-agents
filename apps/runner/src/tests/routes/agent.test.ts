@@ -363,7 +363,7 @@ describe('POST /api/agent — entity authorization (bearer-token mode)', () => {
   // that when the new job completes, maybeResumeParent (execute.ts) injects
   // its result into entity Y's job — a cross-entity result injection.
 
-  it('untrusted session caller cannot attach a new job as the child of another entity\'s job', async () => {
+  it("untrusted session caller cannot attach a new job as the child of another entity's job", async () => {
     const [entityYParentJob] = await dbB
       .insert(agentJobs)
       .values({
@@ -399,7 +399,7 @@ describe('POST /api/agent — entity authorization (bearer-token mode)', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('untrusted session caller CAN attach a new job as the child of its OWN entity\'s job', async () => {
+  it("untrusted session caller CAN attach a new job as the child of its OWN entity's job", async () => {
     const [ownParentJob] = await dbB
       .insert(agentJobs)
       .values({

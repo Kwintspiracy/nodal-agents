@@ -83,7 +83,10 @@ export async function resolveSkillId(
     .where(
       and(
         eq(agentSkills.entityId, entityId),
-        or(eq(agentSkills.slug, slugOrName), ilike(agentSkills.name, escapeLikePattern(slugOrName))),
+        or(
+          eq(agentSkills.slug, slugOrName),
+          ilike(agentSkills.name, escapeLikePattern(slugOrName)),
+        ),
       ),
     )
     .limit(1);

@@ -43,10 +43,15 @@ describe('probeContextWindow', () => {
   });
 
   it('hits the host-root native endpoint, not the /v1 base', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }) as unknown as Response);
+    const fetchMock = vi.fn(
+      async () => ({ ok: true, json: async () => ({ data: [] }) }) as unknown as Response,
+    );
     vi.stubGlobal('fetch', fetchMock);
     await probeContextWindow({ baseURL: 'http://localhost:1234/v1' });
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:1234/api/v0/models', expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:1234/api/v0/models',
+      expect.anything(),
+    );
   });
 
   it('returns null with no baseURL', async () => {

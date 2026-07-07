@@ -13,7 +13,10 @@ import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
-import { BUDGET_CHARS as HISTORY_BUDGET_CHARS, truncate as truncateHeadTail } from '../job/thread-history.ts';
+import {
+  BUDGET_CHARS as HISTORY_BUDGET_CHARS,
+  truncate as truncateHeadTail,
+} from '../job/thread-history.ts';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';

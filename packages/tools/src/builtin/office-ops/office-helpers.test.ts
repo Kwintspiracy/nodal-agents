@@ -110,7 +110,11 @@ describe('validateOfficeZipBomb — direct, injected caps (fast, deterministic)'
       Buffer.from([0x50, 0x4b, 0x03, 0x04]),
       Buffer.from(Array.from({ length: 200 }, (_, i) => i % 256)),
     ]);
-    const r = await validateOfficeZipBomb(corrupted, MAX_OFFICE_INFLATED_BYTES, MAX_OFFICE_ZIP_ENTRIES);
+    const r = await validateOfficeZipBomb(
+      corrupted,
+      MAX_OFFICE_INFLATED_BYTES,
+      MAX_OFFICE_ZIP_ENTRIES,
+    );
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected rejection');
     expect(r.reason.toLowerCase()).toMatch(/corrupt|invalid|unreadable/);
@@ -241,7 +245,9 @@ describe('BYPASS REGRESSION — single-byte-prefix magic-byte bypass (original f
     const prefixed = Buffer.concat([Buffer.from([0x41]), zipBuf]);
     await writeFile(join(WORKSPACE, 'prefixed-bomb.xlsx'), prefixed);
 
-    const r = await readWorkspaceBinary(ctx(), 'prefixed-bomb.xlsx', { maxInflatedBytes: 1024 * 1024 });
+    const r = await readWorkspaceBinary(ctx(), 'prefixed-bomb.xlsx', {
+      maxInflatedBytes: 1024 * 1024,
+    });
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('expected the 1-byte-prefixed zip bomb to still be rejected');
     expect(r.reason.toLowerCase()).toMatch(/inflat|decompress|bomb/);
@@ -289,7 +295,9 @@ describe('BYPASS REGRESSION — forged "ghost STORED entry" defeats a forward-sc
     const p = join(WORKSPACE, 'ghost-stored.xlsx');
     await writeFile(p, poc);
 
-    const r = await readWorkspaceBinary(ctx(), 'ghost-stored.xlsx', { maxInflatedBytes: 1024 * 1024 });
+    const r = await readWorkspaceBinary(ctx(), 'ghost-stored.xlsx', {
+      maxInflatedBytes: 1024 * 1024,
+    });
     expect(r.ok).toBe(false);
     if (r.ok) {
       throw new Error(

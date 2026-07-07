@@ -293,9 +293,7 @@ describe('concurrent gated reads — approval re-pairing (audit RT-3 / #17)', ()
         // Turn 2 (after A's approval resolves): the LLM re-issues the deferred
         // read for b.txt under a NEW toolCallId, per the [DEFERRED] instruction.
         {
-          toolCalls: [
-            { toolCallId: 'tc-read-B2', toolName: 'file_read', args: { path: 'b.txt' } },
-          ],
+          toolCalls: [{ toolCallId: 'tc-read-B2', toolName: 'file_read', args: { path: 'b.txt' } }],
         },
         // Turn 3 (after B's approval resolves): agent finishes.
         {

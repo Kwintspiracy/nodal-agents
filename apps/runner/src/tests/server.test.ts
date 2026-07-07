@@ -574,7 +574,10 @@ describe('startBackfillBackground', () => {
         started = true;
         await new Promise((resolve) => setTimeout(resolve, 50));
         finished = true;
-        return Array.from({ length: 1536 }, (_, i) => ((text.charCodeAt(i % text.length) + i) % 100) / 100);
+        return Array.from(
+          { length: 1536 },
+          (_, i) => ((text.charCodeAt(i % text.length) + i) % 100) / 100,
+        );
       },
       dimensions: 1536,
     };
@@ -618,7 +621,10 @@ describe('startBackfillBackground', () => {
     } as unknown as RunnerDeps['db'];
 
     expect(() =>
-      startBackfillBackground({ db: brokenDb, embeddingClient: createEmbeddingClient({ provider: 'keyword' }) }),
+      startBackfillBackground({
+        db: brokenDb,
+        embeddingClient: createEmbeddingClient({ provider: 'keyword' }),
+      }),
     ).not.toThrow();
 
     // Give the background task time to run and (safely) fail. If the
@@ -651,7 +657,9 @@ describe('POST /api/cron — shared guard with the in-process ticker (finding R3
 
     try {
       // First request starts a tick and gets stuck on the gate.
-      const firstReqPromise = app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
+      const firstReqPromise = app.fetch(
+        new Request('http://localhost/api/cron', { method: 'POST' }),
+      );
 
       // Yield a turn so the handler actually reaches runCronTickGuarded and
       // sets `running = true` before the second request is dispatched.
@@ -660,7 +668,9 @@ describe('POST /api/cron — shared guard with the in-process ticker (finding R3
       // Second request arrives while the first is still stuck on the gate —
       // simulates an external scheduler firing again before the previous
       // invocation returned.
-      const secondRes = await app.fetch(new Request('http://localhost/api/cron', { method: 'POST' }));
+      const secondRes = await app.fetch(
+        new Request('http://localhost/api/cron', { method: 'POST' }),
+      );
       expect(secondRes.status).toBe(200);
       const secondBody = (await secondRes.json()) as { ok: boolean; skipped: boolean };
       expect(secondBody.skipped).toBe(true);

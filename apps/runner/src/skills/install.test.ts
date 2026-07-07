@@ -135,9 +135,9 @@ describe('parseSkillSource', () => {
   // string escape the named repo and reach an ARBITRARY owner/repo — with
   // the operator's own GITHUB_TOKEN attached (confused deputy).
   it('CAT-1: rejects a ".." traversal in the shorthand subdir (confused-deputy path escape)', () => {
-    expect(() =>
-      parseSkillSource('x/y/../../../victim-org/private-repo/contents/f'),
-    ).toThrow(SkillSourceError);
+    expect(() => parseSkillSource('x/y/../../../victim-org/private-repo/contents/f')).toThrow(
+      SkillSourceError,
+    );
   });
 
   it('CAT-1: still parses a legitimate shorthand subdir', () => {
@@ -657,7 +657,10 @@ describe('downloadAndExtract — github subdir fetch', () => {
         );
       }
       if (url === 'https://raw.githubusercontent.com/o/r/main/skills/x/SKILL.md') {
-        return new Response(null, { status: 302, headers: { location: 'http://localhost/secret' } });
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'http://localhost/secret' },
+        });
       }
       throw new Error(`unexpected fetch to ${url}`);
     }) as typeof fetch;
@@ -712,7 +715,7 @@ describe('downloadAndExtract — github subdir fetch', () => {
     expect(sent).toBeLessThan(TARGET_CHUNKS);
   });
 
-  it('still fetches ONLY the subdir when the flow doesn\'t hit a redirect (regression guard for the routing change)', async () => {
+  it("still fetches ONLY the subdir when the flow doesn't hit a redirect (regression guard for the routing change)", async () => {
     global.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
       if (url.includes('/contents/skills/y?ref=main')) {
@@ -801,7 +804,9 @@ describe('downloadAndExtract — download guards', () => {
       if (url === 'https://clawhub.ai/api/v1/download?slug=redirected-skill') {
         return new Response(null, {
           status: 302,
-          headers: { location: 'https://www.clawhub.ai/api/v1/download-final?slug=redirected-skill' },
+          headers: {
+            location: 'https://www.clawhub.ai/api/v1/download-final?slug=redirected-skill',
+          },
         });
       }
       if (url === 'https://www.clawhub.ai/api/v1/download-final?slug=redirected-skill') {

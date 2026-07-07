@@ -3,7 +3,12 @@
 import { readFile, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { resolveAndCheckPath, MAX_READ_BYTES, MAX_READ_FILE_BYTES, WorkspaceError } from './workspace';
+import {
+  resolveAndCheckPath,
+  MAX_READ_BYTES,
+  MAX_READ_FILE_BYTES,
+  WorkspaceError,
+} from './workspace';
 import { readLinesWindowed, ReadLinesCapExceededError } from './read-lines';
 
 export const FileReadInputSchema = z.object({

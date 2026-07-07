@@ -22,12 +22,13 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   // Capturing the constructor args lets the stdio test inspect what the
   // adapter passed to the SDK without actually spawning a subprocess.
-  StdioClientTransport: vi
-    .fn()
-    .mockImplementation(function (this: { args: unknown; close: unknown }, a: unknown) {
-      this.args = a;
-      this.close = h.transportClose;
-    }),
+  StdioClientTransport: vi.fn().mockImplementation(function (
+    this: { args: unknown; close: unknown },
+    a: unknown,
+  ) {
+    this.args = a;
+    this.close = h.transportClose;
+  }),
 }));
 
 import { buildMcpRequest, connectMcp } from '../client.ts';

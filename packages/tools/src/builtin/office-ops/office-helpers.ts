@@ -153,7 +153,9 @@ export async function validateOfficeZipBomb(
         nodeStream.on('error', (err: Error) => {
           if (settled) return;
           settled = true;
-          reject(new Error(`Corrupt entry "${entry.name}" inside the Office archive: ${err.message}`));
+          reject(
+            new Error(`Corrupt entry "${entry.name}" inside the Office archive: ${err.message}`),
+          );
         });
       });
       if (violation) return { ok: false, reason: violation };

@@ -346,9 +346,8 @@ describe('listCredentialsAction — ownership filter', () => {
 
 describe('refreshCredentialAccessToken', () => {
   it('updates encrypted payload in DB and returns new plaintext accessToken', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
-      '../credentials-internal.ts'
-    );
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
+      await import('../credentials-internal.ts');
 
     // Persist a google credential with a refresh token.
     const { id } = await persistCredentialFromOauthFlow({
@@ -395,9 +394,8 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('stores the rotated refresh_token when provider returns one (RFC 6749 §10.4)', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
-      '../credentials-internal.ts'
-    );
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
+      await import('../credentials-internal.ts');
 
     // Simulate Airtable / GitHub-style refresh-token rotation: the provider
     // returns a NEW refresh_token in the response and invalidates the previous one.
@@ -436,9 +434,8 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('keeps the existing refresh_token when provider does NOT rotate it', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
-      '../credentials-internal.ts'
-    );
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
+      await import('../credentials-internal.ts');
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -469,9 +466,8 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('throws when credential does not support refresh (Notion)', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
-      '../credentials-internal.ts'
-    );
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
+      await import('../credentials-internal.ts');
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -486,9 +482,8 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('throws when token endpoint returns 4xx', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
-      '../credentials-internal.ts'
-    );
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
+      await import('../credentials-internal.ts');
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -531,9 +526,7 @@ describe('É-1 — credentials.ts no longer exposes decrypting helpers as Server
     const actionsModule = await import('../credentials.ts');
 
     expect((actionsModule as Record<string, unknown>).getDecryptedCredential).toBeUndefined();
-    expect(
-      (actionsModule as Record<string, unknown>).refreshCredentialAccessToken,
-    ).toBeUndefined();
+    expect((actionsModule as Record<string, unknown>).refreshCredentialAccessToken).toBeUndefined();
     expect(
       (actionsModule as Record<string, unknown>).persistCredentialFromOauthFlow,
     ).toBeUndefined();

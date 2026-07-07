@@ -112,7 +112,11 @@ describe('sendTelegramMessage', () => {
         Promise.resolve(makeFetchResponse(429, { ok: false, description: 'Too Many Requests' })),
       );
 
-      const pending = sendTelegramMessage({ chatId: FAKE_CHAT_ID, text: 'x', botToken: FAKE_TOKEN });
+      const pending = sendTelegramMessage({
+        chatId: FAKE_CHAT_ID,
+        text: 'x',
+        botToken: FAKE_TOKEN,
+      });
       const assertion = expect(pending).rejects.toSatisfy((err: unknown) => {
         return err instanceof DeliveryError && err.code === 'telegram_rate_limited';
       });
@@ -264,7 +268,7 @@ describe('sendTelegramMessage', () => {
   });
 
   // ── F-4: 429 backoff + partial-progress on chunked sends ────────────────────
-  it('honors Telegram\'s retry_after on 429 before retrying the chunk', async () => {
+  it("honors Telegram's retry_after on 429 before retrying the chunk", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
@@ -282,7 +286,11 @@ describe('sendTelegramMessage', () => {
         return Promise.resolve(makeFetchResponse(200, { ok: true, result: { message_id: 5 } }));
       });
 
-      const promise = sendTelegramMessage({ chatId: FAKE_CHAT_ID, text: 'hi', botToken: FAKE_TOKEN });
+      const promise = sendTelegramMessage({
+        chatId: FAKE_CHAT_ID,
+        text: 'hi',
+        botToken: FAKE_TOKEN,
+      });
       // Let the first (429) attempt resolve and schedule the backoff timer.
       await vi.advanceTimersByTimeAsync(0);
       expect(calls).toBe(1); // hasn't retried yet — waiting out retry_after
@@ -299,7 +307,7 @@ describe('sendTelegramMessage', () => {
     }
   });
 
-  it('caps an excessive retry_after instead of trusting Telegram\'s value unbounded', async () => {
+  it("caps an excessive retry_after instead of trusting Telegram's value unbounded", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
@@ -317,7 +325,11 @@ describe('sendTelegramMessage', () => {
         return Promise.resolve(makeFetchResponse(200, { ok: true, result: { message_id: 9 } }));
       });
 
-      const promise = sendTelegramMessage({ chatId: FAKE_CHAT_ID, text: 'hi', botToken: FAKE_TOKEN });
+      const promise = sendTelegramMessage({
+        chatId: FAKE_CHAT_ID,
+        text: 'hi',
+        botToken: FAKE_TOKEN,
+      });
       await vi.advanceTimersByTimeAsync(0);
       expect(calls).toBe(1);
       // Just under the 60s cap: must NOT have retried yet.

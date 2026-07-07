@@ -395,9 +395,8 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   // The race against a short timer ensures this can't stall the output.
   void (async () => {
     try {
-      const { getInstalledVersion, getLatestVersion, isNewerVersion } = await import(
-        '../lib/version.ts'
-      );
+      const { getInstalledVersion, getLatestVersion, isNewerVersion } =
+        await import('../lib/version.ts');
       const installed = getInstalledVersion();
       // Timeout already capped inside getLatestVersion() at 5 s; we add an
       // outer race of 3 s here so any internal delay can't push the notice

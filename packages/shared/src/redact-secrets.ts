@@ -46,7 +46,12 @@ export function redactSecretsForAudit(value: unknown): unknown {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if (SECRET_FIELD_RE.test(k)) {
         out[k] = v == null ? v : REDACTED;
-      } else if (k.toLowerCase() === 'env' && v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      } else if (
+        k.toLowerCase() === 'env' &&
+        v !== null &&
+        typeof v === 'object' &&
+        !Array.isArray(v)
+      ) {
         const envOut: Record<string, unknown> = {};
         for (const ek of Object.keys(v as Record<string, unknown>)) envOut[ek] = REDACTED;
         out[k] = envOut;

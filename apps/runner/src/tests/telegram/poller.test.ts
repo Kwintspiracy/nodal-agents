@@ -347,7 +347,10 @@ describe('runTelegramPoller', () => {
         const requestedOffset = body.offset ?? 0;
         if (requestedOffset <= INFRA_UPDATE_ID) {
           return Promise.resolve(
-            fakeResponse(200, { ok: true, result: [makeUpdate(INFRA_UPDATE_ID, 'legit-during-outage')] }),
+            fakeResponse(200, {
+              ok: true,
+              result: [makeUpdate(INFRA_UPDATE_ID, 'legit-during-outage')],
+            }),
           );
         }
         if (!secondBatchDelivered) {
@@ -437,7 +440,10 @@ describe('runTelegramPoller', () => {
       // (100 and 101 arrive together in one batch, repeatedly, until 100 is done).
       if (requestedOffset <= 100) {
         return Promise.resolve(
-          fakeResponse(200, { ok: true, result: [makeUpdate(100, 'first'), makeUpdate(101, 'second')] }),
+          fakeResponse(200, {
+            ok: true,
+            result: [makeUpdate(100, 'first'), makeUpdate(101, 'second')],
+          }),
         );
       }
       batchesAfterConfirmation += 1;

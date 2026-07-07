@@ -279,7 +279,10 @@ function ImportanceStars({
 
   return (
     <div className="inline-flex items-center gap-1">
-      <div className="inline-flex items-center gap-0.5" aria-label={`Importance ${importance} of 5`}>
+      <div
+        className="inline-flex items-center gap-0.5"
+        aria-label={`Importance ${importance} of 5`}
+      >
         {[1, 2, 3, 4, 5].map((value) => (
           <button
             key={value}

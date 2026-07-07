@@ -136,10 +136,7 @@ describe('makeFirecrawlScrapeTool', () => {
     vi.spyOn(client, 'scrape').mockResolvedValue({ markdown: '# short page' });
 
     const tool = makeFirecrawlScrapeTool(client);
-    const result = await tool.execute(
-      { url: 'https://example.com', formats: ['markdown'] },
-      CTX,
-    );
+    const result = await tool.execute({ url: 'https://example.com', formats: ['markdown'] }, CTX);
 
     expect(result.truncated).toBe(false);
     expect(result.markdown).toBe('# short page');
@@ -154,10 +151,7 @@ describe('makeFirecrawlScrapeTool', () => {
     vi.spyOn(client, 'scrape').mockResolvedValue({ markdown: hugeMarkdown });
 
     const tool = makeFirecrawlScrapeTool(client);
-    const result = await tool.execute(
-      { url: 'https://example.com', formats: ['markdown'] },
-      CTX,
-    );
+    const result = await tool.execute({ url: 'https://example.com', formats: ['markdown'] }, CTX);
 
     expect(result.truncated).toBe(true);
     expect(result.markdown?.length).toBeLessThan(hugeMarkdown.length);

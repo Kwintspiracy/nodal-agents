@@ -220,7 +220,10 @@ describe('OR-5 hardening: a maybeResumeParent failure on one root must not abort
     // P's resume attempt failed (malformed payload) — it's simply left as-is,
     // not silently marked resumed.
     const pRow = (
-      await db.select({ status: agentJobs.status }).from(agentJobs).where(eq(agentJobs.id, parentP.id))
+      await db
+        .select({ status: agentJobs.status })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, parentP.id))
     )[0];
     expect(pRow?.status).toBe('awaiting_delegation');
   });

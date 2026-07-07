@@ -550,7 +550,10 @@ describe('UNIQUE constraints', () => {
     expect(skillB).toBeDefined();
     expect(skillA?.id).not.toBe(skillB?.id);
 
-    const rows = await db.select().from(schema.agentSkills).where(eq(schema.agentSkills.slug, slug));
+    const rows = await db
+      .select()
+      .from(schema.agentSkills)
+      .where(eq(schema.agentSkills.slug, slug));
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.id).sort()).toEqual([skillA!.id, skillB!.id].sort());
   });
@@ -601,10 +604,7 @@ describe('UNIQUE constraints', () => {
     expect(connB).toBeDefined();
     expect(connA?.id).not.toBe(connB?.id);
 
-    const rows = await db
-      .select()
-      .from(schema.connectors)
-      .where(eq(schema.connectors.slug, slug));
+    const rows = await db.select().from(schema.connectors).where(eq(schema.connectors.slug, slug));
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.id).sort()).toEqual([connA!.id, connB!.id].sort());
   });
@@ -640,10 +640,7 @@ describe('UNIQUE constraints', () => {
     expect(msB).toBeDefined();
     expect(msA?.id).not.toBe(msB?.id);
 
-    const rows = await db
-      .select()
-      .from(schema.mcpServers)
-      .where(eq(schema.mcpServers.slug, slug));
+    const rows = await db.select().from(schema.mcpServers).where(eq(schema.mcpServers.slug, slug));
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.id).sort()).toEqual([msA!.id, msB!.id].sort());
   });

@@ -38,7 +38,9 @@ describe('windowsPathViolation — win32', () => {
   });
 
   it('blocks a UNC forward-slash (protocol-relative) path', () => {
-    expect(windowsPathViolation('//attacker/share/x', '//attacker/share/x', 'win32')).not.toBeNull();
+    expect(
+      windowsPathViolation('//attacker/share/x', '//attacker/share/x', 'win32'),
+    ).not.toBeNull();
   });
 
   it('blocks a reserved device name at the end of the path (CON)', () => {
@@ -89,7 +91,9 @@ describe('windowsPathViolation — win32', () => {
   // device name before its first dot. Documented here so it isn't mistaken
   // for an accidental regression.
   it('(accepted trade-off) also blocks aux.config.js — Windows treats it as the AUX device too', () => {
-    expect(windowsPathViolation('aux.config.js', 'C:\\work\\aux.config.js', 'win32')).not.toBeNull();
+    expect(
+      windowsPathViolation('aux.config.js', 'C:\\work\\aux.config.js', 'win32'),
+    ).not.toBeNull();
   });
 
   // R6 — device-name/ADS checks must run over requestedPath only, never over

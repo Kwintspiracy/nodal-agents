@@ -25,7 +25,7 @@ async function writeFixture(content: string): Promise<string> {
   return p;
 }
 
-describe('readLinesWindowed — parity with content.split(\'\\n\')', () => {
+describe("readLinesWindowed — parity with content.split('\\n')", () => {
   it('matches on an empty file: exactly one empty line', async () => {
     const p = await writeFixture('');
     const { windowLines, totalLines } = await readLinesWindowed(p, 0, 10);

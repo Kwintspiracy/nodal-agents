@@ -233,7 +233,15 @@ describe('runMemoryCuration — edit_memory distills a real DB row', () => {
     const distilled = 'Distilled: workflow saved in workspace file workflows/x.json.';
 
     const { client } = makeScriptedClient([
-      { toolCalls: [{ toolCallId: 't1', toolName: 'edit_memory', args: { memoryId: factId, fact: distilled } }] },
+      {
+        toolCalls: [
+          {
+            toolCallId: 't1',
+            toolName: 'edit_memory',
+            args: { memoryId: factId, fact: distilled },
+          },
+        ],
+      },
       {},
     ]);
     setActiveLlmClient(client);
@@ -250,7 +258,11 @@ describe('runMemoryCuration — edit_memory distills a real DB row', () => {
 describe('runMemoryCuration — archive_memory soft-archives a real DB row', () => {
   it('sets archived=true in DB and returns archived=1', async () => {
     await db.delete(agentMemory);
-    const factId = await insertFact({ fact: 'obsolete agent fact', source: 'agent', importance: 2 });
+    const factId = await insertFact({
+      fact: 'obsolete agent fact',
+      source: 'agent',
+      importance: 2,
+    });
 
     const { client } = makeScriptedClient([
       { toolCalls: [{ toolCallId: 't1', toolName: 'archive_memory', args: { memoryId: factId } }] },
@@ -275,7 +287,11 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
     const { client, calls } = makeScriptedClient([
       {
         toolCalls: [
-          { toolCallId: 't1', toolName: 'set_importance', args: { memoryId: factId, importance: 5, reason: 'x' } },
+          {
+            toolCallId: 't1',
+            toolName: 'set_importance',
+            args: { memoryId: factId, importance: 5, reason: 'x' },
+          },
         ],
       },
       {},
@@ -304,7 +320,11 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
     const { client, calls } = makeScriptedClient([
       {
         toolCalls: [
-          { toolCallId: 't1', toolName: 'set_importance', args: { memoryId: factId, importance: 1, reason: 'x' } },
+          {
+            toolCallId: 't1',
+            toolName: 'set_importance',
+            args: { memoryId: factId, importance: 1, reason: 'x' },
+          },
         ],
       },
       {},
@@ -328,7 +348,11 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
       {
         // A forged/hallucinated importance outside the 1-5 schema range.
         toolCalls: [
-          { toolCallId: 't1', toolName: 'set_importance', args: { memoryId: factId, importance: 9, reason: 'x' } },
+          {
+            toolCallId: 't1',
+            toolName: 'set_importance',
+            args: { memoryId: factId, importance: 9, reason: 'x' },
+          },
         ],
       },
       {},
@@ -356,7 +380,11 @@ describe('runMemoryCuration — set_importance error paths never re-try silently
     const { client, calls } = makeScriptedClient([
       {
         toolCalls: [
-          { toolCallId: 't1', toolName: 'set_importance', args: { memoryId: missingId, importance: 5, reason: 'x' } },
+          {
+            toolCallId: 't1',
+            toolName: 'set_importance',
+            args: { memoryId: missingId, importance: 5, reason: 'x' },
+          },
         ],
       },
       {},

@@ -114,7 +114,9 @@ describe('query_memory — FTS syntax robustness', () => {
   });
 
   it('an all-stopwords English query resolves gracefully (no invalid tsquery exception)', async () => {
-    await expect(queryMemoryTool.execute({ query: 'the and of' }, makeCtx())).resolves.not.toThrow();
+    await expect(
+      queryMemoryTool.execute({ query: 'the and of' }, makeCtx()),
+    ).resolves.not.toThrow();
   });
 });
 
