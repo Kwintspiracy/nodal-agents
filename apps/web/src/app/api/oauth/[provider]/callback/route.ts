@@ -9,7 +9,7 @@ import { decrypt } from '@nodal-agents/secrets';
 import { getAuthProvider } from '@/lib/server.ts';
 import { getOAuthProvider, getProviderByCredentialType } from '@/lib/oauth-providers.ts';
 import { verifyStateCookie, STATE_COOKIE_NAME } from '@/lib/oauth-state.ts';
-import { persistCredentialFromOauthFlow } from '@/lib/credentials.ts';
+import { persistCredentialFromOauthFlow } from '@/lib/credentials-internal.ts';
 import type { CredentialType } from '@nodal-agents/shared';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ import {
   decrypt,
   isEncrypted,
 } from '@nodal-agents/secrets';
-import { LOCAL_ENTITY_ID } from '@nodal-agents/auth';
+import { LOCAL_ENTITY_ID, LOCAL_USER_ID } from '@nodal-agents/auth';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 
 beforeAll(() => {
@@ -102,10 +102,30 @@ function makeDb(rows: unknown[] = []) {
  * (INSERT returning {id}). The plain `makeDb(rows)` factory returns the same
  * `rows` for every chain, which conflates the two and fails one of them.
  */
-function makeDbMixed(opts: { select?: unknown[]; insert?: unknown[]; update?: unknown[] }) {
+function makeDbMixed(opts: {
+  select?: unknown[];
+  // Sequential select results, one array per successive SELECT call (the last
+  // repeats once exhausted). Use when an action does DISTINCT selects that need
+  // DIFFERENT rows — e.g. an owner-gate SELECT (entities) followed by a
+  // uniqueness SELECT (mcp_servers). Falls back to the single-value `select`.
+  selectQueue?: unknown[][];
+  insert?: unknown[];
+  update?: unknown[];
+}) {
+  let selectIdx = 0;
+  const nextSelect = () => {
+    const q = opts.selectQueue!;
+    const idx = Math.min(selectIdx, q.length - 1);
+    selectIdx++;
+    return chain(q[idx] ?? []);
+  };
   const db = {
-    select: vi.fn().mockReturnValue(chain(opts.select ?? [])),
-    selectDistinct: vi.fn().mockReturnValue(chain(opts.select ?? [])),
+    select: opts.selectQueue
+      ? vi.fn(nextSelect)
+      : vi.fn().mockReturnValue(chain(opts.select ?? [])),
+    selectDistinct: opts.selectQueue
+      ? vi.fn(nextSelect)
+      : vi.fn().mockReturnValue(chain(opts.select ?? [])),
     insert: vi.fn().mockReturnValue(chain(opts.insert ?? [])),
     delete: vi.fn().mockReturnValue(chain([])),
     update: vi.fn().mockReturnValue(chain(opts.update ?? [])),
@@ -3766,7 +3786,9 @@ describe('createMcpServerFromCatalogAction', () => {
       mockMcpConnection([{ name: 'read_file', description: 'read a file' }]),
     );
     currentDb = makeDbMixed({
-      select: [],
+      // HIGH-2: owner-gate SELECT (entities) resolves to the owner, THEN the
+      // slug-uniqueness SELECT (mcp_servers) resolves empty (slug available).
+      selectQueue: [[{ userId: LOCAL_USER_ID }], []],
       insert: [{ id: 'aaaaaaaa-0000-0000-0000-0000000003a4' }],
     }) as typeof currentDb;
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
@@ -3804,6 +3826,27 @@ describe('createMcpServerFromCatalogAction', () => {
     // Env value is encrypted, not plaintext.
     expect(isEncrypted(envVars['GITHUB_TOKEN']!)).toBe(true);
     expect(envVars['GITHUB_TOKEN']).not.toBe('ghp_secret_value');
+  });
+
+  it('custom-stdio-mcp — refuses a non-owner (HIGH-2 owner-gate, never spawns)', async () => {
+    mcpAdapterMocks.connectMcp.mockReset();
+    // Owner-gate SELECT resolves an entity owned by SOMEONE ELSE (not the
+    // local-trust session user) → the arbitrary-command spawn is refused before
+    // any connect/uniqueness work.
+    currentDb = makeDbMixed({
+      selectQueue: [[{ userId: '00000000-0000-0000-0000-0000000000ff' }]],
+    }) as typeof currentDb;
+    const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
+    const r = await createMcpServerFromCatalogAction({
+      slug: 'custom-stdio-mcp',
+      name: 'Filesystem',
+      customSlug: 'fs-evil',
+      customCommand: 'npx',
+      customArgs: ['-y', 'anything'],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('forbidden');
+    expect(mcpAdapterMocks.connectMcp).not.toHaveBeenCalled();
   });
 
   it('custom-stdio-mcp — refuses missing command', async () => {
@@ -3874,6 +3917,10 @@ describe('updateMcpServerConfigAction', () => {
     const encOld = encrypt('stored-token');
     currentDb = makeDb([
       {
+        // userId matches the local-trust session so the HIGH-2 owner-gate on
+        // stdio reconfig passes (same row feeds the existing-server SELECT and
+        // the owner SELECT under makeDb).
+        userId: LOCAL_USER_ID,
         id: 'aaaaaaaa-0000-0000-0000-0000000005b1',
         name: 'FS',
         slug: 'fs',
@@ -3916,6 +3963,7 @@ describe('updateMcpServerConfigAction', () => {
   it('stdio: a new env value REPLACES with a fresh ciphertext and verifies with the plaintext', async () => {
     currentDb = makeDb([
       {
+        userId: LOCAL_USER_ID, // HIGH-2 owner-gate (see note above)
         id: 'aaaaaaaa-0000-0000-0000-0000000005b2',
         name: 'FS',
         slug: 'fs',
@@ -3991,6 +4039,7 @@ describe('updateMcpServerConfigAction', () => {
   it('fails loud and writes nothing when the new config cannot connect', async () => {
     currentDb = makeDb([
       {
+        userId: LOCAL_USER_ID, // HIGH-2 owner-gate (see note above)
         id: 'aaaaaaaa-0000-0000-0000-0000000005b4',
         name: 'FS',
         slug: 'fs',

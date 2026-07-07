@@ -148,16 +148,19 @@ describe('connectMcp', () => {
 
   // ── stdio transport ────────────────────────────────────────────────────────
   // The SDK's StdioClientTransport is mocked above so the test never actually
-  // spawns a subprocess. We verify two things: (1) the adapter passes
-  // command/args/env through verbatim, and (2) the user env is merged on top
-  // of process.env so PATH still resolves.
+  // spawns a subprocess. audit#2 C-1: un serveur MCP tiers (npx/uvx) est un
+  // binaire arbitraire — il ne doit recevoir QUE l'env scrubbé (allowlist
+  // buildChildEnv, cf. packages/tools/src/builtin/child-env.ts) plus les
+  // variables explicites du connecteur (opts.env), jamais le process.env
+  // complet du runner.
 
-  it('builds a stdio transport with command, args, and merged env', async () => {
+  it('builds a stdio transport with command, args, and a scrubbed env (opts.env still merges)', async () => {
     h.listTools.mockResolvedValue({ tools: [] });
     const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
     ctorMock.mockClear();
 
+    // Non-allowlisted var (a made-up plumbing name) must NOT reach the child.
     process.env['TEST_PATH_SENTINEL'] = '/usr/local/bin';
 
     await connectMcp({
@@ -175,32 +178,71 @@ describe('connectMcp', () => {
     };
     expect(arg.command).toBe('npx');
     expect(arg.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem', '/tmp']);
-    // User env wins on collision; process.env values flow through.
+    // opts.env (connector-scoped, explicitly intended) always flows through.
     expect(arg.env.GITHUB_TOKEN).toBe('ghp_secret');
-    expect(arg.env.TEST_PATH_SENTINEL).toBe('/usr/local/bin');
+    // A random process.env var is NOT allowlisted plumbing — scrubbed out.
+    expect(arg.env.TEST_PATH_SENTINEL).toBeUndefined();
+    // PATH itself IS allowlisted plumbing — still resolves for the child.
+    expect(arg.env.PATH ?? arg.env.Path).toBeTruthy();
 
     delete process.env['TEST_PATH_SENTINEL'];
   });
 
-  it('user env overrides process.env on collision', async () => {
+  it('user env overrides the scrubbed env on collision', async () => {
     h.listTools.mockResolvedValue({ tools: [] });
     const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
     ctorMock.mockClear();
 
-    process.env['SHARED_KEY'] = 'system-value';
+    const savedPath = process.env['PATH'];
+    process.env['PATH'] = '/system/bin';
 
     await connectMcp({
       transport: 'stdio',
       command: 'node',
       args: [],
-      env: { SHARED_KEY: 'user-value' },
+      env: { PATH: '/user/bin' },
     });
 
     const arg = ctorMock.mock.calls[0]?.[0] as { env: Record<string, string> };
-    expect(arg.env.SHARED_KEY).toBe('user-value');
+    expect(arg.env.PATH).toBe('/user/bin');
 
-    delete process.env['SHARED_KEY'];
+    process.env['PATH'] = savedPath;
+  });
+
+  // Regression for audit#2 C-1: a stdio MCP child process used to inherit
+  // process.env WHOLESALE (`{ ...process.env, ...opts.env }`), handing a
+  // third-party npx/uvx binary the runner's secrets. Assert the scrubber is
+  // actually wired in — the exact secrets named in the finding must be absent
+  // even though they're set on process.env for this test.
+  it('does NOT leak WORKER_SECRET or DATABASE_URL from process.env to the spawned MCP server', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+    const ctorMock = StdioClientTransport as unknown as ReturnType<typeof vi.fn>;
+    ctorMock.mockClear();
+
+    process.env['WORKER_SECRET'] = 'wsec_super_secret';
+    process.env['DATABASE_URL'] = 'postgres://user:pw@host/db';
+
+    await connectMcp({
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', 'some-community-mcp-server'],
+      env: { CONNECTOR_TOKEN: 'connector-scoped-token' },
+    });
+
+    const arg = ctorMock.mock.calls[0]?.[0] as { env: Record<string, string> };
+    // Runner-wide secrets from process.env must be scrubbed.
+    expect(arg.env.WORKER_SECRET).toBeUndefined();
+    expect(arg.env.DATABASE_URL).toBeUndefined();
+    // Allowlisted OS/shell plumbing still reaches the child.
+    expect(arg.env.PATH ?? arg.env.Path).toBeTruthy();
+    // The connector's own explicit env (opts.env) is the intended exception —
+    // it's scoped to this one server, not the runner's whole process.env.
+    expect(arg.env.CONNECTOR_TOKEN).toBe('connector-scoped-token');
+
+    delete process.env['WORKER_SECRET'];
+    delete process.env['DATABASE_URL'];
   });
 });
 

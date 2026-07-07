@@ -7,7 +7,7 @@
 // every step; never write a half-installed row.
 
 import { cp, rm, mkdir, readFile } from 'node:fs/promises';
-import { dirname, join, basename, sep } from 'node:path';
+import { dirname, join, basename, sep, resolve } from 'node:path';
 import { eq, and, agentSkills, type AnyDrizzleDb } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { parseSkillSource } from './source';
@@ -84,7 +84,20 @@ export async function pickManifest(
 ): Promise<string> {
   if (subdir) {
     const rel = `${subdir.replace(/\/+$/, '')}/SKILL.md`;
-    if (await isFile(join(extractRoot, rel))) return rel;
+    // CAT-2 (audit#2): source.ts now rejects a literal ".." in subdir at parse
+    // time, but this is defense in depth in case a subdir ever reaches here by
+    // another path (e.g. future callers of pickManifest, or a symlink/junction
+    // trick in the extracted archive) — join()+resolve() can still land outside
+    // extractRoot, and that path would then be read/copied as the skill's own
+    // manifest. Mirrors the same startsWith(root + sep) guard fetch.ts already
+    // applies to every archive entry during extraction.
+    const rootResolved = resolve(extractRoot);
+    const rootWithSep = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
+    const abs = resolve(join(extractRoot, rel));
+    if (abs !== rootResolved && !abs.startsWith(rootWithSep)) {
+      throw new SkillInstallError(`Unsafe skill path: "${subdir}" escapes the repository.`);
+    }
+    if (await isFile(abs)) return rel;
     throw new SkillInstallError(`No SKILL.md at "${subdir}" in the repository.`);
   }
 

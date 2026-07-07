@@ -672,3 +672,89 @@ describe('executeTool — meta-tool safe-by-default posture (M-6)', () => {
     expect(res.outcome).toBe('success');
   });
 });
+
+// ─── Audit sécu 2026-07-07 — NOUVEAU-1 (secret redaction) & É-2 (mcp gating) ────
+
+describe('executeTool — secret redaction (NOUVEAU-1)', () => {
+  const connSchema = z.object({ name: z.string(), apiKey: z.string() });
+  const secretTool: ToolDefinition<typeof connSchema, string> = {
+    name: 'create_connector',
+    description: 'test connector with a secret arg',
+    inputSchema: connSchema,
+    riskLevel: 'write',
+    execute: async () => 'ok',
+  };
+
+  it('redacts apiKey in the tool_calls audit row — real value never persisted there', async () => {
+    const marker = `conn-${Date.now()}`;
+    const secret = 'sk-super-secret-value-xyz';
+    await executeTool(secretTool, { name: marker, apiKey: secret }, makeCtx(), makeOpts());
+
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.jobId, seed.jobId));
+    const row = calls.find((c) => (c.toolInput as { name?: string })?.name === marker);
+    expect(row).toBeDefined();
+    expect((row!.toolInput as { apiKey?: string }).apiKey).toBe('***');
+    expect(JSON.stringify(row!.toolInput)).not.toContain(secret);
+  });
+
+  it('keeps the REAL input in the pending approval_requests row (runner re-reads it to re-run)', async () => {
+    const marker = `conn-appr-${Date.now()}`;
+    const secret = 'sk-real-needed-for-reexec';
+    const rule: ApprovalRule = {
+      id: 'gate-connector',
+      toolName: 'create_connector',
+      action: 'require_approval',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+    const res = await executeTool(
+      secretTool,
+      { name: marker, apiKey: secret },
+      makeCtx(),
+      makeOpts([rule]),
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+
+    const appr = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.jobId, seed.jobId));
+    const row = appr.find((a) => (a.toolInput as { name?: string })?.name === marker);
+    expect(row).toBeDefined();
+    // NOT redacted at rest — the re-exec path depends on the real value.
+    expect((row!.toolInput as { apiKey?: string }).apiKey).toBe(secret);
+  });
+});
+
+describe('executeTool — create_mcp stdio treated as code-execution (É-2)', () => {
+  const mcpSchema = z.object({
+    transport: z.enum(['http', 'stdio']),
+    command: z.string().optional(),
+  });
+  const mcpTool: ToolDefinition<typeof mcpSchema, string> = {
+    name: 'create_mcp',
+    description: 'test create_mcp',
+    inputSchema: mcpSchema,
+    riskLevel: 'write',
+    defaultApproval: 'require_approval',
+    execute: async () => 'ok',
+  };
+
+  it('a stdio create_mcp stays gated under destructive_gate (spawns an arbitrary subprocess)', async () => {
+    const res = await executeTool(
+      mcpTool,
+      { transport: 'stdio', command: 'npx some-cmd' },
+      makeCtx(),
+      { ...makeOpts(), autonomy: 'destructive_gate' },
+    );
+    expect(res.outcome).toBe('awaiting_approval');
+  });
+
+  it('an http create_mcp still auto-approves under destructive_gate (no local spawn)', async () => {
+    const res = await executeTool(mcpTool, { transport: 'http' }, makeCtx(), {
+      ...makeOpts(),
+      autonomy: 'destructive_gate',
+    });
+    expect(res.outcome).toBe('success');
+  });
+});

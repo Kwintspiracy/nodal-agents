@@ -2,6 +2,7 @@
 
 import { approvalRequests, toolCalls } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
+import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { isCatastrophicCommand, isDestructiveOrHeavyCommand } from './catastrophic-command';
 import type { z } from 'zod';
 import type {
@@ -94,8 +95,15 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       //    the command rule, NOT that blanket level — otherwise destructive_gate
       //    would gate every shell command (the bug).
       const command = String((validatedInput as { command?: unknown })?.command ?? '');
+      const mcpTransport = String((validatedInput as { transport?: unknown })?.transport ?? '');
       let isHeavy: boolean;
       if (tool.name === 'run_command') isHeavy = isDestructiveOrHeavyCommand(command);
+      // É-2 (audit sécu 2026-07-07): create_mcp with a stdio transport spawns an
+      // arbitrary local subprocess (npx/uvx <cmd>) — RCE-equivalent to
+      // run_command — so it must stay gated under destructive_gate. Its declared
+      // riskLevel is 'write' (correct for the http case), which would otherwise
+      // let this stdio spawn auto-approve. The http case keeps the 'write' path.
+      else if (tool.name === 'create_mcp' && mcpTransport === 'stdio') isHeavy = true;
       else isHeavy = tool.riskLevel === 'destructive';
       if (!isHeavy) effectiveAction = 'auto_approve';
     }
@@ -140,6 +148,13 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         jobId: ctx.jobId,
         agentId: ctx.agentId,
         toolName: tool.name,
+        // NOUVEAU-1: unlike tool_calls, this column is NOT redacted at rest —
+        // the approval re-exec path (apps/runner/src/job/execute.ts) reads it
+        // back verbatim to re-run the approved call, so a redacted apiKey here
+        // would store '***' as the real secret. Instead, every DISPLAY of this
+        // row is redacted at load (web approvals loader + Telegram notify).
+        // Encrypting the secret fields at rest here (and decrypting on re-exec)
+        // is the tracked follow-up.
         toolInput: validatedInput as Record<string, unknown>,
         status: 'pending',
       })
@@ -272,7 +287,12 @@ async function _writeToolCall(
       entityId: ctx.entityId,
       jobId: ctx.jobId,
       toolName,
-      toolInput: input as Record<string, unknown>,
+      // NOUVEAU-1: the audit trail is never re-executed, so we store a
+      // secret-redacted copy — create_connector/create_mcp API keys and stdio
+      // env values must not sit in cleartext in tool_calls or render to the
+      // logs dashboard (LogsTable). The real value already reached the tool's
+      // execute() above; only this copy is masked.
+      toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
       toolOutput: output,
       durationMs,
     });

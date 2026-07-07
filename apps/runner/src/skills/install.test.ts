@@ -126,6 +126,32 @@ describe('parseSkillSource', () => {
   it('still rejects a scheme-less non-allowlisted host (anti-SSRF)', () => {
     expect(() => parseSkillSource('evil.example.com/owner/repo')).toThrow(SkillSourceError);
   });
+
+  // CAT-1 (audit#2): the shorthand "owner/repo/subdir..." branch builds subdir
+  // from a raw split('/') with no normalisation (unlike the URL-based
+  // branches above, which all go through new URL() first). A literal ".."
+  // there survives all the way to the GitHub Contents API request
+  // (fetch.ts:437, encodeURI does not touch ".."), letting a malicious source
+  // string escape the named repo and reach an ARBITRARY owner/repo — with
+  // the operator's own GITHUB_TOKEN attached (confused deputy).
+  it('CAT-1: rejects a ".." traversal in the shorthand subdir (confused-deputy path escape)', () => {
+    expect(() =>
+      parseSkillSource('x/y/../../../victim-org/private-repo/contents/f'),
+    ).toThrow(SkillSourceError);
+  });
+
+  it('CAT-1: still parses a legitimate shorthand subdir', () => {
+    const s = parseSkillSource('acme/repo/skills/foo');
+    expect(s.owner).toBe('acme');
+    expect(s.repo).toBe('repo');
+    expect(s.subdir).toBe('skills/foo');
+  });
+
+  it('CAT-1: rejects an invalid repo segment in the shorthand form', () => {
+    // '!' is outside the allowed owner/repo charset (matches the existing
+    // owner validation, now also applied to repo).
+    expect(() => parseSkillSource('acme/repo!/skills/foo')).toThrow(SkillSourceError);
+  });
 });
 
 describe('frontmatter', () => {
@@ -334,6 +360,29 @@ describe('pickManifest', () => {
     await manifest('pkg/foo/SKILL.md', 'foo');
     expect(await pickManifest(root, 'pkg/foo', null)).toBe('pkg/foo/SKILL.md');
     await expect(pickManifest(root, 'pkg/missing', null)).rejects.toBeInstanceOf(SkillInstallError);
+  });
+
+  // CAT-2 (audit#2): defense in depth alongside source.ts's own ".." rejection
+  // — even if a subdir with ".." ever reached pickManifest directly, it must
+  // not be allowed to resolve outside extractRoot and read/copy a manifest
+  // that isn't part of the extracted skill.
+  it('CAT-2: fails loud when subdir traversal would escape extractRoot', async () => {
+    // A sibling directory OUTSIDE root, containing a manifest a traversal
+    // could otherwise reach.
+    const outside = await mkdtemp(join(tmpdir(), 'nodal-pick-outside-'));
+    try {
+      await writeFile(
+        join(outside, 'SKILL.md'),
+        '---\nname: escaped\ndescription: d\n---\nbody',
+        'utf8',
+      );
+      const escapingSubdir = `../${outside.split(sep).pop()}`; // "../<outside-dir-name>"
+      await expect(pickManifest(root, escapingSubdir, null)).rejects.toBeInstanceOf(
+        SkillInstallError,
+      );
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 

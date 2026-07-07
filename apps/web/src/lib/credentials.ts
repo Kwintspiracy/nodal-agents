@@ -1,40 +1,33 @@
 'use server';
 
-// credentials.ts — server actions + internal helpers for credential lifecycle.
-// Server actions (listCredentialsAction, deleteCredentialAction, etc.) never return
-// the decrypted payload. Internal helpers (getDecryptedCredential, persist*,
-// refresh*) are server-only and return plaintext in memory.
+// credentials.ts — Server Actions for credential lifecycle (client-facing RPC).
+// Every export of this module is registered by Next.js as a network-reachable
+// Server Action, whether or not a client component references it — so this
+// file MUST only contain actions that (a) enforce ownership via getSession()
+// and (b) never return a decrypted payload to the client.
+//
+// É-1 (audit#2 remediation): the functions that DO decrypt+return OAuth
+// payloads (getDecryptedCredential — dead code, removed; refreshCredentialAccessToken;
+// persistCredentialFromOauthFlow) were moved OUT of this file into
+// credentials-internal.ts, which has no 'use server' directive, so they are
+// plain server-only functions again — not RPC endpoints — even though the
+// OAuth callback route still calls them exactly as before.
 //
 // Decryption + token-refresh logic lives in @nodal-agents/db (packages/db/src/queries/credentials.ts)
-// so the runner can also import it without pulling in Next.js. This file adds:
-// - Ownership checks via getSession()
-// - revalidatePath() calls for Next.js cache invalidation
-// - 'use server' / 'server-only' directives
+// so the runner can also import it without pulling in Next.js.
 
 import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { eq } from '@nodal-agents/db';
 import { credentials, connectors } from '@nodal-agents/db';
-import {
-  getDecryptedCredentialById,
-  decryptCredentialForDisplay,
-  refreshAndPersistCredential,
-} from '@nodal-agents/db';
-import { encrypt, isEncrypted } from '@nodal-agents/secrets';
+import { decryptCredentialForDisplay, refreshAndPersistCredential } from '@nodal-agents/db';
 import { z } from 'zod';
-import type {
-  CredentialType,
-  GoogleOauthPayload,
-  NotionOauthPayload,
-  AirtableOauthPayload,
-} from '@nodal-agents/shared';
+import type { CredentialType } from '@nodal-agents/shared';
 import { getDb, getAuthProvider } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
 import { headers } from 'next/headers';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-export type OauthPayload = GoogleOauthPayload | NotionOauthPayload | AirtableOauthPayload;
 
 export type ActionResult<T = void> =
   | { ok: true; data: T }
@@ -274,66 +267,4 @@ export async function refreshCredentialAction(
     }
     return fail('refresh_failed', `Token refresh failed: ${message}`);
   }
-}
-
-// ─── INTERNAL HELPERS (server-only, return decrypted payload) ─────────────────
-
-/**
- * Fetch and decrypt a credential row.
- * NO ownership check — callers are responsible for access control.
- * Thin wrapper over getDecryptedCredentialById (from @nodal-agents/db) that uses
- * the web app's singleton DB instance.
- *
- * Auto-refresh: transparent (handled by getDecryptedCredentialById).
- */
-export async function getDecryptedCredential(id: string) {
-  return getDecryptedCredentialById(getDb(), id);
-}
-
-/**
- * Thin wrapper over refreshAndPersistCredential (from @nodal-agents/db) that uses
- * the web app's singleton DB instance.
- * Kept for backwards compatibility with existing web app consumers (OAuth callback, tests).
- */
-export async function refreshCredentialAccessToken(credentialId: string): Promise<{
-  accessToken: string;
-  expiresAt: Date | null;
-}> {
-  return refreshAndPersistCredential(getDb(), credentialId);
-}
-
-/**
- * Insert a new credential row from an OAuth flow.
- * Always INSERTs — no upsert. Each flow creates a distinct credential.
- * Returns the new credential id.
- */
-export async function persistCredentialFromOauthFlow(opts: {
-  ownerUserId: string;
-  credentialType: CredentialType;
-  name: string;
-  payload: OauthPayload;
-}): Promise<{ id: string }> {
-  const { ownerUserId, credentialType, name, payload } = opts;
-  const db = getDb();
-
-  // Serialize + encrypt payload
-  const rawJson = JSON.stringify(payload);
-  const encryptedPayload = isEncrypted(rawJson) ? rawJson : encrypt(rawJson);
-
-  const [row] = await db
-    .insert(credentials)
-    .values({
-      ownerUserId,
-      name,
-      type: credentialType,
-      payload: encryptedPayload,
-    })
-    .returning({ id: credentials.id });
-
-  if (!row) {
-    throw new Error('persistCredentialFromOauthFlow: insert returned no row');
-  }
-
-  revalidatePath('/credentials');
-  return { id: row.id };
 }

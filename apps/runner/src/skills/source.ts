@@ -45,6 +45,25 @@ export class SkillSourceError extends Error {
 
 const SEGMENT = '[A-Za-z0-9._-]+';
 const OWNER_REPO = new RegExp(`^(${SEGMENT})/(${SEGMENT})$`);
+const SEGMENT_RE = new RegExp(`^${SEGMENT}$`);
+
+/**
+ * True if `subdir` is safe to interpolate, unescaped, into a GitHub Contents
+ * API path (fetch.ts:437, `.../contents/${encodeURI(path)}`). CAT-1
+ * (audit#2): the shorthand branch below builds `subdir` from a raw
+ * `raw.split('/')` with NO normalisation — unlike the URL-based branches
+ * above, which all go through `new URL()` first (browsers/WHATWG URL collapse
+ * `..` segments during parsing). A literal `..` here survives all the way to
+ * the Contents API request and to `encodeURI`, which does NOT encode `.` or
+ * `/`, so a source like "x/y/../../../victim-org/private-repo/contents/f"
+ * escapes the intended repo and hits an ARBITRARY owner/repo — with the
+ * operator's own GITHUB_TOKEN attached (confused deputy: reads whatever
+ * private repo the token can see, not just the one the user named).
+ */
+function isSafeSubdir(subdir: string): boolean {
+  if (subdir.startsWith('/') || subdir.includes('\\')) return false;
+  return !subdir.split('/').includes('..');
+}
 
 /** Hosts we will fetch from. Everything else is rejected. */
 const ALLOWED_HOSTS = new Set([
@@ -205,12 +224,25 @@ export function parseSkillSource(input: string): SkillSource {
     });
   }
   const segs = raw.split('/').filter(Boolean);
-  if (segs.length >= 2 && new RegExp(`^${SEGMENT}$`).test(segs[0]!)) {
+  if (segs.length >= 2 && SEGMENT_RE.test(segs[0]!)) {
+    const repo = stripGitSuffix(segs[1]!);
+    // CAT-1 (audit#2): both path components that get interpolated into the
+    // GitHub Contents API URL must be validated — the code below previously
+    // checked only segs[0] (owner), leaving repo unchecked.
+    if (!SEGMENT_RE.test(repo)) {
+      throw new SkillSourceError(`Invalid repository name in "${raw}".`);
+    }
+    const subdir = segs.slice(2).join('/') || null;
+    if (subdir !== null && !isSafeSubdir(subdir)) {
+      throw new SkillSourceError(
+        `Unsafe path in skill source "${raw}": must not contain ".." or an absolute/backslash path.`,
+      );
+    }
     return github({
       owner: segs[0]!,
-      repo: stripGitSuffix(segs[1]!),
+      repo,
       ref: null,
-      subdir: segs.slice(2).join('/') || null,
+      subdir,
       skillName: null,
       raw,
     });

@@ -1,12 +1,23 @@
 // @vitest-environment node
-// credentials.test.ts — unit + integration tests for credentials.ts
+// credentials.test.ts — unit + integration tests for credentials.ts +
+// credentials-internal.ts.
 //
 // Covers:
 //   - encrypt at rest: raw row payload starts with enc:v1:
-//   - getDecryptedCredential roundtrip
+//   - getDecryptedCredentialById (@nodal-agents/db) roundtrip, called directly
+//     against the test db (the web-app wrapper getDecryptedCredential was
+//     removed — see É-1 remediation note below)
 //   - persistCredentialFromOauthFlow inserts a new row
 //   - refreshCredentialAccessToken mocks fetch + asserts payload updated in DB
 //   - listCredentialsAction ownership filter (only own credentials returned)
+//
+// É-1 (audit#2 remediation): persistCredentialFromOauthFlow and
+// refreshCredentialAccessToken now live in ../credentials-internal.ts (a
+// plain server-only module, NOT a 'use server' module) so they are not
+// network-reachable Server Actions. getDecryptedCredential — a thin wrapper
+// with no production caller — was dead code and has been removed; these
+// tests now call getDecryptedCredentialById (from @nodal-agents/db) directly
+// against the test db, which is exactly what the wrapper used to do.
 //
 // Uses pglite (in-memory) + spinUpTestDb for a real DB.
 // Must run in 'node' environment (not jsdom) because pglite uses native Node APIs.
@@ -20,7 +31,7 @@ import {
 } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { credentials } from '@nodal-agents/db';
+import { credentials, getDecryptedCredentialById } from '@nodal-agents/db';
 import { eq } from '@nodal-agents/db';
 
 // ─── Module-level mock setup ──────────────────────────────────────────────────
@@ -28,6 +39,11 @@ import { eq } from '@nodal-agents/db';
 let _testDb: TestDb | null = null;
 let _testUserId = 'placeholder-user-id';
 let _testEntityId = 'placeholder-entity-id';
+
+/** Local stand-in for the removed getDecryptedCredential() web wrapper. */
+function getDecryptedCredential(id: string) {
+  return getDecryptedCredentialById(_testDb!, id);
+}
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
@@ -94,7 +110,7 @@ afterAll(() => {
 
 describe('persistCredentialFromOauthFlow', () => {
   it('inserts a credential row with encrypted payload (enc:v1: prefix)', async () => {
-    const { persistCredentialFromOauthFlow } = await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -121,7 +137,7 @@ describe('persistCredentialFromOauthFlow', () => {
   });
 
   it('always INSERTs — a second call creates a second row (no upsert)', async () => {
-    const { persistCredentialFromOauthFlow } = await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
 
     const r1 = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -142,12 +158,11 @@ describe('persistCredentialFromOauthFlow', () => {
   });
 });
 
-// ─── getDecryptedCredential ───────────────────────────────────────────────────
+// ─── getDecryptedCredentialById (@nodal-agents/db), exercised against the test db ──
 
-describe('getDecryptedCredential', () => {
+describe('getDecryptedCredentialById', () => {
   it('returns plaintext payload after persist roundtrip', async () => {
-    const { persistCredentialFromOauthFlow, getDecryptedCredential } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -172,15 +187,12 @@ describe('getDecryptedCredential', () => {
   });
 
   it('returns null when credential id does not exist', async () => {
-    const { getDecryptedCredential } = await import('../credentials.ts');
-
     const result = await getDecryptedCredential('00000000-0000-0000-0000-000000000000');
     expect(result).toBeNull();
   });
 
   it('auto-refreshes the access token when expiry is past and provider supports refresh', async () => {
-    const { persistCredentialFromOauthFlow, getDecryptedCredential } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
 
     // Persist a google credential whose access token expired 10 minutes ago.
     const { id } = await persistCredentialFromOauthFlow({
@@ -214,8 +226,7 @@ describe('getDecryptedCredential', () => {
   });
 
   it('does NOT auto-refresh when the access token is still valid (>60s remaining)', async () => {
-    const { persistCredentialFromOauthFlow, getDecryptedCredential } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
 
     // Token valid for 1 hour.
     const { id } = await persistCredentialFromOauthFlow({
@@ -243,8 +254,7 @@ describe('getDecryptedCredential', () => {
   });
 
   it('returns the stale payload (does not throw) when auto-refresh fails', async () => {
-    const { persistCredentialFromOauthFlow, getDecryptedCredential } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -283,8 +293,8 @@ describe('getDecryptedCredential', () => {
 
 describe('listCredentialsAction — ownership filter', () => {
   it('only returns credentials owned by the current user (not other users)', async () => {
-    const { persistCredentialFromOauthFlow, listCredentialsAction } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow } = await import('../credentials-internal.ts');
+    const { listCredentialsAction } = await import('../credentials.ts');
 
     // Create a credential for our test user.
     await persistCredentialFromOauthFlow({
@@ -336,8 +346,9 @@ describe('listCredentialsAction — ownership filter', () => {
 
 describe('refreshCredentialAccessToken', () => {
   it('updates encrypted payload in DB and returns new plaintext accessToken', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken, getDecryptedCredential } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
+      '../credentials-internal.ts'
+    );
 
     // Persist a google credential with a refresh token.
     const { id } = await persistCredentialFromOauthFlow({
@@ -384,8 +395,9 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('stores the rotated refresh_token when provider returns one (RFC 6749 §10.4)', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken, getDecryptedCredential } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
+      '../credentials-internal.ts'
+    );
 
     // Simulate Airtable / GitHub-style refresh-token rotation: the provider
     // returns a NEW refresh_token in the response and invalidates the previous one.
@@ -424,8 +436,9 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('keeps the existing refresh_token when provider does NOT rotate it', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken, getDecryptedCredential } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
+      '../credentials-internal.ts'
+    );
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -456,8 +469,9 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('throws when credential does not support refresh (Notion)', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
+      '../credentials-internal.ts'
+    );
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -472,8 +486,9 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('throws when token endpoint returns 4xx', async () => {
-    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } =
-      await import('../credentials.ts');
+    const { persistCredentialFromOauthFlow, refreshCredentialAccessToken } = await import(
+      '../credentials-internal.ts'
+    );
 
     const { id } = await persistCredentialFromOauthFlow({
       ownerUserId: _testUserId,
@@ -496,10 +511,44 @@ describe('refreshCredentialAccessToken', () => {
   });
 
   it('throws when credential id does not exist', async () => {
-    const { refreshCredentialAccessToken } = await import('../credentials.ts');
+    const { refreshCredentialAccessToken } = await import('../credentials-internal.ts');
 
     await expect(
       refreshCredentialAccessToken('99999999-9999-9999-9999-999999999999'),
     ).rejects.toThrow("credential '99999999-9999-9999-9999-999999999999' not found");
+  });
+});
+
+// ─── É-1 (audit#2 remediation) — module boundary regression ───────────────────
+//
+// credentials.ts carries 'use server': Next.js registers EVERY exported async
+// function of that module as a network-reachable Server Action, whether or
+// not any client component references it. Decrypting functions must never
+// live there again — this test locks that boundary in place.
+
+describe('É-1 — credentials.ts no longer exposes decrypting helpers as Server Actions', () => {
+  it('does not export getDecryptedCredential, refreshCredentialAccessToken, or persistCredentialFromOauthFlow', async () => {
+    const actionsModule = await import('../credentials.ts');
+
+    expect((actionsModule as Record<string, unknown>).getDecryptedCredential).toBeUndefined();
+    expect(
+      (actionsModule as Record<string, unknown>).refreshCredentialAccessToken,
+    ).toBeUndefined();
+    expect(
+      (actionsModule as Record<string, unknown>).persistCredentialFromOauthFlow,
+    ).toBeUndefined();
+
+    // The four legit ownership-checked actions must still be there.
+    expect(typeof actionsModule.listCredentialsAction).toBe('function');
+    expect(typeof actionsModule.deleteCredentialAction).toBe('function');
+    expect(typeof actionsModule.renameCredentialAction).toBe('function');
+    expect(typeof actionsModule.refreshCredentialAction).toBe('function');
+  });
+
+  it('credentials-internal.ts still exposes the decrypting helpers as plain functions (not Server Actions)', async () => {
+    const internalModule = await import('../credentials-internal.ts');
+
+    expect(typeof internalModule.refreshCredentialAccessToken).toBe('function');
+    expect(typeof internalModule.persistCredentialFromOauthFlow).toBe('function');
   });
 });

@@ -1,6 +1,33 @@
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { test as base } from '@playwright/test';
 import { createClient } from '@nodal-agents/db';
 import type { CredentialType } from '@nodal-agents/shared';
+
+/**
+ * SEC-1: read the runner's WORKER_SECRET from the live config at runtime rather
+ * than hardcoding it. A real 256-bit secret committed to a (public) repo is a
+ * leaked credential; the e2e stack the helper talks to already has the real
+ * secret in ~/.nodalai/config.json (written by `nodalai up`). Fail loud if it
+ * isn't there — never fall back to a baked-in value.
+ */
+function readWorkerSecret(): string {
+  const path = process.env['NODALAI_CONFIG_PATH'] ?? join(homedir(), '.nodalai', 'config.json');
+  let cfg: { workerSecret?: unknown };
+  try {
+    cfg = JSON.parse(readFileSync(path, 'utf8')) as { workerSecret?: unknown };
+  } catch (err) {
+    throw new Error(
+      `e2e: cannot read WORKER_SECRET from ${path} (${(err as Error).message}). ` +
+        'Boot the stack first (`nodalai up`) so the runner secret exists.',
+    );
+  }
+  if (typeof cfg.workerSecret !== 'string' || cfg.workerSecret.length === 0) {
+    throw new Error(`e2e: no "workerSecret" in ${path} — cannot authenticate to the runner.`);
+  }
+  return cfg.workerSecret;
+}
 
 /**
  * Skip the entire test file when the Nodal-Agents stack isn't reachable. Every
@@ -360,7 +387,7 @@ export async function insertJob(opts: {
  * Wake the runner for a pending job by posting to /api/worker with WORKER_SECRET.
  */
 export async function triggerRunner(jobId: string): Promise<void> {
-  const WORKER_SECRET = 'cd5da6649755081810a44954e0fc62fe23729476c2b958aff354557d2d46febc';
+  const WORKER_SECRET = readWorkerSecret();
   const RUNNER_URL = 'http://localhost:3001';
   const res = await fetch(`${RUNNER_URL}/api/worker`, {
     method: 'POST',

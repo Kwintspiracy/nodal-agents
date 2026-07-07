@@ -375,6 +375,53 @@ describe('deliverCompletedRoots', () => {
     expect(candidates).toContain(pendingRoot.id);
   });
 
+  it('C-2 (audit#2): a user-cancelled root is NOT resurrected into completed + delivered', async () => {
+    // Mirrors cancelJobAction (apps/web/src/lib/actions.ts): sets the root's
+    // status to 'cancelled' but NEVER touches completedAt, and cascades only
+    // the still-open tasks to 'cancelled' — a task already 'done' before the
+    // cancel keeps its 'done' status.
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'cancelled', channel: 'telegram', chatId: '99999' })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'Task A finished before cancel', 'Task A');
+    await createTaskForRoot(rootJob.id, 'cancelled', 'Task B cancelled', 'Task B');
+
+    sendTelegramMessageMock.mockClear();
+    await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    const updated = await db
+      .select({
+        status: agentJobs.status,
+        completedAt: agentJobs.completedAt,
+        result: agentJobs.result,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, rootJob.id));
+
+    // (a) status must stay 'cancelled' — NOT overwritten to 'completed'.
+    expect(updated[0]?.status).toBe('cancelled');
+    // (b) never claimed/delivered, so completedAt is still untouched.
+    expect(updated[0]?.completedAt).toBeNull();
+    expect(updated[0]?.result).toBeNull();
+    // (c) no channel delivery fired.
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('C-2: findUndeliveredRootJobIds excludes a cancelled root from the SCAN itself', async () => {
+    const cancelledRoot = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({ completedAt: null, status: 'cancelled' })
+      .where(eq(agentJobs.id, cancelledRoot.id));
+    await createTaskForRoot(cancelledRoot.id, 'done', 'done before cancel');
+
+    const candidates = await findUndeliveredRootJobIds(db as RunnerDeps['db']);
+
+    expect(candidates).not.toContain(cancelledRoot.id);
+  });
+
   it('idempotency: two concurrent ticks deliver each root exactly once', async () => {
     const rootJob = await createRootJob();
     await db

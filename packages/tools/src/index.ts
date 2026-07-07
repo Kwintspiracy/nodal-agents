@@ -59,6 +59,7 @@ export {
   webSearchTool,
   dashboardPublishTool,
   DashboardPublishInputSchema,
+  buildChildEnv,
 } from './builtin/index';
 export type { AlwaysOnTool, DashboardPublishInput } from './builtin/index';
 

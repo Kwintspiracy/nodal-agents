@@ -84,6 +84,7 @@ import {
   META_TOOL_NAMES,
   enabledMetaTools,
   parseRootGrants,
+  redactSecretsForAudit,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
@@ -2825,6 +2826,22 @@ export async function createMcpServerFromCatalogAction(
       if (!parsed.data.customCommand) {
         return fail('validation_failed', 'Command is required for stdio MCP');
       }
+      // HIGH-2 (audit sécu 2026-07-07): a custom stdio MCP spawns an ARBITRARY
+      // host command (customCommand + customArgs) at connect time — RCE-
+      // equivalent to run_command, and previously gated only by getSession()
+      // (any entity member). Reserve it to the workspace owner. Non-owner
+      // members can still add catalog MCPs (vetted, fixed commands) and HTTP MCPs.
+      const [ownerRow] = await getDb()
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!ownerRow) return fail('not_found', 'Workspace not found');
+      if (ownerRow.userId !== session.userId) {
+        return fail(
+          'forbidden',
+          'Only the workspace owner can add a custom stdio (command-spawning) MCP server.',
+        );
+      }
       effectiveSlug = parsed.data.customSlug;
       effectiveTransport = 'stdio';
     }
@@ -3351,6 +3368,21 @@ export async function updateMcpServerConfigAction(
     }
 
     // ── stdio ───────────────────────────────────────────────────────────────────
+    // HIGH-2 (audit sécu 2026-07-07): editing a stdio MCP's command/args re-points
+    // an ARBITRARY host command that gets spawned at connect time — RCE-equivalent,
+    // and previously gated only by getSession() (any entity member). Reserve stdio
+    // reconfiguration to the workspace owner (same as creating one).
+    const [ownerRow] = await db
+      .select({ userId: entities.userId })
+      .from(entities)
+      .where(eq(entities.id, session.entityId));
+    if (!ownerRow) return fail('not_found', 'Workspace not found');
+    if (ownerRow.userId !== session.userId) {
+      return fail(
+        'forbidden',
+        'Only the workspace owner can reconfigure a custom stdio (command-spawning) MCP server.',
+      );
+    }
     const effectiveCommand = (parsed.data.command ?? existing.command ?? '').trim();
     if (!effectiveCommand) return fail('validation_failed', 'Command is required');
     const effectiveArgs =
@@ -3897,6 +3929,12 @@ export async function listApprovalsAction(
     return ok(
       rows.map((r) => ({
         ...r,
+        // NOUVEAU-1: the stored approval row keeps the REAL toolInput (the
+        // runner re-reads it to re-run the approved call), but no display path
+        // may leak a secret — create_connector/create_mcp API keys and stdio
+        // env values are masked here, the single loader feeding both the
+        // approvals page and the sidebar/NotificationsBell provider.
+        toolInput: redactSecretsForAudit(r.toolInput) as typeof r.toolInput,
         status: r.status ?? 'pending',
       })) as ApprovalRow[],
     );

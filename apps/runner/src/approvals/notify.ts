@@ -17,6 +17,7 @@
 
 import { eq } from '@nodal-agents/db';
 import { agents, agentJobs } from '@nodal-agents/db';
+import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { sendTelegramMessage, type TelegramInlineKeyboard } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
@@ -79,7 +80,11 @@ export async function resolveTelegramDeliveryTarget(
  * able to break formatting or inject entities.
  */
 export function describeGatedAction(toolName: string, toolInput: unknown): string {
-  const input = (toolInput ?? {}) as Record<string, unknown>;
+  // NOUVEAU-1: mask secret-bearing fields before they reach the Telegram card.
+  // The default case below dumps the whole input as JSON — for create_connector
+  // / create_mcp / attach_mcp that would print the API key / stdio env values in
+  // clear. run_command's `command` is not a secret field, so it is untouched.
+  const input = (redactSecretsForAudit(toolInput ?? {})) as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v ?? null));
   switch (toolName) {
     case 'run_command':

@@ -10,6 +10,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { buildChildEnv } from '@nodal-agents/tools';
 
 // audit#2 M-15: establishing the transport (HTTP handshake, or spawning a
 // stdio subprocess) has no built-in timeout in the SDK — unlike client
@@ -189,22 +190,24 @@ export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection
       () => safeCloseTransport(transport),
     );
   } else {
-    // Merge user env on top of process.env so PATH (and OS-level vars the
-    // MCP server may need, e.g. HOME, APPDATA, LOCALAPPDATA) reach the
-    // subprocess. User values win on collision — that's the point of letting
-    // them set env.
+    // audit#2 C-1: un serveur MCP tiers lancé via npx/uvx est un binaire
+    // arbitraire — il ne doit PAS hériter du process.env complet du runner
+    // (WORKER_SECRET, DATABASE_URL, clés LLM/OAuth...). On passe par le même
+    // scrubber allowlist que run_command/run_skill_script (buildChildEnv) :
+    // seuls PATH et le plumbing OS/shell (HOME, APPDATA, LOCALAPPDATA...)
+    // traversent, plus les variables explicites du connecteur (opts.env, ex.
+    // token du connecteur) qui restent voulues et gagnent sur collision.
     //
-    // Filter out any undefined entries from process.env before merging — the
-    // SDK's StdioServerParameters typing is strict (`Record<string, string>`)
-    // and Node's process.env has `string | undefined`.
-    const baseEnv: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (typeof v === 'string') baseEnv[k] = v;
+    // Filtrage des `undefined` — la SDK typing StdioServerParameters attend
+    // `Record<string, string>` strict, buildChildEnv retourne `string | undefined`.
+    const scrubbedEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(buildChildEnv(process.env))) {
+      if (typeof v === 'string') scrubbedEnv[k] = v;
     }
     const transport = new StdioClientTransport({
       command: opts.command,
       args: opts.args,
-      env: { ...baseEnv, ...opts.env },
+      env: { ...scrubbedEnv, ...opts.env },
     });
     await withTimeout(
       client.connect(transport),

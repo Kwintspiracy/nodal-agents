@@ -6,7 +6,7 @@
 // the root is skipped. The conditional UPDATE prevents double-processing
 // under concurrent ticks.
 
-import { and, eq, isNotNull, isNull, agents } from '@nodal-agents/db';
+import { and, eq, isNotNull, isNull, notInArray, agents } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { checkRootJobComplete } from '@nodal-agents/orchestration';
@@ -15,6 +15,17 @@ import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
+
+// Statuses a root job can be in that mean "this job is DONE, do not touch it
+// again" — regardless of completedAt. A user-cancelled root (C-2, audit#2)
+// never gets completedAt set by cancelJobAction (apps/web/src/lib/actions.ts),
+// so completedAt IS NULL alone is not a safe "still needs delivery" signal:
+// if even one of its tasks had already reached 'done' before the cancel, the
+// rootStatus derivation below would compute 'completed' and the claim UPDATE
+// would resurrect a cancelled job (overwrite status + set completedAt + fire
+// delivery). Excluding these statuses everywhere completedAt IS NULL is
+// checked closes that hole.
+const TERMINAL_ROOT_STATUSES: string[] = ['cancelled', 'completed', 'failed'];
 
 // ─── findUndeliveredRootJobIds ─────────────────────────────────────────────────
 
@@ -38,6 +49,12 @@ import type { ExecuteJobResult } from '../job/execute.ts';
  * the join's `completed_at IS NULL` filter hits the partial index (kept small
  * since completed roots vastly outnumber open ones).
  *
+ * Also excludes roots already in a TERMINAL_ROOT_STATUS (C-2, audit#2): a
+ * user-cancelled root has completedAt IS NULL forever (cancelJobAction never
+ * sets it), so without this filter a cancelled root with a leftover 'done'
+ * task keeps getting scanned back in on every tick — see deliverCompletedRoots
+ * below for the resurrection this would otherwise cause.
+ *
  * Exported (not just inlined in deliverCompletedRoots) so the bound-scan
  * behavior itself is directly testable, independent of the per-row loop's own
  * completedAt guard below.
@@ -47,7 +64,13 @@ export async function findUndeliveredRootJobIds(db: AnyDrizzleDb): Promise<strin
     .selectDistinct({ rootJobId: agentTasks.rootJobId })
     .from(agentTasks)
     .innerJoin(agentJobs, eq(agentJobs.id, agentTasks.rootJobId))
-    .where(and(isNotNull(agentTasks.rootJobId), isNull(agentJobs.completedAt)));
+    .where(
+      and(
+        isNotNull(agentTasks.rootJobId),
+        isNull(agentJobs.completedAt),
+        notInArray(agentJobs.status, TERMINAL_ROOT_STATUSES),
+      ),
+    );
   return rows.map((r) => r.rootJobId!);
 }
 
@@ -95,6 +118,13 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     const rootJob = rootJobRows[0];
     if (!rootJob) continue; // root job doesn't exist (orphaned tasks)
     if (rootJob.completedAt !== null) continue; // already delivered
+    // C-2 (audit#2): defense in depth — a cancelled/completed/failed root
+    // never gets completedAt set by cancelJobAction (web actions.ts), so the
+    // completedAt-only guard above lets it through. findUndeliveredRootJobIds
+    // already excludes these statuses at the scan level, but re-check here in
+    // case this row's status changed between the scan and this load (e.g. a
+    // user cancel racing the cron tick): never resurrect a terminal root.
+    if (TERMINAL_ROOT_STATUSES.includes(rootJob.status ?? '')) continue;
 
     // Check if all tasks for this root are in terminal states
     const complete = await checkRootJobComplete(rootJobId as JobId, db);
@@ -140,8 +170,13 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     const rootError =
       rootStatus === 'failed' ? `all_tasks_failed (${taskRows.length})` : null;
 
-    // Atomic claim: only deliver if root job completedAt is still NULL
-    // This prevents double-delivery under concurrent ticks (invariant from spec).
+    // Atomic claim: only deliver if root job completedAt is still NULL AND
+    // the root hasn't been raced into a terminal status (cancelled by the
+    // user, or completed/failed by another tick) since we loaded it above —
+    // C-2 (audit#2): without the status guard, a concurrent cancel landing
+    // between the load and this UPDATE would still get overwritten back to
+    // 'completed'. This prevents double-processing AND resurrection under
+    // concurrent ticks (invariant from spec).
     const claimed = await db
       .update(agentJobs)
       .set({
@@ -155,12 +190,14 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         and(
           eq(agentJobs.id, rootJobId),
           isNull(agentJobs.completedAt), // gate: only one tick wins
+          notInArray(agentJobs.status, TERMINAL_ROOT_STATUSES), // gate: never resurrect a cancelled/terminal root
         ),
       )
       .returning({ id: agentJobs.id });
 
     if (claimed.length === 0) {
-      // Another concurrent tick won the race — skip delivery
+      // Another concurrent tick won the race, OR the root was cancelled
+      // between our load and this UPDATE (C-2 guard) — skip delivery either way
       continue;
     }
 

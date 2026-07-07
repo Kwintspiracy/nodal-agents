@@ -1310,9 +1310,16 @@ async function runJob(
   // run_command, run_skill_script and skill_file_write are ALL code-execution
   // surfaces — a shell command, a bundled skill script, and a skill file whose
   // content is a script waiting to be run by one of the other two — so the master
-  // switch protects EXECUTION OF CODE, not just run_command. Auto-approving any of
-  // them in a non-local-trust (LAN / multi-user) install is gated behind an
-  // explicit, owner-controlled workspace opt-in (entities.lan_command_yolo). The
+  // switch protects EXECUTION OF CODE, not just run_command. É-2 (audit sécu
+  // 2026-07-07): create_mcp/attach_mcp with a stdio transport ALSO spawn an
+  // arbitrary local subprocess (npx/uvx <cmd>), so they are code-execution too —
+  // their auto_approve rule used to survive this gate. The list is name-based
+  // (it can't see the transport here), so it conservatively covers the http case
+  // as well: creating/attaching an MCP server in a LAN install is worth a human
+  // glance even over HTTP (it carries an API key and can reach internal URLs).
+  // Auto-approving any of them in a non-local-trust (LAN / multi-user) install is
+  // gated behind an explicit, owner-controlled workspace opt-in
+  // (entities.lan_command_yolo). The
   // web layer gates *creating* a per-agent auto_approve rule, but rule creation is
   // NOT the security boundary — EXECUTION is. So we enforce the same gate here,
   // authoritatively, per tool: when the workspace has not opted in, none of these
@@ -1336,7 +1343,13 @@ async function runJob(
   // test. A single enum needs no full-env validation; default to local-trust.
   const authMode = runnerEnv?.AUTH_MODE ?? process.env['AUTH_MODE'] ?? 'local-trust';
   if (authMode !== 'local-trust') {
-    const CODE_EXECUTION_TOOLS = ['run_command', 'run_skill_script', 'skill_file_write'];
+    const CODE_EXECUTION_TOOLS = [
+      'run_command',
+      'run_skill_script',
+      'skill_file_write',
+      'create_mcp',
+      'attach_mcp',
+    ];
     const [yoloEntityRow] = await db
       .select({ lanCommandYolo: entitiesTable.lanCommandYolo })
       .from(entitiesTable)
