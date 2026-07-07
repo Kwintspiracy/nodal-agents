@@ -9,6 +9,7 @@ import {
   Sparkle,
   UsersThree,
   BookOpenText,
+  BookOpen,
   Lightbulb,
   Plug,
   PlugsConnected,
@@ -42,6 +43,9 @@ type Item = {
   count?: number | string;
   /** External link — rendered as a plain <a> (new tab) with its own styling. */
   external?: boolean;
+  /** Brand-specific external styling. 'discord' → the blurple button; a plain
+   *  external link (e.g. Documentation) renders like a normal SidebarLink row. */
+  brand?: 'discord';
 };
 
 type Group = { section?: string; items: Item[] };
@@ -89,7 +93,18 @@ const NAV: Group[] = [
   {
     section: 'Workspace',
     items: [
-      { href: 'https://discord.gg/7UZsvZPgU', label: 'Join Discord', external: true },
+      {
+        href: 'https://discord.gg/7UZsvZPgU',
+        label: 'Join Discord',
+        external: true,
+        brand: 'discord',
+      },
+      {
+        href: 'https://kwintspiracy.github.io/nodal-agents/',
+        label: 'Documentation',
+        icon: BookOpen,
+        external: true,
+      },
       { href: '/settings', label: 'Settings', icon: GearSix },
     ],
   },
@@ -210,7 +225,7 @@ export default function Sidebar({
             <div key={gi}>
               {group.section && <SidebarSection>{group.section}</SidebarSection>}
               {group.items.map((it) =>
-                it.external ? (
+                it.external && it.brand === 'discord' ? (
                   // Discord — always Discord-blurple, external-link icon, new tab.
                   // Sizing mirrors SidebarLink: roomy on mobile, compact on desktop.
                   <a
@@ -228,6 +243,27 @@ export default function Sidebar({
                       />
                     </span>
                     <span className="flex-1 truncate">{it.label}</span>
+                  </a>
+                ) : it.external ? (
+                  // Plain external link (e.g. Documentation) — mirrors SidebarLink's
+                  // inactive row styling, opens in a new tab, with a small external
+                  // arrow at the end so it reads as "leaves the app".
+                  <a
+                    key={it.href}
+                    href={it.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-[16px] text-ink-2 transition-colors hover:bg-hover lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-[13px] lg:leading-none"
+                  >
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center text-ink-3 group-hover:text-ink-2 lg:h-3.5 lg:w-3.5">
+                      {it.icon ? <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" /> : null}
+                    </span>
+                    <span className="flex-1 truncate">{it.label}</span>
+                    <ArrowSquareOut
+                      size={14}
+                      weight="bold"
+                      className="h-3.5 w-3.5 shrink-0 text-ink-4 lg:h-3 lg:w-3"
+                    />
                   </a>
                 ) : (
                   <SidebarLink
