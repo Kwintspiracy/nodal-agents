@@ -14,6 +14,45 @@ import { jsonSchemaToZod } from './json-schema-to-zod.ts';
 // server that streams progress can run longer still.
 const MCP_CALL_TIMEOUT_MS = Number(process.env.MCP_CALL_TIMEOUT_MS) || 180_000;
 
+// audit#2026-07-07 F6: nothing capped the size of a returned MCP tool result.
+// A third-party MCP server — buggy or actively malicious — can return several
+// MB of text or structured data in one response, exploding the agent's token
+// budget on a single tool call. 50k chars mirrors the CHAR_CAP pattern used by
+// firecrawl/tavily (packages/adapters/firecrawl/src/tools/scrape.ts,
+// packages/adapters/tavily/src/tools/search.ts). Overridable for servers that
+// legitimately need more headroom.
+const MCP_RESULT_CHAR_CAP = Number(process.env.MCP_RESULT_CHAR_CAP) || 50_000;
+
+/**
+ * Cap the size of a value returned by an MCP tool call.
+ *
+ * - Strings are truncated in place with a trailing marker (same pattern as
+ *   capField/capText in firecrawl/tavily) — always valid text, still readable.
+ * - Non-string values (structuredContent objects, raw content-block arrays)
+ *   are NOT byte-sliced: slicing serialized JSON would hand the agent a
+ *   syntactically broken payload, which is worse than the oversized-payload
+ *   problem it's meant to fix. Instead they are wrapped with an explicit
+ *   `truncated: true` flag and a JSON preview, so the caller can tell exactly
+ *   what happened instead of silently receiving cut-off/corrupt data
+ *   (invariant #4 — fail loud, no silent smart fallback).
+ */
+function capMcpResult(value: unknown): unknown {
+  if (typeof value === 'string') {
+    if (value.length <= MCP_RESULT_CHAR_CAP) return value;
+    return (
+      value.slice(0, MCP_RESULT_CHAR_CAP) +
+      `\n\n[...truncated at ${MCP_RESULT_CHAR_CAP} chars — MCP tool result was larger]`
+    );
+  }
+  const serialized = JSON.stringify(value) ?? '';
+  if (serialized.length <= MCP_RESULT_CHAR_CAP) return value;
+  return {
+    truncated: true,
+    originalLength: serialized.length,
+    preview: serialized.slice(0, MCP_RESULT_CHAR_CAP),
+  };
+}
+
 /** Sanitise a server slug into a tool-name-safe prefix (`cogni-cortex` → `cogni_cortex`). */
 export function slugToPrefix(slug: string): string {
   return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
@@ -89,16 +128,16 @@ export function mcpToolToToolDefinition(
       // empty result. Prefer structuredContent; else join text-only content
       // blocks (usually serialized JSON); else return the raw blocks so
       // images/resources are preserved.
-      if (result.structuredContent != null) return result.structuredContent;
+      if (result.structuredContent != null) return capMcpResult(result.structuredContent);
       const content = result.content ?? [];
       if (
         Array.isArray(content) &&
         content.length > 0 &&
         content.every((c) => (c as { type?: unknown }).type === 'text')
       ) {
-        return extractText(content);
+        return capMcpResult(extractText(content));
       }
-      return content;
+      return capMcpResult(content);
     },
   };
 }

@@ -5,8 +5,34 @@
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+
+/**
+ * Restrict a secret file to its owner on ALL platforms (FA-5, audit sécu
+ * 2026-07-07). `chmod 0600` is honoured on POSIX but a no-op on Windows, where
+ * a fresh file inherits the parent directory's ACL rather than being
+ * owner-only. So on Windows we lay down an explicit ACL with `icacls`: strip
+ * inheritance (`/inheritance:r`) and grant Full control to the current user
+ * only. Best-effort — a failure leaves the default profile ACL in place rather
+ * than throwing, since the write itself already succeeded.
+ */
+export function restrictFileToOwner(path: string): void {
+  try {
+    chmodSync(path, 0o600); // POSIX; no-op on Windows
+  } catch {
+    /* ignore */
+  }
+  if (process.platform !== 'win32') return;
+  const user = process.env['USERNAME'] || process.env['USER'];
+  if (!user) return; // can't name the grantee — leave the inherited ACL
+  try {
+    execFileSync('icacls', [path, '/inheritance:r', '/grant:r', `${user}:F`], { stdio: 'ignore' });
+  } catch {
+    /* best-effort: keep the file even if the ACL couldn't be tightened */
+  }
+}
 
 const VERSION = 'v1';
 const ALGO = 'aes-256-gcm';
@@ -52,12 +78,8 @@ export function loadOrCreateMasterKey(path: string = masterKeyPath()): Buffer {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const buf = randomBytes(KEY_BYTES);
   writeFileSync(path, buf.toString('base64'), { mode: 0o600 });
-  // chmod is a no-op on Windows; the profile dir is user-private via NTFS ACL.
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    /* Windows: ignore */
-  }
+  // FA-5: 0600 is POSIX-only — on Windows lay down an explicit owner-only ACL.
+  restrictFileToOwner(path);
   cachedMasterKey = buf;
   return buf;
 }

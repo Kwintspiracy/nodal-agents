@@ -1,36 +1,36 @@
-// @nodal-agents/adapter-google-drive — client factory tests
+// @nodal-agents/adapter-google-calendar — client factory tests
 
 import { describe, it, expect } from 'vitest';
-import { createDriveClient } from '../client';
+import { createGoogleCalendarClient } from '../client';
 
 /** Minimal shape of the OAuth2Client fields this suite inspects. */
 type InspectableAuth = {
   refreshHandler?: () => Promise<{ access_token: string; expiry_date: number }>;
 };
 
-function authOf(drive: ReturnType<typeof createDriveClient>): InspectableAuth {
-  return (drive as unknown as { context: { _options: { auth: InspectableAuth } } }).context._options
-    .auth;
+function authOf(calendar: ReturnType<typeof createGoogleCalendarClient>): InspectableAuth {
+  return (calendar as unknown as { context: { _options: { auth: InspectableAuth } } }).context
+    ._options.auth;
 }
 
-describe('createDriveClient', () => {
-  it('returns a drive_v3.Drive instance with a files resource', () => {
-    const drive = createDriveClient(async () => 'fake_access_token');
-    expect(drive).toBeDefined();
-    expect(typeof drive.files).toBe('object');
-    expect(typeof drive.files.list).toBe('function');
-    expect(typeof drive.files.get).toBe('function');
-    expect(typeof drive.permissions).toBe('object');
+describe('createGoogleCalendarClient', () => {
+  it('returns a calendar_v3.Calendar instance with an events resource', () => {
+    const calendar = createGoogleCalendarClient(async () => 'fake_access_token');
+    expect(calendar).toBeDefined();
+    expect(typeof calendar.events).toBe('object');
+    expect(typeof calendar.events.list).toBe('function');
+    expect(typeof calendar.events.get).toBe('function');
+    expect(typeof calendar.events.insert).toBe('function');
   });
 
   it('creates distinct instances per call', () => {
-    const a = createDriveClient(async () => 'token_a');
-    const b = createDriveClient(async () => 'token_b');
+    const a = createGoogleCalendarClient(async () => 'token_a');
+    const b = createGoogleCalendarClient(async () => 'token_b');
     expect(a).not.toBe(b);
   });
 
   it('accepts any resolver returning a string (validation is API-side)', () => {
-    expect(() => createDriveClient(async () => 'any-token')).not.toThrow();
+    expect(() => createGoogleCalendarClient(async () => 'any-token')).not.toThrow();
   });
 
   // M-12: same fix as gmail's client — see that suite for the full rationale.
@@ -43,8 +43,8 @@ describe('createDriveClient', () => {
       calls++;
       return `token-${calls}`;
     };
-    const drive = createDriveClient(getAccessToken);
-    const auth = authOf(drive);
+    const calendar = createGoogleCalendarClient(getAccessToken);
+    const auth = authOf(calendar);
     expect(typeof auth.refreshHandler).toBe('function');
 
     const first = await auth.refreshHandler!();
@@ -59,8 +59,8 @@ describe('createDriveClient', () => {
   // endpoint that accepts the connection but never responds would pend the
   // tool call forever. This asserts a bounded timeout is always configured.
   it('configures a 30s network timeout (no unbounded gaxios default)', () => {
-    const drive = createDriveClient(async () => 'tok');
-    const options = (drive as unknown as { context: { _options: { timeout?: number } } }).context
+    const calendar = createGoogleCalendarClient(async () => 'tok');
+    const options = (calendar as unknown as { context: { _options: { timeout?: number } } }).context
       ._options;
     expect(options.timeout).toBe(30_000);
   });

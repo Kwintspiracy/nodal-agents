@@ -11,6 +11,16 @@ import { buildAppendTextRequest } from '../helpers/batch-update';
 /** Max characters allowed in get/get_text before throwing docs_document_too_large */
 const CHAR_CAP = 100_000;
 
+// audit#2026-07-07 F8: docs_get compared CHAR_CAP against the FLATTENED text
+// (docBodyToText(doc.body).length) but returned the RAW Google Docs JSON body
+// — which for a heavily-styled or tabled document can be 3-10x heavier than
+// its flattened text for the same visible content (every run carries its own
+// textStyle/paragraphStyle objects, revision suggestions, etc.). A document
+// whose flattened text sits comfortably under CHAR_CAP could still return a
+// multi-MB JSON body, sailing straight past the guard. Cap the actual
+// payload we return, not just its text projection.
+const BODY_JSON_CHAR_CAP = 500_000;
+
 // ── docs_create ────────────────────────────────────────────────────────────
 
 const CreateDocInput = z.object({
@@ -121,6 +131,17 @@ export function createGetDocTool(
             throw new DocsAdapterError(
               'docs_document_too_large',
               `Document body contains ${text.length} characters which exceeds the ${CHAR_CAP}-character cap.`,
+            );
+          }
+
+          // audit#2026-07-07 F8: also cap the RAW JSON we actually return —
+          // see BODY_JSON_CHAR_CAP above. A doc can pass the flattened-text
+          // check yet still carry a multi-MB raw body (heavy styling/tables).
+          const bodyJsonLength = JSON.stringify(doc.body).length;
+          if (bodyJsonLength > BODY_JSON_CHAR_CAP) {
+            throw new DocsAdapterError(
+              'docs_document_too_large',
+              `Document body JSON is ${bodyJsonLength} characters which exceeds the ${BODY_JSON_CHAR_CAP}-character raw-JSON cap (docs_get returns the full Google Docs JSON structure, which can be much heavier than its flattened text — use docs_get_text instead).`,
             );
           }
         }

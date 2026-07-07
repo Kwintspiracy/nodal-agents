@@ -82,6 +82,77 @@ describe('gmail_list_drafts', () => {
   it('has riskLevel read', () => {
     expect(createListDraftsTool(gmail).riskLevel).toBe('read');
   });
+
+  // audit#2026-07-07 F3: a failed per-draft GET must surface as an explicit
+  // `error` field + a nonzero `errors` count — NOT a blank-field stub
+  // indistinguishable from a genuinely empty draft (invariant #4, fail loud).
+  it('reports a failed metadata GET via error/errors instead of a silent blank stub', async () => {
+    (gmail.users.drafts.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: {
+        drafts: [
+          { id: 'draft-ok', message: { id: 'msg-ok' } },
+          { id: 'draft-fail', message: { id: 'msg-fail' } },
+        ],
+        nextPageToken: null,
+      },
+    });
+    (gmail.users.drafts.get as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        data: {
+          id: 'draft-ok',
+          message: {
+            id: 'msg-ok',
+            snippet: 'ok snippet',
+            payload: { headers: [{ name: 'Subject', value: 'OK' }] },
+          },
+        },
+      })
+      .mockRejectedValueOnce(new Error('rate limited'));
+
+    const tool = createListDraftsTool(gmail);
+    const result = await tool.execute({}, {} as never);
+
+    expect(result.total).toBe(2);
+    expect(result.errors).toBe(1);
+    const ok = result.drafts.find((d) => d.draftId === 'draft-ok');
+    const failed = result.drafts.find((d) => d.draftId === 'draft-fail');
+    expect(ok?.error).toBeUndefined();
+    expect(ok?.subject).toBe('OK');
+    expect(failed?.error).toBe('rate limited');
+    expect(failed?.subject).toBe('');
+  });
+
+  // audit#2026-07-07 F3: max_results allows up to 500 — this asserts the
+  // per-draft metadata fetch never exceeds the bounded concurrency, even for
+  // a large page (regression for the unbounded Promise.all fan-out).
+  it('bounds concurrent metadata GETs even for a large page of drafts', async () => {
+    const STUB_COUNT = 40;
+    (gmail.users.drafts.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: {
+        drafts: Array.from({ length: STUB_COUNT }, (_, i) => ({
+          id: `draft-${i}`,
+          message: { id: `msg-${i}` },
+        })),
+        nextPageToken: null,
+      },
+    });
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    (gmail.users.drafts.get as ReturnType<typeof vi.fn>).mockImplementation(async (params) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight--;
+      return { data: { id: params.id, message: { id: 'm', payload: { headers: [] } } } };
+    });
+
+    const tool = createListDraftsTool(gmail);
+    const result = await tool.execute({ max_results: STUB_COUNT }, {} as never);
+
+    expect(result.total).toBe(STUB_COUNT);
+    expect(maxInFlight).toBeLessThanOrEqual(15);
+  });
 });
 
 describe('gmail_create_draft', () => {

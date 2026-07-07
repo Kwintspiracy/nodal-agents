@@ -71,6 +71,29 @@ const nextConfig: NextConfig = {
     },
     optimizePackageImports: ['@phosphor-icons/react'],
   },
+  // Headers de sécurité HTTP posés sur toutes les routes. Pas de CSP complète :
+  // le bootstrap de thème inline (apps/web/src/app/layout.tsx, THEME_BOOTSTRAP)
+  // tourne sans nonce, donc un script-src restrictif le casserait — ou forcerait
+  // 'unsafe-inline' sur les scripts, ce qui annule l'essentiel de la protection
+  // XSS d'une CSP. On se limite à frame-ancestors (redondant avec X-Frame-Options
+  // ci-dessous, appartient à CSP niveau 2 et n'est pas ignoré par les navigateurs
+  // qui le supportent). Durcissement de suivi : nonce sur le script inline +
+  // CSP complète (script-src 'self' 'nonce-...', style-src, etc.).
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+        ],
+      },
+    ];
+  },
   webpack(config: Configuration, { isServer }: { isServer: boolean }) {
     // Safety net: workspace package source no longer uses `.js` extensions in
     // relative imports (Turbopack-compatible), but if a future contributor

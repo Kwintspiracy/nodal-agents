@@ -7,10 +7,59 @@
 // The caller owns the returned connection and must call `close()` on it once
 // finished. For stdio that also tears down the spawned subprocess.
 
+import { lookup as dnsLookupCb } from 'node:dns';
+import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { buildChildEnv } from '@nodal-agents/tools';
+
+const dnsLookup = promisify(dnsLookupCb);
+
+// F7 (audit sécu 2026-07-07): SSRF guard on the HTTP MCP server URL. connectMcp
+// is the single chokepoint for BOTH config paths (the web action AND an agent's
+// create_mcp tool), so the guard lives here. We block ONLY link-local / cloud
+// metadata (169.254.x, metadata.google.internal, …) — the IAM-credential-theft
+// vector when the runner sits in a cloud — while allowing loopback and RFC1918,
+// which are legitimate for a local/LAN MCP server. DNS is resolved so a hostname
+// can't mask a blocked target.
+const BLOCKED_MCP_HOSTNAMES = new Set(['metadata.google.internal', 'metadata.goog', 'metadata']);
+
+function isBlockedMcpAddress(addr: string): boolean {
+  const a = addr.toLowerCase();
+  if (/^169\.254\./.test(a)) return true; // IPv4 link-local (incl. …169.254 metadata)
+  if (a === '100.100.100.100') return true; // Alibaba metadata
+  if (a.startsWith('fe80:')) return true; // IPv6 link-local
+  if (a === 'fd00:ec2::254') return true; // AWS IMDS over IPv6
+  return false;
+}
+
+function isIpLiteral(host: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':');
+}
+
+export async function assertMcpHttpUrlSafe(url: URL): Promise<void> {
+  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (BLOCKED_MCP_HOSTNAMES.has(hostname) || isBlockedMcpAddress(hostname)) {
+    throw new Error(`MCP URL blocked: "${hostname}" is a link-local / cloud-metadata endpoint.`);
+  }
+  // An IP literal was already checked above — no DNS to resolve (and no real
+  // network I/O in unit tests, which would otherwise hang under fake timers).
+  if (isIpLiteral(hostname)) return;
+  let resolved: Array<{ address: string }>;
+  try {
+    resolved = await dnsLookup(hostname, { all: true });
+  } catch {
+    return; // a DNS failure is not a security decision — the real connect fails on its own
+  }
+  for (const { address } of resolved) {
+    if (isBlockedMcpAddress(address)) {
+      throw new Error(
+        `MCP URL blocked: "${hostname}" resolves to a link-local / cloud-metadata address.`,
+      );
+    }
+  }
+}
 
 // audit#2 M-15: establishing the transport (HTTP handshake, or spawning a
 // stdio subprocess) has no built-in timeout in the SDK — unlike client
@@ -180,6 +229,7 @@ export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection
 
   if (opts.transport === 'http') {
     const target = buildMcpRequest(opts);
+    await assertMcpHttpUrlSafe(target.url); // F7: reject link-local / cloud-metadata targets
     const transport = new StreamableHTTPClientTransport(target.url, {
       requestInit: { headers: target.headers },
     });

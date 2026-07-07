@@ -34,7 +34,31 @@ const WebBrowseInput = z.object({
 });
 
 export type WebBrowseResult = { url: string; title: string; content: string };
-export type WebBrowseOutput = { query: string; count: number; results: WebBrowseResult[] };
+export type WebBrowseOutput = {
+  query: string;
+  count: number;
+  results: WebBrowseResult[];
+  /**
+   * True when `waitSecs` elapsed before the run reached a terminal status
+   * (audit#2026-07-07 F1). `results` still reflects whatever the dataset held
+   * at that moment — possibly empty, possibly partial — never a hang.
+   */
+  timedOut: boolean;
+};
+
+// Bound on how long apify_web_browse blocks waiting for rag-web-browser to
+// finish. Without a `waitSecs`, apify-client's `.call()` waits INDEFINITELY —
+// same root cause as apify_run_actor's audit#2 M-15, but this tool has no
+// caller-supplied override (it's meant to be a fast, one-shot scrape/search),
+// so a stuck/slow run would pend the tool call — and the job — forever
+// (audit#2026-07-07 F1). rag-web-browser normally finishes in seconds; 120s is
+// generous headroom while still being a bound instead of no bound at all.
+const WEB_BROWSE_WAIT_SECS = 120;
+
+// Statuses apify-client's `.call()` can return when the run actually finished.
+// Anything else (READY, RUNNING) means `waitSecs` elapsed first — the run is
+// still going on Apify's side, and the dataset we read may be empty/partial.
+const TERMINAL_RUN_STATUSES = new Set(['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT']);
 
 /**
  * Strip control characters (except tab / newline / carriage-return) that creep
@@ -87,17 +111,22 @@ export function makeApifyWebBrowseTool(
     riskLevel: 'read',
     async execute(input) {
       try {
-        const run = await client.actor('apify/rag-web-browser').call({
-          query: input.query,
-          // `text` is the proven, lighter output the legacy skill used. Markdown is
-          // heavier and special-char-dense — an unnecessary deviation that changed
-          // the request/response load profile. Stay on the format that always worked.
-          outputFormats: ['text'],
-          maxResults: input.maxResults ?? 3,
-        });
+        const run = await client.actor('apify/rag-web-browser').call(
+          {
+            query: input.query,
+            // `text` is the proven, lighter output the legacy skill used. Markdown is
+            // heavier and special-char-dense — an unnecessary deviation that changed
+            // the request/response load profile. Stay on the format that always worked.
+            outputFormats: ['text'],
+            maxResults: input.maxResults ?? 3,
+          },
+          // audit#2026-07-07 F1: bound the wait — see WEB_BROWSE_WAIT_SECS above.
+          { waitSecs: WEB_BROWSE_WAIT_SECS },
+        );
         const dataset = await client.dataset(run.defaultDatasetId).listItems({ clean: true });
         const results = (dataset.items ?? []).map(normalizeBrowseItem).filter((r) => r.content);
-        return { query: input.query, count: results.length, results };
+        const timedOut = !TERMINAL_RUN_STATUSES.has(run.status);
+        return { query: input.query, count: results.length, results, timedOut };
       } catch (err) {
         throw wrapApifyError(err);
       }

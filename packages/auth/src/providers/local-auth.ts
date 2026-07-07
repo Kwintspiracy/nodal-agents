@@ -227,6 +227,22 @@ export function createLocalAuthProvider(options: LocalAuthProviderOptions): Loca
     databaseHooks: {
       user: {
         create: {
+          before: async (user) => {
+            // MED-2 (audit sécu 2026-07-07): close open sign-up once the owner
+            // exists. In local-auth on a LAN bind, open sign-up lets ANY
+            // reachable host create an account — and each new user auto-gets
+            // its own entity below (an unauthenticated foothold). The FIRST
+            // user (owner onboarding) is allowed; afterwards sign-up is closed.
+            // Set NODALAI_ALLOW_OPEN_SIGNUP=1 to keep it open for a deliberate
+            // multi-user install (a real invite flow would replace this).
+            if (process.env['NODALAI_ALLOW_OPEN_SIGNUP'] !== '1') {
+              const [existing] = await db.select({ id: users.id }).from(users).limit(1);
+              if (existing) {
+                throw new Error('Sign-up is closed: this workspace already has an owner.');
+              }
+            }
+            return { data: user };
+          },
           after: async (user) => {
             const entityId = crypto.randomUUID();
             const slug = `personal-${entityId.slice(0, 8)}`;

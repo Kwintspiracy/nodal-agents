@@ -6,6 +6,7 @@ import type { ToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError, GmailAdapterError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';
+import { mapWithConcurrency } from '../helpers/concurrency';
 import {
   extractTextFromPayload,
   extractAttachmentInfos,
@@ -16,6 +17,11 @@ import type { AttachmentSpec } from '../helpers/rfc2822';
 
 // Max body chars to return (avoid context overload)
 const BODY_CHAR_CAP = 10000;
+
+// audit#2026-07-07 F3: cap how many per-message GET requests run at once when
+// hydrating a list page (up to 500 stubs) — an unbounded Promise.all fan-out
+// hits Gmail's rate limit and spikes memory for large pages.
+const HYDRATE_CONCURRENCY = 15;
 
 // ── Attachment schema (reused across send/reply/draft) ─────────────────────
 
@@ -119,6 +125,8 @@ const ListMessagesInput = z.object({
 
 export type ListMessagesOutput = {
   total: number;
+  /** Count of stubs whose metadata GET failed (audit#2026-07-07 F3) — see each message's `error`. */
+  errors: number;
   messages: Array<{
     messageId: string;
     threadId: string;
@@ -127,6 +135,8 @@ export type ListMessagesOutput = {
     date: string;
     snippet: string;
     labelIds: string[];
+    /** Set when the metadata GET for this message failed — fields above are blank, not real data. */
+    error?: string;
   }>;
 };
 
@@ -165,41 +175,45 @@ export function createListMessagesTool(
           maxResults,
         );
 
-        // Fetch metadata for each message (Subject, From, Date)
-        const detailed = await Promise.all(
-          messages.map(async (stub) => {
-            try {
-              const res = await gmail.users.messages.get({
-                userId: 'me',
-                id: stub.id!,
-                format: 'metadata',
-                metadataHeaders: ['Subject', 'From', 'Date'],
-              });
-              const headers = parseGmailHeaders(res.data.payload ?? undefined);
-              return {
-                messageId: res.data.id ?? stub.id ?? '',
-                threadId: res.data.threadId ?? stub.threadId ?? '',
-                from: headers['from'] ?? '',
-                subject: headers['subject'] ?? '',
-                date: headers['date'] ?? '',
-                snippet: res.data.snippet ?? '',
-                labelIds: res.data.labelIds ?? [],
-              };
-            } catch {
-              return {
-                messageId: stub.id ?? '',
-                threadId: stub.threadId ?? '',
-                from: '',
-                subject: '',
-                date: '',
-                snippet: '',
-                labelIds: [],
-              };
-            }
-          }),
-        );
+        // Fetch metadata for each message (Subject, From, Date). Bounded
+        // concurrency (F3) — up to 500 stubs would otherwise fan out 500
+        // simultaneous GETs — and a failed fetch is reported via `error`
+        // rather than a blank-field stub indistinguishable from a real (if
+        // empty) message.
+        const detailed = await mapWithConcurrency(messages, HYDRATE_CONCURRENCY, async (stub) => {
+          try {
+            const res = await gmail.users.messages.get({
+              userId: 'me',
+              id: stub.id!,
+              format: 'metadata',
+              metadataHeaders: ['Subject', 'From', 'Date'],
+            });
+            const headers = parseGmailHeaders(res.data.payload ?? undefined);
+            return {
+              messageId: res.data.id ?? stub.id ?? '',
+              threadId: res.data.threadId ?? stub.threadId ?? '',
+              from: headers['from'] ?? '',
+              subject: headers['subject'] ?? '',
+              date: headers['date'] ?? '',
+              snippet: res.data.snippet ?? '',
+              labelIds: res.data.labelIds ?? [],
+            };
+          } catch (err) {
+            return {
+              messageId: stub.id ?? '',
+              threadId: stub.threadId ?? '',
+              from: '',
+              subject: '',
+              date: '',
+              snippet: '',
+              labelIds: [],
+              error: err instanceof Error ? err.message : 'gmail_get_message_failed',
+            };
+          }
+        });
 
-        return { total: detailed.length, messages: detailed };
+        const errors = detailed.filter((m) => m.error !== undefined).length;
+        return { total: detailed.length, errors, messages: detailed };
       } catch (err) {
         throw mapGmailError(err);
       }

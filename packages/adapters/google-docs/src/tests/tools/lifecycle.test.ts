@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { docs_v1 } from 'googleapis';
 import { createCreateDocTool, createGetDocTool, createGetDocTextTool } from '../../tools/lifecycle';
 import { DocsAdapterError } from '../../errors';
+import { docBodyToText } from '../../helpers/doc-to-text';
 
 function makeDocs(): docs_v1.Docs {
   return {
@@ -164,6 +165,47 @@ describe('docs_get', () => {
     const tool = createGetDocTool(docs);
     await expect(tool.execute({ document_id: 'missing' }, {} as never)).rejects.toMatchObject({
       code: 'docs_not_found',
+    });
+  });
+
+  // audit#2026-07-07 F8: docs_get compared CHAR_CAP against the FLATTENED
+  // text but returned the RAW JSON body unbounded — a document whose visible
+  // text is small can still carry a huge raw body once every text run has its
+  // own textStyle object attached (tables, heavy formatting, suggestions).
+  it('throws docs_document_too_large when the raw JSON body is huge but flattened text is small', async () => {
+    // Padding object attached to every run — contributes nothing to the
+    // flattened text (paragraphToText only reads textRun.content) but bloats
+    // the raw JSON body enormously, exactly like real Google Docs run styling.
+    const junkTextStyle = {
+      bold: false,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      fontSize: { magnitude: 11, unit: 'PT' },
+      weightedFontFamily: { fontFamily: 'Arial', weight: 400 },
+      foregroundColor: { color: { rgbColor: { red: 0, green: 0, blue: 0 } } },
+      backgroundColor: { color: { rgbColor: { red: 1, green: 1, blue: 1 } } },
+    };
+    const content = Array.from({ length: 5000 }, () => ({
+      paragraph: {
+        elements: [{ textRun: { content: 'x\n', textStyle: junkTextStyle } }],
+      },
+    }));
+    const body = { content } as unknown as docs_v1.Schema$Body;
+
+    // Sanity check: the OLD guard (flattened text length) would have let this
+    // slip straight through — proving this is a genuine, previously-missed gap.
+    const flattenedLength = docBodyToText(body).length;
+    expect(flattenedLength).toBeLessThan(100_000); // well under docs_get's flattened-text cap
+    expect(JSON.stringify(body).length).toBeGreaterThan(500_000);
+
+    (docs.documents.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: { documentId: 'heavyDoc', title: 'Heavy', body },
+    });
+
+    const tool = createGetDocTool(docs);
+    await expect(tool.execute({ document_id: 'heavyDoc' }, {} as never)).rejects.toMatchObject({
+      code: 'docs_document_too_large',
     });
   });
 

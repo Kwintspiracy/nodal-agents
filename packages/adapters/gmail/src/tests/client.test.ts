@@ -78,4 +78,14 @@ describe('createGmailClient', () => {
     const { expiry_date } = await auth.refreshHandler!();
     expect(expiry_date).toBeLessThan(Date.now());
   });
+
+  // audit#2026-07-07 F2: gaxios defaults to timeout:0 (no timeout) — an
+  // endpoint that accepts the connection but never responds would pend the
+  // tool call forever. This asserts a bounded timeout is always configured.
+  it('configures a 30s network timeout (no unbounded gaxios default)', () => {
+    const gmail = createGmailClient(async () => 'tok');
+    const options = (gmail as unknown as { context: { _options: { timeout?: number } } }).context
+      ._options;
+    expect(options.timeout).toBe(30_000);
+  });
 });

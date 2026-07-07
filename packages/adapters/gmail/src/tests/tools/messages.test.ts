@@ -203,6 +203,77 @@ describe('gmail_list_messages', () => {
   it('has riskLevel read', () => {
     expect(createListMessagesTool(gmail).riskLevel).toBe('read');
   });
+
+  // audit#2026-07-07 F3: a failed per-message GET must surface as an explicit
+  // `error` field + a nonzero `errors` count — NOT a blank-field stub
+  // indistinguishable from a genuinely empty message (invariant #4, fail loud).
+  it('reports a failed metadata GET via error/errors instead of a silent blank stub', async () => {
+    (gmail.users.messages.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: {
+        messages: [
+          { id: 'msg-ok', threadId: 'thread-ok' },
+          { id: 'msg-fail', threadId: 'thread-fail' },
+        ],
+        nextPageToken: null,
+      },
+    });
+    (gmail.users.messages.get as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        data: {
+          id: 'msg-ok',
+          threadId: 'thread-ok',
+          snippet: 'ok snippet',
+          labelIds: ['INBOX'],
+          payload: { headers: [{ name: 'Subject', value: 'OK' }] },
+        },
+      })
+      .mockRejectedValueOnce(new Error('rate limited'));
+
+    const tool = createListMessagesTool(gmail);
+    const result = await tool.execute({}, {} as never);
+
+    expect(result.total).toBe(2);
+    expect(result.errors).toBe(1);
+    const ok = result.messages.find((m) => m.messageId === 'msg-ok');
+    const failed = result.messages.find((m) => m.messageId === 'msg-fail');
+    expect(ok?.error).toBeUndefined();
+    expect(ok?.subject).toBe('OK');
+    expect(failed?.error).toBe('rate limited');
+    // The failed entry's blank fields are clearly flagged, not confused with real data.
+    expect(failed?.subject).toBe('');
+  });
+
+  // audit#2026-07-07 F3: max_results allows up to 500 — this asserts the
+  // per-message metadata fetch never exceeds the bounded concurrency, even
+  // for a large page (regression for the unbounded Promise.all fan-out).
+  it('bounds concurrent metadata GETs even for a large page of messages', async () => {
+    const STUB_COUNT = 40;
+    (gmail.users.messages.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: {
+        messages: Array.from({ length: STUB_COUNT }, (_, i) => ({
+          id: `msg-${i}`,
+          threadId: `thread-${i}`,
+        })),
+        nextPageToken: null,
+      },
+    });
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    (gmail.users.messages.get as ReturnType<typeof vi.fn>).mockImplementation(async (params) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight--;
+      return { data: { id: params.id, threadId: 't', payload: { headers: [] } } };
+    });
+
+    const tool = createListMessagesTool(gmail);
+    const result = await tool.execute({ max_results: STUB_COUNT }, {} as never);
+
+    expect(result.total).toBe(STUB_COUNT);
+    expect(maxInFlight).toBeLessThanOrEqual(15);
+  });
 });
 
 // ── gmail_get_message ─────────────────────────────────────────────────────────

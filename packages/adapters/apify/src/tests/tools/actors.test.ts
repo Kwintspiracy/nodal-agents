@@ -309,6 +309,7 @@ describe('makeApifyWebBrowseTool', () => {
     expect(actorFn).toHaveBeenCalledWith('apify/rag-web-browser');
     expect(actorCall).toHaveBeenCalledWith(
       expect.objectContaining({ query: 'https://a.com', outputFormats: ['text'] }),
+      { waitSecs: 120 },
     );
     expect(datasetFn).toHaveBeenCalledWith('ds-1'); // the run's own dataset
     expect(listItems).toHaveBeenCalled();
@@ -317,6 +318,7 @@ describe('makeApifyWebBrowseTool', () => {
       query: 'https://a.com',
       count: 1,
       results: [{ url: 'https://a.com', title: 'A', content: '# A page' }],
+      timedOut: false,
     });
   });
 
@@ -341,14 +343,68 @@ describe('makeApifyWebBrowseTool', () => {
     const { client, actorCall } = makeBrowseClient([]);
     const tool = makeApifyWebBrowseTool(client);
     await tool.execute({ query: 'jobs' }, ctx);
-    expect(actorCall).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 3 }));
+    expect(actorCall).toHaveBeenCalledWith(
+      expect.objectContaining({ maxResults: 3 }),
+      expect.anything(),
+    );
   });
 
   it('requests text output (the proven format), not markdown', async () => {
     const { client, actorCall } = makeBrowseClient([]);
     const tool = makeApifyWebBrowseTool(client);
     await tool.execute({ query: 'https://a.com' }, ctx);
-    expect(actorCall).toHaveBeenCalledWith(expect.objectContaining({ outputFormats: ['text'] }));
+    expect(actorCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outputFormats: ['text'] }),
+      expect.anything(),
+    );
+  });
+
+  // audit#2026-07-07 F1: without a waitSecs bound, apify-client's .call() waits
+  // INDEFINITELY for rag-web-browser to finish — a stuck run would pend this
+  // (fast, one-shot) tool call forever. This asserts a bound is ALWAYS passed.
+  it('passes a bounded waitSecs so a stuck run can never hang the tool call forever', async () => {
+    const { client, actorCall } = makeBrowseClient([]);
+    const tool = makeApifyWebBrowseTool(client);
+    await tool.execute({ query: 'https://a.com' }, ctx);
+
+    const [, options] = actorCall.mock.calls[0] as [unknown, { waitSecs?: number } | undefined];
+    expect(typeof options?.waitSecs).toBe('number');
+    expect(options?.waitSecs).toBeGreaterThan(0);
+  });
+
+  // audit#2026-07-07 F1: when the wait elapses before the run finishes, the
+  // tool must surface that clearly (timedOut: true) with whatever partial
+  // dataset content exists — never hang, and never claim success silently.
+  it('returns timedOut: true with partial results when the run has not reached a terminal status', async () => {
+    const { client } = makeBrowseClient(
+      [{ metadata: { url: 'https://partial.com', title: 'P' }, text: 'partial content' }],
+      {
+        actorCall: vi
+          .fn()
+          .mockResolvedValue({ id: 'run-2', defaultDatasetId: 'ds-2', status: 'RUNNING' }),
+      },
+    );
+    const tool = makeApifyWebBrowseTool(client);
+
+    const out = await tool.execute({ query: 'slow search' }, ctx);
+
+    expect(out.timedOut).toBe(true);
+    // Whatever the dataset held at the time of the timeout is still returned —
+    // a partial result, not a hang and not a fabricated empty success.
+    expect(out.results).toEqual([
+      { url: 'https://partial.com', title: 'P', content: 'partial content' },
+    ]);
+  });
+
+  it('returns timedOut: false when the run reaches SUCCEEDED within the wait', async () => {
+    const { client } = makeBrowseClient([
+      { metadata: { url: 'https://a.com', title: 'A' }, text: 'content' },
+    ]);
+    const tool = makeApifyWebBrowseTool(client);
+
+    const out = await tool.execute({ query: 'https://a.com' }, ctx);
+
+    expect(out.timedOut).toBe(false);
   });
 
   it('strips control characters from scraped content (keeps tab + newline)', async () => {

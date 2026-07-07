@@ -14,7 +14,7 @@ import {
 } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from './helpers.ts';
 import type { TestDb } from './helpers.ts';
-import { credentials, entityLlmKeys } from '../schema/index.ts';
+import { credentials, entityLlmKeys, connectors, mcpServers } from '../schema/index.ts';
 import { assertMasterKeyRestorable } from '../queries/master-key-guard.ts';
 
 let db: TestDb;
@@ -110,5 +110,39 @@ describe('assertMasterKeyRestorable', () => {
     ).resolves.toBeUndefined();
 
     await db.update(entityLlmKeys).set({ apiKey: '' }).where(eq(entityLlmKeys.entityId, entityId));
+  });
+
+  // SEC-4: the guard must also cover connectors + mcp servers, or an install
+  // whose ONLY secret is one of those would still get a silent re-mint.
+  it('throws when the key is missing and an encrypted connector exists', async () => {
+    await db.insert(connectors).values({
+      entityId,
+      name: 'test-conn',
+      slug: 'test-conn',
+      apiKey: encrypt('sk-connector-secret'),
+    });
+
+    await expect(assertMasterKeyRestorable(db, { keyPath: missingKeyPath() })).rejects.toThrow(
+      /connector API key/,
+    );
+
+    await db.delete(connectors).where(eq(connectors.entityId, entityId));
+  });
+
+  it('throws when the key is missing and an MCP server has an encrypted env value', async () => {
+    await db.insert(mcpServers).values({
+      entityId,
+      name: 'test-mcp',
+      slug: 'test-mcp',
+      transport: 'stdio',
+      command: 'npx',
+      envVars: { TOKEN: encrypt('ghp_secret') },
+    });
+
+    await expect(assertMasterKeyRestorable(db, { keyPath: missingKeyPath() })).rejects.toThrow(
+      /MCP server secret/,
+    );
+
+    await db.delete(mcpServers).where(eq(mcpServers.entityId, entityId));
   });
 });

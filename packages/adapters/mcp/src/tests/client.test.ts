@@ -31,7 +31,7 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   }),
 }));
 
-import { buildMcpRequest, connectMcp } from '../client.ts';
+import { buildMcpRequest, connectMcp, assertMcpHttpUrlSafe } from '../client.ts';
 
 describe('buildMcpRequest', () => {
   it('injects the key as a query param', () => {
@@ -125,7 +125,7 @@ describe('connectMcp', () => {
 
     const conn = await connectMcp({
       transport: 'http',
-      url: 'https://x.example.com/api/mcp',
+      url: 'https://127.0.0.1/api/mcp',
     });
 
     expect(h.connect).toHaveBeenCalledOnce();
@@ -142,7 +142,7 @@ describe('connectMcp', () => {
     h.listTools.mockResolvedValue({ tools: [] });
     const conn = await connectMcp({
       transport: 'http',
-      url: 'https://x.example.com/api/mcp',
+      url: 'https://127.0.0.1/api/mcp',
     });
     expect(conn.tools).toEqual([]);
   });
@@ -277,7 +277,7 @@ describe('connectMcp — connect timeout (M-15)', () => {
     vi.useFakeTimers();
     h.connect.mockImplementation(() => new Promise(() => {}));
 
-    const promise = connectMcp({ transport: 'http', url: 'https://x.example.com/api/mcp' });
+    const promise = connectMcp({ transport: 'http', url: 'https://127.0.0.1/api/mcp' });
     const assertion = expect(promise).rejects.toThrow(/timed out/i);
     await vi.advanceTimersByTimeAsync(120_000);
     await assertion;
@@ -313,7 +313,7 @@ describe('connectMcp — connect timeout (M-15)', () => {
     );
     h.listTools.mockResolvedValue({ tools: [] });
 
-    const promise = connectMcp({ transport: 'http', url: 'https://x.example.com/api/mcp' });
+    const promise = connectMcp({ transport: 'http', url: 'https://127.0.0.1/api/mcp' });
 
     // Simulate a slow-but-legitimate cold start (e.g. npx pulling a package)
     // finishing at 60s — well past the old 30s cutoff, well within the new
@@ -331,11 +331,43 @@ describe('connectMcp — connect timeout (M-15)', () => {
     vi.useFakeTimers();
     h.connect.mockImplementation(() => new Promise(() => {}));
 
-    const promise = connectMcp({ transport: 'http', url: 'https://x.example.com/api/mcp' });
+    const promise = connectMcp({ transport: 'http', url: 'https://127.0.0.1/api/mcp' });
     const assertion = expect(promise).rejects.toThrow(/timed out/i);
     await vi.advanceTimersByTimeAsync(5_000);
     await assertion;
 
     expect(h.transportClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe('assertMcpHttpUrlSafe (F7 — SSRF guard)', () => {
+  it('blocks the IPv4 cloud-metadata / link-local address', async () => {
+    await expect(
+      assertMcpHttpUrlSafe(new URL('http://169.254.169.254/latest/meta-data/')),
+    ).rejects.toThrow(/link-local \/ cloud-metadata/);
+  });
+
+  it('blocks a link-local address in the wider 169.254.0.0/16 range', async () => {
+    await expect(assertMcpHttpUrlSafe(new URL('http://169.254.1.2:8080/mcp'))).rejects.toThrow(
+      /link-local/,
+    );
+  });
+
+  it('blocks the GCP metadata hostname', async () => {
+    await expect(
+      assertMcpHttpUrlSafe(new URL('http://metadata.google.internal/computeMetadata/v1/')),
+    ).rejects.toThrow(/cloud-metadata/);
+  });
+
+  it('allows loopback — a legitimate local MCP server', async () => {
+    await expect(
+      assertMcpHttpUrlSafe(new URL('http://127.0.0.1:3333/mcp')),
+    ).resolves.toBeUndefined();
+  });
+
+  it('allows a private LAN address — a legitimate networked MCP server', async () => {
+    await expect(
+      assertMcpHttpUrlSafe(new URL('http://192.168.1.20:9000/mcp')),
+    ).resolves.toBeUndefined();
   });
 });

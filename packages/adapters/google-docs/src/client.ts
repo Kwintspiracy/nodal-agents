@@ -3,6 +3,12 @@
 import { google } from 'googleapis';
 import type { docs_v1 } from 'googleapis';
 
+// audit#2026-07-07 F2: gaxios (the HTTP layer under googleapis) defaults to
+// timeout:0 — no timeout at all. An endpoint that accepts the TCP connection
+// but never responds would pend the tool call (and the job) forever. Same
+// pattern/value as airtable's and poyo's DEFAULT_TIMEOUT_MS (audit#2 M-15).
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 /**
  * Create a googleapis Docs v1 instance whose access token is resolved lazily
  * — before every request — instead of captured once at construction time.
@@ -31,5 +37,5 @@ export function createDocsClient(getAccessToken: () => Promise<string>): docs_v1
     access_token: await getAccessToken(),
     expiry_date: Date.now() - 1,
   });
-  return google.docs({ version: 'v1', auth });
+  return google.docs({ version: 'v1', auth, timeout: DEFAULT_TIMEOUT_MS });
 }

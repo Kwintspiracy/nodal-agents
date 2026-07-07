@@ -115,4 +115,89 @@ describe('mcpToolToToolDefinition', () => {
 
     await expect(def.execute({}, {} as never)).rejects.toThrow(/boom/);
   });
+
+  // ── audit#2026-07-07 F6: cap unbounded MCP tool results ──────────────────
+
+  it('execute() truncates an oversized text result with a trailing marker (F6)', async () => {
+    const huge = 'x'.repeat(60_000);
+    const client = {
+      callTool: vi.fn(async () => ({
+        content: [{ type: 'text', text: huge }],
+        isError: false,
+      })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = (await def.execute({}, {} as never)) as string;
+
+    expect(typeof out).toBe('string');
+    // Capped, not the full 60k, and clearly marked as truncated (not silently cut).
+    expect(out.length).toBeLessThan(60_000);
+    expect(out).toContain('[...truncated at 50000 chars');
+    expect(out.startsWith('x'.repeat(1000))).toBe(true);
+  });
+
+  it('execute() does NOT truncate a text result under the cap', async () => {
+    const small = 'hello world';
+    const client = {
+      callTool: vi.fn(async () => ({ content: [{ type: 'text', text: small }], isError: false })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = await def.execute({}, {} as never);
+
+    expect(out).toBe(small);
+  });
+
+  it('execute() wraps an oversized structuredContent with truncated:true instead of corrupting the JSON (F6)', async () => {
+    const records = Array.from({ length: 5000 }, (_, i) => ({
+      id: `rec${i}`,
+      fields: { Name: `Record number ${i}`, Notes: 'padding '.repeat(10) },
+    }));
+    const client = {
+      callTool: vi.fn(async () => ({ content: [], structuredContent: { records } })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'airtable');
+
+    const out = (await def.execute({}, {} as never)) as {
+      truncated: boolean;
+      originalLength: number;
+      preview: string;
+    };
+
+    expect(out.truncated).toBe(true);
+    expect(out.originalLength).toBeGreaterThan(50_000);
+    expect(out.preview.length).toBe(50_000);
+    // The preview must still be a prefix of the real serialized JSON — never
+    // fabricated content — even though it is not parseable on its own.
+    expect(JSON.stringify({ records }).startsWith(out.preview)).toBe(true);
+  });
+
+  it('execute() does NOT wrap structuredContent under the cap', async () => {
+    const records = [{ id: 'rec1', fields: { Name: 'A' } }];
+    const client = {
+      callTool: vi.fn(async () => ({ content: [], structuredContent: { records } })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'airtable');
+
+    const out = await def.execute({}, {} as never);
+
+    expect(out).toEqual({ records });
+  });
+
+  it('execute() wraps oversized raw content blocks (e.g. many images) with truncated:true (F6)', async () => {
+    const blocks = Array.from({ length: 200 }, () => ({
+      type: 'image',
+      data: 'iVBOR'.repeat(200),
+      mimeType: 'image/png',
+    }));
+    const client = {
+      callTool: vi.fn(async () => ({ content: blocks })),
+    } as unknown as Client;
+    const def = mcpToolToToolDefinition(client, descriptor, 'c');
+
+    const out = (await def.execute({}, {} as never)) as { truncated: boolean };
+
+    expect(out.truncated).toBe(true);
+  });
 });

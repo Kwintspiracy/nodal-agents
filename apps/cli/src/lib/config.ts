@@ -4,7 +4,30 @@ import { z } from 'zod';
 import { homedir } from 'os';
 import { join } from 'path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { randomBytes } from 'crypto';
+
+/**
+ * Restrict config.json (workerSecret / authSecret / LLM + OAuth secrets) to its
+ * owner on all platforms (FA-5). `chmod 0600` is a no-op on Windows, where the
+ * file inherits the parent dir's ACL — so strip inheritance and grant the
+ * current user only, via `icacls`. Best-effort.
+ */
+function restrictFileToOwner(path: string): void {
+  try {
+    chmodSync(path, 0o600); // POSIX; no-op on Windows
+  } catch {
+    /* ignore */
+  }
+  if (process.platform !== 'win32') return;
+  const user = process.env['USERNAME'] || process.env['USER'];
+  if (!user) return;
+  try {
+    execFileSync('icacls', [path, '/inheritance:r', '/grant:r', `${user}:F`], { stdio: 'ignore' });
+  } catch {
+    /* best-effort */
+  }
+}
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -150,9 +173,10 @@ export function writeConfig(config: Config, configFile: string = CONFIG_FILE): v
   // When writing to the default location, ensure the .nodalai dir tree exists.
   // For custom test paths the caller is responsible for prepping the dir.
   if (configFile === CONFIG_FILE) ensureConfigDir();
-  // M-5: config.json holds workerSecret/authSecret/LLM+OAuth secrets in
-  // plaintext. Mode 0600 restricts it to the owning user (POSIX only — on
-  // Windows the mode is ignored and the profile dir's NTFS ACL is what
-  // actually protects the file; there is no direct chmod equivalent here).
+  // config.json holds workerSecret/authSecret/LLM+OAuth secrets in plaintext.
+  // Mode 0600 restricts it to the owning user on POSIX; FA-5: on Windows that
+  // mode is ignored, so restrictFileToOwner lays down an explicit owner-only
+  // ACL via icacls instead of relying on the inherited profile-dir ACL.
   writeFileSync(configFile, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  restrictFileToOwner(configFile);
 }

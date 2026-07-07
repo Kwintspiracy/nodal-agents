@@ -6,9 +6,15 @@ import type { ToolDefinition } from '@nodal-agents/tools';
 import type { gmail_v1 } from 'googleapis';
 import { mapGmailError } from '../errors';
 import { paginateGmail } from '../helpers/pagination';
+import { mapWithConcurrency } from '../helpers/concurrency';
 import { parseGmailHeaders } from '../helpers/parse-payload';
 import { buildRfc2822Message } from '../helpers/rfc2822';
 import type { AttachmentSpec } from '../helpers/rfc2822';
+
+// audit#2026-07-07 F3: cap how many per-draft GET requests run at once when
+// hydrating a list page (up to 500 stubs) — an unbounded Promise.all fan-out
+// hits Gmail's rate limit and spikes memory for large pages.
+const HYDRATE_CONCURRENCY = 15;
 
 // ── Attachment schema ─────────────────────────────────────────────────────────
 
@@ -37,12 +43,16 @@ const ListDraftsInput = z.object({
 
 export type ListDraftsOutput = {
   total: number;
+  /** Count of stubs whose metadata GET failed (audit#2026-07-07 F3) — see each draft's `error`. */
+  errors: number;
   drafts: Array<{
     draftId: string;
     messageId: string;
     to: string;
     subject: string;
     snippet: string;
+    /** Set when the metadata GET for this draft failed — fields above are blank, not real data. */
+    error?: string;
   }>;
 };
 
@@ -78,38 +88,41 @@ export function createListDraftsTool(
           maxResults,
         );
 
-        // Fetch metadata for each draft
-        const drafts = await Promise.all(
-          draftStubs.map(async (stub) => {
-            const draftId = stub.id ?? '';
-            try {
-              const res = await gmail.users.drafts.get({
-                userId: 'me',
-                id: draftId,
-                format: 'metadata',
-              });
-              const msg = res.data.message ?? {};
-              const headers = parseGmailHeaders(msg.payload ?? undefined);
-              return {
-                draftId,
-                messageId: msg.id ?? '',
-                to: headers['to'] ?? '',
-                subject: headers['subject'] ?? '',
-                snippet: msg.snippet ?? '',
-              };
-            } catch {
-              return {
-                draftId,
-                messageId: stub.message?.id ?? '',
-                to: '',
-                subject: '',
-                snippet: '',
-              };
-            }
-          }),
-        );
+        // Fetch metadata for each draft. Bounded concurrency (F3) — up to 500
+        // stubs would otherwise fan out 500 simultaneous GETs — and a failed
+        // fetch is reported via `error` rather than a blank-field stub
+        // indistinguishable from a real (if empty) draft.
+        const drafts = await mapWithConcurrency(draftStubs, HYDRATE_CONCURRENCY, async (stub) => {
+          const draftId = stub.id ?? '';
+          try {
+            const res = await gmail.users.drafts.get({
+              userId: 'me',
+              id: draftId,
+              format: 'metadata',
+            });
+            const msg = res.data.message ?? {};
+            const headers = parseGmailHeaders(msg.payload ?? undefined);
+            return {
+              draftId,
+              messageId: msg.id ?? '',
+              to: headers['to'] ?? '',
+              subject: headers['subject'] ?? '',
+              snippet: msg.snippet ?? '',
+            };
+          } catch (err) {
+            return {
+              draftId,
+              messageId: stub.message?.id ?? '',
+              to: '',
+              subject: '',
+              snippet: '',
+              error: err instanceof Error ? err.message : 'gmail_get_draft_failed',
+            };
+          }
+        });
 
-        return { total: drafts.length, drafts };
+        const errors = drafts.filter((d) => d.error !== undefined).length;
+        return { total: drafts.length, errors, drafts };
       } catch (err) {
         throw mapGmailError(err);
       }

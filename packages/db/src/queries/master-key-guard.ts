@@ -16,6 +16,8 @@
 
 import { credentials } from '../schema/credentials.ts';
 import { entityLlmKeys } from '../schema/llm_keys.ts';
+import { connectors } from '../schema/connectors.ts';
+import { mcpServers } from '../schema/mcp.ts';
 import { isEncrypted, masterKeyFileMissing } from '@nodal-agents/secrets';
 import type { AnyDrizzleDb } from '../client.ts';
 
@@ -48,6 +50,26 @@ export async function assertMasterKeyRestorable(
   const llmKeyRows = await db.select({ apiKey: entityLlmKeys.apiKey }).from(entityLlmKeys);
   const hasEncryptedLlmKey = llmKeyRows.some((r) => r.apiKey !== '' && isEncrypted(r.apiKey));
   if (hasEncryptedLlmKey) throw missingKeyError('a stored LLM API key');
+
+  // SEC-4 (audit sécu 2026-07-07): the guard also has to cover the OTHER
+  // AES-GCM-encrypted surfaces, or an install whose ONLY secrets are a
+  // connector or MCP server (no OAuth credential / LLM key) would still get a
+  // silent re-mint. connectors.api_key and mcp_servers.api_key are
+  // enc:-prefixed blobs; mcp_servers.env_vars is a JSON map whose VALUES are
+  // individually encrypted (create-mcp.ts).
+  const connectorRows = await db.select({ apiKey: connectors.apiKey }).from(connectors);
+  const hasEncryptedConnector = connectorRows.some((r) => !!r.apiKey && isEncrypted(r.apiKey));
+  if (hasEncryptedConnector) throw missingKeyError('a stored connector API key');
+
+  const mcpRows = await db
+    .select({ apiKey: mcpServers.apiKey, envVars: mcpServers.envVars })
+    .from(mcpServers);
+  const hasEncryptedMcp = mcpRows.some((r) => {
+    if (r.apiKey && isEncrypted(r.apiKey)) return true;
+    const env = (r.envVars ?? {}) as Record<string, unknown>;
+    return Object.values(env).some((v) => typeof v === 'string' && isEncrypted(v));
+  });
+  if (hasEncryptedMcp) throw missingKeyError('a stored MCP server secret');
 }
 
 function missingKeyError(what: string): Error {
