@@ -251,4 +251,37 @@ describe('makeApifyGetDatasetItemsTool', () => {
         err instanceof ApifyApiError && err.code === 'apify_rate_limited' && err.status === 429,
     );
   });
+
+  // audit#2026-07-07 F5: an item can be a whole scraped page (e.g. a giant
+  // HTML field) — must be capped like firecrawl/tavily/google-drive content,
+  // not returned verbatim.
+  it('caps an oversized item at ITEM_CHAR_CAP and sets truncated:true', async () => {
+    const hugeItem = { html: '<p>x</p>'.repeat(3000) }; // JSON form >> 15000 chars
+    const itemsData = makeItemsResult({ items: [hugeItem], total: 1, count: 1, offset: 0 });
+    const client = makeClient({ datasetListItems: vi.fn().mockResolvedValue(itemsData) });
+    const tool = makeApifyGetDatasetItemsTool(client);
+
+    const result = await tool.execute({ datasetId: 'ds-huge', limit: 100, offset: 0 }, ctx);
+
+    expect(result.truncated).toBe(true);
+    const capped = result.items[0] as { __truncated: boolean; preview: string };
+    expect(capped.__truncated).toBe(true);
+    expect(capped.preview.length).toBe(15000);
+    expect(JSON.stringify(result.items[0]).length).toBeLessThan(JSON.stringify(hugeItem).length);
+  });
+
+  it('does not truncate small items and leaves truncated:false', async () => {
+    const smallItems = [
+      { url: 'https://example.com', title: 'Page 1' },
+      { url: 'https://other.com', title: 'Page 2' },
+    ];
+    const itemsData = makeItemsResult({ items: smallItems, total: 2, count: 2, offset: 0 });
+    const client = makeClient({ datasetListItems: vi.fn().mockResolvedValue(itemsData) });
+    const tool = makeApifyGetDatasetItemsTool(client);
+
+    const result = await tool.execute({ datasetId: 'ds-abc', limit: 100, offset: 0 }, ctx);
+
+    expect(result.truncated).toBe(false);
+    expect(result.items).toEqual(smallItems);
+  });
 });

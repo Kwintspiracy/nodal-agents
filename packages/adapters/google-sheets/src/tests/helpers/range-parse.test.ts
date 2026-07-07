@@ -1,7 +1,7 @@
 // @nodal-agents/adapter-google-sheets — range parser tests
 
 import { describe, it, expect } from 'vitest';
-import { parseRange, buildRange } from '../../helpers/range-parse';
+import { parseRange, buildRange, estimateRowSpan } from '../../helpers/range-parse';
 import { SheetsAdapterError } from '../../errors';
 
 describe('parseRange', () => {
@@ -61,6 +61,37 @@ describe('parseRange', () => {
     expect(result.sheetName).toBe('Data');
     expect(result.cellRange).toBe('A1:Z100');
     expect(result.canonical).toBe('Data!A1:Z100');
+  });
+});
+
+// audit#2026-07-07 F10: estimateRowSpan lets values.ts reject an obviously
+// oversized EXPLICIT range before calling the Sheets API.
+describe('estimateRowSpan', () => {
+  it('computes the span for an explicit bounded range', () => {
+    expect(estimateRowSpan('A1:C10')).toBe(10);
+    expect(estimateRowSpan('A5:C5')).toBe(1);
+  });
+
+  it('computes the span for a single cell', () => {
+    expect(estimateRowSpan('A1')).toBe(1);
+  });
+
+  it('computes the span for an explicit full-row range with row numbers', () => {
+    expect(estimateRowSpan('1:1')).toBe(1);
+    expect(estimateRowSpan('5:50000')).toBe(49996);
+  });
+
+  it('returns a huge span for an obviously oversized explicit range', () => {
+    expect(estimateRowSpan('A1:A50000000')).toBe(50000000);
+  });
+
+  it('returns null for an open-ended full-column range (no row numbers)', () => {
+    expect(estimateRowSpan('A:A')).toBeNull();
+    expect(estimateRowSpan('A:ZZ')).toBeNull();
+  });
+
+  it('returns null for a bare column reference', () => {
+    expect(estimateRowSpan('A')).toBeNull();
   });
 });
 

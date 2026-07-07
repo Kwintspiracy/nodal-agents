@@ -176,6 +176,56 @@ describe('makeFirecrawlCrawlStatusTool', () => {
     expect(result.data[0]?.html).toContain('[...content truncated at 15000 chars...]');
   });
 
+  // audit#2026-07-07 F9: capField bounds each document's markdown/html, but
+  // nothing bounded the NUMBER of documents in one status poll — this must
+  // be capped too, with a dataTruncated flag distinct from the per-doc one.
+  it('caps the number of documents at 50 per call and sets dataTruncated:true', async () => {
+    const client = getClient();
+    const manyDocs = Array.from({ length: 120 }, (_, i) => ({
+      markdown: `# Page ${i}`,
+      metadata: { url: `https://example.com/page${i}` },
+    }));
+    vi.spyOn(client, 'getCrawlStatus').mockResolvedValue({
+      id: 'crawl-job-many',
+      status: 'completed',
+      total: 120,
+      completed: 120,
+      data: manyDocs,
+    });
+
+    const tool = makeFirecrawlCrawlStatusTool(client);
+    const result = await tool.execute({ id: 'crawl-job-many' }, CTX);
+
+    expect(result.dataTruncated).toBe(true);
+    expect(result.data).toHaveLength(50);
+    expect(result.data[0]?.url).toBe('https://example.com/page0');
+    expect(result.data[49]?.url).toBe('https://example.com/page49');
+    // total/completed still reflect the real job counts — only the returned
+    // page slice is capped, the job metadata is not lied about.
+    expect(result.total).toBe(120);
+    expect(result.completed).toBe(120);
+  });
+
+  it('does not set dataTruncated when document count is within the cap', async () => {
+    const client = getClient();
+    vi.spyOn(client, 'getCrawlStatus').mockResolvedValue({
+      id: 'crawl-job-small',
+      status: 'completed',
+      total: 2,
+      completed: 2,
+      data: [
+        { markdown: '# Page 1', metadata: { url: 'https://example.com/page1' } },
+        { markdown: '# Page 2', metadata: { url: 'https://example.com/page2' } },
+      ],
+    });
+
+    const tool = makeFirecrawlCrawlStatusTool(client);
+    const result = await tool.execute({ id: 'crawl-job-small' }, CTX);
+
+    expect(result.dataTruncated).toBe(false);
+    expect(result.data).toHaveLength(2);
+  });
+
   it('passes job id to SDK getCrawlStatus', async () => {
     const client = getClient();
     const spy = vi.spyOn(client, 'getCrawlStatus').mockResolvedValue({

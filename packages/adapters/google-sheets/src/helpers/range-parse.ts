@@ -81,3 +81,45 @@ export function buildRange(sheetName: string | undefined, cellRange: string): st
   const quotedSheet = needsQuoting ? `'${sheetName.replace(/'/g, "''")}'` : sheetName;
   return `${quotedSheet}!${cellRange}`;
 }
+
+/**
+ * audit#2026-07-07 F10: ROW_CAP in values.ts was enforced AFTER `values.get`
+ * had already fetched and parsed the entire range — an explicit but absurd
+ * range like 'A1:A50000000' would pay the full API round-trip before being
+ * rejected. This estimates the row count implied by explicit numeric row
+ * bounds in the A1 cell range, so obviously-oversized EXPLICIT ranges can be
+ * rejected before the call.
+ *
+ * Returns null when the range has NO explicit numeric row bound on one or
+ * both sides (e.g. a full-column range like 'A:ZZ', or a bare column 'A') —
+ * for those, the actual row count is only known by the Sheets API (which
+ * only returns rows that hold data, not the sheet's theoretical row limit),
+ * so we cannot bound it here. The post-fetch ROW_CAP check remains the
+ * safety net for that case — callers should prefer explicit numeric ranges
+ * (e.g. 'A1:D10000') for large sheets, since open-ended ranges cannot be
+ * size-checked before the fetch.
+ */
+export function estimateRowSpan(cellRange: string): number | null {
+  const parts = cellRange.split(':');
+  if (parts.length > 2) return null;
+
+  const rowOf = (part: string): number | null => {
+    const m = /^\$?[A-Za-z]*\$?(\d+)$/.exec(part);
+    return m?.[1] !== undefined ? Number(m[1]) : null;
+  };
+
+  const first = parts[0] ?? '';
+  const second = parts[1];
+
+  if (second === undefined) {
+    // Single cell or bare column/row reference, e.g. 'A1' or 'A'.
+    const row = rowOf(first);
+    return row !== null ? 1 : null;
+  }
+
+  const startRow = rowOf(first);
+  const endRow = rowOf(second);
+  if (startRow === null || endRow === null) return null; // open-ended column/row range
+
+  return Math.abs(endRow - startRow) + 1;
+}

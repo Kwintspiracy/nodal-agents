@@ -5,6 +5,30 @@ import type { ToolDefinition } from '@nodal-agents/tools';
 import type { ApifyClient } from '../client.ts';
 import { wrapApifyError } from '../errors.ts';
 
+// audit#2026-07-07 F5: apify_get_dataset_items returned `result.items` verbatim
+// — an item can be a whole scraped page (e.g. a full HTML doc as one dataset
+// field), so a 1000-item page could burn the agent's whole token budget on a
+// single tool result. Same cap + truncated flag pattern as
+// firecrawl/scrape.ts, tavily/search.ts, google-drive/read-file.ts — but those
+// cap one known string field, whereas a dataset item's shape is arbitrary
+// (whatever the actor produced), so we cap the item's JSON serialization
+// instead of a named field.
+const ITEM_CHAR_CAP = 15000;
+
+/** Cap a dataset item at ITEM_CHAR_CAP chars of its JSON form. Oversized items are replaced with a preview + truncated marker. */
+function capItem(item: unknown): { item: unknown; truncated: boolean } {
+  const json = JSON.stringify(item) ?? '';
+  if (json.length <= ITEM_CHAR_CAP) return { item, truncated: false };
+  return {
+    item: {
+      __truncated: true,
+      preview: json.slice(0, ITEM_CHAR_CAP),
+      originalCharCount: json.length,
+    },
+    truncated: true,
+  };
+}
+
 // ── apify_list_datasets ───────────────────────────────────────────────────────
 
 const ListDatasetsInput = z.object({
@@ -104,6 +128,8 @@ export type GetDatasetItemsOutput = {
   total: number;
   count: number;
   offset: number;
+  /** true if any item exceeded ITEM_CHAR_CAP and was replaced with a preview (audit#2026-07-07 F5). */
+  truncated: boolean;
 };
 
 export function makeApifyGetDatasetItemsTool(
@@ -112,7 +138,8 @@ export function makeApifyGetDatasetItemsTool(
   return {
     name: 'apify_get_dataset_items',
     description:
-      'Retrieve items from an Apify dataset. Use the datasetId returned by apify_run_actor or from apify_list_datasets. Supports limit/offset pagination (max 1000 items per call).',
+      'Retrieve items from an Apify dataset. Use the datasetId returned by apify_run_actor or from apify_list_datasets. Supports limit/offset pagination (max 1000 items per call). ' +
+      `Each item is capped at ${ITEM_CHAR_CAP} chars of JSON — see the truncated flag.`,
     inputSchema: GetDatasetItemsInput,
     riskLevel: 'read',
     async execute(input) {
@@ -121,11 +148,13 @@ export function makeApifyGetDatasetItemsTool(
           limit: input.limit ?? 100,
           offset: input.offset ?? 0,
         });
+        const capped = result.items.map(capItem);
         return {
-          items: result.items,
+          items: capped.map((c) => c.item),
           total: result.total,
           count: result.count,
           offset: result.offset,
+          truncated: capped.some((c) => c.truncated),
         };
       } catch (err) {
         throw wrapApifyError(err);

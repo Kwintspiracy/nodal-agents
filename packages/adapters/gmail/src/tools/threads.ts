@@ -10,6 +10,13 @@ import { extractTextFromPayload, parseGmailHeaders } from '../helpers/parse-payl
 
 const BODY_CHAR_CAP = 5000;
 
+// audit#2026-07-07 F4: BODY_CHAR_CAP borne chaque message, mais rien ne bornait
+// le NOMBRE de messages du thread — un thread à 300 messages × 5000 car ≈ 1,5 Mo
+// aurait quand même saturé le budget de tokens de l'agent. Même pattern que les
+// caps de contenu ailleurs (firecrawl/apify/google-drive) : on tronque + on le
+// signale via `truncated` plutôt que de couper en silence (invariant #4).
+const MAX_MESSAGES_PER_THREAD = 50;
+
 // ── gmail_list_threads ────────────────────────────────────────────────────────
 
 const ListThreadsInput = z.object({
@@ -107,6 +114,8 @@ export type GetThreadOutput = {
     body: string;
     labelIds: string[];
   }>;
+  /** true si le thread contenait plus de MAX_MESSAGES_PER_THREAD messages (audit#2026-07-07 F4). */
+  truncated: boolean;
 };
 
 export function createGetThreadTool(
@@ -115,7 +124,8 @@ export function createGetThreadTool(
   return {
     name: 'gmail_get_thread',
     description:
-      'Fetch a full Gmail conversation thread with all messages, decoded bodies and headers.',
+      'Fetch a full Gmail conversation thread with all messages, decoded bodies and headers. ' +
+      `Capped at ${MAX_MESSAGES_PER_THREAD} messages (oldest first) — see the truncated flag.`,
     inputSchema: GetThreadInput,
     riskLevel: 'read',
     async execute(input) {
@@ -126,7 +136,9 @@ export function createGetThreadTool(
           format: 'full',
         });
         const thread = res.data;
-        const messages = (thread.messages ?? []).map((msg) => {
+        const allMessages = thread.messages ?? [];
+        const truncated = allMessages.length > MAX_MESSAGES_PER_THREAD;
+        const messages = allMessages.slice(0, MAX_MESSAGES_PER_THREAD).map((msg) => {
           const payload = msg.payload ?? undefined;
           const headers = parseGmailHeaders(payload);
           let body = extractTextFromPayload(payload).trim();
@@ -145,7 +157,7 @@ export function createGetThreadTool(
           };
         });
 
-        return { threadId: thread.id ?? '', messages };
+        return { threadId: thread.id ?? '', messages, truncated };
       } catch (err) {
         throw mapGmailError(err);
       }

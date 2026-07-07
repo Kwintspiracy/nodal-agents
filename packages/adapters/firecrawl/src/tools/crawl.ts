@@ -16,6 +16,13 @@ import type { FirecrawlClient } from '../client.ts';
 import { wrapFirecrawlError } from '../errors.ts';
 import { capField } from './scrape.ts';
 
+// audit#2026-07-07 F9: capField bounds each document's markdown/html, but
+// nothing bounded the NUMBER of documents returned in one status poll — a
+// crawl with hundreds of completed pages would still return them all,
+// each up to 15000 chars, in a single tool result. Cap the page count too,
+// same truncated-flag pattern as the per-doc cap.
+const MAX_CRAWL_DOCS_PER_CALL = 50;
+
 // ── firecrawl_crawl_start ─────────────────────────────────────────────────────
 
 const CrawlStartInput = z.object({
@@ -78,6 +85,8 @@ export type CrawlStatusOutput = {
   total: number;
   completed: number;
   data: CrawlDocument[];
+  /** true if more documents were available than MAX_CRAWL_DOCS_PER_CALL (audit#2026-07-07 F9). */
+  dataTruncated: boolean;
 };
 
 export function makeFirecrawlCrawlStatusTool(
@@ -86,18 +95,21 @@ export function makeFirecrawlCrawlStatusTool(
   return {
     name: 'firecrawl_crawl_status',
     description:
-      'Get the current status and partial results of a Firecrawl crawl job. Poll this until status is "completed", "failed", or "cancelled".',
+      'Get the current status and partial results of a Firecrawl crawl job. Poll this until status is "completed", "failed", or "cancelled". ' +
+      `Capped at ${MAX_CRAWL_DOCS_PER_CALL} documents per call — see the dataTruncated flag.`,
     inputSchema: CrawlStatusInput,
     riskLevel: 'read',
     async execute(input) {
       try {
         const job = await client.getCrawlStatus(input.id);
+        const rawData = job.data ?? [];
+        const dataTruncated = rawData.length > MAX_CRAWL_DOCS_PER_CALL;
         return {
           id: job.id,
           status: job.status,
           total: job.total,
           completed: job.completed,
-          data: (job.data ?? []).map((doc) => {
+          data: rawData.slice(0, MAX_CRAWL_DOCS_PER_CALL).map((doc) => {
             const md = capField(doc.markdown);
             const html = capField(doc.html);
             return {
@@ -107,6 +119,7 @@ export function makeFirecrawlCrawlStatusTool(
               truncated: md.truncated || html.truncated,
             };
           }),
+          dataTruncated,
         };
       } catch (err) {
         throw wrapFirecrawlError(err);

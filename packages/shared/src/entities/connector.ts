@@ -15,7 +15,9 @@ export const ConnectorSchema = z
       .max(80)
       .regex(/^[a-z0-9-]+$/),
     base_url: z.string().nullable(),
-    // api_key stored encrypted in DB (pgp_sym_encrypt); raw value never returned
+    // audit#2026-07-07 SEC-5: this comment used to claim pgp_sym_encrypt (pgcrypto),
+    // which is not used anywhere. Real encryption is application-level AES-256-GCM
+    // via @nodal-agents/secrets before the value ever reaches the DB; raw value never returned.
     api_key: z.string().nullable(),
     active: z.boolean(),
     auth_type: ConnectorAuthTypeSchema,

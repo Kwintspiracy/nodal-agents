@@ -10,6 +10,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# SC-2 (audit sécu 2026-07-07): least-privilege GITHUB_TOKEN. CI only checks out
+# and runs tests — it never writes to the repo, so a read-only token removes the
+# blast radius of a compromised action or dependency.
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest

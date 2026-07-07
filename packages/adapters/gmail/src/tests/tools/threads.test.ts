@@ -117,6 +117,40 @@ describe('gmail_get_thread', () => {
     expect(result.messages[0]?.messageId).toBe('msg-1');
     expect(result.messages[0]?.from).toBe('alice@example.com');
     expect(result.messages[0]?.subject).toBe('Hello');
+    expect(result.truncated).toBe(false);
+  });
+
+  // audit#2026-07-07 F4: a thread with 300 messages must be capped, not
+  // returned verbatim (300 * 5000-char bodies ≈ 1.5 MB of tokens).
+  it('caps a thread at MAX_MESSAGES_PER_THREAD (50) and sets truncated:true', async () => {
+    const bigThreadMessages = Array.from({ length: 300 }, (_, i) => ({
+      id: `msg-${i}`,
+      threadId: 'thread-huge',
+      snippet: `snippet ${i}`,
+      labelIds: ['INBOX'],
+      payload: {
+        headers: [
+          { name: 'From', value: `sender${i}@example.com` },
+          { name: 'To', value: 'bob@example.com' },
+          { name: 'Subject', value: `Message ${i}` },
+          { name: 'Date', value: '2024-01-01' },
+        ],
+        mimeType: 'text/plain',
+        body: { data: '' },
+      },
+    }));
+    (gmail.users.threads.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: { id: 'thread-huge', messages: bigThreadMessages },
+    });
+
+    const tool = createGetThreadTool(gmail);
+    const result = await tool.execute({ thread_id: 'thread-huge' }, {} as never);
+
+    expect(result.truncated).toBe(true);
+    expect(result.messages).toHaveLength(50);
+    // oldest-first order preserved: the first 50 messages, not an arbitrary slice
+    expect(result.messages[0]?.messageId).toBe('msg-0');
+    expect(result.messages[49]?.messageId).toBe('msg-49');
   });
 
   it('maps 404 to gmail_message_not_found', async () => {

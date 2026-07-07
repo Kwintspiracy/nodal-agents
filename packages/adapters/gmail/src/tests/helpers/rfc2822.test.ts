@@ -2,6 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildRfc2822Message, decodeRfc2822Message, parseRawHeaders } from '../../helpers/rfc2822';
+import { GmailAdapterError } from '../../errors';
 
 describe('buildRfc2822Message', () => {
   it('builds a base64url-encoded message for simple plain text', () => {
@@ -176,6 +177,159 @@ describe('buildRfc2822Message', () => {
 
     const decoded = decodeRfc2822Message(encoded);
     expect(decoded).toContain('text/csv');
+  });
+
+  // audit#2026-07-07 F11: CRLF header injection (CWE-93). A malicious `to`
+  // containing "\r\nBcc: attacker@evil.com" must NOT produce a message with
+  // an injected Bcc header — the build must fail loud instead.
+  describe('F11 — CRLF header injection is rejected, not silently passed through', () => {
+    it('rejects a `to` value containing an injected Bcc header', () => {
+      expect(() =>
+        buildRfc2822Message({
+          to: 'victim@example.com\r\nBcc: attacker@evil.com',
+          subject: 'Hi',
+          body: 'Hello.',
+        }),
+      ).toThrow(GmailAdapterError);
+
+      try {
+        buildRfc2822Message({
+          to: 'victim@example.com\r\nBcc: attacker@evil.com',
+          subject: 'Hi',
+          body: 'Hello.',
+        });
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(GmailAdapterError);
+        expect((err as GmailAdapterError).code).toBe('gmail_validation_error');
+      }
+    });
+
+    it('rejects an injected header via cc', () => {
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi',
+          body: 'Hello.',
+          cc: 'legit@example.com\r\nBcc: attacker@evil.com',
+        }),
+      ).toThrow(GmailAdapterError);
+    });
+
+    it('rejects an injected header via bcc', () => {
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi',
+          body: 'Hello.',
+          bcc: 'legit@example.com\r\nX-Injected: yes',
+        }),
+      ).toThrow(GmailAdapterError);
+    });
+
+    it('rejects an injected header via a plain-ASCII subject (encodeHeader does not strip CRLF)', () => {
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi\r\nBcc: attacker@evil.com',
+          body: 'Hello.',
+        }),
+      ).toThrow(GmailAdapterError);
+    });
+
+    it('rejects an injected header via from/replyTo/inReplyTo/references', () => {
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi',
+          body: 'Hello.',
+          from: 'me@example.com\r\nBcc: x@evil.com',
+        }),
+      ).toThrow(GmailAdapterError);
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi',
+          body: 'Hello.',
+          replyTo: 'me@example.com\r\nBcc: x@evil.com',
+        }),
+      ).toThrow(GmailAdapterError);
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi',
+          body: 'Hello.',
+          inReplyTo: '<id@example.com>\r\nBcc: x@evil.com',
+        }),
+      ).toThrow(GmailAdapterError);
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi',
+          body: 'Hello.',
+          references: '<id@example.com>\r\nBcc: x@evil.com',
+        }),
+      ).toThrow(GmailAdapterError);
+    });
+
+    it('rejects an injected header via an attachment filename', () => {
+      expect(() =>
+        buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'Hi',
+          body: 'See attached.',
+          attachments: [{ filename: 'a.txt\r\nContent-Type: text/html', content: 'hi' }],
+        }),
+      ).toThrow(GmailAdapterError);
+    });
+
+    it('still builds a normal message when no CR/LF is present', () => {
+      const encoded = buildRfc2822Message({
+        to: 'alice@example.com',
+        subject: 'Perfectly normal subject',
+        body: 'Hello.',
+        cc: 'cc@example.com',
+      });
+      expect(typeof encoded).toBe('string');
+      const headers = parseRawHeaders(decodeRfc2822Message(encoded));
+      expect(headers['to']).toBe('alice@example.com');
+      expect(headers['bcc']).toBeUndefined();
+    });
+  });
+
+  // audit#2026-07-07 SEC-6: MIME boundary must come from a CSPRNG
+  // (node:crypto randomBytes), not Math.random.
+  describe('SEC-6 — MIME boundary uses crypto.randomBytes, not Math.random', () => {
+    it('boundary matches the crypto.randomBytes hex format, not a Math.random-derived one', () => {
+      const encoded = buildRfc2822Message({
+        to: 'alice@example.com',
+        subject: 'With Attachment',
+        body: 'See attached.',
+        attachments: [{ filename: 'report.txt', content: 'hello' }],
+      });
+      const decoded = decodeRfc2822Message(encoded);
+      const boundaryMatch = /boundary="([^"]+)"/.exec(decoded);
+      expect(boundaryMatch).not.toBeNull();
+      const boundary = boundaryMatch?.[1] ?? '';
+      // nodalai_<base36 timestamp>_<24 lowercase hex chars from randomBytes(12)>
+      expect(boundary).toMatch(/^nodalai_[0-9a-z]+_[0-9a-f]{24}$/);
+    });
+
+    it('generates distinct boundaries across calls', () => {
+      const boundaries = new Set<string>();
+      for (let i = 0; i < 20; i++) {
+        const encoded = buildRfc2822Message({
+          to: 'alice@example.com',
+          subject: 'x',
+          body: 'y',
+          attachments: [{ filename: 'f.txt', content: 'z' }],
+        });
+        const decoded = decodeRfc2822Message(encoded);
+        const boundary = /boundary="([^"]+)"/.exec(decoded)?.[1] ?? '';
+        boundaries.add(boundary);
+      }
+      expect(boundaries.size).toBe(20);
+    });
   });
 });
 

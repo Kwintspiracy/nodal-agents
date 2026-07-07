@@ -14,7 +14,10 @@ export const connectors = pgTable(
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     baseUrl: text('base_url'),
-    // Encrypted with pgp_sym_encrypt in DB — raw value never returned in select
+    // audit#2026-07-07 SEC-5: this comment used to claim pgp_sym_encrypt (pgcrypto),
+    // which is not used anywhere. Real encryption is application-level AES-256-GCM
+    // via @nodal-agents/secrets before the value ever reaches this column — the DB
+    // column itself just holds ciphertext as opaque text. Raw value never returned in select.
     apiKey: text('api_key'),
     active: boolean('active').default(true),
     authType: text('auth_type').notNull().default('api_key'),

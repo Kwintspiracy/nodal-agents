@@ -7,10 +7,28 @@ import type { ToolDefinition } from '@nodal-agents/tools';
 import type { sheets_v4 } from 'googleapis';
 import { mapSheetsError, SheetsAdapterError } from '../errors';
 import { coerceGrid } from '../helpers/value-coerce';
-import { parseRange } from '../helpers/range-parse';
+import { parseRange, estimateRowSpan } from '../helpers/range-parse';
 
 /** Max rows allowed in a single read before throwing sheets_range_too_large */
 const ROW_CAP = 10_000;
+
+/**
+ * audit#2026-07-07 F10: raise sheets_range_too_large BEFORE calling the Sheets
+ * API when the range gives an explicit numeric row span that already exceeds
+ * ROW_CAP (e.g. 'A1:A50000000') — avoids paying the full fetch+parse for an
+ * obviously-oversized range. Open-ended ranges (full column, e.g. 'A:ZZ')
+ * cannot be bounded this way — estimateRowSpan returns null for those, and
+ * the existing post-fetch ROW_CAP check below remains the safety net.
+ */
+function rejectIfObviouslyTooLarge(cellRange: string, fullRange: string): void {
+  const span = estimateRowSpan(cellRange);
+  if (span !== null && span > ROW_CAP) {
+    throw new SheetsAdapterError(
+      'sheets_range_too_large',
+      `Range '${fullRange}' spans ${span} rows which exceeds the ${ROW_CAP}-row cap. Use a smaller range.`,
+    );
+  }
+}
 
 // ── sheets_read_range ──────────────────────────────────────────────────────
 
@@ -45,7 +63,8 @@ export function createReadRangeTool(
     riskLevel: 'read',
     async execute(input) {
       try {
-        parseRange(input.range); // validate syntax
+        const parsed = parseRange(input.range); // validate syntax
+        rejectIfObviouslyTooLarge(parsed.cellRange, input.range); // audit#2026-07-07 F10
         const res = await sheets.spreadsheets.values.get({
           spreadsheetId: input.spreadsheet_id,
           range: input.range,
@@ -88,9 +107,16 @@ export function createReadAllTool(
 ): ToolDefinition<typeof ReadAllInput, ReadAllOutput> {
   return {
     name: 'sheets_read_all',
+    // audit#2026-07-07 F10: unlike sheets_read_range, this always targets the
+    // whole sheet tab — there is no explicit numeric row bound to check
+    // up front (estimateRowSpan has nothing to work with), so the ROW_CAP
+    // check below necessarily runs AFTER the full sheet has been fetched.
+    // Prefer sheets_read_range with an explicit bounded range on large sheets.
     description:
       'Read all values from a sheet tab. Returns the full 2D array. ' +
-      'Capped at 10,000 rows — use sheets_read_range for partial reads on large sheets.',
+      'Capped at 10,000 rows — use sheets_read_range for partial reads on large sheets. ' +
+      'Note: because this reads a whole tab, the cap is only enforced AFTER the full sheet is ' +
+      'fetched — prefer sheets_read_range with an explicit row-bounded range for very large sheets.',
     inputSchema: ReadAllInput,
     riskLevel: 'read',
     async execute(input) {

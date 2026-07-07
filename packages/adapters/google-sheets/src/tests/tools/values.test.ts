@@ -115,6 +115,30 @@ describe('sheets_read_range', () => {
     ).rejects.toMatchObject({ code: 'sheets_range_too_large' });
   });
 
+  // audit#2026-07-07 F10: an explicit, obviously-oversized range must be
+  // rejected BEFORE the Sheets API is even called — not after fetching and
+  // parsing the whole thing. Assert the mock was never invoked.
+  it('rejects an explicit oversized range before calling the Sheets API', async () => {
+    const tool = createReadRangeTool(sheets);
+    await expect(
+      tool.execute({ spreadsheet_id: 'abc', range: 'Sheet1!A1:A50000000' }, {} as never),
+    ).rejects.toMatchObject({ code: 'sheets_range_too_large' });
+    expect(sheets.spreadsheets.values.get).not.toHaveBeenCalled();
+  });
+
+  // Open-ended ranges (full column, no explicit row bound) cannot be
+  // size-checked up front — the pre-fetch guard must not false-positive on
+  // them, and the post-fetch ROW_CAP remains the safety net.
+  it('does not pre-reject an open-ended full-column range — falls through to post-fetch cap', async () => {
+    (sheets.spreadsheets.values.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: { range: 'Sheet1!A:A', values: [['Name'], ['Alice'], ['Bob']] },
+    });
+    const tool = createReadRangeTool(sheets);
+    const result = await tool.execute({ spreadsheet_id: 'abc', range: 'Sheet1!A:A' }, {} as never);
+    expect(sheets.spreadsheets.values.get).toHaveBeenCalled();
+    expect(result.rows).toBe(3);
+  });
+
   it('has riskLevel read', () => {
     expect(createReadRangeTool(sheets).riskLevel).toBe('read');
   });

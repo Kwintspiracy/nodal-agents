@@ -7,7 +7,11 @@
 //   - File attachments (text content or pre-encoded base64 binary)
 //   - Reply threading headers (In-Reply-To, References)
 //
-// No external dependencies — pure Node.js built-ins.
+// No external dependencies — pure Node.js built-ins, except for the typed
+// GmailAdapterError used to fail loud on header injection (see below).
+
+import { randomBytes } from 'node:crypto';
+import { GmailAdapterError } from '../errors';
 
 export interface AttachmentSpec {
   /** File name displayed in email, e.g. 'report.html' */
@@ -58,6 +62,24 @@ function inferMimeType(filename: string): string {
 }
 
 /**
+ * audit#2026-07-07 F11: reject a header-bound value that contains CR or LF.
+ * `encodeHeader` below only RFC-2047-encodes non-ASCII text — a plain-ASCII
+ * value containing `\r\n` (e.g. a `to` of `"victim@x.com\r\nBcc: attacker@evil.com"`)
+ * would pass through untouched and let the caller inject arbitrary extra
+ * headers into the message we build (CWE-93). Fail loud (invariant #4)
+ * instead of silently stripping: a header value with an embedded line break
+ * is always a bug or an attack, never legitimate input.
+ */
+function assertNoHeaderInjection(fieldName: string, value: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new GmailAdapterError(
+      'gmail_validation_error',
+      `'${fieldName}' contains a line break (CR/LF), which is not allowed in an email header.`,
+    );
+  }
+}
+
+/**
  * Encode a header value for RFC 2047 if it contains non-ASCII characters.
  * Uses base64 encoded-word format: =?utf-8?B?...?=
  */
@@ -71,9 +93,14 @@ function encodeHeader(value: string): string {
 
 /**
  * Generate a boundary string for multipart messages.
+ * audit#2026-07-07 SEC-6: uses crypto.randomBytes (CSPRNG) instead of
+ * Math.random — the boundary only needs to be unpredictable enough to not
+ * collide with the message content, but Math.random is not a
+ * cryptographically-appropriate source and is trivial to swap for a proper
+ * one at no cost.
  */
 function makeBoundary(): string {
-  return `nodalai_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  return `nodalai_${Date.now().toString(36)}_${randomBytes(12).toString('hex')}`;
 }
 
 /**
@@ -82,6 +109,23 @@ function makeBoundary(): string {
  */
 export function buildRfc2822Message(opts: Rfc2822Options): string {
   const { to, subject, body, from, cc, bcc, replyTo, inReplyTo, references, attachments } = opts;
+
+  // audit#2026-07-07 F11: validate every value that ends up on a header line
+  // BEFORE building anything — to/cc/bcc/from/replyTo/inReplyTo/references,
+  // the subject (encodeHeader doesn't strip CRLF for plain-ASCII subjects),
+  // and attachment filenames (used in Content-Type/Content-Disposition lines
+  // of each MIME part — same injection surface).
+  assertNoHeaderInjection('to', to);
+  assertNoHeaderInjection('subject', subject);
+  if (from) assertNoHeaderInjection('from', from);
+  if (cc) assertNoHeaderInjection('cc', cc);
+  if (bcc) assertNoHeaderInjection('bcc', bcc);
+  if (replyTo) assertNoHeaderInjection('replyTo', replyTo);
+  if (inReplyTo) assertNoHeaderInjection('inReplyTo', inReplyTo);
+  if (references) assertNoHeaderInjection('references', references);
+  for (const att of attachments ?? []) {
+    assertNoHeaderInjection('attachment.filename', att.filename);
+  }
 
   const hasAttachments = attachments && attachments.length > 0;
   const isHtml = body.includes('<') && body.includes('>') && /<[a-zA-Z][^>]*>/.test(body);
