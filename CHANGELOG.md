@@ -10,6 +10,15 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.7.6 — Approval Authority · Jul 8, 2026
+
+A Telegram security fix and a rebuilt chat page.
+
+**Highlights**
+
+- **Approval cards always go to the bot owner.** When someone you've authorized to talk to your bot (a guest chat) triggers an action that needs approval, the ✅/❌ card now lands in **your** private chat with the bot — never in the guest's. Previously a guest authorized via a private DM could tap ✅ on their own gated action and self-approve; that hole is closed, and guest-triggered approvals in groups no longer leak the card into the group either. Your own actions are unaffected. (Per-guest capability profiles — restricting *which* actions a guest can even request — are designed and coming next.)
+- **Redesigned chat page.** The conversation view is rebuilt from the ground up: messages in a centered column, agent replies with a lime avatar and a clean name/text layout, dark bubbles for your messages, a floating rounded input, and a distinct Conversations panel. Same speed, same features — just far nicer to look at, in both light and dark themes.
+
 ## v0.7.5 — The Trustworthy Orchestrator · Jul 8, 2026
 
 A deep security-hardening wave, and a rebuilt approval & delegation experience —
