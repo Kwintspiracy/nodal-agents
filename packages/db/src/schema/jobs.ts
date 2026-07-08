@@ -26,6 +26,18 @@ export const agentJobs = pgTable(
     task: text('task').notNull(),
     originalTask: text('original_task'),
     chatId: text('chat_id'),
+    /**
+     * Groups jobs from the same conversational thread for the Jobs page UI
+     * (migration 0059). Purely a reporting/grouping concern — the runtime
+     * execution path (delegation, cron, task-board) never reads this column.
+     * NULL for non-conversational jobs (cron/schedule/webhook with no parent).
+     * Stamped at creation by apps/runner/src/job/conversation-id.ts, reusing
+     * the exact idle-reset session boundary thread-history.ts already uses
+     * for chat continuity — see that file for the gap rule. Delegated/
+     * task-board children inherit their creator's value; nothing else
+     * mutates it after insert.
+     */
+    conversationId: uuid('conversation_id'),
     systemPrompt: text('system_prompt'),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
     /**
@@ -110,6 +122,9 @@ export const agentJobs = pgTable(
       sql`${table.createdAt} DESC`,
     ),
     index('idx_agent_jobs_parent_job_id').on(table.parentJobId),
+    // Migration 0059: the Jobs page groups conversational jobs by
+    // (entity_id, conversation_id) — this index serves that lookup directly.
+    index('idx_agent_jobs_entity_conversation').on(table.entityId, table.conversationId),
     // idx_jobs_parent (F-20, audit #2) was an exact duplicate of
     // idx_agent_jobs_parent_job_id above — same column, same order, both from
     // migration 0000. Dropped in migration 0054; kept this one (matches the

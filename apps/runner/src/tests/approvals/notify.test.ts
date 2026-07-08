@@ -74,6 +74,47 @@ describe('notifyApprovalCreated', () => {
     ]);
   });
 
+  it('renders purpose (line 1) + deterministic impact (line 2) + raw detail (line 3)', async () => {
+    await db.update(agentJobs).set({ chatId: CHAT_ID }).where(eq(agentJobs.id, seed.jobId));
+    await db
+      .update(agents)
+      .set({ telegramBotToken: '123:fake' })
+      .where(eq(agents.id, seed.agentId));
+
+    await notifyApprovalCreated(deps, {
+      approvalRequestId: '00000000-0000-0000-0000-0000000000ac',
+      toolName: 'run_command',
+      toolInput: { command: 'rm -rf /tmp/x', purpose: 'Clean up the scratch dir before the run' },
+      jobId: seed.jobId,
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { text: string };
+    const purposeIdx = body.text.indexOf('Clean up the scratch dir before the run');
+    const impactIdx = body.text.indexOf('Runs a shell command on the host.');
+    const detailIdx = body.text.indexOf('rm -rf /tmp/x');
+    // Line 1 (purpose) before line 2 (impact) before line 3 (raw detail).
+    expect(purposeIdx).toBeGreaterThan(-1);
+    expect(impactIdx).toBeGreaterThan(purposeIdx);
+    expect(detailIdx).toBeGreaterThan(impactIdx);
+  });
+
+  it('falls back to an honest "not specified" line when the agent omits purpose — never invents one', async () => {
+    await db.update(agentJobs).set({ chatId: CHAT_ID }).where(eq(agentJobs.id, seed.jobId));
+    await db
+      .update(agents)
+      .set({ telegramBotToken: '123:fake' })
+      .where(eq(agents.id, seed.agentId));
+
+    await notifyApprovalCreated(deps, req()); // req() has no `purpose` field
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { text: string };
+    expect(body.text).toContain('Purpose not specified by the agent.');
+  });
+
   it('stays silent (no send) when the job has no chat', async () => {
     await db.update(agentJobs).set({ chatId: null }).where(eq(agentJobs.id, seed.jobId));
     await db

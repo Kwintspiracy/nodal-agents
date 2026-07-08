@@ -34,6 +34,9 @@ import { InvalidInputError } from './errors';
  *   - no matching rule → fall back to the tool's `defaultApproval`: execute for
  *     ordinary tools, or suspend for approval for safe-by-default tools
  *     (run_command). A per-agent auto_approve rule overrides this ("Yolo").
+ *   - still no gate → fall back to the tool's `computeApproval` hook, if it
+ *     declares one: a PER-CALL check (e.g. file_write/file_edit gating only
+ *     an overwrite of an existing file in the shared workspace, D1).
  *
  * Rule matching: tool-specific rules take precedence over wildcard.
  * Agent-scoped rules take precedence over entity-scoped rules.
@@ -107,6 +110,26 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       else isHeavy = tool.riskLevel === 'destructive';
       if (!isHeavy) effectiveAction = 'auto_approve';
     }
+  }
+
+  // ── Per-call dynamic gate (D1) ─────────────────────────────────────────────
+  // Complements the static defaultApproval fallback above: a tool declaring
+  // `computeApproval` decides, PER CALL, whether THIS specific input is
+  // destructive enough to need a human — e.g. file_write/file_edit only when
+  // overwriting an existing file in the shared workspace. Same precedence as
+  // defaultApproval: an explicit rule always wins (guarded by !matchedRule),
+  // and fully_autonomous drops the gate entirely (no hardline floor here —
+  // unlike run_command's catastrophic-command circuit breaker, nothing in
+  // this hook's scope is dangerous enough to warrant overriding Yolo).
+  if (
+    !matchedRule &&
+    effectiveAction !== 'block' &&
+    effectiveAction !== 'require_approval' &&
+    tool.computeApproval &&
+    opts.autonomy !== 'fully_autonomous'
+  ) {
+    const dynamic = await tool.computeApproval(validatedInput, ctx);
+    if (dynamic === 'require_approval') effectiveAction = 'require_approval';
   }
 
   // ── Hardline floor ─────────────────────────────────────────────────────────

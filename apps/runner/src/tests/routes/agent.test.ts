@@ -114,6 +114,24 @@ describe('POST /api/agent', () => {
     expect(row.channel).toBe('api');
   });
 
+  it('leaves conversation_id null for a standalone job (no parentJobId)', async () => {
+    const res = await app.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'standalone task, no parent' }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { jobId: string };
+
+    const rows = await db
+      .select({ conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, body.jobId));
+    expect(rows[0]?.conversationId).toBeNull();
+  });
+
   it('returns 400 on missing task', async () => {
     const res = await app.fetch(
       new Request('http://localhost/api/agent', {
@@ -431,6 +449,41 @@ describe('POST /api/agent — entity authorization (bearer-token mode)', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, body.jobId));
     expect(rows[0]?.parentJobId).toBe(ownParentJob!.id);
+  });
+
+  it('inherits conversation_id from the parent job (Jobs page grouping, migration 0059)', async () => {
+    const parentConversationId = '77777777-7777-4777-8777-777777777777';
+    const [ownParentJob] = await dbB
+      .insert(agentJobs)
+      .values({
+        entityId: seedX.entityId,
+        agentId: seedX.agentId,
+        channel: 'telegram',
+        task: 'own entity parent job with a conversation',
+        status: 'awaiting_delegation',
+        conversationId: parentConversationId,
+      })
+      .returning({ id: agentJobs.id });
+
+    const res = await appBearer.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-session': '1' },
+        body: JSON.stringify({
+          task: 'child of a conversational parent',
+          agentSlug: seedXAgentSlug,
+          parentJobId: ownParentJob!.id,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { jobId: string };
+    const rows = await dbB
+      .select({ conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, body.jobId));
+    expect(rows[0]?.conversationId).toBe(parentConversationId);
   });
 
   it('a non-existent parentJobId is refused for an untrusted caller', async () => {

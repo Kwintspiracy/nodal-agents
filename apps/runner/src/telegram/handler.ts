@@ -21,6 +21,7 @@ import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { triggerWorker } from '../routes/agent.ts';
 import { TERMINAL_STATUSES } from '../job/state.ts';
+import { resolveConversationId } from '../job/conversation-id.ts';
 
 export interface HandleResult {
   /** A job was created — caller should triggerWorker after txn commits. */
@@ -246,6 +247,20 @@ export async function handleTelegramUpdate(args: {
     taskText = 'Image envoyée (sans légende).';
   }
 
+  // Jobs page grouping (migration 0059): stamp the same conversation_id as
+  // the thread this message continues, using the identical session-gap rule
+  // loadThreadHistory already applies for chat continuity — see
+  // job/conversation-id.ts. Keyed on targetAgentId (not receivingAgentId):
+  // a `/ask <slug>` message routes this job to a different agent, and that
+  // agent's own thread is what it belongs to.
+  const conversationId = await resolveConversationId({
+    db: tx,
+    entityId: receivingAgentEntityId,
+    agentId: targetAgentId,
+    channel: 'telegram',
+    chatId: String(chatId),
+  });
+
   const [job] = await tx
     .insert(agentJobs)
     .values({
@@ -254,6 +269,7 @@ export async function handleTelegramUpdate(args: {
       channel: 'telegram',
       task: taskText,
       chatId: String(chatId),
+      conversationId,
       status: 'pending',
       // Text-only at insert; when there's a photo the poller upgrades this to a
       // multimodal [text + image] message after downloading the file.

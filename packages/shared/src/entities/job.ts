@@ -21,6 +21,10 @@ export const AgentJobSchema = z
     task: z.string().min(1),
     original_task: z.string().nullable(),
     chat_id: z.string().nullable(),
+    // Groups jobs from the same conversational thread (migration 0059) — see
+    // apps/runner/src/job/conversation-id.ts for the stamping rule. Null for
+    // non-conversational jobs (cron/schedule/webhook with no parent).
+    conversation_id: z.string().guid().nullable(),
     system_prompt: z.string().nullable(),
     messages: z.array(z.record(z.string(), z.unknown())),
     tools_used: z.array(z.string()),
@@ -63,6 +67,7 @@ export const AgentJobInsertSchema = AgentJobSchema.omit({
   status: JobStatusSchema.default('pending'),
   original_task: z.string().nullable().optional(),
   chat_id: z.string().nullable().optional(),
+  conversation_id: z.string().guid().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   request_id: z.string().nullable().optional(),
   parent_job_id: z.string().guid().nullable().optional(),

@@ -424,6 +424,85 @@ describe('executeTool', () => {
   });
 });
 
+// ─── Per-call dynamic gate: tool.computeApproval (D1) ───────────────────────────
+// Generic mechanism test — the real target (file_write/file_edit gating an
+// overwrite in the shared workspace) is exercised end-to-end in
+// builtin/file-ops/overwrite-gate.test.ts. Here we only verify executeTool's
+// wiring: precedence vs explicit rules, and the autonomy relaxation.
+
+describe('executeTool — computeApproval per-call hook (D1)', () => {
+  function makeDynamicTool(
+    decision: 'require_approval' | undefined,
+  ): ToolDefinition<z.ZodObject<{ value: z.ZodString }>, string> {
+    return makeSimpleTool({
+      name: 'dynamic_tool',
+      computeApproval: async () => decision,
+    });
+  }
+
+  it('gates when computeApproval returns require_approval, no rule, propose_confirm (undefined autonomy)', async () => {
+    const captured: ApprovalGateRequest[] = [];
+    const result = await executeTool(
+      makeDynamicTool('require_approval'),
+      { value: 'x' },
+      makeCtx(),
+      makeOpts([], async (req) => {
+        captured.push(req);
+      }),
+    );
+    expect(result.outcome).toBe('awaiting_approval');
+    expect(captured).toHaveLength(1);
+  });
+
+  it('STILL gates under destructive_gate — this hook is not relaxed by that mode', async () => {
+    const opts = makeOpts([]);
+    opts.autonomy = 'destructive_gate';
+    const result = await executeTool(
+      makeDynamicTool('require_approval'),
+      { value: 'x' },
+      makeCtx(),
+      opts,
+    );
+    expect(result.outcome).toBe('awaiting_approval');
+  });
+
+  it('does NOT gate under fully_autonomous — dropped entirely, per D1 spec', async () => {
+    const opts = makeOpts([]);
+    opts.autonomy = 'fully_autonomous';
+    const result = await executeTool(
+      makeDynamicTool('require_approval'),
+      { value: 'x' },
+      makeCtx(),
+      opts,
+    );
+    expect(result.outcome).toBe('success');
+  });
+
+  it('an explicit rule (even auto_approve) is never consulted — computeApproval is skipped', async () => {
+    const autoRule: ApprovalRule = {
+      id: 'explicit-auto',
+      toolName: 'dynamic_tool',
+      action: 'auto_approve',
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    };
+    const result = await executeTool(
+      makeDynamicTool('require_approval'),
+      { value: 'x' },
+      makeCtx(),
+      makeOpts([autoRule]),
+    );
+    expect(result.outcome).toBe('success');
+  });
+
+  it('computeApproval returning undefined never gates, regardless of mode', async () => {
+    const opts = makeOpts([]);
+    opts.autonomy = 'propose_confirm';
+    const result = await executeTool(makeDynamicTool(undefined), { value: 'x' }, makeCtx(), opts);
+    expect(result.outcome).toBe('success');
+  });
+});
+
 // ─── Hardline floor for run_command ─────────────────────────────────────────────
 
 function makeRunCommandTool(): ToolDefinition<z.ZodObject<{ command: z.ZodString }>, string> {

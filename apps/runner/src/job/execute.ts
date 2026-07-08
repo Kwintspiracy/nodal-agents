@@ -64,6 +64,8 @@ import {
   listWorkspaceMcpToolNames,
   isCatastrophicCommand,
   matchApprovalRule,
+  DELIVERY_TOOL_NAMES as DELIVERY_TOOL_NAME_LIST,
+  SHARED_WORKSPACE_LABEL,
 } from '@nodal-agents/tools';
 import type {
   ToolDefinition,
@@ -229,14 +231,7 @@ async function resolveSearchBackend(
 // an agent that keeps messaging the user across consecutive turns instead of
 // finishing with return_result. Extend this set as new outbound channels ship
 // (whatsapp_send_message, slack_send_message, …).
-const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
-  'telegram_send_message',
-  'send_image',
-  'send_file',
-  'send_video',
-  'send_audio',
-  'send_voice',
-]);
+const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set(DELIVERY_TOOL_NAME_LIST);
 
 // Guard 1d — delivery tools whose presence in a turn counts as "delivered" for
 // the no-delivery runaway detector. Superset of DELIVERY_TOOL_NAMES: also includes
@@ -245,12 +240,7 @@ const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
 const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'return_result',
   'dashboard_publish',
-  'telegram_send_message',
-  'send_image',
-  'send_file',
-  'send_video',
-  'send_audio',
-  'send_voice',
+  ...DELIVERY_TOOL_NAME_LIST,
 ]);
 
 // Channels whose ONLY path to the user is a delivery tool call (telegram_send_message).
@@ -838,13 +828,16 @@ async function runJob(
   // this entity can read/write — for ARTIFACTS (reports, images, html, pptx) that
   // siblings or later runs need. Auto-created (works out-of-box); complements the
   // per-agent workspaces above (special tasks) and entity-wide memory (facts).
-  // Labeled 'shared'. The agent's file_* tools see it like any other workspace.
+  // Labeled SHARED_WORKSPACE_LABEL — the same constant the D1 overwrite gate
+  // keys off (packages/tools file-ops/workspace.ts); a drift here would
+  // silently disable that gate. The agent's file_* tools see it like any
+  // other workspace.
   if (job.entityId) {
     const sharedPath = join(homedir(), '.nodalai', 'workspaces', job.entityId, 'shared');
     try {
       mkdirSync(sharedPath, { recursive: true });
-      if (!agentWorkspacesList.some((w) => w.label === 'shared')) {
-        agentWorkspacesList.push({ label: 'shared', path: sharedPath });
+      if (!agentWorkspacesList.some((w) => w.label === SHARED_WORKSPACE_LABEL)) {
+        agentWorkspacesList.push({ label: SHARED_WORKSPACE_LABEL, path: sharedPath });
       }
     } catch {
       // best-effort — a workspace we couldn't create is simply not offered
@@ -1025,7 +1018,29 @@ async function runJob(
   // confirmation). The user is on the dashboard; dashboard_publish is the path.
   // Gate delivery tools on a resolvable recipient — channel-agnostic, the pattern
   // every future outbound tool (whatsapp/slack) follows.
-  if (agentRow.telegramBotToken && job.chatId) {
+  //
+  // B3 — a delegated worker (job.parentJobId set) whose OWN agent has no
+  // Telegram bot token inherits its entity's ROOT agent's token, so it can
+  // reply directly on the same chat the orchestrator is running for, instead
+  // of only the root ever being able to deliver. Entity-scoped: the root
+  // looked up is always entities.root_agent_id for THIS job's entityId, never
+  // another entity's — no cross-entity fallback. No change when the agent
+  // already has its own token (inheritedRootBotToken stays null, so ctx below
+  // gets no override and the send tools fall back to their historical
+  // per-call DB lookup), nor when there is no chatId (dashboard/cron — the
+  // anti-"phantom Telegram" gate above/below is unchanged).
+  let inheritedRootBotToken: string | null = null;
+  if (!agentRow.telegramBotToken && job.parentJobId && job.chatId) {
+    const [rootAgentTokenRow] = await db
+      .select({ telegramBotToken: agents.telegramBotToken })
+      .from(entitiesTable)
+      .innerJoin(agents, eq(agents.id, entitiesTable.rootAgentId))
+      .where(eq(entitiesTable.id, job.entityId ?? ''))
+      .limit(1);
+    inheritedRootBotToken = rootAgentTokenRow?.telegramBotToken ?? null;
+  }
+  const deliveryBotToken = agentRow.telegramBotToken ?? inheritedRootBotToken;
+  if (deliveryBotToken && job.chatId) {
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendFileTool() as unknown as AnyToolDef);
@@ -1672,6 +1687,7 @@ async function runJob(
                 entityId: job.entityId ?? '',
                 db,
                 jobChatId: job.chatId ?? null,
+                resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
                 skillStoreDir: skillStore,
@@ -1858,6 +1874,12 @@ async function runJob(
   const MAX_TELEGRAM_REDELIVERY_NUDGES = 2;
   let telegramRedeliveryNudges = 0;
   let telegramDelivered = false;
+  // B3bis — which delivery tool actually fired (set alongside telegramDelivered
+  // below). Feeds withDeliveryNotice: when THIS job is a delegated worker
+  // (job.parentJobId set) that delivered directly to the user, its parent needs
+  // to know so the orchestrator doesn't re-deliver or treat the task as
+  // undelivered — see withDeliveryNotice below.
+  let deliveredViaToolName: string | null = null;
   // Internal corrective prompt — never sent to the channel; only steers the LLM
   // back to delivering via its tool. Not user-facing text (invariant 2 holds).
   const deliveryNudge =
@@ -1865,6 +1887,21 @@ async function runJob(
     'Appelle `telegram_send_message` avec ta réponse, PUIS `return_result`. Ne réponds pas ' +
     'en texte simple — sur Telegram, seul un message envoyé via `telegram_send_message` est ' +
     "visible par l'utilisateur.";
+
+  // B3bis — append a deterministic, harness-authored delivery notice to the
+  // result this job returns, so a PARENT that delegated to it (assign_*, in
+  // resumeDelegated's tool_result) sees that delivery already happened and
+  // does not re-deliver or mark the task as undelivered. Platform metadata,
+  // not the agent's own voice (invariant #2 holds — this is appended by the
+  // runner, never generated by the LLM). No-op for a non-delegated job
+  // (job.parentJobId null) or one that never delivered this run.
+  const withDeliveryNotice = (resultText: string): string => {
+    if (!job.parentJobId || !deliveredViaToolName) return resultText;
+    const notice = `[livraison effectuée : ${deliveredViaToolName}${
+      job.chatId ? ` → chat ${job.chatId}` : ''
+    }]`;
+    return resultText ? `${resultText}\n\n${notice}` : notice;
+  };
 
   // Approval heads-up (mirror of the delivery guard). A gated tool creates an
   // approval request and pauses the job WITHOUT executing. On a tool-only
@@ -2551,7 +2588,7 @@ async function runJob(
               runnerEnv,
             ).catch((e) => console.warn('[reflection]', e));
           }
-          return { status: 'completed', result: textContent };
+          return { status: 'completed', result: withDeliveryNotice(textContent) };
         }
         // No text AND no tool calls — an empty LLM turn. Transient (the model
         // occasionally returns a blank completion); retry a bounded number of
@@ -2659,6 +2696,7 @@ async function runJob(
         entityId: job.entityId ?? '',
         db,
         jobChatId: job.chatId ?? null,
+        resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
         embeddingClient: deps.embeddingClient,
         workspaces: agentWorkspacesList,
         skillStoreDir: skillStore,
@@ -2905,6 +2943,7 @@ async function runJob(
                 entityId: job.entityId ?? '',
                 db,
                 jobChatId: job.chatId ?? null,
+                resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
                 skillStoreDir: skillStore,
@@ -2956,6 +2995,10 @@ async function runJob(
                 task: job.task,
                 channel: job.channel,
                 chatId: job.chatId,
+                // Lot E (conversations) : le child délégué hérite du fil de
+                // conversation du parent — sans ça, la page Jobs rattacherait
+                // le sous-job à aucune conversation.
+                conversationId: job.conversationId ?? null,
               };
 
               // Forward any non-assign tool results we already executed in this
@@ -3104,6 +3147,7 @@ async function runJob(
         // completion paths know the user actually received something.
         if (toolResult.outcome === 'success' && DELIVERY_TOOL_NAMES.has(call.name)) {
           telegramDelivered = true;
+          deliveredViaToolName = call.name;
         }
 
         // Guard 3b — track unresolved hard tool failures across turns. A success
@@ -3528,7 +3572,7 @@ async function runJob(
         trace('exit_completed_via_return_result', {
           propagatedResultLen: propagatedResult.length,
         });
-        return { status: 'completed', result: propagatedResult };
+        return { status: 'completed', result: withDeliveryNotice(propagatedResult) };
       }
 
       // k. Append tool results and continue

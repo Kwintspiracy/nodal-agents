@@ -1465,6 +1465,10 @@ export type DelegationRunRow = {
   costUsd: number;
   createdAt: Date | null;
   completedAt: Date | null;
+  /** Jobs page grouping (migration 0059) — null for non-conversational jobs. */
+  conversationId: string | null;
+  /** Feeds classifyJob() (chat vs task) in jobs-grouping.ts. */
+  toolsUsed: string[];
 };
 
 export async function listDelegationRunsAction(
@@ -1490,6 +1494,8 @@ export async function listDelegationRunsAction(
         createdAt: agentJobs.createdAt,
         completedAt: agentJobs.completedAt,
         parentJobId: agentJobs.parentJobId,
+        conversationId: agentJobs.conversationId,
+        toolsUsed: agentJobs.toolsUsed,
       })
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
@@ -1575,6 +1581,8 @@ export async function listDelegationRunsAction(
         costUsd: r.costUsd ?? 0,
         createdAt: r.createdAt,
         completedAt: r.completedAt,
+        conversationId: r.conversationId,
+        toolsUsed: r.toolsUsed ?? [],
       };
     });
     return ok(result);

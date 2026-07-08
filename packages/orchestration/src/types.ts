@@ -51,6 +51,13 @@ export interface AgentJob {
   task: string;
   channel: string;
   chatId: string | null;
+  /**
+   * Jobs page grouping (migration 0059) — optional because not every caller
+   * constructing an AgentJob shape threads it through yet. Delegated children
+   * inherit it verbatim from the parent (same conversation); undefined is
+   * treated the same as null (child gets no conversation_id).
+   */
+  conversationId?: string | null;
 }
 
 // ─── DelegationContext ────────────────────────────────────────────────────────

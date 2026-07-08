@@ -418,6 +418,60 @@ export function getWorkspaceRootForDisplay(
   return list[0]!.path;
 }
 
+// ─── Shared-workspace overwrite gate (D1) ─────────────────────────────────────
+
+/**
+ * Whether an already-resolved canonical path (as returned by
+ * resolveAndCheckPath) lives inside the entity-wide SHARED workspace — the
+ * auto-injected common scratch/hand-off area addressed via the "shared/"
+ * label (see SHARED_WORKSPACE_LABEL). A workspace the OWNER explicitly
+ * attached (agent_workspaces — e.g. an Obsidian vault) carries its own,
+ * different label and never matches here, by construction: this is a pure
+ * label lookup, not a heuristic. Returns false (not gated) if the agent has
+ * no shared workspace or its root can't be resolved.
+ */
+export async function isPathInSharedWorkspace(
+  ctx: ToolContext,
+  resolvedPath: string,
+): Promise<boolean> {
+  const shared = ctx.workspaces?.find((ws) => ws.label === SHARED_WORKSPACE_LABEL);
+  if (!shared) return false;
+  const realShared = await realpath(shared.path).catch(() => undefined);
+  if (!realShared) return false;
+  const rootWithSep = realShared.endsWith(sep) ? realShared : realShared + sep;
+  return resolvedPath === realShared || resolvedPath.startsWith(rootWithSep);
+}
+
+/**
+ * D1 gate: file_write/file_edit only need a human in the loop when the call
+ * would OVERWRITE an EXISTING file inside the shared workspace — never for a
+ * brand-new file, and never for an attached or private workspace. Wired as
+ * each tool's `computeApproval` hook (see ToolDefinition) so the decision is
+ * made PER CALL instead of a blanket `defaultApproval` that would gate every
+ * write regardless of target.
+ *
+ * Resolution failures (bad path, no workspace configured, path traversal…)
+ * return undefined — the call is about to fail loud in execute() anyway;
+ * there is nothing destructive to gate.
+ */
+export async function computeSharedOverwriteApproval(
+  ctx: ToolContext,
+  requestedPath: string,
+): Promise<'require_approval' | undefined> {
+  let resolved: string;
+  try {
+    resolved = await resolveAndCheckPath(ctx, requestedPath);
+  } catch {
+    return undefined;
+  }
+  if (!(await isPathInSharedWorkspace(ctx, resolved))) return undefined;
+  const exists = await stat(resolved).then(
+    () => true,
+    () => false,
+  );
+  return exists ? 'require_approval' : undefined;
+}
+
 // Keep `basename` in scope so other modules importing workspace.ts can use it
 // without a direct path import (avoids duplicate imports in callers).
 export { basename };

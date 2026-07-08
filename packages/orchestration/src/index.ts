@@ -38,6 +38,13 @@ export { detectOrchestratorMode } from './orchestrator-mode';
 export { generateAssignTools, getChildAgents } from './router/assign-tools';
 export type { AssignInput } from './router/assign-tools';
 
+// ─── Router: tool availability (B2 brief validation) ─────────────────────────
+export {
+  computeAgentToolNames,
+  findUnavailableToolMentions,
+  KNOWN_TOOL_NAME_UNIVERSE,
+} from './router/tool-availability';
+
 // ─── Router: delegation ───────────────────────────────────────────────────────
 export { handleDelegation } from './router/delegate';
 

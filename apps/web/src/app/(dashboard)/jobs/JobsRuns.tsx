@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import type { DelegationRunRow, AgentRow } from '@/lib/actions.ts';
+import type { AgentRow } from '@/lib/actions.ts';
+import type { JobsPageRow } from '@/lib/jobs-grouping.ts';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import SendTaskForm from '@/components/SendTaskForm.tsx';
@@ -17,7 +18,7 @@ export default function JobsRuns({
   agents,
   error,
 }: {
-  rows: DelegationRunRow[];
+  rows: JobsPageRow[];
   agents: AgentRow[];
   error?: string;
 }) {

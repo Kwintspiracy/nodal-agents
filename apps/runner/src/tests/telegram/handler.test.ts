@@ -130,6 +130,69 @@ describe('handleTelegramUpdate — private chats', () => {
   });
 });
 
+describe('handleTelegramUpdate — conversation grouping (migration 0059)', () => {
+  it('stamps a conversation_id on a fresh thread', async () => {
+    const result = await handleTelegramUpdate({
+      update: privateMessage('first message', 555),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
+    expect(job?.conversationId).toBeTruthy();
+  });
+
+  it('a second message shortly after in the SAME chat inherits the same conversation_id', async () => {
+    const first = await handleTelegramUpdate({
+      update: privateMessage('are you there?', 555),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    // Mark the first job completed (delivered) just now, so the gap since
+    // delivery is ~0 — well under the idle-reset window.
+    await db
+      .update(agentJobs)
+      .set({ status: 'completed', result: 'yes', completedAt: new Date() })
+      .where(eq(agentJobs.id, first.jobId!));
+
+    const second = await handleTelegramUpdate({
+      update: privateMessage('good, one more thing', 555),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    const [firstJob] = await db.select().from(agentJobs).where(eq(agentJobs.id, first.jobId!));
+    const [secondJob] = await db.select().from(agentJobs).where(eq(agentJobs.id, second.jobId!));
+    expect(secondJob?.conversationId).toBe(firstJob?.conversationId);
+  });
+
+  it("a message in a DIFFERENT chat never inherits another thread's conversation_id", async () => {
+    const a = await handleTelegramUpdate({
+      update: privateMessage('hello from chat 555', 555),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    const b = await handleTelegramUpdate({
+      update: privateMessage('hello from chat 999', 999),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    const [jobA] = await db.select().from(agentJobs).where(eq(agentJobs.id, a.jobId!));
+    const [jobB] = await db.select().from(agentJobs).where(eq(agentJobs.id, b.jobId!));
+    expect(jobA?.conversationId).not.toBe(jobB?.conversationId);
+  });
+});
+
 describe('handleTelegramUpdate — group chats', () => {
   it('skips plain text in group chats (no command, no bot reply, no mention)', async () => {
     const result = await handleTelegramUpdate({

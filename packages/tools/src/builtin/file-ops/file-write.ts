@@ -5,7 +5,12 @@ import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { resolveAndCheckPath, MAX_WRITE_BYTES, WorkspaceError } from './workspace';
+import {
+  resolveAndCheckPath,
+  computeSharedOverwriteApproval,
+  MAX_WRITE_BYTES,
+  WorkspaceError,
+} from './workspace';
 
 export const FileWriteInputSchema = z.object({
   path: z
@@ -18,6 +23,15 @@ export const FileWriteInputSchema = z.object({
     .optional()
     .default(false)
     .describe('If true, create missing parent directories.'),
+  purpose: z
+    .string()
+    .optional()
+    .describe(
+      'OPTIONAL. One short sentence on WHY this write is needed. Shown first on the ' +
+        'approval card when this call requires human review (e.g. overwriting an existing ' +
+        'file in the shared workspace) — say why in plain language, not what you already say ' +
+        'in `path`/`content`.',
+    ),
 });
 
 export type FileWriteInput = z.infer<typeof FileWriteInputSchema>;
@@ -34,6 +48,10 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
     'lines you do not touch. Max 1 MiB per write.',
   inputSchema: FileWriteInputSchema,
   riskLevel: 'write',
+  // D1: gate ONLY the destructive case — overwriting a file that already
+  // exists in the entity-wide SHARED workspace. A brand-new file, or a write
+  // into an attached/private workspace, never gates (see computeSharedOverwriteApproval).
+  computeApproval: (input, ctx) => computeSharedOverwriteApproval(ctx, input.path),
   execute: async (input, ctx) => {
     try {
       const bytes = Buffer.byteLength(input.content, 'utf8');

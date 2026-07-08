@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Clock } from '@phosphor-icons/react/dist/ssr';
+import { computeApprovalImpactLine } from '@nodal-agents/shared';
 import { listApprovalsAction } from '@/lib/actions.ts';
 import ApprovalCard from '@/components/ui/ApprovalCard';
 import StatusPill from '@/components/ui/StatusPill';
@@ -89,14 +90,19 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
               body={
                 <div className="space-y-1">
                   {(() => {
+                    // WHY first: the agent's own `purpose` (its voice, invariant #2
+                    // applies — shown verbatim or admitted missing, never invented),
+                    // then a deterministic, code-computed impact line (invariant #2
+                    // does NOT apply — platform UI describing what the action DOES).
                     const ti = (a.toolInput ?? {}) as Record<string, unknown>;
                     const purpose = typeof ti.purpose === 'string' ? ti.purpose.trim() : '';
-                    const impact = typeof ti.impact === 'string' ? ti.impact.trim() : '';
-                    if (!purpose && !impact) return null;
+                    const impact = computeApprovalImpactLine(a.toolName, a.toolInput);
                     return (
                       <div className="space-y-0.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
-                        {purpose && <p className="text-[13px] text-ink">➤ {purpose}</p>}
-                        {impact && <p className="text-[12px] text-warn">⚠️ {impact}</p>}
+                        <p className="text-[13px] text-ink">
+                          ➤ {purpose || 'Purpose not specified by the agent.'}
+                        </p>
+                        <p className="text-[12px] text-warn">⚠️ {impact}</p>
                       </div>
                     );
                   })()}

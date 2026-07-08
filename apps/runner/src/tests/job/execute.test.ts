@@ -20,6 +20,7 @@ import {
   agentMemory,
   chatMessages,
   conversations,
+  entities,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -41,16 +42,18 @@ import type { JobId } from '@nodal-agents/orchestration';
 // execute.ts calls createLlmClient() directly (Brique 25: no env fallback).
 // We intercept that call here and forward to the per-test mock client.
 // vi.hoisted ensures the factory runs before module imports are resolved.
-const { sendTelegramMessageMock, getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
-  let _activeLlmClient: RunnerDeps['llmClient'] | null = null;
-  return {
-    sendTelegramMessageMock: vi.fn().mockResolvedValue({ messageId: 999 }),
-    getActiveLlmClient: () => _activeLlmClient,
-    setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
-      _activeLlmClient = c;
-    },
-  };
-});
+const { sendTelegramMessageMock, sendTelegramPhotoMock, getActiveLlmClient, setActiveLlmClient } =
+  vi.hoisted(() => {
+    let _activeLlmClient: RunnerDeps['llmClient'] | null = null;
+    return {
+      sendTelegramMessageMock: vi.fn().mockResolvedValue({ messageId: 999 }),
+      sendTelegramPhotoMock: vi.fn().mockResolvedValue({ messageId: 998 }),
+      getActiveLlmClient: () => _activeLlmClient,
+      setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
+        _activeLlmClient = c;
+      },
+    };
+  });
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -58,6 +61,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   return {
     ...actual,
     sendTelegramMessage: sendTelegramMessageMock,
+    sendTelegramPhoto: sendTelegramPhotoMock,
   };
 });
 
@@ -921,6 +925,9 @@ describe('executeJob', () => {
       .where(and(eq(agentJobs.id, spawnedJobId!), eq(agentJobs.channel, 'dashboard')));
     expect(job).toBeDefined();
     expect(job?.task).toBe('pull Q2 financials and update the sheet');
+    // Jobs page grouping (migration 0059): the escalated job is stamped with
+    // the dashboard conversation's own id, not re-derived from a heuristic.
+    expect(job?.conversationId).toBe(conv.id);
 
     // The assistant chat message links back to that job (drives the dispatch card).
     const msgs = await db
@@ -4518,6 +4525,293 @@ describe('F-8: tool-call heartbeat keeps a long single tool call from being reap
       expect(after?.status).toBe('completed');
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+// ─── B3 / B3bis: delegated worker inherits root's Telegram token, tells its
+// parent when it delivers directly ─────────────────────────────────────────
+//
+// A worker delegated a job (parent_job_id set) has no Telegram bot token of
+// its own — only the ROOT agent of the entity is ever given one — so it could
+// never use telegram_send_message/send_image/etc. to reply on the same chat
+// the orchestrator is running for. B3 fixes this: when a delegated worker's
+// job carries a chatId and the agent has no token, the runner resolves the
+// entity's root agent's token and offers the delivery tools with THAT token.
+// B3bis: when such a worker delivers directly, the PARENT must be told (via a
+// deterministic notice appended to the tool_result it sees) so it doesn't
+// re-deliver or treat the task as undelivered.
+
+describe('B3: delegated worker inherits root agent Telegram token', () => {
+  async function seedRootAndWorker() {
+    const ts = Date.now() + Math.random();
+    const [user] = await db
+      .insert((await import('@nodal-agents/db')).users)
+      .values({ email: `test-b3-${ts}@ex.com` })
+      .returning();
+    const [entity] = await db
+      .insert(entities)
+      .values({ userId: user!.id, name: 'B3 Entity', slug: `e-b3-${ts}` })
+      .returning();
+    const [root] = await db
+      .insert(agents)
+      .values({
+        entityId: entity!.id,
+        name: 'B3 Root',
+        slug: `b3-root-${ts}`,
+        personality: 'root',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        telegramBotToken: 'root-secret-token',
+        systemAgent: true,
+      })
+      .returning();
+    await db.update(entities).set({ rootAgentId: root!.id }).where(eq(entities.id, entity!.id));
+    const [worker] = await db
+      .insert(agents)
+      .values({
+        entityId: entity!.id,
+        name: 'B3 Worker',
+        slug: `b3-worker-${ts}`,
+        personality: 'worker',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        telegramBotToken: null,
+        systemAgent: true,
+      })
+      .returning();
+    return { entityId: entity!.id, rootId: root!.id, workerId: worker!.id };
+  }
+
+  it('a delegated worker with no token, given a chatId, gets send_image and it uses the ROOT token', async () => {
+    const { entityId, rootId, workerId } = await seedRootAndWorker();
+
+    // Any existing job row satisfies the parent_job_id FK — never executed.
+    const [parentJob] = await db
+      .insert(agentJobs)
+      .values({ entityId, agentId: rootId, channel: 'api', task: 'root task', status: 'pending' })
+      .returning();
+
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId,
+        agentId: workerId,
+        channel: 'api',
+        chatId: '555000111',
+        parentJobId: parentJob!.id,
+        task: 'deliver a chart',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    sendTelegramPhotoMock.mockClear();
+    try {
+      const llmClient = makeMockLlmClient([
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-img',
+              toolName: 'send_image',
+              args: { source: 'http://example.local/chart.png' },
+            },
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+      const result = await executeJob(childJob!.id as JobId, makeDeps(llmClient), testEnv);
+
+      expect(result.status).toBe('completed');
+      expect(sendTelegramPhotoMock).toHaveBeenCalledOnce();
+      expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
+        expect.objectContaining({ botToken: 'root-secret-token', chatId: '555000111' }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('a delegated worker with no token and NO chatId does NOT get delivery tools even though the root has one', async () => {
+    const { entityId, rootId, workerId } = await seedRootAndWorker();
+    const [parentJob] = await db
+      .insert(agentJobs)
+      .values({ entityId, agentId: rootId, channel: 'api', task: 'root task', status: 'pending' })
+      .returning();
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId,
+        agentId: workerId,
+        channel: 'api',
+        chatId: null,
+        parentJobId: parentJob!.id,
+        task: 'no chat here',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    sendTelegramPhotoMock.mockClear();
+    const llmClient = makeMockLlmClient(
+      repeatToolCall('send_image', { source: 'http://example.local/chart.png' }, 4),
+    );
+    const result = await executeJob(childJob!.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+  });
+
+  it('a NON-delegated worker (no parentJobId) does NOT inherit the root token even with a chatId', async () => {
+    const { entityId, workerId } = await seedRootAndWorker();
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId,
+        agentId: workerId,
+        channel: 'api',
+        chatId: '555000222',
+        parentJobId: null,
+        task: 'standalone, not delegated',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    sendTelegramPhotoMock.mockClear();
+    const llmClient = makeMockLlmClient(
+      repeatToolCall('send_image', { source: 'http://example.local/chart.png' }, 4),
+    );
+    const result = await executeJob(childJob!.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+  });
+
+  it('B3bis: a delegated child that delivers via send_image tells its parent in the assign_ tool_result', async () => {
+    const ts = Date.now() + Math.random();
+    const [user] = await db
+      .insert((await import('@nodal-agents/db')).users)
+      .values({ email: `test-b3bis-${ts}@ex.com` })
+      .returning();
+    const [entity] = await db
+      .insert(entities)
+      .values({ userId: user!.id, name: 'B3bis Entity', slug: `e-b3bis-${ts}` })
+      .returning();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: entity!.id,
+        name: 'B3bis Orchestrator',
+        slug: `b3bis-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        telegramBotToken: 'orch-root-token',
+        systemAgent: true,
+      })
+      .returning();
+    await db.update(entities).set({ rootAgentId: orch!.id }).where(eq(entities.id, entity!.id));
+    const childSlug = `b3bis-child-${ts}`;
+    const [child] = await db
+      .insert(agents)
+      .values({
+        entityId: entity!.id,
+        name: 'B3bis Child',
+        slug: childSlug,
+        personality: 'child',
+        llmKeyId: seed.llmKeyId,
+        role: 'agent',
+        telegramBotToken: null,
+        systemAgent: true,
+      })
+      .returning();
+    await db.insert(agentAssignments).values({
+      orchestratorId: orch!.id,
+      subAgentId: child!.id,
+      entityId: entity!.id,
+    });
+    const assignTool = `assign_${childSlug.replace(/-/g, '_')}`;
+
+    const [parentJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: entity!.id,
+        agentId: orch!.id,
+        channel: 'api',
+        chatId: '555000333',
+        task: 'delegate the chart delivery',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    sendTelegramPhotoMock.mockClear();
+    try {
+      const llmClient = makeMockLlmClient([
+        // Parent turn 1: delegates to the child.
+        {
+          toolCalls: [
+            { toolCallId: 'tc-assign', toolName: assignTool, args: { task: 'send the chart' } },
+          ],
+        },
+        // Child turn 1 (runs inline, synchronously, same test): delivers then returns.
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-img',
+              toolName: 'send_image',
+              args: { source: 'http://example.local/chart.png' },
+            },
+            { toolCallId: 'tc-rr-child', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+        // Parent turn 2 (resumed): sees the child's result, finishes.
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr-parent', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ]);
+
+      const result = await executeJob(parentJob!.id as JobId, makeDeps(llmClient), testEnv);
+      expect(result.status).toBe('completed');
+
+      // The child used the inherited ROOT (orchestrator's own) token — proves
+      // B3 held for the assign_ delegation path too, not just a direct job.
+      expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
+        expect.objectContaining({ botToken: 'orch-root-token' }),
+      );
+
+      // B3bis: the parent's own transcript must carry the delivery notice —
+      // the orchestrator's LLM must not re-deliver or treat this as undelivered.
+      const [row] = await db
+        .select({ messages: agentJobs.messages })
+        .from(agentJobs)
+        .where(eq(agentJobs.id, parentJob!.id));
+      const transcript = JSON.stringify(row?.messages ?? []);
+      expect(transcript).toContain('livraison effectuée');
+      expect(transcript).toContain('send_image');
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 });

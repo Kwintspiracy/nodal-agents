@@ -75,7 +75,13 @@ export const PER_TURN_MAX_CHARS = 2_400;
  * THREAD_IDLE_RESET_MINUTES.
  */
 const IDLE_RESET_MINUTES = Number(process.env.THREAD_IDLE_RESET_MINUTES) || 240;
-const IDLE_RESET_MS = IDLE_RESET_MINUTES * 60_000;
+/**
+ * Exported so other call sites needing the SAME session boundary reuse it
+ * instead of re-deriving it — e.g. job/conversation-id.ts (Jobs page
+ * conversation grouping, migration 0059) stamps jobs into the same
+ * conversation using this exact gap.
+ */
+export const IDLE_RESET_MS = IDLE_RESET_MINUTES * 60_000;
 /**
  * Outer query bound — never scan rows older than this. Pure optimization to cap
  * the candidate scan; the real session boundary is the gap logic, not this.

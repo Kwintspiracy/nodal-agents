@@ -104,6 +104,9 @@ export async function handleDelegation(
       status: 'pending',
       parentJobId: parentJob.id as string,
       delegationDepth: childDepth,
+      // Jobs page grouping (migration 0059): a delegated child is the SAME
+      // conversation as its parent, not a new one.
+      conversationId: parentJob.conversationId ?? undefined,
       messages: [{ role: 'user', content: childContent }],
     })
     .returning();

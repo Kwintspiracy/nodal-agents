@@ -12,7 +12,12 @@ import { dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { resolveAndCheckPath, MAX_WRITE_BYTES, WorkspaceError } from './workspace';
+import {
+  resolveAndCheckPath,
+  computeSharedOverwriteApproval,
+  MAX_WRITE_BYTES,
+  WorkspaceError,
+} from './workspace';
 
 export const FileEditInputSchema = z.object({
   path: z.string().min(1).describe('Path to an existing file, relative to the workspace root.'),
@@ -29,6 +34,14 @@ export const FileEditInputSchema = z.object({
     .optional()
     .default(false)
     .describe('Replace every occurrence (default false: require exactly one match).'),
+  purpose: z
+    .string()
+    .optional()
+    .describe(
+      'OPTIONAL. One short sentence on WHY this edit is needed. Shown first on the approval ' +
+        'card when this call requires human review (e.g. editing a file in the shared ' +
+        'workspace) — say why in plain language, not what you already say in `path`.',
+    ),
 });
 
 export type FileEditInput = z.infer<typeof FileEditInputSchema>;
@@ -46,6 +59,10 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
     'untouched lines.',
   inputSchema: FileEditInputSchema,
   riskLevel: 'write',
+  // D1: an edit always targets an EXISTING file (file_edit fails loud on a
+  // missing one — see execute() below), so the only thing left to check is
+  // whether that file lives in the shared workspace. Same gate as file_write.
+  computeApproval: (input, ctx) => computeSharedOverwriteApproval(ctx, input.path),
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);

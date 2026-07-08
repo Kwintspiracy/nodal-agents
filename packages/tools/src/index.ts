@@ -71,9 +71,15 @@ export {
   createSendVideoTool,
   createSendAudioTool,
   createSendVoiceTool,
+  DELIVERY_TOOL_NAMES,
 } from './communication';
 
 // Skill-authoring grounding: the real MCP tool names of a workspace, injected
 // into create_skill / update_skill descriptions by the runner so the ROOT agent
 // references real tools (not its training-prior conventions) BEFORE authoring.
 export { listWorkspaceMcpToolNames } from './builtin/meta-ops/lint-skill-content';
+
+// Canonical label of the entity's built-in shared workspace. The runner builds
+// its workspace list with this label and the D1 overwrite gate keys off it —
+// exported so the two sides can never drift apart.
+export { SHARED_WORKSPACE_LABEL } from './builtin/file-ops/workspace';

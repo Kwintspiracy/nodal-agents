@@ -123,9 +123,13 @@ export async function agentRoute(
   // from entity A's job that is sitting in `awaiting_delegation`, then let
   // this new job complete to have its result injected into entity A's job
   // via maybeResumeParent (execute.ts) — a cross-entity result injection.
+  // Jobs page grouping (migration 0059): a job created with a parentJobId
+  // inherits that parent's conversation_id (same thread); otherwise this is
+  // a standalone API/cron dispatch and stays null.
+  let conversationId: string | null = null;
   if (parentJobId) {
     const [parentJob] = await deps.db
-      .select({ entityId: agentJobs.entityId })
+      .select({ entityId: agentJobs.entityId, conversationId: agentJobs.conversationId })
       .from(agentJobs)
       .where(eq(agentJobs.id, parentJobId))
       .limit(1);
@@ -139,6 +143,7 @@ export async function agentRoute(
     if (entityId && parentJob.entityId !== entityId) {
       return c.json({ error: 'parent_job_entity_mismatch' }, 403);
     }
+    conversationId = parentJob.conversationId;
   }
 
   // Create the job row
@@ -151,6 +156,7 @@ export async function agentRoute(
       task,
       chatId: chatId ?? undefined,
       parentJobId: parentJobId ?? undefined,
+      conversationId: conversationId ?? undefined,
       status: 'pending',
       messages: [{ role: 'user', content: task }],
     })

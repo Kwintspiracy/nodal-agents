@@ -4,7 +4,13 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from '@nodal-agents/db';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentTasks, agentJobs } from '@nodal-agents/db';
+import {
+  agents,
+  agentTasks,
+  agentJobs,
+  agentSkills,
+  agentSkillAssignments,
+} from '@nodal-agents/db';
 import { generateTaskTools } from '../../planner/task-tools';
 import type { AgentId } from '../../types';
 import type { TestDb } from '@nodal-agents/db/test-utils';
@@ -345,6 +351,81 @@ describe('generateTaskTools', () => {
         depends_on: [randomUUID(), randomUUID()],
       });
       expect(ok.success).toBe(true);
+    });
+
+    // ─── B2 (audit#2 followup): brief validation ────────────────────────────
+
+    it('B2: warns when the brief names a tool the target will NOT have', async () => {
+      const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      const result = await createTask!.execute(
+        {
+          title: 'Deliver the chart',
+          description: 'Generate the chart, then call send_image to deliver it to the user.',
+          assigned_to: workerSlug,
+        },
+        ctx,
+      );
+
+      expect(result.warning).toBeDefined();
+      expect(result.warning).toContain('send_image');
+      expect(result.warning).toContain(workerSlug);
+      // Non-blocking: the task is still created.
+      const [row] = await db
+        .select({ id: agentTasks.id })
+        .from(agentTasks)
+        .where(eq(agentTasks.id, result.taskId));
+      expect(row?.id).toBe(result.taskId);
+    });
+
+    it('B2: does NOT warn when the brief mentions no tool at all', async () => {
+      const { entityId, plannerId, workerSlug, jobId } = await seedContext(db);
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      const result = await createTask!.execute(
+        {
+          title: 'Research task',
+          description: 'Research the top 5 competitors and summarize their pricing.',
+          assigned_to: workerSlug,
+        },
+        ctx,
+      );
+
+      expect(result.warning).toBeUndefined();
+    });
+
+    it('B2: does NOT warn when the mentioned tool IS available to the target', async () => {
+      const { entityId, plannerId, workerSlug, workerId, jobId } = await seedContext(db);
+      const [skill] = await db
+        .insert(agentSkills)
+        .values({
+          entityId,
+          name: 'Office Skill',
+          slug: `office-skill-tt-${Date.now()}`,
+          content: 'c',
+          requiredBuiltins: ['office_write_docx'],
+        })
+        .returning();
+      await db
+        .insert(agentSkillAssignments)
+        .values({ entityId, agentId: workerId, skillId: skill!.id });
+
+      const [createTask] = generateTaskTools(plannerId as AgentId, db);
+      const ctx: ToolContext = { jobId, agentId: plannerId, entityId, db, jobChatId: null };
+
+      const result = await createTask!.execute(
+        {
+          title: 'Write the report',
+          description: 'Call office_write_docx to produce the report.',
+          assigned_to: workerSlug,
+        },
+        ctx,
+      );
+
+      expect(result.warning).toBeUndefined();
     });
   });
 

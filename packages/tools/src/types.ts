@@ -29,6 +29,17 @@ export interface ToolContext {
    */
   jobChatId: string | null;
   /**
+   * Telegram bot token the runner resolved for THIS job's delivery tools, when
+   * it differs from the agent's own `agents.telegram_bot_token` — e.g. a
+   * delegated worker job (parent_job_id set) inheriting its entity's ROOT
+   * agent's token so it can reply on the same chat as the orchestrator (B3).
+   * Entity-scoped: the runner only ever populates this from the root agent of
+   * the SAME entity as the job — never cross-entity.
+   * Absent ⇒ the delivery tools fall back to their historical per-call lookup
+   * of `agents.telegram_bot_token` by `ctx.agentId` (the agent's own token).
+   */
+  resolvedTelegramBotToken?: string;
+  /**
    * Embedding client for tools that persist or search semantic memory
    * (save_memory generates an embedding at write time). Optional: the runner
    * always provides it, but lightweight test contexts may omit it — memory
@@ -161,6 +172,27 @@ export interface ToolDefinition<TInput extends z.ZodTypeAny, TOutput> {
    * deferred product decision).
    */
   defaultApproval?: 'require_approval';
+  /**
+   * Optional PER-CALL destructiveness check, complementing the static
+   * `defaultApproval` above for tools where gating depends on the call's
+   * actual TARGET, not the tool's identity — e.g. `file_write`/`file_edit`
+   * only need a human in the loop when the resolved path would overwrite an
+   * EXISTING file inside the entity-wide SHARED workspace (D1), never for a
+   * brand-new file or a workspace the owner explicitly attached. Declaring a
+   * static `defaultApproval: 'require_approval'` on those tools would gate
+   * EVERY write instead of just the destructive-on-shared ones, so this hook
+   * exists to make that decision per call instead.
+   *
+   * Evaluated by `executeTool` only when no explicit approval rule matched
+   * (same precedence as `defaultApproval` — an explicit rule always wins)
+   * and autonomy is not `fully_autonomous`. Return 'require_approval' to gate
+   * THIS call; return undefined to leave the tool's ordinary posture
+   * untouched.
+   */
+  computeApproval?: (
+    input: z.infer<TInput>,
+    ctx: ToolContext,
+  ) => Promise<'require_approval' | undefined>;
   execute: (input: z.infer<TInput>, ctx: ToolContext) => Promise<TOutput>;
 }
 

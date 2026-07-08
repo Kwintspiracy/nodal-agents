@@ -126,6 +126,7 @@ describe('AgentJobSchema round-trip', () => {
       task: 'Do something',
       original_task: null,
       chat_id: '12345',
+      conversation_id: null,
       system_prompt: null,
       messages: [],
       tools_used: ['notion_search'],

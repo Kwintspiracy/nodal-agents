@@ -238,6 +238,52 @@ describe('handleDelegation', () => {
     expect(childRow?.chatId).toBe('12345678');
   });
 
+  it('inherits conversation_id from the parent (Jobs page grouping, migration 0059)', async () => {
+    const { entityId, orchId, workerSlug, parentJobId } = await seedContext(db);
+    const parentConversationId = '55555555-5555-4555-8555-555555555555';
+    const parentJob = {
+      ...makeParentJob(parentJobId, orchId, entityId),
+      conversationId: parentConversationId,
+    };
+
+    const result = await handleDelegation(
+      parentJob,
+      workerSlug,
+      'tu_test_conv',
+      { task: 'inherit my conversation' },
+      [],
+      db,
+    );
+
+    const [childRow] = await db
+      .select({ conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, result.childJobId as string));
+
+    expect(childRow?.conversationId).toBe(parentConversationId);
+  });
+
+  it('leaves the child conversation_id null when the parent has none', async () => {
+    const { entityId, orchId, workerSlug, parentJobId } = await seedContext(db);
+    const parentJob = makeParentJob(parentJobId, orchId, entityId);
+
+    const result = await handleDelegation(
+      parentJob,
+      workerSlug,
+      'tu_test_conv_null',
+      { task: 'no conversation to inherit' },
+      [],
+      db,
+    );
+
+    const [childRow] = await db
+      .select({ conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, result.childJobId as string));
+
+    expect(childRow?.conversationId).toBeNull();
+  });
+
   it('includes sideToolResults in pending_delegation when provided', async () => {
     const { entityId, orchId, workerSlug, parentJobId } = await seedContext(db);
     const parentJob = makeParentJob(parentJobId, orchId, entityId);

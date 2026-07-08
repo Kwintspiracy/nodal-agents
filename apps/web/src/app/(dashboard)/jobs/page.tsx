@@ -1,4 +1,5 @@
 import { listDelegationRunsAction, listAgentsAction } from '@/lib/actions.ts';
+import { groupJobsForJobsPage } from '@/lib/jobs-grouping.ts';
 import PageShell from '@/components/ui/PageShell';
 import JobsRuns from './JobsRuns.tsx';
 
@@ -19,6 +20,10 @@ export default async function JobsPage({
   ]);
   const jobs = jobsResult.ok ? jobsResult.data : [];
   const agents = agentsResult.ok ? agentsResult.data : [];
+  // Conversation grouping (migration 0059): collapse chat exchanges sharing a
+  // conversation_id into one row server-side, before anything reaches the
+  // client — see apps/web/src/lib/jobs-grouping.ts.
+  const rows = groupJobsForJobsPage(jobs);
 
   return (
     <PageShell
@@ -28,7 +33,7 @@ export default async function JobsPage({
       }`}
     >
       <JobsRuns
-        rows={jobs}
+        rows={rows}
         agents={agents}
         error={!jobsResult.ok ? jobsResult.message : undefined}
       />

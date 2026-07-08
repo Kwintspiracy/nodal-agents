@@ -150,9 +150,17 @@ export async function executeReadyTasks(
     // orchestrators using create_task instead of assign_* was never bounded by
     // the maxDelegationDepth guard in execute.ts.
     let childDepth = 0;
+    // Jobs page grouping (migration 0059): a task-board child inherits its
+    // creator/root job's conversation_id — stays null (not a conversation)
+    // when there's no root, same as any other cron-spawned job.
+    let childConversationId: string | null = null;
     if (task.rootJobId) {
       const [creatorRow] = await db
-        .select({ delegationDepth: agentJobs.delegationDepth, status: agentJobs.status })
+        .select({
+          delegationDepth: agentJobs.delegationDepth,
+          status: agentJobs.status,
+          conversationId: agentJobs.conversationId,
+        })
         .from(agentJobs)
         .where(eq(agentJobs.id, task.rootJobId))
         .limit(1);
@@ -172,6 +180,7 @@ export async function executeReadyTasks(
       }
 
       childDepth = (creatorRow?.delegationDepth ?? 0) + 1;
+      childConversationId = creatorRow?.conversationId ?? null;
     }
 
     // Create child job
@@ -184,6 +193,7 @@ export async function executeReadyTasks(
         task: taskText,
         parentJobId: task.rootJobId ?? undefined,
         delegationDepth: childDepth,
+        conversationId: childConversationId ?? undefined,
         status: 'pending',
         messages: [{ role: 'user', content: taskText }],
       })

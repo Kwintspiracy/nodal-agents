@@ -149,6 +149,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       task text NOT NULL,
       original_task text,
       chat_id text,
+      conversation_id uuid,
       system_prompt text,
       messages jsonb DEFAULT '[]',
       search_text text,

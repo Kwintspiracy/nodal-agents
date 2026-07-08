@@ -400,6 +400,10 @@ export async function runChatTurn(opts: {
         status: 'pending',
         channel: 'dashboard',
         task: instruction,
+        // Jobs page grouping (migration 0059): this channel already has a
+        // real conversation entity (the dashboard sidebar thread) — stamp
+        // that id directly rather than re-deriving it from a gap heuristic.
+        conversationId,
         messages: [{ role: 'user', content: workerContent }],
       })
       .returning({ id: agentJobs.id });

@@ -286,6 +286,64 @@ describe('executeReadyTasks', () => {
     expect(childJob[0]?.delegationDepth).toBe(0);
   });
 
+  // ─── Jobs page grouping (migration 0059): conversation_id propagates ──────
+  // through create_task the same way delegationDepth does above.
+
+  it('inherits conversation_id from the CREATOR (root) job', async () => {
+    const conversationId = '66666666-6666-4666-8666-666666666666';
+    const creatorJob = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 'creator task',
+        status: 'processing',
+        messages: [],
+        conversationId,
+      })
+      .returning();
+    const creatorJobId = creatorJob[0]!.id;
+
+    const task = await createTask({ rootJobId: creatorJobId });
+
+    const deps = makeDeps(db, [{ text: 'task done' }]);
+    await executeReadyTasks(db as RunnerDeps['db'], deps, 5);
+
+    const updatedTask = await db
+      .select({ jobId: agentTasks.jobId })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, task.id));
+    const childJobId = updatedTask[0]?.jobId;
+    expect(childJobId).not.toBeNull();
+
+    const childJob = await db
+      .select({ conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, childJobId!));
+    expect(childJob[0]?.conversationId).toBe(conversationId);
+  });
+
+  it('leaves the child conversation_id null when the task has no rootJobId', async () => {
+    const task = await createTask({ rootJobId: null });
+
+    const deps = makeDeps(db, [{ text: 'task done' }]);
+    await executeReadyTasks(db as RunnerDeps['db'], deps, 5);
+
+    const updatedTask = await db
+      .select({ jobId: agentTasks.jobId })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, task.id));
+    const childJobId = updatedTask[0]?.jobId;
+    expect(childJobId).not.toBeNull();
+
+    const childJob = await db
+      .select({ conversationId: agentJobs.conversationId })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, childJobId!));
+    expect(childJob[0]?.conversationId).toBeNull();
+  });
+
   it('skips tasks with unresolved deps', async () => {
     const todoDep = await createTask({ status: 'todo' });
     const blockedTask = await createTask({ dependsOn: [todoDep.id] });

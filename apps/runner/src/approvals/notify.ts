@@ -17,7 +17,7 @@
 
 import { eq } from '@nodal-agents/db';
 import { agents, agentJobs } from '@nodal-agents/db';
-import { redactSecretsForAudit } from '@nodal-agents/shared';
+import { redactSecretsForAudit, computeApprovalImpactLine } from '@nodal-agents/shared';
 import { sendTelegramMessage, type TelegramInlineKeyboard } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
@@ -130,22 +130,24 @@ export async function notifyApprovalCreated(
       .where(eq(agents.id, req.agentId))
       .limit(1);
     const who = agent?.name ?? 'An agent';
-    // Lead with the agent's OWN plain-language explanation + impact (invariant #2:
-    // the LLM speaks, the runner only formats). The raw action stays available but
-    // SECONDARY and truncated — the user decides on the explanation, not on a wall
-    // of shell. Falls back to the old "wants to run: <detail>" when an older agent
-    // didn't provide a purpose.
+    // Three tiers, WHY first: (1) the agent's own plain-language purpose —
+    // invariant #2 applies here, this is the agent's voice, so we show it
+    // verbatim or admit it's missing rather than invent one; (2) a
+    // deterministic, code-computed impact line (invariant #2 does NOT apply —
+    // this is platform UI describing what the action DOES, never the
+    // agent's voice); (3) the raw technical detail (command/path), secondary
+    // and truncated — the reviewer decides on 1+2, not on a wall of shell.
     const input = (req.toolInput ?? {}) as Record<string, unknown>;
     const purpose = typeof input['purpose'] === 'string' ? input['purpose'].trim() : '';
-    const impact = typeof input['impact'] === 'string' ? input['impact'].trim() : '';
+    const impact = computeApprovalImpactLine(req.toolName, req.toolInput);
     const detail = describeGatedAction(req.toolName, req.toolInput);
     const detailShort =
       detail.length > 500 ? detail.slice(0, 500) + '\n… (full detail on the dashboard)' : detail;
 
     const text =
       `⏳ Approval needed — ${who}\n\n` +
-      (purpose ? `➤ ${purpose}\n` : `${who} wants to run an action.\n`) +
-      (impact ? `⚠️ Impact: ${impact}\n` : '') +
+      `➤ ${purpose || 'Purpose not specified by the agent.'}\n` +
+      `⚠️ ${impact}\n` +
       `\nDetails:\n${detailShort}\n\n` +
       `Tap a button below to decide — or resolve it from the dashboard.`;
 

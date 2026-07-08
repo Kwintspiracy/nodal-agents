@@ -407,6 +407,13 @@
       "when": 1783800000000,
       "tag": "0058_entity_llm_keys_context_window",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1783900000000,
+      "tag": "0059_agent_jobs_conversation_id",
+      "breakpoints": true
     }
   ]
 }

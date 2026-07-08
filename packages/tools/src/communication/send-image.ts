@@ -93,14 +93,18 @@ Fail conditions:
         throw err;
       }
 
-      // 2. Fetch bot token for this agent from DB (credential isolation per agent)
-      const agentRows = await ctx.db
-        .select({ telegramBotToken: agents.telegramBotToken })
-        .from(agents)
-        .where(eq(agents.id, ctx.agentId))
-        .limit(1);
-
-      const botToken = agentRows[0]?.telegramBotToken;
+      // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
+      // inheriting its entity's root agent's token); otherwise fall back to this
+      // agent's own token from DB (credential isolation per agent, historical path).
+      let botToken = ctx.resolvedTelegramBotToken;
+      if (botToken === undefined) {
+        const agentRows = await ctx.db
+          .select({ telegramBotToken: agents.telegramBotToken })
+          .from(agents)
+          .where(eq(agents.id, ctx.agentId))
+          .limit(1);
+        botToken = agentRows[0]?.telegramBotToken ?? undefined;
+      }
       if (!botToken) {
         const err = new Error('no_bot_token');
         err.name = 'no_bot_token';
