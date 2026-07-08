@@ -34,7 +34,7 @@ export default async function ChatPage() {
   return (
     <>
       <PageHeader title="Chat" subtitle={data.rootName ? `with ${data.rootName}` : undefined} />
-      <div className="flex h-[calc(100vh-9rem)] flex-col px-5 pt-4 sm:px-8 lg:px-9">
+      <div className="flex h-[calc(100vh-9rem)] flex-col px-5 pt-4 pb-4 sm:px-8 lg:px-9">
         <ChatClient initialConversations={data.conversations} rootName={data.rootName} />
       </div>
     </>
