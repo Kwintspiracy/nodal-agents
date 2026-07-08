@@ -35,6 +35,48 @@ describe('Layer 1 — baseline discipline', () => {
   });
 });
 
+describe('Memory discipline (C1/C2 — every agent)', () => {
+  it('injects the memory-truth-loop and memory-hygiene rules for a worker', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6', { role: 'agent' });
+    expect(block).toContain('## Memory discipline');
+    expect(block).toContain('mark_memory_outdated');
+    expect(block).toContain('save_memory');
+    expect(block).toContain('discovery ban');
+  });
+
+  it('injects the same rules for an orchestrator too', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6', { role: 'orchestrator' });
+    expect(block).toContain('## Memory discipline');
+    expect(block).toContain('mark_memory_outdated');
+  });
+
+  it('injects even with no role specified (default)', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6');
+    expect(block).toContain('## Memory discipline');
+  });
+});
+
+describe('C3 — worker discovery capitalization vs B1 — orchestrator delegation discipline', () => {
+  it('a worker gets the "capitalize what you learn" block, not delegation discipline', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6', { role: 'agent' });
+    expect(block).toContain('## Capitalize what you learn');
+    expect(block).not.toContain('## Delegation discipline');
+  });
+
+  it('an orchestrator gets the delegation discipline block, not the worker one', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6', { role: 'orchestrator' });
+    expect(block).toContain('## Delegation discipline');
+    expect(block).not.toContain('## Capitalize what you learn');
+    expect(block).toContain('return_result');
+    expect(block).toContain('templates are immutable');
+  });
+
+  it('defaults to the worker block when no role is given', () => {
+    const block = buildBaselineBlock('anthropic/claude-sonnet-4.6');
+    expect(block).toContain('## Capitalize what you learn');
+  });
+});
+
 describe('Layer 2 — channel etiquette', () => {
   it('injects channel content only when the agent is on a channel', () => {
     expect(buildChannelBlock({ channel: 'telegram' })).toContain('## Channel etiquette');

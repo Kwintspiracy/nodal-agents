@@ -456,7 +456,7 @@ export async function buildSystemPrompt(
   //    L1 baseline — intrinsic discipline for EVERY agent (+ model-aware nudge).
   //    L2 channel  — per-channel etiquette when bound to a channel.
   //    L2bis discoverability — capabilities the agent could request but lacks.
-  const baselineBlock = buildBaselineBlock(agent.model);
+  const baselineBlock = buildBaselineBlock(agent.model, { role: agent.role });
   const channelBlock = buildChannelBlock({
     channel: jobContext?.origin,
     telegram: Boolean(jobContext?.telegramChatId),

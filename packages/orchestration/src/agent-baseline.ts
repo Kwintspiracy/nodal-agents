@@ -30,21 +30,64 @@ const NEEDS_FIRMER_VERIFY = /deepseek|minimax|qwen|glm|gemma|kimi|mistral|llama/
 const contentOfKind = (kind: 'baseline' | 'channel'): string[] =>
   systemSkills.filter((s) => skillKind(s) === kind).map((s) => s.content.trim());
 
+/**
+ * Memory discipline — every agent, orchestrator or worker. Injected as a
+ * fixed block (not catalog-driven): unlike the verify/safe-tool-use content
+ * above, this reacts to a concrete failure mode from the 2026-07-07 audit —
+ * agents kept silently reusing a memory fact they had just proven wrong, and
+ * separately saved "lessons" that were really micromanagement of OTHER agents
+ * (e.g. a fabricated "do NOT search for workflows" rule) or outright
+ * discovery bans, which then handicapped whichever agent loaded them next.
+ */
+const MEMORY_DISCIPLINE_BLOCK = `## Memory discipline
+
+### Correct what's wrong
+
+If a fact from your Persistent memory block turns out to be false in practice — a file path that doesn't exist, an invalid ID, a procedure that fails the way the memory said it wouldn't — you MUST call \`mark_memory_outdated\` on it with the reason, then \`save_memory\` the corrected fact once you have verified it. Never silently keep reusing a fact you just found to be wrong.
+
+### What's worth saving
+
+A fact you save via \`save_memory\` must describe something VERIFIED — an exact path you confirmed, a real ID, a preference the user stated, a procedure that actually worked. Never save a micromanagement rule for another agent, and never save a discovery ban (e.g. "don't search for X", "don't explore Y") — every agent stays free to check things for itself when what it was given turns out to be wrong.`;
+
+/** Worker-only — capitalize durable discoveries before finishing (not the orchestrator's job: it delegates the work, it doesn't do it). */
+const WORKER_DISCOVERY_BLOCK = `## Capitalize what you learn
+
+When you discover something durable while working a task — the real path of a file or workflow, parameters that worked, a convention — save it via \`save_memory\` before you finish. One fact per call, short and verified.`;
+
+/**
+ * Orchestrator-only — delegation discipline. From the same audit: the root
+ * agent was doing its workers' prep work itself, editing shared/template
+ * files to smuggle in per-run parameters, and prescribing tools in briefs
+ * that the target agent didn't actually have.
+ */
+const DELEGATION_DISCIPLINE_BLOCK = `## Delegation discipline
+
+When you delegate: (1) pass the PARAMETERS in the brief (paths, prompts, values) — do not do the prep work yourself that the worker can do with its own tools; (2) NEVER edit a shared or template file to encode a run's parameters — templates are immutable, values are passed as arguments; (3) only name a specific tool in a brief if you know the target agent has it — otherwise state the expected RESULT (the worker returns it via \`return_result\`) and deliver it yourself once it comes back; (4) a brief states the goal, the parameters, and the constraints — not a step-by-step procedure that forbids the worker from adapting.`;
+
 /** Layer 1 — intrinsic discipline for every agent (+ model-aware reinforcement). */
-export function buildBaselineBlock(model: string): string {
+export function buildBaselineBlock(
+  model: string,
+  opts: { role?: 'agent' | 'orchestrator' | 'system' } = {},
+): string {
   const parts = contentOfKind('baseline');
-  if (parts.length === 0) return '';
-  const reinforcement = NEEDS_FIRMER_VERIFY.test(model)
-    ? '\n\n**Especially you — execution discipline:** ' +
-      'Actually run or check your work before you say a task is done, and never write tool output ' +
-      'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
-      'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
-      'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded with ' +
-      'skill_view ships run_skill_script and ready-made workflows/templates) instead of writing ' +
-      'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
-      'steps that finish the task, then deliver the result with its output path.'
-    : '';
-  return `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}`;
+  const reinforcement =
+    parts.length > 0 && NEEDS_FIRMER_VERIFY.test(model)
+      ? '\n\n**Especially you — execution discipline:** ' +
+        'Actually run or check your work before you say a task is done, and never write tool output ' +
+        'you did not really get back. Be decisive: once a check passes (e.g. dependencies report ' +
+        'ready), DO the action — do not keep re-verifying, re-listing, or running diagnostic ' +
+        'commands. Use the tools, scripts, and exact file paths you were given (a skill loaded with ' +
+        'skill_view ships run_skill_script and ready-made workflows/templates) instead of writing ' +
+        'your own helper or conversion scripts, or rebuilding what already exists. Take the fewest ' +
+        'steps that finish the task, then deliver the result with its output path.'
+      : '';
+  const catalogBlock =
+    parts.length > 0 ? `## How you work (always)\n\n${parts.join('\n\n')}${reinforcement}` : '';
+
+  const roleBlock =
+    opts.role === 'orchestrator' ? DELEGATION_DISCIPLINE_BLOCK : WORKER_DISCOVERY_BLOCK;
+
+  return [catalogBlock, MEMORY_DISCIPLINE_BLOCK, roleBlock].filter(Boolean).join('\n\n');
 }
 
 /** Layer 2 — per-channel etiquette, only when the agent is bound to a channel. */
