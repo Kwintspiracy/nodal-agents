@@ -15,8 +15,8 @@
 // `onApprovalRequired` callback, which knows nothing about Telegram. A no-bot /
 // no-chat job simply gets no card (the dashboard path is unaffected).
 
-import { eq } from '@nodal-agents/db';
-import { agents, agentJobs } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
+import { agents, agentJobs, telegramAllowedChats } from '@nodal-agents/db';
 import { redactSecretsForAudit, computeApprovalImpactLine } from '@nodal-agents/shared';
 import { sendTelegramMessage, type TelegramInlineKeyboard } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
@@ -75,6 +75,50 @@ export async function resolveTelegramDeliveryTarget(
 }
 
 /**
+ * Resolve the delivery target for an APPROVAL CARD specifically — SECURITY
+ * (self-approval hole): `resolveTelegramDeliveryTarget` above answers "which
+ * bot + chat did this job run in", which for an ordinary reply is exactly
+ * right, but for an approve/reject card is wrong whenever the job was
+ * triggered by a `member` chat (an authorized non-owner — H-1 onboarding).
+ * Sending the buttons back to that SAME chat lets the member tap ✅ on their
+ * own gated action. The card must instead always land in the bot OWNER's
+ * private chat — the owner is the one who can actually authorize the agent's
+ * actions.
+ *
+ * Resolves by walking the delegation chain (as above) to find the delivering
+ * bot, then swapping its chat_id for the `role='owner', status='active'` row
+ * on `telegram_allowed_chats`. A job run by the owner's own chat is already
+ * the owner chat, so this is a no-op there (no behavior change for the common
+ * case) — only a guest/member-triggered job sees the card move.
+ *
+ * An active `member` row always implies an `owner` row exists (H-1's
+ * onboarding flow: nobody becomes `member` before someone is `owner`), so the
+ * "no owner found" branch is a defensive fail-loud, not an expected path — it
+ * returns null (no Telegram card; the approval stays resolvable from the
+ * dashboard) rather than ever falling back to the triggering chat.
+ */
+export async function resolveApprovalDeliveryTarget(
+  db: RunnerDeps['db'],
+  jobId: string,
+): Promise<TelegramDeliveryTarget | null> {
+  const base = await resolveTelegramDeliveryTarget(db, jobId);
+  if (!base) return null;
+  const [ownerRow] = await db
+    .select({ chatId: telegramAllowedChats.chatId })
+    .from(telegramAllowedChats)
+    .where(
+      and(
+        eq(telegramAllowedChats.agentId, base.agentId),
+        eq(telegramAllowedChats.role, 'owner'),
+        eq(telegramAllowedChats.status, 'active'),
+      ),
+    )
+    .limit(1);
+  if (!ownerRow) return null;
+  return { agentId: base.agentId, botToken: base.botToken, chatId: ownerRow.chatId };
+}
+
+/**
  * Render a short, human-readable summary of the gated action. PLAIN TEXT (no
  * Markdown) on purpose — tool input (e.g. an arbitrary shell command) must not be
  * able to break formatting or inject entities.
@@ -116,10 +160,13 @@ export async function notifyApprovalCreated(
   req: ApprovalGateRequest,
 ): Promise<void> {
   try {
-    // Resolve the bot that can reach the user. On a delegated chain the gated
-    // job's own agent may have no bot — the orchestrator's bot delivers. null ⇒
-    // no bot anywhere in the chain or no chat → dashboard-only job, stay silent.
-    const target = await resolveTelegramDeliveryTarget(deps.db, req.jobId);
+    // Resolve the bot + chat that must receive the approval card. On a
+    // delegated chain the gated job's own agent may have no bot — the
+    // orchestrator's bot delivers. And regardless of who triggered the job,
+    // the card always goes to the bot OWNER's chat (never the triggering
+    // chat — see resolveApprovalDeliveryTarget). null ⇒ no bot anywhere in
+    // the chain, no chat, or no owner on record → stay silent (dashboard-only).
+    const target = await resolveApprovalDeliveryTarget(deps.db, req.jobId);
     if (!target) return;
     const { botToken, chatId } = target;
 

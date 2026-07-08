@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { approvalRequests, agentJobs, agents } from '@nodal-agents/db';
+import { approvalRequests, agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -33,7 +33,12 @@ vi.stubGlobal(
   ),
 );
 
+// CHAT_ID doubles as the bot OWNER's private chat throughout this suite — the
+// non-delegated, non-guest case where the job's own chat IS the owner chat.
+// GUEST_CHAT_ID is a distinct chat used by the invitee/self-approval tests
+// below, where the job's originating chat must NOT be where the card lands.
 const CHAT_ID = '199791464';
+const GUEST_CHAT_ID = '555000111';
 
 const env = {
   WORKER_SECRET: 'test-secret',
@@ -42,7 +47,7 @@ const env = {
 
 let db: TestDb;
 let deps: RunnerDeps;
-let seed: { userId: string; entityId: string; agentId: string; jobId: string };
+let seed: { userId: string; entityId: string; agentId: string; jobId: string; llmKeyId: string };
 
 beforeAll(async () => {
   const result = await spinUpTestDb();
@@ -56,15 +61,27 @@ beforeAll(async () => {
     .set({ status: 'awaiting_approval', chatId: CHAT_ID })
     .where(eq(agentJobs.id, seed.jobId));
   await db.update(agents).set({ telegramBotToken: '123:fake' }).where(eq(agents.id, seed.agentId));
+  // The bot OWNER of record — resolveApprovalDeliveryTarget resolves the card's
+  // chat from THIS row, never from agent_jobs.chat_id directly.
+  await db.insert(telegramAllowedChats).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    chatId: CHAT_ID,
+    role: 'owner',
+    status: 'active',
+  });
   deps = { db: db as RunnerDeps['db'] } as RunnerDeps;
 });
 
-async function insertPendingApproval(toolName = 'run_command'): Promise<string> {
+async function insertPendingApproval(
+  toolName = 'run_command',
+  jobId = seed.jobId,
+): Promise<string> {
   const [row] = await db
     .insert(approvalRequests)
     .values({
       entityId: seed.entityId,
-      jobId: seed.jobId,
+      jobId,
       agentId: seed.agentId,
       toolName,
       toolInput: { command: 'rm -rf /tmp/x' },
@@ -237,5 +254,126 @@ describe('handleApprovalCallback — security boundary', () => {
     expect(r.handled).toBe(false);
     if (r.handled) throw new Error('unreachable');
     expect(r.reason).toBe('already_resolved');
+  });
+});
+
+describe('handleApprovalCallback — approval card routes to the bot OWNER, never the guest', () => {
+  // A `member` chat (an authorized non-owner, H-1) triggers a gated action.
+  // The card must land in the OWNER's chat (CHAT_ID, seeded in beforeAll above)
+  // — never GUEST_CHAT_ID — so the member cannot self-approve by tapping from
+  // their own conversation.
+  async function insertGuestJob(): Promise<string> {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        task: 'guest-triggered gated action',
+        chatId: GUEST_CHAT_ID,
+        status: 'awaiting_approval',
+      })
+      .returning();
+    return job!.id;
+  }
+
+  it('REJECTS a tap from the guest chat that triggered its own action (self-approval)', async () => {
+    const guestJobId = await insertGuestJob();
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: GUEST_CHAT_ID,
+      role: 'member',
+      status: 'active',
+    });
+    const id = await insertPendingApproval('run_command', guestJobId);
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:a`, GUEST_CHAT_ID), // the guest taps from their OWN chat
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled).toBe(false);
+    if (r.handled) throw new Error('unreachable');
+    expect(r.reason).toBe('chat_mismatch'); // the card's chat is the owner's, not the guest's
+    const [ap] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id))
+      .limit(1);
+    expect(ap!.status).toBe('pending'); // untouched — NOT self-approved
+  });
+
+  it('RESOLVES a tap from the OWNER chat for a job the guest triggered', async () => {
+    const guestJobId = await insertGuestJob();
+    const id = await insertPendingApproval('run_command', guestJobId);
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:a`, CHAT_ID), // the owner taps from their own private chat
+      receivingAgentId: seed.agentId,
+      botToken: 'fake-token',
+      deps,
+      env,
+    });
+
+    expect(r.handled).toBe(true);
+    const [ap] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id))
+      .limit(1);
+    expect(ap!.status).toBe('approved');
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, guestJobId)).limit(1);
+    expect(job!.status).toBe('pending'); // resumed
+  });
+
+  it('no owner on record → no_delivery_target, approval stays pending', async () => {
+    // A distinct bot with a token but NO owner row — the defensive branch of
+    // resolveApprovalDeliveryTarget (should not occur in practice per H-1, but
+    // must fail loud rather than fall back to the guest's chat).
+    const [ownerlessAgent] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Ownerless Bot',
+        slug: `ownerless-bot-${Date.now()}`,
+        personality: 'test agent',
+        llmKeyId: seed.llmKeyId,
+        telegramBotToken: 'ownerless:fake',
+      })
+      .returning();
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: ownerlessAgent!.id,
+        channel: 'telegram',
+        task: 'ownerless gated action',
+        chatId: GUEST_CHAT_ID,
+        status: 'awaiting_approval',
+      })
+      .returning();
+    const id = await insertPendingApproval('run_command', job!.id);
+
+    const r = await handleApprovalCallback({
+      update: callbackUpdate(`apr:${id}:a`, GUEST_CHAT_ID),
+      receivingAgentId: ownerlessAgent!.id,
+      botToken: 'ownerless:fake',
+      deps,
+      env,
+    });
+
+    expect(r.handled).toBe(false);
+    if (r.handled) throw new Error('unreachable');
+    expect(r.reason).toBe('no_delivery_target');
+    const [ap] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, id))
+      .limit(1);
+    expect(ap!.status).toBe('pending'); // untouched
   });
 });

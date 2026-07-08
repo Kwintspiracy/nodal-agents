@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agents, agentJobs } from '@nodal-agents/db';
+import { agents, agentJobs, telegramAllowedChats } from '@nodal-agents/db';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../../deps.ts';
 import { notifyApprovalCreated } from '../../approvals/notify.ts';
@@ -17,7 +17,12 @@ let db: TestDb;
 let deps: RunnerDeps;
 let seed: { userId: string; entityId: string; agentId: string; jobId: string; llmKeyId: string };
 
+// CHAT_ID doubles as the bot OWNER's private chat — the common case where the
+// owner talks to their own bot, so the card lands where the job already ran.
+// GUEST_CHAT_ID is used by the self-approval test below, where the job's own
+// chat must NOT be where the card is delivered.
 const CHAT_ID = '199791464';
+const GUEST_CHAT_ID = '555000111';
 const fetchMock = vi.fn(
   async () =>
     new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
@@ -43,6 +48,18 @@ beforeAll(async () => {
   db = result.db;
   seed = await seedMinimal(db);
   deps = { db: db as RunnerDeps['db'] } as RunnerDeps;
+  // The bot OWNER of record — resolveApprovalDeliveryTarget (called by
+  // notifyApprovalCreated) resolves the card's chat from THIS row, never
+  // straight from agent_jobs.chat_id. Every test below sets the job's own
+  // chat_id to CHAT_ID too, so this is a no-op for them (owner == origin);
+  // the self-approval test further down deliberately diverges the two.
+  await db.insert(telegramAllowedChats).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    chatId: CHAT_ID,
+    role: 'owner',
+    status: 'active',
+  });
 });
 
 beforeEach(() => fetchMock.mockClear());
@@ -195,5 +212,70 @@ describe('notifyApprovalCreated', () => {
       'apr:00000000-0000-0000-0000-0000000000ef:a',
       'apr:00000000-0000-0000-0000-0000000000ef:r',
     ]);
+  });
+
+  it('SECURITY: a guest-triggered job delivers the card to the OWNER chat, not the guest chat', async () => {
+    // The self-approval hole this fix closes: an authorized non-owner
+    // ('member', H-1) DMs the bot and triggers a gated action. The card must
+    // reach the OWNER (CHAT_ID, seeded in beforeAll), never GUEST_CHAT_ID —
+    // otherwise the guest could tap ✅ on their own action.
+    await db.update(agentJobs).set({ chatId: GUEST_CHAT_ID }).where(eq(agentJobs.id, seed.jobId));
+    await db
+      .update(agents)
+      .set({ telegramBotToken: '123:fake' })
+      .where(eq(agents.id, seed.agentId));
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: GUEST_CHAT_ID,
+      role: 'member',
+      status: 'active',
+    });
+
+    await notifyApprovalCreated(deps, req());
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { chat_id: string };
+    expect(body.chat_id).toBe(CHAT_ID); // NOT GUEST_CHAT_ID
+  });
+
+  it('stays silent when the bot has no owner on record (fail loud, no fallback to the triggering chat)', async () => {
+    // A distinct bot/agent with a token but no `role='owner'` row — the
+    // defensive branch of resolveApprovalDeliveryTarget. Should not occur in
+    // practice (H-1: an active member implies an owner), but must never fall
+    // back to sending the card to whatever chat triggered the job.
+    const [ownerlessAgent] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Ownerless Bot',
+        slug: `ownerless-bot-${Date.now()}`,
+        personality: 'test agent',
+        llmKeyId: seed.llmKeyId,
+        telegramBotToken: 'ownerless:fake',
+      })
+      .returning();
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: ownerlessAgent!.id,
+        channel: 'telegram',
+        task: 'ownerless gated action',
+        chatId: GUEST_CHAT_ID,
+      })
+      .returning();
+
+    await notifyApprovalCreated(deps, {
+      approvalRequestId: '00000000-0000-0000-0000-0000000000fa',
+      toolName: 'run_command',
+      toolInput: { command: 'echo hi' },
+      jobId: job!.id,
+      agentId: ownerlessAgent!.id,
+      entityId: seed.entityId,
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -22,7 +22,7 @@ import {
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { resolveApprovalDecision } from '../approvals/resolve.ts';
-import { APPROVAL_CALLBACK_PREFIX, resolveTelegramDeliveryTarget } from '../approvals/notify.ts';
+import { APPROVAL_CALLBACK_PREFIX, resolveApprovalDeliveryTarget } from '../approvals/notify.ts';
 
 export interface HandleApprovalCallbackArgs {
   update: TelegramUpdate;
@@ -103,8 +103,12 @@ export async function handleApprovalCallback(
 
   // Resolve who SHOULD deliver/own this approval's chat. On a delegated chain the
   // approval's agent (e.g. director) has no bot — the card was sent via the
-  // orchestrator's bot (e.g. alfred). The delivery target is that bot owner.
-  const target = await resolveTelegramDeliveryTarget(deps.db, approval.jobId);
+  // orchestrator's bot (e.g. alfred). SECURITY: the card (and therefore the
+  // only chat a tap can be authorized from) always lives in the bot OWNER's
+  // private chat, never the chat that triggered the gated job — a `member`
+  // (authorized non-owner, H-1) must not be able to self-approve its own
+  // action by tapping from its own chat. See resolveApprovalDeliveryTarget.
+  const target = await resolveApprovalDeliveryTarget(deps.db, approval.jobId);
   if (!target) {
     await answerTelegramCallback(botToken, cb.id, 'Not authorized.', true);
     return { handled: false, reason: 'no_delivery_target' };

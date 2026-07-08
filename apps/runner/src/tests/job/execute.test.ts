@@ -21,6 +21,7 @@ import {
   chatMessages,
   conversations,
   entities,
+  telegramAllowedChats,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -2826,6 +2827,16 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
       .where(eq(agents.id, approvalSeed.agentId));
+    // The approval CARD is delivered to the bot OWNER's chat, never straight
+    // from the job's chat_id (self-approval fix) — this job's own chat IS the
+    // owner chat here, the common case.
+    await approvalDb.insert(telegramAllowedChats).values({
+      entityId: approvalSeed.entityId,
+      agentId: approvalSeed.agentId,
+      chatId: '199791464',
+      role: 'owner',
+      status: 'active',
+    });
 
     const [tgJob] = await approvalDb
       .insert(agentJobs)
@@ -2902,6 +2913,9 @@ describe('executeJob — approval gate (Bugs A, B, C)', () => {
       .update(agents)
       .set({ telegramBotToken: null })
       .where(eq(agents.id, approvalSeed.agentId));
+    await approvalDb
+      .delete(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.entityId, approvalSeed.entityId));
   });
 
   it('Bug C: approve → save_memory ACTUALLY runs (agent_memory row created) and executed_at stamped', async () => {
