@@ -93,8 +93,12 @@ describe('notifyApprovalCreated', () => {
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { text: string };
     const purposeIdx = body.text.indexOf('Clean up the scratch dir before the run');
-    const impactIdx = body.text.indexOf('Runs a shell command on the host.');
+    // Impact line is derived from the gate's own classifiers (approval-impact
+    // enrichment, 2026-07-08): `rm -rf` is flagged destructive AND the actual
+    // binary is named — no more generic "runs a shell command".
+    const impactIdx = body.text.indexOf('destructive or heavy');
     const detailIdx = body.text.indexOf('rm -rf /tmp/x');
+    expect(body.text).toContain('`rm`');
     // Line 1 (purpose) before line 2 (impact) before line 3 (raw detail).
     expect(purposeIdx).toBeGreaterThan(-1);
     expect(impactIdx).toBeGreaterThan(purposeIdx);

@@ -33,11 +33,15 @@ export { createToolRegistry } from './registry';
 
 // Execution wrapper
 export { executeTool, matchApprovalRule } from './execute';
+// Command classifiers moved to @nodal-agents/shared (2026-07-08) so the
+// approval-impact line (shared, rendered by runner AND web) can reuse the
+// SAME verdicts as the gate — re-exported here so existing consumers
+// (runner) keep importing them from tools.
 export {
   isCatastrophicCommand,
   isDestructiveOrHeavyCommand,
   isInlineInterpreterEvalCommand,
-} from './catastrophic-command';
+} from '@nodal-agents/shared';
 
 // tool_choice discipline
 export { computeToolChoice } from './tool-choice';

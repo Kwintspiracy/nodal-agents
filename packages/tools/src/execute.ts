@@ -2,8 +2,11 @@
 
 import { approvalRequests, toolCalls } from '@nodal-agents/db';
 import { MessageStructureError, QuotaExhaustedError } from '@nodal-agents/llm';
-import { redactSecretsForAudit } from '@nodal-agents/shared';
-import { isCatastrophicCommand, isDestructiveOrHeavyCommand } from './catastrophic-command';
+import {
+  redactSecretsForAudit,
+  isCatastrophicCommand,
+  isDestructiveOrHeavyCommand,
+} from '@nodal-agents/shared';
 import type { z } from 'zod';
 import type {
   ToolDefinition,
