@@ -55,6 +55,7 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
 // Simulates a real end-user session-bearer-token call: getSession only

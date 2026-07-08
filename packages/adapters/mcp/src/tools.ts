@@ -84,17 +84,63 @@ function extractText(content: unknown): string {
 }
 
 /**
- * Wrap one discovered MCP tool as a NodalAI ToolDefinition.
- *
- * - `name` is namespaced with the server slug (`cogni_cortex__get_home`) so
- *   MCP tool names never collide with builtins or other servers' tools.
- * - `execute` dispatches to the live MCP client via `callTool`; an MCP-side
- *   error (`isError: true`) is rethrown so `executeTool` records it.
+ * Dispatch one MCP tool call against a live client and shape the result.
+ * Shared by the eager wrapper (client already connected at build time) and the
+ * lazy wrapper (client obtained on first call via `ensureConnected()`) so the
+ * isError/structuredContent/capping logic lives in exactly one place.
  */
-export function mcpToolToToolDefinition(
+async function callMcpTool(
   client: Client,
+  originalName: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  const result = await client.callTool(
+    { name: originalName, arguments: input },
+    // Default result schema (CallToolResultSchema).
+    undefined,
+    // The MCP SDK's default per-request timeout is 60s — too short for heavy
+    // tools (a Blender/KeyShot render, a long scrape). Raise it and reset the
+    // clock whenever the server reports progress, so progress-streaming
+    // servers can run even longer. Overridable via MCP_CALL_TIMEOUT_MS.
+    { timeout: MCP_CALL_TIMEOUT_MS, resetTimeoutOnProgress: true },
+  );
+  if (result.isError === true) {
+    const detail = extractText(result.content);
+    throw new Error(`MCP tool ${originalName} failed: ${detail || 'unknown error'}`);
+  }
+  // An MCP CallToolResult carries two payload channels (spec 2025-06-18):
+  // the historical `content` blocks AND `structuredContent` for tools that
+  // declare an outputSchema. The SDK defaults `content` to [] when the
+  // server omits it, so a structured-output server (e.g. Airtable) that
+  // returns its data in `structuredContent` would otherwise surface as an
+  // empty result. Prefer structuredContent; else join text-only content
+  // blocks (usually serialized JSON); else return the raw blocks so
+  // images/resources are preserved.
+  if (result.structuredContent != null) return capMcpResult(result.structuredContent);
+  const content = result.content ?? [];
+  if (
+    Array.isArray(content) &&
+    content.length > 0 &&
+    content.every((c) => (c as { type?: unknown }).type === 'text')
+  ) {
+    return capMcpResult(extractText(content));
+  }
+  return capMcpResult(content);
+}
+
+/**
+ * Build the ToolDefinition shape for one discovered MCP tool. `getClient` is
+ * called on every `execute()` — the eager wrapper resolves it immediately
+ * (client already connected), the lazy wrapper (Lot A3) resolves it via
+ * `ensureConnected()`, which only connects on the first real call.
+ *
+ * `name` is namespaced with the server slug (`cogni_cortex__get_home`) so MCP
+ * tool names never collide with builtins or other servers' tools.
+ */
+function buildMcpToolDefinition(
   mcpTool: McpToolDescriptor,
   slug: string,
+  getClient: () => Promise<Client>,
 ): ToolDefinition<z.ZodTypeAny, unknown> {
   const originalName = mcpTool.name;
   return {
@@ -103,41 +149,33 @@ export function mcpToolToToolDefinition(
     inputSchema: jsonSchemaToZod(mcpTool.inputSchema),
     riskLevel: riskFromAnnotations(mcpTool.annotations),
     async execute(input) {
-      const result = await client.callTool(
-        {
-          name: originalName,
-          arguments: (input ?? {}) as Record<string, unknown>,
-        },
-        // Default result schema (CallToolResultSchema).
-        undefined,
-        // The MCP SDK's default per-request timeout is 60s — too short for heavy
-        // tools (a Blender/KeyShot render, a long scrape). Raise it and reset the
-        // clock whenever the server reports progress, so progress-streaming
-        // servers can run even longer. Overridable via MCP_CALL_TIMEOUT_MS.
-        { timeout: MCP_CALL_TIMEOUT_MS, resetTimeoutOnProgress: true },
-      );
-      if (result.isError === true) {
-        const detail = extractText(result.content);
-        throw new Error(`MCP tool ${originalName} failed: ${detail || 'unknown error'}`);
-      }
-      // An MCP CallToolResult carries two payload channels (spec 2025-06-18):
-      // the historical `content` blocks AND `structuredContent` for tools that
-      // declare an outputSchema. The SDK defaults `content` to [] when the
-      // server omits it, so a structured-output server (e.g. Airtable) that
-      // returns its data in `structuredContent` would otherwise surface as an
-      // empty result. Prefer structuredContent; else join text-only content
-      // blocks (usually serialized JSON); else return the raw blocks so
-      // images/resources are preserved.
-      if (result.structuredContent != null) return capMcpResult(result.structuredContent);
-      const content = result.content ?? [];
-      if (
-        Array.isArray(content) &&
-        content.length > 0 &&
-        content.every((c) => (c as { type?: unknown }).type === 'text')
-      ) {
-        return capMcpResult(extractText(content));
-      }
-      return capMcpResult(content);
+      const client = await getClient();
+      return callMcpTool(client, originalName, (input ?? {}) as Record<string, unknown>);
     },
   };
+}
+
+/**
+ * Wrap one discovered MCP tool as a NodalAI ToolDefinition, dispatching
+ * `execute()` against an already-connected client.
+ */
+export function mcpToolToToolDefinition(
+  client: Client,
+  mcpTool: McpToolDescriptor,
+  slug: string,
+): ToolDefinition<z.ZodTypeAny, unknown> {
+  return buildMcpToolDefinition(mcpTool, slug, () => Promise.resolve(client));
+}
+
+/**
+ * Lazy variant (Lot A3): same wrapping, but `getClient` is invoked only when
+ * `execute()` is actually called — letting the caller build the toolset from
+ * a cached descriptor list with zero connections, and connect on first use.
+ */
+export function mcpToolToLazyToolDefinition(
+  getClient: () => Promise<Client>,
+  mcpTool: McpToolDescriptor,
+  slug: string,
+): ToolDefinition<z.ZodTypeAny, unknown> {
+  return buildMcpToolDefinition(mcpTool, slug, getClient);
 }

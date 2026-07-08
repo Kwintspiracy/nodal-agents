@@ -44,6 +44,7 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
 function makeDeps(): RunnerDeps {
@@ -181,6 +182,52 @@ describe('resolveApprovalDecision — atomic claim (F-14)', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, seed.jobId));
     expect(row?.status).toBe('cancelled');
+  });
+
+  it('Lot A1: job already back in-process (processing) when resolved — ok:true, resumed:"in_process", no re-trigger', async () => {
+    // Mirrors the grace-window race: the job's OWN executeJob is mid grace-
+    // window poll (or already resumed by a previous decision) — status is
+    // `processing`, NOT `awaiting_approval`. The awaiting_approval → pending
+    // UPDATE therefore touches 0 rows, but the decision IS recorded (the
+    // approval_requests row is resolved) and the in-process runner will pick
+    // it up on its own — resolveApprovalDecision must say so instead of
+    // reporting job_not_resumable.
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, seed.jobId));
+
+    const [approval] = await db
+      .insert(approvalRequests)
+      .values({
+        entityId: seed.entityId,
+        jobId: seed.jobId,
+        agentId: seed.agentId,
+        toolName: 'run_command',
+        toolInput: { command: 'echo in-process' },
+        status: 'pending',
+      })
+      .returning();
+
+    const result = await resolveApprovalDecision(makeDeps(), testEnv, {
+      approvalRequestId: approval!.id,
+      decision: 'approve',
+      resolvedBy: 'api',
+    });
+
+    expect(result).toMatchObject({ ok: true, decision: 'approve', resumed: 'in_process' });
+
+    // The decision landed on the approval row itself...
+    const [approvalRow] = await db
+      .select({ status: approvalRequests.status })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approval!.id));
+    expect(approvalRow?.status).toBe('approved');
+
+    // ...but the job's own status is untouched — no separate trigger raced
+    // the in-process runner.
+    const [jobRow] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+    expect(jobRow?.status).toBe('processing');
   });
 
   it('resolving an unknown approval id returns approval_not_found', async () => {

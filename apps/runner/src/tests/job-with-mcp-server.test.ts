@@ -38,7 +38,7 @@ const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
   };
 });
 
-const mcpMock = vi.hoisted(() => ({ createMcpTools: vi.fn() }));
+const mcpMock = vi.hoisted(() => ({ createMcpTools: vi.fn(), createLazyMcpTools: vi.fn() }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -67,6 +67,7 @@ vi.mock('@nodal-agents/adapter-mcp', async (importOriginal) => {
   return {
     ...actual,
     createMcpTools: (...args: unknown[]) => mcpMock.createMcpTools(...args),
+    createLazyMcpTools: (...args: unknown[]) => mcpMock.createLazyMcpTools(...args),
   };
 });
 
@@ -165,6 +166,7 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
@@ -336,5 +338,144 @@ describe('job-with-mcp-server: MCP resolver path', () => {
       .set({ apiKey: encrypt(COGNI_KEY) })
       .where(eq(mcpServers.id, mcpServerId));
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
+  });
+});
+
+// ─── Lot A3: lazy MCP connect ──────────────────────────────────────────────────
+// mcp_servers.available_tools gates whether execute.ts builds a lazy toolset
+// (createLazyMcpTools — no connection at build time) or falls back to the
+// eager path (createMcpTools) and writes back a fresh cache. Both factories
+// are mocked; only the runner's cache-v2 decision (isUsableMcpToolCache) and
+// its write-back call are under test here — the factories themselves are
+// covered in packages/adapters/mcp/src/tests/lazy-tools.test.ts.
+
+describe('job-with-mcp-server: Lot A3 — lazy MCP connect cache', () => {
+  it('a usable v2 cache (every tool carries inputSchema) builds a lazy toolset — createMcpTools (eager) is never called', async () => {
+    mcpMock.createMcpTools.mockReset();
+    mcpMock.createLazyMcpTools.mockReset();
+    const close = vi.fn().mockResolvedValue(undefined);
+    mcpMock.createLazyMcpTools.mockReturnValue({ tools: [fakeMcpTool()], descriptors: [], close });
+
+    await db
+      .update(mcpServers)
+      .set({
+        availableTools: [
+          {
+            name: 'get_home',
+            description: 'Cogni home view',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      })
+      .where(eq(mcpServers.id, mcpServerId));
+    await db
+      .insert(agentMcpServers)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, mcpServerId, enabledTools: null })
+      .onConflictDoNothing();
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Read my Cogni home (v2 cache)',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create job');
+
+    const client = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+
+    // The lazy factory was used, and the eager one — which would pay the
+    // full connect cost — was never invoked.
+    expect(mcpMock.createLazyMcpTools).toHaveBeenCalledOnce();
+    expect(mcpMock.createMcpTools).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+
+    await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
+    await db.update(mcpServers).set({ availableTools: null }).where(eq(mcpServers.id, mcpServerId));
+  });
+
+  it('a stale v1 cache ({name, description} only) takes the eager path and writes back full v2 descriptors', async () => {
+    mcpMock.createMcpTools.mockReset();
+    mcpMock.createLazyMcpTools.mockReset();
+    const close = vi.fn().mockResolvedValue(undefined);
+    const freshDescriptors = [
+      {
+        name: 'get_home',
+        description: 'Cogni home view',
+        inputSchema: { type: 'object', properties: {} },
+        annotations: { readOnlyHint: true },
+      },
+    ];
+    mcpMock.createMcpTools.mockResolvedValue({
+      tools: [fakeMcpTool()],
+      descriptors: freshDescriptors,
+      close,
+    });
+
+    // v1 cache — no inputSchema — must be rejected by isUsableMcpToolCache.
+    await db
+      .update(mcpServers)
+      .set({ availableTools: [{ name: 'get_home', description: 'Cogni home view' }] })
+      .where(eq(mcpServers.id, mcpServerId));
+    await db
+      .insert(agentMcpServers)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, mcpServerId, enabledTools: null })
+      .onConflictDoNothing();
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Read my Cogni home (v1 cache upgrade)',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create job');
+
+    const client = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+
+    expect(mcpMock.createMcpTools).toHaveBeenCalledOnce();
+    expect(mcpMock.createLazyMcpTools).not.toHaveBeenCalled();
+
+    // The real behavior under test: available_tools got auto-upgraded to the
+    // full v2 shape (inputSchema included) — the NEXT job for this server
+    // would now take the lazy path.
+    const [row] = await db
+      .select({ availableTools: mcpServers.availableTools })
+      .from(mcpServers)
+      .where(eq(mcpServers.id, mcpServerId));
+    expect(row?.availableTools).toEqual(freshDescriptors);
+
+    await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
+    await db.update(mcpServers).set({ availableTools: null }).where(eq(mcpServers.id, mcpServerId));
   });
 });

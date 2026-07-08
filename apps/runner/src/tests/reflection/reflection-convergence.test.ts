@@ -638,6 +638,7 @@ describe('reflection-convergence — E: tool-call iteration gate', () => {
     CURATOR_MEMORY_MIN: 8,
     MEMORY_CURATION_ENABLED: '',
     RETENTION_DAYS: 0,
+    NODALAI_APPROVAL_GRACE_MS: 0,
     REFLECTION_MODEL: undefined,
   });
 

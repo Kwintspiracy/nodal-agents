@@ -31,7 +31,21 @@ export interface ResolveApprovalInput {
 }
 
 export type ResolveApprovalResult =
-  | { ok: true; jobId: string; decision: ApprovalDecision; chatId: string | null }
+  | {
+      ok: true;
+      jobId: string;
+      decision: ApprovalDecision;
+      chatId: string | null;
+      /**
+       * How the job will pick up this decision. 'worker' = the usual path — the
+       * job was `awaiting_approval`, is now `pending`, and triggerWorker was
+       * fired. 'in_process' = the job's OWN executeJob is already past
+       * `awaiting_approval` (in its grace-window poll, or already resumed by a
+       * previous decision) — it will notice this row on its next poll/entry, so
+       * no separate trigger is needed (Lot A1, NODALAI_APPROVAL_GRACE_MS).
+       */
+      resumed: 'worker' | 'in_process';
+    }
   | {
       ok: false;
       code: 'approval_not_found' | 'already_resolved' | 'job_not_found' | 'job_not_resumable';
@@ -120,14 +134,32 @@ export async function resolveApprovalDecision(
     .returning({ id: agentJobs.id });
 
   if (resumed.length === 0) {
-    // Re-read to report the status the job actually holds now (typically
-    // `cancelled`) — fail loud so the caller can tell the user the tap did
-    // nothing because the job is no longer running.
+    // The job wasn't `awaiting_approval` at the UPDATE above — re-read to find
+    // out why. Two very different cases share this zero-rows outcome:
+    //   - the job is `processing` (or already back to `pending`): its OWN
+    //     executeJob got here FIRST — either it's mid grace-window poll (Lot
+    //     A1, NODALAI_APPROVAL_GRACE_MS) and will pick up this decision on its
+    //     next poll, or a prior decision already flipped it back to pending.
+    //     Either way the decision IS recorded (the approval_requests UPDATE
+    //     above succeeded) and will be honored — no separate trigger needed,
+    //     and triggering one now would race the in-process runner.
+    //   - the job is in a TERMINAL status (cancelled/completed/failed): the
+    //     decision has nowhere to land — fail loud (job_not_resumable), same
+    //     as before (B1: cancel wins, a stale tap must not resurrect it).
     const [current] = await deps.db
       .select({ status: agentJobs.status })
       .from(agentJobs)
       .where(eq(agentJobs.id, jobId))
       .limit(1);
+    if (current?.status === 'processing' || current?.status === 'pending') {
+      return {
+        ok: true,
+        jobId,
+        decision: input.decision,
+        chatId: (job as { chatId?: string | null }).chatId ?? null,
+        resumed: 'in_process',
+      };
+    }
     return { ok: false, code: 'job_not_resumable', status: current?.status ?? null };
   }
 
@@ -138,5 +170,6 @@ export async function resolveApprovalDecision(
     jobId,
     decision: input.decision,
     chatId: (job as { chatId?: string | null }).chatId ?? null,
+    resumed: 'worker',
   };
 }

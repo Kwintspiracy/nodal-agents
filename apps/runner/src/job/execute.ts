@@ -23,6 +23,7 @@ import {
   entities as entitiesTable,
   getDecryptedCredentialById,
 } from '@nodal-agents/db';
+import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
   enabledMetaTools,
   parseRootGrants,
@@ -31,7 +32,15 @@ import {
   estimateModelCostUsd,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
-import { createMcpTools, slugToPrefix, connectMcp } from '@nodal-agents/adapter-mcp';
+import {
+  createMcpTools,
+  createLazyMcpTools,
+  slugToPrefix,
+  connectMcp,
+  type McpToolDescriptor,
+  type McpToolset,
+} from '@nodal-agents/adapter-mcp';
+import { isUsableMcpToolCache } from './mcp-tool-cache.ts';
 import {
   QuotaExhaustedError,
   MessageStructureError,
@@ -626,6 +635,44 @@ export async function maybeResumeParent(
   }
 }
 
+/**
+ * Self-heal a job stranded in `awaiting_approval` despite its gated approval
+ * already being resolved — the T-ε race between `suspendForApproval`'s last
+ * grace-window poll (Lot A1, NODALAI_APPROVAL_GRACE_MS) and its
+ * `setJobStatus(..., 'awaiting_approval')` write. In that window,
+ * `resolveApprovalDecision`'s `awaiting_approval → pending` UPDATE ran against
+ * a row still `processing` and touched 0 rows — it neither flips the job nor
+ * triggers the worker, even though the decision WAS recorded (the
+ * approval_requests row itself is resolved). Called right after the suspend
+ * write lands: flips the job back to `pending` and re-triggers the worker so
+ * it isn't left stuck on a decision already made. No-op when the job holds no
+ * resolved-but-unexecuted approval request. `runnerEnv` is optional — cron
+ * paths call executeJob without one; the flip still lands, and the cron's
+ * pending-job recovery phase is the fallback trigger (same pattern as
+ * maybeResumeParent above).
+ */
+export async function reviveJobIfApprovalResolvedDuringSuspend(
+  db: RunnerDeps['db'],
+  jobId: string,
+  runnerEnv?: RunnerEnv,
+): Promise<void> {
+  const openRows = await db
+    .select({ status: approvalRequests.status })
+    .from(approvalRequests)
+    .where(and(eq(approvalRequests.jobId, jobId), isNull(approvalRequests.executedAt)));
+  const hasResolved = openRows.some((r) => r.status === 'approved' || r.status === 'rejected');
+  if (!hasResolved) return;
+
+  const flipped = await db
+    .update(agentJobs)
+    .set({ status: 'pending', updatedAt: new Date() })
+    .where(and(eq(agentJobs.id, jobId), eq(agentJobs.status, 'awaiting_approval')))
+    .returning({ id: agentJobs.id });
+  if (flipped.length > 0 && runnerEnv) {
+    void triggerWorker(jobId, runnerEnv);
+  }
+}
+
 async function runJob(
   jobId: JobId,
   deps: RunnerDeps,
@@ -1160,17 +1207,33 @@ async function runJob(
       // ────────────────────────────────────────────────────────────────────────
 
       // ── MCP server tools ─────────────────────────────────────────────────────
-      // Each assigned MCP server is connected per-job. Two transports:
+      // Two transports:
       //   - 'http' : Streamable HTTP (Stripe, Cogni, Composio, custom-HTTP)
       //   - 'stdio': local subprocess (filesystem, sqlite, github, custom-stdio)
-      // Tools discovered via tools/list and wrapped as ToolDefinitions. A
-      // connect failure for one server is swallowed — a broken MCP server must
-      // never fail an unrelated job. Transports are closed in the loop finally
-      // (closing a stdio transport also terminates the spawned subprocess).
-      // null enabledTools → all tools; array → whitelist on the original
-      // (un-prefixed) tool name.
+      //
+      // Lot A3 (lazy MCP connect): connecting eagerly here — before the LLM
+      // has even decided to call a tool — pays the full connect cost (30-120s
+      // for a cold stdio spawn) on EVERY job, including approval resumes, even
+      // when no MCP tool ends up being called (measured ~90s dead time per
+      // resume in prod). When mcp_servers.available_tools already holds a full
+      // "v2" cache (isUsableMcpToolCache — every entry has inputSchema, not
+      // just the {name, description} "v1" shape create-mcp.ts used to write),
+      // createLazyMcpTools builds the toolset synchronously from the cache and
+      // only connects on the tool's first real execute(). Otherwise we fall
+      // back to the eager connect (unavoidable the first time, or after a
+      // stale/absent cache) and write back the fresh descriptors so every job
+      // after this one takes the lazy path.
+      //
+      // A connect failure is swallowed — a broken MCP server must never fail
+      // an unrelated job. With the lazy path this can no longer surface at
+      // build time; it surfaces as a normal tool-call error on first use,
+      // which is the intended fail-loud-at-usage behavior. Transports are
+      // closed in the loop finally (closing a stdio transport also terminates
+      // the spawned subprocess). null enabledTools → all tools; array →
+      // whitelist on the original (un-prefixed) tool name.
       const mcpAssignments = await db
         .select({
+          id: mcpServersTable.id,
           slug: mcpServersTable.slug,
           transport: mcpServersTable.transport,
           url: mcpServersTable.url,
@@ -1180,15 +1243,38 @@ async function runJob(
           command: mcpServersTable.command,
           args: mcpServersTable.args,
           envVars: mcpServersTable.envVars,
+          availableTools: mcpServersTable.availableTools,
           enabledTools: agentMcpServersTable.enabledTools,
         })
         .from(agentMcpServersTable)
         .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
         .where(eq(agentMcpServersTable.agentId, agentRow.id));
 
+      // Best-effort write-back of freshly-discovered descriptors into
+      // mcp_servers.available_tools. Never let a refresh failure break the
+      // job (or the tool call, for the lazy onConnected hook) that
+      // triggered it — logged loud (invariant #4), always swallowed.
+      const refreshMcpToolCache = async (
+        mcpServerId: string,
+        liveTools: McpToolDescriptor[],
+      ): Promise<void> => {
+        try {
+          await db
+            .update(mcpServersTable)
+            .set({ availableTools: liveTools })
+            .where(eq(mcpServersTable.id, mcpServerId));
+        } catch (err) {
+          console.error(
+            `[execute] failed to refresh available_tools cache for MCP server ` +
+              `'${mcpServerId}': ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      };
+
       for (const ms of mcpAssignments) {
         try {
-          let toolset: Awaited<ReturnType<typeof createMcpTools>>;
+          const availableTools = ms.availableTools;
+          let toolset: McpToolset;
           if (ms.transport === 'stdio') {
             // stdio: command + args + env vars (each value encrypted).
             if (!ms.command) continue; // bad row, skip silently
@@ -1201,13 +1287,26 @@ async function runJob(
             } catch {
               continue; // tampered env var — skip silently
             }
-            toolset = await createMcpTools({
-              transport: 'stdio',
+            const connectOpts = {
+              transport: 'stdio' as const,
               slug: ms.slug,
               command: ms.command,
               args: (ms.args ?? []) as string[],
               env: decryptedEnv,
-            });
+            };
+            if (isUsableMcpToolCache(availableTools)) {
+              toolset = createLazyMcpTools(connectOpts, availableTools, {
+                onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+              });
+            } else {
+              toolset = await createMcpTools(connectOpts);
+              // Auto-upgrade v1→v2: real descriptors are always non-empty
+              // when createMcpTools succeeds (guarded here so a test double
+              // that omits `descriptors` doesn't write a bogus cache).
+              if (toolset.descriptors?.length) {
+                await refreshMcpToolCache(ms.id, toolset.descriptors);
+              }
+            }
           } else {
             // http: URL + apiKey + auth metadata, all of which must be set.
             if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) continue;
@@ -1225,14 +1324,27 @@ async function runJob(
               );
               continue;
             }
-            toolset = await createMcpTools({
-              transport: 'http',
+            const connectOpts = {
+              transport: 'http' as const,
               slug: ms.slug,
               url: ms.url,
               apiKey: decryptedKey,
               authScheme: ms.authScheme as 'header' | 'query' | 'bearer',
               authParamName: ms.authParamName,
-            });
+            };
+            if (isUsableMcpToolCache(availableTools)) {
+              toolset = createLazyMcpTools(connectOpts, availableTools, {
+                onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+              });
+            } else {
+              toolset = await createMcpTools(connectOpts);
+              // Auto-upgrade v1→v2: real descriptors are always non-empty
+              // when createMcpTools succeeds (guarded here so a test double
+              // that omits `descriptors` doesn't write a bogus cache).
+              if (toolset.descriptors?.length) {
+                await refreshMcpToolCache(ms.id, toolset.descriptors);
+              }
+            }
           }
           mcpClosers.push(toolset.close);
           const enabled = ms.enabledTools as string[] | null;
@@ -1466,6 +1578,188 @@ async function runJob(
     return { type: 'text', value: truncateForContext(serialized) };
   };
 
+  // ── 11.6.5 Shared: execute already-resolved approval requests in-process ─────
+  // Runs an approved tool (bypassing its gate — a human already reviewed this
+  // exact call) or replaces a rejected tool's marker with a [REJECTED]
+  // explanation, against the given in-memory `messages`. Used by BOTH:
+  //   - 11.7 below, at job entry (the classic suspend → dashboard/Telegram
+  //     resolve → executeJob-restart path), and
+  //   - the grace-window inline resume in `suspendForApproval` (Lot A1,
+  //     NODALAI_APPROVAL_GRACE_MS) — a decision that lands within a short
+  //     in-process wait is executed here too, WITHOUT ever suspending/
+  //     restarting the job.
+  // Does NOT persist anything except the executed_at stamp per row (callers
+  // decide when/what else to checkpoint) and does NOT bump chain_count — the
+  // human acted on an already-proposed action, not a new LLM chain call.
+  // Returns the updated messages plus a non-null `catastrophicRefusalMessage`
+  // when a resolved approval turned out to be a machine-wide-destructive
+  // command (Fix #29) — the caller must fail the job loud with that message
+  // instead of feeding the marker to the LLM.
+  const executeResolvedApprovals = async (
+    resolvedRows: ApprovalRequestRow[],
+    msgsIn: ModelMessage[],
+  ): Promise<{ messages: ModelMessage[]; catastrophicRefusalMessage: string | null }> => {
+    let msgs = msgsIn;
+    let catastrophicRefusalMessage: string | null = null;
+
+    for (const req of resolvedRows) {
+      let replacementOutput: ToolResultOutput;
+
+      if (req.status === 'approved') {
+        // Hardline floor, UX surfacing (Fix #29). A machine-wide-destructive
+        // shell command can NEVER auto-run — not even after an explicit human
+        // approval (packages/tools/src/execute.ts re-trips this floor
+        // unconditionally; that fail-safe is intentional and UNCHANGED here).
+        // Calling executeTool anyway would just hit that floor again, silently
+        // spawn a SECOND orphaned approval_requests row + notification (the
+        // internal gate creates one before returning 'awaiting_approval'), and
+        // leave the LLM staring at an opaque `unexpected_gate_on_approved_tool`
+        // code with no idea why its approved action never ran. Detect it here,
+        // BEFORE calling executeTool, and fail the job loud with a message the
+        // user can actually act on — pure UX, the command still never executes
+        // either way.
+        const resumeCommand = String(
+          (req.toolInput as { command?: unknown } | null)?.command ?? '',
+        );
+        const isCatastrophicResume =
+          req.toolName === 'run_command' && isCatastrophicCommand(resumeCommand);
+
+        if (isCatastrophicResume) {
+          // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)
+          // reach here now — refused even after approval, by design (the
+          // last-resort circuit breaker). Inline interpreter-eval (`python -c`,
+          // `… | python`) is NO LONGER catastrophic: it is approvable and
+          // executes in the `else` branch once a human OKs it (ComfyUI
+          // regression fix, 2026-07).
+          catastrophicRefusalMessage =
+            'Cette commande est jugée catastrophique (destruction machine-wide : rm -rf /, ' +
+            "mkfs, shutdown…) et reste refusée même après approbation, par sécurité. Elle n'a " +
+            'pas été exécutée.';
+          replacementOutput = toResultOutput({ error: catastrophicRefusalMessage });
+          trace('resume_catastrophic_command_refused', { toolName: req.toolName });
+        } else {
+          // Execute the approved tool, bypassing the gate — the human already
+          // reviewed and approved this exact call. The bypass is expressed via a
+          // synthetic auto_approve rule below (NOT an empty rules array: that would
+          // re-fire the tool's own defaultApproval and loop forever for run_command).
+          const toolDef = toolMap.get(req.toolName);
+          if (!toolDef) {
+            // Tool no longer in whitelist — treat as error and mark executed.
+            replacementOutput = toResultOutput({
+              error: `approved_tool_not_found:${req.toolName}`,
+            });
+          } else {
+            // Synthesize an explicit auto_approve rule for this tool so that
+            // tools with defaultApproval:'require_approval' (e.g. run_command)
+            // bypass their own gate during the resume-execution step. The human
+            // already reviewed and approved this exact call — re-gating on the
+            // tool's default posture would produce an infinite approval loop.
+            const resumeApprovalRules: ApprovalRule[] = [
+              {
+                id: 'resume-bypass',
+                entityId: job.entityId ?? '',
+                agentId: null,
+                toolName: req.toolName,
+                action: 'auto_approve',
+              },
+            ];
+            const execResult = await executeTool(
+              toolDef,
+              req.toolInput,
+              {
+                jobId: jobId as string,
+                agentId: agentRow.id,
+                entityId: job.entityId ?? '',
+                db,
+                jobChatId: job.chatId ?? null,
+                embeddingClient: deps.embeddingClient,
+                workspaces: agentWorkspacesList,
+                skillStoreDir: skillStore,
+                assignedSkillSlugs,
+                scriptAuthorizedSkillSlugs,
+                fileWritableSkillSlugs,
+                provisioning: TOOL_PROVISIONING,
+                searchBackend,
+              },
+              {
+                approvalRules: resumeApprovalRules,
+                autonomy: workspaceAutonomy,
+                onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
+              },
+            );
+            if (execResult.outcome === 'success') {
+              replacementOutput = toResultOutput(execResult.output);
+            } else if (execResult.outcome === 'error') {
+              replacementOutput = toResultOutput({ error: execResult.error });
+            } else {
+              // outcome === 'awaiting_approval' should never occur here — we
+              // passed a synthetic auto_approve rule that overrides any
+              // defaultApproval, and the one case that DOES still re-gate
+              // (the catastrophic floor) was already handled above.
+              replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
+            }
+          }
+        }
+        trace('resume_approved_tool_executed', { toolName: req.toolName });
+      } else {
+        // Rejected: replace marker with a [REJECTED] explanation.
+        const reason = req.notes ?? 'no reason provided';
+        replacementOutput = toResultOutput(
+          `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.`,
+        );
+        trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
+      }
+
+      // Find and replace the [AWAITING_APPROVAL] marker in the saved messages.
+      // The marker format is: "[AWAITING_APPROVAL] tool_call_id=<callId>"
+      // We match on the toolName as well (the marker is in the tool-result block
+      // whose toolName equals req.toolName and whose output text contains
+      // [AWAITING_APPROVAL]). Using toolName for matching is safe because there
+      // is at most one pending approval per tool per turn in this design
+      // (one approval at a time; siblings are deferred).
+      msgs = msgs.map((msg) => {
+        if (typeof msg !== 'object' || msg === null || (msg as { role: string }).role !== 'tool') {
+          return msg;
+        }
+        const toolMsg = msg as { role: 'tool'; content: unknown };
+        if (!Array.isArray(toolMsg.content)) return msg;
+
+        const updatedContent = toolMsg.content.map((block: unknown) => {
+          if (
+            typeof block !== 'object' ||
+            block === null ||
+            (block as { type: string }).type !== 'tool-result'
+          ) {
+            return block;
+          }
+          const tb = block as {
+            type: 'tool-result';
+            toolCallId: string;
+            toolName: string;
+            output: ToolResultOutput;
+          };
+          // Match: same toolName and output contains the [AWAITING_APPROVAL] marker.
+          if (tb.toolName !== req.toolName) return block;
+          const outputText =
+            tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
+          if (!outputText.includes('[AWAITING_APPROVAL]')) return block;
+          // Replace with the real (or rejection) output.
+          return { ...tb, output: replacementOutput };
+        });
+
+        return { ...toolMsg, content: updatedContent };
+      }) as typeof msgs;
+
+      // Stamp executed_at so this request is never re-processed.
+      await db
+        .update(approvalRequests)
+        .set({ executedAt: new Date() })
+        .where(eq(approvalRequests.id, req.id));
+    }
+
+    return { messages: msgs, catastrophicRefusalMessage };
+  };
+
   // ── 11.7 Execute-on-resume (Bugs B+C fix) ────────────────────────────────────
   // When the job is resuming after an approval decision, the approved/rejected
   // tool has NOT yet been executed. We do it here — before entering the LLM
@@ -1488,179 +1782,16 @@ async function runJob(
       (r) => r.status === 'approved' || r.status === 'rejected',
     );
 
-    // Fix #29: set when a resolved approval turns out to be a catastrophic
-    // run_command — see the check inside the loop below. Declared outside the
-    // loop so it survives to the fail-loud check right after it.
-    let catastrophicRefusalMessage: string | null = null;
-
     if (resolvedRows.length > 0) {
-      // Process each resolved request and replace its marker in messages.
-      for (const req of resolvedRows) {
-        let replacementOutput: ToolResultOutput;
-
-        if (req.status === 'approved') {
-          // Hardline floor, UX surfacing (Fix #29). A machine-wide-destructive
-          // shell command can NEVER auto-run — not even after an explicit human
-          // approval (packages/tools/src/execute.ts re-trips this floor
-          // unconditionally; that fail-safe is intentional and UNCHANGED here).
-          // Calling executeTool anyway would just hit that floor again, silently
-          // spawn a SECOND orphaned approval_requests row + notification (the
-          // internal gate creates one before returning 'awaiting_approval'), and
-          // leave the LLM staring at an opaque `unexpected_gate_on_approved_tool`
-          // code with no idea why its approved action never ran. Detect it here,
-          // BEFORE calling executeTool, and fail the job loud with a message the
-          // user can actually act on — pure UX, the command still never executes
-          // either way.
-          const resumeCommand = String(
-            (req.toolInput as { command?: unknown } | null)?.command ?? '',
-          );
-          const isCatastrophicResume =
-            req.toolName === 'run_command' && isCatastrophicCommand(resumeCommand);
-
-          if (isCatastrophicResume) {
-            // Only machine-wide destroyers (`rm -rf /`, `mkfs`, `shutdown`, …)
-            // reach here now — refused even after approval, by design (the
-            // last-resort circuit breaker). Inline interpreter-eval (`python -c`,
-            // `… | python`) is NO LONGER catastrophic: it is approvable and
-            // executes in the `else` branch once a human OKs it (ComfyUI
-            // regression fix, 2026-07).
-            catastrophicRefusalMessage =
-              'Cette commande est jugée catastrophique (destruction machine-wide : rm -rf /, ' +
-              "mkfs, shutdown…) et reste refusée même après approbation, par sécurité. Elle n'a " +
-              'pas été exécutée.';
-            replacementOutput = toResultOutput({ error: catastrophicRefusalMessage });
-            trace('resume_catastrophic_command_refused', { toolName: req.toolName });
-          } else {
-            // Execute the approved tool, bypassing the gate — the human already
-            // reviewed and approved this exact call. The bypass is expressed via a
-            // synthetic auto_approve rule below (NOT an empty rules array: that would
-            // re-fire the tool's own defaultApproval and loop forever for run_command).
-            const toolDef = toolMap.get(req.toolName);
-            if (!toolDef) {
-              // Tool no longer in whitelist — treat as error and mark executed.
-              replacementOutput = toResultOutput({
-                error: `approved_tool_not_found:${req.toolName}`,
-              });
-            } else {
-              // Synthesize an explicit auto_approve rule for this tool so that
-              // tools with defaultApproval:'require_approval' (e.g. run_command)
-              // bypass their own gate during the resume-execution step. The human
-              // already reviewed and approved this exact call — re-gating on the
-              // tool's default posture would produce an infinite approval loop.
-              const resumeApprovalRules: ApprovalRule[] = [
-                {
-                  id: 'resume-bypass',
-                  entityId: job.entityId ?? '',
-                  agentId: null,
-                  toolName: req.toolName,
-                  action: 'auto_approve',
-                },
-              ];
-              const execResult = await executeTool(
-                toolDef,
-                req.toolInput,
-                {
-                  jobId: jobId as string,
-                  agentId: agentRow.id,
-                  entityId: job.entityId ?? '',
-                  db,
-                  jobChatId: job.chatId ?? null,
-                  embeddingClient: deps.embeddingClient,
-                  workspaces: agentWorkspacesList,
-                  skillStoreDir: skillStore,
-                  assignedSkillSlugs,
-                  scriptAuthorizedSkillSlugs,
-                  fileWritableSkillSlugs,
-                  provisioning: TOOL_PROVISIONING,
-                  searchBackend,
-                },
-                {
-                  approvalRules: resumeApprovalRules,
-                  autonomy: workspaceAutonomy,
-                  onApprovalRequired: (req: ApprovalGateRequest) =>
-                    notifyApprovalCreated(deps, req),
-                },
-              );
-              if (execResult.outcome === 'success') {
-                replacementOutput = toResultOutput(execResult.output);
-              } else if (execResult.outcome === 'error') {
-                replacementOutput = toResultOutput({ error: execResult.error });
-              } else {
-                // outcome === 'awaiting_approval' should never occur here — we
-                // passed a synthetic auto_approve rule that overrides any
-                // defaultApproval, and the one case that DOES still re-gate
-                // (the catastrophic floor) was already handled above.
-                replacementOutput = toResultOutput({ error: 'unexpected_gate_on_approved_tool' });
-              }
-            }
-          }
-          trace('resume_approved_tool_executed', { toolName: req.toolName });
-        } else {
-          // Rejected: replace marker with a [REJECTED] explanation.
-          const reason = req.notes ?? 'no reason provided';
-          replacementOutput = toResultOutput(
-            `[REJECTED] Human reviewer rejected this action. Reason: ${reason}. Adapt your approach.`,
-          );
-          trace('resume_rejected_tool_marker_replaced', { toolName: req.toolName });
-        }
-
-        // Find and replace the [AWAITING_APPROVAL] marker in the saved messages.
-        // The marker format is: "[AWAITING_APPROVAL] tool_call_id=<callId>"
-        // We match on the toolName as well (the marker is in the tool-result block
-        // whose toolName equals req.toolName and whose output text contains
-        // [AWAITING_APPROVAL]). Using toolName for matching is safe because there
-        // is at most one pending approval per tool per turn in this design
-        // (one approval at a time; siblings are deferred).
-        messages = messages.map((msg) => {
-          if (
-            typeof msg !== 'object' ||
-            msg === null ||
-            (msg as { role: string }).role !== 'tool'
-          ) {
-            return msg;
-          }
-          const toolMsg = msg as { role: 'tool'; content: unknown };
-          if (!Array.isArray(toolMsg.content)) return msg;
-
-          const updatedContent = toolMsg.content.map((block: unknown) => {
-            if (
-              typeof block !== 'object' ||
-              block === null ||
-              (block as { type: string }).type !== 'tool-result'
-            ) {
-              return block;
-            }
-            const tb = block as {
-              type: 'tool-result';
-              toolCallId: string;
-              toolName: string;
-              output: ToolResultOutput;
-            };
-            // Match: same toolName and output contains the [AWAITING_APPROVAL] marker.
-            if (tb.toolName !== req.toolName) return block;
-            const outputText =
-              tb.output.type === 'text' ? tb.output.value : JSON.stringify(tb.output.value);
-            if (!outputText.includes('[AWAITING_APPROVAL]')) return block;
-            // Replace with the real (or rejection) output.
-            return { ...tb, output: replacementOutput };
-          });
-
-          return { ...toolMsg, content: updatedContent };
-        }) as typeof messages;
-
-        // Stamp executed_at so this request is never re-processed.
-        await db
-          .update(approvalRequests)
-          .set({ executedAt: new Date() })
-          .where(eq(approvalRequests.id, req.id));
-      }
+      const executed = await executeResolvedApprovals(resolvedRows, messages);
+      messages = executed.messages;
 
       // Fix #29: a catastrophic run_command was approved but the hardline floor
       // refuses it regardless — fail the job loud NOW, with the clear message,
       // instead of feeding the opaque marker into the LLM loop as if this were
       // an ordinary tool error. The marker replacement + executed_at stamp above
       // already ran for it, so the persisted transcript is consistent.
-      if (catastrophicRefusalMessage !== null) {
+      if (executed.catastrophicRefusalMessage !== null) {
         trace('resume_catastrophic_command_failed_job');
         await failJob(
           db,
@@ -1668,12 +1799,12 @@ async function runJob(
           'catastrophic_command_refused',
           runStats(),
           messages,
-          catastrophicRefusalMessage,
+          executed.catastrophicRefusalMessage,
         );
         return {
           status: 'failed',
           error: 'catastrophic_command_refused',
-          result: catastrophicRefusalMessage,
+          result: executed.catastrophicRefusalMessage,
         };
       }
 
@@ -1752,10 +1883,106 @@ async function runJob(
     'tes propres mots, quelle action tu as lancée et que tu attends son approbation (il pourra ' +
     "valider directement depuis Telegram via les boutons ✅/❌, ou depuis le dashboard). N'appelle " +
     'PAS `return_result` — la mise en pause est automatique.';
+  // Approval grace window (Lot A1). Read via runnerEnv when available
+  // (validated, zod default 120_000); cron paths call executeJob without a
+  // runnerEnv, so fall back to raw process.env like the other job-level limits
+  // above (AUTH_MODE, MAX_TOTAL_TOKENS_PER_JOB, …) — reading the full `env`
+  // proxy here would throw in those contexts (see the AUTH_MODE comment,
+  // section 8b). 0 disables the window: suspend immediately (prior behavior).
+  const approvalGraceMsRaw =
+    runnerEnv?.NODALAI_APPROVAL_GRACE_MS ?? Number(process.env['NODALAI_APPROVAL_GRACE_MS']);
+  const approvalGraceMs =
+    Number.isFinite(approvalGraceMsRaw) && approvalGraceMsRaw >= 0 ? approvalGraceMsRaw : 120_000;
+
   // Suspend the job in `awaiting_approval`, persisting the current conversation
   // so the dashboard-driven resume (section 11.7) picks up exactly where we left
   // off. Closes over the loop accumulators (reassigned each turn) by reference.
-  const suspendForApproval = async (): Promise<ExecuteJobResult> => {
+  //
+  // Grace window (Lot A1): before actually suspending, poll approval_requests
+  // in-process for up to `approvalGraceMs`. A gated tool's approval is often
+  // granted in 5-30s by a human still at the screen; suspending pays a full
+  // executeJob RESTART on resume (~80-105s measured: agent/skill/tool reload,
+  // thread history, system prompt rebuild) for a decision that could have
+  // landed during a short in-process wait instead. If every currently-open
+  // request resolves inside the window, we execute them here — via the SAME
+  // logic as 11.7's resume step (`executeResolvedApprovals`) — and signal the
+  // caller to keep looping instead of suspending. `'resumed_inline'` is that
+  // signal; both call sites reset `approvalPending` and `continue` the turn
+  // loop (a fresh turn then calls the LLM with the now-resolved results).
+  const suspendForApproval = async (): Promise<ExecuteJobResult | 'resumed_inline'> => {
+    if (approvalGraceMs > 0) {
+      // At least every 2s, but fast enough that a short test-configured grace
+      // (e.g. 100ms) still gets a few polls in before it expires. NOT vitest
+      // fake timers — this is a real DB-polling wait, which hangs under fake
+      // timers; tests use genuinely small real durations instead.
+      const pollIntervalMs = Math.max(1, Math.min(2000, Math.floor(approvalGraceMs / 4)));
+      const deadline = Date.now() + approvalGraceMs;
+      // Keep updated_at fresh for the whole wait — same reasoning as the LLM/
+      // tool-call heartbeats above (Leg 5 / F-8): a job that's just waiting on
+      // a human must not look stale to the 5-min orphan reaper.
+      const graceHbInterval = setInterval(() => {
+        void touchJob(db, jobId as string).catch(() => {});
+      }, 60_000);
+      try {
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+          // Cancel wins even mid-window: execute nothing, touch no status —
+          // mirrors the top-of-turn cancellation check (Leg 2).
+          const [statusRow] = await db
+            .select({ status: agentJobs.status })
+            .from(agentJobs)
+            .where(eq(agentJobs.id, jobId as string));
+          if (statusRow?.status === 'cancelled') {
+            trace('grace_window_cancelled');
+            await cancelJob(db, jobId as string, runStats(), messages);
+            return { status: 'cancelled' };
+          }
+
+          const openRows = await db
+            .select()
+            .from(approvalRequests)
+            .where(
+              and(eq(approvalRequests.jobId, jobId as string), isNull(approvalRequests.executedAt)),
+            )
+            .orderBy(approvalRequests.requestedAt);
+          if (openRows.length === 0 || openRows.some((r) => r.status === 'pending')) {
+            continue; // at least one request is still awaiting a decision
+          }
+
+          // Every open request resolved inside the window — execute them
+          // in-process (same logic as the 11.7 resume step) instead of
+          // suspending the job.
+          trace('grace_window_resolved_inline', { count: openRows.length });
+          const executed = await executeResolvedApprovals(openRows, messages);
+          messages = executed.messages;
+
+          if (executed.catastrophicRefusalMessage !== null) {
+            trace('resume_catastrophic_command_failed_job');
+            await failJob(
+              db,
+              jobId as string,
+              'catastrophic_command_refused',
+              runStats(),
+              messages,
+              executed.catastrophicRefusalMessage,
+            );
+            return {
+              status: 'failed',
+              error: 'catastrophic_command_refused',
+              result: executed.catastrophicRefusalMessage,
+            };
+          }
+
+          return 'resumed_inline';
+        }
+      } finally {
+        clearInterval(graceHbInterval);
+      }
+    }
+
+    // Grace disabled, or the window expired with ≥1 request still pending —
+    // suspend as before.
     await saveCheckpoint(db, jobId as string, {
       messages,
       turn,
@@ -1768,6 +1995,15 @@ async function runJob(
       servedProvider,
     });
     await setJobStatus(db, jobId as string, 'awaiting_approval');
+
+    // Race T-ε: a resolution can land between the last poll above (or, with
+    // grace disabled, between the gate firing and this very write) and this
+    // status write actually landing — resolveApprovalDecision's UPDATE ran
+    // against a row still `processing` and silently no-opped. Without this,
+    // the job would be stranded `awaiting_approval` with a decision already
+    // made and nothing left to trigger it.
+    await reviveJobIfApprovalResolvedDuringSuspend(db, jobId as string, runnerEnv);
+
     return { status: 'awaiting_approval' };
   };
 
@@ -2255,7 +2491,15 @@ async function runJob(
         // will continue. (Plain text can't reach a Telegram user anyway, and the
         // heads-up nudge already had its bounded turns above.)
         if (approvalPending) {
-          return await suspendForApproval();
+          const suspended = await suspendForApproval();
+          if (suspended === 'resumed_inline') {
+            // Every open request resolved within the grace window (Lot A1) —
+            // don't suspend. Clear the cross-turn latch and let a fresh turn
+            // call the LLM with the now-resolved results in `messages`.
+            approvalPending = false;
+            continue;
+          }
+          return suspended;
         }
         const textContent = response.text ?? '';
         if (textContent) {
@@ -2923,7 +3167,16 @@ async function runJob(
           messages = [...messages, { role: 'user', content: approvalNudge } as ModelMessage];
           continue;
         }
-        return await suspendForApproval();
+        const suspended = await suspendForApproval();
+        if (suspended === 'resumed_inline') {
+          // Every open request resolved within the grace window (Lot A1) —
+          // don't suspend. Reset the per-turn/cross-turn guards and let a
+          // fresh turn call the LLM with the now-resolved results.
+          awaitingApproval = false;
+          approvalPending = false;
+          continue;
+        }
+        return suspended;
       }
 
       // j-pré. Detect tool errors in the same turn as return_result. If a

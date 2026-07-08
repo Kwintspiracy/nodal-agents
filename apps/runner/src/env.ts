@@ -139,6 +139,17 @@ const envSchema = z.object({
   // Set this ONLY if you explicitly want to cap DB growth. Deleting job history is
   // irreversible. Start with a large value (e.g. 90) and reduce over time.
   RETENTION_DAYS: z.coerce.number().default(0),
+
+  // ─── Approval grace window (Lot A1) ───────────────────────────────────────────
+  // A gated tool normally suspends the job to `awaiting_approval` the instant it
+  // fires — resuming later pays a full executeJob restart (~80-105s measured:
+  // agent/skill/tool reload, thread history, system prompt). A human watching
+  // the screen typically approves in 5-30s, so that whole restart is wasted. This
+  // caps an in-process wait (poll approval_requests) BEFORE actually suspending:
+  // if the decision lands inside the window, the runner executes it inline and
+  // keeps looping — no suspend, no restart. 0 = disabled (suspend immediately,
+  // the pre-existing behavior).
+  NODALAI_APPROVAL_GRACE_MS: z.coerce.number().min(0).default(120_000),
 });
 
 export type RunnerEnv = z.infer<typeof envSchema>;

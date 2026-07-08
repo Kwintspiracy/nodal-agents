@@ -207,6 +207,7 @@ function makeCuratorEnv(
     CURATOR_MEMORY_MIN: overrides.curatorMemoryMin ?? 8,
     MEMORY_CURATION_ENABLED: overrides.memoryCurationEnabled ?? 'false',
     RETENTION_DAYS: 0,
+    NODALAI_APPROVAL_GRACE_MS: 0,
   } as Parameters<typeof runCuratorTick>[2];
 }
 

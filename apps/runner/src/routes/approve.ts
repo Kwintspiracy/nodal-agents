@@ -58,5 +58,10 @@ export async function approveRoute(
     return c.json({ error: 'approval_already_resolved', status: result.status }, 400);
   }
 
-  return c.json({ ok: true, jobId: result.jobId, status: 'pending', decision }, 200);
+  // 'worker' = the job was `awaiting_approval` and is now `pending` (re-queued
+  // for triggerWorker). 'in_process' (Lot A1) = the job's own executeJob is
+  // already past `awaiting_approval` — it never actually suspended, so the
+  // status the caller should see is whatever the job holds now, not 'pending'.
+  const status = result.resumed === 'in_process' ? 'processing' : 'pending';
+  return c.json({ ok: true, jobId: result.jobId, status, decision }, 200);
 }
