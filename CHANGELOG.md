@@ -10,6 +10,55 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.7.5 — The Trustworthy Orchestrator · Jul 8, 2026
+
+A deep security-hardening wave, and a rebuilt approval & delegation experience —
+born from a forensic audit of real jobs that were slow, noisy, and occasionally
+wrong.
+
+**Approvals you can actually read — and that don't stall your job**
+
+- **Approval cards now lead with the WHY.** Three levels: the agent's stated purpose, then a plain-language impact line computed by the platform from the same classifiers the security gate uses (``Runs `rm` — destructive or heavy…`` / ``Runs `curl` → `head` — no destructive pattern detected``), then the full technical detail. Identical on Telegram and the dashboard.
+- **Approving is instant now.** When you approve within ~2 minutes, the job continues **in-process** — no more full restart per approval (which cost 80-105 s each, MCP reconnections included). Approvals that take longer still suspend safely and resume as before.
+- **MCP servers connect lazily.** A job no longer spawns every attached MCP server at startup — the toolset builds from a cache and a server is only spawned the first time one of its tools is actually called.
+
+**Delegation that delivers**
+
+- **Delegated workers can deliver to you directly.** A worker generating your image now inherits the entity's Telegram delivery tools and sends it itself — and the orchestrator is told `[livraison effectuée]` so it never re-delivers or mislabels a delivered job as failed.
+- **Orchestrator discipline, built in.** Every orchestrator now carries intrinsic rules: pass parameters in the brief (don't do the worker's prep), never edit a shared template to smuggle in run parameters, never prescribe a tool the target agent doesn't have. Briefs naming an unavailable tool get an immediate warning.
+- **Shared files are protected.** Overwriting an existing file in the shared workspace now requires approval (in both gated autonomy modes) — your saved templates can't be silently corrupted anymore. Your own attached workspaces (e.g. an Obsidian vault) are never gated, and creating new files never asks.
+- **Memory that corrects itself.** Every agent must now mark a memory fact outdated the moment it proves false in practice (and save the verified correction); workers save durable discoveries before finishing; and "lessons" that micromanage other agents or ban discovery can no longer be saved.
+
+**Jobs page: conversations, not noise**
+
+- A 10-message chat with your agent is now **one expandable 💬 row** (exchanges, time range, aggregated cost) instead of ten identical job rows. Real work — tools, delegations — stays as full rows. Your existing history is regrouped automatically on upgrade.
+
+**Security hardening (full audit remediation)**
+
+- **Secrets stay secret.** MCP stdio subprocesses no longer inherit the full process environment (a third-party server could read your keys); API keys are redacted from tool-call audit logs; a CI secret-scanner blocks hardcoded credentials from ever reaching the repo again.
+- **Context windows respected per model.** The runner now knows each model's real context window (catalog, stored value, or auto-probed from LM Studio) instead of assuming 128K — small local models no longer die silently mid-conversation, and overflow fails loud instead of corrupting.
+- **Plus:** credential helpers moved out of the server-action surface, `create_mcp`/`attach_mcp` gated as code execution, SSRF guards on MCP URLs, timeouts on all Google clients, security headers, signup closed once an owner exists, bounded results across a dozen adapters, and memory injection that finally counts as usage (your useful facts stop being archived by the curator).
+
+## v0.7.2 — Platform Audit Fixes · Jul 7, 2026
+
+Twelve security and reliability fixes from an external-grade platform audit.
+
+**Highlights**
+
+- **Delegation can't run away.** Depth/fan-out caps enforced at the delegation point, cost-cap checkpoints mid-job, and cancellation is respected everywhere — a cancelled job stays cancelled.
+- **Authorization tightened.** Approval endpoints check entity ownership (no cross-tenant IDOR), bearer tokens are entity-scoped, and the code-execution master switch is owner-only on LAN installs.
+- **Runtime hygiene.** Child processes run with a scrubbed environment; per-model context limits and cost accounting checkpoints keep long jobs honest.
+
+## v0.7.0 — Scalable Memory · Jul 2, 2026
+
+Memory that stays fast and relevant as it grows.
+
+**Highlights**
+
+- **Full-text search inside agent memory.** Facts are indexed (Postgres FTS + GIN) and ranked by real relevance to the task at hand, not just recency — the agent surfaces the right fact even with hundreds stored.
+- **A memory curator.** A bounded background pass distills oversized facts, merges near-duplicates, archives what's provably unused, and re-scores importance from actual usage. On by default, per-entity switch.
+- **Pin what matters.** Star a fact in the dashboard to lock its importance — the curator can never archive or down-rank what you pinned.
+
 ## v0.6.8 — First-Run Experience · Jul 1, 2026
 
 A fresh install lands on a capable agent that can search the web and matches the
