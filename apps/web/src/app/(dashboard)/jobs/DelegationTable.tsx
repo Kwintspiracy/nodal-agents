@@ -261,8 +261,12 @@ function JobRowTr({
           )}
           <AgentAvatar name={r.agentName} imageUrl={r.agentAvatarUrl} size="md" />
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 truncate text-[13px] text-ink">
-              {r.task}
+            <div className="flex items-center gap-1.5 text-[13px] text-ink">
+              {/* Agent name ONLY — the task text lives in the row tooltip
+                  (title={r.task}), never as visible cell text: the design pass
+                  (b29bdf2) removed it because it blows the table width and
+                  pushes columns out of frame. Regression fixed 2026-07-08. */}
+              <span className="truncate">{r.agentName}</span>
               {/* Badge (migration 0059): this job belongs to a conversation but
                   wasn't collapsed into it (it did real work, not just chat) —
                   a discreet 💬 links it back visually. */}
