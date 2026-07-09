@@ -99,7 +99,7 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
             </div>
           </div>
 
-          {selectedAgent?.telegramBotToken && selectedAgent?.lastSeenChatIdTelegram && (
+          {selectedAgent?.telegramBotToken && (
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input
                 type="checkbox"
@@ -107,7 +107,7 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
                 value="true"
                 className="rounded border border-rule bg-hover accent-white"
               />
-              Send result via Telegram (chat: {selectedAgent.lastSeenChatIdTelegram})
+              Send result via Telegram
             </label>
           )}
 

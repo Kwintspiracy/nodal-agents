@@ -9,7 +9,7 @@
 // conditional UPDATE acts as the lock.
 
 import { and, eq, isNull, lte, or } from '@nodal-agents/db';
-import { agentSchedules, agentJobs, agents } from '@nodal-agents/db';
+import { agentSchedules, agentJobs, resolveOwnerChatId } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob, type ExecuteJobResult } from '../job/execute.ts';
@@ -40,13 +40,10 @@ export async function runScheduleTick(
       nextRun: agentSchedules.nextRun,
       // Per-schedule opt-in: deliver a success confirmation to the user.
       notifyOnSuccess: agentSchedules.notifyOnSuccess,
-      // The agent's last-seen Telegram chat is the delivery target for cron-fired
-      // jobs that opted into a confirmation. Populated by the inbound poller on
-      // every DM; null until the user has DM'd the bot once.
-      agentLastSeenChatIdTelegram: agents.lastSeenChatIdTelegram,
+      // Explicit delivery target (e.g. "post to #team"), null for the common case.
+      chatId: agentSchedules.chatId,
     })
     .from(agentSchedules)
-    .leftJoin(agents, eq(agents.id, agentSchedules.agentId))
     .where(
       and(
         eq(agentSchedules.active, true),
@@ -117,8 +114,12 @@ export async function runScheduleTick(
     // chat"). We set it ONLY when the schedule opted into a success confirmation
     // (notify_on_success); otherwise the cron runs silently. A non-null chat_id
     // on a cron job makes the runner force the agent to deliver before finishing
-    // (see `cronWantsConfirmation` in execute.ts).
-    const notifyChatId = sched.notifyOnSuccess ? (sched.agentLastSeenChatIdTelegram ?? null) : null;
+    // (see `cronWantsConfirmation` in execute.ts). An explicit schedule.chatId
+    // (e.g. "post to #team") wins; otherwise fall back to the bot owner's 1:1 —
+    // never the agent's last-seen chat, which a group message silently overwrites.
+    const notifyChatId = sched.notifyOnSuccess
+      ? (sched.chatId ?? (await resolveOwnerChatId(db, sched.agentId)) ?? null)
+      : null;
     const [job] = await db
       .insert(agentJobs)
       .values({

@@ -15,7 +15,7 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agentSchedules, agents } from '@nodal-agents/db';
+import { agentJobs, agentSchedules, agents, telegramAllowedChats } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -160,6 +160,7 @@ async function createSchedule(overrides: {
   nextRun?: Date | null;
   task?: string;
   notifyOnSuccess?: boolean;
+  chatId?: string | null;
 }) {
   const rows = await db
     .insert(agentSchedules)
@@ -173,6 +174,7 @@ async function createSchedule(overrides: {
       active: overrides.active ?? true,
       nextRun: overrides.nextRun === undefined ? null : overrides.nextRun,
       notifyOnSuccess: overrides.notifyOnSuccess ?? false,
+      chatId: overrides.chatId ?? null,
     })
     .returning();
   return rows[0]!;
@@ -228,14 +230,19 @@ describe('runScheduleTick', () => {
     expect(after[0]?.lastRun).toBeInstanceOf(Date);
   });
 
-  it('propagates agent.lastSeenChatIdTelegram into the cron job chat_id ONLY when notify_on_success is on', async () => {
-    // Opt-in: a schedule that asked for a success confirmation gets the agent's
-    // last-seen Telegram chat copied into the job's chat_id at INSERT time. That
+  it('propagates the bot owner chat into the cron job chat_id ONLY when notify_on_success is on', async () => {
+    // Opt-in: a schedule that asked for a success confirmation gets the bot
+    // OWNER's 1:1 chat copied into the job's chat_id at INSERT time. That
     // non-null chat_id is what makes the runner force the agent to confirm.
-    await db
-      .update(agents)
-      .set({ lastSeenChatIdTelegram: '7777' })
-      .where(eq(agents.id, seed.agentId));
+    // (The owner's chat is NEVER the agent's last-seen chat — a group message
+    // silently overwrites that — it's the dedicated telegram_allowed_chats row.)
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '7777',
+      role: 'owner',
+      status: 'active',
+    });
 
     const past = new Date(Date.now() - 60_000);
     await createSchedule({ nextRun: past, task: 'cron with confirmation', notifyOnSuccess: true });
@@ -251,19 +258,54 @@ describe('runScheduleTick', () => {
     expect(justFired.length).toBeGreaterThanOrEqual(1);
 
     // Cleanup so subsequent tests aren't affected.
-    await db
-      .update(agents)
-      .set({ lastSeenChatIdTelegram: null })
-      .where(eq(agents.id, seed.agentId));
+    await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
   });
 
-  it('leaves chat_id NULL on a cron job when notify_on_success is off, even with a known Telegram chat', async () => {
-    // Default behavior: the cron runs silently. A known Telegram chat is NOT
+  it("an explicit schedule.chat_id wins over the owner's chat", async () => {
+    // A schedule with a deliberate target (e.g. "post to #team") must never be
+    // redirected to the owner's 1:1 — the explicit target is authoritative.
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '7777',
+      role: 'owner',
+      status: 'active',
+    });
+
+    const past = new Date(Date.now() - 60_000);
+    await createSchedule({
+      nextRun: past,
+      task: 'cron with explicit target',
+      notifyOnSuccess: true,
+      chatId: '424242',
+    });
+
+    const deps = makeDeps(db, [{ text: 'cron ran' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const cronJobs = await db
+      .select({ chatId: agentJobs.chatId, channel: agentJobs.channel, task: agentJobs.task })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+    const fired = cronJobs.filter(
+      (j) => j.channel === 'cron' && j.task === 'cron with explicit target',
+    );
+    expect(fired.length).toBeGreaterThanOrEqual(1);
+    expect(fired.every((j) => j.chatId === '424242')).toBe(true);
+
+    await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+  });
+
+  it('leaves chat_id NULL on a cron job when notify_on_success is off, even with a registered owner', async () => {
+    // Default behavior: the cron runs silently. A registered owner is NOT
     // enough — the user must opt in per schedule.
-    await db
-      .update(agents)
-      .set({ lastSeenChatIdTelegram: '8888' })
-      .where(eq(agents.id, seed.agentId));
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: '8888',
+      role: 'owner',
+      status: 'active',
+    });
 
     const past = new Date(Date.now() - 60_000);
     await createSchedule({ nextRun: past, task: 'silent cron', notifyOnSuccess: false });
@@ -280,22 +322,24 @@ describe('runScheduleTick', () => {
     expect(fired.length).toBeGreaterThanOrEqual(1);
     expect(fired.every((j) => j.chatId === null)).toBe(true);
 
-    await db
-      .update(agents)
-      .set({ lastSeenChatIdTelegram: null })
-      .where(eq(agents.id, seed.agentId));
+    await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
   });
 
-  it('leaves chat_id NULL when the agent has no last-seen Telegram chat', async () => {
-    // Agent has never been DM'd → lastSeenChatIdTelegram is null → cron jobs
-    // do NOT get a chat_id (no Telegram delivery, no error).
+  it('leaves chat_id NULL when the agent has no registered owner (no leak to a stale last-seen chat)', async () => {
+    // No telegram_allowed_chats owner row → resolveOwnerChatId returns null →
+    // cron jobs do NOT get a chat_id (no Telegram delivery, no error). Also
+    // proves a polluted agents.last_seen_chat_id_telegram is never consulted.
     await db
       .update(agents)
-      .set({ lastSeenChatIdTelegram: null })
+      .set({ lastSeenChatIdTelegram: '9999' })
       .where(eq(agents.id, seed.agentId));
 
     const past = new Date(Date.now() - 60_000);
-    await createSchedule({ nextRun: past, task: 'cron without telegram default' });
+    await createSchedule({
+      nextRun: past,
+      task: 'cron without registered owner',
+      notifyOnSuccess: true,
+    });
 
     const deps = makeDeps(db, [{ text: 'cron ran' }]);
     await runScheduleTick(db as RunnerDeps['db'], deps, 5);
@@ -310,10 +354,15 @@ describe('runScheduleTick', () => {
       .from(agentJobs)
       .where(eq(agentJobs.agentId, seed.agentId));
     const justFired = cronJobs.filter(
-      (j) => j.channel === 'cron' && j.task === 'cron without telegram default',
+      (j) => j.channel === 'cron' && j.task === 'cron without registered owner',
     );
     expect(justFired.length).toBeGreaterThanOrEqual(1);
     expect(justFired[0]!.chatId).toBeNull();
+
+    await db
+      .update(agents)
+      .set({ lastSeenChatIdTelegram: null })
+      .where(eq(agents.id, seed.agentId));
   });
 
   it('skips a paused schedule even if next_run is past', async () => {

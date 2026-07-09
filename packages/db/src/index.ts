@@ -16,6 +16,7 @@ export {
 export type { DecryptedCredential, OauthPayload, Db } from './queries/credentials.ts';
 export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
+export { resolveOwnerChatId } from './queries/telegram-owner.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export { createAgentRepo, attachAgentToOrchestrator } from './repos/agents.ts';

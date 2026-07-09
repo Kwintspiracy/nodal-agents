@@ -256,6 +256,31 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
     const expectedChatId = tgAgent.lastSeenChatIdTelegram!;
     const promptText = `brique31-e2e-test-${testSlugSuffix()}`;
 
+    // Delivery now resolves the OWNER's chat (resolveOwnerChatId), never
+    // lastSeenChatIdTelegram directly — a group message can silently overwrite
+    // the latter. Seed/upsert an owner row so the resolved target matches
+    // expectedChatId, keeping this test's intent (chatId lands on the row)
+    // without depending on stack-side manual state.
+    const { telegramAllowedChats } = await import('@nodal-agents/db');
+    const { db: dbSeed, close: closeSeed } = makeDbClient();
+    try {
+      await dbSeed
+        .insert(telegramAllowedChats)
+        .values({
+          entityId: e2eEntityId,
+          agentId: tgAgent.id,
+          chatId: expectedChatId,
+          role: 'owner',
+          status: 'active',
+        })
+        .onConflictDoUpdate({
+          target: [telegramAllowedChats.agentId, telegramAllowedChats.chatId],
+          set: { role: 'owner', status: 'active' },
+        });
+    } finally {
+      await closeSeed();
+    }
+
     await page.goto('/jobs');
     await page.getByRole('button', { name: /send task/i }).click();
 
@@ -268,14 +293,11 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
     const agentSelect = page.getByLabel(/assign to/i);
     await agentSelect.selectOption(tgAgent.id);
 
-    // Wait for the Telegram checkbox to appear (rendered when agent has bot token + chatId)
+    // Wait for the Telegram checkbox to appear (rendered when the agent has a bot
+    // token; label no longer exposes the raw chat id — the real target is now
+    // resolved server-side to the owner, not shown here).
     const telegramCheckbox = page.locator('input[name="sendViaTelegram"]');
     await expect(telegramCheckbox).toBeVisible({ timeout: 5_000 });
-
-    // Assert the label contains the chat ID
-    await expect(page.locator('label').filter({ has: telegramCheckbox })).toContainText(
-      expectedChatId,
-    );
 
     // Tick the checkbox
     await telegramCheckbox.check();
@@ -312,9 +334,10 @@ test.describe('Test C — Send-task with Telegram checkbox (Brique 31 acceptance
       expect(job?.task, 'task must be pure user prompt — no suffix injection (Brique 31)').toBe(
         promptText,
       );
-      expect(job?.chatId, 'chatId must be set to the agent lastSeenChatIdTelegram').toBe(
-        expectedChatId,
-      );
+      expect(
+        job?.chatId,
+        'chatId must be set to the resolved owner chat (seeded = expectedChatId)',
+      ).toBe(expectedChatId);
       expect(job?.channel, 'channel stays api (origin = dashboard)').toBe('api');
     } finally {
       await closeCheck();

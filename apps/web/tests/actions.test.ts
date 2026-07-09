@@ -2501,7 +2501,6 @@ describe('runScheduleNowAction', () => {
           agentId: 'aaaaaaaa-0000-0000-0000-000000000201',
           task: null,
           chatId: null,
-          agentChatId: null,
         },
       ],
     }) as typeof currentDb;
@@ -2514,17 +2513,19 @@ describe('runScheduleNowAction', () => {
     expect(insertSpy).not.toHaveBeenCalled();
   });
 
-  it('inserts a cron-channel job, wakes the runner, and leaves the planning untouched (notify ON → chatId set)', async () => {
+  it('inserts a cron-channel job, wakes the runner, and leaves the planning untouched (notify ON → chatId set to owner chat)', async () => {
     const jobId = 'aaaaaaaa-0000-0000-0000-000000000210';
     currentDb = makeDbMixed({
-      select: [
-        {
-          agentId: 'aaaaaaaa-0000-0000-0000-000000000211',
-          task: 'Summarize the inbox',
-          chatId: null,
-          notifyOnSuccess: true,
-          agentChatId: '12345',
-        },
+      selectQueue: [
+        [
+          {
+            agentId: 'aaaaaaaa-0000-0000-0000-000000000211',
+            task: 'Summarize the inbox',
+            chatId: null,
+            notifyOnSuccess: true,
+          },
+        ],
+        [{ chatId: '12345' }], // resolveOwnerChatId lookup
       ],
       insert: [{ id: jobId }],
     }) as typeof currentDb;
@@ -2547,7 +2548,7 @@ describe('runScheduleNowAction', () => {
     expect(insertValues?.['status']).toBe('pending');
     expect(insertValues?.['task']).toBe('Summarize the inbox');
     expect(insertValues?.['agentId']).toBe('aaaaaaaa-0000-0000-0000-000000000211');
-    // notify_on_success is ON → chatId carries the agent's last-seen Telegram chat
+    // notify_on_success is ON → chatId carries the resolved owner chat
     // so the runner enforces a confirmation.
     expect(insertValues?.['chatId']).toBe('12345');
     expect(insertValues?.['messages']).toEqual([{ role: 'user', content: 'Summarize the inbox' }]);
@@ -2572,7 +2573,6 @@ describe('runScheduleNowAction', () => {
           task: 'Silent maintenance',
           chatId: null,
           notifyOnSuccess: false,
-          agentChatId: '12345',
         },
       ],
       insert: [{ id: jobId }],
@@ -2589,9 +2589,44 @@ describe('runScheduleNowAction', () => {
     const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
       .values;
     const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
-    // notify_on_success is OFF → no delivery target even though the agent has a
-    // known Telegram chat. The runner won't force a confirmation.
+    // notify_on_success is OFF → no delivery target, and resolveOwnerChatId is
+    // never even called (short-circuited). The runner won't force a confirmation.
     expect('chatId' in (insertValues ?? {})).toBe(false);
+    fetchSpy.mockRestore();
+  });
+
+  it('uses the schedule explicit chat_id over the owner chat when both are set', async () => {
+    const jobId = 'aaaaaaaa-0000-0000-0000-000000000230';
+    currentDb = makeDbMixed({
+      // A single select is expected — an explicit schedule.chatId short-circuits
+      // the `??` before resolveOwnerChatId's own SELECT would ever run.
+      select: [
+        {
+          agentId: 'aaaaaaaa-0000-0000-0000-000000000231',
+          task: 'Post the standup',
+          chatId: 'explicit-target-chat',
+          notifyOnSuccess: true,
+        },
+      ],
+      insert: [{ id: jobId }],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('aaaaaaaa-0000-0000-0000-000000000232');
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    // An explicit schedule target wins over the owner default.
+    expect(insertValues?.['chatId']).toBe('explicit-target-chat');
+    // Only the schedule SELECT ran — resolveOwnerChatId's SELECT was skipped.
+    const selectSpy = (currentDb as unknown as { select: ReturnType<typeof vi.fn> }).select;
+    expect(selectSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockRestore();
   });
 });
@@ -3269,11 +3304,11 @@ function makeDbSeq(selectSequence: unknown[][], insertRows: unknown[] = []) {
 const AGENT_UUID = 'aaaaaaaa-1111-1111-1111-111111111111';
 
 describe('sendTaskAction — Telegram delivery channel', () => {
-  it('returns no_telegram_recipient_known when sendViaTelegram=true and lastSeenChatIdTelegram is null', async () => {
+  it('returns no_telegram_recipient_known when sendViaTelegram=true and no owner chat is registered', async () => {
     currentDb = makeDbSeq(
       [
         [{ id: AGENT_UUID, slug: 'test-agent' }], // ownership check
-        [{ chatId: null }], // lastSeenChatIdTelegram lookup
+        [], // resolveOwnerChatId lookup — no active owner row
       ],
       [],
     ) as typeof currentDb;
@@ -3292,11 +3327,11 @@ describe('sendTaskAction — Telegram delivery channel', () => {
     expect(insertSpy).not.toHaveBeenCalled();
   });
 
-  it('sets chatId on job row when sendViaTelegram=true and lastSeenChatIdTelegram is populated (Brique 31: no suffix injection)', async () => {
+  it('sets chatId on job row to the owner chat when sendViaTelegram=true (Brique 31: no suffix injection)', async () => {
     currentDb = makeDbSeq(
       [
         [{ id: AGENT_UUID, slug: 'test-agent' }], // ownership check
-        [{ chatId: '12345' }], // lastSeenChatIdTelegram lookup
+        [{ chatId: '12345' }], // resolveOwnerChatId lookup
       ],
       [{ id: 'jobid-1111-1111-1111-111111111111' }], // insert returning
     ) as typeof currentDb;

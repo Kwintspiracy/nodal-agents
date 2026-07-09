@@ -4,7 +4,7 @@
 // the runner picks it up and runs it. riskLevel 'write'.
 
 import { z } from 'zod';
-import { eq, and, agentSchedules, agents, agentJobs } from '@nodal-agents/db';
+import { eq, and, agentSchedules, agentJobs, resolveOwnerChatId } from '@nodal-agents/db';
 import type { ToolDefinition } from '../../types';
 
 const RunScheduleInput = z.object({
@@ -28,10 +28,8 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
         task: agentSchedules.task,
         chatId: agentSchedules.chatId,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
-        agentChatId: agents.lastSeenChatIdTelegram,
       })
       .from(agentSchedules)
-      .leftJoin(agents, eq(agents.id, agentSchedules.agentId))
       .where(and(eq(agentSchedules.entityId, ctx.entityId), eq(agentSchedules.name, input.name)))
       .limit(1);
 
@@ -40,8 +38,11 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
 
     // Mirror the cron tick: carry a delivery target only if the schedule opted
     // into a success confirmation (else it runs silently, like a normal fire).
+    // An explicit schedule.chatId wins; otherwise fall back to the bot owner's
+    // 1:1 — never the agent's last-seen chat, which a group message silently
+    // overwrites (see resolveOwnerChatId).
     const resolvedChatId = sched.notifyOnSuccess
-      ? (sched.chatId ?? sched.agentChatId ?? null)
+      ? (sched.chatId ?? (await resolveOwnerChatId(ctx.db, sched.agentId)) ?? null)
       : null;
 
     const [job] = await ctx.db

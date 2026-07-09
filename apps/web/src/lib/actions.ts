@@ -63,6 +63,7 @@ import {
   setInstallNotes,
   setSkillScriptsAuthorized,
   setSkillFilesWritable,
+  resolveOwnerChatId,
 } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
@@ -1349,21 +1350,21 @@ export async function sendTaskAction(raw: unknown): Promise<ActionResult<{ jobId
     if (!agent) return fail('not_found', 'Agent not found');
 
     // Resolve chatId for Telegram delivery.
-    // When sendViaTelegram=true, the agent's lastSeenChatIdTelegram is set as
-    // chatId on the job row. The runner reads this to populate the Job context
-    // block in the system_prompt. The agent's personality decides how to use it.
-    // task field stays pristine (= exact user input, no suffix injection).
+    // A dashboard send is the OWNER acting, so it must reach the owner's 1:1 —
+    // never `agents.lastSeenChatIdTelegram`, which a group message silently
+    // overwrites (see resolveOwnerChatId). The runner reads chatId to populate
+    // the Job context block in the system_prompt; the agent's personality
+    // decides how to use it. task field stays pristine (= exact user input,
+    // no suffix injection).
     let resolvedChatId: string | null = null;
     if (parsed.data.sendViaTelegram) {
-      const [agentTg] = await db
-        .select({ chatId: agents.lastSeenChatIdTelegram })
-        .from(agents)
-        .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)))
-        .limit(1);
-      if (!agentTg?.chatId) {
-        return fail('no_telegram_recipient_known', 'DM the bot first to register a recipient.');
+      resolvedChatId = await resolveOwnerChatId(db, parsed.data.agentId);
+      if (!resolvedChatId) {
+        return fail(
+          'no_telegram_recipient_known',
+          'No owner chat registered — the owner must DM this bot first.',
+        );
       }
-      resolvedChatId = agentTg.chatId;
     }
 
     // Insert job — task is the pure user prompt (no suffix injection).
@@ -6132,10 +6133,8 @@ export async function runScheduleNowAction(
         task: agentSchedules.task,
         chatId: agentSchedules.chatId,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
-        agentChatId: agents.lastSeenChatIdTelegram,
       })
       .from(agentSchedules)
-      .leftJoin(agents, eq(agents.id, agentSchedules.agentId))
       .where(and(eq(agentSchedules.id, scheduleId), eq(agentSchedules.entityId, session.entityId)))
       .limit(1);
     if (!schedule) return fail('not_found', 'Schedule not found');
@@ -6145,9 +6144,12 @@ export async function runScheduleNowAction(
 
     // Mirror the cron tick: only carry a delivery target when the schedule opted
     // into a success confirmation, so a manual run notifies exactly like a fired
-    // one (and stays silent when the schedule is silent).
+    // one (and stays silent when the schedule is silent). An explicit schedule
+    // target wins; otherwise fall back to the bot owner's 1:1 — never the
+    // agent's lastSeenChatIdTelegram, which a group message can silently
+    // overwrite (see resolveOwnerChatId).
     const resolvedChatId = schedule.notifyOnSuccess
-      ? (schedule.chatId ?? schedule.agentChatId ?? null)
+      ? (schedule.chatId ?? (await resolveOwnerChatId(db, schedule.agentId)) ?? null)
       : null;
 
     const [job] = await db
