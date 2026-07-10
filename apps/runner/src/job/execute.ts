@@ -955,6 +955,7 @@ async function runJob(
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
     ...(cronWantsConfirmation ? { notifyOnSuccess: true } : {}),
     ...(job.parentJobId ? { isDelegated: true } : {}),
+    ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
     deployment,
   };
 

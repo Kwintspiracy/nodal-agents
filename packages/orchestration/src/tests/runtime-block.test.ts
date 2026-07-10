@@ -111,6 +111,38 @@ describe('buildRuntimeBlock', () => {
     const block = buildRuntimeBlock(d);
     expect(block).not.toContain('### Install notes');
   });
+
+  // ─── Event Triggers, Brique 1: cron trigger_context line ─────────────────────
+
+  it('renders the "Scheduled run of" line with the previous last_run when triggerContext.prevRunAt is set', () => {
+    const d: DeploymentContext = { os: 'Linux', networkMode: 'loopback', authMode: 'local-trust' };
+    const block = buildRuntimeBlock(d, {
+      type: 'cron',
+      scheduleName: 'Nightly digest',
+      prevRunAt: '2026-07-01T09:00:00.000Z',
+    });
+    expect(block).toContain(
+      '- Scheduled run of "Nightly digest". Previous run of this schedule: 2026-07-01T09:00:00.000Z.',
+    );
+  });
+
+  it('renders the FIRST-run variant when triggerContext.prevRunAt is null', () => {
+    const d: DeploymentContext = { os: 'Linux', networkMode: 'loopback', authMode: 'local-trust' };
+    const block = buildRuntimeBlock(d, {
+      type: 'cron',
+      scheduleName: 'Nightly digest',
+      prevRunAt: null,
+    });
+    expect(block).toContain(
+      '- Scheduled run of "Nightly digest". This is the FIRST run of this schedule.',
+    );
+  });
+
+  it('renders no "Scheduled run of" line when triggerContext is absent (non-cron regression)', () => {
+    const d: DeploymentContext = { os: 'Linux', networkMode: 'loopback', authMode: 'local-trust' };
+    const block = buildRuntimeBlock(d);
+    expect(block).not.toContain('Scheduled run of');
+  });
 });
 
 // ─── Regression: localhost reachability message ───────────────────────────────
@@ -252,5 +284,23 @@ describe('buildSystemPrompt — runtime block integration', () => {
     expect(builtinIdx).toBeGreaterThan(personalityIdx);
     expect(boundaryIdx).toBeGreaterThan(builtinIdx);
     expect(runtimeIdx).toBeGreaterThan(boundaryIdx);
+  });
+
+  it('surfaces jobContext.triggerContext as a "Scheduled run of" line end-to-end', async () => {
+    const { entityId } = await seedEntity(db);
+    const agent = await seedAgent(db, entityId);
+    const deployment: DeploymentContext = {
+      os: 'macOS',
+      networkMode: 'loopback',
+      authMode: 'local-trust',
+    };
+    const prompt = await buildSystemPrompt(agent, db, {
+      origin: 'cron',
+      deployment,
+      triggerContext: { type: 'cron', scheduleName: 'Nightly digest', prevRunAt: null },
+    });
+    expect(prompt).toContain(
+      '- Scheduled run of "Nightly digest". This is the FIRST run of this schedule.',
+    );
   });
 });

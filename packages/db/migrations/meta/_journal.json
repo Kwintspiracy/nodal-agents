@@ -421,6 +421,13 @@
       "when": 1784000000000,
       "tag": "0060_telegram_allowed_chats_single_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1784100000000,
+      "tag": "0061_agent_jobs_trigger_context",
+      "breakpoints": true
     }
   ]
 }

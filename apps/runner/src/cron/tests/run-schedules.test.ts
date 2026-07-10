@@ -14,7 +14,7 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq } from '@nodal-agents/db';
+import { and, eq } from '@nodal-agents/db';
 import { agentJobs, agentSchedules, agents, telegramAllowedChats } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -456,5 +456,68 @@ describe('runScheduleTick', () => {
       .where(eq(agentSchedules.id, sched.id));
 
     expect(after[0]?.lastStatus).toBe('failed');
+  });
+
+  // ─── Event Triggers, Brique 1: schedule_id + trigger_context ────────────────
+
+  it('stamps the fired job with schedule_id and trigger_context.prevRunAt = the PREVIOUS last_run', async () => {
+    const priorRun = new Date(Date.now() - 60 * 60_000); // 1h ago
+    const sched = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'watch for new rows since prevRunAt',
+    });
+    // Seed a prior last_run directly so this tick's captured "previous" value
+    // is deterministic (createSchedule leaves last_run NULL by default).
+    await db
+      .update(agentSchedules)
+      .set({ lastRun: priorRun })
+      .where(eq(agentSchedules.id, sched.id));
+
+    const deps = makeDeps(db, [{ text: 'checked since prevRunAt' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const jobs = await db
+      .select({
+        scheduleId: agentJobs.scheduleId,
+        triggerContext: agentJobs.triggerContext,
+        channel: agentJobs.channel,
+        task: agentJobs.task,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, seed.agentId));
+    const fired = jobs.filter(
+      (j) => j.channel === 'cron' && j.task === 'watch for new rows since prevRunAt',
+    );
+    expect(fired.length).toBeGreaterThanOrEqual(1);
+    const job = fired[0]!;
+    expect(job.scheduleId).toBe(sched.id);
+    expect(job.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'Test schedule',
+      prevRunAt: priorRun.toISOString(),
+    });
+  });
+
+  it("trigger_context.prevRunAt is null on a schedule's first-ever run", async () => {
+    const sched = await createSchedule({
+      nextRun: null,
+      task: 'first run ever',
+    });
+    expect(sched.lastRun).toBeNull();
+
+    const deps = makeDeps(db, [{ text: 'first fire' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const jobs = await db
+      .select({ scheduleId: agentJobs.scheduleId, triggerContext: agentJobs.triggerContext })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'first run ever')));
+    expect(jobs.length).toBeGreaterThanOrEqual(1);
+    expect(jobs[0]!.scheduleId).toBe(sched.id);
+    expect(jobs[0]!.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'Test schedule',
+      prevRunAt: null,
+    });
   });
 });

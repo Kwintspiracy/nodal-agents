@@ -2629,6 +2629,81 @@ describe('runScheduleNowAction', () => {
     expect(selectSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockRestore();
   });
+
+  // ─── Event Triggers, Brique 1: scheduleId + trigger_context ────────────────
+
+  it('stamps the job with scheduleId and trigger_context.prevRunAt = the schedule current last_run', async () => {
+    const jobId = 'aaaaaaaa-0000-0000-0000-000000000241';
+    const priorRun = new Date('2026-07-01T09:00:00.000Z');
+    currentDb = makeDbMixed({
+      select: [
+        {
+          agentId: 'aaaaaaaa-0000-0000-0000-000000000242',
+          task: 'Watch inbox since prevRunAt',
+          chatId: null,
+          notifyOnSuccess: false,
+          name: 'Inbox watcher',
+          lastRun: priorRun,
+        },
+      ],
+      insert: [{ id: jobId }],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('aaaaaaaa-0000-0000-0000-000000000243');
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(insertValues?.['scheduleId']).toBe('aaaaaaaa-0000-0000-0000-000000000243');
+    expect(insertValues?.['triggerContext']).toEqual({
+      type: 'cron',
+      scheduleName: 'Inbox watcher',
+      prevRunAt: priorRun.toISOString(),
+    });
+    fetchSpy.mockRestore();
+  });
+
+  it("trigger_context.prevRunAt is null on a schedule's first-ever manual run", async () => {
+    const jobId = 'aaaaaaaa-0000-0000-0000-000000000251';
+    currentDb = makeDbMixed({
+      select: [
+        {
+          agentId: 'aaaaaaaa-0000-0000-0000-000000000252',
+          task: 'First fire',
+          chatId: null,
+          notifyOnSuccess: false,
+          name: 'Fresh schedule',
+          lastRun: null,
+        },
+      ],
+      insert: [{ id: jobId }],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const { runScheduleNowAction } = await import('../src/lib/actions.ts');
+    const r = await runScheduleNowAction('aaaaaaaa-0000-0000-0000-000000000253');
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesFn = (insertSpy.mock.results[0]?.value as { values?: ReturnType<typeof vi.fn> })
+      .values;
+    const insertValues = valuesFn?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(insertValues?.['scheduleId']).toBe('aaaaaaaa-0000-0000-0000-000000000253');
+    expect(insertValues?.['triggerContext']).toEqual({
+      type: 'cron',
+      scheduleName: 'Fresh schedule',
+      prevRunAt: null,
+    });
+    fetchSpy.mockRestore();
+  });
 });
 
 const CHAT_CONV_ID = 'aaaaaaaa-0000-0000-0000-000000000400';

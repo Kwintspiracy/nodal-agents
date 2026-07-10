@@ -37,7 +37,12 @@ export async function runScheduleTick(
       cronExpr: agentSchedules.cronExpr,
       timezone: agentSchedules.timezone,
       task: agentSchedules.task,
+      name: agentSchedules.name,
       nextRun: agentSchedules.nextRun,
+      // Captured BEFORE the claim UPDATE below overwrites it with `now` — this
+      // is the schedule's PREVIOUS fire time, the deterministic cursor a
+      // polling-watcher agent needs ("since when"). See trigger_context below.
+      lastRun: agentSchedules.lastRun,
       // Per-schedule opt-in: deliver a success confirmation to the user.
       notifyOnSuccess: agentSchedules.notifyOnSuccess,
       // Explicit delivery target (e.g. "post to #team"), null for the common case.
@@ -130,6 +135,12 @@ export async function runScheduleTick(
         task: sched.task,
         status: 'pending',
         messages: [{ role: 'user', content: sched.task }],
+        scheduleId: sched.id,
+        triggerContext: {
+          type: 'cron',
+          scheduleName: sched.name,
+          prevRunAt: sched.lastRun ? sched.lastRun.toISOString() : null,
+        },
       })
       .returning({ id: agentJobs.id });
 

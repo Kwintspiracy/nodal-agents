@@ -173,4 +173,58 @@ describe('run_schedule', () => {
     if (result.ok) throw new Error('expected ok:false');
     expect(result.error).toContain('run-sched-no-task');
   });
+
+  // ─── Event Triggers, Brique 1: schedule_id + trigger_context ────────────────
+
+  it('stamps a manually-fired job with schedule_id and trigger_context carrying the CURRENT last_run', async () => {
+    const priorRun = new Date(Date.now() - 30 * 60_000); // 30min ago
+    const sched = await createSchedule({ name: 'run-sched-trigger-ctx' });
+    await db
+      .update(agentSchedules)
+      .set({ lastRun: priorRun })
+      .where(eq(agentSchedules.id, sched.id));
+
+    const result = await runScheduleTool.execute({ name: 'run-sched-trigger-ctx' }, makeCtx());
+    expect(result.ok).toBe(true);
+
+    const jobs = await db
+      .select({
+        scheduleId: agentJobs.scheduleId,
+        triggerContext: agentJobs.triggerContext,
+        channel: agentJobs.channel,
+      })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'Do the thing')));
+    const job = jobs[jobs.length - 1]!;
+    expect(job.channel).toBe('cron');
+    expect(job.scheduleId).toBe(sched.id);
+    expect(job.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'run-sched-trigger-ctx',
+      prevRunAt: priorRun.toISOString(),
+    });
+  });
+
+  it('trigger_context.prevRunAt is null when the schedule has never run', async () => {
+    const sched = await createSchedule({ name: 'run-sched-trigger-ctx-first' });
+    expect(sched.lastRun).toBeNull();
+
+    const result = await runScheduleTool.execute(
+      { name: 'run-sched-trigger-ctx-first' },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+
+    const jobs = await db
+      .select({ scheduleId: agentJobs.scheduleId, triggerContext: agentJobs.triggerContext })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'Do the thing')));
+    const job = jobs[jobs.length - 1]!;
+    expect(job.scheduleId).toBe(sched.id);
+    expect(job.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'run-sched-trigger-ctx-first',
+      prevRunAt: null,
+    });
+  });
 });

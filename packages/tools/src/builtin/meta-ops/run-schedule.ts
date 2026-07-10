@@ -24,10 +24,14 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
   execute: async (input, ctx) => {
     const [sched] = await ctx.db
       .select({
+        id: agentSchedules.id,
         agentId: agentSchedules.agentId,
         task: agentSchedules.task,
         chatId: agentSchedules.chatId,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        // Manual "run now": prevRunAt is still "when did this schedule last
+        // actually run" — this fire doesn't change that semantic.
+        lastRun: agentSchedules.lastRun,
       })
       .from(agentSchedules)
       .where(and(eq(agentSchedules.entityId, ctx.entityId), eq(agentSchedules.name, input.name)))
@@ -55,6 +59,12 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
         task: sched.task,
         messages: [{ role: 'user', content: sched.task }],
         ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        scheduleId: sched.id,
+        triggerContext: {
+          type: 'cron',
+          scheduleName: input.name,
+          prevRunAt: sched.lastRun ? sched.lastRun.toISOString() : null,
+        },
       })
       .returning({ id: agentJobs.id });
 

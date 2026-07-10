@@ -20,6 +20,7 @@ import {
   agentWorkspaces,
   touchSkillsLastUsed,
 } from '@nodal-agents/db';
+import type { JobTriggerContext } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
@@ -75,6 +76,14 @@ export interface JobContext {
    * deliver to the end user itself — the ROOT owns the single channel reply.
    */
   isDelegated?: boolean;
+  /**
+   * Provenance when this job was fired by an automated trigger (currently only
+   * cron schedules). Rendered into the `## Runtime` block (buildRuntimeBlock)
+   * as a "Scheduled run of ..." line carrying the schedule's PREVIOUS last_run
+   * — the deterministic "since when" cursor a polling-watcher agent needs
+   * instead of relying on its own memory. Undefined for non-triggered jobs.
+   */
+  triggerContext?: JobTriggerContext;
 }
 
 // ─── DeploymentContext ────────────────────────────────────────────────────────
@@ -112,8 +121,15 @@ export interface DeploymentContext {
  * The block is computed live per job so it always matches the actual running
  * config. Gated on jobContext.deployment — absent deployment means unknown
  * context (e.g. system or test jobs), so the block is omitted.
+ *
+ * @param triggerContext  When the job was fired by an automated trigger (Event
+ *   Triggers, Brique 1), renders a "Scheduled run of ..." line carrying the
+ *   deterministic "since when" cursor (the schedule's previous last_run).
  */
-export function buildRuntimeBlock(d: DeploymentContext): string {
+export function buildRuntimeBlock(
+  d: DeploymentContext,
+  triggerContext?: JobTriggerContext,
+): string {
   const networkLine =
     d.networkMode === 'lan'
       ? `LAN — the dashboard is reachable by other devices on the local network${d.lanAddresses && d.lanAddresses.length > 0 ? ` at ${d.lanAddresses.join(', ')}` : ''}; multiple users may share this instance.`
@@ -127,6 +143,14 @@ export function buildRuntimeBlock(d: DeploymentContext): string {
     `- Local services on this machine are reachable directly at \`127.0.0.1\` / \`localhost\` (a local API, a database, or an app such as ComfyUI on \`:8188\`). Call them directly. NEVER ask the user to expose a local service through a public tunnel (ngrok, cloudflared) — it is unnecessary here and a needless security risk.`,
     `- Network: ${networkLine}`,
   ];
+
+  if (triggerContext?.type === 'cron') {
+    lines.push(
+      triggerContext.prevRunAt
+        ? `- Scheduled run of "${triggerContext.scheduleName}". Previous run of this schedule: ${triggerContext.prevRunAt}.`
+        : `- Scheduled run of "${triggerContext.scheduleName}". This is the FIRST run of this schedule.`,
+    );
+  }
 
   if (d.timezone) {
     lines.push(
@@ -415,7 +439,7 @@ export async function buildSystemPrompt(
   // to set up tunnels for local services. Omitted when no deployment
   // context is provided (system jobs, tests).
   const runtimeBlock = jobContext?.deployment
-    ? '\n\n' + buildRuntimeBlock(jobContext.deployment)
+    ? '\n\n' + buildRuntimeBlock(jobContext.deployment, jobContext.triggerContext)
     : '';
 
   // 5. Built-in capabilities block — injected for every agent so the LLM sees

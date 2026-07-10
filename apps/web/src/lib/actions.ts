@@ -6133,6 +6133,11 @@ export async function runScheduleNowAction(
         task: agentSchedules.task,
         chatId: agentSchedules.chatId,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        name: agentSchedules.name,
+        // Manual "run now": prevRunAt is still "when did this schedule last
+        // actually run" — this fire deliberately doesn't touch last_run itself
+        // (see the NOTE below), so the CURRENT value is the right cursor.
+        lastRun: agentSchedules.lastRun,
       })
       .from(agentSchedules)
       .where(and(eq(agentSchedules.id, scheduleId), eq(agentSchedules.entityId, session.entityId)))
@@ -6162,6 +6167,12 @@ export async function runScheduleNowAction(
         task: schedule.task,
         messages: [{ role: 'user', content: schedule.task }],
         ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+        scheduleId,
+        triggerContext: {
+          type: 'cron',
+          scheduleName: schedule.name,
+          prevRunAt: schedule.lastRun ? schedule.lastRun.toISOString() : null,
+        },
       })
       .returning({ id: agentJobs.id });
     if (!job) return fail('db_error', 'Failed to create job');

@@ -150,6 +150,11 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       original_task text,
       chat_id text,
       conversation_id uuid,
+      -- schedule_id references agent_schedules, created further below — the FK
+      -- is added via ALTER TABLE right after that table exists (mirrors the
+      -- entities/agents forward-reference pattern above).
+      schedule_id uuid,
+      trigger_context jsonb,
       system_prompt text,
       messages jsonb DEFAULT '[]',
       search_text text,
@@ -398,6 +403,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );
+
+    ALTER TABLE agent_jobs
+      ADD CONSTRAINT agent_jobs_schedule_id_fkey
+      FOREIGN KEY (schedule_id) REFERENCES agent_schedules(id) ON DELETE SET NULL;
 
     CREATE TABLE IF NOT EXISTS mcp_servers (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

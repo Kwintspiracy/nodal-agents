@@ -326,6 +326,57 @@ describe('FK cascades', () => {
     expect(gone.length).toBe(0);
   });
 
+  it('deleting a schedule sets agent_jobs.schedule_id to NULL and the job survives (Event Triggers, Brique 1)', async () => {
+    const [s] = await db
+      .insert(schema.agentSchedules)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        type: 'cron',
+        name: 'trigger-context sched',
+        cronExpr: '0 * * * *',
+      })
+      .returning();
+    const [j] = await db
+      .insert(schema.agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        task: 'watch for changes',
+        scheduleId: s!.id,
+        triggerContext: {
+          type: 'cron',
+          scheduleName: 'trigger-context sched',
+          prevRunAt: null,
+        },
+      })
+      .returning();
+
+    // Round-trip: scheduleId + the trigger_context jsonb come back exactly as
+    // written (not just "truthy" — the actual jsonb content matters here since
+    // the runner reads prevRunAt out of it to build the system prompt).
+    const [before] = await db.select().from(schema.agentJobs).where(eq(schema.agentJobs.id, j!.id));
+    expect(before!.scheduleId).toBe(s!.id);
+    expect(before!.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'trigger-context sched',
+      prevRunAt: null,
+    });
+
+    await db.delete(schema.agentSchedules).where(eq(schema.agentSchedules.id, s!.id));
+
+    const [after] = await db.select().from(schema.agentJobs).where(eq(schema.agentJobs.id, j!.id));
+    expect(after).toBeDefined(); // the job survives — ON DELETE SET NULL, not CASCADE
+    expect(after!.scheduleId).toBeNull();
+    // trigger_context is untouched — it's a point-in-time snapshot, not a live FK.
+    expect(after!.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'trigger-context sched',
+      prevRunAt: null,
+    });
+  });
+
   it('deleting agent cascades through jobs, memory, tasks (both FKs), approval_requests', async () => {
     // Live bug 2026-05-20 — clicking Delete on an agent surfaced a FK violation
     // toast. Five FK refs to agents.id were ON DELETE NO ACTION; migration 0013

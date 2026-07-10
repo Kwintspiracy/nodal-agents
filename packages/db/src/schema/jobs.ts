@@ -14,6 +14,22 @@ import {
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
+import { agentSchedules } from './schedules.ts';
+
+/**
+ * Structured provenance for a job fired by an automated trigger, injected into
+ * the system prompt's `## Runtime` block (buildRuntimeBlock in
+ * packages/orchestration/src/system-prompt.ts) so the agent has a deterministic
+ * cursor ("since when") instead of relying on its own memory. `prevRunAt` is the
+ * schedule's `last_run` value AS IT WAS before this fire claimed it — null on a
+ * schedule's first-ever run. Extensible: a future webhook trigger adds its own
+ * `type: 'webhook'` variant; not built yet.
+ */
+export type JobTriggerContext = {
+  type: 'cron';
+  scheduleName: string;
+  prevRunAt: string | null;
+};
 
 export const agentJobs = pgTable(
   'agent_jobs',
@@ -38,6 +54,19 @@ export const agentJobs = pgTable(
      * mutates it after insert.
      */
     conversationId: uuid('conversation_id'),
+    /**
+     * The schedule that fired this job (Event Triggers, Brique 1). NULL for
+     * jobs that didn't come from a schedule. ON DELETE SET NULL — deleting a
+     * schedule must not orphan its job history, just sever the link.
+     */
+    scheduleId: uuid('schedule_id').references(() => agentSchedules.id, { onDelete: 'set null' }),
+    /**
+     * Structured trigger provenance (see JobTriggerContext above), injected
+     * into the system prompt by the runner so the agent knows "since when" —
+     * the deterministic cursor for polling-watcher flows. NULL for jobs not
+     * fired by an automated trigger (chat, dashboard, delegated children, ...).
+     */
+    triggerContext: jsonb('trigger_context').$type<JobTriggerContext>(),
     systemPrompt: text('system_prompt'),
     messages: jsonb('messages').default(sql`'[]'::jsonb`),
     /**
