@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { eq } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import { handleTelegramUpdate, pruneTelegramWorkspace } from '../../telegram/handler.ts';
@@ -72,7 +72,10 @@ function privateMessage(text: string, chatId = 555): TelegramUpdate {
   };
 }
 
-function groupMessage(text: string, opts: { replyToBot?: boolean } = {}): TelegramUpdate {
+function groupMessage(
+  text: string,
+  opts: { replyToBot?: boolean; replyToBotUsername?: string } = {},
+): TelegramUpdate {
   return {
     update_id: 1,
     message: {
@@ -80,10 +83,57 @@ function groupMessage(text: string, opts: { replyToBot?: boolean } = {}): Telegr
       chat: { id: -100123, type: 'group' },
       from: { id: 7, first_name: 'Alice', is_bot: false },
       text,
-      ...(opts.replyToBot ? { reply_to_message: { from: { is_bot: true } } } : {}),
+      // A real bot's `from` always carries a username — default to 'test_bot'
+      // (the bot username most group-chat tests configure as the receiver)
+      // so existing "reply to the bot" tests keep matching by default; F-2
+      // tests override it to simulate a reply to a DIFFERENT bot.
+      ...(opts.replyToBot
+        ? {
+            reply_to_message: {
+              from: { is_bot: true, username: opts.replyToBotUsername ?? 'test_bot' },
+            },
+          }
+        : {}),
     },
   };
 }
+
+/** A fresh agent with an empty telegram_allowed_chats slate, for H-1/F-1/F-4 tests. */
+async function freshBot(): Promise<string> {
+  const [row] = await db
+    .insert(agents)
+    .values({
+      entityId: seed.entityId,
+      name: 'Auth Bot',
+      slug: `auth-bot-${Date.now()}-${Math.floor(performance.now())}`,
+      personality: 'p',
+      role: 'agent',
+      active: true,
+    })
+    .returning({ id: agents.id });
+  return row!.id;
+}
+
+function dm(text: string, chatId: number): TelegramUpdate {
+  return {
+    update_id: 1,
+    message: {
+      message_id: 1,
+      chat: { id: chatId, type: 'private' },
+      from: { id: 7, first_name: 'Bob', username: 'bob', is_bot: false },
+      text,
+    },
+  };
+}
+
+const call = (agentId: string, update: TelegramUpdate) =>
+  handleTelegramUpdate({
+    update,
+    receivingAgentId: agentId,
+    receivingAgentEntityId: seed.entityId,
+    receivingAgentBotUsername: 'auth_bot',
+    tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+  });
 
 describe('handleTelegramUpdate — private chats', () => {
   it('creates a telegram-channel job for the receiving agent', async () => {
@@ -262,6 +312,86 @@ describe('handleTelegramUpdate — group chats', () => {
     });
     expect(result).toEqual({ skipped: 'group_filter' });
   });
+
+  // F-2: a plain substring match would let bot `@news` fire on `@newsroom`.
+  it('does NOT trigger on a longer handle that merely starts with the bot name', async () => {
+    const result = await handleTelegramUpdate({
+      update: groupMessage('@newsroom hello'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'news',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result).toEqual({ skipped: 'group_filter' });
+  });
+
+  it('DOES trigger on the exact handle, even when a longer one shares the same prefix', async () => {
+    const result = await handleTelegramUpdate({
+      update: groupMessage('@news hello'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'news',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result.jobId).toBeDefined();
+
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
+    expect(job?.task).toContain('hello');
+    expect(job?.task).not.toContain('@news');
+  });
+
+  // F-2: `reply_to_message.from.is_bot` alone can't distinguish which bot —
+  // a reply to a DIFFERENT bot's message in the same group must not wake
+  // THIS one up.
+  it("ignores a reply to a DIFFERENT bot's message in the group", async () => {
+    const result = await handleTelegramUpdate({
+      update: groupMessage('thanks for that', {
+        replyToBot: true,
+        replyToBotUsername: 'some_other_bot',
+      }),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result).toEqual({ skipped: 'group_filter' });
+  });
+});
+
+describe('handleTelegramUpdate — F-3 lastSeenChatIdTelegram (private only)', () => {
+  it('updates lastSeenChatIdTelegram for a private message but not for a group message', async () => {
+    const agentId = await freshBot();
+    await db.insert(telegramAllowedChats).values([
+      { entityId: seed.entityId, agentId, chatId: '7001', role: 'owner', status: 'active' },
+      { entityId: seed.entityId, agentId, chatId: '-7002', role: 'member', status: 'active' },
+    ]);
+
+    // Group message first — must NOT touch lastSeenChatIdTelegram.
+    const groupResult = await handleTelegramUpdate({
+      update: {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          chat: { id: -7002, type: 'group' },
+          from: { id: 7, first_name: 'Bob', is_bot: false },
+          text: '/agents',
+        },
+      },
+      receivingAgentId: agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'auth_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(groupResult.jobId).toBeDefined();
+    const [afterGroup] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(afterGroup?.lastSeenChatIdTelegram).toBeNull();
+
+    // Private message — MUST update it.
+    const privateResult = await call(agentId, dm('hello', 7001));
+    expect(privateResult.jobId).toBeDefined();
+    const [afterPrivate] = await db.select().from(agents).where(eq(agents.id, agentId));
+    expect(afterPrivate?.lastSeenChatIdTelegram).toBe('7001');
+  });
 });
 
 describe('handleTelegramUpdate — /ask command', () => {
@@ -277,6 +407,16 @@ describe('handleTelegramUpdate — /ask command', () => {
       })
       .returning();
     expect(otherAgent).toBeDefined();
+    // F-1: /ask is now gated by the TARGET agent's own allowlist too — this
+    // chat (555, the default privateMessage() chat) must be active for the
+    // target, not just for the receiver, for the relay to proceed.
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: otherAgent!.id,
+      chatId: '555',
+      role: 'member',
+      status: 'active',
+    });
 
     const result = await handleTelegramUpdate({
       update: privateMessage(`/ask ${otherAgent!.slug} what is the time`),
@@ -290,6 +430,124 @@ describe('handleTelegramUpdate — /ask command', () => {
     const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
     expect(job?.agentId).toBe(otherAgent!.id);
     expect(job?.task).toBe('what is the time');
+  });
+
+  // F-1: a chat authorized to talk to the RECEIVING agent must not reach a
+  // SIBLING agent just by asking the receiver to relay — the sibling's own
+  // allowlist gates it independently.
+  it('/ask to a sibling the chat has never talked to: NO job, pending member created, owner notified', async () => {
+    const targetAgentId = await freshBot();
+    // Target already has its own owner, on a DIFFERENT chat than the one asking.
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: targetAgentId,
+      chatId: '8001',
+      role: 'owner',
+      status: 'active',
+    });
+    const [targetRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, targetAgentId));
+
+    // Chat 555 is active for the RECEIVER (seeded in the top-level beforeEach)
+    // but has never talked to the target agent at all.
+    const result = await handleTelegramUpdate({
+      update: privateMessage(`/ask ${targetRow!.slug} please help`, 555),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('awaiting_authorization');
+    expect(result.pendingAuth).toMatchObject({
+      ownerChatId: '8001',
+      requesterChatId: '555',
+      targetAgentName: 'Auth Bot',
+    });
+
+    const [pendingRow] = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(
+        and(
+          eq(telegramAllowedChats.agentId, targetAgentId),
+          eq(telegramAllowedChats.chatId, '555'),
+        ),
+      );
+    expect(pendingRow?.role).toBe('member');
+    expect(pendingRow?.status).toBe('pending');
+
+    const jobs = await db.select().from(agentJobs).where(eq(agentJobs.agentId, targetAgentId));
+    expect(jobs).toHaveLength(0);
+  });
+
+  it('/ask to a sibling where this chat is already pending on the target: NO job, no re-ask', async () => {
+    const targetAgentId = await freshBot();
+    await db.insert(telegramAllowedChats).values([
+      {
+        entityId: seed.entityId,
+        agentId: targetAgentId,
+        chatId: '8002',
+        role: 'owner',
+        status: 'active',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: targetAgentId,
+        chatId: '555',
+        role: 'member',
+        status: 'pending',
+      },
+    ]);
+    const [targetRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, targetAgentId));
+
+    const result = await handleTelegramUpdate({
+      update: privateMessage(`/ask ${targetRow!.slug} please help`, 555),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('awaiting_authorization');
+    expect(result.pendingAuth).toBeUndefined(); // no re-spam
+  });
+
+  it('/ask to a sibling with NO owner at all: the chat becomes a pending MEMBER, never owner', async () => {
+    const targetAgentId = await freshBot(); // zero allowlist rows
+    const [targetRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, targetAgentId));
+
+    const result = await handleTelegramUpdate({
+      update: privateMessage(`/ask ${targetRow!.slug} please help`, 555),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+
+    expect(result.jobId).toBeUndefined();
+    expect(result.skipped).toBe('awaiting_authorization');
+    // No owner exists to notify — the request still lands pending, silently.
+    expect(result.pendingAuth).toBeUndefined();
+
+    const rows = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.agentId, targetAgentId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.role).toBe('member');
+    expect(rows[0]?.status).toBe('pending');
+    expect(rows[0]?.chatId).toBe('555');
   });
 
   it('skips /ask with no text payload', async () => {
@@ -462,41 +720,8 @@ describe('pruneTelegramWorkspace — F-13 bounded cleanup', () => {
 describe('handleTelegramUpdate — H-1 inbound authorization', () => {
   // A fresh agent per test so the top-level beforeEach (which seeds seed.agentId's
   // allowlist) never interferes: these tests own their bot's allowlist entirely.
-  async function freshBot(): Promise<string> {
-    const [row] = await db
-      .insert(agents)
-      .values({
-        entityId: seed.entityId,
-        name: 'Auth Bot',
-        slug: `auth-bot-${Date.now()}-${Math.floor(performance.now())}`,
-        personality: 'p',
-        role: 'agent',
-        active: true,
-      })
-      .returning({ id: agents.id });
-    return row!.id;
-  }
-
-  function dm(text: string, chatId: number): TelegramUpdate {
-    return {
-      update_id: 1,
-      message: {
-        message_id: 1,
-        chat: { id: chatId, type: 'private' },
-        from: { id: 7, first_name: 'Bob', username: 'bob', is_bot: false },
-        text,
-      },
-    };
-  }
-
-  const call = (agentId: string, update: TelegramUpdate) =>
-    handleTelegramUpdate({
-      update,
-      receivingAgentId: agentId,
-      receivingAgentEntityId: seed.entityId,
-      receivingAgentBotUsername: 'auth_bot',
-      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
-    });
+  // freshBot/dm/call are shared module-level helpers (also used by the F-1/F-4
+  // describe blocks below).
 
   it('first private DM with no owner claims ownership AND creates a job', async () => {
     const agentId = await freshBot();
@@ -581,5 +806,60 @@ describe('handleTelegramUpdate — H-1 inbound authorization', () => {
     });
     expect(result.jobId).toBeUndefined();
     expect(result.skipped).toBe('no_owner_group');
+  });
+});
+
+describe('handleTelegramUpdate — F-4 owner-claim race safety', () => {
+  it('two chats racing to claim ownership resolve to exactly one owner; the loser lands as a pending member', async () => {
+    // The partial unique index `telegram_allowed_chats_single_owner` (`ON
+    // telegram_allowed_chats(agent_id) WHERE role='owner'`, migration 0060,
+    // baked into spinUpTestDb's schema) is what makes a genuine concurrent
+    // race fail at the DB level instead of silently letting two different
+    // chats both become owner — see checkChatAuthorization's F-4 comment in
+    // handler.ts for the writer-side half of this fix.
+    const agentId = await freshBot();
+
+    // Two different chats DM the same fresh bot "at once" — neither has ever
+    // talked to it before, so both race to claim ownership.
+    const [resultA, resultB] = await Promise.all([
+      call(agentId, dm('a first', 9001)),
+      call(agentId, dm('b first', 9002)),
+    ]);
+
+    const rows = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.agentId, agentId));
+
+    const owners = rows.filter((r) => r.role === 'owner' && r.status === 'active');
+    const pendingMembers = rows.filter((r) => r.role === 'member' && r.status === 'pending');
+
+    // Never two owners — that's the invariant F-4 protects.
+    expect(owners).toHaveLength(1);
+    expect(pendingMembers).toHaveLength(1);
+
+    const winnerResult = owners[0]?.chatId === '9001' ? resultA : resultB;
+    const loserResult = owners[0]?.chatId === '9001' ? resultB : resultA;
+    expect(winnerResult.jobId).toBeDefined();
+    expect(loserResult.jobId).toBeUndefined();
+    expect(loserResult.skipped).toBe('awaiting_authorization');
+  });
+
+  it('a chat that loses the owner race still gets its message through once the owner approves it (unaffected by the race path)', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('owner claims first', 9101));
+    const loser = await call(agentId, dm('me too', 9102));
+    expect(loser.jobId).toBeUndefined();
+
+    // Owner approves the loser exactly like any other pending member.
+    await db
+      .update(telegramAllowedChats)
+      .set({ status: 'active' })
+      .where(
+        and(eq(telegramAllowedChats.agentId, agentId), eq(telegramAllowedChats.chatId, '9102')),
+      );
+
+    const approved = await call(agentId, dm('hi again', 9102));
+    expect(approved.jobId).toBeDefined();
   });
 });

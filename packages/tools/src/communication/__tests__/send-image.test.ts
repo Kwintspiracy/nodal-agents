@@ -6,8 +6,12 @@
 //   (d) throws no_bot_token when agent has no token in DB
 //   (e) throws image_too_large when bytes exceed 10 MB
 //   (f) fetch_failed on non-2xx URL response
+//   (g) F1 — explicit chatId authorization (not allowed / allowed / no lookup when === jobChatId)
+//   (h) F2 — local source path confinement
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createSendImageTool } from '../send-image';
 import type { ToolContext } from '../../types';
 
@@ -27,16 +31,26 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
 });
 
 // ─── Mock node:fs/promises ────────────────────────────────────────────────────
+// realpath is mocked as an identity pass-through — the confinement check
+// (delivery-guard's assertLocalSourceAllowed) then runs for real against the
+// OS temp dir / ctx.workspaces / ctx.skillStoreDir, which is why every
+// fixture `source` path below lives under `tmpdir()`.
 
-const { readFileMock } = vi.hoisted(() => ({
+const { readFileMock, realpathMock } = vi.hoisted(() => ({
   readFileMock: vi.fn(),
+  realpathMock: vi.fn((p: string) => Promise.resolve(p)),
 }));
 
 vi.mock('node:fs/promises', () => ({
   readFile: readFileMock,
+  realpath: realpathMock,
 }));
 
 // ─── Mock @nodal-agents/db ────────────────────────────────────────────────────
+
+const { isChatAllowedMock } = vi.hoisted(() => ({
+  isChatAllowedMock: vi.fn(),
+}));
 
 function makeDb(telegramBotToken: string | null | undefined) {
   return {
@@ -54,23 +68,38 @@ function makeDb(telegramBotToken: string | null | undefined) {
 vi.mock('@nodal-agents/db', () => {
   const agents = { telegramBotToken: 'telegram_bot_token', id: 'id' };
   const eq = (col: unknown, val: unknown) => ({ col, val });
-  return { agents, eq };
+  return { agents, eq, isChatAllowed: isChatAllowedMock };
 });
 
 // ─── Context factory ──────────────────────────────────────────────────────────
 
-function makeCtx(overrides: { jobChatId?: string | null; db?: unknown } = {}): ToolContext {
+function makeCtx(
+  overrides: {
+    jobChatId?: string | null;
+    db?: unknown;
+    resolvedTelegramBotToken?: string;
+    workspaces?: ToolContext['workspaces'];
+  } = {},
+): ToolContext {
   return {
     jobId: 'job-123',
     agentId: 'agent-abc',
     entityId: 'entity-xyz',
     jobChatId: overrides.jobChatId ?? null,
     db: (overrides.db ?? makeDb('bot:TEST_TOKEN')) as unknown as ToolContext['db'],
+    resolvedTelegramBotToken: overrides.resolvedTelegramBotToken,
+    workspaces: overrides.workspaces,
   };
 }
 
 // A tiny 4-byte fake PNG (enough for size checks)
 const TINY_PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+// Fixture source paths under the OS temp dir — the unconditionally allowed
+// root for local sources (F2).
+const SRC_OUTPUT = path.join(tmpdir(), 'output.png');
+const SRC_HUGE = path.join(tmpdir(), 'huge.png');
+const SRC_OUT = path.join(tmpdir(), 'out.png');
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -80,13 +109,15 @@ describe('createSendImageTool', () => {
     sendTelegramPhotoMock.mockResolvedValue({ messageId: 55 });
     // Default: readFile returns our tiny PNG buffer
     readFileMock.mockResolvedValue(TINY_PNG);
+    realpathMock.mockImplementation((p: string) => Promise.resolve(p));
+    isChatAllowedMock.mockResolvedValue(true);
   });
 
   it('(a) resolves chatId from ctx.jobChatId when no chatId arg provided', async () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({ jobChatId: '99887766' });
 
-    const result = await tool.execute({ source: '/tmp/output.png' }, ctx);
+    const result = await tool.execute({ source: SRC_OUTPUT }, ctx);
 
     expect(sendTelegramPhotoMock).toHaveBeenCalledOnce();
     expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
@@ -99,7 +130,7 @@ describe('createSendImageTool', () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({ jobChatId: '12345' });
 
-    const result = await tool.execute({ source: '/tmp/output.png' }, ctx);
+    const result = await tool.execute({ source: SRC_OUTPUT }, ctx);
 
     // Result must only have ok and bytes — no photo data
     expect(Object.keys(result)).toEqual(['ok', 'bytes']);
@@ -114,7 +145,7 @@ describe('createSendImageTool', () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({ jobChatId: null });
 
-    await expect(tool.execute({ source: '/tmp/output.png' }, ctx)).rejects.toMatchObject({
+    await expect(tool.execute({ source: SRC_OUTPUT }, ctx)).rejects.toMatchObject({
       name: 'no_recipient',
     });
 
@@ -125,7 +156,7 @@ describe('createSendImageTool', () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({ jobChatId: '12345', db: makeDb(null) });
 
-    await expect(tool.execute({ source: '/tmp/output.png' }, ctx)).rejects.toMatchObject({
+    await expect(tool.execute({ source: SRC_OUTPUT }, ctx)).rejects.toMatchObject({
       name: 'no_bot_token',
     });
 
@@ -140,7 +171,7 @@ describe('createSendImageTool', () => {
     const bigBuf = Buffer.alloc(10 * 1024 * 1024 + 1, 0x00);
     readFileMock.mockResolvedValueOnce(bigBuf);
 
-    await expect(tool.execute({ source: '/tmp/huge.png' }, ctx)).rejects.toMatchObject({
+    await expect(tool.execute({ source: SRC_HUGE }, ctx)).rejects.toMatchObject({
       name: 'image_too_large',
     });
 
@@ -162,22 +193,87 @@ describe('createSendImageTool', () => {
     vi.restoreAllMocks();
   });
 
-  it('explicit chatId arg overrides ctx.jobChatId', async () => {
+  it('explicit chatId arg overrides ctx.jobChatId (allowed)', async () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({ jobChatId: '99887766' });
 
-    await tool.execute({ source: '/tmp/out.png', chatId: '11223344' }, ctx);
+    await tool.execute({ source: SRC_OUT, chatId: '11223344' }, ctx);
 
     expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: '11223344' }),
     );
+    expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
+      entityId: 'entity-xyz',
+      agentId: 'agent-abc',
+      chatId: '11223344',
+    });
+  });
+
+  it('(g) throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
+    isChatAllowedMock.mockResolvedValueOnce(false);
+    const tool = createSendImageTool();
+    const ctx = makeCtx({ jobChatId: '99887766' });
+
+    await expect(tool.execute({ source: SRC_OUT, chatId: '00000000' }, ctx)).rejects.toMatchObject({
+      name: 'telegram_chat_not_allowed',
+    });
+
+    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+  });
+
+  it('(g) skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
+    const tool = createSendImageTool();
+    const ctx = makeCtx({ jobChatId: '99887766' });
+
+    await tool.execute({ source: SRC_OUT, chatId: '99887766' }, ctx);
+
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+    expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: '99887766' }),
+    );
+  });
+
+  it('(g) delegated worker: resolvedTelegramBotToken + an entity-approved chatId still sends', async () => {
+    const tool = createSendImageTool();
+    const ctx = makeCtx({ jobChatId: null, resolvedTelegramBotToken: 'root-token' });
+
+    await tool.execute({ source: SRC_OUT, chatId: '55555555' }, ctx);
+
+    expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: '55555555', botToken: 'root-token' }),
+    );
+  });
+
+  it('(h) throws source_path_not_allowed for a local path outside workspaces/skill store/temp dir', async () => {
+    const tool = createSendImageTool();
+    const ctx = makeCtx({ jobChatId: '12345' });
+
+    await expect(
+      tool.execute({ source: path.join(process.cwd(), '..', 'outside.png') }, ctx),
+    ).rejects.toMatchObject({ name: 'source_path_not_allowed' });
+
+    expect(readFileMock).not.toHaveBeenCalled();
+    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+  });
+
+  it('(h) allows a local path inside a configured workspace root', async () => {
+    const wsRoot = path.join(process.cwd(), 'fake-workspace');
+    const tool = createSendImageTool();
+    const ctx = makeCtx({
+      jobChatId: '12345',
+      workspaces: [{ label: 'ws', path: wsRoot }],
+    });
+
+    await tool.execute({ source: path.join(wsRoot, 'render.png') }, ctx);
+
+    expect(sendTelegramPhotoMock).toHaveBeenCalledOnce();
   });
 
   it('passes caption to sendTelegramPhoto when provided', async () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({ jobChatId: '12345' });
 
-    await tool.execute({ source: '/tmp/out.png', caption: 'My image' }, ctx);
+    await tool.execute({ source: SRC_OUT, caption: 'My image' }, ctx);
 
     expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
       expect.objectContaining({ caption: 'My image' }),

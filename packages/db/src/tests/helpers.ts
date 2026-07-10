@@ -568,6 +568,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       CONSTRAINT telegram_allowed_chats_status_check CHECK (status IN ('active','pending'))
     );
 
+    -- F1 (audit #2 remediation follow-up, migration 0060): at most one active
+    -- role='owner' row per agent — closes the concurrent-first-contact race
+    -- that could create co-owners.
+    CREATE UNIQUE INDEX IF NOT EXISTS telegram_allowed_chats_single_owner
+      ON telegram_allowed_chats (agent_id) WHERE role = 'owner';
+
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS sessions (

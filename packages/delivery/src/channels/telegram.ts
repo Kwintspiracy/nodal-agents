@@ -733,7 +733,7 @@ export interface TelegramUpdate {
     document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
     chat?: { id?: number; type?: string };
     from?: { id?: number; first_name?: string; username?: string; is_bot?: boolean };
-    reply_to_message?: { from?: { is_bot?: boolean } };
+    reply_to_message?: { from?: { is_bot?: boolean; username?: string } };
   };
   callback_query?: {
     id: string;

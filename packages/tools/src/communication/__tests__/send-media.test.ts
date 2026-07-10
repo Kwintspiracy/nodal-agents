@@ -1,8 +1,10 @@
 // send-media.test.ts — createSendVideoTool / createSendAudioTool / createSendVoiceTool
 // The three share one factory; tests cover the shared core via send_video plus
-// per-tool wiring (right name + right delivery helper).
+// per-tool wiring (right name + right delivery helper), plus F1/F2 wiring.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createSendVideoTool, createSendAudioTool, createSendVoiceTool } from '../send-media';
 import type { ToolContext } from '../../types';
 
@@ -23,13 +25,20 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   };
 });
 
-const { readFileMock } = vi.hoisted(() => ({ readFileMock: vi.fn() }));
-vi.mock('node:fs/promises', () => ({ readFile: readFileMock }));
+// realpath is mocked as an identity pass-through — the confinement check then
+// runs for real, hence every fixture source path lives under `tmpdir()`.
+const { readFileMock, realpathMock } = vi.hoisted(() => ({
+  readFileMock: vi.fn(),
+  realpathMock: vi.fn((p: string) => Promise.resolve(p)),
+}));
+vi.mock('node:fs/promises', () => ({ readFile: readFileMock, realpath: realpathMock }));
+
+const { isChatAllowedMock } = vi.hoisted(() => ({ isChatAllowedMock: vi.fn() }));
 
 vi.mock('@nodal-agents/db', () => {
   const agents = { telegramBotToken: 'telegram_bot_token', id: 'id' };
   const eq = (col: unknown, val: unknown) => ({ col, val });
-  return { agents, eq };
+  return { agents, eq, isChatAllowed: isChatAllowedMock };
 });
 
 function makeDb(telegramBotToken: string | null | undefined) {
@@ -45,17 +54,31 @@ function makeDb(telegramBotToken: string | null | undefined) {
   };
 }
 
-function makeCtx(overrides: { jobChatId?: string | null; db?: unknown } = {}): ToolContext {
+function makeCtx(
+  overrides: {
+    jobChatId?: string | null;
+    db?: unknown;
+    workspaces?: ToolContext['workspaces'];
+  } = {},
+): ToolContext {
   return {
     jobId: 'job-1',
     agentId: 'agent-1',
     entityId: 'entity-1',
     jobChatId: overrides.jobChatId ?? null,
     db: (overrides.db ?? makeDb('bot:TOKEN')) as unknown as ToolContext['db'],
+    workspaces: overrides.workspaces,
   };
 }
 
 const TINY = Buffer.from([0x00, 0x01, 0x02, 0x03]);
+
+// Fixture source paths under the OS temp dir (F2's unconditionally allowed root).
+const SRC_CLIP = path.join(tmpdir(), 'clip.mp4');
+const SRC_SONG = path.join(tmpdir(), 'song.mp3');
+const SRC_NOTE = path.join(tmpdir(), 'note.ogg');
+const SRC_HUGE = path.join(tmpdir(), 'huge.mp4');
+const SRC_TMP_BIN = path.join(tmpdir(), 'tmp.bin');
 
 describe('send media tools', () => {
   beforeEach(() => {
@@ -64,6 +87,8 @@ describe('send media tools', () => {
     audioMock.mockResolvedValue({ messageId: 2 });
     voiceMock.mockResolvedValue({ messageId: 3 });
     readFileMock.mockResolvedValue(TINY);
+    realpathMock.mockImplementation((p: string) => Promise.resolve(p));
+    isChatAllowedMock.mockResolvedValue(true);
   });
 
   it('exposes the right names and risk levels', () => {
@@ -75,7 +100,7 @@ describe('send media tools', () => {
 
   it('send_video uploads via sendTelegramVideo and returns { ok, bytes, filename }', async () => {
     const ctx = makeCtx({ jobChatId: '4242' });
-    const result = await createSendVideoTool().execute({ source: '/tmp/clip.mp4' }, ctx);
+    const result = await createSendVideoTool().execute({ source: SRC_CLIP }, ctx);
 
     expect(videoMock).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: '4242', botToken: 'bot:TOKEN', filename: 'clip.mp4' }),
@@ -85,8 +110,8 @@ describe('send media tools', () => {
 
   it('send_audio routes to sendTelegramAudio; send_voice routes to sendTelegramVoice', async () => {
     const ctx = makeCtx({ jobChatId: '4242' });
-    await createSendAudioTool().execute({ source: '/tmp/song.mp3' }, ctx);
-    await createSendVoiceTool().execute({ source: '/tmp/note.ogg' }, ctx);
+    await createSendAudioTool().execute({ source: SRC_SONG }, ctx);
+    await createSendVoiceTool().execute({ source: SRC_NOTE }, ctx);
 
     expect(audioMock).toHaveBeenCalledWith(expect.objectContaining({ filename: 'song.mp3' }));
     expect(voiceMock).toHaveBeenCalledWith(expect.objectContaining({ filename: 'note.ogg' }));
@@ -94,9 +119,7 @@ describe('send media tools', () => {
 
   it('throws no_recipient when no chatId anywhere', async () => {
     const ctx = makeCtx({ jobChatId: null });
-    await expect(
-      createSendVideoTool().execute({ source: '/tmp/clip.mp4' }, ctx),
-    ).rejects.toMatchObject({
+    await expect(createSendVideoTool().execute({ source: SRC_CLIP }, ctx)).rejects.toMatchObject({
       name: 'no_recipient',
     });
     expect(videoMock).not.toHaveBeenCalled();
@@ -104,9 +127,7 @@ describe('send media tools', () => {
 
   it('throws no_bot_token when the agent has no token', async () => {
     const ctx = makeCtx({ jobChatId: '4242', db: makeDb(null) });
-    await expect(
-      createSendAudioTool().execute({ source: '/tmp/song.mp3' }, ctx),
-    ).rejects.toMatchObject({
+    await expect(createSendAudioTool().execute({ source: SRC_SONG }, ctx)).rejects.toMatchObject({
       name: 'no_bot_token',
     });
     expect(audioMock).not.toHaveBeenCalled();
@@ -115,9 +136,7 @@ describe('send media tools', () => {
   it('throws video_too_large past the 50 MB cap', async () => {
     const ctx = makeCtx({ jobChatId: '4242' });
     readFileMock.mockResolvedValueOnce(Buffer.alloc(50 * 1024 * 1024 + 1, 0));
-    await expect(
-      createSendVideoTool().execute({ source: '/tmp/huge.mp4' }, ctx),
-    ).rejects.toMatchObject({
+    await expect(createSendVideoTool().execute({ source: SRC_HUGE }, ctx)).rejects.toMatchObject({
       name: 'video_too_large',
     });
     expect(videoMock).not.toHaveBeenCalled();
@@ -125,7 +144,37 @@ describe('send media tools', () => {
 
   it('explicit filename overrides the derived name', async () => {
     const ctx = makeCtx({ jobChatId: '4242' });
-    await createSendVideoTool().execute({ source: '/tmp/tmp.bin', filename: 'final-cut.mp4' }, ctx);
+    await createSendVideoTool().execute({ source: SRC_TMP_BIN, filename: 'final-cut.mp4' }, ctx);
     expect(videoMock).toHaveBeenCalledWith(expect.objectContaining({ filename: 'final-cut.mp4' }));
+  });
+
+  it('throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
+    isChatAllowedMock.mockResolvedValueOnce(false);
+    const ctx = makeCtx({ jobChatId: '4242' });
+
+    await expect(
+      createSendVideoTool().execute({ source: SRC_CLIP, chatId: '00000000' }, ctx),
+    ).rejects.toMatchObject({ name: 'telegram_chat_not_allowed' });
+    expect(videoMock).not.toHaveBeenCalled();
+  });
+
+  it('skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
+    const ctx = makeCtx({ jobChatId: '4242' });
+
+    await createSendVideoTool().execute({ source: SRC_CLIP, chatId: '4242' }, ctx);
+
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+    expect(videoMock).toHaveBeenCalledWith(expect.objectContaining({ chatId: '4242' }));
+  });
+
+  it('throws source_path_not_allowed for a local path outside workspaces/skill store/temp dir', async () => {
+    const ctx = makeCtx({ jobChatId: '4242' });
+
+    await expect(
+      createSendVideoTool().execute({ source: path.join(process.cwd(), '..', 'outside.mp4') }, ctx),
+    ).rejects.toMatchObject({ name: 'source_path_not_allowed' });
+
+    expect(readFileMock).not.toHaveBeenCalled();
+    expect(videoMock).not.toHaveBeenCalled();
   });
 });

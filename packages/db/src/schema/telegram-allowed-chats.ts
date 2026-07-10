@@ -10,7 +10,16 @@
 //     messages never create a job.
 // One row per (agent_id, chat_id).
 
-import { pgTable, text, uuid, timestamp, index, check, unique } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  timestamp,
+  index,
+  check,
+  unique,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -41,6 +50,16 @@ export const telegramAllowedChats = pgTable(
     index('idx_telegram_allowed_chats_entity').on(table.entityId),
     check('telegram_allowed_chats_role_check', sql`${table.role} IN ('owner','member')`),
     check('telegram_allowed_chats_status_check', sql`${table.status} IN ('active','pending')`),
+    // F1 (audit #2 remediation follow-up, migration 0060): concurrent
+    // first-contact claims could each pass the "no owner yet" check before
+    // either row committed, creating two role='owner' rows for one agent —
+    // every owner-resolution query (resolveOwnerChatId,
+    // resolveApprovalDeliveryTarget) does LIMIT 1 assuming uniqueness. A
+    // partial unique index (owner rows only; 'member' rows are unrestricted)
+    // closes the race at the DB level.
+    uniqueIndex('telegram_allowed_chats_single_owner')
+      .on(table.agentId)
+      .where(sql`${table.role} = 'owner'`),
   ],
 );
 

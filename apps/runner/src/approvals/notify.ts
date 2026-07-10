@@ -43,6 +43,14 @@ export interface TelegramDeliveryTarget {
  * parent_job_id from the gated job upward and return the first job whose agent
  * has a bot token, carrying the chat_id down the chain. Returns null when no
  * agent in the chain has a bot or no chat_id is set (→ dashboard-only job).
+ *
+ * DEFENSE-IN-DEPTH: the walk must never cross an entity boundary. A corrupt or
+ * foreign parent_job_id (bug, or a future cross-entity delegation feature)
+ * would otherwise route a delivery — and for approvals, the ✅/❌ card itself —
+ * to ANOTHER entity's bot + chat. The starting job's entity_id is captured up
+ * front; the moment an ancestor's entity_id diverges, the walk stops and
+ * returns null (fail loud) rather than silently continuing into another
+ * tenant's data.
  */
 export async function resolveTelegramDeliveryTarget(
   db: RunnerDeps['db'],
@@ -50,11 +58,13 @@ export async function resolveTelegramDeliveryTarget(
 ): Promise<TelegramDeliveryTarget | null> {
   let current: string | null = jobId;
   let chatId: string | null = null;
+  let startEntityId: string | null | undefined;
   for (let hops = 0; current && hops < 8; hops += 1) {
     const [row] = await db
       .select({
         parentJobId: agentJobs.parentJobId,
         chatId: agentJobs.chatId,
+        entityId: agentJobs.entityId,
         agentId: agents.id,
         botToken: agents.telegramBotToken,
       })
@@ -63,6 +73,16 @@ export async function resolveTelegramDeliveryTarget(
       .where(eq(agentJobs.id, current))
       .limit(1);
     if (!row) break;
+    if (startEntityId === undefined) {
+      startEntityId = row.entityId;
+    } else if (row.entityId !== startEntityId) {
+      console.error(
+        `[approval-notify] SECURITY: delivery walk crossed an entity boundary — ` +
+          `starting job ${jobId} (entity ${startEntityId}) reached ancestor job ${current} ` +
+          `(entity ${row.entityId}). Aborting the walk, no delivery target resolved.`,
+      );
+      return null;
+    }
     const bt: string | null = row.botToken;
     const rc: string | null = row.chatId ?? chatId;
     if (bt !== null && rc !== null) {

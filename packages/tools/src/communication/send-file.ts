@@ -8,10 +8,14 @@
 // ZERO file bytes ever enter the LLM context — the return value is tiny.
 
 import { z } from 'zod';
-import { eq } from '@nodal-agents/db';
-import { agents } from '@nodal-agents/db';
 import { sendTelegramDocument } from '@nodal-agents/delivery';
 import { readFile } from 'node:fs/promises';
+import {
+  resolveBotToken,
+  resolveRecipientChatId,
+  assertLocalSourceAllowed,
+  fetchBoundedUrl,
+} from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 
 // Telegram sendDocument size limit for bots. Uploads above this are rejected
@@ -76,18 +80,25 @@ into your reply. Inline bytes waste thousands of tokens and re-send every turn.
 This tool keeps the LLM context tiny: the return value is just
 \`{ ok: true, bytes: <size>, filename: <name> }\`.
 
-- **source**: file path or http(s) URL. localhost URLs are allowed.
+- **source**: file path or http(s) URL. A local path must be inside one of your
+  workspaces, the skill store, or the temp directory — for anything else, use the
+  service's http URL instead. localhost URLs are allowed.
 - **filename**: optional name the recipient sees (keep the extension, e.g. "notes.md").
   Defaults to the name derived from the source.
 - **caption**: optional, ≤1024 chars.
-- **chatId**: optional. Omit to reply to the chat that triggered this job.
+- **chatId**: optional. Omit to reply to the chat that triggered this job. An
+  explicit chatId must already be an approved chat for this agent.
 
 Size cap: 50 MB (Telegram document limit). Larger files throw \`file_too_large\`.
 
 Fail conditions:
 - No chatId provided and the job has no origin chat → throws \`no_recipient\`.
 - Agent has no configured Telegram bot token → throws \`no_bot_token\`.
-- Source URL returns non-2xx → throws \`fetch_failed\`.
+- Explicit chatId is not an approved chat → throws \`telegram_chat_not_allowed\`.
+- Local source path is outside your workspaces/skill store/temp dir → throws
+  \`source_path_not_allowed\`.
+- Source URL returns non-2xx or resolves to a link-local address → throws
+  \`fetch_failed\`.
 - Bytes exceed 50 MB → throws \`file_too_large\`.`,
 
     inputSchema: SendFileInput,
@@ -95,26 +106,14 @@ Fail conditions:
     riskLevel: 'write',
 
     async execute(input: SendFileInput, ctx: ToolContext): Promise<SendFileOutput> {
-      // 1. Resolve chatId — explicit arg wins, then job origin chat
-      const chatId = input.chatId ?? ctx.jobChatId;
-      if (!chatId) {
-        const err = new Error('no_recipient');
-        err.name = 'no_recipient';
-        throw err;
-      }
+      // 1. Resolve + authorize chatId — explicit arg wins (must be approved
+      // unless it's the job's own origin chat), then job origin chat (F1).
+      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'no_recipient');
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      let botToken = ctx.resolvedTelegramBotToken;
-      if (botToken === undefined) {
-        const agentRows = await ctx.db
-          .select({ telegramBotToken: agents.telegramBotToken })
-          .from(agents)
-          .where(eq(agents.id, ctx.agentId))
-          .limit(1);
-        botToken = agentRows[0]?.telegramBotToken ?? undefined;
-      }
+      const botToken = await resolveBotToken(ctx);
       if (!botToken) {
         const err = new Error('no_bot_token');
         err.name = 'no_bot_token';
@@ -122,49 +121,30 @@ Fail conditions:
       }
 
       // 3. Obtain bytes server-side — NEVER return them to the model
-      let bytes: ArrayBuffer;
+      let bytes: Uint8Array;
       let derivedName: string;
 
       const src = input.source;
 
       if (src.startsWith('http://') || src.startsWith('https://')) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30_000);
-
-        let urlResponse: Response;
-        try {
-          urlResponse = await fetch(src, { signal: controller.signal });
-        } catch (fetchErr) {
-          const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-          const err = new Error(`fetch_failed: ${errMsg}`);
-          err.name = 'fetch_failed';
-          throw err;
-        } finally {
-          clearTimeout(timeoutId);
-        }
-
-        if (!urlResponse.ok) {
-          const err = new Error(`fetch_failed: HTTP ${urlResponse.status} from ${src}`);
-          err.name = 'fetch_failed';
-          throw err;
-        }
-
-        bytes = await urlResponse.arrayBuffer();
+        // Remote URL — streamed, capped, and link-local addresses blocked (F3).
+        bytes = await fetchBoundedUrl(src, {
+          maxBytes: MAX_DOCUMENT_BYTES,
+          tooLargeErrorName: 'file_too_large',
+        });
 
         const urlPath = new URL(src).pathname;
         derivedName = urlPath.split('/').pop() || 'file';
       } else {
-        // Local file path
-        const nodeBuf = await readFile(src);
-        bytes = nodeBuf.buffer.slice(
-          nodeBuf.byteOffset,
-          nodeBuf.byteOffset + nodeBuf.byteLength,
-        ) as ArrayBuffer;
+        // Local file path — confined to workspaces/skill store/temp dir (F2).
+        const realPath = await assertLocalSourceAllowed(src, ctx);
+        bytes = await readFile(realPath);
 
         derivedName = src.split(/[\\/]/).pop() || 'file';
       }
 
-      // 4. Enforce 50 MB cap (Telegram document limit)
+      // 4. Enforce 50 MB cap (Telegram document limit). URL sources are
+      // already capped while streaming (F3); this is the backstop for local reads.
       if (bytes.byteLength > MAX_DOCUMENT_BYTES) {
         const err = new Error(
           `file_too_large: ${bytes.byteLength} bytes exceeds the 50 MB Telegram document limit`,
@@ -178,7 +158,7 @@ Fail conditions:
       await sendTelegramDocument({
         chatId,
         botToken,
-        document: new Uint8Array(bytes),
+        document: bytes,
         filename,
         caption: input.caption,
       });

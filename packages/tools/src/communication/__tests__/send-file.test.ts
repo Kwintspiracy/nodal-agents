@@ -7,8 +7,12 @@
 //   (e) file_too_large when bytes exceed 50 MB
 //   (f) fetch_failed on non-2xx URL response
 //   (g) derives filename from the path, explicit filename overrides
+//   (h) F1 — explicit chatId authorization
+//   (i) F2 — local source path confinement
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createSendFileTool } from '../send-file';
 import type { ToolContext } from '../../types';
 
@@ -28,16 +32,24 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
 });
 
 // ─── Mock node:fs/promises ────────────────────────────────────────────────────
+// realpath is mocked as an identity pass-through — the confinement check
+// then runs for real, hence every fixture source path lives under `tmpdir()`.
 
-const { readFileMock } = vi.hoisted(() => ({
+const { readFileMock, realpathMock } = vi.hoisted(() => ({
   readFileMock: vi.fn(),
+  realpathMock: vi.fn((p: string) => Promise.resolve(p)),
 }));
 
 vi.mock('node:fs/promises', () => ({
   readFile: readFileMock,
+  realpath: realpathMock,
 }));
 
 // ─── Mock @nodal-agents/db ────────────────────────────────────────────────────
+
+const { isChatAllowedMock } = vi.hoisted(() => ({
+  isChatAllowedMock: vi.fn(),
+}));
 
 function makeDb(telegramBotToken: string | null | undefined) {
   return {
@@ -55,23 +67,35 @@ function makeDb(telegramBotToken: string | null | undefined) {
 vi.mock('@nodal-agents/db', () => {
   const agents = { telegramBotToken: 'telegram_bot_token', id: 'id' };
   const eq = (col: unknown, val: unknown) => ({ col, val });
-  return { agents, eq };
+  return { agents, eq, isChatAllowed: isChatAllowedMock };
 });
 
 // ─── Context factory ──────────────────────────────────────────────────────────
 
-function makeCtx(overrides: { jobChatId?: string | null; db?: unknown } = {}): ToolContext {
+function makeCtx(
+  overrides: {
+    jobChatId?: string | null;
+    db?: unknown;
+    workspaces?: ToolContext['workspaces'];
+  } = {},
+): ToolContext {
   return {
     jobId: 'job-123',
     agentId: 'agent-abc',
     entityId: 'entity-xyz',
     jobChatId: overrides.jobChatId ?? null,
     db: (overrides.db ?? makeDb('bot:TEST_TOKEN')) as unknown as ToolContext['db'],
+    workspaces: overrides.workspaces,
   };
 }
 
 // A tiny fake markdown document.
 const TINY_MD = Buffer.from('# Notes\nhello');
+
+// Fixture source paths under the OS temp dir (F2's unconditionally allowed root).
+const SRC_REPORT = path.join(tmpdir(), 'report.md');
+const SRC_HUGE = path.join(tmpdir(), 'huge.zip');
+const SRC_TMP_XYZ = path.join(tmpdir(), 'tmp-xyz.dat');
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -80,13 +104,15 @@ describe('createSendFileTool', () => {
     vi.clearAllMocks();
     sendTelegramDocumentMock.mockResolvedValue({ messageId: 77 });
     readFileMock.mockResolvedValue(TINY_MD);
+    realpathMock.mockImplementation((p: string) => Promise.resolve(p));
+    isChatAllowedMock.mockResolvedValue(true);
   });
 
   it('(a) resolves chatId from ctx.jobChatId and returns { ok, bytes, filename }', async () => {
     const tool = createSendFileTool();
     const ctx = makeCtx({ jobChatId: '99887766' });
 
-    const result = await tool.execute({ source: '/tmp/report.md' }, ctx);
+    const result = await tool.execute({ source: SRC_REPORT }, ctx);
 
     expect(sendTelegramDocumentMock).toHaveBeenCalledOnce();
     expect(sendTelegramDocumentMock).toHaveBeenCalledWith(
@@ -103,7 +129,7 @@ describe('createSendFileTool', () => {
     const tool = createSendFileTool();
     const ctx = makeCtx({ jobChatId: '12345' });
 
-    const result = await tool.execute({ source: '/tmp/report.md' }, ctx);
+    const result = await tool.execute({ source: SRC_REPORT }, ctx);
 
     expect(Object.keys(result).sort()).toEqual(['bytes', 'filename', 'ok']);
     expect((result as Record<string, unknown>)['document']).toBeUndefined();
@@ -114,7 +140,7 @@ describe('createSendFileTool', () => {
     const tool = createSendFileTool();
     const ctx = makeCtx({ jobChatId: null });
 
-    await expect(tool.execute({ source: '/tmp/report.md' }, ctx)).rejects.toMatchObject({
+    await expect(tool.execute({ source: SRC_REPORT }, ctx)).rejects.toMatchObject({
       name: 'no_recipient',
     });
     expect(sendTelegramDocumentMock).not.toHaveBeenCalled();
@@ -124,7 +150,7 @@ describe('createSendFileTool', () => {
     const tool = createSendFileTool();
     const ctx = makeCtx({ jobChatId: '12345', db: makeDb(null) });
 
-    await expect(tool.execute({ source: '/tmp/report.md' }, ctx)).rejects.toMatchObject({
+    await expect(tool.execute({ source: SRC_REPORT }, ctx)).rejects.toMatchObject({
       name: 'no_bot_token',
     });
     expect(sendTelegramDocumentMock).not.toHaveBeenCalled();
@@ -137,7 +163,7 @@ describe('createSendFileTool', () => {
     const bigBuf = Buffer.alloc(50 * 1024 * 1024 + 1, 0x00);
     readFileMock.mockResolvedValueOnce(bigBuf);
 
-    await expect(tool.execute({ source: '/tmp/huge.zip' }, ctx)).rejects.toMatchObject({
+    await expect(tool.execute({ source: SRC_HUGE }, ctx)).rejects.toMatchObject({
       name: 'file_too_large',
     });
     expect(sendTelegramDocumentMock).not.toHaveBeenCalled();
@@ -160,15 +186,47 @@ describe('createSendFileTool', () => {
     const tool = createSendFileTool();
     const ctx = makeCtx({ jobChatId: '12345' });
 
-    const result = await tool.execute(
-      { source: '/tmp/tmp-xyz.dat', filename: 'Q3-report.pdf' },
-      ctx,
-    );
+    const result = await tool.execute({ source: SRC_TMP_XYZ, filename: 'Q3-report.pdf' }, ctx);
 
     expect(sendTelegramDocumentMock).toHaveBeenCalledWith(
       expect.objectContaining({ filename: 'Q3-report.pdf' }),
     );
     expect(result.filename).toBe('Q3-report.pdf');
+  });
+
+  it('(h) throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
+    isChatAllowedMock.mockResolvedValueOnce(false);
+    const tool = createSendFileTool();
+    const ctx = makeCtx({ jobChatId: '99887766' });
+
+    await expect(
+      tool.execute({ source: SRC_REPORT, chatId: '00000000' }, ctx),
+    ).rejects.toMatchObject({ name: 'telegram_chat_not_allowed' });
+    expect(sendTelegramDocumentMock).not.toHaveBeenCalled();
+  });
+
+  it('(h) skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
+    const tool = createSendFileTool();
+    const ctx = makeCtx({ jobChatId: '99887766' });
+
+    await tool.execute({ source: SRC_REPORT, chatId: '99887766' }, ctx);
+
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+    expect(sendTelegramDocumentMock).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: '99887766' }),
+    );
+  });
+
+  it('(i) throws source_path_not_allowed for a local path outside workspaces/skill store/temp dir', async () => {
+    const tool = createSendFileTool();
+    const ctx = makeCtx({ jobChatId: '12345' });
+
+    await expect(
+      tool.execute({ source: path.join(process.cwd(), '..', 'outside.md') }, ctx),
+    ).rejects.toMatchObject({ name: 'source_path_not_allowed' });
+
+    expect(readFileMock).not.toHaveBeenCalled();
+    expect(sendTelegramDocumentMock).not.toHaveBeenCalled();
   });
 
   it('has correct static metadata', () => {

@@ -8,10 +8,14 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agents, agentJobs, telegramAllowedChats } from '@nodal-agents/db';
+import { agents, agentJobs, telegramAllowedChats, entities, users } from '@nodal-agents/db';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../../deps.ts';
-import { notifyApprovalCreated } from '../../approvals/notify.ts';
+import {
+  notifyApprovalCreated,
+  resolveTelegramDeliveryTarget,
+  resolveApprovalDeliveryTarget,
+} from '../../approvals/notify.ts';
 
 let db: TestDb;
 let deps: RunnerDeps;
@@ -276,6 +280,130 @@ describe('notifyApprovalCreated', () => {
       entityId: seed.entityId,
     });
 
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveTelegramDeliveryTarget: entity boundary assertion (F2)', () => {
+  it('a 2-hop chain within one entity still resolves — regression', async () => {
+    // Orchestrator (root) — has the bot + the chat.
+    await db.update(agentJobs).set({ chatId: CHAT_ID }).where(eq(agentJobs.id, seed.jobId));
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'regression:bot' })
+      .where(eq(agents.id, seed.agentId));
+
+    // Bot-less delegate, correctly parented WITHIN the same entity.
+    const [delegate] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Same-Entity Delegate',
+        slug: `same-entity-delegate-${Date.now()}`,
+        personality: 'sub-agent',
+        llmKeyId: seed.llmKeyId,
+      })
+      .returning();
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: delegate!.id,
+        channel: 'internal',
+        chatId: CHAT_ID,
+        parentJobId: seed.jobId,
+        task: 'same-entity delegated job',
+      })
+      .returning();
+
+    const target = await resolveTelegramDeliveryTarget(deps.db, childJob!.id);
+    expect(target).toEqual({
+      agentId: seed.agentId,
+      botToken: 'regression:bot',
+      chatId: CHAT_ID,
+    });
+  });
+
+  it('SECURITY: a chain that crosses an entity boundary returns null and never leaks the foreign bot token', async () => {
+    // Foreign entity, with its own bot-owning agent and job — stands in for a
+    // corrupt/foreign parent_job_id (bug, or a future cross-entity delegation
+    // path). If the walk didn't check entity_id, this bot token + chat would
+    // be returned to a DIFFERENT tenant's job.
+    const [foreignUser] = await db
+      .insert(users)
+      .values({ email: `f2-foreign-user-${Date.now()}@example.com` })
+      .returning();
+    const [foreignEntity] = await db
+      .insert(entities)
+      .values({
+        userId: foreignUser!.id,
+        name: 'F2 Foreign Entity',
+        slug: `f2-foreign-entity-${Date.now()}`,
+      })
+      .returning();
+    const [foreignAgent] = await db
+      .insert(agents)
+      .values({
+        entityId: foreignEntity!.id,
+        name: 'Foreign Bot Owner',
+        slug: `f2-foreign-bot-${Date.now()}`,
+        personality: 'test',
+        telegramBotToken: 'foreign:secret-bot',
+      })
+      .returning();
+    const [foreignJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: foreignEntity!.id,
+        agentId: foreignAgent!.id,
+        channel: 'internal',
+        chatId: 'foreign-chat-id',
+        task: 'foreign ancestor job',
+      })
+      .returning();
+
+    // Bot-less delegate in the ORIGINAL entity, corruptly parented to the
+    // foreign job — a plain parent_job_id walk (no entity check) would climb
+    // straight into it and return the foreign bot.
+    const [delegate] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Cross-Entity Delegate',
+        slug: `f2-cross-entity-delegate-${Date.now()}`,
+        personality: 'sub-agent',
+        llmKeyId: seed.llmKeyId,
+      })
+      .returning();
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: delegate!.id,
+        channel: 'internal',
+        chatId: CHAT_ID,
+        parentJobId: foreignJob!.id,
+        task: 'cross-entity delegated job',
+      })
+      .returning();
+
+    const target = await resolveTelegramDeliveryTarget(deps.db, childJob!.id);
+    expect(target).toBeNull();
+
+    // Same guard applies to the approval-card resolver (it calls the base
+    // function above — no separate walk to duplicate the fix in).
+    const approvalTarget = await resolveApprovalDeliveryTarget(deps.db, childJob!.id);
+    expect(approvalTarget).toBeNull();
+
+    // End-to-end: the deterministic notifier must stay fully silent too.
+    await notifyApprovalCreated(deps, {
+      approvalRequestId: '00000000-0000-0000-0000-0000000000fb',
+      toolName: 'run_command',
+      toolInput: { command: 'echo pwned' },
+      jobId: childJob!.id,
+      agentId: delegate!.id,
+      entityId: seed.entityId,
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

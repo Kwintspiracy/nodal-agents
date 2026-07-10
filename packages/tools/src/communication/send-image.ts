@@ -6,10 +6,14 @@
 // ZERO image bytes ever enter the LLM context — the return value is tiny.
 
 import { z } from 'zod';
-import { eq } from '@nodal-agents/db';
-import { agents } from '@nodal-agents/db';
 import { sendTelegramPhoto } from '@nodal-agents/delivery';
 import { readFile } from 'node:fs/promises';
+import {
+  resolveBotToken,
+  resolveRecipientChatId,
+  assertLocalSourceAllowed,
+  fetchBoundedUrl,
+} from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 
 // Telegram photo size limit. Uploads above this cap silently fail or are
@@ -67,17 +71,25 @@ Typical usage right after an image-gen tool produces an output:
   2. Call \`send_image\` with that path as \`source\`.
   3. Call \`return_result\` to finish the job.
 
-- **source**: file path or http(s) URL. localhost URLs are allowed — the runner
-  runs on the user's machine, so ComfyUI and similar local services are reachable.
+- **source**: file path or http(s) URL. A local path must be inside one of your
+  workspaces, the skill store, or the temp directory — for anything else, use the
+  service's http URL instead (e.g. ComfyUI's \`/view\` endpoint). localhost URLs
+  are allowed — the runner runs on the user's machine, so ComfyUI and similar
+  local services are reachable.
 - **caption**: optional, ≤1024 chars (Telegram's caption limit).
-- **chatId**: optional. Omit to reply to the chat that triggered this job.
+- **chatId**: optional. Omit to reply to the chat that triggered this job. An
+  explicit chatId must already be an approved chat for this agent.
 
 Size cap: 10 MB (Telegram photo limit). Larger files throw \`image_too_large\`.
 
 Fail conditions:
 - No chatId provided and the job has no origin chat → throws \`no_recipient\`.
 - Agent has no configured Telegram bot token → throws \`no_bot_token\`.
-- Source URL returns non-2xx → throws \`fetch_failed\`.
+- Explicit chatId is not an approved chat → throws \`telegram_chat_not_allowed\`.
+- Local source path is outside your workspaces/skill store/temp dir → throws
+  \`source_path_not_allowed\`.
+- Source URL returns non-2xx or resolves to a link-local address → throws
+  \`fetch_failed\`.
 - Bytes exceed 10 MB → throws \`image_too_large\`.`,
 
     inputSchema: SendImageInput,
@@ -85,26 +97,14 @@ Fail conditions:
     riskLevel: 'write',
 
     async execute(input: SendImageInput, ctx: ToolContext): Promise<SendImageOutput> {
-      // 1. Resolve chatId — explicit arg wins, then job origin chat
-      const chatId = input.chatId ?? ctx.jobChatId;
-      if (!chatId) {
-        const err = new Error('no_recipient');
-        err.name = 'no_recipient';
-        throw err;
-      }
+      // 1. Resolve + authorize chatId — explicit arg wins (must be approved
+      // unless it's the job's own origin chat), then job origin chat (F1).
+      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'no_recipient');
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      let botToken = ctx.resolvedTelegramBotToken;
-      if (botToken === undefined) {
-        const agentRows = await ctx.db
-          .select({ telegramBotToken: agents.telegramBotToken })
-          .from(agents)
-          .where(eq(agents.id, ctx.agentId))
-          .limit(1);
-        botToken = agentRows[0]?.telegramBotToken ?? undefined;
-      }
+      const botToken = await resolveBotToken(ctx);
       if (!botToken) {
         const err = new Error('no_bot_token');
         err.name = 'no_bot_token';
@@ -112,53 +112,34 @@ Fail conditions:
       }
 
       // 3. Obtain bytes server-side — NEVER return them to the model
-      let bytes: ArrayBuffer;
+      let bytes: Uint8Array;
       let filename: string;
 
       const src = input.source;
 
       if (src.startsWith('http://') || src.startsWith('https://')) {
-        // Remote URL (ComfyUI, external CDN, etc.) — fetch with 30s timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30_000);
-
-        let urlResponse: Response;
-        try {
-          urlResponse = await fetch(src, { signal: controller.signal });
-        } catch (fetchErr) {
-          const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-          const err = new Error(`fetch_failed: ${errMsg}`);
-          err.name = 'fetch_failed';
-          throw err;
-        } finally {
-          clearTimeout(timeoutId);
-        }
-
-        if (!urlResponse.ok) {
-          const err = new Error(`fetch_failed: HTTP ${urlResponse.status} from ${src}`);
-          err.name = 'fetch_failed';
-          throw err;
-        }
-
-        bytes = await urlResponse.arrayBuffer();
+        // Remote URL (ComfyUI, external CDN, etc.) — streamed, capped, and
+        // link-local addresses blocked (F3).
+        bytes = await fetchBoundedUrl(src, {
+          maxBytes: MAX_PHOTO_BYTES,
+          tooLargeErrorName: 'image_too_large',
+        });
 
         // Derive filename from URL path (last segment before query string)
         const urlPath = new URL(src).pathname;
         filename = urlPath.split('/').pop() ?? 'image.png';
         if (!filename.includes('.')) filename = 'image.png';
       } else {
-        // Local file path
-        const nodeBuf = await readFile(src);
-        bytes = nodeBuf.buffer.slice(
-          nodeBuf.byteOffset,
-          nodeBuf.byteOffset + nodeBuf.byteLength,
-        ) as ArrayBuffer;
+        // Local file path — confined to workspaces/skill store/temp dir (F2).
+        const realPath = await assertLocalSourceAllowed(src, ctx);
+        bytes = await readFile(realPath);
 
         // Derive filename from the path
         filename = src.split(/[\\/]/).pop() ?? 'image.png';
       }
 
-      // 4. Enforce 10 MB cap (Telegram photo limit)
+      // 4. Enforce 10 MB cap (Telegram photo limit). URL sources are already
+      // capped while streaming (F3); this is the backstop for local reads.
       if (bytes.byteLength > MAX_PHOTO_BYTES) {
         const err = new Error(
           `image_too_large: ${bytes.byteLength} bytes exceeds the 10 MB Telegram photo limit`,
@@ -171,7 +152,7 @@ Fail conditions:
       await sendTelegramPhoto({
         chatId,
         botToken,
-        photo: new Uint8Array(bytes),
+        photo: bytes,
         filename,
         caption: input.caption,
       });

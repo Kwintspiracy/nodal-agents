@@ -484,10 +484,15 @@ async function sendAuthConfirmation(
   botToken: string,
   pending: NonNullable<HandleResult['pendingAuth']>,
 ): Promise<void> {
+  // A /ask-relayed request targets a SIBLING agent — name it on the card so
+  // the owner knows exactly which agent's access they are granting (H3).
+  const target = pending.targetAgentName
+    ? `souhaite parler à l'agent « ${pending.targetAgentName} » via ce bot`
+    : 'souhaite parler à ce bot';
   await sendTelegramMessage({
     botToken,
     chatId: pending.ownerChatId,
-    text: `👤 ${pending.requesterName} (chat ${pending.requesterChatId}) souhaite parler à ce bot. Autoriser ?`,
+    text: `👤 ${pending.requesterName} (chat ${pending.requesterChatId}) ${target}. Autoriser ?`,
     inlineKeyboard: buildAuthConfirmKeyboard(pending.allowedChatId),
   });
   // Let the requester know they're waiting — best-effort, never fatal.

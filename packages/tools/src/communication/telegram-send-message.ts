@@ -5,9 +5,8 @@
 // Credentials are fetched from the DB at execution time (never in closure).
 
 import { z } from 'zod';
-import { eq } from '@nodal-agents/db';
-import { agents } from '@nodal-agents/db';
 import { sendTelegramMessage } from '@nodal-agents/delivery';
+import { resolveBotToken, resolveRecipientChatId } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 
 // ─── Input / Output ───────────────────────────────────────────────────────────
@@ -45,8 +44,10 @@ Use this tool to deliver a reply, notification, or result via Telegram.
 
 - **chatId**: optional. Provide it only when sending to a chat other than the one
   that triggered this job. If you omit it, the platform uses the chat that sent the
-  original request (the job's origin chat).
-- **text**: the message body. Plain text or HTML (Telegram HTML parse mode).
+  original request (the job's origin chat). An explicit chatId must already be an
+  APPROVED chat for this agent (the owner, or a member the owner confirmed) —
+  you cannot message an arbitrary chat id.
+- **text**: the message body, sent as plain text (no HTML/Markdown parsing).
 
 **Same-response multi-call (CRITICAL for cost & latency)**:
 When you need to send multiple messages (long replies split across the
@@ -79,7 +80,9 @@ Fail conditions:
 - If no chatId is provided and the current job has no origin chat, the tool throws
   \`telegram_no_recipient\`. This is intentional — do not guess a chat ID.
 - If the agent has no configured Telegram bot token, the tool throws
-  \`telegram_no_bot_token\`. Fix: configure the bot token in agent settings.`,
+  \`telegram_no_bot_token\`. Fix: configure the bot token in agent settings.
+- If an explicit chatId is not an approved chat for this agent, the tool throws
+  \`telegram_chat_not_allowed\`.`,
 
     inputSchema: TelegramSendMessageInput,
 
@@ -89,26 +92,14 @@ Fail conditions:
       input: TelegramSendMessageInput,
       ctx: ToolContext,
     ): Promise<TelegramSendMessageOutput> {
-      // 1. Resolve chatId — explicit arg wins, then job origin chat
-      const chatId = input.chatId ?? ctx.jobChatId;
-      if (!chatId) {
-        const err = new Error('telegram_no_recipient');
-        err.name = 'telegram_no_recipient';
-        throw err;
-      }
+      // 1. Resolve + authorize chatId — explicit arg wins (must be approved
+      // unless it's the job's own origin chat), then job origin chat (F1).
+      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'telegram_no_recipient');
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      let botToken = ctx.resolvedTelegramBotToken;
-      if (botToken === undefined) {
-        const agentRows = await ctx.db
-          .select({ telegramBotToken: agents.telegramBotToken })
-          .from(agents)
-          .where(eq(agents.id, ctx.agentId))
-          .limit(1);
-        botToken = agentRows[0]?.telegramBotToken ?? undefined;
-      }
+      const botToken = await resolveBotToken(ctx);
       if (!botToken) {
         const err = new Error('telegram_no_bot_token');
         err.name = 'telegram_no_bot_token';

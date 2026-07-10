@@ -61,6 +61,14 @@ export interface HandleResult {
     requesterChatId: string;
     /** Display name for the owner's card. */
     requesterName: string;
+    /**
+     * F-1: set only when this pending request came from `/ask <slug>` routing
+     * to a SIBLING agent — the display name of that target agent, so the
+     * owner's card can say which bot access is being requested for (the
+     * direct first-contact case leaves this undefined: there's only one bot
+     * in play, so it's already unambiguous).
+     */
+    targetAgentName?: string;
   };
 }
 
@@ -103,18 +111,25 @@ export async function handleTelegramUpdate(args: {
 
   const isGroup = chatType === 'group' || chatType === 'supergroup';
 
-  // Detect a mention of the bot. Telegram usernames are case-insensitive,
-  // so compare lowercased. Surrounding word-boundary chars include space and
-  // line breaks; a regex with the literal token is good enough.
-  const mentionToken = receivingAgentBotUsername
-    ? `@${receivingAgentBotUsername}`.toLowerCase()
-    : '';
-  const isMention = mentionToken !== '' && text.toLowerCase().includes(mentionToken);
+  // Detect a mention of the bot. F-2: a plain substring match would trigger
+  // bot `@news` on `@newsroom hello` — buildMentionRegex requires the
+  // username to end at a Telegram-username word boundary ([A-Za-z0-9_]),
+  // matching exactly `@news` and not a prefix of a longer handle.
+  const isMention =
+    receivingAgentBotUsername !== null && buildMentionRegex(receivingAgentBotUsername).test(text);
 
   // Group chat: only respond to commands, mentions, or replies to the bot.
   if (isGroup) {
     const isCommand = text.startsWith('/ask ') || text.startsWith('/agents') || text === '/start';
-    const replyToBot = message.reply_to_message?.from?.is_bot === true;
+    // F-2: only a reply to THIS bot's own message counts — a reply to some
+    // OTHER bot in the group (a different agent, a poll bot, whatever) must
+    // not wake this one up.
+    const replyToBotUsername = message.reply_to_message?.from?.username;
+    const replyToBot =
+      message.reply_to_message?.from?.is_bot === true &&
+      receivingAgentBotUsername !== null &&
+      replyToBotUsername !== undefined &&
+      replyToBotUsername.toLowerCase() === receivingAgentBotUsername.toLowerCase();
     if (!isCommand && !isMention && !replyToBot) return { skipped: 'group_filter' };
   }
 
@@ -125,80 +140,16 @@ export async function handleTelegramUpdate(args: {
   // claims ownership (the person who set it up); any other unknown chat is held
   // pending and the owner is asked to confirm before it is allowed.
   const chatIdStr = String(chatId);
-  const [known] = await tx
-    .select({ status: telegramAllowedChats.status })
-    .from(telegramAllowedChats)
-    .where(
-      and(
-        eq(telegramAllowedChats.agentId, receivingAgentId),
-        eq(telegramAllowedChats.chatId, chatIdStr),
-      ),
-    )
-    .limit(1);
-
-  if (!known) {
-    const [owner] = await tx
-      .select({ chatId: telegramAllowedChats.chatId })
-      .from(telegramAllowedChats)
-      .where(
-        and(
-          eq(telegramAllowedChats.agentId, receivingAgentId),
-          eq(telegramAllowedChats.role, 'owner'),
-          eq(telegramAllowedChats.status, 'active'),
-        ),
-      )
-      .limit(1);
-
-    if (!owner) {
-      // No owner yet. Ownership can only be claimed from a private DM — a group
-      // can't bootstrap it (the owner must DM the bot first).
-      if (chatType !== 'private') return { skipped: 'no_owner_group' };
-      await tx
-        .insert(telegramAllowedChats)
-        .values({
-          entityId: receivingAgentEntityId,
-          agentId: receivingAgentId,
-          chatId: chatIdStr,
-          role: 'owner',
-          status: 'active',
-          requesterName: senderName,
-        })
-        .onConflictDoNothing();
-      // Fall through: the owner's own first message proceeds to a job.
-    } else {
-      // Owner exists → a new contact needs the owner's confirmation. Record it
-      // pending and signal the poller to ask; this message creates NO job.
-      const [pending] = await tx
-        .insert(telegramAllowedChats)
-        .values({
-          entityId: receivingAgentEntityId,
-          agentId: receivingAgentId,
-          chatId: chatIdStr,
-          role: 'member',
-          status: 'pending',
-          requesterName: senderName,
-        })
-        .onConflictDoNothing()
-        .returning({ id: telegramAllowedChats.id });
-      return {
-        skipped: 'awaiting_authorization',
-        // Signal a confirmation only when WE inserted the row — a repeat DM from
-        // an already-pending chat hits the unique constraint (no row) and must
-        // not re-spam the owner.
-        pendingAuth: pending
-          ? {
-              allowedChatId: pending.id,
-              ownerChatId: owner.chatId,
-              requesterChatId: chatIdStr,
-              requesterName: senderName,
-            }
-          : undefined,
-      };
-    }
-  } else if (known.status !== 'active') {
-    // Already pending the owner's decision — drop silently (no re-ask).
-    return { skipped: 'awaiting_authorization' };
-  }
+  const receiverAuth = await checkChatAuthorization({
+    tx,
+    agentId: receivingAgentId,
+    entityId: receivingAgentEntityId,
+    chatId: chatIdStr,
+    chatType,
+    senderName,
+    allowOwnerClaim: true,
+  });
+  if (!receiverAuth.authorized) return receiverAuth.result;
   // Authorized (active member/owner, or ownership just claimed) → continue.
 
   // /ask <slug> <text> routes to a different agent in the same entity.
@@ -213,7 +164,7 @@ export async function handleTelegramUpdate(args: {
     if (!askText) return { skipped: 'ask_no_text' };
 
     const rows = await tx
-      .select({ id: agents.id })
+      .select({ id: agents.id, name: agents.name })
       .from(agents)
       .where(
         and(
@@ -229,6 +180,27 @@ export async function handleTelegramUpdate(args: {
 
     targetAgentId = targetRow.id;
     taskText = askText;
+
+    // F-1: the receiving agent's allowlist only authorizes talking to THAT
+    // agent — `/ask` re-pointing the job at a sibling must be gated by the
+    // SIBLING's own allowlist, or any chat authorized on ANY bot could reach
+    // every other agent in the entity by relaying through it. Ownership can
+    // only ever be claimed via a direct DM to the target's own bot (never via
+    // a relay), so this check never lets the chat become owner here — at
+    // most it lands as a pending member, even if the target has no owner yet.
+    if (targetAgentId !== receivingAgentId) {
+      const targetAuth = await checkChatAuthorization({
+        tx,
+        agentId: targetAgentId,
+        entityId: receivingAgentEntityId,
+        chatId: chatIdStr,
+        chatType,
+        senderName,
+        allowOwnerClaim: false,
+        targetAgentName: targetRow.name,
+      });
+      if (!targetAuth.authorized) return targetAuth.result;
+    }
   } else if (isGroup) {
     // Group chats: strip the @mention if present so the agent doesn't see
     // its own handle in the prompt; then prefix with sender name so it
@@ -284,11 +256,15 @@ export async function handleTelegramUpdate(args: {
   }
 
   // Atomically record the last-seen chat_id so the dashboard can offer
-  // "send result via Telegram" for this agent.
-  await tx
-    .update(agents)
-    .set({ lastSeenChatIdTelegram: String(chatId) })
-    .where(eq(agents.id, receivingAgentId));
+  // "send result via Telegram" for this agent. F-3: only for PRIVATE chats —
+  // it's display-only, but a group message would otherwise overwrite the
+  // owner's own DM chat id with the group's, breaking that dashboard feature.
+  if (chatType === 'private') {
+    await tx
+      .update(agents)
+      .set({ lastSeenChatIdTelegram: String(chatId) })
+      .where(eq(agents.id, receivingAgentId));
+  }
 
   return {
     jobId: job.id,
@@ -479,7 +455,156 @@ export async function pruneTelegramWorkspace(dir: string, db: RunnerDeps['db']):
 
 const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g;
 
+/**
+ * F-2: matches `@botusername` as a whole token — Telegram usernames only
+ * contain [A-Za-z0-9_], so a negative lookahead for another such character
+ * stops bot `@news` from matching inside `@newsroom hello`.
+ */
 function buildMentionRegex(botUsername: string): RegExp {
   const escaped = botUsername.replace(REGEX_SPECIAL, '\\$&');
-  return new RegExp(`@${escaped}`, 'gi');
+  return new RegExp(`@${escaped}(?![A-Za-z0-9_])`, 'gi');
+}
+
+type ChatAuthCheck = { authorized: true } | { authorized: false; result: HandleResult };
+
+/**
+ * H-1 inbound-authorization check for one (agent, chat) pair. Shared by two
+ * call sites in handleTelegramUpdate:
+ *   - the RECEIVING agent (a chat messaging its own bot directly) — may
+ *     claim ownership when the bot has none yet (`allowOwnerClaim: true`).
+ *   - F-1: the TARGET agent of a `/ask <slug>` relay — a chat authorized to
+ *     talk to agent A must not reach agent B just by asking A to relay it, so
+ *     B's OWN allowlist is checked too. `allowOwnerClaim: false` here: a
+ *     relay is never a direct DM to B's bot, so it can only ever land B as a
+ *     pending member — never its owner, even when B has no owner yet.
+ */
+async function checkChatAuthorization(args: {
+  tx: RunnerDeps['db'];
+  agentId: string;
+  entityId: string;
+  chatId: string;
+  chatType: string;
+  senderName: string;
+  allowOwnerClaim: boolean;
+  /** F-1: label for the owner's confirmation card when this is an /ask relay. */
+  targetAgentName?: string;
+}): Promise<ChatAuthCheck> {
+  const { tx, agentId, entityId, chatId, chatType, senderName, allowOwnerClaim, targetAgentName } =
+    args;
+
+  const [known] = await tx
+    .select({ status: telegramAllowedChats.status })
+    .from(telegramAllowedChats)
+    .where(and(eq(telegramAllowedChats.agentId, agentId), eq(telegramAllowedChats.chatId, chatId)))
+    .limit(1);
+
+  if (known) {
+    if (known.status === 'active') return { authorized: true };
+    // Already pending the owner's decision — drop silently (no re-ask).
+    return { authorized: false, result: { skipped: 'awaiting_authorization' } };
+  }
+
+  let [owner] = await tx
+    .select({ chatId: telegramAllowedChats.chatId })
+    .from(telegramAllowedChats)
+    .where(
+      and(
+        eq(telegramAllowedChats.agentId, agentId),
+        eq(telegramAllowedChats.role, 'owner'),
+        eq(telegramAllowedChats.status, 'active'),
+      ),
+    )
+    .limit(1);
+
+  if (!owner && allowOwnerClaim) {
+    // No owner yet. Ownership can only be claimed from a private DM — a group
+    // can't bootstrap it (the owner must DM the bot first).
+    if (chatType !== 'private') {
+      return { authorized: false, result: { skipped: 'no_owner_group' } };
+    }
+    await tx
+      .insert(telegramAllowedChats)
+      .values({
+        entityId,
+        agentId,
+        chatId,
+        role: 'owner',
+        status: 'active',
+        requesterName: senderName,
+      })
+      .onConflictDoNothing();
+
+    // F-4: race-safe re-check. `.onConflictDoNothing()` above has no target,
+    // so Postgres swallows ANY unique-constraint conflict on this table —
+    // including a concurrent DIFFERENT chat's owner claim landing first on
+    // the (agent_id) WHERE role='owner' partial unique index. Re-read what
+    // actually exists for THIS (agent, chat) pair instead of assuming our
+    // insert won: in the common single-writer case it did, and this read
+    // just confirms that with no behavior change.
+    const [ourRow] = await tx
+      .select({ role: telegramAllowedChats.role, status: telegramAllowedChats.status })
+      .from(telegramAllowedChats)
+      .where(
+        and(eq(telegramAllowedChats.agentId, agentId), eq(telegramAllowedChats.chatId, chatId)),
+      )
+      .limit(1);
+
+    if (ourRow?.role === 'owner' && ourRow.status === 'active') {
+      // Fall through: the owner's own first message proceeds to a job.
+      return { authorized: true };
+    }
+
+    // Lost the race — some other chat claimed ownership first. Fall back to
+    // pending member below, exactly like the "owner already exists" branch;
+    // re-fetch the actual owner so there's someone to notify.
+    [owner] = await tx
+      .select({ chatId: telegramAllowedChats.chatId })
+      .from(telegramAllowedChats)
+      .where(
+        and(
+          eq(telegramAllowedChats.agentId, agentId),
+          eq(telegramAllowedChats.role, 'owner'),
+          eq(telegramAllowedChats.status, 'active'),
+        ),
+      )
+      .limit(1);
+  }
+
+  // Owner exists (or the race above resolved to one) → a new contact needs
+  // the owner's confirmation. Record it pending and signal the poller to ask;
+  // this message creates NO job. When NO owner exists at all — only reachable
+  // via an /ask relay, where allowOwnerClaim is false — there's no one to
+  // notify yet, so the chat still lands pending, just silently.
+  const [pending] = await tx
+    .insert(telegramAllowedChats)
+    .values({
+      entityId,
+      agentId,
+      chatId,
+      role: 'member',
+      status: 'pending',
+      requesterName: senderName,
+    })
+    .onConflictDoNothing()
+    .returning({ id: telegramAllowedChats.id });
+
+  return {
+    authorized: false,
+    result: {
+      skipped: 'awaiting_authorization',
+      // Signal a confirmation only when WE inserted the row AND there's an
+      // owner to send it to — a repeat DM from an already-pending chat hits
+      // the unique constraint (no row) and must not re-spam the owner.
+      pendingAuth:
+        pending && owner
+          ? {
+              allowedChatId: pending.id,
+              ownerChatId: owner.chatId,
+              requesterChatId: chatId,
+              requesterName: senderName,
+              targetAgentName,
+            }
+          : undefined,
+    },
+  };
 }
