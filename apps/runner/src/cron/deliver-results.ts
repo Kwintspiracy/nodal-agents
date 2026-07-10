@@ -6,7 +6,7 @@
 // the root is skipped. The conditional UPDATE prevents double-processing
 // under concurrent ticks.
 
-import { and, eq, isNotNull, isNull, notInArray, agents } from '@nodal-agents/db';
+import { and, eq, isNotNull, isNull, notInArray, agents, isChatAllowed } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { checkRootJobComplete } from '@nodal-agents/orchestration';
@@ -233,25 +233,48 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     // the root agent's own model and send THAT (not the raw 15K concatenation,
     // which Telegram rejects as "message too long"). No chatId = no send
     // (preserves the anti-phantom-send guarantee).
+    //
+    // M4 (audit#2 defense-in-depth): every writer of rootJob.chatId today is
+    // owner-gated (cron → resolveOwnerChatId, dashboard → resolveOwnerChatId,
+    // inbound → authorized origin chat), so this isn't currently exploitable —
+    // but this is the send site, and any future chatId writer that isn't
+    // owner-gated would otherwise become an unsolicited-delivery hole right
+    // here. isChatAllowed re-checks the chatId against telegram_allowed_chats
+    // (active, scoped to this agent or its entity) immediately before send.
     if (rootJob.chatId && rootJob.agentId && compiledResult.trim()) {
       try {
-        const [ag] = await db
-          .select({
-            botToken: agents.telegramBotToken,
-            llmKeyId: agents.llmKeyId,
-            fallbackChain: agents.fallbackChain,
-            model: agents.model,
-          })
-          .from(agents)
-          .where(eq(agents.id, rootJob.agentId))
-          .limit(1);
-        if (ag?.botToken) {
-          const summary = await synthesizeForChannel(db, ag, rootJob.task ?? '', compiledResult);
-          await sendTelegramMessage({
+        const allowed =
+          rootJob.entityId !== null &&
+          (await isChatAllowed(db, {
+            entityId: rootJob.entityId,
+            agentId: rootJob.agentId,
             chatId: rootJob.chatId,
-            text: summary,
-            botToken: ag.botToken,
-          });
+          }));
+        if (!allowed) {
+          console.error(
+            `[deliverCompletedRoots] SECURITY: refusing to deliver root job ${rootJobId} ` +
+              `(agent ${rootJob.agentId}, entity ${rootJob.entityId ?? 'none'}) — chatId ` +
+              `${rootJob.chatId} is not an active row in telegram_allowed_chats`,
+          );
+        } else {
+          const [ag] = await db
+            .select({
+              botToken: agents.telegramBotToken,
+              llmKeyId: agents.llmKeyId,
+              fallbackChain: agents.fallbackChain,
+              model: agents.model,
+            })
+            .from(agents)
+            .where(eq(agents.id, rootJob.agentId))
+            .limit(1);
+          if (ag?.botToken) {
+            const summary = await synthesizeForChannel(db, ag, rootJob.task ?? '', compiledResult);
+            await sendTelegramMessage({
+              chatId: rootJob.chatId,
+              text: summary,
+              botToken: ag.botToken,
+            });
+          }
         }
       } catch (err) {
         // Delivery failure must not break completion — the result is persisted on

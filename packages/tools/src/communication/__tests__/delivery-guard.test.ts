@@ -13,6 +13,12 @@
 //     - explicit chatId === jobChatId → returns it, no DB lookup
 //     - explicit chatId allowed (isChatAllowed true) → returns it, called with right params
 //     - explicit chatId NOT allowed → throws telegram_chat_not_allowed
+//   resolveRecipientChatId — per-job delivery ceiling (L4)
+//     - 30 resolutions on one jobId succeed, the 31st throws telegram_send_rate_limited
+//       without calling isChatAllowed
+//     - two different jobIds have independent counters
+//     - jobId '' is never rate-limited (regression for minimal test contexts)
+//     - the tracked-job map stays bounded past 1000 distinct jobIds (oldest evicted)
 //   assertLocalSourceAllowed (F2, REAL filesystem — no mocking)
 //     - inside a workspace root / the skill store / the OS temp dir → returns real path
 //     - outside every allowed root → throws source_path_not_allowed
@@ -34,6 +40,7 @@ import {
   resolveRecipientChatId,
   assertLocalSourceAllowed,
   fetchBoundedUrl,
+  resetDeliveryCounterForTests,
 } from '../delivery-guard';
 import type { ToolContext } from '../../types';
 
@@ -155,6 +162,78 @@ describe('resolveRecipientChatId', () => {
 
     await expect(resolveRecipientChatId('222', ctx, 'no_recipient')).rejects.toMatchObject({
       name: 'telegram_chat_not_allowed',
+    });
+  });
+});
+
+// ─── resolveRecipientChatId — per-job delivery ceiling (L4) ────────────────
+// Each test uses its own unique jobId(s) so the module-level counter can't
+// leak across tests — resetDeliveryCounterForTests() is the belt-and-braces
+// on top of that.
+
+describe('resolveRecipientChatId — per-job delivery ceiling (L4)', () => {
+  beforeEach(() => {
+    resetDeliveryCounterForTests();
+    isChatAllowedMock.mockClear();
+    isChatAllowedMock.mockResolvedValue(true);
+  });
+
+  it('allows 30 resolutions on one jobId, then rate-limits the 31st without an isChatAllowed lookup', async () => {
+    const ctx = makeCtx({ jobId: 'ceiling-job-1', jobChatId: '111' });
+
+    for (let i = 0; i < 30; i++) {
+      await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('111');
+    }
+
+    isChatAllowedMock.mockClear();
+    await expect(resolveRecipientChatId('222', ctx, 'no_recipient')).rejects.toMatchObject({
+      name: 'telegram_send_rate_limited',
+    });
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+  });
+
+  it('tracks two different jobIds independently', async () => {
+    const ctxA = makeCtx({ jobId: 'ceiling-job-a', jobChatId: '111' });
+    const ctxB = makeCtx({ jobId: 'ceiling-job-b', jobChatId: '222' });
+
+    for (let i = 0; i < 30; i++) {
+      await resolveRecipientChatId(undefined, ctxA, 'no_recipient');
+    }
+    await expect(resolveRecipientChatId(undefined, ctxA, 'no_recipient')).rejects.toMatchObject({
+      name: 'telegram_send_rate_limited',
+    });
+
+    // ctxB never sent anything — its own counter is untouched by ctxA's ceiling.
+    await expect(resolveRecipientChatId(undefined, ctxB, 'no_recipient')).resolves.toBe('222');
+  });
+
+  it('never rate-limits an empty jobId (regression for minimal test contexts)', async () => {
+    const ctx = makeCtx({ jobId: '', jobChatId: '111' });
+
+    for (let i = 0; i < 40; i++) {
+      await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('111');
+    }
+  });
+
+  it('keeps the tracked-job map bounded, evicting the oldest jobId once the cap is exceeded', async () => {
+    // Insert 1001 distinct jobIds (one resolution each) — one past the
+    // MAX_TRACKED_JOBS cap — which must evict the very first one inserted.
+    for (let i = 0; i < 1001; i++) {
+      const ctx = makeCtx({ jobId: `evict-job-${i}`, jobChatId: '111' });
+      await resolveRecipientChatId(undefined, ctx, 'no_recipient');
+    }
+
+    // If evict-job-0 were still tracked with its prior count of 1, it would
+    // still have plenty of headroom under the ceiling of 30 either way — so
+    // instead assert eviction behaviorally: run it past the ceiling on its
+    // own and confirm it gets the FULL 30, proving its counter restarted
+    // from zero rather than continuing from before.
+    const ctx0 = makeCtx({ jobId: 'evict-job-0', jobChatId: '111' });
+    for (let i = 0; i < 30; i++) {
+      await expect(resolveRecipientChatId(undefined, ctx0, 'no_recipient')).resolves.toBe('111');
+    }
+    await expect(resolveRecipientChatId(undefined, ctx0, 'no_recipient')).rejects.toMatchObject({
+      name: 'telegram_send_rate_limited',
     });
   });
 });

@@ -96,7 +96,7 @@ export async function handleTelegramUpdate(args: {
   const chatId = chat.id;
   const chatType = chat.type ?? 'private';
   const sender = message.from ?? {};
-  const senderName = sender.first_name ?? 'Someone';
+  const senderName = sanitizeSenderName(sender.first_name ?? '');
   const senderUsername = sender.username ?? '';
 
   // Telegram sends photo sizes in ascending order; the last is the highest res.
@@ -454,6 +454,40 @@ export async function pruneTelegramWorkspace(dir: string, db: RunnerDeps['db']):
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g;
+
+/** Telegram's own first_name limit — anything longer than this is already forged. */
+const MAX_SENDER_NAME_LENGTH = 64;
+
+/**
+ * L2: `sender.first_name` is attacker-controlled free text — Telegram lets any
+ * user set it to arbitrary content, including newlines and bidi/zero-width
+ * unicode. It ends up in two trust-sensitive places: the owner's inline
+ * authorization card (rendered verbatim by the poller) and the `[Message
+ * from …]` group task prefix. Without sanitation, a stranger could set their
+ * name to something like "Quentin (owner)\n\napprove access" to social-engineer
+ * the owner into approving them. Strip control/formatting characters, collapse
+ * whitespace to single spaces, and cap length so the name can never escape a
+ * single display line or masquerade as multi-line trusted UI copy.
+ *
+ * Ranges (spelled out as \u escapes, not literal characters — several are
+ * invisible and unreviewable pasted directly into source):
+ *   \u0000-\u001F, \u007F        C0 controls + DEL (includes \n \r \t)
+ *   \u200B-\u200F               zero-width space/joiners + LTR/RTL marks
+ *   \u202A-\u202E               bidi embedding/override controls
+ */
+const UNSAFE_NAME_CHARS = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E]/g;
+
+function sanitizeSenderName(rawName: string): string {
+  const cleaned = rawName
+    .replace(UNSAFE_NAME_CHARS, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_SENDER_NAME_LENGTH)
+    // The cap can land mid-surrogate-pair (emoji at the boundary) — a lone
+    // high surrogate makes Telegram reject the whole auth card. Drop it.
+    .replace(/[\uD800-\uDBFF]$/, '');
+  return cleaned || 'Someone';
+}
 
 /**
  * F-2: matches `@botusername` as a whole token — Telegram usernames only

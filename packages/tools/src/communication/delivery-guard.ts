@@ -5,12 +5,14 @@
 // Consolidates what used to be copy-pasted per tool:
 //   - bot token resolution (resolveBotToken)
 //   - recipient chatId resolution + authorization (resolveRecipientChatId, F1)
+//     — including the hard per-job delivery ceiling (L4)
 //   - local source-path confinement (assertLocalSourceAllowed, F2)
 //   - bounded, link-local-blocked URL fetch (fetchBoundedUrl, F3)
 //
 // Each tool keeps its OWN error names for the no-token/no-recipient/too-large
-// cases (passed in as params) — only `telegram_chat_not_allowed` and
-// `source_path_not_allowed` are new, shared names.
+// cases (passed in as params) — only `telegram_chat_not_allowed`,
+// `telegram_send_rate_limited`, and `source_path_not_allowed` are new,
+// shared names.
 
 import { eq } from '@nodal-agents/db';
 import { agents, isChatAllowed } from '@nodal-agents/db';
@@ -38,6 +40,49 @@ export async function resolveBotToken(ctx: ToolContext): Promise<string | undefi
   return agentRows[0]?.telegramBotToken ?? undefined;
 }
 
+// ─── Per-job delivery ceiling (L4) ─────────────────────────────────────────
+//
+// The advisory anti-spam guard on the runner side is heuristic; this is the
+// deterministic backstop. resolveRecipientChatId is on the path of every one
+// of the 6 delivery tools, so it is the natural choke point for a hard cap.
+
+/**
+ * 30 covers a very long multi-part delivery (long replies chunk at 4096
+ * chars, so a single "reply" can legitimately take several sends) while
+ * still stopping a genuinely runaway send loop — same anti-loop philosophy
+ * as the chain/tool-call caps in packages/orchestration/src/chain-counters.ts.
+ */
+const MAX_DELIVERIES_PER_JOB = 30;
+
+/** Bound on distinct jobIds tracked at once, so a long-lived runner process never leaks memory. */
+const MAX_TRACKED_JOBS = 1000;
+
+/** Module-level: successful deliveries so far, keyed by jobId. Insertion order = oldest first. */
+const deliveryCountsByJob = new Map<string, number>();
+
+function evictOldestIfOverCapacity(): void {
+  let excess = deliveryCountsByJob.size - MAX_TRACKED_JOBS;
+  const it = deliveryCountsByJob.keys();
+  while (excess > 0) {
+    const oldest = it.next();
+    if (oldest.done) break;
+    deliveryCountsByJob.delete(oldest.value);
+    excess--;
+  }
+}
+
+/**
+ * Test-only helper to keep cases isolated: clears the counter for one jobId,
+ * or every jobId when called with no argument. Not for production use.
+ */
+export function resetDeliveryCounterForTests(jobId?: string): void {
+  if (jobId === undefined) {
+    deliveryCountsByJob.clear();
+  } else {
+    deliveryCountsByJob.delete(jobId);
+  }
+}
+
 // ─── Recipient chatId + authorization (F1) ─────────────────────────────────
 
 /**
@@ -50,12 +95,26 @@ export async function resolveBotToken(ctx: ToolContext): Promise<string | undefi
  *     row in telegram_allowed_chats for this agent or its entity, else
  *     throws `telegram_chat_not_allowed`. No fallback, no silent redirect —
  *     an agent can never message an arbitrary chat id it wasn't approved for.
+ *   - hard per-job delivery ceiling (L4): a real jobId that has already hit
+ *     MAX_DELIVERIES_PER_JOB successful resolutions throws
+ *     `telegram_send_rate_limited` before any lookup runs. An empty/absent
+ *     jobId (minimal test contexts) is never counted or rate-limited.
  */
 export async function resolveRecipientChatId(
   explicitChatId: string | undefined,
   ctx: ToolContext,
   noRecipientErrorName: string,
 ): Promise<string> {
+  if (ctx.jobId && (deliveryCountsByJob.get(ctx.jobId) ?? 0) >= MAX_DELIVERIES_PER_JOB) {
+    const err = new Error(
+      `telegram_send_rate_limited: this job has already sent ${MAX_DELIVERIES_PER_JOB} ` +
+        'messages, the per-job delivery ceiling. Stop sending and finish with return_result ' +
+        'instead — do not retry this call.',
+    );
+    err.name = 'telegram_send_rate_limited';
+    throw err;
+  }
+
   const chatId = explicitChatId ?? ctx.jobChatId;
   if (!chatId) {
     const err = new Error(noRecipientErrorName);
@@ -78,6 +137,11 @@ export async function resolveRecipientChatId(
       err.name = 'telegram_chat_not_allowed';
       throw err;
     }
+  }
+
+  if (ctx.jobId) {
+    deliveryCountsByJob.set(ctx.jobId, (deliveryCountsByJob.get(ctx.jobId) ?? 0) + 1);
+    evictOldestIfOverCapacity();
   }
 
   return chatId;

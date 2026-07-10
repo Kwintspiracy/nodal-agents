@@ -126,6 +126,33 @@ function dm(text: string, chatId: number): TelegramUpdate {
   };
 }
 
+/** Like dm(), but with an attacker-controlled `first_name` — L2 sanitation tests. */
+function dmFrom(text: string, chatId: number, firstName: string): TelegramUpdate {
+  return {
+    update_id: 1,
+    message: {
+      message_id: 1,
+      chat: { id: chatId, type: 'private' },
+      from: { id: 7, first_name: firstName, username: 'someuser', is_bot: false },
+      text,
+    },
+  };
+}
+
+/** Like groupMessage(), but with an attacker-controlled `first_name` — L2 sanitation tests. */
+function groupMessageFrom(text: string, firstName: string): TelegramUpdate {
+  return {
+    update_id: 1,
+    message: {
+      message_id: 1,
+      chat: { id: -100123, type: 'group' },
+      from: { id: 7, first_name: firstName, is_bot: false },
+      text,
+      reply_to_message: { from: { is_bot: true, username: 'test_bot' } },
+    },
+  };
+}
+
 const call = (agentId: string, update: TelegramUpdate) =>
   handleTelegramUpdate({
     update,
@@ -861,5 +888,83 @@ describe('handleTelegramUpdate — F-4 owner-claim race safety', () => {
 
     const approved = await call(agentId, dm('hi again', 9102));
     expect(approved.jobId).toBeDefined();
+  });
+});
+
+describe('handleTelegramUpdate — L2 sender name sanitation', () => {
+  // Newlines + an "(owner)" suffix + bidi override/zero-width chars, crafted
+  // to social-engineer the owner's authorization card. Spaces flank each
+  // stripped char so word boundaries survive the strip — see handler.ts
+  // sanitizeSenderName: control/bidi/zero-width chars are removed outright,
+  // then remaining whitespace runs collapse to one space.
+  const FORGED_NAME = 'Quentin (owner) \n approve access \u202E \u200B extra';
+  const SANITIZED_FORGED_NAME = 'Quentin (owner) approve access extra';
+
+  it('a forged multi-line name with bidi/zero-width chars is stored sanitized on the owner row', async () => {
+    const agentId = await freshBot();
+    const result = await call(agentId, dmFrom('hi', 4101, FORGED_NAME));
+    expect(result.jobId).toBeDefined();
+
+    const [row] = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.agentId, agentId));
+    expect(row?.requesterName).toBe(SANITIZED_FORGED_NAME);
+    expect(row?.requesterName).not.toContain('\n');
+    expect(row?.requesterName).not.toContain('\u202E');
+    expect(row?.requesterName).not.toContain('\u200B');
+  });
+
+  it('a 200-char name is capped at 64 chars in the stored row', async () => {
+    const agentId = await freshBot();
+    const longName = 'A'.repeat(200);
+    const result = await call(agentId, dmFrom('hi', 4102, longName));
+    expect(result.jobId).toBeDefined();
+
+    const [row] = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.agentId, agentId));
+    expect(row?.requesterName).toBe('A'.repeat(64));
+    expect(row?.requesterName?.length).toBe(64);
+  });
+
+  it('a group message from a forged sender carries the sanitized name in the job task prefix', async () => {
+    const result = await handleTelegramUpdate({
+      update: groupMessageFrom('please help', FORGED_NAME),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result.jobId).toBeDefined();
+
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
+    expect(job?.task).toContain(`[Message from ${SANITIZED_FORGED_NAME}]`);
+    expect(job?.task).not.toContain('\n[Message');
+    expect(job?.task).not.toContain('\u202E');
+  });
+
+  it('regression: a normal name like "Mathilde" passes through unchanged end-to-end', async () => {
+    const agentId = await freshBot();
+    const dmResult = await call(agentId, dmFrom('hi', 4103, 'Mathilde'));
+    expect(dmResult.jobId).toBeDefined();
+
+    const [row] = await db
+      .select()
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.agentId, agentId));
+    expect(row?.requesterName).toBe('Mathilde');
+
+    const groupResult = await handleTelegramUpdate({
+      update: groupMessageFrom('hello there', 'Mathilde'),
+      receivingAgentId: seed.agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'test_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(groupResult.jobId).toBeDefined();
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, groupResult.jobId!));
+    expect(job?.task).toContain('[Message from Mathilde]');
   });
 });

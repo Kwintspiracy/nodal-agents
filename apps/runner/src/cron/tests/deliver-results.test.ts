@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agentTasks, agents } from '@nodal-agents/db';
+import { agentJobs, agentTasks, agents, telegramAllowedChats } from '@nodal-agents/db';
 
 // Mock the channel send + the LLM resolver so we can assert WHAT gets sent to
 // the channel (the short synthesis) without network/LLM. Hoisted by vitest.
@@ -74,6 +74,16 @@ async function createTaskForRoot(
     })
     .returning();
   return rows[0]!;
+}
+
+async function allowChat(chatId: string) {
+  await db.insert(telegramAllowedChats).values({
+    entityId: seed.entityId,
+    agentId: seed.agentId,
+    chatId,
+    role: 'member',
+    status: 'active',
+  });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -300,6 +310,7 @@ describe('deliverCompletedRoots', () => {
       client: { generateText: vi.fn(async () => ({ text: 'SHORT SUMMARY ✅' })) },
     });
     sendTelegramMessageMock.mockClear();
+    await allowChat('12345'); // M4: send site now requires an active telegram_allowed_chats row
 
     const rootJob = await createRootJob();
     await db
@@ -329,6 +340,7 @@ describe('deliverCompletedRoots', () => {
       reason: 'agent_no_llm_configured',
     });
     sendTelegramMessageMock.mockClear();
+    await allowChat('777'); // M4: send site now requires an active telegram_allowed_chats row
 
     const rootJob = await createRootJob();
     await db
@@ -342,6 +354,45 @@ describe('deliverCompletedRoots', () => {
     expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
     const arg = sendTelegramMessageMock.mock.calls[0]![0] as { text: string };
     expect(arg.text).toContain('Fallback result body'); // compiled text, chunking handles length
+  });
+
+  it('M4: root job chatId NOT in telegram_allowed_chats is refused — no send, job still completes, loud security log', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    sendTelegramMessageMock.mockClear();
+
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({
+        completedAt: null,
+        status: 'processing',
+        channel: 'telegram',
+        chatId: 'unapproved-chat-999', // never inserted into telegram_allowed_chats
+      })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'Task result body', 'Task A');
+
+    const count = await deliverCompletedRoots(db as RunnerDeps['db']);
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    // The send boundary is never reached for an unauthorized chatId.
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+    // Delivery refusal does not block completion — the root still transitions
+    // to completed exactly as it would if the send had succeeded.
+    const updated = await db
+      .select({ status: agentJobs.status, completedAt: agentJobs.completedAt })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, rootJob.id));
+    expect(updated[0]?.status).toBe('completed');
+    expect(updated[0]?.completedAt).not.toBeNull();
+
+    // A loud security log fires, naming the refused chatId and the job.
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('SECURITY'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('unapproved-chat-999'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(rootJob.id));
+
+    consoleErrorSpy.mockRestore();
   });
 
   it('fix #27: findUndeliveredRootJobIds excludes an already-delivered root from the SCAN itself', async () => {
