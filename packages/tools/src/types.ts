@@ -130,6 +130,21 @@ export type ProvisionMcpConnect =
   | { transport: 'stdio'; command: string; args: string[]; env: Record<string, string> };
 
 /**
+ * A discovered MCP tool, redeclared here (mirrors the MCP adapter's
+ * `McpToolDescriptor`) so packages/tools stays free of an adapter dependency.
+ * `inputSchema` is what makes a cache "v2" per `isUsableMcpToolCache` in the
+ * runner — omitting it forces every job to re-connect eagerly to rebuild the
+ * toolset, so create_mcp MUST persist the full descriptor, not just
+ * name/description.
+ */
+export interface ProvisionedMcpTool {
+  name: string;
+  description: string | null;
+  inputSchema?: unknown;
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+}
+
+/**
  * Capabilities the runner injects so ROOT meta-tools can verify-then-write
  * external infrastructure without packages/tools importing the MCP adapter or
  * the secrets package.
@@ -141,7 +156,7 @@ export interface ToolProvisioning {
    * the returned connection.
    */
   connectMcp(opts: ProvisionMcpConnect): Promise<{
-    tools: Array<{ name: string; description: string | null }>;
+    tools: ProvisionedMcpTool[];
     close: () => Promise<void>;
   }>;
   /** Encrypt a secret value for at-rest storage. */

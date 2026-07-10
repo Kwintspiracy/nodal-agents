@@ -48,8 +48,9 @@ vi.mock('node:fs/promises', () => ({
 
 // ─── Mock @nodal-agents/db ────────────────────────────────────────────────────
 
-const { isChatAllowedMock } = vi.hoisted(() => ({
+const { isChatAllowedMock, resolveOwnerChatIdMock } = vi.hoisted(() => ({
   isChatAllowedMock: vi.fn(),
+  resolveOwnerChatIdMock: vi.fn(),
 }));
 
 function makeDb(telegramBotToken: string | null | undefined) {
@@ -68,7 +69,12 @@ function makeDb(telegramBotToken: string | null | undefined) {
 vi.mock('@nodal-agents/db', () => {
   const agents = { telegramBotToken: 'telegram_bot_token', id: 'id' };
   const eq = (col: unknown, val: unknown) => ({ col, val });
-  return { agents, eq, isChatAllowed: isChatAllowedMock };
+  return {
+    agents,
+    eq,
+    isChatAllowed: isChatAllowedMock,
+    resolveOwnerChatId: resolveOwnerChatIdMock,
+  };
 });
 
 // ─── Context factory ──────────────────────────────────────────────────────────
@@ -111,6 +117,7 @@ describe('createSendImageTool', () => {
     readFileMock.mockResolvedValue(TINY_PNG);
     realpathMock.mockImplementation((p: string) => Promise.resolve(p));
     isChatAllowedMock.mockResolvedValue(true);
+    resolveOwnerChatIdMock.mockResolvedValue(null);
   });
 
   it('(a) resolves chatId from ctx.jobChatId when no chatId arg provided', async () => {

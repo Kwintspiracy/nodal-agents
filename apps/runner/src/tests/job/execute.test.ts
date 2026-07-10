@@ -107,6 +107,8 @@ function makeMockLlmClient(
   }>,
   capturedPrompts?: unknown[],
   configOverride?: { provider: string; model: string },
+  /** The keys of the `tools` object handed to the model each turn — the REAL whitelist. */
+  capturedToolKeysPerCall?: string[][],
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -185,10 +187,15 @@ function makeMockLlmClient(
       structuredOutputs: false,
       streaming: false,
     },
-    generateText: (args) =>
-      generateText({ ...args, model: mockModel } as Parameters<
+    generateText: (args) => {
+      if (capturedToolKeysPerCall) {
+        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
+        capturedToolKeysPerCall.push(Object.keys(tools));
+      }
+      return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
-      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+    },
     streamText: () => {
       throw new Error('streamText not supported in mock');
     },
@@ -2167,12 +2174,21 @@ describe('executeJob', () => {
     expect(rows[0]?.status).toBe('failed');
   });
 
-  it('channel-aware delivery: telegram_send_message is NOT offered on a dashboard job with no recipient (regression for jobs 2ddb15e3/920fd89c)', async () => {
-    // The agent HAS a bot token, but a dashboard job has no chatId → no Telegram
-    // recipient. The tool must not be offered: a phantom telegram_send_message
-    // fails (telegram_no_recipient) and trips the no-false-success guard on an
-    // otherwise-successful task (the live false-failure). dashboard_publish is
-    // the path on this channel.
+  it('channel-aware delivery: a phantom telegram_send_message on a dashboard job with no recipient still fails loud, never delivers (regression for jobs 2ddb15e3/920fd89c)', async () => {
+    // Historical bug: the agent completed a dashboard task successfully via
+    // another channel, then ALSO tried a redundant Telegram confirmation,
+    // which failed (telegram_no_recipient) and tripped the no-false-success
+    // guard, wrongly blocking an otherwise-successful task.
+    //
+    // The tool registration gate used to be job.chatId-based (excluding
+    // dashboard jobs entirely). That gate has since been widened: registration
+    // now only depends on the agent having a bot token — recipient resolution
+    // (including an OWNER fallback for jobs with no jobChatId, see
+    // delivery-guard.ts) is delivery-guard's job, not tool-whitelist's. So
+    // telegram_send_message IS now offered here. The security property under
+    // test still holds: this seeded agent has no registered OWNER chat, so
+    // the owner fallback also resolves to null and the call still fails loud
+    // with no-recipient — the delivery function is NEVER reached.
     await db
       .update(agents)
       .set({ telegramBotToken: 'fake-token' })
@@ -2198,13 +2214,106 @@ describe('executeJob', () => {
     sendTelegramMessageMock.mockClear();
     const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
 
-    // Not whitelisted (no recipient on this channel) → the call is nudged then
-    // caught by a guard; the delivery function is NEVER reached and the job fails
+    // No recipient resolvable (no jobChatId, no registered owner) → the tool
+    // call itself throws repeatedly; a guard catches it and the job fails
     // loud rather than falsely succeeding (the security property under test).
     expect(result.status).toBe('failed');
     expect(sendTelegramMessageMock).not.toHaveBeenCalled();
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('capability whitelist: a cron job (chatId null) for an agent WITH a bot token includes telegram_send_message and send_image (fix for the silent-watcher gap)', async () => {
+    // The exact live gap this closes: a cron watcher job (notify_on_success
+    // off → job.chatId is null) whose agent HAS a Telegram bot token used to
+    // get NO delivery tools at all — it could detect something worth
+    // reporting and have no way to speak. Registration must depend only on a
+    // resolvable bot token, never on job.chatId/channel.
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        chatId: null,
+        task: 'Watch for something and report it',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('failed to create cron test job');
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Assert on the REAL tool list the LLM was handed on its first turn.
+    expect(toolKeysPerCall.length).toBeGreaterThan(0);
+    const firstTurnTools = new Set(toolKeysPerCall[0]);
+    expect(firstTurnTools.has('telegram_send_message')).toBe(true);
+    expect(firstTurnTools.has('send_image')).toBe(true);
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('capability whitelist: a cron job for an agent with NO token anywhere gets no delivery tools (regression)', async () => {
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'cron',
+        chatId: null,
+        task: 'Watch for something and report it',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('failed to create cron test job');
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    expect(toolKeysPerCall.length).toBeGreaterThan(0);
+    const firstTurnTools = new Set(toolKeysPerCall[0]);
+    expect(firstTurnTools.has('telegram_send_message')).toBe(false);
+    expect(firstTurnTools.has('send_image')).toBe(false);
   });
 
   // ─── Brique 25: fail-loud on missing llmKeyId ──────────────────────────────

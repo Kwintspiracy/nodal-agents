@@ -570,13 +570,15 @@ describe('create_agent', () => {
 
 function fakeProvisioning(opts?: {
   fail?: boolean;
-  tools?: { name: string; description: string | null }[];
+  tools?: import('../../types').ProvisionedMcpTool[];
 }): ToolProvisioning {
   return {
     async connectMcp() {
       if (opts?.fail) throw new Error('connection refused');
       return {
-        tools: opts?.tools ?? [{ name: 'search', description: 'a search tool' }],
+        tools: opts?.tools ?? [
+          { name: 'search', description: 'a search tool', inputSchema: { type: 'object' } },
+        ],
         close: async () => {},
       };
     },
@@ -599,7 +601,13 @@ describe('create_mcp', () => {
         apiKey: 'sk-secret-1234',
         authScheme: 'bearer',
       },
-      makeCtxWith(fakeProvisioning({ tools: [{ name: 'do_thing', description: 'does a thing' }] })),
+      makeCtxWith(
+        fakeProvisioning({
+          tools: [
+            { name: 'do_thing', description: 'does a thing', inputSchema: { type: 'object' } },
+          ],
+        }),
+      ),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(`expected ok: ${result.error}`);
@@ -616,8 +624,13 @@ describe('create_mcp', () => {
     expect(row!.apiKey).toBe('enc:sk-secret-1234');
     expect(row!.apiKeyLast4).toBe('1234');
     expect(row!.authScheme).toBe('bearer');
-    // Discovered tools from the live connection are persisted.
-    expect(row!.availableTools).toEqual([{ name: 'do_thing', description: 'does a thing' }]);
+    // Discovered tools from the live connection are persisted WITH inputSchema
+    // (the "v2" cache shape — isUsableMcpToolCache requires it on every entry
+    // for the runner to take the lazy-connect path instead of eagerly
+    // reconnecting on every job).
+    expect(row!.availableTools).toEqual([
+      { name: 'do_thing', description: 'does a thing', inputSchema: { type: 'object' } },
+    ]);
   });
 
   it('stdio: encrypts each env value and stores command + args', async () => {

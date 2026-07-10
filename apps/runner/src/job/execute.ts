@@ -127,11 +127,22 @@ const MAX_TOOL_RESULT_CHARS = 50_000;
 // meta-tool never persists an unverified server. Adapts the MCP adapter's
 // connection shape to ToolProvisioning and exposes secret encryption — keeping
 // packages/tools free of adapter/secrets dependencies.
+//
+// Carries inputSchema/annotations through (not just name/description): this is
+// what create_mcp persists into mcp_servers.available_tools, and
+// isUsableMcpToolCache (mcp-tool-cache.ts) requires inputSchema on every entry
+// for the "v2" cache to be usable. Stripping it here used to force every
+// create_mcp-provisioned server onto the eager reconnect-on-every-job path.
 const TOOL_PROVISIONING: ToolProvisioning = {
   async connectMcp(opts) {
     const conn = await connectMcp(opts);
     return {
-      tools: conn.tools.map((t) => ({ name: t.name, description: t.description ?? null })),
+      tools: conn.tools.map((t) => ({
+        name: t.name,
+        description: t.description ?? null,
+        inputSchema: t.inputSchema,
+        annotations: t.annotations,
+      })),
       close: conn.close,
     };
   },
@@ -1009,16 +1020,17 @@ async function runJob(
   // capabilityTools bypasses computeToolWhitelist's registry-based drift check
   // because the definition itself is passed, not just its name.
   const capabilityTools: AnyToolDef[] = [];
-  // telegram_send_message is only offered when this job actually has a Telegram
-  // recipient to reach: a telegram job, a cron-notify opt-in, or a dashboard task
-  // sent "via Telegram" — all carry job.chatId. On a dashboard/api/internal job
-  // with no chatId there IS no chat, so offering it just lets the agent try →
-  // telegram_no_recipient → the no-false-success guard (Guard 3b) blocks the
-  // completion: a successful task wrongly reported as failed/blocked (live: jobs
-  // 2ddb15e3, 920fd89c — agent emailed fine, then tried a phantom Telegram
-  // confirmation). The user is on the dashboard; dashboard_publish is the path.
-  // Gate delivery tools on a resolvable recipient — channel-agnostic, the pattern
-  // every future outbound tool (whatsapp/slack) follows.
+  // telegram_send_message (and its siblings) are offered whenever this job
+  // has a Telegram bot token to deliver with — a resolvable RECIPIENT is a
+  // separate concern, handled per-call by resolveRecipientChatId's fallback
+  // chain (explicit chatId → job.chatId → the agent's OWNER chat). Gating
+  // registration on job.chatId used to also exclude the owner-fallback path:
+  // a cron watcher (notify_on_success=false, job.chatId=null) that detects
+  // something worth reporting had a bot token but no send tools at all — it
+  // could never speak, even though resolveRecipientChatId now resolves the
+  // owner for exactly this case. Registration only needs to know a token
+  // exists; recipient resolution (and its own no-recipient failure mode) is
+  // delivery-guard's job, not tool-whitelist's.
   //
   // B3 — a delegated worker (job.parentJobId set) whose OWN agent has no
   // Telegram bot token inherits its entity's ROOT agent's token, so it can
@@ -1028,8 +1040,11 @@ async function runJob(
   // another entity's — no cross-entity fallback. No change when the agent
   // already has its own token (inheritedRootBotToken stays null, so ctx below
   // gets no override and the send tools fall back to their historical
-  // per-call DB lookup), nor when there is no chatId (dashboard/cron — the
-  // anti-"phantom Telegram" gate above/below is unchanged).
+  // per-call DB lookup). Inheritance still requires job.chatId: a delegated
+  // worker with no chat of its own has no owner row on the child agent
+  // either (owner rows live on the root), so without a chatId to inherit it
+  // would register tools it can never successfully call — token inheritance
+  // stays scoped to the case it actually solves.
   let inheritedRootBotToken: string | null = null;
   if (!agentRow.telegramBotToken && job.parentJobId && job.chatId) {
     const [rootAgentTokenRow] = await db
@@ -1041,7 +1056,7 @@ async function runJob(
     inheritedRootBotToken = rootAgentTokenRow?.telegramBotToken ?? null;
   }
   const deliveryBotToken = agentRow.telegramBotToken ?? inheritedRootBotToken;
-  if (deliveryBotToken && job.chatId) {
+  if (deliveryBotToken) {
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendFileTool() as unknown as AnyToolDef);
@@ -1372,8 +1387,17 @@ async function runJob(
               ? toolset.tools
               : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
           capabilityTools.push(...filtered);
-        } catch {
-          continue; // MCP server unreachable / auth failed / spawn failed — skip silently
+        } catch (err) {
+          // MCP server unreachable / auth failed / spawn failed — must not
+          // fail an unrelated job, so we still `continue`. But swallowing
+          // this silently (invariant #4) made a whole class of "agent has
+          // zero tools from an attached MCP server" incidents undiagnosable
+          // — log loud so the slug/id and root cause show up in job logs.
+          console.error(
+            `[execute] MCP tool materialization failed for server '${ms.slug}' (${ms.id}): ` +
+              `${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+          );
+          continue;
         }
       }
       // ────────────────────────────────────────────────────────────────────────

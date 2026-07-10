@@ -33,12 +33,20 @@ const { readFileMock, realpathMock } = vi.hoisted(() => ({
 }));
 vi.mock('node:fs/promises', () => ({ readFile: readFileMock, realpath: realpathMock }));
 
-const { isChatAllowedMock } = vi.hoisted(() => ({ isChatAllowedMock: vi.fn() }));
+const { isChatAllowedMock, resolveOwnerChatIdMock } = vi.hoisted(() => ({
+  isChatAllowedMock: vi.fn(),
+  resolveOwnerChatIdMock: vi.fn(),
+}));
 
 vi.mock('@nodal-agents/db', () => {
   const agents = { telegramBotToken: 'telegram_bot_token', id: 'id' };
   const eq = (col: unknown, val: unknown) => ({ col, val });
-  return { agents, eq, isChatAllowed: isChatAllowedMock };
+  return {
+    agents,
+    eq,
+    isChatAllowed: isChatAllowedMock,
+    resolveOwnerChatId: resolveOwnerChatIdMock,
+  };
 });
 
 function makeDb(telegramBotToken: string | null | undefined) {
@@ -89,6 +97,7 @@ describe('send media tools', () => {
     readFileMock.mockResolvedValue(TINY);
     realpathMock.mockImplementation((p: string) => Promise.resolve(p));
     isChatAllowedMock.mockResolvedValue(true);
+    resolveOwnerChatIdMock.mockResolvedValue(null);
   });
 
   it('exposes the right names and risk levels', () => {

@@ -478,4 +478,50 @@ describe('job-with-mcp-server: Lot A3 — lazy MCP connect cache', () => {
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
     await db.update(mcpServers).set({ availableTools: null }).where(eq(mcpServers.id, mcpServerId));
   });
+
+  it('an eager connect failure is logged loud (slug + id) and the job completes without that server', async () => {
+    // No cache (availableTools null after the previous test) → the eager
+    // path runs and rejects. Before this fix the catch was bare — a broken
+    // MCP server vanished with zero trace anywhere in the logs.
+    mcpMock.createMcpTools.mockReset();
+    mcpMock.createLazyMcpTools.mockReset();
+    mcpMock.createMcpTools.mockRejectedValue(new Error('ECONNREFUSED'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await db
+      .insert(agentMcpServers)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, mcpServerId, enabledTools: null })
+      .onConflictDoNothing();
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Cogni is down, answer without it',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create job');
+
+    // The MCP tool never makes it into the whitelist → the LLM just answers with text.
+    const client = makeMockLlmClient([{ text: 'Cogni is unreachable right now.' }]);
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+
+    const loggedMcpFailure = errorSpy.mock.calls.some(
+      (args) =>
+        typeof args[0] === 'string' &&
+        args[0].includes('cogni-cortex') &&
+        args[0].includes(mcpServerId) &&
+        args[0].includes('ECONNREFUSED'),
+    );
+    expect(loggedMcpFailure).toBe(true);
+
+    errorSpy.mockRestore();
+    await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
+  });
 });

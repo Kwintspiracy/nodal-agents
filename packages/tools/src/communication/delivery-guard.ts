@@ -15,7 +15,7 @@
 // shared names.
 
 import { eq } from '@nodal-agents/db';
-import { agents, isChatAllowed } from '@nodal-agents/db';
+import { agents, isChatAllowed, resolveOwnerChatId } from '@nodal-agents/db';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -87,7 +87,8 @@ export function resetDeliveryCounterForTests(jobId?: string): void {
 
 /**
  * Resolve the target chatId and authorize it:
- *   - no explicit chatId → falls back to ctx.jobChatId; null → throws
+ *   - no explicit chatId → falls back to ctx.jobChatId; still null → falls
+ *     back to the agent's OWNER chat (see below); no owner either → throws
  *     `noRecipientErrorName` (each tool keeps its historical name).
  *   - explicit chatId === ctx.jobChatId → allowed without a DB lookup (the
  *     job's origin chat is authorized by construction).
@@ -115,7 +116,24 @@ export async function resolveRecipientChatId(
     throw err;
   }
 
-  const chatId = explicitChatId ?? ctx.jobChatId;
+  let chatId = explicitChatId ?? ctx.jobChatId;
+
+  // Owner fallback: an unsolicited run (cron watcher, notify_on_success=false,
+  // any job with no originating chat) that decides on its own initiative to
+  // speak must reach the OWNER — the same canonical target as every other
+  // unsolicited delivery since commit 77c40b8 (`schedule.chatId ??
+  // resolveOwnerChatId()`), never a guessed or last-seen chat. Only applies
+  // when the caller omitted chatId entirely — an explicit chatId always goes
+  // through the allowlist check below, never this shortcut, so the owner is
+  // NOT allowlist-checked (it's the canonical target, not a guess).
+  // For a DELEGATED child job running on its entity's inherited root token,
+  // ctx.agentId is the CHILD agent — owner rows live on the root agent, so
+  // this correctly resolves to null and the child still throws no-recipient;
+  // it must deliver through its parent chain, never guess the root's owner.
+  if (explicitChatId === undefined && chatId === null) {
+    chatId = await resolveOwnerChatId(ctx.db, ctx.agentId);
+  }
+
   if (!chatId) {
     const err = new Error(noRecipientErrorName);
     err.name = noRecipientErrorName;

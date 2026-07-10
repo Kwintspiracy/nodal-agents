@@ -35,8 +35,9 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
 
 // ─── Mock @nodal-agents/db ─────────────────────────────────────────────────────────
 
-const { isChatAllowedMock } = vi.hoisted(() => ({
+const { isChatAllowedMock, resolveOwnerChatIdMock } = vi.hoisted(() => ({
   isChatAllowedMock: vi.fn(),
+  resolveOwnerChatIdMock: vi.fn(),
 }));
 
 // We build a minimal fake DB that returns agent rows on demand
@@ -60,7 +61,12 @@ vi.mock('@nodal-agents/db', () => {
     id: 'id',
   };
   const eq = (col: unknown, val: unknown) => ({ col, val });
-  return { agents, eq, isChatAllowed: isChatAllowedMock };
+  return {
+    agents,
+    eq,
+    isChatAllowed: isChatAllowedMock,
+    resolveOwnerChatId: resolveOwnerChatIdMock,
+  };
 });
 
 // ─── Context factory ──────────────────────────────────────────────────────────
@@ -91,6 +97,7 @@ describe('createTelegramSendMessageTool', () => {
     vi.clearAllMocks();
     sendTelegramMessageMock.mockResolvedValue({ messageId: 42 });
     isChatAllowedMock.mockResolvedValue(true);
+    resolveOwnerChatIdMock.mockResolvedValue(null);
   });
 
   it('sends message using ctx.jobChatId when no chatId arg provided', async () => {

@@ -13,7 +13,7 @@
 import { z } from 'zod';
 import { eq, and } from '@nodal-agents/db';
 import { mcpServers } from '@nodal-agents/db';
-import type { ToolDefinition } from '../../types';
+import type { ToolDefinition, ProvisionedMcpTool } from '../../types';
 import { resolveAgentId, linkMcpToAgent } from './link-helpers';
 
 const CreateMcpInput = z.object({
@@ -121,7 +121,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
       }
 
       // Verify by connecting + listing tools — throws on any failure (no write).
-      let tools: Array<{ name: string; description: string | null }> = [];
+      let tools: ProvisionedMcpTool[] = [];
       let conn: Awaited<ReturnType<typeof provisioning.connectMcp>> | null = null;
       try {
         conn = await provisioning.connectMcp({
@@ -168,7 +168,7 @@ export const createMcpTool: ToolDefinition<typeof CreateMcpInput, CreateMcpOutpu
     const args = input.args ?? [];
     const env = input.env ?? {};
 
-    let tools: Array<{ name: string; description: string | null }> = [];
+    let tools: ProvisionedMcpTool[] = [];
     let conn: Awaited<ReturnType<typeof provisioning.connectMcp>> | null = null;
     try {
       conn = await provisioning.connectMcp({ transport: 'stdio', command, args, env });

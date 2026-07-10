@@ -8,11 +8,14 @@
 //     - falls back to the agent's own DB row
 //     - undefined when neither is configured
 //   resolveRecipientChatId (F1)
-//     - no chatId anywhere → throws the caller's error name, no DB lookup
-//     - omitted chatId + jobChatId set → returns it, no DB lookup
+//     - no chatId anywhere, no owner either → throws the caller's error name
+//     - no chatId anywhere, owner resolves → returns the owner chatId, isChatAllowed
+//       never called (owner is canonical, not allowlist-checked)
+//     - omitted chatId + jobChatId set → returns it, owner lookup NEVER called (regression)
 //     - explicit chatId === jobChatId → returns it, no DB lookup
 //     - explicit chatId allowed (isChatAllowed true) → returns it, called with right params
 //     - explicit chatId NOT allowed → throws telegram_chat_not_allowed
+//     - owner-fallback chatId still counted against the per-job delivery ceiling
 //   resolveRecipientChatId — per-job delivery ceiling (L4)
 //     - 30 resolutions on one jobId succeed, the 31st throws telegram_send_rate_limited
 //       without calling isChatAllowed
@@ -48,12 +51,20 @@ import type { ToolContext } from '../../types';
 // isChatAllowed is mocked here as the authorization BOUNDARY — its own DB logic
 // is covered separately in packages/db/src/tests/telegram-allowed-queries.test.ts.
 
-const { isChatAllowedMock } = vi.hoisted(() => ({ isChatAllowedMock: vi.fn() }));
+const { isChatAllowedMock, resolveOwnerChatIdMock } = vi.hoisted(() => ({
+  isChatAllowedMock: vi.fn(),
+  resolveOwnerChatIdMock: vi.fn(),
+}));
 
 vi.mock('@nodal-agents/db', () => {
   const agents = { telegramBotToken: 'telegram_bot_token', id: 'id' };
   const eq = (col: unknown, val: unknown) => ({ col, val });
-  return { agents, eq, isChatAllowed: isChatAllowedMock };
+  return {
+    agents,
+    eq,
+    isChatAllowed: isChatAllowedMock,
+    resolveOwnerChatId: resolveOwnerChatIdMock,
+  };
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -117,21 +128,41 @@ describe('resolveRecipientChatId', () => {
     isChatAllowedMock.mockResolvedValue(true);
   });
 
-  it('throws the caller error name when no chatId anywhere', async () => {
-    const ctx = makeCtx({ jobChatId: null });
+  beforeEach(() => {
+    resolveOwnerChatIdMock.mockReset();
+  });
+
+  it('throws the caller error name when no chatId anywhere and no owner either', async () => {
+    resolveOwnerChatIdMock.mockResolvedValueOnce(null);
+    const ctx = makeCtx({ jobChatId: null, agentId: 'agent-no-owner' });
 
     await expect(resolveRecipientChatId(undefined, ctx, 'my_no_recipient')).rejects.toMatchObject({
       name: 'my_no_recipient',
     });
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, 'agent-no-owner');
     expect(isChatAllowedMock).not.toHaveBeenCalled();
   });
 
-  it('falls back to ctx.jobChatId without an allow-list lookup', async () => {
+  it('falls back to the OWNER chat when no explicit chatId and no jobChatId (cron/unsolicited delivery)', async () => {
+    isChatAllowedMock.mockClear();
+    resolveOwnerChatIdMock.mockResolvedValueOnce('owner-chat-999');
+    const ctx = makeCtx({ jobChatId: null, agentId: 'agent-with-owner' });
+
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe(
+      'owner-chat-999',
+    );
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, 'agent-with-owner');
+    // Owner is the canonical target, not a guessed/arbitrary chat — never allowlist-checked.
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to ctx.jobChatId without an allow-list lookup, and never calls the owner lookup', async () => {
     isChatAllowedMock.mockClear();
     const ctx = makeCtx({ jobChatId: '111' });
 
     await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('111');
     expect(isChatAllowedMock).not.toHaveBeenCalled();
+    expect(resolveOwnerChatIdMock).not.toHaveBeenCalled();
   });
 
   it('allows an explicit chatId equal to ctx.jobChatId without a lookup', async () => {
@@ -213,6 +244,25 @@ describe('resolveRecipientChatId — per-job delivery ceiling (L4)', () => {
     for (let i = 0; i < 40; i++) {
       await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe('111');
     }
+  });
+
+  it('counts owner-fallback resolutions against the same per-job ceiling', async () => {
+    resolveOwnerChatIdMock.mockReset();
+    resolveOwnerChatIdMock.mockResolvedValue('owner-chat-ceiling');
+    const ctx = makeCtx({ jobId: 'ceiling-owner-job', jobChatId: null });
+
+    for (let i = 0; i < 30; i++) {
+      await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe(
+        'owner-chat-ceiling',
+      );
+    }
+
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).rejects.toMatchObject({
+      name: 'telegram_send_rate_limited',
+    });
+    // The ceiling check runs BEFORE the owner lookup — the 31st call must never
+    // even attempt to resolve the owner.
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledTimes(30);
   });
 
   it('keeps the tracked-job map bounded, evicting the oldest jobId once the cap is exceeded', async () => {

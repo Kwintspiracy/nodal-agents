@@ -3683,7 +3683,9 @@ describe('resetSkillToDefaultAction', () => {
 
 // ─── MCP connector actions ────────────────────────────────────────────────────
 
-function mockMcpConnection(tools: Array<{ name: string; description?: string }>) {
+function mockMcpConnection(
+  tools: Array<{ name: string; description?: string; inputSchema?: unknown }>,
+) {
   return {
     client: {
       callTool: vi.fn().mockResolvedValue({ content: [], isError: false }),
@@ -3759,10 +3761,13 @@ describe('createMcpServerFromCatalogAction', () => {
     expect(conn.close).toHaveBeenCalled();
   });
 
-  it('happy path — encrypts the key, caches discovered tools, inserts the row', async () => {
+  it('happy path — encrypts the key, caches discovered tools (full descriptor, inputSchema included), inserts the row', async () => {
     mcpAdapterMocks.connectMcp.mockReset();
     mcpAdapterMocks.connectMcp.mockResolvedValue(
-      mockMcpConnection([{ name: 'get_home', description: 'home view' }, { name: 'get_feed' }]),
+      mockMcpConnection([
+        { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
+        { name: 'get_feed', inputSchema: { type: 'object' } },
+      ]),
     );
     currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-0000000003a1' }]) as typeof currentDb;
     const { createMcpServerFromCatalogAction } = await import('../src/lib/actions.ts');
@@ -3784,10 +3789,12 @@ describe('createMcpServerFromCatalogAction', () => {
     expect(values?.['apiKeyLast4']).toBe('y123');
     expect(values?.['authScheme']).toBe('header');
     expect(values?.['authParamName']).toBe('x-api-key');
-    // Discovered tools are cached for the UI.
+    // Discovered tools are cached for the UI AND for the runner's Lot A3
+    // lazy-connect gate — inputSchema must round-trip on every entry, or
+    // isUsableMcpToolCache rejects the cache and every job reconnects eagerly.
     expect(values?.['availableTools']).toEqual([
-      { name: 'get_home', description: 'home view' },
-      { name: 'get_feed', description: null },
+      { name: 'get_home', description: 'home view', inputSchema: { type: 'object' } },
+      { name: 'get_feed', inputSchema: { type: 'object' } },
     ]);
   });
 
@@ -4045,7 +4052,9 @@ describe('updateMcpServerConfigAction', () => {
       },
     ]) as typeof currentDb;
     mcpAdapterMocks.connectMcp.mockReset();
-    mcpAdapterMocks.connectMcp.mockResolvedValue(mockMcpConnection([{ name: 'do_thing' }]));
+    mcpAdapterMocks.connectMcp.mockResolvedValue(
+      mockMcpConnection([{ name: 'do_thing', inputSchema: { type: 'object' } }]),
+    );
 
     const { updateMcpServerConfigAction } = await import('../src/lib/actions.ts');
     const r = await updateMcpServerConfigAction('aaaaaaaa-0000-0000-0000-0000000005b1', {
@@ -4062,12 +4071,15 @@ describe('updateMcpServerConfigAction', () => {
     expect(connectArg['args']).toEqual(['-y', 'new-pkg']);
     expect(connectArg['env']).toEqual({ TOKEN: 'stored-token' });
 
-    // Persisted row: new args, name, tools refreshed; ciphertext UNCHANGED (kept).
+    // Persisted row: new args, name, tools refreshed (full descriptor, incl.
+    // inputSchema — see the create-action test for why); ciphertext UNCHANGED (kept).
     const set = setPayload();
     expect(set?.['name']).toBe('FS renamed');
     expect(set?.['args']).toEqual(['-y', 'new-pkg']);
     expect((set?.['envVars'] as Record<string, string>)['TOKEN']).toBe(encOld);
-    expect(set?.['availableTools']).toEqual([{ name: 'do_thing', description: null }]);
+    expect(set?.['availableTools']).toEqual([
+      { name: 'do_thing', inputSchema: { type: 'object' } },
+    ]);
   });
 
   it('stdio: a new env value REPLACES with a fresh ciphertext and verifies with the plaintext', async () => {

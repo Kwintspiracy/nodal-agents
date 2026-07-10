@@ -96,7 +96,7 @@ import { isValidAvatarUrl } from './avatar-catalog.ts';
 import { MCP_CATALOG } from '@nodal-agents/shared';
 import { probeContextWindow } from '@nodal-agents/llm';
 import { systemSkillSlugs, skillKindOfSlug } from '@nodal-agents/catalog';
-import { connectMcp } from '@nodal-agents/adapter-mcp';
+import { connectMcp, type McpToolDescriptor } from '@nodal-agents/adapter-mcp';
 import { getOAuthProvider } from './oauth-providers.ts';
 import { computeNextRun } from './cron.ts';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
@@ -2632,8 +2632,13 @@ export async function deleteConnectorAction(id: string): Promise<ActionResult<vo
 
 // ─── MCP connector Actions ────────────────────────────────────────────────────
 
-/** A cached MCP tool descriptor, stored in mcp_servers.available_tools. */
-type McpToolSummary = { name: string; description: string | null };
+// A cached MCP tool descriptor, stored in mcp_servers.available_tools. Reuses
+// the MCP adapter's own descriptor shape (name, description, inputSchema,
+// annotations) rather than a parallel {name, description}-only type — the
+// runner's isUsableMcpToolCache (mcp-tool-cache.ts) requires `inputSchema` on
+// every entry to take the lazy-connect path; persisting less than the full
+// descriptor here silently forces every job to reconnect eagerly instead.
+type McpToolSummary = McpToolDescriptor;
 
 // Multi-instance brique: one instance per row, several rows per slug allowed.
 export type McpServerInstance = {
@@ -2912,10 +2917,10 @@ export async function createMcpServerFromCatalogAction(
             return fail('mcp_connect_failed', `${catalog.label} rejected the API key.`);
           }
         }
-        toolDescriptors = conn.tools.map((t) => ({
-          name: t.name,
-          description: t.description ?? null,
-        }));
+        // Persist the FULL descriptor (inputSchema + annotations included),
+        // not just name/description — the runner's isUsableMcpToolCache
+        // requires inputSchema on every entry to take the lazy-connect path.
+        toolDescriptors = conn.tools;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return fail('mcp_connect_failed', `Could not connect to ${catalog.label}: ${msg}`);
@@ -2970,10 +2975,9 @@ export async function createMcpServerFromCatalogAction(
         args,
         env: userEnv,
       });
-      stdioToolDescriptors = stdioConn.tools.map((t) => ({
-        name: t.name,
-        description: t.description ?? null,
-      }));
+      // Persist the FULL descriptor (inputSchema + annotations included) —
+      // see the http path above for why.
+      stdioToolDescriptors = stdioConn.tools;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(
@@ -3139,11 +3143,11 @@ export async function updateMcpServerApiKeyAction(
         authScheme: existing.authScheme as 'header' | 'query' | 'bearer',
         authParamName: existing.authParamName,
       });
-      const tools = await conn.client.listTools();
-      toolDescriptors = (tools.tools ?? []).map((t) => ({
-        name: t.name,
-        description: t.description ?? null,
-      }));
+      // connectMcp() already lists tools once to populate conn.tools — reuse
+      // that (full descriptor, inputSchema included) instead of a redundant
+      // second tools/list round-trip that used to strip it down to
+      // name/description.
+      toolDescriptors = conn.tools;
       if (catalog?.verifyToolName) {
         await conn.client.callTool({ name: catalog.verifyToolName, arguments: {} });
       }
@@ -3348,10 +3352,9 @@ export async function updateMcpServerConfigAction(
           authScheme: effectiveScheme,
           authParamName: effectiveParam,
         });
-        toolDescriptors = conn.tools.map((t) => ({
-          name: t.name,
-          description: t.description ?? null,
-        }));
+        // Persist the FULL descriptor (inputSchema + annotations included) —
+        // see createMcpServerFromCatalogAction above for why.
+        toolDescriptors = conn.tools;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return fail('mcp_connect_failed', `Could not connect with the new config: ${msg}`);
@@ -3430,10 +3433,9 @@ export async function updateMcpServerConfigAction(
         args: effectiveArgs,
         env: plaintextEnv,
       });
-      toolDescriptors = conn.tools.map((t) => ({
-        name: t.name,
-        description: t.description ?? null,
-      }));
+      // Persist the FULL descriptor (inputSchema + annotations included) —
+      // see createMcpServerFromCatalogAction above for why.
+      toolDescriptors = conn.tools;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail(
