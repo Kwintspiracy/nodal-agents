@@ -65,6 +65,7 @@ import {
   setSkillFilesWritable,
   resolveOwnerChatId,
 } from '@nodal-agents/db';
+import type { JobTriggerContext } from '@nodal-agents/db';
 import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
 import {
   listMemories,
@@ -1316,6 +1317,10 @@ export type JobDetailRow = JobRow & {
   parentJobId: string | null;
   agentName: string | null;
   agentSlug: string | null;
+  /** Cache-aware input tokens (see DelegationRunRow doc) — null pre-migration 0036. */
+  effectiveInputTokens: number | null;
+  /** Cron provenance (migration 0061) — null unless this job was schedule-fired. */
+  triggerContext: JobTriggerContext | null;
   /** Direct children (delegated jobs) — id, agent, status. */
   children: Array<{
     id: string;
@@ -1463,6 +1468,13 @@ export type DelegationRunRow = {
   status: string | null;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Cumulative EFFECTIVE (non-cached) input tokens — the cache-aware figure
+   * the token budget actually measures. Falls back to `inputTokens` at read
+   * time for rows predating the effective_input_tokens column (migration
+   * 0036), where it defaults to 0. See DB column comment for the full story.
+   */
+  effectiveInputTokens: number;
   costUsd: number;
   createdAt: Date | null;
   completedAt: Date | null;
@@ -1470,6 +1482,12 @@ export type DelegationRunRow = {
   conversationId: string | null;
   /** Feeds classifyJob() (chat vs task) in jobs-grouping.ts. */
   toolsUsed: string[];
+  /**
+   * Name of the schedule that fired this job (from `trigger_context`,
+   * migration 0061) — null for jobs not fired by a cron trigger, and for
+   * cron rows predating that column.
+   */
+  scheduleName: string | null;
 };
 
 export async function listDelegationRunsAction(
@@ -1491,12 +1509,14 @@ export async function listDelegationRunsAction(
         status: agentJobs.status,
         inputTokens: agentJobs.inputTokens,
         outputTokens: agentJobs.outputTokens,
+        effectiveInputTokens: agentJobs.effectiveInputTokens,
         costUsd: agentJobs.totalCostUsd,
         createdAt: agentJobs.createdAt,
         completedAt: agentJobs.completedAt,
         parentJobId: agentJobs.parentJobId,
         conversationId: agentJobs.conversationId,
         toolsUsed: agentJobs.toolsUsed,
+        triggerContext: agentJobs.triggerContext,
       })
       .from(agentJobs)
       .leftJoin(agents, eq(agents.id, agentJobs.agentId))
@@ -1579,11 +1599,13 @@ export async function listDelegationRunsAction(
         status: r.status,
         inputTokens: r.inputTokens ?? 0,
         outputTokens: r.outputTokens ?? 0,
+        effectiveInputTokens: r.effectiveInputTokens ?? 0,
         costUsd: r.costUsd ?? 0,
         createdAt: r.createdAt,
         completedAt: r.completedAt,
         conversationId: r.conversationId,
         toolsUsed: r.toolsUsed ?? [],
+        scheduleName: r.triggerContext?.type === 'cron' ? r.triggerContext.scheduleName : null,
       };
     });
     return ok(result);

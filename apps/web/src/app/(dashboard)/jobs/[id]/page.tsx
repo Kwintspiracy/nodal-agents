@@ -41,6 +41,24 @@ export default async function JobDetailPage({ params }: Props) {
   const isLive = !TERMINAL.has(job.status ?? '');
   const messages = Array.isArray(job.messages) ? (job.messages as Record<string, unknown>[]) : [];
 
+  // Cron provenance (trigger_context, migration 0061) — null for non-cron jobs
+  // and for cron rows predating that column.
+  const scheduleName =
+    job.channel === 'cron' && job.triggerContext?.type === 'cron'
+      ? job.triggerContext.scheduleName
+      : null;
+
+  // Cache-aware input tokens (effective_input_tokens, migration 0036) — falls
+  // back to raw for rows predating that column, where it defaults to 0. Shown
+  // as the primary figure with the raw count alongside when they differ, so a
+  // heavily-cached job doesn't look like it burned way more than it did.
+  const rawInputTokens = job.inputTokens ?? 0;
+  const effectiveInputTokens = job.effectiveInputTokens || rawInputTokens;
+  const inputTokensDisplay =
+    effectiveInputTokens !== rawInputTokens
+      ? `${effectiveInputTokens} (raw ${rawInputTokens})`
+      : String(rawInputTokens);
+
   return (
     <PageShell title={job.agentName ?? 'Run'} subtitle={job.id}>
       <div className="space-y-6">
@@ -140,11 +158,11 @@ export default async function JobDetailPage({ params }: Props) {
           <div className="grid grid-cols-2 gap-2 text-xs">
             {[
               ['Task', job.task],
-              ['Channel', job.channel],
+              ['Channel', scheduleName ? `${job.channel} · ${scheduleName}` : job.channel],
               ['Turn', String(job.turn ?? 0)],
               ['Chain count', String(job.chainCount ?? 0)],
               ['Delegation depth', String(job.delegationDepth ?? 0)],
-              ['Input tokens', String(job.inputTokens ?? 0)],
+              ['Input tokens', inputTokensDisplay],
               ['Output tokens', String(job.outputTokens ?? 0)],
               ['Duration ms', String(job.totalDurationMs ?? '—')],
               ['Created', formatDate(job.createdAt)],

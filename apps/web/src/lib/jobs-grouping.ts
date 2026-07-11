@@ -95,7 +95,12 @@ function aggregateConversation(
   const head = jobs[0]!;
 
   const totalCostUsd = jobs.reduce((sum, j) => sum + j.costUsd, 0);
-  const totalTokens = jobs.reduce((sum, j) => sum + j.inputTokens + j.outputTokens, 0);
+  // Cache-aware input (falls back to raw for jobs predating effectiveInputTokens,
+  // where it defaults to 0 — see DelegationRunRow doc).
+  const totalTokens = jobs.reduce(
+    (sum, j) => sum + (j.effectiveInputTokens || j.inputTokens) + j.outputTokens,
+    0,
+  );
 
   const status: ConversationGroupRow['status'] = jobs.some((j) => isFailedStatus(j.status))
     ? 'failed'

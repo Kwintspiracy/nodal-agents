@@ -21,11 +21,13 @@ function makeRow(overrides: Partial<DelegationRunRow> = {}): DelegationRunRow {
     status: 'completed',
     inputTokens: 100,
     outputTokens: 50,
+    effectiveInputTokens: 0,
     costUsd: 0.01,
     createdAt: new Date(2026, 5, 1, 10, n),
     completedAt: new Date(2026, 5, 1, 10, n, 30),
     conversationId: null,
     toolsUsed: [],
+    scheduleName: null,
     ...overrides,
   };
 }
@@ -166,6 +168,38 @@ describe('groupJobsForJobsPage', () => {
     if (row.kind === 'conversation') {
       expect(row.totalCostUsd).toBeCloseTo(0.03);
       expect(row.totalTokens).toBe(450);
+    }
+  });
+
+  it('aggregates tokens using effectiveInputTokens when present, falling back to raw per-job', () => {
+    const conversationId = 'conv-8';
+    const rows = [
+      // Tracked (post-migration-0036) job: cache-aware figure is much smaller
+      // than raw input — must be what gets counted.
+      makeRow({
+        id: 'j2',
+        conversationId,
+        inputTokens: 2_000_000,
+        effectiveInputTokens: 200_000,
+        outputTokens: 100,
+        toolsUsed: [],
+      }),
+      // Legacy job predating the column: effectiveInputTokens defaults to 0,
+      // so the aggregation must fall back to raw input for this one.
+      makeRow({
+        id: 'j1',
+        conversationId,
+        inputTokens: 300,
+        effectiveInputTokens: 0,
+        outputTokens: 50,
+        toolsUsed: [],
+      }),
+    ];
+    const grouped = groupJobsForJobsPage(rows);
+    const row = grouped[0]!;
+    expect(row.kind).toBe('conversation');
+    if (row.kind === 'conversation') {
+      expect(row.totalTokens).toBe(200_000 + 100 + 300 + 50);
     }
   });
 });

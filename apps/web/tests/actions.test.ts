@@ -885,6 +885,65 @@ describe('listDelegationRunsAction', () => {
     expect(serialized).toContain('"name":"entity_id"');
     expect(serialized).toContain(LOCAL_ENTITY_ID);
   });
+
+  it('exposes scheduleName from trigger_context on cron rows, and effectiveInputTokens', async () => {
+    currentDb = makeDb([
+      {
+        id: 'eeeeeeee-0000-0000-0000-000000000001',
+        agentName: 'Alfred',
+        agentSlug: 'alfred',
+        agentAvatarUrl: null,
+        task: 'poll releases',
+        channel: 'cron',
+        status: 'completed',
+        inputTokens: 100,
+        outputTokens: 50,
+        effectiveInputTokens: 80,
+        costUsd: 0,
+        createdAt: new Date(),
+        completedAt: null,
+        parentJobId: null,
+        conversationId: null,
+        toolsUsed: [],
+        triggerContext: {
+          type: 'cron',
+          scheduleName: 'Watch AcmeCorp releases',
+          prevRunAt: null,
+        },
+      },
+      {
+        id: 'eeeeeeee-0000-0000-0000-000000000002',
+        agentName: 'Alfred',
+        agentSlug: 'alfred',
+        agentAvatarUrl: null,
+        task: 'chat',
+        channel: 'telegram',
+        status: 'completed',
+        inputTokens: 10,
+        outputTokens: 5,
+        effectiveInputTokens: 0,
+        costUsd: 0,
+        createdAt: new Date(),
+        completedAt: null,
+        parentJobId: null,
+        conversationId: null,
+        toolsUsed: [],
+        triggerContext: null,
+      },
+    ]) as typeof currentDb;
+
+    const { listDelegationRunsAction } = await import('../src/lib/actions.ts');
+    const r = await listDelegationRunsAction({});
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const cronJob = r.data.find((j) => j.id === 'eeeeeeee-0000-0000-0000-000000000001');
+    expect(cronJob?.scheduleName).toBe('Watch AcmeCorp releases');
+    expect(cronJob?.effectiveInputTokens).toBe(80);
+
+    const chatJob = r.data.find((j) => j.id === 'eeeeeeee-0000-0000-0000-000000000002');
+    expect(chatJob?.scheduleName).toBeNull();
+  });
 });
 
 describe('getChatJobStatusAction', () => {

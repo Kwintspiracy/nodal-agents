@@ -244,7 +244,9 @@ function JobRowTr({
   indented?: boolean;
 }) {
   const delegated = r.role === 'delegated';
-  const tokens = r.inputTokens + r.outputTokens;
+  // Cache-aware input (falls back to raw for pre-migration-0036 rows, where
+  // effectiveInputTokens defaults to 0).
+  const tokens = (r.effectiveInputTokens || r.inputTokens) + r.outputTokens;
   const trig = triggerForChannel(r.role, r.channel);
   return (
     <tr
@@ -286,12 +288,24 @@ function JobRowTr({
       </td>
       <td className={TD}>
         {trig ? (
-          <span
-            title={trig.label}
-            className={`inline-flex size-[24px] items-center justify-center rounded-md ${trig.cls}`}
-          >
-            <trig.Icon size={13} weight="fill" />
-          </span>
+          <div className="flex items-center gap-2">
+            <span
+              title={trig.label}
+              className={`inline-flex size-[24px] shrink-0 items-center justify-center rounded-md ${trig.cls}`}
+            >
+              <trig.Icon size={13} weight="fill" />
+            </span>
+            {/* Which schedule fired this cron run (trigger_context, migration
+                0061) — null on cron rows predating that column. */}
+            {trig === CRON && r.scheduleName && (
+              <span
+                title={r.scheduleName}
+                className="max-w-[140px] truncate text-[11px] leading-tight text-ink-3"
+              >
+                {r.scheduleName}
+              </span>
+            )}
+          </div>
         ) : (
           <span className="text-[12.5px] text-ink-4">—</span>
         )}
