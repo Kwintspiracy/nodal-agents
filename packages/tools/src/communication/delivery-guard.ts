@@ -21,6 +21,7 @@ import {
   resolveOwnerConversation,
   isConversationAllowed,
   getBindingCredentials,
+  getChannelBinding,
 } from '@nodal-agents/db';
 import { resolveTransportChannel, type ChannelKind } from '@nodal-agents/delivery';
 import { realpath } from 'node:fs/promises';
@@ -32,16 +33,40 @@ import type { ToolContext } from '../types';
 
 /**
  * Which ChannelAdapter a delivery tool sends THIS job's messages through
- * (S3 of the multichannel plan). `ctx.jobChannel` is the job's trigger
- * origin (`agent_jobs.channel`) — when it already names a registered
- * transport (today: only 'telegram') it wins; otherwise the job was
- * triggered by something that isn't itself a transport (cron, webhook,
- * dashboard, api, …), and the agent's only real transport is its Telegram
- * binding, so that's the default. See resolveTransportChannel for the shared
- * rule (also used by deliver-results.ts's channel-return send site).
+ * (S3 of the multichannel plan, extended for cross-channel sends). `explicitChannel`
+ * is the send tool's optional `channel` argument — a caller targeting a
+ * platform OTHER than the one this job runs on. When given, it wins ONLY if
+ * this agent has an ENABLED binding for it (verified via `getChannelBinding`)
+ * — never assume credentials just because the LLM named a channel; absent
+ * that binding, throws `channel_not_connected`. When `explicitChannel` names
+ * the SAME channel the job already runs on (including when it is omitted),
+ * behavior is byte-identical to before this parameter existed: `ctx.jobChannel`
+ * (the job's trigger origin — `agent_jobs.channel`) wins when it already names
+ * a registered transport (today: telegram/discord/slack/whatsapp); otherwise
+ * the job was triggered by something that isn't itself a transport (cron,
+ * webhook, dashboard, api, …), and the agent's only real transport is its
+ * Telegram binding, so that's the default. See resolveTransportChannel for the
+ * shared default rule (also used by deliver-results.ts's channel-return send
+ * site).
  */
-export function resolveChannelForJob(ctx: ToolContext): ChannelKind {
-  return resolveTransportChannel(ctx.jobChannel);
+export async function resolveChannelForJob(
+  ctx: ToolContext,
+  explicitChannel?: ChannelKind,
+): Promise<ChannelKind> {
+  const jobChannel = resolveTransportChannel(ctx.jobChannel);
+  if (explicitChannel === undefined || explicitChannel === jobChannel) {
+    return jobChannel;
+  }
+
+  const binding = await getChannelBinding(ctx.db, ctx.agentId, explicitChannel);
+  if (!binding || !binding.enabled) {
+    const err = new Error(
+      `channel_not_connected: this agent has no enabled ${explicitChannel} binding to send through.`,
+    );
+    err.name = 'channel_not_connected';
+    throw err;
+  }
+  return explicitChannel;
 }
 
 // ─── Bot token ──────────────────────────────────────────────────────────────
@@ -53,18 +78,26 @@ export function resolveChannelForJob(ctx: ToolContext): ChannelKind {
  * (credential isolation per agent, historical path). Returns undefined when
  * neither is configured — callers throw their own tool-specific error name.
  *
- * Channel-parametric since D2 (Discord ingress): a non-telegram job (today:
- * 'discord' — see resolveChannelForJob) resolves its credential from that
- * channel's channel_bindings row instead, via the shared
- * `getBindingCredentials` (@nodal-agents/db) — the same helper
- * approvals/notify.ts and the inbound handlers use. NOTE: B3's delegation
- * inheritance (`ctx.resolvedTelegramBotToken`) is telegram-only — a delegated
- * worker replying on a discord job does not yet inherit its orchestrator's
- * binding; generalizing that is cleanup-phase work once a real delegated
- * discord flow needs it.
+ * Channel-parametric since D2 (Discord ingress): a non-telegram channel
+ * (today: 'discord'/'slack', or an explicit cross-channel target — see
+ * resolveChannelForJob) resolves its credential from that channel's
+ * channel_bindings row instead, via the shared `getBindingCredentials`
+ * (@nodal-agents/db) — the same helper approvals/notify.ts and the inbound
+ * handlers use. NOTE: B3's delegation inheritance (`ctx.resolvedTelegramBotToken`)
+ * is telegram-only — a delegated worker replying on a discord job does not yet
+ * inherit its orchestrator's binding; generalizing that is cleanup-phase work
+ * once a real delegated discord flow needs it.
+ *
+ * `explicitChannel` (a send tool's optional `channel` argument) is threaded
+ * straight into `resolveChannelForJob` — credential resolution always follows
+ * whichever channel that resolves to, the job's own or an explicit cross-
+ * channel target.
  */
-export async function resolveBotToken(ctx: ToolContext): Promise<string | undefined> {
-  const channel = resolveChannelForJob(ctx);
+export async function resolveBotToken(
+  ctx: ToolContext,
+  explicitChannel?: ChannelKind,
+): Promise<string | undefined> {
+  const channel = await resolveChannelForJob(ctx, explicitChannel);
   if (channel !== 'telegram') {
     const creds = await getBindingCredentials(ctx.db, ctx.agentId, channel);
     return creds?.['botToken'] ?? undefined;
@@ -141,17 +174,35 @@ export function resetDeliveryCounterForTests(jobId?: string): void {
  *     `telegram_send_rate_limited` before any lookup runs. An empty/absent
  *     jobId (minimal test contexts) is never counted or rate-limited.
  *
- * Channel-parametric (S3): resolves `resolveChannelForJob(ctx)` once and uses
- * it for both the owner fallback and the allowlist check, via the
- * channel-neutral `resolveOwnerConversation`/`isConversationAllowed`
- * (@nodal-agents/db). For channel='telegram' — every job today — these are
- * byte-identical to the pre-S3 `resolveOwnerChatId`/`isChatAllowed` calls
- * they replace (both are thin wrappers pinned to channel='telegram').
+ * Channel-parametric (S3, extended for cross-channel sends): resolves
+ * `resolveChannelForJob(ctx, explicitChannel)` once and uses it for both the
+ * owner fallback and the allowlist check, via the channel-neutral
+ * `resolveOwnerConversation`/`isConversationAllowed` (@nodal-agents/db). For
+ * channel='telegram' with no `explicitChannel` — every job before cross-
+ * channel sends existed — these are byte-identical to the pre-S3
+ * `resolveOwnerChatId`/`isChatAllowed` calls they replace (both are thin
+ * wrappers pinned to channel='telegram').
+ *
+ * When `explicitChannel` names a channel OTHER than the job's own transport
+ * channel (a cross-channel target), two things change from the same-channel
+ * path above:
+ *   - `ctx.jobChatId` is never used as a chatId fallback — it belongs to the
+ *     JOB's channel, not the target one, so reusing it here would silently
+ *     address the wrong platform's id space. Omitting `chatId` on a
+ *     cross-channel call always goes through the owner fallback (see below),
+ *     resolved on the TARGET channel via the `channel` this function computes.
+ *   - the `explicitChatId === ctx.jobChatId` exemption (skips the allowlist
+ *     check because "the job's origin chat is authorized by construction")
+ *     NEVER applies — that exemption is meaningless once the destination
+ *     platform differs, so a cross-channel target is ALWAYS allowlist-checked
+ *     against the TARGET channel, even if the raw id string happens to
+ *     coincide with `ctx.jobChatId` by coincidence.
  */
 export async function resolveRecipientChatId(
   explicitChatId: string | undefined,
   ctx: ToolContext,
   noRecipientErrorName: string,
+  explicitChannel?: ChannelKind,
 ): Promise<string> {
   if (ctx.jobId && (deliveryCountsByJob.get(ctx.jobId) ?? 0) >= MAX_DELIVERIES_PER_JOB) {
     const err = new Error(
@@ -163,17 +214,21 @@ export async function resolveRecipientChatId(
     throw err;
   }
 
-  const channel = resolveChannelForJob(ctx);
-  let chatId = explicitChatId ?? ctx.jobChatId;
+  const channel = await resolveChannelForJob(ctx, explicitChannel);
+  const crossChannel =
+    explicitChannel !== undefined && explicitChannel !== resolveTransportChannel(ctx.jobChannel);
+  let chatId = explicitChatId ?? (crossChannel ? null : ctx.jobChatId);
 
   // Owner fallback: an unsolicited run (cron watcher, notify_on_success=false,
-  // any job with no originating chat) that decides on its own initiative to
-  // speak must reach the OWNER — the same canonical target as every other
+  // any job with no originating chat — or a cross-channel target with no
+  // explicit chatId, see above) that decides on its own initiative to speak
+  // must reach the OWNER — the same canonical target as every other
   // unsolicited delivery since commit 77c40b8 (`schedule.chatId ??
   // resolveOwnerChatId()`), never a guessed or last-seen chat. Only applies
   // when the caller omitted chatId entirely — an explicit chatId always goes
   // through the allowlist check below, never this shortcut, so the owner is
-  // NOT allowlist-checked (it's the canonical target, not a guess).
+  // NOT allowlist-checked (it's the canonical target, not a guess). Resolved
+  // on `channel` — the TARGET channel for a cross-channel call.
   // For a DELEGATED child job running on its entity's inherited root token,
   // ctx.agentId is the CHILD agent — owner rows live on the root agent, so
   // this correctly resolves to null and the child still throws no-recipient;
@@ -188,12 +243,17 @@ export async function resolveRecipientChatId(
     throw err;
   }
 
-  if (explicitChatId !== undefined && explicitChatId !== ctx.jobChatId) {
+  // Same-channel exemption (chatId === ctx.jobChatId skips the allowlist
+  // lookup) NEVER applies cross-channel — see doc comment above.
+  const needsAllowlistCheck =
+    explicitChatId !== undefined && (crossChannel || explicitChatId !== ctx.jobChatId);
+
+  if (needsAllowlistCheck) {
     const allowed = await isConversationAllowed(ctx.db, {
       entityId: ctx.entityId,
       agentId: ctx.agentId,
       channel,
-      conversationId: explicitChatId,
+      conversationId: explicitChatId!,
     });
     if (!allowed) {
       const err = new Error(

@@ -2326,6 +2326,9 @@ describe('executeJob', () => {
     const firstTurnTools = new Set(toolKeysPerCall[0]);
     expect(firstTurnTools.has('telegram_send_message')).toBe(true);
     expect(firstTurnTools.has('send_image')).toBe(true);
+    // list_conversations shares the exact same registration gate as the send
+    // tools above — a bot token must be enough on its own, same as them.
+    expect(firstTurnTools.has('list_conversations')).toBe(true);
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
@@ -2369,6 +2372,7 @@ describe('executeJob', () => {
     const firstTurnTools = new Set(toolKeysPerCall[0]);
     expect(firstTurnTools.has('telegram_send_message')).toBe(false);
     expect(firstTurnTools.has('send_image')).toBe(false);
+    expect(firstTurnTools.has('list_conversations')).toBe(false);
   });
 
   // ─── Brique 25: fail-loud on missing llmKeyId ──────────────────────────────

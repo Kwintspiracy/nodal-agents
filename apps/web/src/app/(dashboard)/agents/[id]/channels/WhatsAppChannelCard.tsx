@@ -24,12 +24,13 @@ export default function WhatsAppChannelCard({
   return (
     <div className="bg-paper border border-rule-2 rounded-xl px-5 py-5 space-y-5">
       <div className="flex items-center gap-3">
-        <span
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-conn-vivid/15 text-base"
+        {/* eslint-disable-next-line @next/next/no-img-element -- static brand svg, same convention as ConnectorsInstalledTable */}
+        <img
+          src="/channel-icons/whatsapp.svg"
+          alt=""
           aria-hidden="true"
-        >
-          📱
-        </span>
+          className="h-9 w-9 shrink-0"
+        />
         <div>
           <p className="text-sm font-medium text-ink">WhatsApp</p>
           <p className="text-xs text-ink-3">

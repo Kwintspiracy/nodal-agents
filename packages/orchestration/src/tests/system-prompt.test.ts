@@ -2,7 +2,16 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spinUpTestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentAssignments, agentSkillAssignments, agentSkills, eq } from '@nodal-agents/db';
+import {
+  agents,
+  agentAssignments,
+  agentSkillAssignments,
+  agentSkills,
+  channelBindings,
+  channelAllowedConversations,
+  telegramAllowedChats,
+  eq,
+} from '@nodal-agents/db';
 import { buildSystemPrompt } from '../system-prompt';
 import type { JobContext } from '../system-prompt';
 import type { Agent, AgentId, EntityId } from '../types';
@@ -607,5 +616,96 @@ describe('buildSystemPrompt — last_used_at learning loop', () => {
       .where(eq(agentSkills.id, skill!.id));
 
     expect(after!.lastUsedAt).toBeNull();
+  });
+});
+
+// ─── "Messaging channels" block — bindings + approved-conversation counts ─────
+
+describe('buildSystemPrompt — Messaging channels block', () => {
+  it('does NOT include ## Messaging channels when the agent has zero bindings (regression)', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP No Channels Agent',
+        slug: `test-sp-nochannels-${Date.now()}`,
+        personality: 'You have no channels yet.',
+        role: 'agent',
+      })
+      .returning();
+
+    const agent = makeAgent(agentRow!.id, entityId, agentRow!.personality);
+    const prompt = await buildSystemPrompt(agent, db);
+
+    expect(prompt).not.toContain('## Messaging channels');
+  });
+
+  it('renders a block with real per-channel bot labels and approved-conversation counts', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'SP Channels Agent',
+        slug: `test-sp-channels-${Date.now()}`,
+        personality: 'You talk to people.',
+        role: 'agent',
+      })
+      .returning();
+    const agentId = agentRow!.id;
+
+    // Telegram: 2 active allowlist rows (owner + one approved member) — read
+    // from the legacy telegram_allowed_chats table (S2 transitional split).
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId,
+      channel: 'telegram',
+      credentials: JSON.stringify({ botToken: 'fake-token' }),
+      botIdentity: { username: 'nodal_test_bot' },
+      enabled: true,
+    });
+    await db.insert(telegramAllowedChats).values([
+      { entityId, agentId, chatId: 'owner-chat-1', role: 'owner', status: 'active' },
+      { entityId, agentId, chatId: 'member-chat-1', role: 'member', status: 'active' },
+      { entityId, agentId, chatId: 'pending-chat-1', role: 'member', status: 'pending' },
+    ]);
+
+    // Discord: 1 active allowlist row, read from channel_allowed_conversations.
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken: 'fake-discord-token' }),
+      botIdentity: { displayName: 'Nodal-Agents' },
+      enabled: true,
+    });
+    await db.insert(channelAllowedConversations).values({
+      entityId,
+      agentId,
+      channel: 'discord',
+      conversationId: 'discord-owner-1',
+      role: 'owner',
+      status: 'active',
+    });
+
+    // A disabled binding must NOT be rendered.
+    await db.insert(channelBindings).values({
+      entityId,
+      agentId,
+      channel: 'slack',
+      credentials: JSON.stringify({ botToken: 'fake-slack-token' }),
+      enabled: false,
+    });
+
+    const agent = makeAgent(agentId, entityId, agentRow!.personality);
+    const prompt = await buildSystemPrompt(agent, db);
+
+    expect(prompt).toContain('## Messaging channels');
+    expect(prompt).toContain('telegram — bot @nodal_test_bot · 2 approved conversations');
+    expect(prompt).toContain('discord — bot "Nodal-Agents" · 1 approved conversation');
+    expect(prompt).not.toContain('slack —');
+    expect(prompt).toContain('list_conversations');
+    expect(prompt).toContain('optional `channel`');
   });
 });

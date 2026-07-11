@@ -30,6 +30,11 @@ export { returnResultTool } from './return-result';
 export { skillViewTool } from './skill-view';
 export { listModelsTool } from './list-models';
 export { listSchedulesTool } from './list-schedules';
+// list_conversations — capability-driven like the communication send tools
+// (NOT registered via registerBuiltins/ALWAYS_ON_TOOLS): the runner
+// instantiates it directly and pushes it into capabilityTools only when the
+// agent has ≥1 enabled channel binding, mirroring the 6 send tools' gate.
+export { createListConversationsTool } from './list-conversations';
 export { saveMemoryTool } from './save-memory';
 export { queryMemoryTool } from './query-memory';
 export { searchHistoryTool } from './search-history';

@@ -48,6 +48,7 @@ function makeFakeHandle(sessionDir: string): FakeHandle {
     getStatus: () => status,
     getIdentity: () => null,
     send: vi.fn(async () => 'msg-id'),
+    listGroups: vi.fn(async () => []),
   };
   return {
     handle,

@@ -15,7 +15,7 @@
 // Telegram's inline keyboard / Discord's message components in this phase,
 // so `sendApprovalCard` is intentionally NOT implemented here.
 
-import type { AnyMessageContent } from '@whiskeysockets/baileys';
+import type { AnyMessageContent, GroupMetadata } from '@whiskeysockets/baileys';
 import { DeliveryError } from '../errors.ts';
 import {
   ensureWhatsAppSocket,
@@ -25,6 +25,7 @@ import {
 import type {
   ChannelAdapter,
   ChannelCredentials,
+  DiscoveredConversation,
   OutboundMedia,
   SendResult,
   BotIdentity,
@@ -292,6 +293,48 @@ function waitForIdentity(handle: WhatsAppHandle, timeoutMs: number): Promise<Bot
 }
 
 /**
+ * Enumerate the groups the linked account currently participates in.
+ * DMs are NOT enumerable here — unlike Discord's guild list or Slack's
+ * users.conversations, WhatsApp/Baileys exposes no contact-list API a bot
+ * could use to discover its 1:1 chats, only the groups it's a participant
+ * of (groupFetchAllParticipating). Throws `whatsapp_not_paired` — same code
+ * validateCredentials uses for "not a usable, linked session" — rather than
+ * a generic send failure, since an unlinked socket isn't a transient error.
+ */
+async function listConversations(creds: ChannelCredentials): Promise<DiscoveredConversation[]> {
+  // Not requireSessionDir (that throws the generic whatsapp_send_failed) —
+  // this is a discovery/read op tied to pairing state like validateCredentials,
+  // so a missing credential gets the same whatsapp_not_paired code as an
+  // unlinked socket, not a transport failure code.
+  const sessionDir = creds['sessionDir'];
+  if (!sessionDir) {
+    throw new DeliveryError(
+      'whatsapp_not_paired',
+      'whatsapp_not_paired: missing sessionDir credential',
+    );
+  }
+  const handle = ensureWhatsAppSocket(sessionDir, { sessionDir });
+  if (handle.getStatus() !== 'open') {
+    throw new DeliveryError(
+      'whatsapp_not_paired',
+      `whatsapp_not_paired: socket is not "open" (status=${handle.getStatus()}) — link this WhatsApp account first`,
+    );
+  }
+
+  let groups: GroupMetadata[];
+  try {
+    groups = await handle.listGroups();
+  } catch (err) {
+    throw toDeliveryError(err);
+  }
+  return groups.map((group) => ({
+    conversationId: group.id,
+    name: group.subject,
+    kind: 'group' as const,
+  }));
+}
+
+/**
  * Returns the linked account's identity once the socket for this session
  * reaches 'open'; throws `whatsapp_not_paired` if it doesn't within
  * WHATSAPP_PAIR_TIMEOUT_MS (or logs out while waiting), or if the sessionDir
@@ -322,5 +365,6 @@ export const whatsappAdapter: ChannelAdapter = {
   capabilities: { buttons: false, threads: false, media: true, editMessage: false },
   sendText,
   sendMedia,
+  listConversations,
   validateCredentials,
 };

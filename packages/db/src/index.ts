@@ -24,7 +24,10 @@ export {
   getChannelBinding,
   listChannelBindings,
   getBindingCredentials,
+  countActiveConversations,
+  listAllowedConversations,
 } from './queries/channel-identity.ts';
+export type { AllowedConversationSummary } from './queries/channel-identity.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export { createAgentRepo, attachAgentToOrchestrator } from './repos/agents.ts';

@@ -57,6 +57,12 @@ const SendFileInput = z.object({
     .max(20)
     .optional()
     .describe('Telegram chat ID. Omit to reply to the chat that triggered this job.'),
+  channel: z
+    .enum(['telegram', 'discord', 'slack', 'whatsapp'])
+    .optional()
+    .describe(
+      'Target another connected platform; omit to reply on the current conversation’s channel.',
+    ),
 });
 
 type SendFileInput = z.infer<typeof SendFileInput>;
@@ -93,6 +99,9 @@ This tool keeps the LLM context tiny: the return value is just
 - **caption**: optional, ≤1024 chars.
 - **chatId**: optional. Omit to reply to the chat that triggered this job. An
   explicit chatId must already be an approved chat for this agent.
+- **channel**: optional. Target another connected platform (telegram, discord,
+  slack, whatsapp) instead of the current conversation's — the agent must have
+  an ENABLED binding for it. Omit to reply on the current conversation's channel.
 
 Size cap: 50 MB (Telegram document limit). Larger files throw \`file_too_large\`.
 
@@ -104,7 +113,9 @@ Fail conditions:
   \`source_path_not_allowed\`.
 - Source URL returns non-2xx or resolves to a link-local address → throws
   \`fetch_failed\`.
-- Bytes exceed 50 MB → throws \`file_too_large\`.`,
+- Bytes exceed 50 MB → throws \`file_too_large\`.
+- \`channel\` names a platform this agent has no ENABLED binding for → throws
+  \`channel_not_connected\`.`,
 
     inputSchema: SendFileInput,
 
@@ -113,12 +124,14 @@ Fail conditions:
     async execute(input: SendFileInput, ctx: ToolContext): Promise<SendFileOutput> {
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved
       // unless it's the job's own origin chat), then job origin chat (F1).
-      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'no_recipient');
+      // `input.channel` targets another connected platform when given — see
+      // resolveRecipientChatId's doc comment for the cross-channel rules.
+      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'no_recipient', input.channel);
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      const botToken = await resolveBotToken(ctx);
+      const botToken = await resolveBotToken(ctx, input.channel);
       if (!botToken) {
         const err = new Error('no_bot_token');
         err.name = 'no_bot_token';
@@ -160,7 +173,7 @@ Fail conditions:
 
       // 5. Upload via the channel-neutral adapter (server-side, zero bytes in LLM context)
       const filename = input.filename ?? derivedName;
-      const adapter = getAdapter(resolveChannelForJob(ctx));
+      const adapter = getAdapter(await resolveChannelForJob(ctx, input.channel));
       await adapter.sendMedia({ botToken }, chatId, {
         kind: 'document',
         bytes,

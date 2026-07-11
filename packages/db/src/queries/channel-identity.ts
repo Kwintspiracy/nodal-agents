@@ -174,3 +174,99 @@ export async function getBindingCredentials(
     return null;
   }
 }
+
+/**
+ * Count of ACTIVE conversations (owner + approved members) for (agent,
+ * channel) — feeds the system prompt's "Messaging channels" block so an agent
+ * knows how many conversations it can already reach on each connected
+ * platform, without any network/adapter call. channel='telegram' reads the
+ * legacy telegram_allowed_chats table (see file header); every other channel
+ * reads channel_allowed_conversations.
+ */
+export async function countActiveConversations(
+  db: AnyDrizzleDb,
+  agentId: string,
+  channel: string,
+): Promise<number> {
+  if (channel === 'telegram') {
+    const rows = await db
+      .select({ id: telegramAllowedChats.id })
+      .from(telegramAllowedChats)
+      .where(
+        and(eq(telegramAllowedChats.agentId, agentId), eq(telegramAllowedChats.status, 'active')),
+      );
+    return rows.length;
+  }
+
+  const rows = await db
+    .select({ id: channelAllowedConversations.id })
+    .from(channelAllowedConversations)
+    .where(
+      and(
+        eq(channelAllowedConversations.agentId, agentId),
+        eq(channelAllowedConversations.channel, channel),
+        eq(channelAllowedConversations.status, 'active'),
+      ),
+    );
+  return rows.length;
+}
+
+/** One allowlist row, channel-neutral shape — see listAllowedConversations. */
+export interface AllowedConversationSummary {
+  conversationId: string;
+  kind: string;
+  role: string;
+  status: string;
+  requesterName: string | null;
+}
+
+/**
+ * Every allowlist row (owner + pending + approved member) for (agent,
+ * channel) — powers `list_conversations`' Telegram path (Telegram bots can't
+ * enumerate the chats that have messaged them, so this allowlist IS the
+ * agent's complete view of that channel — see file header) and the merge step
+ * for channels with real adapter-side discovery.
+ *
+ * channel='telegram' reads the legacy telegram_allowed_chats table (see file
+ * header); that table has no `kind` column of its own, so it is derived from
+ * the chat id's sign — Telegram's Bot API convention: group/supergroup/channel
+ * ids are negative, private chat ids are positive. Every other channel reads
+ * channel_allowed_conversations, which stores `kind` directly.
+ */
+export async function listAllowedConversations(
+  db: AnyDrizzleDb,
+  agentId: string,
+  channel: string,
+): Promise<AllowedConversationSummary[]> {
+  if (channel === 'telegram') {
+    const rows = await db
+      .select({
+        conversationId: telegramAllowedChats.chatId,
+        role: telegramAllowedChats.role,
+        status: telegramAllowedChats.status,
+        requesterName: telegramAllowedChats.requesterName,
+      })
+      .from(telegramAllowedChats)
+      .where(eq(telegramAllowedChats.agentId, agentId));
+    return rows.map((r) => ({
+      ...r,
+      kind: r.conversationId.startsWith('-') ? 'group' : 'private',
+    }));
+  }
+
+  return db
+    .select({
+      conversationId: channelAllowedConversations.conversationId,
+      kind: channelAllowedConversations.kind,
+      role: channelAllowedConversations.role,
+      status: channelAllowedConversations.status,
+      requesterName: channelAllowedConversations.requesterName,
+    })
+    .from(channelAllowedConversations)
+    .where(
+      and(
+        eq(channelAllowedConversations.agentId, agentId),
+        eq(channelAllowedConversations.channel, channel),
+      ),
+    );
+}

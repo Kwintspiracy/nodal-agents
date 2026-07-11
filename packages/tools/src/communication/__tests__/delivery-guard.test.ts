@@ -54,10 +54,16 @@ import type { ToolContext } from '../../types';
 // isConversationAllowed is mocked here as the authorization BOUNDARY — its own
 // DB logic is covered separately in packages/db/src/tests/telegram-allowed-queries.test.ts.
 
-const { isChatAllowedMock, resolveOwnerChatIdMock, getBindingCredentialsMock } = vi.hoisted(() => ({
+const {
+  isChatAllowedMock,
+  resolveOwnerChatIdMock,
+  getBindingCredentialsMock,
+  getChannelBindingMock,
+} = vi.hoisted(() => ({
   isChatAllowedMock: vi.fn(),
   resolveOwnerChatIdMock: vi.fn(),
   getBindingCredentialsMock: vi.fn(),
+  getChannelBindingMock: vi.fn(),
 }));
 
 vi.mock('@nodal-agents/db', () => {
@@ -69,6 +75,7 @@ vi.mock('@nodal-agents/db', () => {
     isConversationAllowed: isChatAllowedMock,
     resolveOwnerConversation: resolveOwnerChatIdMock,
     getBindingCredentials: getBindingCredentialsMock,
+    getChannelBinding: getChannelBindingMock,
   };
 });
 
@@ -152,6 +159,45 @@ describe('resolveBotToken', () => {
       await expect(resolveBotToken(ctx)).resolves.toBeUndefined();
     });
   });
+
+  // Explicit `channel` argument (send tools' optional cross-channel target) —
+  // resolveChannelForJob gates it on an ENABLED binding for that channel.
+  describe('explicit channel — cross-channel target', () => {
+    beforeEach(() => {
+      getChannelBindingMock.mockReset();
+      getBindingCredentialsMock.mockReset();
+    });
+
+    it('resolves credentials for the TARGET channel when it has an enabled binding', async () => {
+      getChannelBindingMock.mockResolvedValueOnce({ enabled: true });
+      getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
+      // jobChannel is unset (defaults to telegram) — the explicit channel
+      // ('discord') differs from it, so this IS a cross-channel target.
+      const ctx = makeCtx();
+
+      await expect(resolveBotToken(ctx, 'discord')).resolves.toBe('discord-token');
+      expect(getChannelBindingMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+      expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+    });
+
+    it('throws channel_not_connected when there is no enabled binding for the explicit channel', async () => {
+      getChannelBindingMock.mockResolvedValueOnce(null);
+      const ctx = makeCtx();
+
+      await expect(resolveBotToken(ctx, 'discord')).rejects.toMatchObject({
+        name: 'channel_not_connected',
+      });
+      expect(getBindingCredentialsMock).not.toHaveBeenCalled();
+    });
+
+    it('an explicit channel matching the job channel is byte-identical (no binding check)', async () => {
+      const ctx = makeCtx({ jobChannel: 'discord' });
+      getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
+
+      await expect(resolveBotToken(ctx, 'discord')).resolves.toBe('discord-token');
+      expect(getChannelBindingMock).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // ─── resolveRecipientChatId (F1) ────────────────────────────────────────────
@@ -228,6 +274,61 @@ describe('resolveRecipientChatId', () => {
     await expect(resolveRecipientChatId('222', ctx, 'no_recipient')).rejects.toMatchObject({
       name: 'telegram_chat_not_allowed',
     });
+  });
+});
+
+// ─── resolveRecipientChatId — explicit cross-channel target ────────────────
+
+describe('resolveRecipientChatId — explicit cross-channel target', () => {
+  beforeEach(() => {
+    getChannelBindingMock.mockReset();
+    getChannelBindingMock.mockResolvedValue({ enabled: true });
+    isChatAllowedMock.mockReset();
+    resolveOwnerChatIdMock.mockReset();
+  });
+
+  it('is ALWAYS allowlist-checked against the TARGET channel, even when the id equals ctx.jobChatId (exemption bypass)', async () => {
+    isChatAllowedMock.mockResolvedValueOnce(true);
+    const ctx = makeCtx({ jobChatId: '111', entityId: 'entity-xyz', agentId: 'agent-abc' });
+
+    await expect(resolveRecipientChatId('111', ctx, 'no_recipient', 'discord')).resolves.toBe(
+      '111',
+    );
+    expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
+      entityId: 'entity-xyz',
+      agentId: 'agent-abc',
+      channel: 'discord',
+      conversationId: '111',
+    });
+  });
+
+  it('throws telegram_chat_not_allowed for a cross-channel id === ctx.jobChatId that is NOT approved on the target channel', async () => {
+    isChatAllowedMock.mockResolvedValueOnce(false);
+    const ctx = makeCtx({ jobChatId: '111' });
+
+    await expect(
+      resolveRecipientChatId('111', ctx, 'no_recipient', 'discord'),
+    ).rejects.toMatchObject({ name: 'telegram_chat_not_allowed' });
+  });
+
+  it('never falls back to ctx.jobChatId (a different channel’s id) — omitted chatId goes straight to the TARGET channel’s owner', async () => {
+    resolveOwnerChatIdMock.mockResolvedValueOnce('discord-owner-chat');
+    const ctx = makeCtx({ jobChatId: '111' });
+
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient', 'discord')).resolves.toBe(
+      'discord-owner-chat',
+    );
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
+  });
+
+  it('an explicit channel matching the job channel keeps the same-channel exemption (regression)', async () => {
+    const ctx = makeCtx({ jobChatId: '111', jobChannel: 'discord' });
+
+    await expect(resolveRecipientChatId('111', ctx, 'no_recipient', 'discord')).resolves.toBe(
+      '111',
+    );
+    expect(isChatAllowedMock).not.toHaveBeenCalled();
   });
 });
 

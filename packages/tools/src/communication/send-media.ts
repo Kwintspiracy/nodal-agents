@@ -48,6 +48,12 @@ const MediaInput = z.object({
     .max(20)
     .optional()
     .describe('Telegram chat ID. Omit to reply to the chat that triggered this job.'),
+  channel: z
+    .enum(['telegram', 'discord', 'slack', 'whatsapp'])
+    .optional()
+    .describe(
+      'Target another connected platform; omit to reply on the current conversation’s channel.',
+    ),
 });
 
 type MediaInput = z.infer<typeof MediaInput>;
@@ -72,12 +78,14 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
     async execute(input: MediaInput, ctx: ToolContext): Promise<MediaOutput> {
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved
       // unless it's the job's own origin chat), then job origin chat (F1).
-      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'no_recipient');
+      // `input.channel` targets another connected platform when given — see
+      // resolveRecipientChatId's doc comment for the cross-channel rules.
+      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'no_recipient', input.channel);
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      const botToken = await resolveBotToken(ctx);
+      const botToken = await resolveBotToken(ctx, input.channel);
       if (!botToken) {
         const err = new Error('no_bot_token');
         err.name = 'no_bot_token';
@@ -117,7 +125,7 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
 
       // 5. Upload via the channel-neutral adapter (server-side, zero bytes in context).
       const filename = input.filename ?? derivedName;
-      const adapter = getAdapter(resolveChannelForJob(ctx));
+      const adapter = getAdapter(await resolveChannelForJob(ctx, input.channel));
       await adapter.sendMedia({ botToken }, chatId, {
         kind: spec.mediaKind,
         bytes,
@@ -149,10 +157,12 @@ return value is tiny: \`{ ok: true, bytes, filename }\`.
 - filename / caption: optional.
 - chatId: optional (omitted → the triggering chat); an explicit chatId must
   already be an approved chat for this agent.
+- channel: optional. Target another connected platform instead of the current
+  conversation's — the agent must have an ENABLED binding for it.
 
 Size cap: 50 MB → throws \`video_too_large\`. Other failures: \`no_recipient\`,
 \`no_bot_token\`, \`telegram_chat_not_allowed\`, \`source_path_not_allowed\`,
-\`fetch_failed\`.`,
+\`fetch_failed\`, \`channel_not_connected\`.`,
   });
 }
 
@@ -170,11 +180,11 @@ for a plain download use \`send_file\`. Pass \`source\` as a local file path or
 http(s) URL — the runner fetches bytes server-side; do NOT base64-encode it.
 Return value: \`{ ok: true, bytes, filename }\`.
 
-- source / filename / caption / chatId as for send_video.
+- source / filename / caption / chatId / channel as for send_video.
 
 Size cap: 50 MB → throws \`audio_too_large\`. Other failures: \`no_recipient\`,
 \`no_bot_token\`, \`telegram_chat_not_allowed\`, \`source_path_not_allowed\`,
-\`fetch_failed\`.`,
+\`fetch_failed\`, \`channel_not_connected\`.`,
   });
 }
 
@@ -192,10 +202,10 @@ For a short spoken message. Telegram expects OGG/Opus — for music use
 path or http(s) URL — bytes fetched server-side; do NOT base64-encode it.
 Return value: \`{ ok: true, bytes, filename }\`.
 
-- source / filename / caption / chatId as for send_video.
+- source / filename / caption / chatId / channel as for send_video.
 
 Size cap: 50 MB → throws \`voice_too_large\`. Other failures: \`no_recipient\`,
 \`no_bot_token\`, \`telegram_chat_not_allowed\`, \`source_path_not_allowed\`,
-\`fetch_failed\`.`,
+\`fetch_failed\`, \`channel_not_connected\`.`,
   });
 }

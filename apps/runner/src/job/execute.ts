@@ -62,6 +62,7 @@ import {
   createSendVideoTool,
   createSendAudioTool,
   createSendVoiceTool,
+  createListConversationsTool,
   listWorkspaceMcpToolNames,
   isCatastrophicCommand,
   matchApprovalRule,
@@ -1094,6 +1095,10 @@ async function runJob(
     capabilityTools.push(createSendVideoTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendAudioTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendVoiceTool() as unknown as AnyToolDef);
+    // list_conversations — same gate as the 6 send tools above: lets the agent
+    // discover a connected platform's structure (and which conversations it's
+    // already approved for) instead of denying a binding it actually has.
+    capabilityTools.push(createListConversationsTool() as unknown as AnyToolDef);
   }
 
   // Close callbacks for per-job MCP transports — invoked in the LLM loop's

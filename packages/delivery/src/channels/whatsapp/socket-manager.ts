@@ -40,6 +40,7 @@ import makeWASocket, {
   type WAMessage,
   type AnyMessageContent,
   type ConnectionState,
+  type GroupMetadata,
 } from '@whiskeysockets/baileys';
 import type { proto } from '@whiskeysockets/baileys';
 import type { Boom } from '@hapi/boom';
@@ -122,6 +123,10 @@ export interface WhatsAppHandle {
   /** Send raw Baileys message content through the live socket. Throws a plain
    *  Error (mapped to a DeliveryError by the adapter) when the socket isn't 'open'. */
   send(jid: string, content: AnyMessageContent): Promise<string>;
+  /** Every group the linked account currently participates in. Throws a plain
+   *  Error (mapped to a DeliveryError by the adapter) when the socket isn't
+   *  'open' — same guard as `send`. */
+  listGroups(): Promise<GroupMetadata[]>;
 }
 
 interface RegistryEntry {
@@ -298,6 +303,13 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
       }
       const result = await state.sock.sendMessage(jid, content);
       return result?.key.id ?? '';
+    },
+    async listGroups() {
+      if (state.status !== 'open' || !state.sock) {
+        throw new Error(`whatsapp socket "${bindingKey}" is not open (status=${state.status})`);
+      }
+      const participating = await state.sock.groupFetchAllParticipating();
+      return Object.values(participating);
     },
   };
 

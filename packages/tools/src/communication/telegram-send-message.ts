@@ -5,11 +5,10 @@
 // Credentials are fetched from the DB at execution time (never in closure).
 //
 // S3 (multichannel plan): sends through the channel-neutral ChannelAdapter
-// (getAdapter) rather than calling the Telegram send helper directly. The
-// tool's NAME, Zod schema, and error names are unchanged this phase — only
-// the transport plumbing moved. resolveChannelForJob picks the adapter (today
-// this only ever resolves 'telegram', since that's the only registered
-// transport — see resolveTransportChannel).
+// (getAdapter) rather than calling the Telegram send helper directly.
+// resolveChannelForJob picks the adapter — the job's own transport channel by
+// default, or the optional `channel` argument below when the caller wants to
+// target a DIFFERENT connected platform (cross-channel send).
 
 import { z } from 'zod';
 import { getAdapter } from '@nodal-agents/delivery';
@@ -26,6 +25,12 @@ const TelegramSendMessageInput = z.object({
     .optional()
     .describe('Telegram chat ID to send to. Omit to reply to the chat that triggered this job.'),
   text: z.string().min(1).max(4096).describe('The message text to send.'),
+  channel: z
+    .enum(['telegram', 'discord', 'slack', 'whatsapp'])
+    .optional()
+    .describe(
+      'Target another connected platform; omit to reply on the current conversation’s channel.',
+    ),
 });
 
 type TelegramSendMessageInput = z.infer<typeof TelegramSendMessageInput>;
@@ -55,6 +60,9 @@ Use this tool to deliver a reply, notification, or result via Telegram.
   APPROVED chat for this agent (the owner, or a member the owner confirmed) —
   you cannot message an arbitrary chat id.
 - **text**: the message body, sent as plain text (no HTML/Markdown parsing).
+- **channel**: optional. Target another connected platform (telegram, discord,
+  slack, whatsapp) instead of the current conversation's — the agent must have
+  an ENABLED binding for it. Omit to reply on the current conversation's channel.
 
 **Same-response multi-call (CRITICAL for cost & latency)**:
 When you need to send multiple messages (long replies split across the
@@ -89,7 +97,9 @@ Fail conditions:
 - If the agent has no configured Telegram bot token, the tool throws
   \`telegram_no_bot_token\`. Fix: configure the bot token in agent settings.
 - If an explicit chatId is not an approved chat for this agent, the tool throws
-  \`telegram_chat_not_allowed\`.`,
+  \`telegram_chat_not_allowed\`.
+- If \`channel\` names a platform this agent has no ENABLED binding for, the tool
+  throws \`channel_not_connected\`.`,
 
     inputSchema: TelegramSendMessageInput,
 
@@ -101,12 +111,19 @@ Fail conditions:
     ): Promise<TelegramSendMessageOutput> {
       // 1. Resolve + authorize chatId — explicit arg wins (must be approved
       // unless it's the job's own origin chat), then job origin chat (F1).
-      const chatId = await resolveRecipientChatId(input.chatId, ctx, 'telegram_no_recipient');
+      // `input.channel` targets another connected platform when given — see
+      // resolveRecipientChatId's doc comment for the cross-channel rules.
+      const chatId = await resolveRecipientChatId(
+        input.chatId,
+        ctx,
+        'telegram_no_recipient',
+        input.channel,
+      );
 
       // 2. Bot token — the runner's resolved token wins (B3: a delegated worker
       // inheriting its entity's root agent's token); otherwise fall back to this
       // agent's own token from DB (credential isolation per agent, historical path).
-      const botToken = await resolveBotToken(ctx);
+      const botToken = await resolveBotToken(ctx, input.channel);
       if (!botToken) {
         const err = new Error('telegram_no_bot_token');
         err.name = 'telegram_no_bot_token';
@@ -115,7 +132,7 @@ Fail conditions:
 
       // 3. Send via the channel-neutral adapter (battle-tested Telegram delivery
       // helper underneath — see channels/telegram-adapter.ts).
-      const adapter = getAdapter(resolveChannelForJob(ctx));
+      const adapter = getAdapter(await resolveChannelForJob(ctx, input.channel));
       const res = await adapter.sendText({ botToken }, chatId, input.text);
 
       return { messageId: res.messageId };

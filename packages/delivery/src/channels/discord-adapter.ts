@@ -23,14 +23,19 @@ import {
   AllowedMentionsTypes,
   ButtonStyle,
   ComponentType,
+  ChannelType,
 } from 'discord.js';
 import type {
   APIActionRowComponent,
   APIButtonComponentWithCustomId,
   APIComponentInMessageActionRow,
+  APIGuildChannel,
   APIMessage,
   APIUser,
+  GuildChannelType,
   RawFile,
+  RESTGetAPICurrentUserGuildsResult,
+  RESTGetAPIGuildChannelsResult,
   RESTPatchAPIChannelMessageJSONBody,
   RESTPostAPIChannelMessageJSONBody,
 } from 'discord.js';
@@ -38,6 +43,7 @@ import { DeliveryError } from '../errors.ts';
 import type {
   ChannelAdapter,
   ChannelCredentials,
+  DiscoveredConversation,
   OutboundMedia,
   ApprovalCard,
   SendResult,
@@ -349,6 +355,64 @@ async function editMessageText(
   }
 }
 
+/** Bound on how many guilds `listConversations` will walk. A bot installed
+ *  into hundreds of servers must not turn one discovery call into hundreds of
+ *  sequential `/guilds/{id}/channels` round-trips — anything beyond the cap
+ *  is logged and dropped rather than silently truncated without a trace. */
+const MAX_GUILDS = 25;
+
+/** Text-capable channel types this discovery surfaces. Voice/stage/category
+ *  channels have no message history an agent could send into, so they're
+ *  filtered out rather than exposed as a dead-end conversation target. */
+const TEXT_CAPABLE_CHANNEL_TYPES: ReadonlySet<ChannelType> = new Set([
+  ChannelType.GuildText,
+  ChannelType.GuildAnnouncement,
+]);
+
+/**
+ * Enumerate the text-capable channels of every guild this bot is in.
+ * Discord has no single "all channels this bot can see" endpoint — it's
+ * GET /users/@me/guilds, then GET /guilds/{id}/channels per guild — so this
+ * is inherently N+1 requests, bounded by MAX_GUILDS.
+ */
+async function listConversations(creds: ChannelCredentials): Promise<DiscoveredConversation[]> {
+  const botToken = requireBotToken(creds);
+  const rest = makeRestClient(botToken);
+
+  let guilds: RESTGetAPICurrentUserGuildsResult;
+  try {
+    guilds = (await rest.get(Routes.userGuilds())) as RESTGetAPICurrentUserGuildsResult;
+  } catch (err) {
+    throw toDeliveryError(err, botToken);
+  }
+  if (guilds.length > MAX_GUILDS) {
+    console.warn(
+      `[discord-adapter] listConversations: bot is in ${guilds.length} guilds, truncating to ${MAX_GUILDS}`,
+    );
+    guilds = guilds.slice(0, MAX_GUILDS);
+  }
+
+  const conversations: DiscoveredConversation[] = [];
+  for (const guild of guilds) {
+    let channels: RESTGetAPIGuildChannelsResult;
+    try {
+      channels = (await rest.get(Routes.guildChannels(guild.id))) as RESTGetAPIGuildChannelsResult;
+    } catch (err) {
+      throw toDeliveryError(err, botToken);
+    }
+    for (const channel of channels as APIGuildChannel<GuildChannelType>[]) {
+      if (!TEXT_CAPABLE_CHANNEL_TYPES.has(channel.type)) continue;
+      conversations.push({
+        conversationId: channel.id,
+        name: `#${channel.name}`,
+        kind: 'channel',
+        groupName: guild.name,
+      });
+    }
+  }
+  return conversations;
+}
+
 /** Validate a bot token via GET /users/@me. Throws `discord_invalid_token` on
  *  a 401 — any other failure gets the generic `send_failed` mapping. */
 async function validateCredentials(creds: ChannelCredentials): Promise<BotIdentity> {
@@ -378,5 +442,6 @@ export const discordAdapter: ChannelAdapter = {
   sendMedia,
   sendApprovalCard,
   editMessageText,
+  listConversations,
   validateCredentials,
 };

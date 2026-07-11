@@ -301,6 +301,64 @@ describe('slackAdapter.editMessageText', () => {
   });
 });
 
+describe('slackAdapter.listConversations', () => {
+  it('maps public/private channels, im, and mpim into DiscoveredConversation[]', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({
+      ok: true,
+      channels: [
+        { id: 'C1', name: 'general', is_channel: true },
+        { id: 'G1', name: 'secret-team', is_group: true, is_private: true },
+        { id: 'D1', is_im: true, user: 'U123' },
+        { id: 'M1', name: 'mpdm-a--b-1', is_mpim: true },
+      ],
+    } as never);
+
+    const result = await slackAdapter.listConversations!(CREDS);
+
+    expect(result).toEqual([
+      { conversationId: 'C1', name: '#general', kind: 'channel' },
+      { conversationId: 'G1', name: '#secret-team', kind: 'channel' },
+      { conversationId: 'D1', name: 'U123', kind: 'private' },
+      { conversationId: 'M1', name: 'mpdm-a--b-1', kind: 'group' },
+    ]);
+  });
+
+  it('calls users.conversations with exclude_archived + the expected types', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({
+      ok: true,
+      channels: [],
+    } as never);
+
+    await slackAdapter.listConversations!(CREDS);
+
+    const [method, options] = vi.mocked(WebClient.prototype.apiCall).mock.calls[0]!;
+    expect(method).toBe('users.conversations');
+    expect(options).toEqual({
+      types: 'public_channel,private_channel,im,mpim',
+      exclude_archived: true,
+      limit: 200,
+    });
+  });
+
+  it('skips an im entry with no user id (no display resolution to fall back on)', async () => {
+    vi.mocked(WebClient.prototype.apiCall).mockResolvedValueOnce({
+      ok: true,
+      channels: [{ id: 'D2', is_im: true }],
+    } as never);
+
+    const result = await slackAdapter.listConversations!(CREDS);
+
+    expect(result).toEqual([]);
+  });
+
+  it('throws slack_no_token when botToken credential is missing', async () => {
+    await expect(slackAdapter.listConversations!({ appToken: FAKE_APP_TOKEN })).rejects.toSatisfy(
+      (err: unknown) => err instanceof DeliveryError && err.code === 'slack_no_token',
+    );
+    expect(WebClient.prototype.apiCall).not.toHaveBeenCalled();
+  });
+});
+
 describe('slackAdapter.validateCredentials', () => {
   function fakeAuthTest(overrides: Partial<AuthTestResponse>): AuthTestResponse {
     return { ok: true, ...overrides } as AuthTestResponse;

@@ -77,6 +77,19 @@ export interface ChannelCapabilities {
   editMessage: boolean;
 }
 
+/** One conversation a bot/session can send into, as surfaced by a channel's
+ *  own enumeration API (Discord: guild channels, Slack: users.conversations,
+ *  WhatsApp: participating groups). Neutral shape — each adapter maps its own
+ *  wire objects onto this, the same way OutboundMedia/ApprovalCard are the
+ *  neutral shapes for sending. */
+export type DiscoveredConversation = {
+  conversationId: string;
+  name: string;
+  kind: 'private' | 'group' | 'channel' | 'thread';
+  /** Grouping container when the platform has one (Discord guild name, Slack workspace) */
+  groupName?: string;
+};
+
 export interface ChannelAdapter {
   readonly channel: ChannelKind;
   readonly capabilities: ChannelCapabilities;
@@ -108,6 +121,11 @@ export interface ChannelAdapter {
     messageId: string,
     text: string,
   ): Promise<void>;
+
+  /** Optional: only channels whose platform can enumerate what a bot/session
+   *  could send into implement this (Telegram's Bot API has no such
+   *  enumeration at all — see telegram-adapter.ts). */
+  listConversations?(creds: ChannelCredentials): Promise<DiscoveredConversation[]>;
 
   validateCredentials(creds: ChannelCredentials): Promise<BotIdentity>;
 }

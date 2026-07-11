@@ -28,6 +28,8 @@ import {
   isConversationAllowed,
   getChannelBinding,
   listChannelBindings,
+  countActiveConversations,
+  listAllowedConversations,
 } from '../queries/channel-identity.ts';
 
 let db: TestDb;
@@ -184,5 +186,79 @@ describe('resolveOwnerConversation / isConversationAllowed — transitional lega
         ),
       );
     expect(neutralRows).toHaveLength(0);
+  });
+});
+
+describe('countActiveConversations / listAllowedConversations — neutral channel (discord)', () => {
+  it('counts only ACTIVE rows, excluding pending', async () => {
+    await db.insert(channelAllowedConversations).values({
+      entityId,
+      agentId,
+      channel: 'discord',
+      conversationId: 'convo-pending-1',
+      role: 'member',
+      status: 'pending',
+    });
+    await db.insert(channelAllowedConversations).values({
+      entityId,
+      agentId,
+      channel: 'discord',
+      conversationId: 'convo-member-1',
+      role: 'member',
+      status: 'active',
+    });
+
+    // discord now holds: convo-1 (owner, active), convo-member-1 (member,
+    // active), convo-pending-1 (pending) — only the two active ones count.
+    await expect(countActiveConversations(db, agentId, 'discord')).resolves.toBe(2);
+  });
+
+  it('listAllowedConversations returns every row (active + pending) with its real fields', async () => {
+    const rows = await listAllowedConversations(db, agentId, 'discord');
+    const byId = new Map(rows.map((r) => [r.conversationId, r]));
+    expect(byId.get('convo-1')).toMatchObject({
+      kind: 'private',
+      role: 'owner',
+      status: 'active',
+    });
+    expect(byId.get('convo-pending-1')).toMatchObject({ role: 'member', status: 'pending' });
+  });
+});
+
+describe('countActiveConversations / listAllowedConversations — transitional legacy read (telegram)', () => {
+  it('counts active telegram_allowed_chats rows and derives kind from the chat id sign', async () => {
+    // legacy-chat-1 is already active/owner from the describe block above
+    // (positive id → 'private'). Add a group (negative id, Telegram's own
+    // convention) member row + a pending row that must NOT be counted.
+    await db.insert(telegramAllowedChats).values({
+      entityId,
+      agentId,
+      chatId: '-100200300',
+      role: 'member',
+      status: 'active',
+    });
+    await db.insert(telegramAllowedChats).values({
+      entityId,
+      agentId,
+      chatId: 'legacy-chat-pending',
+      role: 'member',
+      status: 'pending',
+    });
+
+    await expect(countActiveConversations(db, agentId, 'telegram')).resolves.toBe(2);
+
+    const rows = await listAllowedConversations(db, agentId, 'telegram');
+    const byId = new Map(rows.map((r) => [r.conversationId, r]));
+    expect(byId.get('legacy-chat-1')).toMatchObject({
+      kind: 'private',
+      role: 'owner',
+      status: 'active',
+    });
+    expect(byId.get('-100200300')).toMatchObject({
+      kind: 'group',
+      role: 'member',
+      status: 'active',
+    });
+    expect(byId.get('legacy-chat-pending')).toMatchObject({ status: 'pending' });
   });
 });

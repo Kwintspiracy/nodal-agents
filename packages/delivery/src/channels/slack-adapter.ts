@@ -18,6 +18,7 @@ import { DeliveryError } from '../errors.ts';
 import type {
   ChannelAdapter,
   ChannelCredentials,
+  DiscoveredConversation,
   OutboundMedia,
   ApprovalCard,
   SendResult,
@@ -346,6 +347,53 @@ async function editMessageText(
 }
 
 /**
+ * Enumerate the conversations this bot is a MEMBER of, via `users.conversations`
+ * — deliberately not `conversations.list` (every channel in the workspace,
+ * bot membership aside): that needs scopes this app doesn't request
+ * (channels:read on channels the bot hasn't joined) and would surface targets
+ * the bot can't actually post into anyway. `users.conversations` is the
+ * actionable set. A single call, `limit: 200` (Slack's own page-size cap) —
+ * pagination via `response_metadata.next_cursor` is left for whenever a real
+ * workspace needs more than 200 conversations in one discovery pass.
+ */
+async function listConversations(creds: ChannelCredentials): Promise<DiscoveredConversation[]> {
+  const botToken = requireBotToken(creds);
+  const client = makeClient(botToken);
+
+  let result: Awaited<ReturnType<typeof client.users.conversations>>;
+  try {
+    result = await client.users.conversations({
+      types: 'public_channel,private_channel,im,mpim',
+      exclude_archived: true,
+      limit: 200,
+    });
+  } catch (err) {
+    throw toDeliveryError(err, botToken);
+  }
+
+  const conversations: DiscoveredConversation[] = [];
+  for (const ch of result.channels ?? []) {
+    if (!ch.id) continue;
+    if (ch.is_im) {
+      // No display-name resolution here (that's a separate users.info call
+      // per DM) — keep this a single API call; the raw user id is still a
+      // usable conversationId/name for the tool layer to work with.
+      if (!ch.user) continue;
+      conversations.push({ conversationId: ch.id, name: ch.user, kind: 'private' });
+    } else if (ch.is_mpim) {
+      if (!ch.name) continue;
+      conversations.push({ conversationId: ch.id, name: ch.name, kind: 'group' });
+      // groupName (workspace/team) omitted: getting it needs its own
+      // auth.test call, and this function is deliberately kept to one.
+    } else {
+      if (!ch.name) continue;
+      conversations.push({ conversationId: ch.id, name: `#${ch.name}`, kind: 'channel' });
+    }
+  }
+  return conversations;
+}
+
+/**
  * Validate a bot's credentials via `auth.test`, plus the app-level token that
  * rides alongside it. The Slack ChannelCredentials bag carries BOTH tokens —
  * `botToken` (used by every method above, via `chat.*`/`files.*`) and
@@ -388,5 +436,6 @@ export const slackAdapter: ChannelAdapter = {
   sendMedia,
   sendApprovalCard,
   editMessageText,
+  listConversations,
   validateCredentials,
 };

@@ -19,6 +19,8 @@ import {
   mcpServers,
   agentWorkspaces,
   touchSkillsLastUsed,
+  listChannelBindings,
+  countActiveConversations,
 } from '@nodal-agents/db';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
@@ -290,6 +292,44 @@ function buildWorkspacesBlock(
   );
 }
 
+// ─── buildMessagingChannelsBlock ──────────────────────────────────────────────
+// Renders the agent's connected platforms (channel_bindings, enabled only)
+// plus each one's approved-conversation count, so the agent knows what it's
+// actually connected to — born from a live incident where an agent with an
+// ENABLED Discord binding told its owner "I have no Discord connection":
+// bindings were never surfaced to the LLM at all. DB-only — never a network/
+// adapter call in the prompt path (bindings + counts, no live platform query).
+// Omitted entirely when the agent has zero enabled bindings.
+async function buildMessagingChannelsBlock(agentId: string, db: AnyDrizzleDb): Promise<string> {
+  const bindings = (await listChannelBindings(db, agentId)).filter((b) => b.enabled);
+  if (bindings.length === 0) return '';
+
+  const lines = await Promise.all(
+    bindings.map(async (b) => {
+      const count = await countActiveConversations(db, agentId, b.channel);
+      const label = b.botIdentity?.username
+        ? `@${b.botIdentity.username}`
+        : b.botIdentity?.displayName
+          ? `"${b.botIdentity.displayName}"`
+          : 'bot';
+      const noun = count === 1 ? 'conversation' : 'conversations';
+      return `- ${b.channel} — bot ${label} · ${count} approved ${noun}`;
+    }),
+  );
+
+  return (
+    `## Messaging channels\n\n` +
+    `You are connected to these messaging platforms (each with its own owner-approved ` +
+    `conversation list):\n` +
+    `${lines.join('\n')}\n\n` +
+    `Use \`list_conversations\` to explore a platform's structure (servers, channels, groups) ` +
+    `and see which conversations are approved. You can only SEND to approved conversations; ` +
+    `to get a new one approved, ask your owner to mention you there (or message you from it) ` +
+    `and approve the resulting card. Send tools accept an optional \`channel\` to target a ` +
+    `platform other than the current conversation's.`
+  );
+}
+
 // ─── buildSystemPrompt ────────────────────────────────────────────────────────
 
 /**
@@ -501,6 +541,10 @@ export async function buildSystemPrompt(
     workspaceMcps,
   });
 
+  //    Messaging channels — the agent's connected platforms + approved-
+  //    conversation counts (see buildMessagingChannelsBlock's doc comment).
+  const messagingChannelsBlock = await buildMessagingChannelsBlock(agent.id as string, db);
+
   //    L3 delegated sub-task — when this job is a delegated child (it has a
   //    parent), the agent must NOT deliver to the end user itself: it returns its
   //    result to the orchestrator, and the ROOT owns the single reply on the
@@ -537,6 +581,7 @@ export async function buildSystemPrompt(
     workspacesBlock +
     skillsBlock +
     wrap(discoverabilityBlock) +
+    wrap(messagingChannelsBlock) +
     wrap(channelBlock) +
     wrap(subAgentBlock);
 

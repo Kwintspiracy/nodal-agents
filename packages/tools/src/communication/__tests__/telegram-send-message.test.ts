@@ -24,8 +24,9 @@ import { DeliveryError } from '@nodal-agents/delivery';
 // reference variables declared later. Use vi.hoisted to create the mock fn
 // in the hoisted scope so both the factory and the test body can access it.
 
-const { sendTextMock } = vi.hoisted(() => ({
+const { sendTextMock, getAdapterMock } = vi.hoisted(() => ({
   sendTextMock: vi.fn(),
+  getAdapterMock: vi.fn(() => ({ sendText: sendTextMock })),
 }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
@@ -33,15 +34,22 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return {
     ...actual,
-    getAdapter: () => ({ sendText: sendTextMock }),
+    getAdapter: getAdapterMock,
   };
 });
 
 // ─── Mock @nodal-agents/db ─────────────────────────────────────────────────────────
 
-const { isChatAllowedMock, resolveOwnerChatIdMock } = vi.hoisted(() => ({
+const {
+  isChatAllowedMock,
+  resolveOwnerChatIdMock,
+  getChannelBindingMock,
+  getBindingCredentialsMock,
+} = vi.hoisted(() => ({
   isChatAllowedMock: vi.fn(),
   resolveOwnerChatIdMock: vi.fn(),
+  getChannelBindingMock: vi.fn(),
+  getBindingCredentialsMock: vi.fn(),
 }));
 
 // We build a minimal fake DB that returns agent rows on demand
@@ -70,6 +78,8 @@ vi.mock('@nodal-agents/db', () => {
     eq,
     isConversationAllowed: isChatAllowedMock,
     resolveOwnerConversation: resolveOwnerChatIdMock,
+    getChannelBinding: getChannelBindingMock,
+    getBindingCredentials: getBindingCredentialsMock,
   };
 });
 
@@ -252,5 +262,94 @@ describe('createTelegramSendMessageTool', () => {
     expect(schema.safeParse({ text: 'hi' }).success).toBe(true);
     expect(schema.safeParse({ chatId: '123', text: 'hi' }).success).toBe(true);
     expect(schema.safeParse({ chatId: 123, text: 'hi' }).success).toBe(false);
+  });
+
+  // ─── Optional `channel` — cross-channel send ──────────────────────────────
+
+  describe('optional channel — cross-channel send', () => {
+    beforeEach(() => {
+      getChannelBindingMock.mockReset();
+      getBindingCredentialsMock.mockReset();
+      getAdapterMock.mockClear();
+    });
+
+    it("omitted channel stays byte-identical: no binding check, sends via the job's own (telegram) adapter", async () => {
+      const tool = createTelegramSendMessageTool();
+      const ctx = makeCtx({ jobChatId: '99887766' });
+
+      await tool.execute({ text: 'plain' }, ctx);
+
+      expect(getChannelBindingMock).not.toHaveBeenCalled();
+      expect(getAdapterMock).toHaveBeenCalledWith('telegram');
+      expect(sendTextMock).toHaveBeenCalledWith(
+        { botToken: 'bot:TEST_TOKEN' },
+        '99887766',
+        'plain',
+      );
+    });
+
+    it('sends via the TARGET channel adapter when an explicit channel differs from the job channel', async () => {
+      // resolveChannelForJob's binding check runs once each from
+      // resolveRecipientChatId, resolveBotToken, and the adapter lookup below —
+      // all three must see the same enabled binding.
+      getChannelBindingMock.mockResolvedValue({ enabled: true });
+      getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
+      isChatAllowedMock.mockResolvedValueOnce(true);
+
+      const tool = createTelegramSendMessageTool();
+      const ctx = makeCtx({ jobChatId: '99887766' });
+
+      await tool.execute({ chatId: '55556666', text: 'cross-channel', channel: 'discord' }, ctx);
+
+      expect(getChannelBindingMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+      expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+      expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
+        entityId: ctx.entityId,
+        agentId: ctx.agentId,
+        channel: 'discord',
+        conversationId: '55556666',
+      });
+      expect(getAdapterMock).toHaveBeenCalledWith('discord');
+      expect(sendTextMock).toHaveBeenCalledWith(
+        { botToken: 'discord-token' },
+        '55556666',
+        'cross-channel',
+      );
+    });
+
+    it('throws channel_not_connected when there is no enabled binding for the explicit channel — nothing sent', async () => {
+      getChannelBindingMock.mockResolvedValueOnce(null);
+
+      const tool = createTelegramSendMessageTool();
+      const ctx = makeCtx({ jobChatId: '99887766' });
+
+      await expect(
+        tool.execute({ chatId: '55556666', text: 'nope', channel: 'discord' }, ctx),
+      ).rejects.toMatchObject({ name: 'channel_not_connected' });
+
+      expect(getBindingCredentialsMock).not.toHaveBeenCalled();
+      expect(sendTextMock).not.toHaveBeenCalled();
+    });
+
+    it('throws telegram_chat_not_allowed for a cross-channel target even when the chat id equals ctx.jobChatId (exemption bypass)', async () => {
+      getChannelBindingMock.mockResolvedValueOnce({ enabled: true });
+      getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
+      isChatAllowedMock.mockResolvedValueOnce(false);
+
+      const tool = createTelegramSendMessageTool();
+      const ctx = makeCtx({ jobChatId: '99887766' });
+
+      await expect(
+        tool.execute({ chatId: '99887766', text: 'sneaky', channel: 'discord' }, ctx),
+      ).rejects.toMatchObject({ name: 'telegram_chat_not_allowed' });
+
+      expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
+        entityId: ctx.entityId,
+        agentId: ctx.agentId,
+        channel: 'discord',
+        conversationId: '99887766',
+      });
+      expect(sendTextMock).not.toHaveBeenCalled();
+    });
   });
 });

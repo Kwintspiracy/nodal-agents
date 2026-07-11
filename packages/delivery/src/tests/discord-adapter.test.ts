@@ -9,7 +9,7 @@
 // changes needed to make it injectable).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { REST, Routes, DiscordAPIError } from 'discord.js';
+import { REST, Routes, DiscordAPIError, ChannelType } from 'discord.js';
 import type { APIMessage, APIUser } from 'discord.js';
 import { discordAdapter } from '../channels/discord-adapter.ts';
 import { DeliveryError } from '../errors.ts';
@@ -261,6 +261,76 @@ describe('discordAdapter.editMessageText', () => {
     await expect(
       discordAdapter.editMessageText!(CREDS, CHANNEL_ID, '42', 'Resolved ✅'),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('discordAdapter.listConversations', () => {
+  it('maps guilds + their text-capable channels into DiscoveredConversation[]', async () => {
+    vi.mocked(REST.prototype.get).mockImplementation((route) => {
+      if (route === Routes.userGuilds()) {
+        return Promise.resolve([
+          { id: 'g1', name: 'Guild One' },
+          { id: 'g2', name: 'Guild Two' },
+        ]);
+      }
+      if (route === Routes.guildChannels('g1')) {
+        return Promise.resolve([{ id: 'c1', name: 'general', type: ChannelType.GuildText }]);
+      }
+      if (route === Routes.guildChannels('g2')) {
+        return Promise.resolve([
+          { id: 'c2', name: 'announcements', type: ChannelType.GuildAnnouncement },
+        ]);
+      }
+      throw new Error(`unexpected route ${String(route)}`);
+    });
+
+    const result = await discordAdapter.listConversations!(CREDS);
+
+    expect(result).toEqual([
+      { conversationId: 'c1', name: '#general', kind: 'channel', groupName: 'Guild One' },
+      { conversationId: 'c2', name: '#announcements', kind: 'channel', groupName: 'Guild Two' },
+    ]);
+  });
+
+  it('excludes non-text-capable channel types (voice, category)', async () => {
+    vi.mocked(REST.prototype.get).mockImplementation((route) => {
+      if (route === Routes.userGuilds()) {
+        return Promise.resolve([{ id: 'g1', name: 'Guild One' }]);
+      }
+      return Promise.resolve([
+        { id: 'c1', name: 'general', type: ChannelType.GuildText },
+        { id: 'c2', name: 'Voice Chat', type: ChannelType.GuildVoice },
+        { id: 'c3', name: 'Category', type: ChannelType.GuildCategory },
+        { id: 'c4', name: 'announcements', type: ChannelType.GuildAnnouncement },
+      ]);
+    });
+
+    const result = await discordAdapter.listConversations!(CREDS);
+
+    expect(result.map((c) => c.conversationId)).toEqual(['c1', 'c4']);
+  });
+
+  it('truncates to the MAX_GUILDS bound when the bot is in more guilds than that', async () => {
+    const guilds = Array.from({ length: 30 }, (_, i) => ({ id: `g${i}`, name: `Guild ${i}` }));
+    vi.mocked(REST.prototype.get).mockImplementation((route) => {
+      if (route === Routes.userGuilds()) return Promise.resolve(guilds);
+      return Promise.resolve([{ id: 'c0', name: 'general', type: ChannelType.GuildText }]);
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await discordAdapter.listConversations!(CREDS);
+
+    // 25 guilds walked (the bound), each contributing exactly one channel here
+    expect(result).toHaveLength(25);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('throws discord_no_token when botToken credential is missing', async () => {
+    await expect(discordAdapter.listConversations!({})).rejects.toSatisfy(
+      (err: unknown) => err instanceof DeliveryError && err.code === 'discord_no_token',
+    );
+    expect(REST.prototype.get).not.toHaveBeenCalled();
   });
 });
 

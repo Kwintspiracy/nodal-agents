@@ -171,5 +171,6 @@ export const telegramAdapter: ChannelAdapter = {
   sendMedia,
   sendApprovalCard,
   editMessageText,
+  // listConversations: intentionally NOT implemented — the Bot API has no enumeration whatsoever (no "list my chats" endpoint); callers fall back to the allowlist.
   validateCredentials,
 };

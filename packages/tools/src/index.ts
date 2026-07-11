@@ -79,6 +79,10 @@ export {
   DELIVERY_TOOL_NAMES,
 } from './communication';
 
+// Channel discovery — capability-driven, same registration gate as the
+// communication tools above (see builtin/list-conversations.ts).
+export { createListConversationsTool } from './builtin/index';
+
 // Skill-authoring grounding: the real MCP tool names of a workspace, injected
 // into create_skill / update_skill descriptions by the runner so the ROOT agent
 // references real tools (not its training-prior conventions) BEFORE authoring.

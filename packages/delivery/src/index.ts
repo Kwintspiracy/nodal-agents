@@ -44,6 +44,7 @@ export type {
   BotIdentity,
   ChannelCapabilities,
   ChannelAdapter,
+  DiscoveredConversation,
 } from './channel-adapter.ts';
 
 export { telegramAdapter } from './channels/telegram-adapter.ts';

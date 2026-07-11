@@ -27,6 +27,7 @@ interface FakeHandle {
   getStatus(): WhatsAppStatus;
   getIdentity(): BotIdentity | null;
   send: ReturnType<typeof vi.fn>;
+  listGroups: ReturnType<typeof vi.fn>;
 }
 
 function makeFakeHandle(
@@ -36,12 +37,14 @@ function makeFakeHandle(
   const events = new EventEmitter();
   const status = initialStatus;
   const send = vi.fn().mockResolvedValue('wamsg-1');
+  const listGroups = vi.fn().mockResolvedValue([]);
   return {
     bindingKey: CREDS.sessionDir,
     events,
     getStatus: () => status,
     getIdentity: () => identity,
     send,
+    listGroups,
     // test-only helper to drive status transitions
     // (not part of WhatsAppHandle — attached for convenience below)
   } as FakeHandle & { setStatus: (s: WhatsAppStatus) => void };
@@ -259,6 +262,41 @@ describe('whatsappAdapter.sendMedia', () => {
       ptt: true,
       mimetype: 'audio/ogg; codecs=opus',
     });
+  });
+});
+
+describe('whatsappAdapter.listConversations', () => {
+  it('maps participating groups into DiscoveredConversation[] when the socket is open', async () => {
+    const handle = makeFakeHandle('open');
+    handle.listGroups.mockResolvedValue([
+      { id: '1-group@g.us', subject: 'Family', owner: undefined, participants: [] },
+      { id: '2-group@g.us', subject: 'Work', owner: undefined, participants: [] },
+    ]);
+    mockEnsureWhatsAppSocket.mockReturnValue(handle);
+
+    const result = await whatsappAdapter.listConversations!(CREDS);
+
+    expect(result).toEqual([
+      { conversationId: '1-group@g.us', name: 'Family', kind: 'group' },
+      { conversationId: '2-group@g.us', name: 'Work', kind: 'group' },
+    ]);
+  });
+
+  it('throws whatsapp_not_paired without calling listGroups when the socket is not open', async () => {
+    const handle = makeFakeHandle('connecting');
+    mockEnsureWhatsAppSocket.mockReturnValue(handle);
+
+    await expect(whatsappAdapter.listConversations!(CREDS)).rejects.toSatisfy(
+      (err: unknown) => err instanceof DeliveryError && err.code === 'whatsapp_not_paired',
+    );
+    expect(handle.listGroups).not.toHaveBeenCalled();
+  });
+
+  it('throws whatsapp_not_paired when sessionDir credential is missing', async () => {
+    await expect(whatsappAdapter.listConversations!({})).rejects.toSatisfy(
+      (err: unknown) => err instanceof DeliveryError && err.code === 'whatsapp_not_paired',
+    );
+    expect(mockEnsureWhatsAppSocket).not.toHaveBeenCalled();
   });
 });
 
