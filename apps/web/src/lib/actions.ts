@@ -5879,6 +5879,7 @@ export type ScheduleRow = {
   nextRun: Date | null;
   lastStatus: string | null;
   notifyOnSuccess: boolean;
+  dailyBudgetUsd: number;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -5901,6 +5902,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
         nextRun: agentSchedules.nextRun,
         lastStatus: agentSchedules.lastStatus,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
         createdAt: agentSchedules.createdAt,
         updatedAt: agentSchedules.updatedAt,
       })
@@ -5914,6 +5916,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
         ...r,
         active: r.active ?? true,
         notifyOnSuccess: r.notifyOnSuccess ?? false,
+        dailyBudgetUsd: r.dailyBudgetUsd ?? 5,
       })) as ScheduleRow[],
     );
   } catch (err) {
@@ -5928,6 +5931,7 @@ const CreateScheduleSchema = z.object({
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
   notifyOnSuccess: z.boolean().optional().default(false),
+  dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
 });
 
 export async function createScheduleAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
@@ -5963,6 +5967,7 @@ export async function createScheduleAction(raw: unknown): Promise<ActionResult<{
         active: true,
         nextRun,
         notifyOnSuccess: parsed.data.notifyOnSuccess,
+        dailyBudgetUsd: parsed.data.dailyBudgetUsd,
       })
       .returning({ id: agentSchedules.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -5997,6 +6002,7 @@ export async function duplicateScheduleAction(id: string): Promise<ActionResult<
         cronExpr: agentSchedules.cronExpr,
         task: agentSchedules.task,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
       })
       .from(agentSchedules)
       .where(and(eq(agentSchedules.id, id), eq(agentSchedules.entityId, session.entityId)));
@@ -6014,6 +6020,7 @@ export async function duplicateScheduleAction(id: string): Promise<ActionResult<
         active: false, // paused — review + enable when ready, never double-fire
         nextRun: null,
         notifyOnSuccess: src.notifyOnSuccess ?? false,
+        dailyBudgetUsd: src.dailyBudgetUsd ?? 5,
       })
       .returning({ id: agentSchedules.id });
     if (!row) return fail('db_error', 'Insert returned no row');
@@ -6033,6 +6040,7 @@ const UpdateScheduleSchema = z.object({
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
   notifyOnSuccess: z.boolean().optional().default(false),
+  dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
 });
 
 export async function updateScheduleAction(raw: unknown): Promise<ActionResult<void>> {
@@ -6074,6 +6082,7 @@ export async function updateScheduleAction(raw: unknown): Promise<ActionResult<v
         task: parsed.data.task,
         nextRun,
         notifyOnSuccess: parsed.data.notifyOnSuccess,
+        dailyBudgetUsd: parsed.data.dailyBudgetUsd,
         updatedAt: new Date(),
       })
       .where(eq(agentSchedules.id, parsed.data.id));

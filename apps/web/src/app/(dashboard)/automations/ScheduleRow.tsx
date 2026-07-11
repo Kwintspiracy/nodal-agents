@@ -106,12 +106,19 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
                         ? 'text-ok'
                         : s.lastStatus === 'failed'
                           ? 'text-err'
-                          : 'text-ink-4'
+                          : s.lastStatus === 'budget_exhausted'
+                            ? 'text-warn'
+                            : 'text-ink-4'
                     }`}
                   >
-                    ({s.lastStatus})
+                    ({s.lastStatus === 'budget_exhausted' ? 'budget reached' : s.lastStatus})
                   </span>
                 )}
+              </span>
+            )}
+            {s.lastStatus === 'budget_exhausted' && (
+              <span title={`Paused until tomorrow — spent its $${s.dailyBudgetUsd} daily budget`}>
+                💰
               </span>
             )}
           </div>

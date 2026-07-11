@@ -8,6 +8,7 @@
 //   - concurrent ticks → schedule fires exactly once (idempotency)
 //   - failed job → last_status='failed' on schedule
 //   - next_run advances correctly after firing
+//   - Event Triggers, Brique 3: daily budget guard (F1) + no-overlap guard (F2)
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { MockLanguageModelV3 } from 'ai/test';
@@ -20,6 +21,16 @@ import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../../deps.ts';
+
+// Mock the delivery channel so the budget-exhausted owner notice (F1) can be
+// asserted deterministically without network. Hoisted by vitest — mirrors
+// deliver-results.test.ts's pattern.
+type SendOpts = { chatId: string; text: string; botToken: string };
+const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
+vi.mock('@nodal-agents/delivery', () => ({
+  sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
+}));
+
 import { runScheduleTick } from '../run-schedules.ts';
 
 // Brique 25: execute.ts calls createLlmClient() from @nodal-agents/llm directly.
@@ -161,6 +172,7 @@ async function createSchedule(overrides: {
   task?: string;
   notifyOnSuccess?: boolean;
   chatId?: string | null;
+  dailyBudgetUsd?: number;
 }) {
   const rows = await db
     .insert(agentSchedules)
@@ -175,6 +187,28 @@ async function createSchedule(overrides: {
       nextRun: overrides.nextRun === undefined ? null : overrides.nextRun,
       notifyOnSuccess: overrides.notifyOnSuccess ?? false,
       chatId: overrides.chatId ?? null,
+      dailyBudgetUsd: overrides.dailyBudgetUsd ?? 5,
+    })
+    .returning();
+  return rows[0]!;
+}
+
+/** Insert an agent_jobs row tied to a schedule with a controlled cost + created_at, for budget rollup tests. */
+async function insertScheduleJob(
+  scheduleId: string,
+  overrides: { totalCostUsd?: number; createdAt?: Date; status?: string; task?: string } = {},
+) {
+  const rows = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'cron',
+      task: overrides.task ?? 'rollup fixture',
+      status: overrides.status ?? 'completed',
+      scheduleId,
+      totalCostUsd: overrides.totalCostUsd ?? 0,
+      createdAt: overrides.createdAt ?? new Date(),
     })
     .returning();
   return rows[0]!;
@@ -519,5 +553,273 @@ describe('runScheduleTick', () => {
       scheduleName: 'Test schedule',
       prevRunAt: null,
     });
+  });
+
+  // ─── Event Triggers, Brique 3: daily budget guard (F1) ──────────────────────
+
+  it('fires normally when the schedule has spent under its daily budget today', async () => {
+    const sched = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'budget ok',
+    });
+    await insertScheduleJob(sched.id, { totalCostUsd: 4.99 });
+
+    const deps = makeDeps(db, [{ text: 'ran within budget' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const after = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after[0]?.lastStatus).toBe('success');
+
+    const fired = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.scheduleId, sched.id), eq(agentJobs.task, 'budget ok')));
+    expect(fired.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it(
+    'holds a schedule that already spent past its daily budget, notifies the owner once, ' +
+      'and does not repeat the notice on the next tick while still exhausted',
+    async () => {
+      await db.insert(telegramAllowedChats).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        chatId: 'budget-owner-1',
+        role: 'owner',
+        status: 'active',
+      });
+      await db
+        .update(agents)
+        .set({ telegramBotToken: 'test-bot-token' })
+        .where(eq(agents.id, seed.agentId));
+
+      const sched = await createSchedule({
+        nextRun: new Date(Date.now() - 60_000),
+        task: 'budget exceeded',
+      });
+      await insertScheduleJob(sched.id, { totalCostUsd: 5.01 });
+
+      const deps = makeDeps(db, [{ text: 'should not run' }]);
+      await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+      const after1 = await db
+        .select({ lastStatus: agentSchedules.lastStatus, lastRun: agentSchedules.lastRun })
+        .from(agentSchedules)
+        .where(eq(agentSchedules.id, sched.id));
+      expect(after1[0]?.lastStatus).toBe('budget_exhausted');
+      // No new job created — only the pre-existing fixture job.
+      const jobsAfterFirstTick = await db
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(eq(agentJobs.scheduleId, sched.id));
+      expect(jobsAfterFirstTick.length).toBe(1);
+
+      expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
+      const sent = sendTelegramMessageMock.mock.calls[0]![0];
+      expect(sent.botToken).toBe('test-bot-token');
+      expect(sent.chatId).toBe('budget-owner-1');
+      expect(sent.text).toContain('Test schedule');
+      expect(sent.text).toContain('5.00');
+
+      // Second tick: still exhausted (no new spend) — must NOT re-notify.
+      sendTelegramMessageMock.mockClear();
+      await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+      const after2 = await db
+        .select({ lastStatus: agentSchedules.lastStatus })
+        .from(agentSchedules)
+        .where(eq(agentSchedules.id, sched.id));
+      expect(after2[0]?.lastStatus).toBe('budget_exhausted');
+      expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+      await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+      await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+    },
+  );
+
+  it('does not count cost from a previous day toward the budget', async () => {
+    const sched = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'yesterday cost',
+    });
+    // >24h ago is safely "yesterday" regardless of the server's local timezone
+    // (max UTC offset is ±14h).
+    const yesterday = new Date(Date.now() - 25 * 60 * 60_000);
+    await insertScheduleJob(sched.id, { totalCostUsd: 999, createdAt: yesterday });
+
+    const deps = makeDeps(db, [{ text: 'still runs' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const after = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after[0]?.lastStatus).toBe('success');
+  });
+
+  it("does not count another schedule's cost toward this one's budget", async () => {
+    const schedA = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'schedule A budget',
+    });
+    const schedB = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'schedule B budget',
+    });
+    await insertScheduleJob(schedB.id, { totalCostUsd: 999 });
+
+    const deps = makeDeps(db, [{ text: 'A runs fine' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const afterA = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, schedA.id));
+    expect(afterA[0]?.lastStatus).toBe('success');
+
+    const afterB = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, schedB.id));
+    expect(afterB[0]?.lastStatus).toBe('budget_exhausted');
+  });
+
+  it("never counts a non-schedule job (schedule_id NULL) toward any schedule's budget", async () => {
+    await db.insert(agentJobs).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'api',
+      task: 'unrelated non-schedule job',
+      status: 'completed',
+      totalCostUsd: 999,
+      scheduleId: null,
+    });
+    const sched = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'unaffected by null-schedule jobs',
+    });
+
+    const deps = makeDeps(db, [{ text: 'runs fine' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const after = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after[0]?.lastStatus).toBe('success');
+  });
+
+  it('accepts budget_exhausted as a valid last_status (migration 0062 CHECK constraint)', async () => {
+    const sched = await createSchedule({ nextRun: null, task: 'constraint probe' });
+    await db
+      .update(agentSchedules)
+      .set({ lastStatus: 'budget_exhausted' })
+      .where(eq(agentSchedules.id, sched.id));
+    const after = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after[0]?.lastStatus).toBe('budget_exhausted');
+  });
+
+  // ─── Event Triggers, Brique 3: no-overlap guard (F2) ────────────────────────
+
+  it('skips firing a due schedule while a previous job for it is still live', async () => {
+    const sched = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'overlap guard task',
+    });
+    const liveJob = await insertScheduleJob(sched.id, {
+      status: 'processing',
+      task: 'overlap guard task',
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const deps = makeDeps(db, [{ text: 'should not fire' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+
+    const jobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.scheduleId, sched.id));
+    expect(jobs.length).toBe(1); // only the pre-existing live job, no new one
+    expect(jobs[0]!.id).toBe(liveJob.id);
+
+    const after = await db
+      .select({ lastRun: agentSchedules.lastRun })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after[0]?.lastRun).toBeNull(); // untouched
+  });
+
+  it('fires normally once the previous live job for the schedule has completed (regression)', async () => {
+    const sched = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'overlap then clear',
+    });
+    const priorJob = await insertScheduleJob(sched.id, {
+      status: 'processing',
+      task: 'overlap then clear',
+    });
+
+    const deps = makeDeps(db, [{ text: 'should not fire yet' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+    let jobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.scheduleId, sched.id));
+    expect(jobs.length).toBe(1); // still just the live one
+
+    await db.update(agentJobs).set({ status: 'completed' }).where(eq(agentJobs.id, priorJob.id));
+
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+    jobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.scheduleId, sched.id));
+    expect(jobs.length).toBe(2); // the completed one + a newly-fired one
+
+    const after = await db
+      .select({ lastRun: agentSchedules.lastRun })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after[0]?.lastRun).toBeInstanceOf(Date);
+  });
+
+  it('a live job on one schedule does not block a different schedule from firing', async () => {
+    const schedBusy = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'busy schedule',
+    });
+    const schedFree = await createSchedule({
+      nextRun: new Date(Date.now() - 60_000),
+      task: 'free schedule',
+    });
+    await insertScheduleJob(schedBusy.id, { status: 'processing', task: 'busy schedule' });
+
+    const deps = makeDeps(db, [{ text: 'free schedule fires' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const freeJobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.scheduleId, schedFree.id));
+    expect(freeJobs.length).toBeGreaterThanOrEqual(1);
+
+    const afterFree = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, schedFree.id));
+    expect(afterFree[0]?.lastStatus).toBe('success');
+
+    const busyJobs = await db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(eq(agentJobs.scheduleId, schedBusy.id));
+    expect(busyJobs.length).toBe(1); // untouched — still just the live fixture job
   });
 });

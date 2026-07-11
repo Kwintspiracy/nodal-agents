@@ -1,6 +1,6 @@
 // agent_schedules table
 
-import { pgTable, text, uuid, boolean, timestamp, index, check } from 'drizzle-orm/pg-core';
+import { pgTable, text, uuid, boolean, real, timestamp, index, check } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -31,6 +31,12 @@ export const agentSchedules = pgTable(
     // forces the agent to send the user a success confirmation before finishing.
     // Default false → the cron runs silently (the user must opt in per schedule).
     notifyOnSuccess: boolean('notify_on_success').notNull().default(false),
+    // Per-schedule daily cost ceiling in USD (Event Triggers, Brique 3). Rolled
+    // up against agent_jobs.total_cost_usd for this schedule since the start
+    // of its local day — see runScheduleTick (apps/runner/src/cron/run-schedules.ts).
+    // Default 5.0: generous enough not to surprise existing schedules, small
+    // enough to bound the worst case a frequent watcher can burn.
+    dailyBudgetUsd: real('daily_budget_usd').notNull().default(5.0),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
@@ -40,7 +46,7 @@ export const agentSchedules = pgTable(
     check('agent_schedules_type_check', sql`${table.type} IN ('cron','heartbeat')`),
     check(
       'agent_schedules_last_status_check',
-      sql`${table.lastStatus} IN ('success','failed','no_action') OR ${table.lastStatus} IS NULL`,
+      sql`${table.lastStatus} IN ('success','failed','no_action','budget_exhausted') OR ${table.lastStatus} IS NULL`,
     ),
   ],
 );

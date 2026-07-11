@@ -1,20 +1,70 @@
 // cron/run-schedules.ts — runScheduleTick
 // Fire active agent_schedules whose next_run is due (NULL or <= now). For each
 // fired schedule:
-//   1. Atomic claim via conditional UPDATE (no FOR UPDATE SKIP LOCKED on pglite)
-//   2. Insert agent_jobs row with channel='cron'
-//   3. Execute inline via executeJob
-//   4. Update last_status from job outcome
+//   1. No-overlap pre-filter — skip if a live job for this schedule exists
+//   2. Daily budget pre-filter — skip if today's cost rollup hit the ceiling
+//   3. Atomic claim via conditional UPDATE (no FOR UPDATE SKIP LOCKED on pglite)
+//   4. Insert agent_jobs row with channel='cron'
+//   5. Execute inline via executeJob
+//   6. Update last_status from job outcome
 // Idempotent: two concurrent ticks can't fire the same schedule twice — the
 // conditional UPDATE acts as the lock.
 
-import { and, eq, isNull, lte, or } from '@nodal-agents/db';
-import { agentSchedules, agentJobs, resolveOwnerChatId } from '@nodal-agents/db';
+import { and, eq, isNull, lte, or, sql, desc, inArray } from '@nodal-agents/db';
+import { agentSchedules, agentJobs, agents, resolveOwnerChatId } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
+import { resolveTimezone } from '@nodal-agents/shared';
+import { sendTelegramMessage } from '@nodal-agents/delivery';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob, type ExecuteJobResult } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { JobId } from '@nodal-agents/orchestration';
+
+// Job statuses that mean "this schedule already has a run in flight" — the
+// no-overlap guard (F2, Event Triggers Brique 3).
+const LIVE_JOB_STATUSES = ['pending', 'processing', 'awaiting_approval', 'awaiting_delegation'];
+
+// A live job older than this is very likely stuck, not just long-running —
+// escalate the log so it's noticed, but still skip: reaping stuck jobs is the
+// job watchdog's (cron/reset-orphans.ts) job, not this guard's.
+const STUCK_LIVE_JOB_MS = 2 * 60 * 60 * 1000; // 2h
+
+/**
+ * Best-effort: tell the bot OWNER a schedule's daily budget just tripped.
+ * Failures are logged and swallowed — a notification failure must never block
+ * the (already-persisted) budget hold. No-ops silently when the agent has no
+ * registered owner or no bot token (dashboard-only schedule).
+ */
+async function notifyBudgetExhausted(
+  db: AnyDrizzleDb,
+  agentId: string,
+  scheduleName: string,
+  dailyBudgetUsd: number,
+): Promise<void> {
+  try {
+    const ownerChatId = await resolveOwnerChatId(db, agentId);
+    if (!ownerChatId) return;
+    const [agent] = await db
+      .select({ botToken: agents.telegramBotToken })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+    if (!agent?.botToken) return;
+    await sendTelegramMessage({
+      botToken: agent.botToken,
+      chatId: ownerChatId,
+      text:
+        `Schedule « ${scheduleName} » a atteint son budget quotidien (${dailyBudgetUsd.toFixed(2)} $) ` +
+        `— runs suspendus jusqu'à demain. Ajustez le budget dans Automations si besoin.`,
+    });
+  } catch (err) {
+    console.warn(
+      `[runScheduleTick] failed to notify owner of budget_exhausted for agent ${agentId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
 
 // ─── runScheduleTick ──────────────────────────────────────────────────────────
 
@@ -47,6 +97,10 @@ export async function runScheduleTick(
       notifyOnSuccess: agentSchedules.notifyOnSuccess,
       // Explicit delivery target (e.g. "post to #team"), null for the common case.
       chatId: agentSchedules.chatId,
+      // Read BEFORE this tick's writes — "was it already budget_exhausted" is
+      // the transition check the notify-once-per-day dedup relies on below.
+      lastStatus: agentSchedules.lastStatus,
+      dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
     })
     .from(agentSchedules)
     .where(
@@ -68,6 +122,66 @@ export async function runScheduleTick(
 
   for (const sched of candidates.slice(0, max)) {
     if (!sched.task || !sched.entityId) continue;
+
+    // F2 — no-overlap guard. A pre-filter, NOT a replacement for the atomic
+    // claim below: it just refuses to even attempt claiming while a live job
+    // for this schedule exists. The schedule stays due (next_run/last_run
+    // untouched) — it fires on the first tick after the live job finishes.
+    // Live incident 2026-07-11: tick N+1 fired while tick N's job for the same
+    // schedule was still processing (stale next_run catch-up + a long run),
+    // producing two concurrent instances of the same watcher.
+    const [liveJob] = await db
+      .select({ id: agentJobs.id, createdAt: agentJobs.createdAt })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.scheduleId, sched.id), inArray(agentJobs.status, LIVE_JOB_STATUSES)))
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(1);
+    if (liveJob) {
+      const ageMs = now.getTime() - (liveJob.createdAt?.getTime() ?? now.getTime());
+      if (ageMs > STUCK_LIVE_JOB_MS) {
+        console.warn(
+          `[runScheduleTick] schedule "${sched.name}" (${sched.id}) skipped — live job ${liveJob.id} ` +
+            `has been running for ${Math.round(ageMs / 60_000)}min (>2h, possibly stuck). Skipping this ` +
+            `fire; the job watchdog owns stuck-job recovery, not this guard.`,
+        );
+      } else {
+        console.warn(
+          `[runScheduleTick] schedule "${sched.name}" (${sched.id}) skipped — live job ${liveJob.id} ` +
+            `is still running (no-overlap guard).`,
+        );
+      }
+      continue;
+    }
+
+    // F1 — daily budget guard. Rolled up BEFORE the claim: sum this
+    // schedule's cost today (its own local day, in its cron timezone) and
+    // refuse to fire once it's spent its ceiling. Live incident 2026-07-11: a
+    // 5-min watcher schedule with no aggregate ceiling could burn up to
+    // $576/day worst case at the per-job $2 cap. Left due (not claimed, not
+    // touched) so the next day's rollup naturally lifts the hold — no cron
+    // math needed to "resume tomorrow".
+    const tz = resolveTimezone(sched.timezone);
+    const [spentRow] = await db
+      .select({ spent: sql<number>`COALESCE(SUM(${agentJobs.totalCostUsd}), 0)` })
+      .from(agentJobs)
+      .where(
+        sql`${agentJobs.scheduleId} = ${sched.id} AND ${agentJobs.createdAt} >= (date_trunc('day', now() AT TIME ZONE ${tz}) AT TIME ZONE ${tz})`,
+      );
+    const spentToday = Number(spentRow?.spent ?? 0);
+    if (spentToday >= sched.dailyBudgetUsd) {
+      const wasExhausted = sched.lastStatus === 'budget_exhausted';
+      await db
+        .update(agentSchedules)
+        .set({ lastStatus: 'budget_exhausted', updatedAt: now })
+        .where(eq(agentSchedules.id, sched.id));
+      // Notify once per day: only on the transition INTO budget_exhausted —
+      // the day rolls over, last_status becomes success/failed/no_action
+      // again, and the next trip re-notifies.
+      if (!wasExhausted) {
+        await notifyBudgetExhausted(db, sched.agentId, sched.name, sched.dailyBudgetUsd);
+      }
+      continue;
+    }
 
     let newNextRun: Date;
     try {

@@ -57,6 +57,7 @@ export default function ScheduleForm(props: Props) {
     const fd = new FormData(form);
 
     startTransition(async () => {
+      const dailyBudgetUsd = Number(fd.get('dailyBudgetUsd'));
       if (isEdit) {
         const r = await updateScheduleAction({
           id: props.initial.id,
@@ -65,6 +66,7 @@ export default function ScheduleForm(props: Props) {
           cronExpr: fd.get('cronExpr'),
           task: fd.get('task'),
           notifyOnSuccess,
+          dailyBudgetUsd,
         });
         if (!r.ok) toast.error(r.message);
         else {
@@ -78,6 +80,7 @@ export default function ScheduleForm(props: Props) {
           cronExpr: fd.get('cronExpr'),
           task: fd.get('task'),
           notifyOnSuccess,
+          dailyBudgetUsd,
         });
         if (!r.ok) toast.error(r.message);
         else {
@@ -112,6 +115,7 @@ export default function ScheduleForm(props: Props) {
   const nameDefault = isEdit ? props.initial.name : '';
   const taskDefault = isEdit ? (props.initial.task ?? '') : '';
   const cronDefault = isEdit ? props.initial.cronExpr : '0 9 * * *';
+  const dailyBudgetDefault = isEdit ? props.initial.dailyBudgetUsd : 5;
 
   // Telegram delivery is per-agent (the runner sends via the executing agent's
   // own bot token). A "notify" cron on a bot-less agent can never reach the user
@@ -205,6 +209,26 @@ export default function ScheduleForm(props: Props) {
             {` has no Telegram bot, so it can't send you this confirmation. Schedule this automation on a Telegram-connected agent, or connect a bot to this one.`}
           </p>
         )}
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-daily-budget">
+          Daily budget ($)
+        </label>
+        <input
+          id="schedule-daily-budget"
+          name="dailyBudgetUsd"
+          type="number"
+          required
+          min={0.5}
+          max={100}
+          step={0.5}
+          defaultValue={dailyBudgetDefault}
+          className="w-32 rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
+        />
+        <p className="mt-1 text-xs text-ink-3">
+          Runs pause automatically once this schedule spends this much in a day, resuming the next.
+        </p>
       </div>
 
       <div className="flex gap-2 pt-1">

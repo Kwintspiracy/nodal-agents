@@ -158,6 +158,15 @@ const CreateScheduleInput = z.object({
     .describe(
       'If true, the agent confirms to the user on success (default false = runs silently).',
     ),
+  dailyBudgetUsd: z
+    .number()
+    .min(0.5)
+    .max(100)
+    .optional()
+    .describe(
+      "Daily cost ceiling in USD for this schedule (default 5). Once the sum of a day's runs " +
+        'hits it, further fires are held until the next day.',
+    ),
 });
 
 type ScheduleOutput = { ok: true; message: string } | { ok: false; error: string };
@@ -211,6 +220,7 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
       timezone: tz,
       task: input.task,
       notifyOnSuccess: input.notifyOnSuccess ?? false,
+      ...(input.dailyBudgetUsd !== undefined ? { dailyBudgetUsd: input.dailyBudgetUsd } : {}),
       active: true,
       nextRun,
     });
@@ -235,6 +245,12 @@ const UpdateScheduleInput = z.object({
   task: z.string().min(1).optional().describe('New task/instructions.'),
   newName: z.string().min(1).optional().describe('Rename the schedule.'),
   notifyOnSuccess: z.boolean().optional().describe('Toggle the success notification.'),
+  dailyBudgetUsd: z
+    .number()
+    .min(0.5)
+    .max(100)
+    .optional()
+    .describe('New daily cost ceiling in USD for this schedule.'),
 });
 
 export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, ScheduleOutput> = {
@@ -255,12 +271,13 @@ export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, Sche
       !input.task &&
       !input.newName &&
       input.notifyOnSuccess === undefined &&
-      !input.days
+      !input.days &&
+      input.dailyBudgetUsd === undefined
     ) {
       return {
         ok: false,
         error:
-          'Nothing to update — provide atTimes, everyMinutes, task, newName, notifyOnSuccess, or days.',
+          'Nothing to update — provide atTimes, everyMinutes, task, newName, notifyOnSuccess, dailyBudgetUsd, or days.',
       };
     }
     if (hasTimes && hasInterval) {
@@ -299,6 +316,7 @@ export const updateScheduleTool: ToolDefinition<typeof UpdateScheduleInput, Sche
     if (input.task) patch['task'] = input.task;
     if (input.newName) patch['name'] = input.newName;
     if (input.notifyOnSuccess !== undefined) patch['notifyOnSuccess'] = input.notifyOnSuccess;
+    if (input.dailyBudgetUsd !== undefined) patch['dailyBudgetUsd'] = input.dailyBudgetUsd;
     await ctx.db.update(agentSchedules).set(patch).where(eq(agentSchedules.id, sched.id));
     return { ok: true, message: `Updated schedule "${input.name}".` };
   },
