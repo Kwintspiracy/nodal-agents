@@ -832,7 +832,7 @@ describe('Slack channel actions (K3)', () => {
       agentId: AGENT_ID,
       channel: 'slack',
       credentials: {
-        botToken: 'xoxb-a-fake-slack-bot-token',
+        botToken: 'xoxb-a-fake-slack-bot-token', // secrets:allow — fixture factice
         appToken: 'xapp-a-fake-slack-app-token',
       },
     });
@@ -851,7 +851,7 @@ describe('Slack channel actions (K3)', () => {
     expect(insertArg['channel']).toBe('slack');
     expect(insertArg['agentId']).toBe(AGENT_ID);
     expect(JSON.parse(insertArg['credentials'] as string)).toEqual({
-      botToken: 'xoxb-a-fake-slack-bot-token',
+      botToken: 'xoxb-a-fake-slack-bot-token', // secrets:allow — fixture factice
       appToken: 'xapp-a-fake-slack-app-token',
     });
     expect(insertArg['botIdentity']).toEqual({
@@ -877,7 +877,7 @@ describe('Slack channel actions (K3)', () => {
     const r = await configureAgentChannelAction({
       agentId: AGENT_ID,
       channel: 'slack',
-      credentials: { botToken: 'xoxb-a-fake-slack-bot-token', appToken: 'not-an-app-token' },
+      credentials: { botToken: 'xoxb-a-fake-slack-bot-token', appToken: 'not-an-app-token' }, // secrets:allow — fixture factice
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
@@ -898,7 +898,7 @@ describe('Slack channel actions (K3)', () => {
       agentId: AGENT_ID,
       channel: 'slack',
       credentials: {
-        botToken: 'xoxb-a-fake-but-wrong-token',
+        botToken: 'xoxb-a-fake-but-wrong-token', // secrets:allow — fixture factice
         appToken: 'xapp-a-fake-but-wrong-token',
       },
     });
