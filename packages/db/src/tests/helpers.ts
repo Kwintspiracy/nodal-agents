@@ -584,6 +584,48 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
     CREATE UNIQUE INDEX IF NOT EXISTS telegram_allowed_chats_single_owner
       ON telegram_allowed_chats (agent_id) WHERE role = 'owner';
 
+    -- ── channel_bindings + channel_allowed_conversations (migration 0064 — S2) ─
+    -- Channel-neutral generalization of telegram_bot_token/_allowed_chats. See
+    -- queries/channel-identity.ts for the transitional read split that keeps
+    -- Telegram's behavior byte-identical while it exists.
+
+    CREATE TABLE IF NOT EXISTS channel_bindings (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      channel text NOT NULL,
+      credentials text NOT NULL,
+      bot_identity jsonb,
+      cursor text,
+      enabled boolean NOT NULL DEFAULT true,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      CONSTRAINT channel_bindings_agent_channel_unique UNIQUE (agent_id, channel),
+      CONSTRAINT channel_bindings_channel_check CHECK (channel IN ('telegram','discord','slack','whatsapp'))
+    );
+
+    CREATE TABLE IF NOT EXISTS channel_allowed_conversations (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      channel text NOT NULL,
+      conversation_id text NOT NULL,
+      kind text NOT NULL DEFAULT 'private',
+      role text NOT NULL DEFAULT 'member',
+      status text NOT NULL DEFAULT 'pending',
+      requester_name text,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      CONSTRAINT channel_allowed_conversations_agent_channel_conversation_unique UNIQUE (agent_id, channel, conversation_id),
+      CONSTRAINT channel_allowed_conversations_channel_check CHECK (channel IN ('telegram','discord','slack','whatsapp')),
+      CONSTRAINT channel_allowed_conversations_kind_check CHECK (kind IN ('private','group','channel','thread')),
+      CONSTRAINT channel_allowed_conversations_role_check CHECK (role IN ('owner','member')),
+      CONSTRAINT channel_allowed_conversations_status_check CHECK (status IN ('active','pending'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS channel_allowed_conversations_single_owner
+      ON channel_allowed_conversations (agent_id, channel) WHERE role = 'owner';
+
     -- ── auth tables (better-auth) ────────────────────────────────────────────
 
     CREATE TABLE IF NOT EXISTS sessions (

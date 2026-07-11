@@ -14,9 +14,14 @@
 // standup to #team") — callers resolve `schedule.chatId ?? resolveOwnerChatId()`
 // so an intentional target wins and the owner is the safe default, never a
 // polluted last-seen value.
+//
+// S2 (migration 0064): thin delegation to the channel-neutral
+// resolveOwnerConversation, pinned to channel='telegram'. That function reads
+// telegram_allowed_chats directly for this channel (see
+// queries/channel-identity.ts's file header) — same query as before, so this
+// wrapper's behavior is byte-identical to the pre-S2 implementation.
 
-import { eq, and } from 'drizzle-orm';
-import { telegramAllowedChats } from '../schema/telegram-allowed-chats.ts';
+import { resolveOwnerConversation } from './channel-identity.ts';
 import type { AnyDrizzleDb } from '../client.ts';
 
 /**
@@ -28,16 +33,5 @@ export async function resolveOwnerChatId(
   db: AnyDrizzleDb,
   agentId: string,
 ): Promise<string | null> {
-  const [row] = await db
-    .select({ chatId: telegramAllowedChats.chatId })
-    .from(telegramAllowedChats)
-    .where(
-      and(
-        eq(telegramAllowedChats.agentId, agentId),
-        eq(telegramAllowedChats.role, 'owner'),
-        eq(telegramAllowedChats.status, 'active'),
-      ),
-    )
-    .limit(1);
-  return row?.chatId ?? null;
+  return resolveOwnerConversation(db, agentId, 'telegram');
 }

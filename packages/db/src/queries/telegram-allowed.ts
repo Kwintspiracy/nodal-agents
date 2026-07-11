@@ -10,28 +10,24 @@
 // entity — entity-scoped so a DELEGATED worker job, which inherits its
 // entity ROOT agent's bot token (B3, ctx.resolvedTelegramBotToken), can
 // still target chats that were approved on the root agent.
+//
+// S2 (migration 0064): thin delegation to the channel-neutral
+// isConversationAllowed, pinned to channel='telegram'. That function reads
+// telegram_allowed_chats directly for this channel (see
+// queries/channel-identity.ts's file header) — same query as before, so this
+// wrapper's behavior is byte-identical to the pre-S2 implementation.
 
-import { eq, and, or } from 'drizzle-orm';
-import { telegramAllowedChats } from '../schema/telegram-allowed-chats.ts';
+import { isConversationAllowed } from './channel-identity.ts';
 import type { AnyDrizzleDb } from '../client.ts';
 
 export async function isChatAllowed(
   db: AnyDrizzleDb,
   params: { entityId: string; agentId: string; chatId: string },
 ): Promise<boolean> {
-  const [row] = await db
-    .select({ id: telegramAllowedChats.id })
-    .from(telegramAllowedChats)
-    .where(
-      and(
-        eq(telegramAllowedChats.chatId, params.chatId),
-        eq(telegramAllowedChats.status, 'active'),
-        or(
-          eq(telegramAllowedChats.entityId, params.entityId),
-          eq(telegramAllowedChats.agentId, params.agentId),
-        ),
-      ),
-    )
-    .limit(1);
-  return row !== undefined;
+  return isConversationAllowed(db, {
+    entityId: params.entityId,
+    agentId: params.agentId,
+    channel: 'telegram',
+    conversationId: params.chatId,
+  });
 }

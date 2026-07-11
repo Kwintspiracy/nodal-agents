@@ -29,6 +29,8 @@ import type {
   UserProfileRow,
   UserRow,
   AgentConnectorAssignmentRow,
+  ChannelBindingRow,
+  ChannelAllowedConversationRow,
 } from '../schema/index.ts';
 
 import { describe, it, expect } from 'vitest';
@@ -384,6 +386,45 @@ type WebhookTriggerKeysOk = HasKeys<
 >;
 const _webhookTriggerKeysOk: WebhookTriggerKeysOk = true;
 void _webhookTriggerKeysOk;
+
+// ── channel_bindings (S2, migration 0064) ────────────────────────────────────
+type ChannelBindingKeysOk = HasKeys<
+  ChannelBindingRow,
+  [
+    'id',
+    'entityId',
+    'agentId',
+    'channel',
+    'credentials',
+    'botIdentity',
+    'cursor',
+    'enabled',
+    'createdAt',
+    'updatedAt',
+  ]
+>;
+const _channelBindingKeysOk: ChannelBindingKeysOk = true;
+void _channelBindingKeysOk;
+
+// ── channel_allowed_conversations (S2, migration 0064) ───────────────────────
+type ChannelAllowedConversationKeysOk = HasKeys<
+  ChannelAllowedConversationRow,
+  [
+    'id',
+    'entityId',
+    'agentId',
+    'channel',
+    'conversationId',
+    'kind',
+    'role',
+    'status',
+    'requesterName',
+    'createdAt',
+    'updatedAt',
+  ]
+>;
+const _channelAllowedConversationKeysOk: ChannelAllowedConversationKeysOk = true;
+void _channelAllowedConversationKeysOk;
 
 // Runtime placeholder — vitest requires at least one test
 describe('type alignment', () => {

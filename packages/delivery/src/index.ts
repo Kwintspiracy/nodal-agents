@@ -32,3 +32,20 @@ export { DeliveryError } from './errors.ts';
 export type { DeliveryErrorCode } from './errors.ts';
 
 export type { DeliveryChannel, DeliveryStatus } from './types.ts';
+
+export type {
+  ChannelKind,
+  ChannelCredentials,
+  TextFormat,
+  SendTextOpts,
+  OutboundMedia,
+  ApprovalCard,
+  SendResult,
+  BotIdentity,
+  ChannelCapabilities,
+  ChannelAdapter,
+} from './channel-adapter.ts';
+
+export { telegramAdapter } from './channels/telegram-adapter.ts';
+
+export { getAdapter } from './registry.ts';

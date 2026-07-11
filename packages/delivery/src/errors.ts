@@ -11,7 +11,12 @@ export type DeliveryErrorCode =
   | 'telegram_file_too_large'
   | 'delivery_email_not_configured'
   | 'delivery_job_not_found'
-  | 'delivery_no_content';
+  | 'delivery_no_content'
+  | 'channel_adapter_not_found'
+  /** Generic send failure for a channel adapter without a more specific code
+   *  of its own (e.g. a future Discord/Slack adapter before it grows its own
+   *  granular error taxonomy — mirrors what telegram_request_failed is for Telegram). */
+  | 'send_failed';
 
 /**
  * Progress info attached to a DeliveryError thrown mid-way through a chunked

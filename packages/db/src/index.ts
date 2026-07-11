@@ -18,6 +18,12 @@ export { assertMasterKeyRestorable } from './queries/master-key-guard.ts';
 export type { AssertMasterKeyRestorableOptions } from './queries/master-key-guard.ts';
 export { resolveOwnerChatId } from './queries/telegram-owner.ts';
 export { isChatAllowed } from './queries/telegram-allowed.ts';
+export {
+  resolveOwnerConversation,
+  isConversationAllowed,
+  getChannelBinding,
+  listChannelBindings,
+} from './queries/channel-identity.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────
 export { createAgentRepo, attachAgentToOrchestrator } from './repos/agents.ts';

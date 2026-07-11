@@ -23,3 +23,5 @@ export * from './agent-workspaces.ts';
 export * from './chat-messages.ts';
 export * from './app-settings.ts';
 export * from './telegram-allowed-chats.ts';
+export * from './channel-bindings.ts';
+export * from './channel-allowed-conversations.ts';
