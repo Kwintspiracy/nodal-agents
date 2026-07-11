@@ -26,4 +26,8 @@ describe('resolveTransportChannel', () => {
   it('keeps a registered non-telegram transport (discord) as itself, not redirected', () => {
     expect(resolveTransportChannel('discord')).toBe('discord');
   });
+
+  it('keeps a registered non-telegram transport (whatsapp) as itself, not redirected', () => {
+    expect(resolveTransportChannel('whatsapp')).toBe('whatsapp');
+  });
 });

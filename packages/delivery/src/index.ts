@@ -50,6 +50,19 @@ export { telegramAdapter } from './channels/telegram-adapter.ts';
 
 export { discordAdapter } from './channels/discord-adapter.ts';
 
+export { slackAdapter } from './channels/slack-adapter.ts';
+
+export { whatsappAdapter } from './channels/whatsapp-adapter.ts';
+
+export { ensureWhatsAppSocket, closeWhatsAppSocket } from './channels/whatsapp/socket-manager.ts';
+export type {
+  WhatsAppHandle,
+  WhatsAppStatus,
+  WhatsAppSocketOpts,
+  WhatsAppInboundMessage,
+  WhatsAppEventEmitter,
+} from './channels/whatsapp/socket-manager.ts';
+
 export { getAdapter } from './registry.ts';
 
 export { resolveTransportChannel } from './transport-channel.ts';

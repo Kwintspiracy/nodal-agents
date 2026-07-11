@@ -9,11 +9,15 @@
 import { DeliveryError } from './errors.ts';
 import { telegramAdapter } from './channels/telegram-adapter.ts';
 import { discordAdapter } from './channels/discord-adapter.ts';
+import { slackAdapter } from './channels/slack-adapter.ts';
+import { whatsappAdapter } from './channels/whatsapp-adapter.ts';
 import type { ChannelAdapter, ChannelKind } from './channel-adapter.ts';
 
 const adapters: ReadonlyMap<ChannelKind, ChannelAdapter> = new Map([
   ['telegram', telegramAdapter],
   ['discord', discordAdapter],
+  ['slack', slackAdapter],
+  ['whatsapp', whatsappAdapter],
 ]);
 
 /** Resolve the ChannelAdapter for `channel`. Throws `channel_adapter_not_found`

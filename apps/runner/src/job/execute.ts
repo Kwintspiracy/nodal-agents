@@ -1082,7 +1082,12 @@ async function runJob(
   // — scoped to what this ticket's tests actually exercise.
   const discordBinding = await getChannelBinding(db, agentRow.id, 'discord');
   const hasDiscordBinding = discordBinding?.enabled === true;
-  if (deliveryBotToken || hasDiscordBinding) {
+  // K2 (Slack ingress): same story as discord above — a slack-bound agent
+  // gets the SAME 6 tools, gated purely on a credential existing for the
+  // job's own transport.
+  const slackBinding = await getChannelBinding(db, agentRow.id, 'slack');
+  const hasSlackBinding = slackBinding?.enabled === true;
+  if (deliveryBotToken || hasDiscordBinding || hasSlackBinding) {
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendFileTool() as unknown as AnyToolDef);

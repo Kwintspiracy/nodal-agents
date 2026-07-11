@@ -249,25 +249,27 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
  * comes back empty.
  *
  * S3 (multichannel plan): exported so a later phase can extend this map
- * per-channel once other channels get their OWN send tool name (slack/
- * whatsapp are in CONVERSATIONAL_CHANNELS above but have no send tool yet —
- * the delivery tools' NAMES don't change until that phase, so there is
- * nothing to map them to today; adding an entry here ahead of a real tool
- * would just point at a name that doesn't exist).
+ * per-channel once other channels get their OWN send tool name (whatsapp is
+ * in CONVERSATIONAL_CHANNELS above but has no send tool yet — the delivery
+ * tools' NAMES don't change until that phase, so there is nothing to map it
+ * to today; adding an entry here ahead of a real tool would just point at a
+ * name that doesn't exist).
  *
- * Discord ingress (D2): a discord job's send tool IS 'telegram_send_message'
- * — the 6 delivery tools are registered by CREDENTIAL AVAILABILITY, not by
- * channel-specific name (see execute.ts's capabilityTools gating and
- * delivery-guard.ts's resolveChannelForJob/resolveBotToken), and the tool
- * itself already dispatches through the channel-neutral ChannelAdapter
- * resolved from the job's OWN channel. Reusing the telegram-named tool for a
- * discord job is functionally correct but semantically odd — renaming the 6
- * tools to channel-neutral names (e.g. `send_message`) is cleanup-phase work,
- * not this ticket.
+ * Discord/Slack ingress (D2, K2): a discord or slack job's send tool IS
+ * 'telegram_send_message' — the 6 delivery tools are registered by
+ * CREDENTIAL AVAILABILITY, not by channel-specific name (see execute.ts's
+ * capabilityTools gating and delivery-guard.ts's
+ * resolveChannelForJob/resolveBotToken), and the tool itself already
+ * dispatches through the channel-neutral ChannelAdapter resolved from the
+ * job's OWN channel. Reusing the telegram-named tool for a discord/slack job
+ * is functionally correct but semantically odd — renaming the 6 tools to
+ * channel-neutral names (e.g. `send_message`) is cleanup-phase work, not
+ * this ticket.
  */
 export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
   telegram: 'telegram_send_message',
   discord: 'telegram_send_message',
+  slack: 'telegram_send_message',
 };
 
 /**

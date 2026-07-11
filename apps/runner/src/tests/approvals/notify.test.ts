@@ -8,9 +8,61 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agents, agentJobs, telegramAllowedChats, entities, users } from '@nodal-agents/db';
+import {
+  agents,
+  agentJobs,
+  telegramAllowedChats,
+  channelBindings,
+  channelAllowedConversations,
+  entities,
+  users,
+} from '@nodal-agents/db';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../../deps.ts';
+
+// W2: discord/whatsapp coverage below needs getAdapter to return
+// INSTRUMENTED, network-free fakes for those two channels — a real
+// whatsappAdapter.sendText would attempt an actual Baileys socket
+// (filesystem + websocket), and a real discordAdapter would hit Discord's
+// REST API. The telegram path is left COMPLETELY untouched: `importOriginal`
+// spreads the real module, so telegram tests below still exercise the real
+// telegramAdapter → sendTelegramMessage → the stubbed global `fetch` — byte-
+// identical to before this mock existed.
+const { discordSendApprovalCardMock, whatsappSendTextMock } = vi.hoisted(() => ({
+  discordSendApprovalCardMock: vi.fn(async () => ({ messageId: 'discord-msg-1' })),
+  whatsappSendTextMock: vi.fn(async () => ({ messageId: 'wa-msg-1' })),
+}));
+
+vi.mock('@nodal-agents/delivery', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
+  return {
+    ...actual,
+    getAdapter: (channel: string) => {
+      if (channel === 'discord') {
+        return {
+          channel: 'discord',
+          capabilities: { buttons: true, threads: true, media: true, editMessage: true },
+          sendText: vi.fn(async () => ({ messageId: 'unused' })),
+          sendMedia: vi.fn(),
+          validateCredentials: vi.fn(),
+          sendApprovalCard: discordSendApprovalCardMock,
+        };
+      }
+      if (channel === 'whatsapp') {
+        return {
+          channel: 'whatsapp',
+          capabilities: { buttons: false, threads: false, media: true, editMessage: false },
+          sendText: whatsappSendTextMock,
+          sendMedia: vi.fn(),
+          validateCredentials: vi.fn(),
+        };
+      }
+      return actual.getAdapter(channel as Parameters<typeof actual.getAdapter>[0]);
+    },
+  };
+});
+
 import {
   notifyApprovalCreated,
   resolveTelegramDeliveryTarget,
@@ -405,5 +457,190 @@ describe('resolveTelegramDeliveryTarget: entity boundary assertion (F2)', () => 
       entityId: seed.entityId,
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── notifyApprovalCreated — channel-parametric delivery (W2) ───────────────
+//
+// Telegram's own tests above are UNTOUCHED and must stay green (they prove
+// the byte-identical regression). These cover the generalization: a
+// buttons-capable channel (discord, standing in for slack too — same
+// capabilities.buttons=true path) still gets sendApprovalCard; a
+// no-buttons channel (whatsapp) falls back to sendText with an explicit
+// dashboard pointer instead of silently swallowing the notification (the
+// bug a bare `sendApprovalCard!` non-null assertion used to hit).
+
+describe('notifyApprovalCreated — channel-parametric delivery (W2)', () => {
+  it('discord job (buttons capability) → sendApprovalCard via the discord adapter', async () => {
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken: 'discord-tok-1' }),
+      enabled: true,
+    });
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: 'discord-owner-chan-1',
+      kind: 'private',
+      role: 'owner',
+      status: 'active',
+    });
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        chatId: 'discord-owner-chan-1',
+        task: 'discord-triggered task',
+      })
+      .returning();
+
+    discordSendApprovalCardMock.mockClear();
+    await notifyApprovalCreated(deps, {
+      approvalRequestId: '00000000-0000-0000-0000-0000000000d1',
+      toolName: 'run_command',
+      toolInput: { command: 'echo discord' },
+      jobId: job!.id,
+      agentId: seed.agentId,
+      entityId: seed.entityId,
+    });
+
+    expect(discordSendApprovalCardMock).toHaveBeenCalledTimes(1);
+    const [creds, conversationId, card] = discordSendApprovalCardMock.mock.calls[0] as unknown as [
+      unknown,
+      string,
+      { callbackId: string; text: string },
+    ];
+    expect(creds).toEqual({ botToken: 'discord-tok-1' });
+    expect(conversationId).toBe('discord-owner-chan-1');
+    expect(card.callbackId).toBe('apr:00000000-0000-0000-0000-0000000000d1');
+    expect(card.text).toContain('echo discord');
+  });
+
+  it('whatsapp job (no buttons capability) → sendText fallback with the dashboard closing line, never throws', async () => {
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      credentials: JSON.stringify({ sessionDir: '/sessions/notify-test' }),
+      enabled: true,
+    });
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      conversationId: '15550000000@s.whatsapp.net',
+      kind: 'private',
+      role: 'owner',
+      status: 'active',
+    });
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        chatId: '15550000000@s.whatsapp.net',
+        task: 'whatsapp-triggered task',
+      })
+      .returning();
+
+    whatsappSendTextMock.mockClear();
+    await expect(
+      notifyApprovalCreated(deps, {
+        approvalRequestId: '00000000-0000-0000-0000-0000000000d2',
+        toolName: 'run_command',
+        toolInput: { command: 'echo whatsapp' },
+        jobId: job!.id,
+        agentId: seed.agentId,
+        entityId: seed.entityId,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(whatsappSendTextMock).toHaveBeenCalledTimes(1);
+    const [creds, conversationId, text] = whatsappSendTextMock.mock.calls[0] as unknown as [
+      unknown,
+      string,
+      string,
+    ];
+    expect(creds).toEqual({ sessionDir: '/sessions/notify-test' });
+    expect(conversationId).toBe('15550000000@s.whatsapp.net');
+    expect(text).toContain('echo whatsapp');
+    expect(text).toContain('Approve or reject from the dashboard: Approvals page.');
+  });
+
+  it('SECURITY: the entity-boundary guard still applies to the generalized (discord) walk', async () => {
+    // Mirrors the telegram SECURITY test above, but for a chain whose root
+    // resolves to discord instead of telegram — proves the generalization
+    // didn't drop the boundary check on the way.
+    const [foreignUser] = await db
+      .insert(users)
+      .values({ email: `w2-foreign-user-${Date.now()}@example.com` })
+      .returning();
+    const [foreignEntity] = await db
+      .insert(entities)
+      .values({
+        userId: foreignUser!.id,
+        name: 'W2 Foreign Entity',
+        slug: `w2-foreign-entity-${Date.now()}`,
+      })
+      .returning();
+    const [foreignAgent] = await db
+      .insert(agents)
+      .values({
+        entityId: foreignEntity!.id,
+        name: 'W2 Foreign Bot Owner',
+        slug: `w2-foreign-bot-${Date.now()}`,
+        personality: 'test',
+      })
+      .returning();
+    const [foreignJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: foreignEntity!.id,
+        agentId: foreignAgent!.id,
+        channel: 'discord',
+        chatId: 'foreign-discord-chan',
+        task: 'foreign ancestor job',
+      })
+      .returning();
+
+    const [delegate] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'W2 Cross-Entity Delegate',
+        slug: `w2-cross-entity-delegate-${Date.now()}`,
+        personality: 'sub-agent',
+        llmKeyId: seed.llmKeyId,
+      })
+      .returning();
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: delegate!.id,
+        channel: 'internal',
+        chatId: 'discord-owner-chan-1',
+        parentJobId: foreignJob!.id,
+        task: 'cross-entity delegated discord job',
+      })
+      .returning();
+
+    discordSendApprovalCardMock.mockClear();
+    await notifyApprovalCreated(deps, {
+      approvalRequestId: '00000000-0000-0000-0000-0000000000d3',
+      toolName: 'run_command',
+      toolInput: { command: 'echo pwned' },
+      jobId: childJob!.id,
+      agentId: delegate!.id,
+      entityId: seed.entityId,
+    });
+
+    expect(discordSendApprovalCardMock).not.toHaveBeenCalled();
   });
 });

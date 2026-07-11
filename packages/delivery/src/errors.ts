@@ -12,14 +12,27 @@ export type DeliveryErrorCode =
   | 'discord_no_token'
   | 'discord_no_channel_id'
   | 'discord_invalid_token'
+  | 'slack_no_token'
+  | 'slack_no_channel_id'
+  | 'slack_invalid_token'
+  /** validateCredentials: the socket for this session never reached 'open'
+   *  with existing device keys (or the sessionDir credential is missing) —
+   *  this WhatsApp account isn't linked (see whatsapp-adapter.ts). Distinct
+   *  from `send_failed` because "not paired" is an actionable, specific
+   *  state (go pair the device), not a generic transport failure. */
+  | 'whatsapp_not_paired'
+  /** Generic send failure for the WhatsApp adapter (missing credential/
+   *  conversationId, socket not open, or a Baileys sendMessage() throw). */
+  | 'whatsapp_send_failed'
   | 'delivery_email_not_configured'
   | 'delivery_job_not_found'
   | 'delivery_no_content'
   | 'channel_adapter_not_found'
   /** Generic send failure for a channel adapter without a more specific code
-   *  of its own (e.g. a future Slack adapter before it grows its own granular
-   *  error taxonomy, or Discord's own API/HTTP-level failures — mirrors what
-   *  telegram_request_failed is for Telegram). */
+   *  of its own — Discord's and Slack's own API/HTTP-level failures land here
+   *  (mirrors what telegram_request_failed is for Telegram); a future channel
+   *  grows its own granular taxonomy only once a real caller needs to
+   *  distinguish a failure mode. */
   | 'send_failed';
 
 /**

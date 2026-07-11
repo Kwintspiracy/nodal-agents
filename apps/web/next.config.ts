@@ -54,6 +54,11 @@ const nextConfig: NextConfig = {
     // resolve it. External, discord.js runs through plain Node `require` at
     // runtime, where the same dynamic import's `.catch()` handles it fine.
     'discord.js',
+    // Baileys (WhatsApp transport core, Phase W) — same class of bug as
+    // discord.js above: its optional peer deps (jimp, audio-decode →
+    // @eshaz/web-worker) contain a FULLY dynamic `import(mod)` Turbopack can
+    // never resolve statically, breaking every dashboard route's compile.
+    '@whiskeysockets/baileys',
   ],
   allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [
@@ -136,6 +141,7 @@ const nextConfig: NextConfig = {
         '@tavily/core',
         'apify-client',
         'discord.js',
+        '@whiskeysockets/baileys',
       ];
       const existing = config.externals ?? [];
       config.externals = Array.isArray(existing) ? existing : [existing];

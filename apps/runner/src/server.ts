@@ -15,9 +15,16 @@ import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
 import { webhookRoute } from './routes/webhook.ts';
 import { installSkillRoute, uninstallSkillRoute } from './routes/skills.ts';
+import {
+  whatsappPairingStatusRoute,
+  whatsappPairingStartRoute,
+} from './routes/whatsapp-pairing.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
 import { startDiscordManager } from './channels/discord/manager.ts';
+import { startSlackManager } from './channels/slack/manager.ts';
+import { startWhatsAppManager } from './channels/whatsapp/manager.ts';
+import type { WhatsAppManagerHandle } from './channels/whatsapp/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
@@ -51,6 +58,7 @@ export function startBackfillBackground(deps: Pick<RunnerDeps, 'db' | 'embedding
 export function createApp(
   deps: Awaited<ReturnType<typeof createRunnerDeps>>,
   runnerEnv: ReturnType<typeof parseEnv>,
+  whatsappManager: WhatsAppManagerHandle | null = null,
 ): Hono {
   const app = new Hono();
 
@@ -137,6 +145,7 @@ export function createApp(
   app.use('/api/chat', requireRunnerAuth);
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
+  app.use('/api/whatsapp/pairing', requireRunnerAuth);
 
   // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -156,6 +165,12 @@ export function createApp(
   // WORKER_SECRET check inside the handlers (web → runner cross-process call).
   app.post('/api/skills/install', (c) => installSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/uninstall', (c) => uninstallSkillRoute(c, deps, runnerEnv));
+
+  // WhatsApp pairing status/start — reads/kicks the whatsapp manager's
+  // in-memory qr/status map (null in tests/environments that never started
+  // one; the routes answer 503 rather than crash).
+  app.get('/api/whatsapp/pairing', (c) => whatsappPairingStatusRoute(c, deps, whatsappManager));
+  app.post('/api/whatsapp/pairing', (c) => whatsappPairingStartRoute(c, deps, whatsappManager));
 
   // Inbound webhooks (Brique 5) — intentionally OUTSIDE requireRunnerAuth
   // (that gate is a literal-path app.use on the four /api/* routes above, so
@@ -199,7 +214,18 @@ async function main(): Promise<void> {
   // no external network call, sub-second in practice.
   await seedDefaultSkills(deps.db, runnerEnv);
 
-  const app = createApp(deps, runnerEnv);
+  // Start the WhatsApp manager BEFORE createApp: the pairing route needs the
+  // manager's handle threaded in at route-registration time (its GET/POST
+  // closures capture it directly — there's no other shared-state channel
+  // between a route and a long-lived runtime manager in this app). Disable
+  // with WHATSAPP_BRIDGE_ENABLED=false (e.g. tests).
+  const whatsappEnabled = process.env['WHATSAPP_BRIDGE_ENABLED'] !== 'false';
+  const whatsappManager = whatsappEnabled ? startWhatsAppManager(deps, { env: runnerEnv }) : null;
+  if (whatsappEnabled) {
+    console.warn('[runner] whatsapp manager started');
+  }
+
+  const app = createApp(deps, runnerEnv, whatsappManager);
 
   const port = runnerEnv.PORT;
   const hostname = runnerEnv.BIND;
@@ -243,6 +269,15 @@ async function main(): Promise<void> {
     console.warn('[runner] discord manager started');
   }
 
+  // Start the Slack Socket Mode manager — one live @slack/bolt App per
+  // channel_bindings row (channel='slack', enabled=true). Refreshes every
+  // 30s. Disable with SLACK_SOCKET_ENABLED=false (e.g. tests).
+  const slackEnabled = process.env['SLACK_SOCKET_ENABLED'] !== 'false';
+  const slackManager = slackEnabled ? startSlackManager(deps, { env: runnerEnv }) : null;
+  if (slackEnabled) {
+    console.warn('[runner] slack manager started');
+  }
+
   serve(
     {
       fetch: app.fetch,
@@ -271,6 +306,8 @@ async function main(): Promise<void> {
     ticker?.stop();
     await telegramManager?.stop();
     await discordManager?.stop();
+    await slackManager?.stop();
+    await whatsappManager?.stop();
     await deps.close();
     process.exit(0);
   };

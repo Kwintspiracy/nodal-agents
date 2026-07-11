@@ -16,9 +16,22 @@
 // no-chat job simply gets no card (the dashboard path is unaffected).
 
 import { eq, and } from '@nodal-agents/db';
-import { agents, agentJobs, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  agents,
+  agentJobs,
+  telegramAllowedChats,
+  getChannelBinding,
+  getBindingCredentials,
+  resolveOwnerConversation,
+} from '@nodal-agents/db';
 import { redactSecretsForAudit, computeApprovalImpactLine } from '@nodal-agents/shared';
-import { getAdapter, type ApprovalCard } from '@nodal-agents/delivery';
+import {
+  getAdapter,
+  resolveTransportChannel,
+  type ApprovalCard,
+  type ChannelKind,
+  type ChannelCredentials,
+} from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
 
@@ -138,6 +151,133 @@ export async function resolveApprovalDeliveryTarget(
   return { agentId: base.agentId, botToken: base.botToken, chatId: ownerRow.chatId };
 }
 
+// ─── Channel-parametric delivery target (W2) ─────────────────────────────────
+//
+// The Telegram-specific resolvers above stay UNTOUCHED (byte-identical
+// behavior — their own tests assert on the {agentId, botToken, chatId} shape
+// directly). This section generalizes delivery to discord/slack/whatsapp
+// without disturbing that contract: notifyApprovalCreated below calls ONLY
+// resolveChannelApprovalDeliveryTarget, which delegates straight to
+// resolveApprovalDeliveryTarget for the telegram case and wraps its result.
+
+/** Channel-neutral approval delivery target. */
+export interface ChannelApprovalDeliveryTarget {
+  channel: ChannelKind;
+  /** The agent whose binding is actually delivering (may differ from the
+   *  gated job's own agent on a delegated chain — same "orchestrator
+   *  delivers" rule as the Telegram walk). */
+  agentId: string;
+  credentials: ChannelCredentials;
+  conversationId: string;
+}
+
+/** Hop bound mirrors resolveTelegramDeliveryTarget's — a delegation chain
+ *  this deep is already a bug, not a legitimate case to keep climbing for. */
+const DELIVERY_CHAIN_MAX_HOPS = 8;
+
+/**
+ * Walk parent_job_id from `jobId` up to its root, collecting each hop's
+ * (agentId, channel) — entity-boundary guarded exactly like
+ * resolveTelegramDeliveryTarget's walk (a corrupt/foreign parentJobId must
+ * never let this cross into another tenant's data). Returns the hops in
+ * order from `jobId` itself up to the root, or null if the boundary was
+ * crossed or the starting job doesn't even resolve to an agent.
+ */
+async function walkJobChainToRoot(
+  db: RunnerDeps['db'],
+  jobId: string,
+): Promise<Array<{ agentId: string; channel: string | null }> | null> {
+  const chain: Array<{ agentId: string; channel: string | null }> = [];
+  let current: string | null = jobId;
+  let startEntityId: string | null | undefined;
+  for (let hops = 0; current && hops < DELIVERY_CHAIN_MAX_HOPS; hops += 1) {
+    const [row] = await db
+      .select({
+        agentId: agentJobs.agentId,
+        channel: agentJobs.channel,
+        parentJobId: agentJobs.parentJobId,
+        entityId: agentJobs.entityId,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, current))
+      .limit(1);
+    if (!row) break;
+    const agentId = row.agentId;
+    if (!agentId) break;
+    if (startEntityId === undefined) {
+      startEntityId = row.entityId;
+    } else if (row.entityId !== startEntityId) {
+      console.error(
+        `[approval-notify] SECURITY: delivery walk crossed an entity boundary — ` +
+          `starting job ${jobId} (entity ${startEntityId}) reached ancestor job ${current} ` +
+          `(entity ${row.entityId}). Aborting the walk, no delivery target resolved.`,
+      );
+      return null;
+    }
+    chain.push({ agentId, channel: row.channel });
+    current = row.parentJobId;
+  }
+  return chain.length > 0 ? chain : null;
+}
+
+/**
+ * Resolve the channel-neutral delivery target for an approval card. The
+ * TRANSPORT channel is decided by the job chain's ROOT (the job with no
+ * parent) — a delegated sub-job's own `channel` column is usually 'internal'
+ * and tells us nothing about where the human actually is; the root's channel
+ * (run through resolveTransportChannel — cron/webhook/api/dashboard default
+ * to 'telegram', the only channel that predates this generalization) is the
+ * one that reflects how the whole chain was triggered.
+ *
+ * channel='telegram': delegates straight to resolveApprovalDeliveryTarget
+ * above — EXACT existing behavior, wrapped into the neutral shape.
+ *
+ * channel=discord/slack/whatsapp: walks the SAME chain (self out to root)
+ * looking for the first agent with an ENABLED binding for that channel —
+ * mirrors the telegram walk's "first bot in the chain that can deliver"
+ * rule. Once found, the card's conversationId is ALWAYS that agent's OWNER
+ * conversation (resolveOwnerConversation) — never the triggering
+ * conversation — for the exact self-approval reason resolveApprovalDeliveryTarget
+ * documents above (an authorized non-owner must never approve their own
+ * gated action). No owner on record, or no usable credentials, → null
+ * (fail loud — dashboard-only), matching Telegram's own fail-loud contract
+ * rather than ever falling back to the triggering conversation.
+ */
+export async function resolveChannelApprovalDeliveryTarget(
+  db: RunnerDeps['db'],
+  jobId: string,
+): Promise<ChannelApprovalDeliveryTarget | null> {
+  const chain = await walkJobChainToRoot(db, jobId);
+  if (!chain) return null;
+
+  const rootChannel = resolveTransportChannel(chain[chain.length - 1]!.channel);
+
+  if (rootChannel === 'telegram') {
+    const target = await resolveApprovalDeliveryTarget(db, jobId);
+    if (!target) return null;
+    return {
+      channel: 'telegram',
+      agentId: target.agentId,
+      credentials: { botToken: target.botToken },
+      conversationId: target.chatId,
+    };
+  }
+
+  for (const hop of chain) {
+    const binding = await getChannelBinding(db, hop.agentId, rootChannel);
+    if (!binding || !binding.enabled) continue;
+
+    const conversationId = await resolveOwnerConversation(db, hop.agentId, rootChannel);
+    if (!conversationId) return null;
+
+    const credentials = await getBindingCredentials(db, hop.agentId, rootChannel);
+    if (!credentials) return null;
+
+    return { channel: rootChannel, agentId: hop.agentId, credentials, conversationId };
+  }
+  return null;
+}
+
 /**
  * Render a short, human-readable summary of the gated action. PLAIN TEXT (no
  * Markdown) on purpose — tool input (e.g. an arbitrary shell command) must not be
@@ -180,15 +320,17 @@ export async function notifyApprovalCreated(
   req: ApprovalGateRequest,
 ): Promise<void> {
   try {
-    // Resolve the bot + chat that must receive the approval card. On a
-    // delegated chain the gated job's own agent may have no bot — the
-    // orchestrator's bot delivers. And regardless of who triggered the job,
-    // the card always goes to the bot OWNER's chat (never the triggering
-    // chat — see resolveApprovalDeliveryTarget). null ⇒ no bot anywhere in
-    // the chain, no chat, or no owner on record → stay silent (dashboard-only).
-    const target = await resolveApprovalDeliveryTarget(deps.db, req.jobId);
+    // Resolve the bot/gateway + conversation that must receive the approval
+    // card. On a delegated chain the gated job's own agent may have no
+    // binding — the orchestrator's delivers. And regardless of who triggered
+    // the job, the card always goes to the OWNER's conversation (never the
+    // triggering one — see resolveApprovalDeliveryTarget /
+    // resolveChannelApprovalDeliveryTarget). null ⇒ no binding anywhere in
+    // the chain, no owner on record, or no usable credentials → stay silent
+    // (dashboard-only).
+    const target = await resolveChannelApprovalDeliveryTarget(deps.db, req.jobId);
     if (!target) return;
-    const { botToken, chatId } = target;
+    const { channel, credentials, conversationId } = target;
 
     // The acting agent (whose action is gated) names the card — NOT the bot owner.
     const [agent] = await deps.db
@@ -211,28 +353,38 @@ export async function notifyApprovalCreated(
     const detailShort =
       detail.length > 500 ? detail.slice(0, 500) + '\n… (full detail on the dashboard)' : detail;
 
-    const text =
+    const body =
       `⏳ Approval needed — ${who}\n\n` +
       `➤ ${purpose || 'Purpose not specified by the agent.'}\n` +
       `⚠️ ${impact}\n` +
-      `\nDetails:\n${detailShort}\n\n` +
-      `Tap a button below to decide — or resolve it from the dashboard.`;
+      `\nDetails:\n${detailShort}`;
 
-    // Channel-neutral (S3): sent through the ChannelAdapter rather than the
+    // Channel-neutral (W2): sent through the ChannelAdapter rather than the
     // Telegram helper directly. `callbackId` carries the `apr:<id>` prefix so
     // the adapter's own `:a`/`:r` suffixing reproduces approvalCallbackData's
-    // EXACT format — approval-callback.ts's parser is unchanged. Channel is
-    // always 'telegram' today (resolveApprovalDeliveryTarget only ever walks
-    // Telegram bot tokens); it becomes channel-parametric once a second
-    // channel's delivery target resolution exists.
-    const card: ApprovalCard = {
-      text,
-      approveLabel: '✅ Approve',
-      rejectLabel: '❌ Reject',
-      callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
-    };
-    const adapter = getAdapter('telegram');
-    await adapter.sendApprovalCard!({ botToken }, chatId, card);
+    // EXACT format — approval-callback.ts's parser is unchanged.
+    //
+    // Not every channel can render buttons (capabilities.buttons — WhatsApp
+    // today): sendApprovalCard is only called when the adapter actually
+    // implements it; otherwise this falls back to a plain sendText with an
+    // explicit dashboard pointer, closing the silent-swallow hole a bare
+    // `sendApprovalCard!` non-null assertion would otherwise hit on an
+    // adapter that never implements it (an approval on such a channel used
+    // to deliver NOTHING with no error).
+    const adapter = getAdapter(channel);
+    if (adapter.capabilities.buttons && adapter.sendApprovalCard) {
+      const text = `${body}\n\nTap a button below to decide — or resolve it from the dashboard.`;
+      const card: ApprovalCard = {
+        text,
+        approveLabel: '✅ Approve',
+        rejectLabel: '❌ Reject',
+        callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
+      };
+      await adapter.sendApprovalCard(credentials, conversationId, card);
+    } else {
+      const text = `${body}\n\nApprove or reject from the dashboard: Approvals page.`;
+      await adapter.sendText(credentials, conversationId, text);
+    }
   } catch (err) {
     console.warn(
       `[approval-notify] failed to send approval card for ${req.approvalRequestId}: ${

@@ -513,7 +513,7 @@ describe('getAgentChannelsAction (S4)', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('telegram connected, discord disconnected (connectable, unbound), slack/whatsapp coming_soon', async () => {
+  it('telegram connected, discord/slack/whatsapp disconnected (connectable, unbound)', async () => {
     currentDb = makeDb([
       {
         id: 'aaaaaaaa-0000-0000-0000-000000000051',
@@ -529,8 +529,8 @@ describe('getAgentChannelsAction (S4)', () => {
     expect(r.data.channels).toEqual([
       { channel: 'telegram', status: 'connected' },
       { channel: 'discord', status: 'disconnected' },
-      { channel: 'slack', status: 'coming_soon' },
-      { channel: 'whatsapp', status: 'coming_soon' },
+      { channel: 'slack', status: 'disconnected' },
+      { channel: 'whatsapp', status: 'disconnected' },
     ]);
   });
 
@@ -553,15 +553,15 @@ describe('getAgentChannelsAction (S4)', () => {
 });
 
 describe('configureAgentChannelAction — dual-write (S4)', () => {
-  it('fails loud for channels without an adapter yet', async () => {
+  it('rejects whatsapp — it pairs via QR (startWhatsAppPairingAction), not a pasted token', async () => {
     const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
     const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000060',
-      channel: 'slack',
+      channel: 'whatsapp',
       credentials: { botToken: 'whatever' },
     });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('channel_not_supported_yet');
+    if (!r.ok) expect(r.code).toBe('use_whatsapp_pairing');
   });
 
   it('persists agents.telegram_* AND upserts a channel_bindings row', async () => {
@@ -619,14 +619,16 @@ describe('configureAgentChannelAction — dual-write (S4)', () => {
 });
 
 describe('disconnectAgentChannelAction — dual-delete (S4)', () => {
-  it('fails loud for channels without an adapter yet', async () => {
+  it('deletes the whatsapp channel_bindings row (no agents.* columns to clear)', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000070' }]) as typeof currentDb;
     const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
     const r = await disconnectAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000070',
-      channel: 'slack',
+      channel: 'whatsapp',
     });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.code).toBe('channel_not_supported_yet');
+    expect(r.ok).toBe(true);
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
   });
 
   it('clears agents.telegram_* AND deletes the channel_bindings row', async () => {
@@ -809,6 +811,304 @@ describe('Discord channel actions (D3)', () => {
     const r = await revokeChannelAllowedConversationAction('aaaaaaaa-0000-0000-0000-0000000000d3');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('Slack channel actions (K3)', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-0000000000e1';
+
+  it('configureAgentChannelAction connects Slack — validates via the adapter, upserts channel_bindings with both tokens', async () => {
+    currentDb = makeDb([{ id: AGENT_ID, slug: 'agent-s', name: 'Agent S' }]) as typeof currentDb;
+    deliveryMocks.getAdapter.mockReturnValue({
+      validateCredentials: vi.fn().mockResolvedValue({
+        id: 'U0123456789',
+        username: 'nodalbot',
+        displayName: 'Nodal Bot',
+      }),
+    });
+
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: AGENT_ID,
+      channel: 'slack',
+      credentials: {
+        botToken: 'xoxb-a-fake-slack-bot-token',
+        appToken: 'xapp-a-fake-slack-app-token',
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.channel).toBe('slack');
+      expect(r.data.status).toBe('connected');
+      expect(r.data.identityLabel).toBe('nodalbot#U0123456789');
+    }
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const insertValuesSpy = insertSpy.mock.results[0]!.value as {
+      values: ReturnType<typeof vi.fn>;
+    };
+    const insertArg = insertValuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
+    expect(insertArg['channel']).toBe('slack');
+    expect(insertArg['agentId']).toBe(AGENT_ID);
+    expect(JSON.parse(insertArg['credentials'] as string)).toEqual({
+      botToken: 'xoxb-a-fake-slack-bot-token',
+      appToken: 'xapp-a-fake-slack-app-token',
+    });
+    expect(insertArg['botIdentity']).toEqual({
+      id: 'U0123456789',
+      username: 'nodalbot',
+      displayName: 'Nodal Bot',
+    });
+  });
+
+  it('configureAgentChannelAction rejects a bot token missing the xoxb- prefix (malformed, fails loud before touching the adapter)', async () => {
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: AGENT_ID,
+      channel: 'slack',
+      credentials: { botToken: 'not-a-bot-token', appToken: 'xapp-a-fake-slack-app-token' },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('configureAgentChannelAction rejects an app token missing the xapp- prefix (malformed, fails loud before touching the adapter)', async () => {
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: AGENT_ID,
+      channel: 'slack',
+      credentials: { botToken: 'xoxb-a-fake-slack-bot-token', appToken: 'not-an-app-token' },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('configureAgentChannelAction fails loud when Slack rejects the tokens', async () => {
+    currentDb = makeDb([{ id: AGENT_ID, slug: 'agent-s', name: 'Agent S' }]) as typeof currentDb;
+    deliveryMocks.getAdapter.mockReturnValue({
+      validateCredentials: vi
+        .fn()
+        .mockRejectedValue(
+          new DeliveryError('slack_invalid_token', 'Slack rejected these tokens.'),
+        ),
+    });
+
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: AGENT_ID,
+      channel: 'slack',
+      credentials: {
+        botToken: 'xoxb-a-fake-but-wrong-token',
+        appToken: 'xapp-a-fake-but-wrong-token',
+      },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('slack_invalid_token');
+      expect(r.message).toBe('Slack rejected these tokens.');
+    }
+  });
+
+  it('disconnectAgentChannelAction deletes the slack channel_bindings row (no agents.* columns to clear)', async () => {
+    currentDb = makeDb([{ id: AGENT_ID }]) as typeof currentDb;
+    const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentChannelAction({ agentId: AGENT_ID, channel: 'slack' });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    expect(updateSpy).not.toHaveBeenCalled();
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('getAgentChannelsAction reflects slack as connected once a channel_bindings row exists', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: AGENT_ID, slug: 'agent-s2', name: 'Agent S2', botToken: null }],
+        [{ channel: 'slack', enabled: true }],
+      ],
+    }) as typeof currentDb;
+    const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentChannelsAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const slack = r.data.channels.find((c) => c.channel === 'slack');
+    expect(slack?.status).toBe('connected');
+  });
+
+  it('getAgentSlackConfigAction: disconnected + no identity when unbound', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [[{ id: AGENT_ID, slug: 'agent-s3', name: 'Agent S3' }], []],
+    }) as typeof currentDb;
+    const { getAgentSlackConfigAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentSlackConfigAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.status).toBe('disconnected');
+    expect(r.data.identityLabel).toBe(null);
+  });
+
+  it('getAgentSlackConfigAction: connected + formatted identity when bound', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: AGENT_ID, slug: 'agent-s4', name: 'Agent S4' }],
+        [{ enabled: true, botIdentity: { id: 'U9998887776', username: 'nodalbot' } }],
+      ],
+    }) as typeof currentDb;
+    const { getAgentSlackConfigAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentSlackConfigAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.status).toBe('connected');
+    expect(r.data.identityLabel).toBe('nodalbot#U9998887776');
+  });
+});
+
+describe('WhatsApp channel actions (W3)', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-0000000000f1';
+
+  it('startWhatsAppPairingAction creates the channel_bindings row (sessionDir under ~/.nodalai/whatsapp/<id>) and POSTs the runner', async () => {
+    currentDb = makeDbMixed({
+      // agent lookup, then getChannelBinding (no existing row).
+      selectQueue: [[{ id: AGENT_ID }], []],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    const { startWhatsAppPairingAction } = await import('../src/lib/actions.ts');
+    const r = await startWhatsAppPairingAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const insertValuesSpy = insertSpy.mock.results[0]!.value as {
+      values: ReturnType<typeof vi.fn>;
+    };
+    const insertArg = insertValuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
+    expect(insertArg['channel']).toBe('whatsapp');
+    expect(insertArg['agentId']).toBe(AGENT_ID);
+    expect(insertArg['enabled']).toBe(true);
+    const creds = JSON.parse(insertArg['credentials'] as string) as { sessionDir: string };
+    expect(creds.sessionDir).toContain('.nodalai');
+    expect(creds.sessionDir).toContain('whatsapp');
+    expect(creds.sessionDir).toContain(insertArg['id'] as string);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toBe(`http://localhost:3001/api/whatsapp-pairing?agentId=${AGENT_ID}`);
+    expect((init as RequestInit).method).toBe('POST');
+    expect((init as RequestInit).headers).toEqual({ Authorization: 'Bearer test-bearer-789' });
+
+    fetchSpy.mockRestore();
+  });
+
+  it('startWhatsAppPairingAction reuses the existing binding row on reconnect (update, not insert)', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: AGENT_ID }],
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-0000000000f2',
+            credentials: JSON.stringify({ sessionDir: '/home/x/.nodalai/whatsapp/f2' }),
+            enabled: false,
+          },
+        ],
+      ],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    const { startWhatsAppPairingAction } = await import('../src/lib/actions.ts');
+    const r = await startWhatsAppPairingAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+
+    expect(
+      (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert,
+    ).not.toHaveBeenCalled();
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    const setArg = (updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> }).set.mock
+      .calls[0]![0] as Record<string, unknown>;
+    expect(setArg['enabled']).toBe(true);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('startWhatsAppPairingAction fails loud when the runner is unreachable', async () => {
+    currentDb = makeDbMixed({ selectQueue: [[{ id: AGENT_ID }], []] }) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+    const { startWhatsAppPairingAction } = await import('../src/lib/actions.ts');
+    const r = await startWhatsAppPairingAction(AGENT_ID);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('network_error');
+
+    fetchSpy.mockRestore();
+  });
+
+  it('getWhatsAppPairingStatusAction returns disconnected without pinging the runner when there is no binding', async () => {
+    currentDb = makeDbMixed({ selectQueue: [[{ id: AGENT_ID }], []] }) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    const { getWhatsAppPairingStatusAction } = await import('../src/lib/actions.ts');
+    const r = await getWhatsAppPairingStatusAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual({ status: 'disconnected', qr: null, identityLabel: null });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    fetchSpy.mockRestore();
+  });
+
+  it('getWhatsAppPairingStatusAction proxies the runner status + qr while pairing', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [[{ id: AGENT_ID }], [{ enabled: true, botIdentity: null }]],
+    }) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: 'qr_pending', qr: '2@abc,def,...' }), {
+        status: 200,
+      }),
+    );
+
+    const { getWhatsAppPairingStatusAction } = await import('../src/lib/actions.ts');
+    const r = await getWhatsAppPairingStatusAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.status).toBe('qr_pending');
+      expect(r.data.qr).toBe('2@abc,def,...');
+      expect(r.data.identityLabel).toBe(null);
+    }
+    const [url] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toBe(`http://localhost:3001/api/whatsapp-pairing?agentId=${AGENT_ID}`);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('getWhatsAppPairingStatusAction denormalizes identityLabel from bot_identity once linked', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: AGENT_ID }],
+        [
+          {
+            enabled: true,
+            botIdentity: { id: '491701234567@s.whatsapp.net', displayName: 'Quentin' },
+          },
+        ],
+      ],
+    }) as typeof currentDb;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'open' }), { status: 200 }));
+
+    const { getWhatsAppPairingStatusAction } = await import('../src/lib/actions.ts');
+    const r = await getWhatsAppPairingStatusAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.status).toBe('open');
+      expect(r.data.identityLabel).toBe('Quentin');
+    }
+
+    fetchSpy.mockRestore();
   });
 });
 

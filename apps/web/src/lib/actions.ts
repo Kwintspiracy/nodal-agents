@@ -78,6 +78,7 @@ import {
   getAdapter,
   type ChannelKind,
   type BotIdentity,
+  type WhatsAppStatus,
 } from '@nodal-agents/delivery';
 import {
   listMemories,
@@ -1825,7 +1826,12 @@ const CHANNEL_ORDER: readonly ChannelKind[] = ['telegram', 'discord', 'slack', '
 
 /** Channels with a real connect flow (ChannelAdapter + UI card). Everything
  *  else in CHANNEL_ORDER renders "coming soon" until it grows one. */
-const CONNECTABLE_CHANNELS: ReadonlySet<ChannelKind> = new Set(['telegram', 'discord']);
+const CONNECTABLE_CHANNELS: ReadonlySet<ChannelKind> = new Set([
+  'telegram',
+  'discord',
+  'slack',
+  'whatsapp',
+]);
 
 export type ChannelUiStatus = 'connected' | 'disconnected' | 'coming_soon';
 
@@ -1913,6 +1919,25 @@ const DiscordBotTokenSchema = z
   .min(20, 'Token looks too short')
   .max(200, 'Token looks too long');
 
+// Slack, unlike Discord, DOES commit to a public token grammar (bot tokens
+// start "xoxb-", app-level tokens start "xapp-") — validate the prefix up
+// front so a pasted-in-wrong-field mistake fails with a clear message
+// instead of a confusing API error from getAdapter('slack').validateCredentials.
+const SlackBotTokenSchema = z
+  .string()
+  .min(10, 'Bot token looks too short')
+  .max(200, 'Bot token looks too long')
+  .regex(/^xoxb-/, 'Bot token must start with "xoxb-" — copy it from Settings → Install App');
+
+const SlackAppTokenSchema = z
+  .string()
+  .min(10, 'App token looks too short')
+  .max(200, 'App token looks too long')
+  .regex(
+    /^xapp-/,
+    'App token must start with "xapp-" — copy it from Basic Information → App-Level Tokens',
+  );
+
 export interface ConfigureChannelResult {
   agentId: string;
   agentSlug: string;
@@ -1946,6 +1971,21 @@ export async function configureAgentChannelAction(
 
     if (channel === 'discord') {
       return await configureDiscordChannel(session, agentId, credentials);
+    }
+
+    if (channel === 'slack') {
+      return await configureSlackChannel(session, agentId, credentials);
+    }
+
+    // WhatsApp has no token to paste — it pairs via QR (Baileys/WhatsApp Web),
+    // owned by startWhatsAppPairingAction below. Reject explicitly rather than
+    // falling into the generic "coming soon" branch, which would be a lie now
+    // that the channel IS connectable (invariant #4: fail loud, not vague).
+    if (channel === 'whatsapp') {
+      return fail(
+        'use_whatsapp_pairing',
+        'WhatsApp connects via QR pairing, not a pasted token — use the Connect button.',
+      );
     }
 
     if (channel !== 'telegram') {
@@ -2123,6 +2163,84 @@ async function configureDiscordChannel(
   });
 }
 
+/**
+ * Slack branch of configureAgentChannelAction — same shape of work as the
+ * Discord branch above, but Slack's socket-mode app needs TWO credentials
+ * (a bot token AND an app-level token) instead of one: validateCredentials
+ * checks both against Slack's API in a single call.
+ */
+async function configureSlackChannel(
+  session: Awaited<ReturnType<typeof getSession>>,
+  agentId: string,
+  credentials: Record<string, string>,
+): Promise<ActionResult<ConfigureChannelResult>> {
+  const botTokenCheck = SlackBotTokenSchema.safeParse(credentials['botToken']);
+  if (!botTokenCheck.success) {
+    return fail('validation_failed', botTokenCheck.error.issues[0]?.message ?? 'Invalid bot token');
+  }
+  const appTokenCheck = SlackAppTokenSchema.safeParse(credentials['appToken']);
+  if (!appTokenCheck.success) {
+    return fail('validation_failed', appTokenCheck.error.issues[0]?.message ?? 'Invalid app token');
+  }
+  const botToken = botTokenCheck.data;
+  const appToken = appTokenCheck.data;
+
+  const db = getDb();
+  const [agent] = await db
+    .select({ id: agents.id, slug: agents.slug, name: agents.name })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+  if (!agent) return fail('not_found', 'Agent not found');
+
+  let identity: BotIdentity;
+  try {
+    identity = await getAdapter('slack').validateCredentials({ botToken, appToken });
+  } catch (err) {
+    if (err instanceof DeliveryError) {
+      return fail(err.code, err.message);
+    }
+    throw err;
+  }
+
+  const botIdentity = {
+    id: identity.id,
+    username: identity.username ?? undefined,
+    displayName: identity.displayName ?? undefined,
+  };
+
+  await db
+    .insert(channelBindings)
+    .values({
+      entityId: session.entityId,
+      agentId,
+      channel: 'slack',
+      credentials: JSON.stringify({ botToken, appToken }),
+      botIdentity,
+      enabled: true,
+    })
+    .onConflictDoUpdate({
+      target: [channelBindings.agentId, channelBindings.channel],
+      set: {
+        credentials: JSON.stringify({ botToken, appToken }),
+        botIdentity,
+        enabled: true,
+        updatedAt: new Date(),
+      },
+    });
+
+  revalidatePath('/agents');
+  revalidatePath(`/agents/${agentId}/channels`);
+
+  return ok({
+    agentId: agent.id,
+    agentSlug: agent.slug,
+    agentName: agent.name,
+    channel: 'slack',
+    status: 'connected',
+    identityLabel: identity.username ? `${identity.username}#${identity.id}` : identity.id,
+  });
+}
+
 const DisconnectChannelSchema = z.object({
   agentId: z.string().guid(),
   channel: z.enum(['telegram', 'discord', 'slack', 'whatsapp']),
@@ -2140,6 +2258,14 @@ export async function disconnectAgentChannelAction(raw: unknown): Promise<Action
 
     if (channel === 'discord') {
       return await disconnectDiscordChannel(session, agentId);
+    }
+
+    if (channel === 'slack') {
+      return await disconnectSlackChannel(session, agentId);
+    }
+
+    if (channel === 'whatsapp') {
+      return await disconnectWhatsAppChannel(session, agentId);
     }
 
     if (channel !== 'telegram') {
@@ -2198,6 +2324,206 @@ async function disconnectDiscordChannel(
   revalidatePath('/agents');
   revalidatePath(`/agents/${agentId}/channels`);
   return ok(undefined);
+}
+
+/** Slack branch of disconnectAgentChannelAction — no `agents.*` columns to clear, just the binding. */
+async function disconnectSlackChannel(
+  session: Awaited<ReturnType<typeof getSession>>,
+  agentId: string,
+): Promise<ActionResult<void>> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+  if (!row) return fail('not_found', 'Agent not found');
+
+  await db
+    .delete(channelBindings)
+    .where(and(eq(channelBindings.agentId, agentId), eq(channelBindings.channel, 'slack')));
+
+  revalidatePath('/agents');
+  revalidatePath(`/agents/${agentId}/channels`);
+  return ok(undefined);
+}
+
+/** WhatsApp branch of disconnectAgentChannelAction — deletes the binding (its
+ *  `sessionDir` is left on disk; a later `startWhatsAppPairingAction` mints a
+ *  fresh one rather than reusing a possibly-stale auth folder). The runner's
+ *  WhatsApp manager despawns the live socket on its next refresh tick, same
+ *  as Telegram/Discord's "detect on next tick" pattern above. */
+async function disconnectWhatsAppChannel(
+  session: Awaited<ReturnType<typeof getSession>>,
+  agentId: string,
+): Promise<ActionResult<void>> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+  if (!row) return fail('not_found', 'Agent not found');
+
+  await db
+    .delete(channelBindings)
+    .where(and(eq(channelBindings.agentId, agentId), eq(channelBindings.channel, 'whatsapp')));
+
+  revalidatePath('/agents');
+  revalidatePath(`/agents/${agentId}/channels`);
+  return ok(undefined);
+}
+
+// ─── WhatsApp Actions (W3) ────────────────────────────────────────────────────
+//
+// WhatsApp (via Baileys/WhatsApp Web) has no bot token to paste — connecting
+// means pairing a device by scanning a QR code, so it gets its own two
+// actions instead of reusing configureAgentChannelAction's shape:
+//   - startWhatsAppPairingAction: creates the channel_bindings row (crediting
+//     it with a fresh `sessionDir` on first connect, reusing the existing one
+//     on reconnect) THEN tells the runner to open the pairing socket.
+//   - getWhatsAppPairingStatusAction: proxies the runner's live status/QR so
+//     the client can poll — same shape the runner exposes (WhatsAppStatus)
+//     plus a UI-only 'disconnected' for "no binding yet".
+//
+// The binding row must exist BEFORE the POST reaches the runner: the runner
+// resolves `sessionDir` from channel_bindings.credentials to spawn the
+// Baileys socket (whatsapp-adapter.ts's bindingKey), it doesn't invent one.
+
+export type WhatsAppPairingStatus = WhatsAppStatus | 'disconnected';
+
+export interface WhatsAppPairingResult {
+  status: WhatsAppPairingStatus;
+  /** Raw QR payload (only while status === 'qr_pending') — render with the
+   *  `qrcode` package client-side, never generated server-side. */
+  qr: string | null;
+  identityLabel: string | null;
+}
+
+/** `~/.nodalai/whatsapp/<bindingId>` — a `useMultiFileAuthState` folder
+ *  holding this binding's linked-device keys (see socket-manager.ts's
+ *  header: treat it like a credential store). Mirrors cli-config.ts's
+ *  `homedir()`-based resolution of `~/.nodalai` for the same host. */
+function whatsAppSessionDir(bindingId: string): string {
+  return pathJoin(homedir(), '.nodalai', 'whatsapp', bindingId);
+}
+
+/**
+ * Starts (or restarts) WhatsApp pairing for an agent. Idempotent on the
+ * binding: a first call mints a fresh sessionDir and inserts the row: a
+ * later call (e.g. reconnecting after 'logged_out') reuses the SAME row/dir
+ * and just re-enables it — Baileys itself decides whether that folder's
+ * auth state is still valid, this action doesn't need to know.
+ */
+export async function startWhatsAppPairingAction(agentId: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const existing = await getChannelBinding(db, agentId, 'whatsapp');
+    if (existing) {
+      await db
+        .update(channelBindings)
+        .set({ enabled: true, updatedAt: new Date() })
+        .where(eq(channelBindings.id, existing.id));
+    } else {
+      const bindingId = crypto.randomUUID();
+      await db.insert(channelBindings).values({
+        id: bindingId,
+        entityId: session.entityId,
+        agentId,
+        channel: 'whatsapp',
+        credentials: JSON.stringify({ sessionDir: whatsAppSessionDir(bindingId) }),
+        enabled: true,
+      });
+    }
+
+    if (!env.WORKER_SECRET) {
+      console.error('[startWhatsAppPairingAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    try {
+      const res = await fetch(
+        `${env.RUNNER_URL}/api/whatsapp-pairing?agentId=${encodeURIComponent(agentId)}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${env.WORKER_SECRET}` } },
+      );
+      if (!res.ok) {
+        return fail('pairing_start_failed', `Runner rejected pairing start (${res.status})`);
+      }
+    } catch (fetchErr) {
+      console.error('[startWhatsAppPairingAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+
+    revalidatePath('/agents');
+    revalidatePath(`/agents/${agentId}/channels`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[startWhatsAppPairingAction]', err);
+    return fail('db_error', 'Failed to start WhatsApp pairing');
+  }
+}
+
+/**
+ * Polled every ~2s by WhatsAppConfigForm while pairing. Returns 'disconnected'
+ * (no runner call) when there's no binding at all — otherwise proxies the
+ * runner's GET /api/whatsapp-pairing for the live status/QR, denormalizing
+ * `identityLabel` from the binding's `bot_identity` (best-effort — the
+ * runner is expected to keep it in sync once the socket reaches 'open').
+ */
+export async function getWhatsAppPairingStatusAction(
+  agentId: string,
+): Promise<ActionResult<WhatsAppPairingResult>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const binding = await getChannelBinding(db, agentId, 'whatsapp');
+    if (!binding || !binding.enabled) {
+      return ok({ status: 'disconnected', qr: null, identityLabel: null });
+    }
+
+    if (!env.WORKER_SECRET) {
+      console.error('[getWhatsAppPairingStatusAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(
+        `${env.RUNNER_URL}/api/whatsapp-pairing?agentId=${encodeURIComponent(agentId)}`,
+        { headers: { Authorization: `Bearer ${env.WORKER_SECRET}` } },
+      );
+    } catch (fetchErr) {
+      console.error('[getWhatsAppPairingStatusAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    if (!res.ok) {
+      return fail('pairing_status_failed', `Runner returned ${res.status}`);
+    }
+    const body = (await res.json()) as { status: WhatsAppStatus; qr?: string };
+    const identity = binding.botIdentity;
+    const identityLabel = identity
+      ? (identity.displayName ?? identity.username ?? identity.id ?? null)
+      : null;
+    return ok({ status: body.status, qr: body.qr ?? null, identityLabel });
+  } catch (err) {
+    console.error('[getWhatsAppPairingStatusAction]', err);
+    return fail('db_error', 'Failed to load WhatsApp pairing status');
+  }
 }
 
 // ─── Telegram Actions ─────────────────────────────────────────────────────────
@@ -2577,6 +2903,61 @@ export async function getAgentDiscordConfigAction(
   } catch (err) {
     console.error('[getAgentDiscordConfigAction]', err);
     return fail('db_error', 'Failed to load Discord config');
+  }
+}
+
+// ─── Slack Actions (K3) ───────────────────────────────────────────────────────
+//
+// Same story as Discord: no legacy per-agent columns on `agents`,
+// channel_bindings is Slack's only store, channel_allowed_conversations its
+// only allowlist store.
+
+export type SlackConfigStatus = 'connected' | 'disconnected';
+
+export type SlackConfigRow = {
+  agentId: string;
+  agentSlug: string;
+  agentName: string;
+  status: SlackConfigStatus;
+  /** "username#id" (or bare id if the bot has no username), display-only. */
+  identityLabel: string | null;
+};
+
+/** Slack's connection detail for its Channels card — mirrors
+ *  getAgentDiscordConfigAction's shape, sourced from channel_bindings. */
+export async function getAgentSlackConfigAction(
+  agentId: string,
+): Promise<ActionResult<SlackConfigRow>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, slug: agents.slug, name: agents.name })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const binding = await getChannelBinding(db, agentId, 'slack');
+    const identity = binding?.botIdentity;
+    const identityLabel = identity
+      ? identity.username && identity.id
+        ? `${identity.username}#${identity.id}`
+        : (identity.username ?? identity.id ?? null)
+      : null;
+
+    return ok({
+      agentId: agent.id,
+      agentSlug: agent.slug,
+      agentName: agent.name,
+      status: binding?.enabled ? 'connected' : 'disconnected',
+      identityLabel,
+    });
+  } catch (err) {
+    console.error('[getAgentSlackConfigAction]', err);
+    return fail('db_error', 'Failed to load Slack config');
   }
 }
 
