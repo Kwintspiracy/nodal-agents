@@ -231,6 +231,48 @@ export function recordToolOutcome(
   return { state: { streak, nudged: state.nudged }, signal: 'none' };
 }
 
+// ─── Guard 1g — verify-before-assert nudge (cancel/undo intent) ─────────────
+//
+// Live incident 2026-07-11: a user asked their agent whether it could post
+// Discord release announcements. The agent called `create_schedule` — a
+// schedule row was created and persisted, active. The user replied "Annule".
+// The agent's ENTIRE response turn was `telegram_send_message` +
+// `return_result` — it never called a read tool (`list_schedules`) to check
+// what actually existed, and asserted "Aucune schedule créée — rien à
+// annuler ✅", directly contradicting its OWN prior turn, visible in the same
+// thread history. Failure class: unverified assertions about platform state
+// / the agent's own past actions.
+//
+// Guard 1g catches this class at the runtime layer: an inbound cancel/undo
+// request answered without a single verification tool call. It is a NUDGE,
+// not a hard fail — a "cancel"/"undo" can legitimately be about conversation
+// content rather than a platform object, so after one nudge the agent is
+// free to answer textually. See job/execute.ts for the wiring (checked ONCE,
+// on the job's first turn only) and Layer 1 (thread-history.ts's action
+// ledger) + Layer 3 (the `verify-before-done` baseline skill) for the other
+// two legs of the fix.
+
+/**
+ * FR + EN cancel/undo intent, matched against the first
+ * `CANCEL_UNDO_INTENT_SCAN_CHARS` characters of the job's inbound task,
+ * case-insensitive. Deliberately broad (annuler/cancel/undo/supprimer/
+ * enlever/retirer/désactiver/arrêter) — false positives just cost one
+ * advisory nudge, false negatives leave the incident's failure mode open.
+ */
+export const CANCEL_UNDO_INTENT_RE =
+  /\b(annule[rz]?|cancel|undo|supprime[rz]?|enl[eè]ve[rz]?|retire[rz]?|d[ée]sactive[rz]?|arr[êe]te[rz]?)\b/i;
+
+/** Chars of the inbound task scanned for cancel/undo intent (Guard 1g). */
+export const CANCEL_UNDO_INTENT_SCAN_CHARS = 200;
+
+/**
+ * Guard 1g nudge text — injected once (as a `user`-role message, same
+ * mechanism as Guard 1d/1f's forcing messages) when the job's first turn
+ * answers a cancel/undo request using only delivery/return tools.
+ */
+export const VERIFY_BEFORE_ASSERT_NUDGE =
+  'Runtime notice: the user asked to cancel/undo something. Verify actual platform state with your READ tools (list_schedules, list_conversations, ...) BEFORE asserting what exists or what was done — your own memory of past actions is not a source of truth. Then act on what you find and report precisely what remains.';
+
 // ─── ChainCounters ────────────────────────────────────────────────────────────
 
 /**

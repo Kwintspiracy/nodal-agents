@@ -37,6 +37,7 @@ import {
   BLOCK_NO_REASON,
 } from '../../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
+import { VERIFY_BEFORE_ASSERT_NUDGE } from '@nodal-agents/orchestration';
 
 // ─── Module-level mock registry ───────────────────────────────────────────────
 // Approval-gate regression imports (used in the approval-gate describe block below)
@@ -4864,6 +4865,316 @@ describe('Guard 1f: non-progress detector', () => {
     // delivery working) — confirms this isn't passing by the calls having
     // silently failed/no-op'd.
     expect(sendTelegramMessageMock).toHaveBeenCalledTimes(5);
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+});
+
+// ─── Guard 1g — verify-before-assert nudge (cancel/undo intent) ──────────────
+//
+// Live incident 2026-07-11: a user asked their agent whether it could post
+// Discord release announcements. The agent created a schedule. The user said
+// "Annule". The agent's ENTIRE response turn was telegram_send_message +
+// return_result — it never called a read tool, and asserted "rien à annuler",
+// contradicting its own prior turn. Guard 1g nudges the agent to verify
+// platform state before asserting, when an inbound cancel/undo request is
+// answered without any verification tool call on the job's first turn.
+
+describe('Guard 1g — verify-before-assert nudge (cancel/undo intent)', () => {
+  async function createTelegramJob(task: string) {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [tgJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task,
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!tgJob) throw new Error('Failed to create telegram test job');
+    return tgJob;
+  }
+
+  async function loadMessages(jobId: string) {
+    const [row] = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, jobId));
+    return (row?.messages ?? []) as Array<{ role: string; content: unknown }>;
+  }
+
+  it('cancel-intent task + first turn with only telegram_send_message → nudge injected before the next request', async () => {
+    const tgJob = await createTelegramJob("Mais non je ne t'ai pas demandé ça. Annule.");
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-tg1',
+            toolName: 'telegram_send_message',
+            args: { text: 'Annulé, rien à faire.' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const msgs = await loadMessages(tgJob.id as string);
+    const nudgeMsg = msgs.find(
+      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
+    );
+    expect(nudgeMsg).toBeDefined();
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('task without cancel/undo words → no nudge', async () => {
+    const tgJob = await createTelegramJob('Envoie un résumé du projet.');
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-tg1',
+            toolName: 'telegram_send_message',
+            args: { text: 'Voici le résumé.' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const msgs = await loadMessages(tgJob.id as string);
+    const nudgeMsg = msgs.find(
+      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
+    );
+    expect(nudgeMsg).toBeUndefined();
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('first turn WITH a read tool (list_schedules) → no nudge', async () => {
+    const tgJob = await createTelegramJob('Annule cette automation.');
+
+    const llmClient = makeMockLlmClient([
+      { toolCalls: [{ toolCallId: 'tc-ls', toolName: 'list_schedules', args: {} }] },
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-tg1',
+            toolName: 'telegram_send_message',
+            args: { text: 'Vérifié : aucune automation.' },
+          },
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const msgs = await loadMessages(tgJob.id as string);
+    const nudgeMsg = msgs.find(
+      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
+    );
+    expect(nudgeMsg).toBeUndefined();
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('nudge fires at most once, even if the second turn also skips verification', async () => {
+    const tgJob = await createTelegramJob("Annule, j'ai changé d'avis.");
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-tg1', toolName: 'telegram_send_message', args: { text: 'ok annulé' } },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-tg2', toolName: 'telegram_send_message', args: { text: 'confirmé' } },
+        ],
+      },
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const msgs = await loadMessages(tgJob.id as string);
+    const nudges = msgs.filter(
+      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
+    );
+    expect(nudges).toHaveLength(1);
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // ─── Guard 1g HOLD — the exact incident shape ────────────────────────────
+  // Live incident 2026-07-11: turn 1 was [telegram_send_message, return_result]
+  // IN THE SAME turn — the job completed before the k-ter nudge (above) ever
+  // got a chance to fire. The HOLD intercepts exactly this shape: defers
+  // return_result once, injects the nudge, and lets the loop run one more turn.
+
+  it('EXACT incident shape: return_result in the SAME turn as telegram_send_message → held once, completes on turn 2', async () => {
+    const tgJob = await createTelegramJob("Mais non je t'ai pas demandé ça . Annule");
+
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-tg1',
+              toolName: 'telegram_send_message',
+              args: { text: 'Aucune schedule créée — rien à annuler.' },
+            },
+            { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedPrompts,
+    );
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Two LLM calls happened — the job did NOT finalize on turn 1's
+    // return_result, it looped once more.
+    expect(capturedPrompts.length).toBe(2);
+
+    // The nudge is visible in the persisted transcript, between the two turns.
+    const msgs = await loadMessages(tgJob.id as string);
+    const nudgeMsg = msgs.find(
+      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
+    );
+    expect(nudgeMsg).toBeDefined();
+
+    // return_result's FIRST call got a "deferred" tool-result, not an
+    // "acknowledged" one — it was genuinely held, not silently dropped.
+    const heldResult = msgs.find(
+      (m) =>
+        m.role === 'tool' &&
+        Array.isArray(m.content) &&
+        (m.content as Array<Record<string, unknown>>).some(
+          (p) =>
+            p['toolCallId'] === 'tc-rr1' && JSON.stringify(p['output'] ?? '').includes('deferred'),
+        ),
+    );
+    expect(heldResult).toBeDefined();
+
+    // The send actually went out exactly once — the hold didn't re-send or
+    // drop the delivery.
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('regression: cancel-intent with a read tool (list_schedules) alongside return_result on turn 1 → completes normally, no hold', async () => {
+    const tgJob = await createTelegramJob('Annule cette automation.');
+
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-ls', toolName: 'list_schedules', args: {} },
+            {
+              toolCallId: 'tc-tg',
+              toolName: 'telegram_send_message',
+              args: { text: 'Vérifié : aucune automation.' },
+            },
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedPrompts,
+    );
+
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // ONE LLM call — return_result finalized straight away, no hold/re-loop.
+    expect(capturedPrompts.length).toBe(1);
+
+    const msgs = await loadMessages(tgJob.id as string);
+    const nudgeMsg = msgs.find(
+      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
+    );
+    expect(nudgeMsg).toBeUndefined();
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  it('the hold fires at most once, even if turn 2 answers again with no verification', async () => {
+    const tgJob = await createTelegramJob('Annule tout de suite.');
+
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          // Turn 1: same incident shape — held once.
+          toolCalls: [
+            { toolCallId: 'tc-tg1', toolName: 'telegram_send_message', args: { text: 'annulé' } },
+            { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+        {
+          // Turn 2: STILL no verification tool — must pass through unconditionally.
+          toolCalls: [
+            { toolCallId: 'tc-tg2', toolName: 'telegram_send_message', args: { text: 'confirmé' } },
+            { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedPrompts,
+    );
+
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Exactly 2 LLM calls — turn 2's return_result was NOT held again.
+    expect(capturedPrompts.length).toBe(2);
+
+    const msgs = await loadMessages(tgJob.id as string);
+    const nudges = msgs.filter(
+      (m) => m.role === 'user' && m.content === VERIFY_BEFORE_ASSERT_NUDGE,
+    );
+    expect(nudges).toHaveLength(1);
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });

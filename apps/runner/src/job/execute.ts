@@ -97,6 +97,9 @@ import {
   recordToolOutcome,
   INITIAL_SAME_TOOL_STREAK_STATE,
   INITIAL_ERROR_STREAK_STATE,
+  CANCEL_UNDO_INTENT_RE,
+  CANCEL_UNDO_INTENT_SCAN_CHARS,
+  VERIFY_BEFORE_ASSERT_NUDGE,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
 import type {
@@ -2245,6 +2248,23 @@ async function runJob(
   let sameToolStreakState: SameToolStreakState = INITIAL_SAME_TOOL_STREAK_STATE;
   let errorStreakState: ErrorStreakState = INITIAL_ERROR_STREAK_STATE;
 
+  // Guard 1g — verify-before-assert nudge. See chain-counters.ts for the
+  // incident + detection rationale. Checked ONCE, on this job's first turn
+  // only — `turn` is still `job.turn ?? 0` here (the while loop below does
+  // `turn += 1` as its first statement), so `guard1gTargetTurn` is exactly
+  // the turn number of that first iteration.
+  const cancelIntentDetected = CANCEL_UNDO_INTENT_RE.test(
+    (job.task ?? '').slice(0, CANCEL_UNDO_INTENT_SCAN_CHARS),
+  );
+  const guard1gTargetTurn = turn + 1;
+  let guard1gChecked = false;
+  // Bounded to ONE hold per job (below) — the exact incident shape is turn 1
+  // calling return_result IN THE SAME turn as telegram_send_message, which
+  // would otherwise complete the job before the k-ter nudge (below) is ever
+  // reached. Once held once, every subsequent return_result passes through
+  // unconditionally, whatever it says.
+  let guard1gHeldCompletion = false;
+
   // Guard 3b — no-false-success. Tool names whose last outcome this run was a
   // hard error and that were never since re-run successfully. If the agent
   // signals return_result(status='success') while this set is non-empty, it is
@@ -3396,6 +3416,50 @@ async function runJob(
         return suspended;
       }
 
+      // j-1g. Guard 1g HOLD — the exact 2026-07-11 incident shape: turn 1
+      // answers a cancel/undo request by calling return_result IN THE SAME
+      // turn as (only) delivery tools, or with no other tool call at all. The
+      // k-ter nudge (below) never gets a chance to be seen if the job
+      // completes here — the incident job's turn 1 was literally
+      // [telegram_send_message, return_result] and it went straight to
+      // 'completed'. Intercept: do NOT let return_result finalize this once —
+      // synthesize a "deferred" tool-result (same shape as j-pré below),
+      // inject the verify-before-assert nudge, and loop once more. Bounded to
+      // ONE interception per job via `guard1gHeldCompletion`: the very next
+      // return_result — whatever turn, whatever it says — passes through
+      // unconditionally, so this can never itself become a stall.
+      if (
+        returnResultCall &&
+        !guard1gHeldCompletion &&
+        turn === guard1gTargetTurn &&
+        cancelIntentDetected
+      ) {
+        const siblingToolNames = toolResultBlocks.map((b) => b.toolName);
+        const noVerification = siblingToolNames.every(
+          (n) => n === 'return_result' || DELIVERY_TOOL_NAMES.has(n),
+        );
+        if (noVerification) {
+          guard1gHeldCompletion = true;
+          guard1gChecked = true;
+          trace('guard1g_held_completion', { turn });
+          toolResultBlocks.push({
+            type: 'tool-result',
+            toolCallId: returnResultCall.toolCallId,
+            toolName: 'return_result',
+            output: toResultOutput({
+              error:
+                'deferred: verify platform state with a read tool before finalizing — see the runtime notice below.',
+            }),
+          });
+          messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+          messages = [
+            ...messages,
+            { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
+          ];
+          continue;
+        }
+      }
+
       // j-pré. Detect tool errors in the same turn as return_result. If a
       // sibling tool errored, do NOT finalize: inject the error into messages
       // and re-loop so the LLM sees it next turn. Without this guard, a turn
@@ -3805,6 +3869,29 @@ async function runJob(
       // we keep return_result in the set for correctness against future paths.)
       {
         const thisToolNames = toolResultBlocks.map((b) => b.toolName);
+
+        // Guard 1g — verify-before-assert nudge (see chain-counters.ts for the
+        // incident + detection rationale). Covers the turn that answers a
+        // cancel/undo request WITHOUT calling return_result this turn (e.g. a
+        // bare telegram_send_message, still gathering). The turn that DOES
+        // call return_result in the same breath is instead caught by the j-1g
+        // HOLD above, before this point is ever reached — that's the guard
+        // that fires on the exact incident shape.
+        if (!guard1gChecked && turn === guard1gTargetTurn) {
+          guard1gChecked = true;
+          if (cancelIntentDetected) {
+            const noVerification =
+              thisToolNames.length === 0 || thisToolNames.every((n) => DELIVERY_TOOL_NAMES.has(n));
+            if (noVerification) {
+              messages = [
+                ...messages,
+                { role: 'user', content: VERIFY_BEFORE_ASSERT_NUDGE } as ModelMessage,
+              ];
+              trace('verify_before_assert_nudge', { turn });
+            }
+          }
+        }
+
         const isDelivering = thisToolNames.some((n) => DELIVERY_OR_TERMINAL_TOOL_NAMES.has(n));
         if (isDelivering || thisToolNames.length === 0) {
           // Delivered or no tool calls (shouldn't reach here if no tools, but defensive).

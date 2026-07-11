@@ -73,6 +73,8 @@ async function insertCompletedJob(opts: {
   messages?: unknown;
   /** Channel to insert on — defaults to 'telegram'. */
   channel?: string;
+  /** Optional `tools_used` — drives the Layer-1 action ledger. Defaults to unset. */
+  toolsUsed?: string[];
 }): Promise<string> {
   const createdAt = opts.minutesAgo ? new Date(Date.now() - opts.minutesAgo * 60_000) : new Date();
   const [row] = await db
@@ -87,6 +89,7 @@ async function insertCompletedJob(opts: {
       result: opts.result,
       messages: (opts.messages ?? []) as never,
       createdAt,
+      ...(opts.toolsUsed !== undefined ? { toolsUsed: opts.toolsUsed } : {}),
       ...(opts.completedMinutesAgo !== undefined
         ? { completedAt: new Date(Date.now() - opts.completedMinutesAgo * 60_000) }
         : {}),
@@ -772,5 +775,81 @@ describe('loadThreadHistory', () => {
 
     const flat = summarize(history);
     expect(flat.some((m) => /launch comfyui/i.test(m.text))).toBe(true);
+  });
+
+  // ─── Action ledger (Layer 1, 2026-07-11 incident) ──────────────────────────
+
+  it('appends an action ledger line when the prior job used a state-changing tool', async () => {
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'peux-tu poster une annonce Discord à chaque release ?',
+      result: null,
+      minutesAgo: 5,
+      messages: tgReply(
+        'peux-tu poster une annonce Discord à chaque release ?',
+        'Fait, une automation est en place.',
+      ),
+      toolsUsed: ['create_schedule', 'telegram_send_message'],
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(s).toContainEqual({
+      role: 'assistant',
+      text: '[Actions performed in this exchange: create_schedule, telegram_send_message]',
+    });
+  });
+
+  it('does NOT append a ledger line when the prior job only used send tools', async () => {
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'dis bonjour',
+      result: null,
+      minutesAgo: 5,
+      messages: tgReply('dis bonjour', 'Bonjour !'),
+      toolsUsed: ['telegram_send_message'],
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(s.some((m) => m.text.includes('Actions performed'))).toBe(false);
+  });
+
+  it('does NOT append a ledger line when tools_used is null/empty', async () => {
+    await insertCompletedJob({
+      chatId: '12345',
+      task: 'dis bonjour',
+      result: 'Bonjour !',
+      minutesAgo: 5,
+      // toolsUsed omitted — column defaults to '{}'.
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(s.some((m) => m.text.includes('Actions performed'))).toBe(false);
   });
 });

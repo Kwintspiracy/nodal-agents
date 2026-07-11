@@ -45,6 +45,13 @@ export {
 } from './chain-counters';
 export type { SameToolStreakState, ErrorStreakState, NonProgressSignal } from './chain-counters';
 
+// ─── Guard 1g — verify-before-assert nudge (cancel/undo intent) ─────────────
+export {
+  CANCEL_UNDO_INTENT_RE,
+  CANCEL_UNDO_INTENT_SCAN_CHARS,
+  VERIFY_BEFORE_ASSERT_NUDGE,
+} from './chain-counters';
+
 // ─── OrchestratorMode detection ───────────────────────────────────────────────
 export { detectOrchestratorMode } from './orchestrator-mode';
 

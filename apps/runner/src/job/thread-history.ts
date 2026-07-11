@@ -28,6 +28,15 @@
 //
 // Fail-soft: callers should wrap in try/catch so a DB hiccup never kills a
 // job — at worst the agent loses session continuity for that turn.
+//
+// Action ledger (2026-07-11 incident, Layer 1 of the 3-layer fix — see
+// chain-counters.ts Guard 1g for the incident write-up): a prior job's OWN
+// prose is not a reliable record of what it actually did. When a prior job in
+// this thread used a STATE-CHANGING tool (create_schedule, attach_mcp, ...),
+// its rendered assistant turn gets a trailing `[Actions performed in this
+// exchange: ...]` line naming the REAL tool calls from `agent_jobs.tools_used`
+// — a structural fact the LLM can't override with confabulated prose on a
+// later turn.
 
 import { eq, and, ne, gt, desc, inArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
@@ -88,6 +97,48 @@ export const IDLE_RESET_MS = IDLE_RESET_MINUTES * 60_000;
  */
 const MAX_LOOKBACK_MS = 24 * 60 * 60_000;
 
+/**
+ * Built-in tools that create/mutate/delete a platform object — schedules,
+ * agents, skills, MCP servers, connectors, memory — as opposed to read tools
+ * (`list_schedules`, ...) or delivery tools (`telegram_send_message`, ...).
+ * Gates the action ledger below: a prior job whose `tools_used` intersects
+ * this set gets a ledger line naming ALL its tools_used (not just the
+ * state-changing ones — the point is to show the FULL real action record).
+ *
+ * Maintained alongside the builtin tool registry
+ * (packages/tools/src/builtin) — extend this set whenever a new tool
+ * creates, mutates, or deletes a platform object.
+ */
+export const STATE_CHANGING_TOOLS: ReadonlySet<string> = new Set([
+  // Schedules
+  'create_schedule',
+  'update_schedule',
+  'toggle_schedule',
+  'run_schedule',
+  // Agents
+  'create_agent',
+  'update_agent',
+  'attach_agent',
+  'detach_agent',
+  // Skills
+  'create_skill',
+  'update_skill',
+  'attach_skill',
+  'detach_skill',
+  // MCP servers
+  'create_mcp',
+  'attach_mcp',
+  'detach_mcp',
+  // Connectors
+  'create_connector',
+  'attach_connector',
+  'detach_connector',
+  // Memory
+  'save_memory',
+  'mark_memory_helpful',
+  'mark_memory_outdated',
+]);
+
 export interface LoadThreadHistoryOptions {
   db: RunnerDeps['db'];
   entityId: string;
@@ -125,6 +176,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       channel: agentJobs.channel,
       createdAt: agentJobs.createdAt,
       completedAt: agentJobs.completedAt,
+      toolsUsed: agentJobs.toolsUsed,
     })
     .from(agentJobs)
     .where(
@@ -193,22 +245,31 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       channel: row.channel,
     });
     if (assistant === null) continue;
+
+    // Action ledger (see file header) — only when this job actually used a
+    // STATE-CHANGING tool. Lists the job's FULL tools_used (not just the
+    // state-changing subset) so the ledger reads as a complete action record,
+    // not a partial one.
+    const toolsUsedRow = Array.isArray(row.toolsUsed) ? (row.toolsUsed as string[]) : [];
+    const ledgerLine = toolsUsedRow.some((t) => STATE_CHANGING_TOOLS.has(t))
+      ? `[Actions performed in this exchange: ${toolsUsedRow.join(', ')}]`
+      : null;
+
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
     if (sendTool) {
       const callId = `history-tool-${nextSynthId++}`;
+      const assistantContent: Array<Record<string, unknown>> = [
+        {
+          type: 'tool-call',
+          toolCallId: callId,
+          toolName: sendTool,
+          input: { text: truncate(assistant) },
+        },
+      ];
+      if (ledgerLine) assistantContent.push({ type: 'text', text: ledgerLine });
       blocks.push([
         { role: 'user', content: truncate(row.task) },
-        {
-          role: 'assistant',
-          content: [
-            {
-              type: 'tool-call',
-              toolCallId: callId,
-              toolName: sendTool,
-              input: { text: truncate(assistant) },
-            },
-          ],
-        } as ModelMessage,
+        { role: 'assistant', content: assistantContent } as ModelMessage,
         {
           role: 'tool',
           content: [
@@ -224,7 +285,10 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
     } else {
       blocks.push([
         { role: 'user', content: truncate(row.task) },
-        { role: 'assistant', content: truncate(assistant) },
+        {
+          role: 'assistant',
+          content: ledgerLine ? `${truncate(assistant)}\n\n${ledgerLine}` : truncate(assistant),
+        },
       ]);
     }
   }
