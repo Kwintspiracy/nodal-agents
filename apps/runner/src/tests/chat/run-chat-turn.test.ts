@@ -1,0 +1,291 @@
+// run-chat-turn.test.ts — delegated-task visibility, the EXACT incident shape
+// (2026-07-12): a dashboard chat turn escalated "research Law & Order and
+// send it to Mathilde" into a root job that delegated via create_task; the
+// task's own child job really called telegram_send_message. The next chat
+// turn ("Tu as envoyé à Mathilde ?") must see that fact in the history fed to
+// the LLM — not just the root job's own prose result — or the agent denies
+// something it (via delegation) actually did.
+
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { MockLanguageModelV3 } from 'ai/test';
+import { generateText } from 'ai';
+import type { ModelMessage } from 'ai';
+import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
+import type { TestDb } from '@nodal-agents/db/test-utils';
+import { eq } from '@nodal-agents/db';
+import { agentJobs, agentTasks, conversations, chatMessages } from '@nodal-agents/db';
+import type { RunnerDeps } from '../../deps.ts';
+import { runChatTurn } from '../../chat/run-chat-turn.ts';
+
+// ─── Intercept createLlmClient (same pattern as execute.test.ts) ──────────────
+const { getActiveLlmClient, setActiveLlmClient } = vi.hoisted(() => {
+  let _activeLlmClient: RunnerDeps['llmClient'] | null = null;
+  return {
+    getActiveLlmClient: () => _activeLlmClient,
+    setActiveLlmClient: (c: RunnerDeps['llmClient']) => {
+      _activeLlmClient = c;
+    },
+  };
+});
+
+vi.mock('@nodal-agents/llm', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('@nodal-agents/llm')>();
+  return {
+    ...actual,
+    createLlmClient: (..._args: Parameters<typeof actual.createLlmClient>) => {
+      const active = getActiveLlmClient();
+      if (!active) {
+        throw new Error('run-chat-turn.test: no active LLM client — call setActiveLlmClient first');
+      }
+      return active;
+    },
+  };
+});
+
+/** A fake client whose generateText resolves a fixed text reply (no run_task
+ *  call) and records the `messages` array of every call it received, so the
+ *  test can assert what history actually reached the model. */
+function makeMockLlmClient(
+  replyText: string,
+  capturedCalls: ModelMessage[][],
+): RunnerDeps['llmClient'] {
+  const mockModel = new MockLanguageModelV3({
+    provider: 'mock',
+    modelId: 'mock',
+    doGenerate: async () => ({
+      content: [{ type: 'text', text: replyText }],
+      finishReason: { unified: 'stop' as const, raw: 'stop' },
+      usage: {
+        inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: 5, text: 5, reasoning: undefined },
+      },
+      warnings: [],
+    }),
+  });
+
+  return {
+    config: { provider: 'anthropic', model: 'mock' } as RunnerDeps['llmClient']['config'],
+    capabilities: {
+      toolUse: true,
+      promptCaching: false,
+      vision: false,
+      structuredOutputs: false,
+      streaming: false,
+    },
+    generateText: (args) => {
+      capturedCalls.push((args.messages ?? []) as ModelMessage[]);
+      return generateText({ ...args, model: mockModel } as Parameters<
+        typeof generateText
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+    },
+    streamText: () => {
+      throw new Error('streamText not supported in mock');
+    },
+    generateObject: () => {
+      throw new Error('generateObject not supported in mock');
+    },
+  };
+}
+
+/** Flatten every string leaf reachable in a ModelMessage[] (string content,
+ *  `text` parts, tool-call `instruction`, tool-result text `value`) into one
+ *  blob, so a test can assert a fact is somewhere in what the model saw. */
+function flattenText(messages: ModelMessage[]): string {
+  const parts: string[] = [];
+  for (const m of messages) {
+    const c = m.content;
+    if (typeof c === 'string') {
+      parts.push(c);
+      continue;
+    }
+    if (!Array.isArray(c)) continue;
+    for (const p of c) {
+      if (!p || typeof p !== 'object') continue;
+      const part = p as Record<string, unknown>;
+      if (part.type === 'text' && typeof part.text === 'string') parts.push(part.text);
+      if (part.type === 'tool-call' && part.input && typeof part.input === 'object') {
+        const instruction = (part.input as { instruction?: unknown }).instruction;
+        if (typeof instruction === 'string') parts.push(instruction);
+      }
+      if (part.type === 'tool-result' && part.output && typeof part.output === 'object') {
+        const value = (part.output as { value?: unknown }).value;
+        if (typeof value === 'string') parts.push(value);
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
+let db: TestDb;
+let seed: { userId: string; entityId: string; agentId: string };
+let deps: RunnerDeps;
+
+beforeAll(async () => {
+  const result = await spinUpTestDb();
+  db = result.db;
+  seed = await seedMinimal(db);
+  // runChatTurn only reads deps.db — the rest is unused, so a minimal cast is enough.
+  deps = { db } as unknown as RunnerDeps;
+});
+
+beforeEach(async () => {
+  await db.delete(agentTasks);
+  await db.delete(chatMessages);
+  await db.delete(conversations);
+  await db.delete(agentJobs).where(eq(agentJobs.agentId, seed.agentId));
+});
+
+describe('runChatTurn — delegated-task visibility', () => {
+  it('the incident: a follow-up turn sees the delegated telegram_send_message the root job never mentioned in prose', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Mathilde research' })
+      .returning();
+    if (!conv) throw new Error('conversation insert failed');
+
+    // The root job the FIRST turn escalated into — its compiled `result` is
+    // just the delegated agent's prose, never naming telegram_send_message.
+    const [rootJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        conversationId: conv.id,
+        task: 'research Law & Order and send it to Mathilde',
+        status: 'completed',
+        result: '## Research Law & Order and send to Mathilde\nDone — summary delivered.',
+      })
+      .returning({ id: agentJobs.id });
+    if (!rootJob) throw new Error('root job insert failed');
+
+    // The delegated task-board child that ACTUALLY sent the Telegram message.
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'task-board',
+        task: 'send the research summary to Mathilde',
+        status: 'completed',
+        toolsUsed: ['web_search', 'telegram_send_message'],
+      })
+      .returning({ id: agentJobs.id });
+    if (!childJob) throw new Error('child job insert failed');
+
+    await db.insert(agentTasks).values({
+      entityId: seed.entityId,
+      orchestratorId: seed.agentId,
+      title: 'Research Law & Order and send to Mathilde',
+      status: 'done',
+      result: 'Sent a summary to Mathilde via Telegram.',
+      rootJobId: rootJob.id,
+      jobId: childJob.id,
+    });
+
+    // The FIRST turn's persisted exchange (user request + assistant ack tied
+    // to the root job) — exactly what runChatTurn replays as history.
+    await db.insert(chatMessages).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: 'research Law & Order and send it to Mathilde',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'assistant',
+        content: 'Sur ça — je lance la recherche.',
+        jobId: rootJob.id,
+      },
+    ]);
+
+    const capturedCalls: ModelMessage[][] = [];
+    setActiveLlmClient(makeMockLlmClient('Oui, envoyé à Mathilde.', capturedCalls));
+
+    const result = await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'Tu as envoyé à Mathilde ?',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(capturedCalls.length).toBeGreaterThan(0);
+
+    // The FIRST call is the one carrying full conversational history.
+    const seenByModel = flattenText(capturedCalls[0]!);
+    expect(seenByModel).toContain('telegram_send_message');
+    expect(seenByModel).toContain(
+      '[Task "Research Law & Order and send to Mathilde" completed: actions — web_search, ' +
+        'telegram_send_message; result: Sent a summary to Mathilde via Telegram.]',
+    );
+  });
+
+  it('does NOT surface a delegated task that has not finished yet', async () => {
+    const [conv] = await db
+      .insert(conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId, title: 'Still working' })
+      .returning();
+    if (!conv) throw new Error('conversation insert failed');
+
+    const [rootJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        conversationId: conv.id,
+        task: 'kick off the report',
+        status: 'completed',
+        result: 'Working on it.',
+      })
+      .returning({ id: agentJobs.id });
+    if (!rootJob) throw new Error('root job insert failed');
+
+    await db.insert(agentTasks).values({
+      entityId: seed.entityId,
+      orchestratorId: seed.agentId,
+      title: 'still running',
+      status: 'in_progress',
+      rootJobId: rootJob.id,
+    });
+
+    await db.insert(chatMessages).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'user',
+        content: 'kick off the report',
+      },
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        conversationId: conv.id,
+        role: 'assistant',
+        content: 'On it.',
+        jobId: rootJob.id,
+      },
+    ]);
+
+    const capturedCalls: ModelMessage[][] = [];
+    setActiveLlmClient(makeMockLlmClient('Toujours en cours.', capturedCalls));
+
+    await runChatTurn({
+      deps,
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      conversationId: conv.id,
+      message: 'Où en est le rapport ?',
+    });
+
+    const seenByModel = flattenText(capturedCalls[0]!);
+    expect(seenByModel).not.toContain('[Task');
+  });
+});

@@ -17,6 +17,7 @@ import {
   BUDGET_CHARS as HISTORY_BUDGET_CHARS,
   truncate as truncateHeadTail,
 } from '../job/thread-history.ts';
+import { loadTaskLedger, formatTaskLedgerLines } from '../job/task-ledger.ts';
 import { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
@@ -156,11 +157,27 @@ interface HistoryRow {
  * it's a last resort when the budget is exceeded even after dropping older
  * turns, never an unconditional per-turn cap; pass the identity function to
  * keep a turn fully intact).
+ *
+ * `ledgerLines` (2026-07-12 incident — see task-ledger.ts) — the REAL tool
+ * calls made by any tasks this exchange's job delegated via `create_task`.
+ * The job's own `result` (from deliverCompletedRoots' compileTaskResults) is
+ * the delegated agent's PROSE, not a structural record of what it did; these
+ * lines are appended after that prose so a later turn can't be told "no, I
+ * never sent it" when a child job's tools_used says otherwise. Appended
+ * AFTER truncation of the dispatch output itself so the bounded, already-
+ * short ledger can never be the part that gets chopped.
  */
-function buildHistoryBlock(r: HistoryRow, truncateFn: (s: string) => string): ModelMessage[] {
+function buildHistoryBlock(
+  r: HistoryRow,
+  truncateFn: (s: string) => string,
+  ledgerLines: readonly string[],
+): ModelMessage[] {
   if (r.role === 'assistant' && r.jobId) {
     const toolCallId = `hist-${r.jobId}`;
     const ackText = r.content ? truncateFn(r.content) : '';
+    const dispatchOutput = truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError));
+    const outputValue =
+      ledgerLines.length > 0 ? `${dispatchOutput}\n\n${ledgerLines.join('\n')}` : dispatchOutput;
     return [
       {
         role: 'assistant',
@@ -185,10 +202,7 @@ function buildHistoryBlock(r: HistoryRow, truncateFn: (s: string) => string): Mo
             type: 'tool-result' as const,
             toolCallId,
             toolName: 'run_task',
-            output: {
-              type: 'text' as const,
-              value: truncateFn(buildDispatchOutput(r.jobStatus, r.jobResult, r.jobError)),
-            },
+            output: { type: 'text' as const, value: outputValue },
           },
         ],
       },
@@ -302,6 +316,18 @@ export async function runChatTurn(opts: {
     .orderBy(desc(chatMessages.createdAt))
     .limit(HISTORY_CANDIDATE_LIMIT);
 
+  // Delegated-task visibility (2026-07-12 incident — see task-ledger.ts): one
+  // batched query for every escalated job's own create_task fan-out, keyed by
+  // jobId (= agent_tasks.root_job_id).
+  const taskLedger = await loadTaskLedger(
+    db,
+    rows.map((r) => r.jobId),
+  );
+  const ledgerLinesByJobId = new Map<string, string[]>();
+  for (const [jobId, entries] of taskLedger) {
+    ledgerLinesByJobId.set(jobId, formatTaskLedgerLines(entries));
+  }
+
   // Build one "block" (1 or 2 ModelMessages) per row, so the budget trim
   // below can drop a whole block at a time — never split an escalation's
   // tool-call from its tool-result. `truncateFn` is a parameter (not always
@@ -311,7 +337,9 @@ export async function runChatTurn(opts: {
   // even when the whole conversation fit comfortably under budget).
   const chronologicalRows = rows.reverse();
   let remainingRows = chronologicalRows;
-  let blocks = remainingRows.map((r) => buildHistoryBlock(r, (s) => s));
+  let blocks = remainingRows.map((r) =>
+    buildHistoryBlock(r, (s) => s, ledgerLinesByJobId.get(r.jobId ?? '') ?? []),
+  );
 
   // Drop the OLDEST blocks (front of the chronological array) until the
   // total size is under budget — the same char-budget-as-token-proxy
@@ -328,7 +356,9 @@ export async function runChatTurn(opts: {
   // is itself gigantic). A conversation that fits under budget as-is keeps
   // every turn intact, however large a single message is.
   if (totalHistoryChars(blocks) > HISTORY_BUDGET_CHARS) {
-    blocks = remainingRows.map((r) => buildHistoryBlock(r, truncateHeadTail));
+    blocks = remainingRows.map((r) =>
+      buildHistoryBlock(r, truncateHeadTail, ledgerLinesByJobId.get(r.jobId ?? '') ?? []),
+    );
   }
   const messages: ModelMessage[] = blocks.flatMap((b) => b);
 

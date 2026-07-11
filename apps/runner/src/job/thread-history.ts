@@ -37,11 +37,20 @@
 // exchange: ...]` line naming the REAL tool calls from `agent_jobs.tools_used`
 // — a structural fact the LLM can't override with confabulated prose on a
 // later turn.
+//
+// Delegated-task ledger (2026-07-12 incident — see task-ledger.ts): the line
+// above only covers the prior job's OWN tools_used. A prior job that instead
+// DELEGATED work via `create_task` (planner fan-out) never touched a tool
+// itself — the real action happened in a child task-board job the LLM has no
+// visibility into. Each prior job's delegated tasks (if any) get their own
+// `[Task "..." completed: actions — ...; result: ...]` line(s), sourced from
+// the CHILD job's tools_used, not the parent's prose summary.
 
 import { eq, and, ne, gt, desc, inArray } from '@nodal-agents/db';
 import { agentJobs } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import type { RunnerDeps } from '../deps.ts';
+import { loadTaskLedger, formatTaskLedgerLines } from './task-ledger.ts';
 
 /**
  * Channels that represent ongoing conversations. Others (`api`, `cron`,
@@ -170,6 +179,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
 
   const rows = await opts.db
     .select({
+      id: agentJobs.id,
       task: agentJobs.task,
       result: agentJobs.result,
       messages: agentJobs.messages,
@@ -227,6 +237,14 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
   // blocks first.
   const chronological = session.reverse();
 
+  // Delegated-task visibility (2026-07-12 incident, see task-ledger.ts): one
+  // batched query for every prior job's own delegated tasks, keyed by job id
+  // (= agent_tasks.root_job_id when that job used create_task).
+  const taskLedger = await loadTaskLedger(
+    opts.db,
+    chronological.map((r) => r.id),
+  );
+
   // Each "block" is a contiguous slice of messages we keep or drop together
   // — either a 2-message `[user, assistant-text]` pair (no send-tool path)
   // or a 3-message `[user, assistant-tool-call, tool-result]` block (when
@@ -255,6 +273,11 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
       ? `[Actions performed in this exchange: ${toolsUsedRow.join(', ')}]`
       : null;
 
+    // Delegated-task ledger (see file header) — this job's own create_task
+    // fan-out, if any, sourced from each child task's OWN job.tools_used.
+    const delegatedLedgerLines = formatTaskLedgerLines(taskLedger.get(row.id) ?? []);
+    const allLedgerLines = [...(ledgerLine ? [ledgerLine] : []), ...delegatedLedgerLines];
+
     const sendTool = CHANNEL_SEND_TOOL[row.channel];
     if (sendTool) {
       const callId = `history-tool-${nextSynthId++}`;
@@ -266,7 +289,7 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
           input: { text: truncate(assistant) },
         },
       ];
-      if (ledgerLine) assistantContent.push({ type: 'text', text: ledgerLine });
+      for (const line of allLedgerLines) assistantContent.push({ type: 'text', text: line });
       blocks.push([
         { role: 'user', content: truncate(row.task) },
         { role: 'assistant', content: assistantContent } as ModelMessage,
@@ -287,7 +310,10 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
         { role: 'user', content: truncate(row.task) },
         {
           role: 'assistant',
-          content: ledgerLine ? `${truncate(assistant)}\n\n${ledgerLine}` : truncate(assistant),
+          content:
+            allLedgerLines.length > 0
+              ? `${truncate(assistant)}\n\n${allLedgerLines.join('\n')}`
+              : truncate(assistant),
         },
       ]);
     }

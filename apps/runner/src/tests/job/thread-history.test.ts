@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agentJobs } from '@nodal-agents/db';
+import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { ModelMessage } from 'ai';
 import { loadThreadHistory } from '../../job/thread-history.ts';
 
@@ -52,6 +52,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   // Each test starts with a clean agent_jobs table — earlier inserts must
   // not leak into the next test's history query.
+  await db.delete(agentTasks);
   await db.delete(agentJobs);
 });
 
@@ -97,6 +98,47 @@ async function insertCompletedJob(opts: {
     .returning({ id: agentJobs.id });
   if (!row) throw new Error('insert returned no row');
   return row.id;
+}
+
+/**
+ * Insert a task-board child job (the delegated worker) plus the agent_tasks
+ * row linking it to `rootJobId` (the prior job in the thread that called
+ * create_task). Returns the task id.
+ */
+async function insertDelegatedTask(opts: {
+  rootJobId: string;
+  title: string;
+  status?: 'todo' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
+  result?: string | null;
+  toolsUsed?: string[];
+}): Promise<string> {
+  const [childJob] = await db
+    .insert(agentJobs)
+    .values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'task-board',
+      task: opts.title,
+      status: 'completed',
+      ...(opts.toolsUsed !== undefined ? { toolsUsed: opts.toolsUsed } : {}),
+    })
+    .returning({ id: agentJobs.id });
+  if (!childJob) throw new Error('insert returned no row');
+
+  const [task] = await db
+    .insert(agentTasks)
+    .values({
+      entityId: seed.entityId,
+      orchestratorId: seed.agentId,
+      title: opts.title,
+      status: opts.status ?? 'done',
+      result: opts.result ?? null,
+      rootJobId: opts.rootJobId,
+      jobId: childJob.id,
+    })
+    .returning({ id: agentTasks.id });
+  if (!task) throw new Error('insert returned no row');
+  return task.id;
 }
 
 /** Build a minimal `messages` array matching what a Conciergus-style Telegram
@@ -851,5 +893,146 @@ describe('loadThreadHistory', () => {
 
     const s = summarize(history);
     expect(s.some((m) => m.text.includes('Actions performed'))).toBe(false);
+  });
+
+  // ─── Delegated-task ledger (2026-07-12 incident) ───────────────────────────
+
+  it("surfaces a delegated task-board child's REAL tool calls, not the parent's prose", async () => {
+    // The reported incident's shape on a conversational channel: the prior job
+    // in this thread delegated via create_task; the child job actually called
+    // telegram_send_message, but the parent's own result is just prose that
+    // never says so.
+    const rootJobId = await insertCompletedJob({
+      chatId: '12345',
+      task: 'research Law & Order and send it to Mathilde',
+      result: '## Research Law & Order and send to Mathilde\nDone — summary delivered.',
+      minutesAgo: 5,
+    });
+    await insertDelegatedTask({
+      rootJobId,
+      title: 'Research Law & Order and send to Mathilde',
+      status: 'done',
+      result: 'Sent a summary to Mathilde via Telegram.',
+      toolsUsed: ['web_search', 'telegram_send_message'],
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(
+      s.some(
+        (m) =>
+          m.role === 'assistant' &&
+          m.text ===
+            '[Task "Research Law & Order and send to Mathilde" completed: actions — web_search, ' +
+              'telegram_send_message; result: Sent a summary to Mathilde via Telegram.]',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT surface a delegated task that has not finished yet', async () => {
+    const rootJobId = await insertCompletedJob({
+      chatId: '12345',
+      task: 'kick off the report',
+      result: 'Working on it.',
+      minutesAgo: 5,
+    });
+    await insertDelegatedTask({
+      rootJobId,
+      title: 'still running',
+      status: 'in_progress',
+      result: null,
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(s.some((m) => m.text.includes('[Task'))).toBe(false);
+  });
+
+  it('bounds the delegated-task ledger to 3 entries per exchange', async () => {
+    const rootJobId = await insertCompletedJob({
+      chatId: '12345',
+      task: 'run a big fan-out',
+      result: 'All done.',
+      minutesAgo: 5,
+    });
+    for (let i = 0; i < 5; i++) {
+      await insertDelegatedTask({
+        rootJobId,
+        title: `subtask-${i}`,
+        status: 'done',
+        result: `result-${i}`,
+        toolsUsed: ['web_search'],
+      });
+    }
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    const taskLines = s.filter((m) => m.text.includes('[Task'));
+    expect(taskLines).toHaveLength(3);
+  });
+
+  it('combines the state-changing ledger AND the delegated-task ledger on the same exchange', async () => {
+    const rootJobId = await insertCompletedJob({
+      chatId: '12345',
+      task: 'automate the newsletter and send the first one',
+      result: null,
+      minutesAgo: 5,
+      messages: tgReply(
+        'automate the newsletter and send the first one',
+        'Automation en place, première édition envoyée.',
+      ),
+      toolsUsed: ['create_schedule', 'telegram_send_message'],
+    });
+    await insertDelegatedTask({
+      rootJobId,
+      title: 'write and send the first newsletter',
+      status: 'done',
+      result: 'Sent.',
+      toolsUsed: ['telegram_send_message'],
+    });
+
+    const history = await loadThreadHistory({
+      db: db as unknown as Parameters<typeof loadThreadHistory>[0]['db'],
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      chatId: '12345',
+      excludeJobId: '00000000-0000-0000-0000-000000000000',
+    });
+
+    const s = summarize(history);
+    expect(
+      s.some(
+        (m) =>
+          m.text === '[Actions performed in this exchange: create_schedule, telegram_send_message]',
+      ),
+    ).toBe(true);
+    expect(
+      s.some((m) => m.text.startsWith('[Task "write and send the first newsletter" completed:')),
+    ).toBe(true);
   });
 });
