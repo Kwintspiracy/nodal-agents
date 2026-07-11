@@ -10,7 +10,9 @@ import {
   agentAssignments,
   agents,
   mcpServers,
+  agentMcpServers,
   connectors,
+  entities,
   eq,
   and,
 } from '@nodal-agents/db';
@@ -23,6 +25,7 @@ import { createAgentTool } from './create-agent';
 import { attachAgentTool } from './attach-agent';
 import { createMcpTool } from './create-mcp';
 import { createConnectorTool } from './create-connector';
+import { attachMcpTool } from './attach-mcp';
 import { createAgentRepo } from '@nodal-agents/db';
 
 let db: TestDb;
@@ -895,5 +898,101 @@ describe('attach_agent', () => {
     if (result.ok) throw new Error('expected ok:false');
     expect(result.error).toContain('no-such-agent-xyz-attach');
     expect(result.error.toLowerCase()).toContain('create_agent');
+  });
+});
+
+// ─── attach_mcp ───────────────────────────────────────────────────────────────
+
+describe('attach_mcp', () => {
+  it('inserts a real agent_mcp_servers row when both mcpSlug and agentSlug resolve', async () => {
+    const ctx = makeCtx();
+    await db.insert(mcpServers).values({
+      entityId: seed.entityId,
+      name: 'Attach Target MCP',
+      slug: 'attach-target-mcp',
+      transport: 'stdio',
+      command: 'npx',
+      active: true,
+    });
+    const [agentRow] = await db
+      .select({ slug: agents.slug })
+      .from(agents)
+      .where(eq(agents.id, seed.agentId));
+
+    const result = await attachMcpTool.execute(
+      { mcpSlug: 'attach-target-mcp', agentSlug: agentRow!.slug },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`expected ok: ${result.error}`);
+    expect(result.message).toContain('attach-target-mcp');
+
+    const [mcpRow] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(eq(mcpServers.slug, 'attach-target-mcp'));
+    const assignments = await db
+      .select()
+      .from(agentMcpServers)
+      .where(
+        and(eq(agentMcpServers.mcpServerId, mcpRow!.id), eq(agentMcpServers.agentId, seed.agentId)),
+      );
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.entityId).toBe(seed.entityId);
+  });
+
+  it('unknown mcpSlug: error lists the REAL available slugs so a guessed name self-corrects', async () => {
+    const ctx = makeCtx();
+    // A distinct, known-good slug that must show up in the error's availability list.
+    await db.insert(mcpServers).values({
+      entityId: seed.entityId,
+      name: 'Fetch MCP',
+      slug: 'mcp-fetch',
+      transport: 'stdio',
+      command: 'npx',
+      active: true,
+    });
+
+    // A plausible hallucination: underscore instead of hyphen (the exact
+    // failure mode from the diagnosed incident — guessed from a tool-name
+    // prefix like `mcp_fetch__fetch_url`). agentSlug is irrelevant here: the
+    // mcpSlug lookup fails first and returns before the agent is resolved.
+    const result = await attachMcpTool.execute(
+      { mcpSlug: 'mcp_fetch', agentSlug: 'irrelevant-agent' },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ok:false');
+    expect(result.error).toContain('mcp_fetch');
+    expect(result.error).toContain('not found');
+    expect(result.error).toContain('Available');
+    // The real slug must be named verbatim so the LLM can self-correct.
+    expect(result.error).toContain('mcp-fetch');
+  });
+
+  it('no MCP servers in the workspace: error says so instead of an empty "Available:" list', async () => {
+    const ctx = makeCtx();
+    // Fresh entity with zero mcp_servers rows.
+    const [freshEntity] = await db
+      .insert(entities)
+      .values({
+        userId: seed.userId,
+        name: 'Attach MCP Empty Entity',
+        slug: `attach-mcp-empty-entity-${Date.now()}`,
+      })
+      .returning();
+    if (!freshEntity) throw new Error('failed to create fresh entity');
+
+    const result = await attachMcpTool.execute(
+      { mcpSlug: 'anything', agentSlug: 'irrelevant-agent' },
+      { ...ctx, entityId: freshEntity.id },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected ok:false');
+    expect(result.error).not.toContain('Available:');
+    expect(result.error.toLowerCase()).toContain('no mcp servers exist');
+    expect(result.error).toContain('create_mcp');
   });
 });

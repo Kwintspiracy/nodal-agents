@@ -103,6 +103,134 @@ export const DEFAULT_LIMITS: ChainLimits = {
   maxCostPerJobUsd: 2.0,
 };
 
+// ─── Guard 1f — non-progress detector (per-tool-call streaks) ────────────────
+//
+// Two live incidents on 2026-07-11 that Guard 1b (identical turn signature)
+// and Guard 1d (per-turn same-tool-only streak, above) both missed — in both
+// cases the tool INPUTS varied turn to turn and an occasional other tool call
+// was mixed in, so neither signature-matching nor per-turn homogeneity ever
+// latched:
+//   - A worker spent 38 consecutive turns of `run_command` probing for a
+//     ComfyUI install (dir/where/findstr…), never progressing, never telling
+//     the user — $0.25 and a lot of context burned before manual cancellation.
+//   - Watcher agents burned turns retrying `attach_mcp`/`create_mcp` after
+//     failures instead of reporting the blocker.
+//
+// These two signals track the raw SEQUENCE OF TOOL CALLS (not turns, and not
+// requiring identical inputs/outputs):
+//   S1 — the SAME tool name called this many times in a row (any inputs).
+//   S2 — this many tool calls in a row threw or returned the runtime's error
+//        outcome (ToolExecutionResult.outcome === 'error').
+// Each nudges once per streak, then fails loud if the streak keeps growing
+// past the fail threshold. These are intentionally NOT part of `ChainLimits` /
+// `DEFAULT_LIMITS` — they are per-call reducers, not per-job caps, and keeping
+// them standalone avoids forcing every existing `ChainLimits` literal (see
+// chain-counters.test.ts) to grow four more required fields.
+//
+// Calibration: 12/24 and 5/10 both use a 2x nudge→fail ratio, mirroring Guard
+// 1d's nudge-then-fail cadence — enough headroom for a legitimate multi-step
+// retry (a few pagination attempts, a couple of transient 429s) before the
+// runtime intervenes, and a further doubling so a nudged agent that ignores
+// the warning doesn't burn the whole 50-turn budget before the job dies.
+// Override via env — see execute.ts.
+
+/** S1 — nudge threshold: 12 consecutive calls to the same tool. */
+export const NON_PROGRESS_SAME_TOOL_NUDGE_AT = 12;
+/** S1 — fail threshold: 24 consecutive calls to the same tool. */
+export const NON_PROGRESS_SAME_TOOL_FAIL_AT = 24;
+/** S2 — nudge threshold: 5 consecutive failing tool calls. */
+export const NON_PROGRESS_ERROR_STREAK_NUDGE_AT = 5;
+/** S2 — fail threshold: 10 consecutive failing tool calls. */
+export const NON_PROGRESS_ERROR_STREAK_FAIL_AT = 10;
+
+/**
+ * Tools exempt from S1 — they neither extend nor break a same-tool streak:
+ *   - `return_result` — a model can legitimately emit it more than once while
+ *     finalizing (see the duplicate-return_result handling in execute.ts).
+ *   - `telegram_send_message` — a multi-part reply legitimately sends several
+ *     messages in a row; the per-job delivery ceiling already bounds this.
+ * S2 (error streak) has NO exemption — a failing send is still a real failure.
+ */
+export const NON_PROGRESS_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
+  'return_result',
+  'telegram_send_message',
+]);
+
+export type NonProgressSignal = 'none' | 'nudge' | 'fail';
+
+/** S1 state — the pure reducer's running same-tool streak. */
+export interface SameToolStreakState {
+  readonly toolName: string | null;
+  readonly streak: number;
+  readonly nudged: boolean;
+}
+
+export const INITIAL_SAME_TOOL_STREAK_STATE: SameToolStreakState = {
+  toolName: null,
+  streak: 0,
+  nudged: false,
+};
+
+/**
+ * S1 reducer — call once per tool call, in execution order (a parallel batch
+ * within one turn counts in its response order). Returns the next state and
+ * whether this call crossed a threshold. `nudge` fires once per streak (not
+ * once per call past the threshold); `fail` fires once the streak reaches
+ * `failAt` and stays terminal from the caller's perspective (the job dies).
+ */
+export function recordSameToolCall(
+  state: SameToolStreakState,
+  toolName: string,
+  nudgeAt: number = NON_PROGRESS_SAME_TOOL_NUDGE_AT,
+  failAt: number = NON_PROGRESS_SAME_TOOL_FAIL_AT,
+): { state: SameToolStreakState; signal: NonProgressSignal } {
+  if (NON_PROGRESS_EXEMPT_TOOLS.has(toolName)) {
+    return { state, signal: 'none' };
+  }
+  const continuing = state.toolName === toolName;
+  const streak = continuing ? state.streak + 1 : 1;
+  const nudged = continuing ? state.nudged : false;
+  if (streak >= failAt) {
+    return { state: { toolName, streak, nudged }, signal: 'fail' };
+  }
+  if (streak >= nudgeAt && !nudged) {
+    return { state: { toolName, streak, nudged: true }, signal: 'nudge' };
+  }
+  return { state: { toolName, streak, nudged }, signal: 'none' };
+}
+
+/** S2 state — the pure reducer's running consecutive-error count. */
+export interface ErrorStreakState {
+  readonly streak: number;
+  readonly nudged: boolean;
+}
+
+export const INITIAL_ERROR_STREAK_STATE: ErrorStreakState = { streak: 0, nudged: false };
+
+/**
+ * S2 reducer — call once per tool call with whether that call threw or
+ * returned the runtime's error outcome. A success resets the streak to 0
+ * (and re-arms the nudge for the next streak). Unlike S1, no tool is exempt.
+ */
+export function recordToolOutcome(
+  state: ErrorStreakState,
+  failed: boolean,
+  nudgeAt: number = NON_PROGRESS_ERROR_STREAK_NUDGE_AT,
+  failAt: number = NON_PROGRESS_ERROR_STREAK_FAIL_AT,
+): { state: ErrorStreakState; signal: NonProgressSignal } {
+  if (!failed) {
+    return { state: INITIAL_ERROR_STREAK_STATE, signal: 'none' };
+  }
+  const streak = state.streak + 1;
+  if (streak >= failAt) {
+    return { state: { streak, nudged: state.nudged }, signal: 'fail' };
+  }
+  if (streak >= nudgeAt && !state.nudged) {
+    return { state: { streak, nudged: true }, signal: 'nudge' };
+  }
+  return { state: { streak, nudged: state.nudged }, signal: 'none' };
+}
+
 // ─── ChainCounters ────────────────────────────────────────────────────────────
 
 /**

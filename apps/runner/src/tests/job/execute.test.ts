@@ -2062,11 +2062,14 @@ describe('executeJob', () => {
   it('anti-loop: 51 tool_use blocks → tool_call_limit_exceeded', async () => {
     const job = await createTestJob(db, seed);
 
-    // Build 51 save_memory calls (always-on tool so it's in whitelist)
+    // Build 51 tool calls, ALTERNATING between two always-on whitelisted
+    // tools so no single tool ever runs 24+ in a row — otherwise Guard 1f
+    // (S1 same-tool streak, see chain-counters.ts) would fail the job first
+    // and mask the per-turn tool_call_limit_exceeded cap this test targets.
     const manyToolCalls = Array.from({ length: 51 }, (_, i) => ({
       toolCallId: `tc-${i}`,
-      toolName: 'save_memory',
-      args: { fact: `fact ${i}`, category: 'context' },
+      toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
+      args: i % 2 === 0 ? { fact: `fact ${i}`, category: 'context' } : { query: `fact ${i}` },
     }));
 
     // LLM returns 51 tool calls, then text (never reached due to limit)
@@ -2463,18 +2466,25 @@ describe('executeJob', () => {
     try {
       const job = await createTestJob(db, seed);
 
-      // LLM always returns save_memory (always-on, whitelisted) — never return_result.
-      // We need 51 distinct entries (one per turn) with unique toolCallIds so the
-      // message-structure validator doesn't reject duplicate_tool_use_id before the
-      // turn cap fires. The last response is reused for turns beyond the array length
-      // — so we generate DEFAULT_LIMITS.maxTurns + 1 entries, all unique.
+      // LLM always returns save_memory/query_memory (always-on, whitelisted)
+      // — never return_result. We need 51 distinct entries (one per turn)
+      // with unique toolCallIds so the message-structure validator doesn't
+      // reject duplicate_tool_use_id before the turn cap fires. The last
+      // response is reused for turns beyond the array length — so we generate
+      // DEFAULT_LIMITS.maxTurns + 1 entries, all unique. ALTERNATING the two
+      // tools keeps Guard 1f's S1 same-tool streak (see chain-counters.ts)
+      // from firing first and masking the turn_limit_exceeded cap this test
+      // targets — a real agent looping on ONE tool for 51 turns is exactly
+      // the pattern Guard 1f exists to catch, so this test deliberately
+      // avoids that shape to isolate the turn cap instead.
       const loopingLlmClient = makeMockLlmClient(
         Array.from({ length: DEFAULT_LIMITS.maxTurns + 1 }, (_, i) => ({
           toolCalls: [
             {
               toolCallId: `tc-loop-${i}`,
-              toolName: 'save_memory',
-              args: { fact: `loop ${i}`, category: 'context' },
+              toolName: i % 2 === 0 ? 'save_memory' : 'query_memory',
+              args:
+                i % 2 === 0 ? { fact: `loop ${i}`, category: 'context' } : { query: `loop ${i}` },
             },
           ],
         })),
@@ -4564,6 +4574,242 @@ describe('reliability guards', () => {
       .from(agentJobs)
       .where(eq(agentJobs.id, job.id));
     expect(row?.status).toBe('completed');
+  });
+});
+
+// ─── Guard 1f: non-progress detector (per-tool-call streaks) ────────────────
+// Incident 2026-07-11: a worker looped 38 turns of `run_command` probing for a
+// ComfyUI install (dir/where/findstr…), never progressing, never telling the
+// user; watcher agents separately burned turns retrying attach_mcp/create_mcp
+// after failures instead of reporting. Guard 1b (identical turn signature) and
+// Guard 1d (per-turn same-tool-only streak) both miss this because the tool
+// INPUTS vary turn to turn. Guard 1f tracks the raw sequence of tool CALLS
+// (S1: same tool name N times in a row; S2: N calls in a row erroring) — see
+// chain-counters.ts for the pure reducers and thresholds (12/24, 5/10).
+describe('Guard 1f: non-progress detector', () => {
+  it('S1: 12 consecutive file_list calls → the NEXT LLM request carries a nudge naming the tool and the count; job continues', async () => {
+    const job = await createTestJob(db, seed);
+    const capturedPrompts: unknown[] = [];
+    // `glob` varies per call (ignored by file_list when `path` is omitted, but
+    // it keeps each call's INPUT distinct) so Guard 1b's identical-turn-
+    // signature detector — whose default threshold also happens to be 12 —
+    // never latches; this test isolates Guard 1f alone.
+    const responses: Array<{
+      toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+    }> = Array.from({ length: 12 }, (_v, i) => ({
+      toolCalls: [{ toolCallId: `fl-${i}`, toolName: 'file_list', args: { glob: `probe-${i}` } }],
+    }));
+    responses.push({
+      toolCalls: [
+        { toolCallId: 'rr-s1-nudge', toolName: 'return_result', args: { status: 'success' } },
+      ],
+    });
+    const llmClient = makeMockLlmClient(responses, capturedPrompts);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // The 13th call (index 12) is the one made AFTER the 12th file_list call —
+    // its prompt must carry the nudge naming the tool and the exact count.
+    expect(capturedPrompts.length).toBe(13);
+    const nudgedPrompt = JSON.stringify(capturedPrompts[12]);
+    expect(nudgedPrompt).toContain('file_list');
+    expect(nudgedPrompt).toContain('12 times in a row');
+  });
+
+  it('S1: 24 consecutive same-tool calls → fails loud with non_progress_detected naming the tool', async () => {
+    const job = await createTestJob(db, seed);
+    // Distinct `glob` per call keeps Guard 1b (identical-signature, threshold
+    // also 12) from tripping first — this isolates Guard 1f's own fail path.
+    const responses = Array.from({ length: 24 }, (_v, i) => ({
+      toolCalls: [{ toolCallId: `fl2-${i}`, toolName: 'file_list', args: { glob: `probe-${i}` } }],
+    }));
+    const llmClient = makeMockLlmClient(responses);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toContain('non_progress_detected');
+      expect(result.error).toContain('file_list');
+    }
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toContain('non_progress_detected');
+    expect(row?.error).toContain('file_list');
+  });
+
+  it('S1 regression: alternating tools for 30 calls never nudges or fails', async () => {
+    const job = await createTestJob(db, seed);
+    const capturedPrompts: unknown[] = [];
+    const responses = Array.from({ length: 30 }, (_v, i) => ({
+      toolCalls: [
+        {
+          toolCallId: `alt-${i}`,
+          toolName: i % 2 === 0 ? 'file_list' : 'list_schedules',
+          args: {},
+        },
+      ],
+    }));
+    responses.push({
+      toolCalls: [{ toolCallId: 'rr-alt', toolName: 'return_result', args: { status: 'success' } }],
+    });
+    const llmClient = makeMockLlmClient(responses, capturedPrompts);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const allPrompts = JSON.stringify(capturedPrompts);
+    expect(allPrompts).not.toContain('times in a row');
+    expect(allPrompts).not.toContain('non_progress_detected');
+  });
+
+  it('S2: 5 consecutive failing tool calls → the NEXT LLM request carries the error-streak nudge', async () => {
+    const job = await createTestJob(db, seed);
+    const capturedPrompts: unknown[] = [];
+    // save_memory with {} is invalid input → errors every time (Guard 1b fixture).
+    const responses = Array.from({ length: 5 }, (_v, i) => ({
+      toolCalls: [{ toolCallId: `sm-err-${i}`, toolName: 'save_memory', args: {} }],
+    }));
+    responses.push({
+      toolCalls: [
+        { toolCallId: 'rr-s2-nudge', toolName: 'return_result', args: { status: 'success' } },
+      ],
+    });
+    const llmClient = makeMockLlmClient(responses, capturedPrompts);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    expect(capturedPrompts.length).toBe(6);
+    const nudgedPrompt = JSON.stringify(capturedPrompts[5]);
+    expect(nudgedPrompt).toContain('save_memory');
+    expect(nudgedPrompt).toContain('5 consecutive tool calls have failed');
+  });
+
+  it('S2: 10 consecutive failing tool calls → fails loud with the error-streak message', async () => {
+    const job = await createTestJob(db, seed);
+    const responses = Array.from({ length: 10 }, (_v, i) => ({
+      toolCalls: [{ toolCallId: `sm-err2-${i}`, toolName: 'save_memory', args: {} }],
+    }));
+    const llmClient = makeMockLlmClient(responses);
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toContain('non_progress_detected');
+      expect(result.error).toContain('10 consecutive failing tool calls');
+      expect(result.error).toContain('save_memory');
+    }
+
+    const [row] = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(row?.status).toBe('failed');
+    expect(row?.error).toContain('non_progress_detected');
+  });
+
+  it('S2: a successful call after 4 errors resets the streak — no nudge at the 5th call overall', async () => {
+    const job = await createTestJob(db, seed);
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        { toolCalls: [{ toolCallId: 'sm-e1', toolName: 'save_memory', args: {} }] }, // error 1
+        { toolCalls: [{ toolCallId: 'sm-e2', toolName: 'save_memory', args: {} }] }, // error 2
+        { toolCalls: [{ toolCallId: 'sm-e3', toolName: 'save_memory', args: {} }] }, // error 3
+        { toolCalls: [{ toolCallId: 'sm-e4', toolName: 'save_memory', args: {} }] }, // error 4
+        {
+          toolCalls: [
+            {
+              toolCallId: 'sm-ok',
+              toolName: 'save_memory',
+              args: { fact: 'reliability streak-reset', category: 'context' },
+            },
+          ],
+        }, // success — resets the S2 streak to 0
+        {
+          toolCalls: [
+            { toolCallId: 'rr-reset', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedPrompts,
+    );
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Prompt for the call AFTER the successful 5th call must NOT carry the
+    // error-streak nudge — the reset means the streak never reached 5.
+    expect(capturedPrompts.length).toBe(6);
+    expect(JSON.stringify(capturedPrompts[5])).not.toContain('consecutive tool calls have failed');
+  });
+
+  it('S1 exemption: 5 parallel telegram_send_message calls never count toward or break a same-tool streak', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [tgJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Guard 1f S1 exemption test',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!tgJob) throw new Error('Failed to create telegram test job');
+
+    const capturedPrompts: unknown[] = [];
+    // Distinct `glob` per call (ignored by file_list without `path`, but keeps
+    // each call's INPUT distinct) so Guard 1b's identical-signature detector
+    // never interferes with this Guard 1f-only test.
+    const fileListCall = (id: string, i: number) => ({
+      toolCalls: [{ toolCallId: id, toolName: 'file_list', args: { glob: `probe-${id}-${i}` } }],
+    });
+    const responses = [
+      // Turns 1-6: build a file_list streak of 6.
+      ...Array.from({ length: 6 }, (_v, i) => fileListCall(`pre-${i}`, i)),
+      // Turn 7: 5 PARALLEL telegram_send_message calls, no file_list — exempt
+      // from S1, must be transparent (neither extend nor break the streak).
+      {
+        toolCalls: Array.from({ length: 5 }, (_v, i) => ({
+          toolCallId: `tg-${i}`,
+          toolName: 'telegram_send_message',
+          args: { text: `part ${i}` },
+        })),
+      },
+      // Turns 8-13: 6 more file_list calls — if the exemption held, the streak
+      // resumes from 6 and reaches 12 on the last of these (turn 13).
+      ...Array.from({ length: 6 }, (_v, i) => fileListCall(`post-${i}`, i)),
+      // Turn 14: finalize.
+      {
+        toolCalls: [
+          { toolCallId: 'rr-exempt', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ];
+    const llmClient = makeMockLlmClient(responses, capturedPrompts);
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(tgJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // 14 turns total — the nudge (fired on turn 13, the 12th cumulative
+    // file_list call) must be visible in the prompt for turn 14.
+    expect(capturedPrompts.length).toBe(14);
+    const nudgedPrompt = JSON.stringify(capturedPrompts[13]);
+    expect(nudgedPrompt).toContain('file_list');
+    expect(nudgedPrompt).toContain('12 times in a row');
+    // The 5 telegram sends actually went out (exemption is orthogonal to
+    // delivery working) — confirms this isn't passing by the calls having
+    // silently failed/no-op'd.
+    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(5);
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 });
 

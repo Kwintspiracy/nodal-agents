@@ -87,9 +87,25 @@ import {
   ToolCallLimitExceededError,
   DelegationDepthExceededError,
   DelegationPendingError,
+  NON_PROGRESS_SAME_TOOL_NUDGE_AT,
+  NON_PROGRESS_SAME_TOOL_FAIL_AT,
+  NON_PROGRESS_ERROR_STREAK_NUDGE_AT,
+  NON_PROGRESS_ERROR_STREAK_FAIL_AT,
+  recordSameToolCall,
+  recordToolOutcome,
+  INITIAL_SAME_TOOL_STREAK_STATE,
+  INITIAL_ERROR_STREAK_STATE,
 } from '@nodal-agents/orchestration';
 import { decrypt, encrypt } from '@nodal-agents/secrets';
-import type { AgentId, JobId, EntityId, Agent, JobContext } from '@nodal-agents/orchestration';
+import type {
+  AgentId,
+  JobId,
+  EntityId,
+  Agent,
+  JobContext,
+  SameToolStreakState,
+  ErrorStreakState,
+} from '@nodal-agents/orchestration';
 import type { z } from 'zod';
 import type { ModelMessage } from 'ai';
 import {
@@ -1095,6 +1111,266 @@ async function runJob(
       .map((name) => registry.get(name))
       .filter((t): t is AnyToolDef => t !== undefined);
 
+    // Capability tools (connector adapters + MCP servers) are resolved here —
+    // BEFORE the orchestrator/worker split below — so an explicit user
+    // assignment materializes for EITHER role. Orchestrators stay lean when
+    // nothing is assigned (capabilityTools stays empty; merged in via
+    // `...capabilityTools` in the orchestrator branch below), but an assigned
+    // connector/MCP now reaches an orchestrator's toolset exactly as it does a
+    // worker's — it used to only populate inside the worker branch, so an
+    // orchestrator with an assigned MCP server silently never saw its tools.
+    // ── Connector adapter tools ──────────────────────────────────────────────
+    // Fetch agent's connector assignments (with per-operation whitelist).
+    // Each assignment instantiates its adapter's tools using a bearer token
+    // resolved from either:
+    //   - connectors.credentialId → credentials.payload.accessToken (OAuth)
+    //   - connectors.api_key      → decrypted api_key column (PAT / api_key)
+    // null enabledOperations → all tools; array → whitelist on tool.name.
+    // Adapters without a registry entry are skipped silently.
+    const connectorAssignments = await db
+      .select({
+        connectorId: connectorsTable.id,
+        slug: connectorsTable.slug,
+        credentialId: connectorsTable.credentialId,
+        apiKey: connectorsTable.apiKey,
+        enabledOperations: agentConnectorAssignments.enabledOperations,
+      })
+      .from(agentConnectorAssignments)
+      .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
+      .where(eq(agentConnectorAssignments.agentId, agentRow.id));
+
+    for (const ca of connectorAssignments) {
+      const entry = ADAPTER_REGISTRY[ca.slug];
+      if (!entry) continue; // no adapter for this catalog slug — skip silently
+
+      let accessToken: string | null = null;
+      let credentialIdForResolver: string | null = null;
+      if (entry.credentialType === 'api_key') {
+        // PAT / api_key path: decrypt connectors.api_key directly.
+        if (!ca.apiKey) continue;
+        try {
+          accessToken = decrypt(ca.apiKey);
+        } catch (err) {
+          // Log loudly, never skip silently (F3, audit followup / invariant #4).
+          // A single tampered row is one bad connector; a CORRUPT/ROTATED master
+          // key makes EVERY connector fail here, the agent ends up tool-less, and
+          // the LLM's next tool call surfaces as a misleading "whitelist
+          // violation" with no hint the real cause was decryption. This log is
+          // the breadcrumb that distinguishes the two.
+          console.error(
+            `[execute] connector '${ca.slug}' (${ca.connectorId}) api_key failed to decrypt ` +
+              `(tampered row, or wrong/rotated master key): ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+          );
+          continue;
+        }
+      } else {
+        // OAuth path: token lives in credentials.payload.accessToken.
+        if (!ca.credentialId) continue;
+        const decrypted = await getDecryptedCredentialById(db, ca.credentialId);
+        if (!decrypted) continue;
+        accessToken = decrypted.payload.accessToken;
+        credentialIdForResolver = ca.credentialId;
+      }
+
+      if (!accessToken) continue;
+
+      // M-12: some OAuth providers issue short-lived access tokens (Google
+      // ~1h, Airtable ~60min) while a job can run far longer (IDLE_RESET is
+      // 4h). For adapters registered with toolFactoryWithResolver (the 5
+      // Google adapters + airtable-oauth), pass a resolver that re-reads —
+      // and, via getDecryptedCredentialById's existing advisory-lock
+      // refresh — refreshes the credential before every network call,
+      // instead of the one-shot accessToken resolved above. Other adapters
+      // (notion-oauth — long-lived, no refresh; api_key entries — static
+      // PAT/API key) are unaffected — toolFactoryWithResolver is undefined
+      // for them.
+      const allTools =
+        entry.toolFactoryWithResolver && credentialIdForResolver
+          ? entry.toolFactoryWithResolver(async () => {
+              const fresh = await getDecryptedCredentialById(db, credentialIdForResolver);
+              if (!fresh) {
+                throw new Error(
+                  `Credential ${credentialIdForResolver} was removed mid-job — reconnect the connector.`,
+                );
+              }
+              return fresh.payload.accessToken;
+            })
+          : entry.toolFactory(accessToken);
+      const enabled = ca.enabledOperations;
+      const filtered =
+        enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));
+
+      capabilityTools.push(...filtered);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    // ── MCP server tools ─────────────────────────────────────────────────────
+    // Two transports:
+    //   - 'http' : Streamable HTTP (Stripe, Cogni, Composio, custom-HTTP)
+    //   - 'stdio': local subprocess (filesystem, sqlite, github, custom-stdio)
+    //
+    // Lot A3 (lazy MCP connect): connecting eagerly here — before the LLM
+    // has even decided to call a tool — pays the full connect cost (30-120s
+    // for a cold stdio spawn) on EVERY job, including approval resumes, even
+    // when no MCP tool ends up being called (measured ~90s dead time per
+    // resume in prod). When mcp_servers.available_tools already holds a full
+    // "v2" cache (isUsableMcpToolCache — every entry has inputSchema, not
+    // just the {name, description} "v1" shape create-mcp.ts used to write),
+    // createLazyMcpTools builds the toolset synchronously from the cache and
+    // only connects on the tool's first real execute(). Otherwise we fall
+    // back to the eager connect (unavoidable the first time, or after a
+    // stale/absent cache) and write back the fresh descriptors so every job
+    // after this one takes the lazy path.
+    //
+    // A connect failure is swallowed — a broken MCP server must never fail
+    // an unrelated job. With the lazy path this can no longer surface at
+    // build time; it surfaces as a normal tool-call error on first use,
+    // which is the intended fail-loud-at-usage behavior. Transports are
+    // closed in the loop finally (closing a stdio transport also terminates
+    // the spawned subprocess). null enabledTools → all tools; array →
+    // whitelist on the original (un-prefixed) tool name.
+    const mcpAssignments = await db
+      .select({
+        id: mcpServersTable.id,
+        slug: mcpServersTable.slug,
+        transport: mcpServersTable.transport,
+        url: mcpServersTable.url,
+        apiKey: mcpServersTable.apiKey,
+        authScheme: mcpServersTable.authScheme,
+        authParamName: mcpServersTable.authParamName,
+        command: mcpServersTable.command,
+        args: mcpServersTable.args,
+        envVars: mcpServersTable.envVars,
+        availableTools: mcpServersTable.availableTools,
+        enabledTools: agentMcpServersTable.enabledTools,
+      })
+      .from(agentMcpServersTable)
+      .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
+      .where(eq(agentMcpServersTable.agentId, agentRow.id));
+
+    // Best-effort write-back of freshly-discovered descriptors into
+    // mcp_servers.available_tools. Never let a refresh failure break the
+    // job (or the tool call, for the lazy onConnected hook) that
+    // triggered it — logged loud (invariant #4), always swallowed.
+    const refreshMcpToolCache = async (
+      mcpServerId: string,
+      liveTools: McpToolDescriptor[],
+    ): Promise<void> => {
+      try {
+        await db
+          .update(mcpServersTable)
+          .set({ availableTools: liveTools })
+          .where(eq(mcpServersTable.id, mcpServerId));
+      } catch (err) {
+        console.error(
+          `[execute] failed to refresh available_tools cache for MCP server ` +
+            `'${mcpServerId}': ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+
+    for (const ms of mcpAssignments) {
+      try {
+        const availableTools = ms.availableTools;
+        let toolset: McpToolset;
+        if (ms.transport === 'stdio') {
+          // stdio: command + args + env vars (each value encrypted).
+          if (!ms.command) continue; // bad row, skip silently
+          const rawEnv = (ms.envVars ?? {}) as Record<string, string>;
+          let decryptedEnv: Record<string, string>;
+          try {
+            decryptedEnv = Object.fromEntries(
+              Object.entries(rawEnv).map(([k, v]) => [k, decrypt(v)]),
+            );
+          } catch {
+            continue; // tampered env var — skip silently
+          }
+          const connectOpts = {
+            transport: 'stdio' as const,
+            slug: ms.slug,
+            command: ms.command,
+            args: (ms.args ?? []) as string[],
+            env: decryptedEnv,
+          };
+          if (isUsableMcpToolCache(availableTools)) {
+            toolset = createLazyMcpTools(connectOpts, availableTools, {
+              onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+            });
+          } else {
+            toolset = await createMcpTools(connectOpts);
+            // Auto-upgrade v1→v2: real descriptors are always non-empty
+            // when createMcpTools succeeds (guarded here so a test double
+            // that omits `descriptors` doesn't write a bogus cache).
+            if (toolset.descriptors?.length) {
+              await refreshMcpToolCache(ms.id, toolset.descriptors);
+            }
+          }
+        } else {
+          // http: URL + apiKey + auth metadata, all of which must be set.
+          if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) continue;
+          let decryptedKey: string;
+          try {
+            decryptedKey = decrypt(ms.apiKey);
+          } catch (err) {
+            // Log loudly (F3, invariant #4) — a wrong/rotated master key
+            // silently dropping an MCP server surfaces later as a missing tool.
+            console.error(
+              `[execute] MCP server '${ms.slug}' api_key failed to decrypt ` +
+                `(tampered, or wrong/rotated master key): ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+            );
+            continue;
+          }
+          const connectOpts = {
+            transport: 'http' as const,
+            slug: ms.slug,
+            url: ms.url,
+            apiKey: decryptedKey,
+            authScheme: ms.authScheme as 'header' | 'query' | 'bearer',
+            authParamName: ms.authParamName,
+          };
+          if (isUsableMcpToolCache(availableTools)) {
+            toolset = createLazyMcpTools(connectOpts, availableTools, {
+              onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
+            });
+          } else {
+            toolset = await createMcpTools(connectOpts);
+            // Auto-upgrade v1→v2: real descriptors are always non-empty
+            // when createMcpTools succeeds (guarded here so a test double
+            // that omits `descriptors` doesn't write a bogus cache).
+            if (toolset.descriptors?.length) {
+              await refreshMcpToolCache(ms.id, toolset.descriptors);
+            }
+          }
+        }
+        mcpClosers.push(toolset.close);
+        const enabled = ms.enabledTools as string[] | null;
+        // Wrapped tool names are `${prefix}__${original}`; the whitelist
+        // stores original names → strip the prefix before comparing.
+        const prefixLen = slugToPrefix(ms.slug).length + 2;
+        const filtered =
+          enabled === null
+            ? toolset.tools
+            : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
+        capabilityTools.push(...filtered);
+      } catch (err) {
+        // MCP server unreachable / auth failed / spawn failed — must not
+        // fail an unrelated job, so we still `continue`. But swallowing
+        // this silently (invariant #4) made a whole class of "agent has
+        // zero tools from an attached MCP server" incidents undiagnosable
+        // — log loud so the slug/id and root cause show up in job logs.
+        console.error(
+          `[execute] MCP tool materialization failed for server '${ms.slug}' (${ms.id}): ` +
+            `${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+        );
+        continue;
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     if (isOrchestrator) {
       // Unified orchestrator: expose BOTH delegation styles and let the model
       // pick per request. assign_* (router) for a SINGLE or reactive/dependent
@@ -1149,258 +1425,6 @@ async function runJob(
       const registeredConfigured = configuredToolNames.filter(
         (name) => registry.get(name) !== undefined,
       );
-
-      // ── Connector adapter tools ──────────────────────────────────────────────
-      // Fetch agent's connector assignments (with per-operation whitelist).
-      // Each assignment instantiates its adapter's tools using a bearer token
-      // resolved from either:
-      //   - connectors.credentialId → credentials.payload.accessToken (OAuth)
-      //   - connectors.api_key      → decrypted api_key column (PAT / api_key)
-      // null enabledOperations → all tools; array → whitelist on tool.name.
-      // Adapters without a registry entry are skipped silently.
-      const connectorAssignments = await db
-        .select({
-          connectorId: connectorsTable.id,
-          slug: connectorsTable.slug,
-          credentialId: connectorsTable.credentialId,
-          apiKey: connectorsTable.apiKey,
-          enabledOperations: agentConnectorAssignments.enabledOperations,
-        })
-        .from(agentConnectorAssignments)
-        .innerJoin(connectorsTable, eq(connectorsTable.id, agentConnectorAssignments.connectorId))
-        .where(eq(agentConnectorAssignments.agentId, agentRow.id));
-
-      for (const ca of connectorAssignments) {
-        const entry = ADAPTER_REGISTRY[ca.slug];
-        if (!entry) continue; // no adapter for this catalog slug — skip silently
-
-        let accessToken: string | null = null;
-        let credentialIdForResolver: string | null = null;
-        if (entry.credentialType === 'api_key') {
-          // PAT / api_key path: decrypt connectors.api_key directly.
-          if (!ca.apiKey) continue;
-          try {
-            accessToken = decrypt(ca.apiKey);
-          } catch (err) {
-            // Log loudly, never skip silently (F3, audit followup / invariant #4).
-            // A single tampered row is one bad connector; a CORRUPT/ROTATED master
-            // key makes EVERY connector fail here, the agent ends up tool-less, and
-            // the LLM's next tool call surfaces as a misleading "whitelist
-            // violation" with no hint the real cause was decryption. This log is
-            // the breadcrumb that distinguishes the two.
-            console.error(
-              `[execute] connector '${ca.slug}' (${ca.connectorId}) api_key failed to decrypt ` +
-                `(tampered row, or wrong/rotated master key): ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-            );
-            continue;
-          }
-        } else {
-          // OAuth path: token lives in credentials.payload.accessToken.
-          if (!ca.credentialId) continue;
-          const decrypted = await getDecryptedCredentialById(db, ca.credentialId);
-          if (!decrypted) continue;
-          accessToken = decrypted.payload.accessToken;
-          credentialIdForResolver = ca.credentialId;
-        }
-
-        if (!accessToken) continue;
-
-        // M-12: some OAuth providers issue short-lived access tokens (Google
-        // ~1h, Airtable ~60min) while a job can run far longer (IDLE_RESET is
-        // 4h). For adapters registered with toolFactoryWithResolver (the 5
-        // Google adapters + airtable-oauth), pass a resolver that re-reads —
-        // and, via getDecryptedCredentialById's existing advisory-lock
-        // refresh — refreshes the credential before every network call,
-        // instead of the one-shot accessToken resolved above. Other adapters
-        // (notion-oauth — long-lived, no refresh; api_key entries — static
-        // PAT/API key) are unaffected — toolFactoryWithResolver is undefined
-        // for them.
-        const allTools =
-          entry.toolFactoryWithResolver && credentialIdForResolver
-            ? entry.toolFactoryWithResolver(async () => {
-                const fresh = await getDecryptedCredentialById(db, credentialIdForResolver);
-                if (!fresh) {
-                  throw new Error(
-                    `Credential ${credentialIdForResolver} was removed mid-job — reconnect the connector.`,
-                  );
-                }
-                return fresh.payload.accessToken;
-              })
-            : entry.toolFactory(accessToken);
-        const enabled = ca.enabledOperations;
-        const filtered =
-          enabled === null ? allTools : allTools.filter((t) => enabled.includes(t.name));
-
-        capabilityTools.push(...filtered);
-      }
-      // ────────────────────────────────────────────────────────────────────────
-
-      // ── MCP server tools ─────────────────────────────────────────────────────
-      // Two transports:
-      //   - 'http' : Streamable HTTP (Stripe, Cogni, Composio, custom-HTTP)
-      //   - 'stdio': local subprocess (filesystem, sqlite, github, custom-stdio)
-      //
-      // Lot A3 (lazy MCP connect): connecting eagerly here — before the LLM
-      // has even decided to call a tool — pays the full connect cost (30-120s
-      // for a cold stdio spawn) on EVERY job, including approval resumes, even
-      // when no MCP tool ends up being called (measured ~90s dead time per
-      // resume in prod). When mcp_servers.available_tools already holds a full
-      // "v2" cache (isUsableMcpToolCache — every entry has inputSchema, not
-      // just the {name, description} "v1" shape create-mcp.ts used to write),
-      // createLazyMcpTools builds the toolset synchronously from the cache and
-      // only connects on the tool's first real execute(). Otherwise we fall
-      // back to the eager connect (unavoidable the first time, or after a
-      // stale/absent cache) and write back the fresh descriptors so every job
-      // after this one takes the lazy path.
-      //
-      // A connect failure is swallowed — a broken MCP server must never fail
-      // an unrelated job. With the lazy path this can no longer surface at
-      // build time; it surfaces as a normal tool-call error on first use,
-      // which is the intended fail-loud-at-usage behavior. Transports are
-      // closed in the loop finally (closing a stdio transport also terminates
-      // the spawned subprocess). null enabledTools → all tools; array →
-      // whitelist on the original (un-prefixed) tool name.
-      const mcpAssignments = await db
-        .select({
-          id: mcpServersTable.id,
-          slug: mcpServersTable.slug,
-          transport: mcpServersTable.transport,
-          url: mcpServersTable.url,
-          apiKey: mcpServersTable.apiKey,
-          authScheme: mcpServersTable.authScheme,
-          authParamName: mcpServersTable.authParamName,
-          command: mcpServersTable.command,
-          args: mcpServersTable.args,
-          envVars: mcpServersTable.envVars,
-          availableTools: mcpServersTable.availableTools,
-          enabledTools: agentMcpServersTable.enabledTools,
-        })
-        .from(agentMcpServersTable)
-        .innerJoin(mcpServersTable, eq(mcpServersTable.id, agentMcpServersTable.mcpServerId))
-        .where(eq(agentMcpServersTable.agentId, agentRow.id));
-
-      // Best-effort write-back of freshly-discovered descriptors into
-      // mcp_servers.available_tools. Never let a refresh failure break the
-      // job (or the tool call, for the lazy onConnected hook) that
-      // triggered it — logged loud (invariant #4), always swallowed.
-      const refreshMcpToolCache = async (
-        mcpServerId: string,
-        liveTools: McpToolDescriptor[],
-      ): Promise<void> => {
-        try {
-          await db
-            .update(mcpServersTable)
-            .set({ availableTools: liveTools })
-            .where(eq(mcpServersTable.id, mcpServerId));
-        } catch (err) {
-          console.error(
-            `[execute] failed to refresh available_tools cache for MCP server ` +
-              `'${mcpServerId}': ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      };
-
-      for (const ms of mcpAssignments) {
-        try {
-          const availableTools = ms.availableTools;
-          let toolset: McpToolset;
-          if (ms.transport === 'stdio') {
-            // stdio: command + args + env vars (each value encrypted).
-            if (!ms.command) continue; // bad row, skip silently
-            const rawEnv = (ms.envVars ?? {}) as Record<string, string>;
-            let decryptedEnv: Record<string, string>;
-            try {
-              decryptedEnv = Object.fromEntries(
-                Object.entries(rawEnv).map(([k, v]) => [k, decrypt(v)]),
-              );
-            } catch {
-              continue; // tampered env var — skip silently
-            }
-            const connectOpts = {
-              transport: 'stdio' as const,
-              slug: ms.slug,
-              command: ms.command,
-              args: (ms.args ?? []) as string[],
-              env: decryptedEnv,
-            };
-            if (isUsableMcpToolCache(availableTools)) {
-              toolset = createLazyMcpTools(connectOpts, availableTools, {
-                onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
-              });
-            } else {
-              toolset = await createMcpTools(connectOpts);
-              // Auto-upgrade v1→v2: real descriptors are always non-empty
-              // when createMcpTools succeeds (guarded here so a test double
-              // that omits `descriptors` doesn't write a bogus cache).
-              if (toolset.descriptors?.length) {
-                await refreshMcpToolCache(ms.id, toolset.descriptors);
-              }
-            }
-          } else {
-            // http: URL + apiKey + auth metadata, all of which must be set.
-            if (!ms.url || !ms.apiKey || !ms.authScheme || !ms.authParamName) continue;
-            let decryptedKey: string;
-            try {
-              decryptedKey = decrypt(ms.apiKey);
-            } catch (err) {
-              // Log loudly (F3, invariant #4) — a wrong/rotated master key
-              // silently dropping an MCP server surfaces later as a missing tool.
-              console.error(
-                `[execute] MCP server '${ms.slug}' api_key failed to decrypt ` +
-                  `(tampered, or wrong/rotated master key): ${
-                    err instanceof Error ? err.message : String(err)
-                  }`,
-              );
-              continue;
-            }
-            const connectOpts = {
-              transport: 'http' as const,
-              slug: ms.slug,
-              url: ms.url,
-              apiKey: decryptedKey,
-              authScheme: ms.authScheme as 'header' | 'query' | 'bearer',
-              authParamName: ms.authParamName,
-            };
-            if (isUsableMcpToolCache(availableTools)) {
-              toolset = createLazyMcpTools(connectOpts, availableTools, {
-                onConnected: (liveTools) => refreshMcpToolCache(ms.id, liveTools),
-              });
-            } else {
-              toolset = await createMcpTools(connectOpts);
-              // Auto-upgrade v1→v2: real descriptors are always non-empty
-              // when createMcpTools succeeds (guarded here so a test double
-              // that omits `descriptors` doesn't write a bogus cache).
-              if (toolset.descriptors?.length) {
-                await refreshMcpToolCache(ms.id, toolset.descriptors);
-              }
-            }
-          }
-          mcpClosers.push(toolset.close);
-          const enabled = ms.enabledTools as string[] | null;
-          // Wrapped tool names are `${prefix}__${original}`; the whitelist
-          // stores original names → strip the prefix before comparing.
-          const prefixLen = slugToPrefix(ms.slug).length + 2;
-          const filtered =
-            enabled === null
-              ? toolset.tools
-              : toolset.tools.filter((t) => enabled.includes(t.name.slice(prefixLen)));
-          capabilityTools.push(...filtered);
-        } catch (err) {
-          // MCP server unreachable / auth failed / spawn failed — must not
-          // fail an unrelated job, so we still `continue`. But swallowing
-          // this silently (invariant #4) made a whole class of "agent has
-          // zero tools from an attached MCP server" incidents undiagnosable
-          // — log loud so the slug/id and root cause show up in job logs.
-          console.error(
-            `[execute] MCP tool materialization failed for server '${ms.slug}' (${ms.id}): ` +
-              `${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
-          );
-          continue;
-        }
-      }
-      // ────────────────────────────────────────────────────────────────────────
 
       // skillRequiredBuiltins: union of requiredBuiltins from all assigned skills.
       // Only add builtins that actually exist in the registry to avoid WhitelistDriftError
@@ -2176,6 +2200,30 @@ async function runJob(
   let noDeliveryNudgesIssued = 0;
   let turnOfLastNudge = -Infinity;
 
+  // Guard 1f — non-progress detector. Tracks two signals over the raw
+  // SEQUENCE OF TOOL CALLS (not turns, unlike 1b/1d above): S1 = same tool
+  // name called N times in a row (any inputs); S2 = N tool calls in a row
+  // erroring. See chain-counters.ts for the incident write-up and the pure
+  // reducers. In-memory/intra-run, same lifetime as the Guard 1d state above.
+  const nonProgressSameToolNudgeAt = (() => {
+    const n = Number(process.env['NON_PROGRESS_SAME_TOOL_NUDGE_AT']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_SAME_TOOL_NUDGE_AT;
+  })();
+  const nonProgressSameToolFailAt = (() => {
+    const n = Number(process.env['NON_PROGRESS_SAME_TOOL_FAIL_AT']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_SAME_TOOL_FAIL_AT;
+  })();
+  const nonProgressErrorStreakNudgeAt = (() => {
+    const n = Number(process.env['NON_PROGRESS_ERROR_STREAK_NUDGE_AT']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_ERROR_STREAK_NUDGE_AT;
+  })();
+  const nonProgressErrorStreakFailAt = (() => {
+    const n = Number(process.env['NON_PROGRESS_ERROR_STREAK_FAIL_AT']);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NON_PROGRESS_ERROR_STREAK_FAIL_AT;
+  })();
+  let sameToolStreakState: SameToolStreakState = INITIAL_SAME_TOOL_STREAK_STATE;
+  let errorStreakState: ErrorStreakState = INITIAL_ERROR_STREAK_STATE;
+
   // Guard 3b — no-false-success. Tool names whose last outcome this run was a
   // hard error and that were never since re-run successfully. If the agent
   // signals return_result(status='success') while this set is non-empty, it is
@@ -2697,6 +2745,12 @@ async function runJob(
 
       let awaitingApproval = false;
 
+      // Guard 1f — non-progress nudges queued while processing this turn's
+      // tool calls (S1/S2 below), flushed into `messages` once at step k so
+      // the NEXT LLM call sees them. A 'fail' signal returns immediately from
+      // inside the loop instead of queuing — see the hooks below.
+      const pendingNonProgressNudges: string[] = [];
+
       // Parallel pre-pass: when EVERY tool call this turn is an independent READ
       // (no delegation, no writes, no return_result), run them in
       // concurrency-limited waves and cache the results. The serial loop below
@@ -2810,6 +2864,38 @@ async function runJob(
 
         counters.bumpToolCall();
         toolsUsed = [...new Set([...toolsUsed, call.name])];
+
+        // Guard 1f (S1) — same-tool streak, across the whole job (any
+        // inputs, any turn). Checked BEFORE the toolDef lookup below so it
+        // also catches a model hammering the same unavailable/hallucinated
+        // tool name. `fail` returns immediately — no tool-result is pushed
+        // for this call (mirrors the whitelist_violation fail path above),
+        // and the job's persisted transcript reflects everything up to the
+        // PRIOR turn (failJob is passed the current `messages`).
+        {
+          const { state, signal } = recordSameToolCall(
+            sameToolStreakState,
+            call.name,
+            nonProgressSameToolNudgeAt,
+            nonProgressSameToolFailAt,
+          );
+          sameToolStreakState = state;
+          if (signal === 'fail') {
+            const errorCode = `non_progress_detected: ${state.streak} consecutive ${call.name} calls without changing approach`;
+            trace('non_progress_same_tool_fail', { turn, tool: call.name, streak: state.streak });
+            await failJob(db, jobId as string, errorCode, runStats(), messages);
+            return { status: 'failed', error: errorCode };
+          }
+          if (signal === 'nudge') {
+            trace('non_progress_same_tool_nudge', { turn, tool: call.name, streak: state.streak });
+            pendingNonProgressNudges.push(
+              `[system] You have called ${call.name} ${state.streak} times in a row. You are ` +
+                'likely stuck. Stop exploring: either finish the task with what you already have, ' +
+                'or clearly report the blocker in your final answer and end with return_result. Do ' +
+                'not keep retrying the same approach.',
+            );
+          }
+        }
 
         const toolDef = toolMap.get(call.name);
         if (!toolDef) {
@@ -3183,6 +3269,45 @@ async function runJob(
           unresolvedToolFailures.delete(call.name);
         } else {
           unresolvedToolFailures.add(call.name);
+        }
+
+        // Guard 1f (S2) — error streak, across the whole job. `toolResult`
+        // here is always success|error (awaiting_approval already `continue`d
+        // above), so `outcome === 'error'` is exactly the runtime's tool-error
+        // shape (executeTool catches everything except MessageStructureError /
+        // QuotaExhaustedError / DelegationPendingError, which are re-thrown
+        // and never reach here).
+        {
+          const { state, signal } = recordToolOutcome(
+            errorStreakState,
+            toolResult.outcome === 'error',
+            nonProgressErrorStreakNudgeAt,
+            nonProgressErrorStreakFailAt,
+          );
+          errorStreakState = state;
+          if (signal === 'fail') {
+            const errorCode = `non_progress_detected: ${state.streak} consecutive failing tool calls (last: ${call.name})`;
+            trace('non_progress_error_streak_fail', {
+              turn,
+              tool: call.name,
+              streak: state.streak,
+            });
+            await failJob(db, jobId as string, errorCode, runStats(), messages);
+            return { status: 'failed', error: errorCode };
+          }
+          if (signal === 'nudge') {
+            trace('non_progress_error_streak_nudge', {
+              turn,
+              tool: call.name,
+              streak: state.streak,
+            });
+            pendingNonProgressNudges.push(
+              `[system] ${state.streak} consecutive tool calls have failed (last: ${call.name}). ` +
+                'You are likely stuck. Stop exploring: either finish the task with what you already ' +
+                'have, or clearly report the blocker in your final answer and end with return_result. ' +
+                'Do not keep retrying the same approach.',
+            );
+          }
         }
 
         toolResultBlocks.push({
@@ -3603,6 +3728,14 @@ async function runJob(
       // k. Append tool results and continue
       if (toolResultBlocks.length > 0) {
         messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
+      }
+
+      // k-pré-bis. Guard 1f — flush any non-progress nudges queued while
+      // processing this turn's tool calls (S1/S2 hooks above) so the NEXT
+      // LLM call sees them. A 'fail' signal already returned from inside the
+      // loop, so only 'nudge' entries ever reach here.
+      for (const nudge of pendingNonProgressNudges) {
+        messages = [...messages, { role: 'user', content: nudge } as ModelMessage];
       }
 
       // k-bis. Guard 1b — no-progress detector. Signature of THIS turn's work:

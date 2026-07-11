@@ -71,6 +71,8 @@ function makeMockLlmClient(
     text?: string;
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
+  /** The keys of the `tools` object handed to the model each turn — the REAL whitelist. */
+  capturedToolKeysPerCall?: string[][],
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
 
@@ -123,10 +125,15 @@ function makeMockLlmClient(
       structuredOutputs: false,
       streaming: false,
     },
-    generateText: (args) =>
-      generateText({ ...args, model: mockModel } as Parameters<
+    generateText: (args) => {
+      if (capturedToolKeysPerCall) {
+        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
+        capturedToolKeysPerCall.push(Object.keys(tools));
+      }
+      return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
-      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+    },
     streamText: () => {
       throw new Error('streamText not supported in mock');
     },
@@ -334,5 +341,78 @@ describe('job-with-adapter: Drive connector fully enabled (enabledOperations=nul
     await db
       .delete(agentConnectorAssignments)
       .where(eq(agentConnectorAssignments.agentId, seed.agentId));
+  });
+});
+
+// ─── HIGH fix: connector tools now materialize for orchestrators too ──────────
+// Same bug as the MCP case (see job-with-mcp-server.test.ts): the connector
+// assembly loop lived only inside execute.ts's worker branch, so an
+// orchestrator's assigned connector never reached its whitelist. Asserts the
+// REAL `tools` object handed to the LLM, not a tool_calls row (the tool is
+// never called here — only its presence in the whitelist is under test).
+
+describe('job-with-adapter: orchestrator role sees an assigned connector (HIGH fix regression)', () => {
+  it('an orchestrator with the Drive connector assigned sees drive_list_files in its whitelist', async () => {
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Drive Orchestrator',
+        slug: `drive-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    if (!orch) throw new Error('Failed to create orchestrator agent');
+
+    await db
+      .insert(agentConnectorAssignments)
+      .values({
+        agentId: orch.id,
+        connectorId,
+        entityId: seed.entityId,
+        enabledOperations: null,
+      })
+      .onConflictDoNothing();
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch.id,
+        channel: 'api',
+        task: 'Just answer directly, no need for Drive this time',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create test job');
+
+    const capturedToolKeysPerCall: string[][] = [];
+    const client = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedToolKeysPerCall,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+
+    // The bug: this key was NEVER present for an orchestrator before the fix.
+    expect(capturedToolKeysPerCall[0]).toContain('drive_list_files');
+
+    await db
+      .delete(agentConnectorAssignments)
+      .where(eq(agentConnectorAssignments.agentId, orch.id));
   });
 });

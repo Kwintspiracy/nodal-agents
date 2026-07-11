@@ -31,6 +31,20 @@ export type { OrchestrationErrorCode } from './errors';
 // ─── ChainCounters ────────────────────────────────────────────────────────────
 export { ChainCounters, DEFAULT_LIMITS } from './chain-counters';
 
+// ─── Guard 1f — non-progress detector (pure reducers) ────────────────────────
+export {
+  NON_PROGRESS_SAME_TOOL_NUDGE_AT,
+  NON_PROGRESS_SAME_TOOL_FAIL_AT,
+  NON_PROGRESS_ERROR_STREAK_NUDGE_AT,
+  NON_PROGRESS_ERROR_STREAK_FAIL_AT,
+  NON_PROGRESS_EXEMPT_TOOLS,
+  recordSameToolCall,
+  recordToolOutcome,
+  INITIAL_SAME_TOOL_STREAK_STATE,
+  INITIAL_ERROR_STREAK_STATE,
+} from './chain-counters';
+export type { SameToolStreakState, ErrorStreakState, NonProgressSignal } from './chain-counters';
+
 // ─── OrchestratorMode detection ───────────────────────────────────────────────
 export { detectOrchestratorMode } from './orchestrator-mode';
 

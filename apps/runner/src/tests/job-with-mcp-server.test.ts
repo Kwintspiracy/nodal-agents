@@ -18,7 +18,7 @@ import {
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, agentJobs, agents, mcpServers, agentMcpServers, toolCalls } from '@nodal-agents/db';
-import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
+import { createToolRegistry, registerBuiltins, ALWAYS_ON_TOOLS } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
 import type { RunnerDeps } from '../deps.ts';
@@ -78,6 +78,8 @@ function makeMockLlmClient(
     text?: string;
     toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
   }>,
+  /** The keys of the `tools` object handed to the model each turn — the REAL whitelist. */
+  capturedToolKeysPerCall?: string[][],
 ): RunnerDeps['llmClient'] {
   let callIndex = 0;
   const mockModel = new MockLanguageModelV3({
@@ -123,10 +125,15 @@ function makeMockLlmClient(
       structuredOutputs: false,
       streaming: false,
     },
-    generateText: (args) =>
-      generateText({ ...args, model: mockModel } as Parameters<
+    generateText: (args) => {
+      if (capturedToolKeysPerCall) {
+        const tools = (args as { tools?: Record<string, unknown> }).tools ?? {};
+        capturedToolKeysPerCall.push(Object.keys(tools));
+      }
+      return generateText({ ...args, model: mockModel } as Parameters<
         typeof generateText
-      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>,
+      >[0]) as ReturnType<RunnerDeps['llmClient']['generateText']>;
+    },
     streamText: () => {
       throw new Error('streamText not supported in mock');
     },
@@ -523,5 +530,161 @@ describe('job-with-mcp-server: Lot A3 — lazy MCP connect cache', () => {
 
     errorSpy.mockRestore();
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
+  });
+});
+
+// ─── HIGH fix: MCP tools now materialize for orchestrators, not just workers ──
+// Before the fix, the connector/MCP assembly loops lived entirely inside
+// execute.ts's worker `else` branch — an agent with role='orchestrator' never
+// got its assigned MCP/connector tools into its whitelist, silently (zero
+// logs; the UI still showed "Connected, N tools"). The fix hoists that
+// assembly above the orchestrator/worker split so an EXPLICIT assignment
+// materializes for either role, while an orchestrator with nothing assigned
+// stays exactly as lean as before. These tests assert the REAL tool list
+// handed to the LLM (`tools` object keys on the generateText call), not a
+// tool_calls row or a call count.
+
+describe('job-with-mcp-server: orchestrator role (HIGH fix regression)', () => {
+  it('an orchestrator with an assigned MCP server (v2 cache) sees the MCP tool in its whitelist', async () => {
+    mcpMock.createMcpTools.mockReset();
+    mcpMock.createLazyMcpTools.mockReset();
+    const close = vi.fn().mockResolvedValue(undefined);
+    mcpMock.createLazyMcpTools.mockReturnValue({ tools: [fakeMcpTool()], descriptors: [], close });
+
+    // A usable v2 cache (every entry carries inputSchema) so the lazy path
+    // builds the toolset synchronously — no live connect needed either way,
+    // this test is about whitelist assembly, not the connect strategy.
+    await db
+      .update(mcpServers)
+      .set({
+        availableTools: [
+          {
+            name: 'get_home',
+            description: 'Cogni home view',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      })
+      .where(eq(mcpServers.id, mcpServerId));
+
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'MCP Orchestrator',
+        slug: `mcp-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    if (!orch) throw new Error('Failed to create orchestrator agent');
+
+    await db
+      .insert(agentMcpServers)
+      .values({ entityId: seed.entityId, agentId: orch.id, mcpServerId, enabledTools: null })
+      .onConflictDoNothing();
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch.id,
+        channel: 'api',
+        task: 'Read my Cogni home',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create job');
+
+    const capturedToolKeysPerCall: string[][] = [];
+    const client = makeMockLlmClient(
+      [
+        { toolCalls: [{ toolCallId: 'tc-home', toolName: 'cogni_cortex__get_home', args: {} }] },
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedToolKeysPerCall,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+
+    // The bug: this key was NEVER present for an orchestrator before the fix.
+    expect(capturedToolKeysPerCall[0]).toContain('cogni_cortex__get_home');
+
+    // A real tool_calls row confirms the MCP tool actually executed for the
+    // orchestrator (not just offered — invoked).
+    const tcRows = await db
+      .select({ toolName: toolCalls.toolName })
+      .from(toolCalls)
+      .where(eq(toolCalls.jobId, job.id));
+    expect(tcRows.map((r) => r.toolName)).toContain('cogni_cortex__get_home');
+
+    await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, orch.id));
+    await db.update(mcpServers).set({ availableTools: null }).where(eq(mcpServers.id, mcpServerId));
+  });
+
+  it('an orchestrator with NO connector/MCP assignment stays exactly as lean as before (no drift)', async () => {
+    const ts = Date.now();
+    const [orch] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Lean Orchestrator',
+        slug: `lean-orch-${ts}`,
+        personality: 'orch',
+        llmKeyId: seed.llmKeyId,
+        role: 'orchestrator',
+        orchestratorMode: 'router',
+        systemAgent: true,
+      })
+      .returning();
+    if (!orch) throw new Error('Failed to create orchestrator agent');
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: orch.id,
+        channel: 'api',
+        task: 'Just answer directly',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create job');
+
+    const capturedToolKeysPerCall: string[][] = [];
+    const client = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedToolKeysPerCall,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Exact expected whitelist for a childless, non-root orchestrator with no
+    // capability assignments: create_task + list_tasks (unified orchestrator's
+    // own delegation tools, no children ⇒ zero assign_* tools) + every
+    // always-on builtin (return_result included). No adapter/MCP tool leaks
+    // in — this is the "stays lean" half of the fix.
+    const expected = ['create_task', 'list_tasks', ...ALWAYS_ON_TOOLS].slice().sort();
+    expect(capturedToolKeysPerCall[0]?.slice().sort()).toEqual(expected);
   });
 });

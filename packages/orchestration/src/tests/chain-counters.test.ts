@@ -2,7 +2,18 @@
 // Pure logic, no DB needed.
 
 import { describe, it, expect } from 'vitest';
-import { ChainCounters, DEFAULT_LIMITS } from '../chain-counters';
+import {
+  ChainCounters,
+  DEFAULT_LIMITS,
+  NON_PROGRESS_SAME_TOOL_NUDGE_AT,
+  NON_PROGRESS_SAME_TOOL_FAIL_AT,
+  NON_PROGRESS_ERROR_STREAK_NUDGE_AT,
+  NON_PROGRESS_ERROR_STREAK_FAIL_AT,
+  recordSameToolCall,
+  recordToolOutcome,
+  INITIAL_SAME_TOOL_STREAK_STATE,
+  INITIAL_ERROR_STREAK_STATE,
+} from '../chain-counters';
 import {
   ChainLimitExceededError,
   ToolCallLimitExceededError,
@@ -336,5 +347,183 @@ describe('ChainCounters', () => {
       expect(restored.toolCallsThisTurn).toBe(1);
       expect(restored.delegationDepth).toBe(1);
     });
+  });
+});
+
+// ─── Guard 1f — non-progress detector (pure reducers) ────────────────────────
+// Incident 2026-07-11: a worker looped 38 turns of `run_command` probing for a
+// ComfyUI install; watcher agents retried attach_mcp/create_mcp after failures
+// instead of reporting. See chain-counters.ts for the full write-up.
+
+describe('recordSameToolCall (S1)', () => {
+  it('has thresholds 12 (nudge) / 24 (fail)', () => {
+    expect(NON_PROGRESS_SAME_TOOL_NUDGE_AT).toBe(12);
+    expect(NON_PROGRESS_SAME_TOOL_FAIL_AT).toBe(24);
+  });
+
+  it('starts a streak of 1 on the first call', () => {
+    const { state, signal } = recordSameToolCall(INITIAL_SAME_TOOL_STREAK_STATE, 'file_list');
+    expect(state).toEqual({ toolName: 'file_list', streak: 1, nudged: false });
+    expect(signal).toBe('none');
+  });
+
+  it('extends the streak on repeated calls to the same tool', () => {
+    let state = INITIAL_SAME_TOOL_STREAK_STATE;
+    for (let i = 0; i < 5; i++) {
+      ({ state } = recordSameToolCall(state, 'file_list'));
+    }
+    expect(state.streak).toBe(5);
+  });
+
+  it('resets the streak to 1 when a different tool is called', () => {
+    let state = INITIAL_SAME_TOOL_STREAK_STATE;
+    for (let i = 0; i < 5; i++) {
+      ({ state } = recordSameToolCall(state, 'file_list'));
+    }
+    ({ state } = recordSameToolCall(state, 'file_read'));
+    expect(state).toEqual({ toolName: 'file_read', streak: 1, nudged: false });
+  });
+
+  it('signals "nudge" exactly once when the streak reaches nudgeAt=12, then "none" until failAt', () => {
+    let state = INITIAL_SAME_TOOL_STREAK_STATE;
+    let nudgeCount = 0;
+    for (let i = 0; i < 20; i++) {
+      const r = recordSameToolCall(state, 'run_command');
+      state = r.state;
+      if (r.signal === 'nudge') nudgeCount++;
+    }
+    expect(state.streak).toBe(20);
+    expect(nudgeCount).toBe(1); // fired once at streak 12, not again through 20
+  });
+
+  it('signals "fail" at streak 24', () => {
+    let state = INITIAL_SAME_TOOL_STREAK_STATE;
+    let lastSignal: 'none' | 'nudge' | 'fail' = 'none';
+    for (let i = 0; i < 24; i++) {
+      const r = recordSameToolCall(state, 'run_command');
+      state = r.state;
+      lastSignal = r.signal;
+    }
+    expect(state.streak).toBe(24);
+    expect(lastSignal).toBe('fail');
+  });
+
+  it('a new streak after a reset gets its own fresh nudge', () => {
+    let state = INITIAL_SAME_TOOL_STREAK_STATE;
+    for (let i = 0; i < 12; i++) ({ state } = recordSameToolCall(state, 'a'));
+    expect(state.nudged).toBe(true);
+    // Different tool breaks the streak — nudged resets for the new streak.
+    ({ state } = recordSameToolCall(state, 'b'));
+    expect(state.nudged).toBe(false);
+    let secondNudgeFired = false;
+    for (let i = 0; i < 11; i++) {
+      const r = recordSameToolCall(state, 'b');
+      state = r.state;
+      if (r.signal === 'nudge') secondNudgeFired = true;
+    }
+    expect(state.streak).toBe(12);
+    expect(secondNudgeFired).toBe(true);
+  });
+
+  it('exempts return_result and telegram_send_message — transparent to the streak', () => {
+    let state = INITIAL_SAME_TOOL_STREAK_STATE;
+    for (let i = 0; i < 6; i++) ({ state } = recordSameToolCall(state, 'file_list'));
+    expect(state.streak).toBe(6);
+    // 5 exempt calls in a row — must not touch the running streak.
+    for (const exempt of ['return_result', 'telegram_send_message', 'return_result']) {
+      const r = recordSameToolCall(state, exempt);
+      expect(r.signal).toBe('none');
+      state = r.state;
+    }
+    expect(state).toEqual({ toolName: 'file_list', streak: 6, nudged: false });
+    // The file_list streak resumes exactly where it left off.
+    ({ state } = recordSameToolCall(state, 'file_list'));
+    expect(state.streak).toBe(7);
+  });
+
+  it('honors custom thresholds (not just the defaults)', () => {
+    let state = INITIAL_SAME_TOOL_STREAK_STATE;
+    let signal: 'none' | 'nudge' | 'fail' = 'none';
+    for (let i = 0; i < 3; i++) {
+      const r = recordSameToolCall(state, 'x', 2, 3);
+      state = r.state;
+      signal = r.signal;
+    }
+    expect(state.streak).toBe(3);
+    expect(signal).toBe('fail');
+  });
+});
+
+describe('recordToolOutcome (S2)', () => {
+  it('has thresholds 5 (nudge) / 10 (fail)', () => {
+    expect(NON_PROGRESS_ERROR_STREAK_NUDGE_AT).toBe(5);
+    expect(NON_PROGRESS_ERROR_STREAK_FAIL_AT).toBe(10);
+  });
+
+  it('a success is a no-op on the initial (zero) state', () => {
+    const { state, signal } = recordToolOutcome(INITIAL_ERROR_STREAK_STATE, false);
+    expect(state).toEqual(INITIAL_ERROR_STREAK_STATE);
+    expect(signal).toBe('none');
+  });
+
+  it('extends the streak on consecutive failures', () => {
+    let state = INITIAL_ERROR_STREAK_STATE;
+    for (let i = 0; i < 4; i++) {
+      ({ state } = recordToolOutcome(state, true));
+    }
+    expect(state.streak).toBe(4);
+  });
+
+  it('signals "nudge" once at streak 5', () => {
+    let state = INITIAL_ERROR_STREAK_STATE;
+    let nudgeCount = 0;
+    for (let i = 0; i < 9; i++) {
+      const r = recordToolOutcome(state, true);
+      state = r.state;
+      if (r.signal === 'nudge') nudgeCount++;
+    }
+    expect(state.streak).toBe(9);
+    expect(nudgeCount).toBe(1);
+  });
+
+  it('signals "fail" at streak 10', () => {
+    let state = INITIAL_ERROR_STREAK_STATE;
+    let lastSignal: 'none' | 'nudge' | 'fail' = 'none';
+    for (let i = 0; i < 10; i++) {
+      const r = recordToolOutcome(state, true);
+      state = r.state;
+      lastSignal = r.signal;
+    }
+    expect(state.streak).toBe(10);
+    expect(lastSignal).toBe('fail');
+  });
+
+  it('a success after 4 failures resets the streak to 0 (no nudge at the 5th call)', () => {
+    let state = INITIAL_ERROR_STREAK_STATE;
+    for (let i = 0; i < 4; i++) ({ state } = recordToolOutcome(state, true));
+    expect(state.streak).toBe(4);
+    const r = recordToolOutcome(state, false);
+    expect(r.signal).toBe('none');
+    expect(r.state).toEqual(INITIAL_ERROR_STREAK_STATE);
+  });
+
+  it('applies uniformly regardless of tool name — S2 has no exemption', () => {
+    // The reducer doesn't even take a tool name — confirms by construction
+    // that return_result / telegram_send_message failures are NOT exempt.
+    let state = INITIAL_ERROR_STREAK_STATE;
+    for (let i = 0; i < 5; i++) ({ state } = recordToolOutcome(state, true));
+    expect(state.streak).toBe(5);
+  });
+
+  it('honors custom thresholds (not just the defaults)', () => {
+    let state = INITIAL_ERROR_STREAK_STATE;
+    let signal: 'none' | 'nudge' | 'fail' = 'none';
+    for (let i = 0; i < 3; i++) {
+      const r = recordToolOutcome(state, true, 2, 3);
+      state = r.state;
+      signal = r.signal;
+    }
+    expect(state.streak).toBe(3);
+    expect(signal).toBe('fail');
   });
 });

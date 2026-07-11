@@ -71,6 +71,26 @@ export async function resolveMcpServerId(
   return row?.id ?? null;
 }
 
+/**
+ * List the MCP server slugs actually available in this workspace, bounded
+ * (LIMIT 20). Used to enrich a "not found" error with real, guessable-free
+ * names — an LLM that hallucinates a slug (e.g. `mcp_fetch` guessed from a
+ * tool-name prefix) can self-correct to the real one (`mcp-fetch`) instead
+ * of retrying the same wrong guess.
+ */
+export async function listMcpServerSlugs(
+  db: AnyDrizzleDb,
+  entityId: string,
+  limit = 20,
+): Promise<string[]> {
+  const rows = await db
+    .select({ slug: mcpServers.slug })
+    .from(mcpServers)
+    .where(eq(mcpServers.entityId, entityId))
+    .limit(limit);
+  return rows.map((r) => r.slug);
+}
+
 /** Resolve a skill by slug OR name within an entity. */
 export async function resolveSkillId(
   db: AnyDrizzleDb,

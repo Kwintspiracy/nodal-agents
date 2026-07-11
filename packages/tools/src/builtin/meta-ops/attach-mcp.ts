@@ -5,7 +5,12 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import { resolveAgentId, resolveMcpServerId, linkMcpToAgent } from './link-helpers';
+import {
+  resolveAgentId,
+  resolveMcpServerId,
+  linkMcpToAgent,
+  listMcpServerSlugs,
+} from './link-helpers';
 
 const AttachMcpInput = z.object({
   mcpSlug: z
@@ -29,9 +34,17 @@ export const attachMcpTool: ToolDefinition<typeof AttachMcpInput, AttachMcpOutpu
   execute: async (input, ctx) => {
     const mcpId = await resolveMcpServerId(ctx.db, ctx.entityId, input.mcpSlug);
     if (!mcpId) {
+      // List the real slugs so a guessed/hallucinated name (e.g. `mcp_fetch`
+      // guessed from a tool-name prefix) can self-correct to the actual one
+      // (`mcp-fetch`) instead of retrying the same wrong guess.
+      const available = await listMcpServerSlugs(ctx.db, ctx.entityId);
+      const availabilityNote =
+        available.length > 0
+          ? ` Available: ${available.join(', ')}.`
+          : ' No MCP servers exist in this workspace yet — create one with create_mcp first.';
       return {
         ok: false,
-        error: `MCP server "${input.mcpSlug}" not found in this workspace. Create it with create_mcp first.`,
+        error: `MCP server "${input.mcpSlug}" not found in this workspace.${availabilityNote}`,
       };
     }
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
