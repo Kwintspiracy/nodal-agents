@@ -1,19 +1,16 @@
-type ComingSoonChannel = 'discord' | 'slack' | 'whatsapp';
+type ComingSoonChannel = 'slack' | 'whatsapp';
 
 const ICON: Record<ComingSoonChannel, string> = {
-  discord: '🎮',
   slack: '💼',
   whatsapp: '📱',
 };
 
 const LABEL: Record<ComingSoonChannel, string> = {
-  discord: 'Discord',
   slack: 'Slack',
   whatsapp: 'WhatsApp',
 };
 
 const BLURB: Record<ComingSoonChannel, string> = {
-  discord: 'Discord bot — coming soon.',
   slack: 'Slack app — coming soon.',
   whatsapp: 'WhatsApp gateway — coming soon.',
 };

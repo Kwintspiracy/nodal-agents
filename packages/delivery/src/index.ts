@@ -48,6 +48,8 @@ export type {
 
 export { telegramAdapter } from './channels/telegram-adapter.ts';
 
+export { discordAdapter } from './channels/discord-adapter.ts';
+
 export { getAdapter } from './registry.ts';
 
 export { resolveTransportChannel } from './transport-channel.ts';

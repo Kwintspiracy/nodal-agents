@@ -17,6 +17,7 @@ import { webhookRoute } from './routes/webhook.ts';
 import { installSkillRoute, uninstallSkillRoute } from './routes/skills.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
+import { startDiscordManager } from './channels/discord/manager.ts';
 import { seedDefaultLlmKey } from './bootstrap/seed-llm-key.ts';
 import { migrateLlmKeysToEncrypted } from './bootstrap/migrate-llm-keys.ts';
 import { backfillMemoryEmbeddings } from './bootstrap/backfill-embeddings.ts';
@@ -233,6 +234,15 @@ async function main(): Promise<void> {
     console.warn('[runner] telegram manager started');
   }
 
+  // Start the Discord gateway manager — one live gateway Client per
+  // channel_bindings row (channel='discord', enabled=true). Refreshes every
+  // 30s. Disable with DISCORD_GATEWAY_ENABLED=false (e.g. tests).
+  const discordEnabled = process.env['DISCORD_GATEWAY_ENABLED'] !== 'false';
+  const discordManager = discordEnabled ? startDiscordManager(deps, { env: runnerEnv }) : null;
+  if (discordEnabled) {
+    console.warn('[runner] discord manager started');
+  }
+
   serve(
     {
       fetch: app.fetch,
@@ -260,6 +270,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     ticker?.stop();
     await telegramManager?.stop();
+    await discordManager?.stop();
     await deps.close();
     process.exit(0);
   };

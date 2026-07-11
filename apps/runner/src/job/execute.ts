@@ -22,6 +22,7 @@ import {
   agentWorkspaces as agentWorkspacesTable,
   entities as entitiesTable,
   getDecryptedCredentialById,
+  getChannelBinding,
 } from '@nodal-agents/db';
 import type { ApprovalRequestRow } from '@nodal-agents/db';
 import {
@@ -1072,7 +1073,16 @@ async function runJob(
     inheritedRootBotToken = rootAgentTokenRow?.telegramBotToken ?? null;
   }
   const deliveryBotToken = agentRow.telegramBotToken ?? inheritedRootBotToken;
-  if (deliveryBotToken) {
+  // D2 (Discord ingress): a discord-bound agent gets the SAME 6 tools —
+  // registration only needs to know a CREDENTIAL exists for the job's own
+  // transport, exactly like the telegram check above (recipient resolution
+  // and its own no-recipient failure mode stay delivery-guard's job). No
+  // inheritance across a delegation chain yet for discord (see
+  // resolveBotToken's doc in packages/tools/communication/delivery-guard.ts)
+  // — scoped to what this ticket's tests actually exercise.
+  const discordBinding = await getChannelBinding(db, agentRow.id, 'discord');
+  const hasDiscordBinding = discordBinding?.enabled === true;
+  if (deliveryBotToken || hasDiscordBinding) {
     capabilityTools.push(createTelegramSendMessageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendImageTool() as unknown as AnyToolDef);
     capabilityTools.push(createSendFileTool() as unknown as AnyToolDef);

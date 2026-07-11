@@ -54,9 +54,10 @@ import type { ToolContext } from '../../types';
 // isConversationAllowed is mocked here as the authorization BOUNDARY — its own
 // DB logic is covered separately in packages/db/src/tests/telegram-allowed-queries.test.ts.
 
-const { isChatAllowedMock, resolveOwnerChatIdMock } = vi.hoisted(() => ({
+const { isChatAllowedMock, resolveOwnerChatIdMock, getBindingCredentialsMock } = vi.hoisted(() => ({
   isChatAllowedMock: vi.fn(),
   resolveOwnerChatIdMock: vi.fn(),
+  getBindingCredentialsMock: vi.fn(),
 }));
 
 vi.mock('@nodal-agents/db', () => {
@@ -67,6 +68,7 @@ vi.mock('@nodal-agents/db', () => {
     eq,
     isConversationAllowed: isChatAllowedMock,
     resolveOwnerConversation: resolveOwnerChatIdMock,
+    getBindingCredentials: getBindingCredentialsMock,
   };
 });
 
@@ -121,6 +123,34 @@ describe('resolveBotToken', () => {
     const ctx = makeCtx({ db: makeFakeDb([]) as unknown as ToolContext['db'] });
 
     await expect(resolveBotToken(ctx)).resolves.toBeUndefined();
+  });
+
+  // D2 (Discord ingress): a non-telegram job resolves its credential from the
+  // channel_bindings row via getBindingCredentials, NOT the agents table —
+  // and ctx.resolvedTelegramBotToken (B3's telegram-only inheritance) is
+  // never consulted for it.
+  describe('discord (channel-parametric, D2)', () => {
+    beforeEach(() => {
+      getBindingCredentialsMock.mockReset();
+    });
+
+    it("resolves the discord binding's botToken via getBindingCredentials, ignoring resolvedTelegramBotToken", async () => {
+      getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
+      const ctx = makeCtx({
+        jobChannel: 'discord',
+        resolvedTelegramBotToken: 'should-be-ignored',
+      });
+
+      await expect(resolveBotToken(ctx)).resolves.toBe('discord-token');
+      expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+    });
+
+    it('returns undefined when the discord binding has no credentials', async () => {
+      getBindingCredentialsMock.mockResolvedValueOnce(null);
+      const ctx = makeCtx({ jobChannel: 'discord' });
+
+      await expect(resolveBotToken(ctx)).resolves.toBeUndefined();
+    });
   });
 });
 

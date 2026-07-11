@@ -46,6 +46,14 @@ const nextConfig: NextConfig = {
     '@mendable/firecrawl-js',
     '@tavily/core',
     'apify-client',
+    // discord.js (Discord ChannelAdapter, D3) — its gateway layer
+    // (@discordjs/ws) has a lazy `import('zlib-sync')` for optional
+    // WebSocket compression that it itself catches when missing (zlib-sync
+    // is a native addon, not a declared dependency). Webpack's static
+    // analysis doesn't know that and fails the whole build trying to
+    // resolve it. External, discord.js runs through plain Node `require` at
+    // runtime, where the same dynamic import's `.catch()` handles it fine.
+    'discord.js',
   ],
   allowedDevOrigins: ['localhost', '127.0.0.1', ...lanIPv4()],
   transpilePackages: [
@@ -127,6 +135,7 @@ const nextConfig: NextConfig = {
         '@mendable/firecrawl-js',
         '@tavily/core',
         'apify-client',
+        'discord.js',
       ];
       const existing = config.externals ?? [];
       config.externals = Array.isArray(existing) ? existing : [existing];

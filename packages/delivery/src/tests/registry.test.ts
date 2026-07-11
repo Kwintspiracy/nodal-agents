@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { getAdapter } from '../registry.ts';
 import { telegramAdapter } from '../channels/telegram-adapter.ts';
+import { discordAdapter } from '../channels/discord-adapter.ts';
 import { DeliveryError } from '../errors.ts';
 import type { ChannelKind } from '../channel-adapter.ts';
 
@@ -12,10 +13,14 @@ describe('getAdapter', () => {
     expect(getAdapter('telegram')).toBe(telegramAdapter);
   });
 
+  it('resolves the registered discord adapter', () => {
+    expect(getAdapter('discord')).toBe(discordAdapter);
+  });
+
   it('throws channel_adapter_not_found for an unregistered channel', () => {
-    expect(() => getAdapter('discord' as ChannelKind)).toThrow(DeliveryError);
+    expect(() => getAdapter('slack' as ChannelKind)).toThrow(DeliveryError);
     try {
-      getAdapter('discord' as ChannelKind);
+      getAdapter('slack' as ChannelKind);
       expect.fail('expected getAdapter to throw');
     } catch (err) {
       expect(err).toBeInstanceOf(DeliveryError);

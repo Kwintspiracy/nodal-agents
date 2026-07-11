@@ -20,6 +20,7 @@ import {
 } from '@nodal-agents/secrets';
 import { LOCAL_ENTITY_ID, LOCAL_USER_ID } from '@nodal-agents/auth';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
+import { DeliveryError } from '@nodal-agents/delivery';
 
 beforeAll(() => {
   process.env['DATABASE_URL'] = 'postgres://placeholder:5432/placeholder';
@@ -197,6 +198,25 @@ const mcpAdapterMocks = {
 vi.mock('@nodal-agents/adapter-mcp', () => ({
   connectMcp: (...args: unknown[]) => mcpAdapterMocks.connectMcp(...args),
 }));
+
+// ─── Mock @nodal-agents/delivery's getAdapter ─────────────────────────────────
+// Telegram's own actions never go through getAdapter (they call
+// getTelegramBotInfo/getTelegramUpdates directly, mocked via globalThis.fetch
+// below) — this mock only matters for Discord's configureAgentChannelAction
+// branch, which resolves its adapter via the registry. Mocked at the adapter
+// boundary rather than depending on the real discord adapter landing first.
+const deliveryMocks = {
+  getAdapter: vi.fn(),
+};
+
+vi.mock('@nodal-agents/delivery', async () => {
+  const actual =
+    await vi.importActual<typeof import('@nodal-agents/delivery')>('@nodal-agents/delivery');
+  return {
+    ...actual,
+    getAdapter: (...args: unknown[]) => deliveryMocks.getAdapter(...args),
+  };
+});
 
 // ─── Mock cli-config (filesystem access) ─────────────────────────────────────
 const cliConfigMocks: {
@@ -493,7 +513,7 @@ describe('getAgentChannelsAction (S4)', () => {
     if (!r.ok) expect(r.code).toBe('not_found');
   });
 
-  it('telegram connected, others coming_soon, when the agent has a bot token', async () => {
+  it('telegram connected, discord disconnected (connectable, unbound), slack/whatsapp coming_soon', async () => {
     currentDb = makeDb([
       {
         id: 'aaaaaaaa-0000-0000-0000-000000000051',
@@ -508,7 +528,7 @@ describe('getAgentChannelsAction (S4)', () => {
     if (!r.ok) return;
     expect(r.data.channels).toEqual([
       { channel: 'telegram', status: 'connected' },
-      { channel: 'discord', status: 'coming_soon' },
+      { channel: 'discord', status: 'disconnected' },
       { channel: 'slack', status: 'coming_soon' },
       { channel: 'whatsapp', status: 'coming_soon' },
     ]);
@@ -537,7 +557,7 @@ describe('configureAgentChannelAction — dual-write (S4)', () => {
     const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
     const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000060',
-      channel: 'discord',
+      channel: 'slack',
       credentials: { botToken: 'whatever' },
     });
     expect(r.ok).toBe(false);
@@ -626,6 +646,169 @@ describe('disconnectAgentChannelAction — dual-delete (S4)', () => {
 
     const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
     expect(deleteSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Discord channel actions (D3)', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-0000000000d1';
+
+  it('configureAgentChannelAction connects Discord — validates via the adapter, upserts channel_bindings', async () => {
+    currentDb = makeDb([{ id: AGENT_ID, slug: 'agent-d', name: 'Agent D' }]) as typeof currentDb;
+    deliveryMocks.getAdapter.mockReturnValue({
+      validateCredentials: vi.fn().mockResolvedValue({
+        id: '998877665544332211',
+        username: 'nodalbot',
+        displayName: 'Nodal Bot',
+      }),
+    });
+
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: AGENT_ID,
+      channel: 'discord',
+      credentials: { botToken: 'a-fake-discord-token-long-enough' },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.channel).toBe('discord');
+      expect(r.data.status).toBe('connected');
+      expect(r.data.identityLabel).toBe('nodalbot#998877665544332211');
+    }
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const insertValuesSpy = insertSpy.mock.results[0]!.value as {
+      values: ReturnType<typeof vi.fn>;
+    };
+    const insertArg = insertValuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
+    expect(insertArg['channel']).toBe('discord');
+    expect(insertArg['agentId']).toBe(AGENT_ID);
+    expect(JSON.parse(insertArg['credentials'] as string)).toEqual({
+      botToken: 'a-fake-discord-token-long-enough',
+    });
+    expect(insertArg['botIdentity']).toEqual({
+      id: '998877665544332211',
+      username: 'nodalbot',
+      displayName: 'Nodal Bot',
+    });
+  });
+
+  it('configureAgentChannelAction fails loud when Discord rejects the token', async () => {
+    currentDb = makeDb([{ id: AGENT_ID, slug: 'agent-d', name: 'Agent D' }]) as typeof currentDb;
+    deliveryMocks.getAdapter.mockReturnValue({
+      validateCredentials: vi
+        .fn()
+        .mockRejectedValue(
+          new DeliveryError('discord_invalid_token', 'Discord rejected this token.'),
+        ),
+    });
+
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: AGENT_ID,
+      channel: 'discord',
+      credentials: { botToken: 'a-fake-but-wrong-discord-token' },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('discord_invalid_token');
+      expect(r.message).toBe('Discord rejected this token.');
+    }
+  });
+
+  it('disconnectAgentChannelAction deletes the discord channel_bindings row (no agents.* columns to clear)', async () => {
+    currentDb = makeDb([{ id: AGENT_ID }]) as typeof currentDb;
+    const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentChannelAction({ agentId: AGENT_ID, channel: 'discord' });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    expect(updateSpy).not.toHaveBeenCalled();
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('getAgentChannelsAction reflects discord as connected once a channel_bindings row exists', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: AGENT_ID, slug: 'agent-d2', name: 'Agent D2', botToken: null }],
+        [{ channel: 'discord', enabled: true }],
+      ],
+    }) as typeof currentDb;
+    const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentChannelsAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const discord = r.data.channels.find((c) => c.channel === 'discord');
+    expect(discord?.status).toBe('connected');
+  });
+
+  it('getAgentDiscordConfigAction: disconnected + no identity when unbound', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [[{ id: AGENT_ID, slug: 'agent-d3', name: 'Agent D3' }], []],
+    }) as typeof currentDb;
+    const { getAgentDiscordConfigAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentDiscordConfigAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.status).toBe('disconnected');
+    expect(r.data.identityLabel).toBe(null);
+  });
+
+  it('getAgentDiscordConfigAction: connected + formatted identity when bound', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: AGENT_ID, slug: 'agent-d4', name: 'Agent D4' }],
+        [{ enabled: true, botIdentity: { id: '111222333444555666', username: 'nodalbot' } }],
+      ],
+    }) as typeof currentDb;
+    const { getAgentDiscordConfigAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentDiscordConfigAction(AGENT_ID);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.status).toBe('connected');
+    expect(r.data.identityLabel).toBe('nodalbot#111222333444555666');
+  });
+
+  it('getChannelAllowedConversationsAction lists a channel-neutral allowlist for discord', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: AGENT_ID }],
+        [
+          {
+            id: 'aaaaaaaa-0000-0000-0000-0000000000d2',
+            conversationId: '555666777888',
+            role: 'owner',
+            status: 'active',
+            requesterName: 'Quentin',
+            createdAt: new Date('2026-07-01T00:00:00Z'),
+          },
+        ],
+      ],
+    }) as typeof currentDb;
+    const { getChannelAllowedConversationsAction } = await import('../src/lib/actions.ts');
+    const r = await getChannelAllowedConversationsAction(AGENT_ID, 'discord');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data).toEqual([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-0000000000d2',
+        conversationId: '555666777888',
+        role: 'owner',
+        status: 'active',
+        requesterName: 'Quentin',
+        createdAt: '2026-07-01T00:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('revokeChannelAllowedConversationAction refuses the owner', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-0000000000d3', role: 'owner', agentId: AGENT_ID },
+    ]) as typeof currentDb;
+    const { revokeChannelAllowedConversationAction } = await import('../src/lib/actions.ts');
+    const r = await revokeChannelAllowedConversationAction('aaaaaaaa-0000-0000-0000-0000000000d3');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 });
 

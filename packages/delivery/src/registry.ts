@@ -8,9 +8,13 @@
 
 import { DeliveryError } from './errors.ts';
 import { telegramAdapter } from './channels/telegram-adapter.ts';
+import { discordAdapter } from './channels/discord-adapter.ts';
 import type { ChannelAdapter, ChannelKind } from './channel-adapter.ts';
 
-const adapters: ReadonlyMap<ChannelKind, ChannelAdapter> = new Map([['telegram', telegramAdapter]]);
+const adapters: ReadonlyMap<ChannelKind, ChannelAdapter> = new Map([
+  ['telegram', telegramAdapter],
+  ['discord', discordAdapter],
+]);
 
 /** Resolve the ChannelAdapter for `channel`. Throws `channel_adapter_not_found`
  *  (never returns a default/best-guess adapter) when none is registered. */

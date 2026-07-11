@@ -68,13 +68,16 @@ import {
   channelBindings,
   channelAllowedConversations,
   listChannelBindings,
+  getChannelBinding,
 } from '@nodal-agents/db';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import {
   DeliveryError,
   getTelegramBotInfo,
   getTelegramUpdates,
+  getAdapter,
   type ChannelKind,
+  type BotIdentity,
 } from '@nodal-agents/delivery';
 import {
   listMemories,
@@ -1820,6 +1823,10 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
 
 const CHANNEL_ORDER: readonly ChannelKind[] = ['telegram', 'discord', 'slack', 'whatsapp'];
 
+/** Channels with a real connect flow (ChannelAdapter + UI card). Everything
+ *  else in CHANNEL_ORDER renders "coming soon" until it grows one. */
+const CONNECTABLE_CHANNELS: ReadonlySet<ChannelKind> = new Set(['telegram', 'discord']);
+
 export type ChannelUiStatus = 'connected' | 'disconnected' | 'coming_soon';
 
 export interface AgentChannelSummary {
@@ -1837,10 +1844,12 @@ export interface AgentChannelsOverview {
 /**
  * Per-channel connection status for the Channels page's card grid. Telegram
  * reads `agents.telegram_bot_token` directly (S2 transitional pattern — same
- * table getAgentTelegramConfigAction reads); every other channel has no
- * connect flow yet (`configureAgentChannelAction` fails loud for them), so its
- * status comes from whether a `channel_bindings` row happens to exist — none
- * do today, which is why they render 'coming_soon'. Never returns credentials.
+ * table getAgentTelegramConfigAction reads); Discord (and any future
+ * CONNECTABLE_CHANNELS entry) has no legacy columns, so its status comes from
+ * whether an enabled `channel_bindings` row exists — 'disconnected' when it
+ * doesn't, since the user CAN connect it. Channels without an adapter yet
+ * (`configureAgentChannelAction` fails loud for them) render 'coming_soon'.
+ * Never returns credentials.
  */
 export async function getAgentChannelsAction(
   agentId: string,
@@ -1869,7 +1878,11 @@ export async function getAgentChannelsAction(
       if (channel === 'telegram') {
         return { channel, status: row.botToken ? 'connected' : 'disconnected' };
       }
-      return { channel, status: boundChannels.has(channel) ? 'connected' : 'coming_soon' };
+      if (boundChannels.has(channel)) return { channel, status: 'connected' };
+      return {
+        channel,
+        status: CONNECTABLE_CHANNELS.has(channel) ? 'disconnected' : 'coming_soon',
+      };
     });
 
     return ok({ agentId: row.id, agentSlug: row.slug, agentName: row.name, channels });
@@ -1890,6 +1903,15 @@ const TelegramBotTokenSchema = z
   .min(20, 'Token looks too short')
   .max(200, 'Token looks too long')
   .regex(/^\d+:[A-Za-z0-9_-]+$/, 'Token must look like 123456789:AAAAA...');
+
+// Discord bot tokens don't share Telegram's fixed shape (no stable public
+// grammar Discord commits to) — bound the length only and let
+// getAdapter('discord').validateCredentials (a real Discord API call) be the
+// actual check, same division of labor as Telegram's getMe below.
+const DiscordBotTokenSchema = z
+  .string()
+  .min(20, 'Token looks too short')
+  .max(200, 'Token looks too long');
 
 export interface ConfigureChannelResult {
   agentId: string;
@@ -1921,6 +1943,10 @@ export async function configureAgentChannelAction(
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const { agentId, channel, credentials } = parsed.data;
+
+    if (channel === 'discord') {
+      return await configureDiscordChannel(session, agentId, credentials);
+    }
 
     if (channel !== 'telegram') {
       return fail('channel_not_supported_yet', `${channel} isn't connectable yet — coming soon.`);
@@ -2024,6 +2050,79 @@ export async function configureAgentChannelAction(
   }
 }
 
+/**
+ * Discord branch of configureAgentChannelAction — same shape of work as the
+ * Telegram branch above (validate credentials against the platform, then
+ * upsert channel_bindings) but Discord has no `agents.*` legacy columns to
+ * dual-write: channel_bindings is its only store from day one.
+ */
+async function configureDiscordChannel(
+  session: Awaited<ReturnType<typeof getSession>>,
+  agentId: string,
+  credentials: Record<string, string>,
+): Promise<ActionResult<ConfigureChannelResult>> {
+  const tokenCheck = DiscordBotTokenSchema.safeParse(credentials['botToken']);
+  if (!tokenCheck.success) {
+    return fail('validation_failed', tokenCheck.error.issues[0]?.message ?? 'Invalid token');
+  }
+  const botToken = tokenCheck.data;
+
+  const db = getDb();
+  const [agent] = await db
+    .select({ id: agents.id, slug: agents.slug, name: agents.name })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+  if (!agent) return fail('not_found', 'Agent not found');
+
+  let identity: BotIdentity;
+  try {
+    identity = await getAdapter('discord').validateCredentials({ botToken });
+  } catch (err) {
+    if (err instanceof DeliveryError) {
+      return fail(err.code, err.message);
+    }
+    throw err;
+  }
+
+  const botIdentity = {
+    id: identity.id,
+    username: identity.username ?? undefined,
+    displayName: identity.displayName ?? undefined,
+  };
+
+  await db
+    .insert(channelBindings)
+    .values({
+      entityId: session.entityId,
+      agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken }),
+      botIdentity,
+      enabled: true,
+    })
+    .onConflictDoUpdate({
+      target: [channelBindings.agentId, channelBindings.channel],
+      set: {
+        credentials: JSON.stringify({ botToken }),
+        botIdentity,
+        enabled: true,
+        updatedAt: new Date(),
+      },
+    });
+
+  revalidatePath('/agents');
+  revalidatePath(`/agents/${agentId}/channels`);
+
+  return ok({
+    agentId: agent.id,
+    agentSlug: agent.slug,
+    agentName: agent.name,
+    channel: 'discord',
+    status: 'connected',
+    identityLabel: identity.username ? `${identity.username}#${identity.id}` : identity.id,
+  });
+}
+
 const DisconnectChannelSchema = z.object({
   agentId: z.string().guid(),
   channel: z.enum(['telegram', 'discord', 'slack', 'whatsapp']),
@@ -2038,6 +2137,10 @@ export async function disconnectAgentChannelAction(raw: unknown): Promise<Action
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
     const { agentId, channel } = parsed.data;
+
+    if (channel === 'discord') {
+      return await disconnectDiscordChannel(session, agentId);
+    }
 
     if (channel !== 'telegram') {
       return fail('channel_not_supported_yet', `${channel} isn't connectable yet — coming soon.`);
@@ -2074,6 +2177,27 @@ export async function disconnectAgentChannelAction(raw: unknown): Promise<Action
     console.error('[disconnectAgentChannelAction]', err);
     return fail('db_error', 'Failed to disconnect channel');
   }
+}
+
+/** Discord branch of disconnectAgentChannelAction — no `agents.*` columns to clear, just the binding. */
+async function disconnectDiscordChannel(
+  session: Awaited<ReturnType<typeof getSession>>,
+  agentId: string,
+): Promise<ActionResult<void>> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+  if (!row) return fail('not_found', 'Agent not found');
+
+  await db
+    .delete(channelBindings)
+    .where(and(eq(channelBindings.agentId, agentId), eq(channelBindings.channel, 'discord')));
+
+  revalidatePath('/agents');
+  revalidatePath(`/agents/${agentId}/channels`);
+  return ok(undefined);
 }
 
 // ─── Telegram Actions ─────────────────────────────────────────────────────────
@@ -2397,6 +2521,236 @@ export async function resolveTelegramChatAction(
   } catch (err) {
     console.error('[resolveTelegramChatAction]', err);
     return fail('db_error', 'Failed to update chat');
+  }
+}
+
+// ─── Discord Actions (D3) ─────────────────────────────────────────────────────
+//
+// Discord has no legacy per-agent columns on `agents` (unlike Telegram's
+// telegram_bot_token/telegram_bot_username/telegram_offset) — channel_bindings
+// is its only store from day one, and channel_allowed_conversations is its
+// only allowlist store (no telegram_allowed_chats-style dual-write needed).
+
+export type DiscordConfigStatus = 'connected' | 'disconnected';
+
+export type DiscordConfigRow = {
+  agentId: string;
+  agentSlug: string;
+  agentName: string;
+  status: DiscordConfigStatus;
+  /** "username#id" (or bare id if the bot has no username), display-only. */
+  identityLabel: string | null;
+};
+
+/** Discord's connection detail for its Channels card — mirrors
+ *  getAgentTelegramConfigAction's shape, sourced from channel_bindings. */
+export async function getAgentDiscordConfigAction(
+  agentId: string,
+): Promise<ActionResult<DiscordConfigRow>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, slug: agents.slug, name: agents.name })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const binding = await getChannelBinding(db, agentId, 'discord');
+    const identity = binding?.botIdentity;
+    const identityLabel = identity
+      ? identity.username && identity.id
+        ? `${identity.username}#${identity.id}`
+        : (identity.username ?? identity.id ?? null)
+      : null;
+
+    return ok({
+      agentId: agent.id,
+      agentSlug: agent.slug,
+      agentName: agent.name,
+      status: binding?.enabled ? 'connected' : 'disconnected',
+      identityLabel,
+    });
+  } catch (err) {
+    console.error('[getAgentDiscordConfigAction]', err);
+    return fail('db_error', 'Failed to load Discord config');
+  }
+}
+
+// ─── Channel-neutral allowlist (Discord and beyond) ───────────────────────────
+//
+// channel_allowed_conversations is already the source of truth for every
+// non-telegram channel (see queries/channel-identity.ts's file header) — no
+// legacy table to dual-write to, unlike telegram_allowed_chats above. Reuses
+// the SAME owner-protection and pending/active semantics as the Telegram
+// actions, just parameterized by channel instead of hardcoded to it.
+
+export interface ChannelAllowedConversationView {
+  id: string;
+  conversationId: string;
+  role: 'owner' | 'member';
+  status: 'active' | 'pending';
+  requesterName: string | null;
+  createdAt: string | null;
+}
+
+/** List the inbound-conversation allowlist for an agent's bot on `channel` (entity-scoped). */
+export async function getChannelAllowedConversationsAction(
+  agentId: string,
+  channel: ChannelKind,
+): Promise<ActionResult<ChannelAllowedConversationView[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const rows = await db
+      .select({
+        id: channelAllowedConversations.id,
+        conversationId: channelAllowedConversations.conversationId,
+        role: channelAllowedConversations.role,
+        status: channelAllowedConversations.status,
+        requesterName: channelAllowedConversations.requesterName,
+        createdAt: channelAllowedConversations.createdAt,
+      })
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, agentId),
+          eq(channelAllowedConversations.channel, channel),
+          eq(channelAllowedConversations.entityId, session.entityId),
+        ),
+      )
+      .orderBy(desc(channelAllowedConversations.createdAt));
+
+    return ok(
+      rows.map((r) => ({
+        id: r.id,
+        conversationId: r.conversationId,
+        role: r.role as 'owner' | 'member',
+        status: r.status as 'active' | 'pending',
+        requesterName: r.requesterName,
+        createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
+      })),
+    );
+  } catch (err) {
+    console.error('[getChannelAllowedConversationsAction]', err);
+    return fail('db_error', 'Failed to load authorized conversations');
+  }
+}
+
+/**
+ * Revoke a conversation's access (delete the allowlist row), entity-scoped.
+ * Refuses to revoke the OWNER — disconnect the bot instead, otherwise the
+ * next stranger to message it would claim ownership.
+ */
+export async function revokeChannelAllowedConversationAction(
+  rowId: string,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(rowId).success) {
+      return fail('validation_failed', 'Invalid id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: channelAllowedConversations.id,
+        role: channelAllowedConversations.role,
+        agentId: channelAllowedConversations.agentId,
+      })
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.id, rowId),
+          eq(channelAllowedConversations.entityId, session.entityId),
+        ),
+      );
+    if (!row) return fail('not_found', 'Conversation not found');
+    if (row.role === 'owner') {
+      return fail('validation_failed', 'Cannot revoke the owner — disconnect the bot instead.');
+    }
+
+    await db
+      .delete(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.id, rowId),
+          eq(channelAllowedConversations.entityId, session.entityId),
+        ),
+      );
+
+    revalidatePath(`/agents/${row.agentId}/channels`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[revokeChannelAllowedConversationAction]', err);
+    return fail('db_error', 'Failed to revoke conversation');
+  }
+}
+
+/** Approve (→ active) or deny (delete) a PENDING inbound conversation, entity-scoped. */
+export async function resolveChannelAllowedConversationAction(
+  rowId: string,
+  decision: 'approve' | 'deny',
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(rowId).success) {
+      return fail('validation_failed', 'Invalid id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: channelAllowedConversations.id,
+        status: channelAllowedConversations.status,
+        agentId: channelAllowedConversations.agentId,
+      })
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.id, rowId),
+          eq(channelAllowedConversations.entityId, session.entityId),
+        ),
+      );
+    if (!row) return fail('not_found', 'Conversation not found');
+    if (row.status !== 'pending')
+      return fail('validation_failed', 'This conversation is not pending');
+
+    if (decision === 'approve') {
+      await db
+        .update(channelAllowedConversations)
+        .set({ status: 'active', updatedAt: new Date() })
+        .where(
+          and(
+            eq(channelAllowedConversations.id, rowId),
+            eq(channelAllowedConversations.entityId, session.entityId),
+          ),
+        );
+    } else {
+      await db
+        .delete(channelAllowedConversations)
+        .where(
+          and(
+            eq(channelAllowedConversations.id, rowId),
+            eq(channelAllowedConversations.entityId, session.entityId),
+          ),
+        );
+    }
+    revalidatePath(`/agents/${row.agentId}/channels`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[resolveChannelAllowedConversationAction]', err);
+    return fail('db_error', 'Failed to update conversation');
   }
 }
 

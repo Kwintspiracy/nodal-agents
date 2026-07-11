@@ -16,6 +16,7 @@
   "dependencies": {
     "@nodal-agents/db": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
+    "discord.js": "^14.26.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
