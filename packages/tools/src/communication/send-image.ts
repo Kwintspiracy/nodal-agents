@@ -2,15 +2,20 @@
 //
 // Registered per-agent when agents.telegramBotToken IS NOT NULL (same condition
 // as telegram_send_message). The agent passes a source path or URL; the runner
-// fetches the bytes server-side and uploads them to the user's Telegram chat.
+// fetches the bytes server-side and uploads them to the user's chat.
 // ZERO image bytes ever enter the LLM context — the return value is tiny.
+//
+// S3 (multichannel plan): uploads through the channel-neutral ChannelAdapter
+// (getAdapter) rather than calling the Telegram photo helper directly — see
+// telegram-send-message.ts's file header for the rationale.
 
 import { z } from 'zod';
-import { sendTelegramPhoto } from '@nodal-agents/delivery';
+import { getAdapter } from '@nodal-agents/delivery';
 import { readFile } from 'node:fs/promises';
 import {
   resolveBotToken,
   resolveRecipientChatId,
+  resolveChannelForJob,
   assertLocalSourceAllowed,
   fetchBoundedUrl,
 } from './delivery-guard';
@@ -148,11 +153,11 @@ Fail conditions:
         throw err;
       }
 
-      // 5. Upload via delivery helper (server-side, zero bytes in LLM context)
-      await sendTelegramPhoto({
-        chatId,
-        botToken,
-        photo: bytes,
+      // 5. Upload via the channel-neutral adapter (server-side, zero bytes in LLM context)
+      const adapter = getAdapter(resolveChannelForJob(ctx));
+      await adapter.sendMedia({ botToken }, chatId, {
+        kind: 'photo',
+        bytes,
         filename,
         caption: input.caption,
       });

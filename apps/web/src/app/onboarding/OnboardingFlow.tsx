@@ -939,7 +939,7 @@ export default function OnboardingFlow() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => finish(agentId ? `/agents/${agentId}/telegram` : '/')}
+                  onClick={() => finish(agentId ? `/agents/${agentId}/channels` : '/')}
                   className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92]"
                 >
                   Connect Telegram →

@@ -22,12 +22,25 @@ export interface ToolContext {
   entityId: string;
   db: AnyDrizzleDb;
   /**
-   * The chatId that originated this job (set by Telegram inbound handler).
+   * The conversationId that originated this job (set by the Telegram inbound
+   * handler today — the name predates multichannel and stays `jobChatId` for
+   * now; renaming it is cleanup-phase work, not S3).
    * null for jobs started from the dashboard, cron, or API.
-   * Used by telegram_send_message as the default reply target when the caller
+   * Used by the delivery tools as the default reply target when the caller
    * does not explicitly provide a chatId argument.
    */
   jobChatId: string | null;
+  /**
+   * The job's `agent_jobs.channel` value (S3 of the multichannel plan) —
+   * 'telegram', 'cron', 'dashboard', 'api', … Populated by the runner from
+   * `job.channel` at every ToolContext construction site. Used by
+   * delivery-guard's resolveChannelForJob to pick which ChannelAdapter a
+   * delivery tool sends through: when this IS a registered transport channel
+   * it wins; otherwise the tool falls back to the agent's Telegram binding
+   * (today's only transport) — see resolveTransportChannel. Absent in
+   * lightweight test contexts, which get the same 'telegram' default.
+   */
+  jobChannel?: string;
   /**
    * Telegram bot token the runner resolved for THIS job's delivery tools, when
    * it differs from the agent's own `agents.telegram_bot_token` — e.g. a

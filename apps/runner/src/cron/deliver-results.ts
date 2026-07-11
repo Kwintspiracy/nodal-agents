@@ -6,12 +6,21 @@
 // the root is skipped. The conditional UPDATE prevents double-processing
 // under concurrent ticks.
 
-import { and, eq, isNotNull, isNull, notInArray, agents, isChatAllowed } from '@nodal-agents/db';
+import {
+  and,
+  eq,
+  isNotNull,
+  isNull,
+  notInArray,
+  agents,
+  isConversationAllowed,
+  getBindingCredentials,
+} from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { checkRootJobComplete } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
-import { sendTelegramMessage } from '@nodal-agents/delivery';
+import { getAdapter, resolveTransportChannel } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
@@ -239,16 +248,24 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     // inbound → authorized origin chat), so this isn't currently exploitable —
     // but this is the send site, and any future chatId writer that isn't
     // owner-gated would otherwise become an unsolicited-delivery hole right
-    // here. isChatAllowed re-checks the chatId against telegram_allowed_chats
-    // (active, scoped to this agent or its entity) immediately before send.
+    // here. isConversationAllowed re-checks the chatId against the job's
+    // transport channel's allowlist (active, scoped to this agent or its
+    // entity) immediately before send.
+    //
+    // S3 (multichannel plan): dispatches via the ChannelAdapter for
+    // `rootJob.channel` when it's already a registered transport, else falls
+    // back to the agent's Telegram binding (resolveTransportChannel — the
+    // same default rule delivery-guard.ts's resolveChannelForJob uses).
     if (rootJob.chatId && rootJob.agentId && compiledResult.trim()) {
       try {
+        const channel = resolveTransportChannel(rootJob.channel);
         const allowed =
           rootJob.entityId !== null &&
-          (await isChatAllowed(db, {
+          (await isConversationAllowed(db, {
             entityId: rootJob.entityId,
             agentId: rootJob.agentId,
-            chatId: rootJob.chatId,
+            channel,
+            conversationId: rootJob.chatId,
           }));
         if (!allowed) {
           console.error(
@@ -259,7 +276,6 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         } else {
           const [ag] = await db
             .select({
-              botToken: agents.telegramBotToken,
               llmKeyId: agents.llmKeyId,
               fallbackChain: agents.fallbackChain,
               model: agents.model,
@@ -267,13 +283,11 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
             .from(agents)
             .where(eq(agents.id, rootJob.agentId))
             .limit(1);
-          if (ag?.botToken) {
+          const creds = await getBindingCredentials(db, rootJob.agentId, channel);
+          if (ag && creds) {
             const summary = await synthesizeForChannel(db, ag, rootJob.task ?? '', compiledResult);
-            await sendTelegramMessage({
-              chatId: rootJob.chatId,
-              text: summary,
-              botToken: ag.botToken,
-            });
+            const adapter = getAdapter(channel);
+            await adapter.sendText(creds, rootJob.chatId, summary);
           }
         }
       } catch (err) {

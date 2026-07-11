@@ -23,6 +23,7 @@ export {
   isConversationAllowed,
   getChannelBinding,
   listChannelBindings,
+  getBindingCredentials,
 } from './queries/channel-identity.ts';
 
 // ─── Repos ─────────────────────────────────────────────────────────────────────

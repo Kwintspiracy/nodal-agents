@@ -9,8 +9,8 @@
 // the bot from the dashboard, which respawns a fresh poller.
 // On other errors: exponential backoff (1s → 30s) then retry.
 
-import { eq } from '@nodal-agents/db';
-import { agents, telegramAllowedChats } from '@nodal-agents/db';
+import { eq, and } from '@nodal-agents/db';
+import { agents, telegramAllowedChats, channelBindings } from '@nodal-agents/db';
 import {
   getTelegramUpdates,
   sendTelegramMessage,
@@ -159,6 +159,47 @@ function isTransientInfraError(err: unknown): boolean {
   return false;
 }
 
+// Agent ids we've already logged a "no channel_bindings row yet" warning for
+// — module-level so a poller that never has a binding (the common case until
+// S4 ships the dashboard writer) doesn't re-log on every single update.
+const loggedMissingBindingFor = new Set<string>();
+
+/**
+ * S3 dual-write: mirror the getUpdates offset into channel_bindings.cursor
+ * for this agent's telegram binding, IF one exists. A cheap secondary write —
+ * migration 0064 only back-fills channel_bindings once at migrate time, so
+ * most installs have no row yet until a later channel operation creates one;
+ * that's non-fatal here, just a one-time log so it's diagnosable, never a
+ * throw (the legacy agents.telegram_offset write above is the one that must
+ * never be blocked by this).
+ */
+async function mirrorOffsetToBinding(
+  db: RunnerDeps['db'],
+  agentId: string,
+  offset: number,
+): Promise<void> {
+  try {
+    const updated = await db
+      .update(channelBindings)
+      .set({ cursor: String(offset), updatedAt: new Date() })
+      .where(and(eq(channelBindings.agentId, agentId), eq(channelBindings.channel, 'telegram')))
+      .returning({ id: channelBindings.id });
+    if (updated.length === 0 && !loggedMissingBindingFor.has(agentId)) {
+      loggedMissingBindingFor.add(agentId);
+      console.warn(
+        `[telegram-poller agent=${agentId}] no channel_bindings row for channel='telegram' yet — ` +
+          'offset cursor mirror is a no-op until one exists (not fatal).',
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[telegram-poller agent=${agentId}] failed to mirror offset into channel_bindings.cursor: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
 /**
  * Run the poll loop until `signal` is aborted or the bot token is rejected.
  * Resolves only when the loop exits — callers (the manager) keep this promise
@@ -246,6 +287,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
             .update(agents)
             .set({ telegramOffset: newOffset, updatedAt: new Date() })
             .where(eq(agents.id, agentId));
+          await mirrorOffsetToBinding(deps.db, agentId, newOffset);
           // A DB write just succeeded — the DB is healthy again.
           dbBackoffMs = BACKOFF_INITIAL_MS;
         } catch (err) {
@@ -283,6 +325,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
                 .update(agents)
                 .set({ telegramOffset: newOffset, updatedAt: new Date() })
                 .where(eq(agents.id, agentId));
+              await mirrorOffsetToBinding(deps.db, agentId, newOffset);
               dbBackoffMs = BACKOFF_INITIAL_MS;
             } catch (advanceErr) {
               console.error(
@@ -341,6 +384,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
             .update(agents)
             .set({ telegramOffset: newOffset, updatedAt: new Date() })
             .where(eq(agents.id, agentId));
+          await mirrorOffsetToBinding(tx as unknown as RunnerDeps['db'], agentId, newOffset);
 
           createdJobId = result.jobId;
           createdPhoto = result.photo;
@@ -387,6 +431,7 @@ export async function runTelegramPoller(opts: PollerOpts): Promise<PollerExit> {
               .update(agents)
               .set({ telegramOffset: newOffset, updatedAt: new Date() })
               .where(eq(agents.id, agentId));
+            await mirrorOffsetToBinding(deps.db, agentId, newOffset);
             dbBackoffMs = BACKOFF_INITIAL_MS;
           } catch (advanceErr) {
             console.error(

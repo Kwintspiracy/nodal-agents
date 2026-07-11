@@ -19,6 +19,7 @@ import { eq, and, or } from 'drizzle-orm';
 import { telegramAllowedChats } from '../schema/telegram-allowed-chats.ts';
 import { channelBindings, type ChannelBindingRow } from '../schema/channel-bindings.ts';
 import { channelAllowedConversations } from '../schema/channel-allowed-conversations.ts';
+import { agents } from '../schema/agents.ts';
 import type { AnyDrizzleDb } from '../client.ts';
 
 /**
@@ -129,4 +130,47 @@ export async function listChannelBindings(
   agentId: string,
 ): Promise<ChannelBindingRow[]> {
   return db.select().from(channelBindings).where(eq(channelBindings.agentId, agentId));
+}
+
+/**
+ * The credential bag needed to actually SEND on a (agent, channel) pair (S3).
+ *
+ * channel='telegram' reads `agents.telegram_bot_token` directly — the SAME
+ * transitional pattern as resolveOwnerConversation/isConversationAllowed
+ * above: migration 0064's channel_bindings back-fill is a one-time copy that
+ * nothing keeps live, so reading it here would silently drift stale the
+ * moment a token is rotated via the dashboard (which still writes
+ * agents.telegram_bot_token, not channel_bindings). Every OTHER channel reads
+ * channel_bindings.credentials, JSON-parsed — @nodal-agents/db never imports
+ * @nodal-agents/secrets to decrypt (architecture rule: only the writer layer
+ * does), so this path is inert until a real non-Telegram channel ships its
+ * first live writer with actual encryption-at-rest.
+ *
+ * Returns null when there is no credential to send with (no token / no
+ * binding / unparseable credentials) — callers treat that as "can't deliver",
+ * never as a reason to guess or fall back to a different channel.
+ */
+export async function getBindingCredentials(
+  db: AnyDrizzleDb,
+  agentId: string,
+  channel: string,
+): Promise<Record<string, string> | null> {
+  if (channel === 'telegram') {
+    const [row] = await db
+      .select({ botToken: agents.telegramBotToken })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+    return row?.botToken ? { botToken: row.botToken } : null;
+  }
+
+  const binding = await getChannelBinding(db, agentId, channel);
+  if (!binding) return null;
+  try {
+    const parsed: unknown = JSON.parse(binding.credentials);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Record<string, string>;
+  } catch {
+    return null;
+  }
 }

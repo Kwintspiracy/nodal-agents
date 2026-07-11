@@ -8,7 +8,7 @@
 // future message re-asks).
 
 import { eq, and } from '@nodal-agents/db';
-import { telegramAllowedChats } from '@nodal-agents/db';
+import { telegramAllowedChats, channelAllowedConversations } from '@nodal-agents/db';
 import {
   answerTelegramCallback,
   editTelegramMessageText,
@@ -153,6 +153,20 @@ export async function handleAuthCallback(
       .update(telegramAllowedChats)
       .set({ status: 'active', updatedAt: new Date() })
       .where(and(eq(telegramAllowedChats.id, row.id), eq(telegramAllowedChats.status, 'pending')));
+    // S3 dual-write: mirror the allow decision. Correlated by
+    // (agent, channel, conversationId) rather than a shared id — the two
+    // tables' rows are inserted independently (handler.ts's dual-write) and
+    // never share a primary key.
+    await deps.db
+      .update(channelAllowedConversations)
+      .set({ status: 'active', updatedAt: new Date() })
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, row.agentId),
+          eq(channelAllowedConversations.channel, 'telegram'),
+          eq(channelAllowedConversations.conversationId, row.chatId),
+        ),
+      );
     await answerTelegramCallback(botToken, cb.id, '✅ Autorisé');
     if (messageId !== undefined) {
       await editTelegramMessageText({
@@ -167,6 +181,16 @@ export async function handleAuthCallback(
 
   // Deny: remove the row so the chat stays blocked (a future message re-asks).
   await deps.db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.id, row.id));
+  // S3 dual-write: mirror the deletion — same correlation as the allow path.
+  await deps.db
+    .delete(channelAllowedConversations)
+    .where(
+      and(
+        eq(channelAllowedConversations.agentId, row.agentId),
+        eq(channelAllowedConversations.channel, 'telegram'),
+        eq(channelAllowedConversations.conversationId, row.chatId),
+      ),
+    );
   await answerTelegramCallback(botToken, cb.id, '❌ Refusé');
   if (messageId !== undefined) {
     await editTelegramMessageText({

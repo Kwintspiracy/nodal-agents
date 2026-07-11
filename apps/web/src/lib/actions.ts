@@ -65,9 +65,17 @@ import {
   setSkillScriptsAuthorized,
   setSkillFilesWritable,
   resolveOwnerChatId,
+  channelBindings,
+  channelAllowedConversations,
+  listChannelBindings,
 } from '@nodal-agents/db';
 import type { JobTriggerContext } from '@nodal-agents/db';
-import { DeliveryError, getTelegramBotInfo, getTelegramUpdates } from '@nodal-agents/delivery';
+import {
+  DeliveryError,
+  getTelegramBotInfo,
+  getTelegramUpdates,
+  type ChannelKind,
+} from '@nodal-agents/delivery';
 import {
   listMemories,
   createMemory,
@@ -1806,6 +1814,268 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
   }
 }
 
+// ─── Channels Actions (S4 — generalizes the per-agent Telegram config into a
+// channel-neutral surface: /agents/[id]/channels renders one card per channel
+// from CHANNEL_ORDER, Telegram being the only one with a real adapter today).
+
+const CHANNEL_ORDER: readonly ChannelKind[] = ['telegram', 'discord', 'slack', 'whatsapp'];
+
+export type ChannelUiStatus = 'connected' | 'disconnected' | 'coming_soon';
+
+export interface AgentChannelSummary {
+  channel: ChannelKind;
+  status: ChannelUiStatus;
+}
+
+export interface AgentChannelsOverview {
+  agentId: string;
+  agentSlug: string;
+  agentName: string;
+  channels: AgentChannelSummary[];
+}
+
+/**
+ * Per-channel connection status for the Channels page's card grid. Telegram
+ * reads `agents.telegram_bot_token` directly (S2 transitional pattern — same
+ * table getAgentTelegramConfigAction reads); every other channel has no
+ * connect flow yet (`configureAgentChannelAction` fails loud for them), so its
+ * status comes from whether a `channel_bindings` row happens to exist — none
+ * do today, which is why they render 'coming_soon'. Never returns credentials.
+ */
+export async function getAgentChannelsAction(
+  agentId: string,
+): Promise<ActionResult<AgentChannelsOverview>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: agents.id,
+        slug: agents.slug,
+        name: agents.name,
+        botToken: agents.telegramBotToken,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'Agent not found');
+
+    const bindings = await listChannelBindings(db, agentId);
+    const boundChannels = new Set(bindings.filter((b) => b.enabled).map((b) => b.channel));
+
+    const channels: AgentChannelSummary[] = CHANNEL_ORDER.map((channel) => {
+      if (channel === 'telegram') {
+        return { channel, status: row.botToken ? 'connected' : 'disconnected' };
+      }
+      return { channel, status: boundChannels.has(channel) ? 'connected' : 'coming_soon' };
+    });
+
+    return ok({ agentId: row.id, agentSlug: row.slug, agentName: row.name, channels });
+  } catch (err) {
+    console.error('[getAgentChannelsAction]', err);
+    return fail('db_error', 'Failed to load channels');
+  }
+}
+
+const ConfigureChannelSchema = z.object({
+  agentId: z.string().guid(),
+  channel: z.enum(['telegram', 'discord', 'slack', 'whatsapp']),
+  credentials: z.record(z.string(), z.string()),
+});
+
+const TelegramBotTokenSchema = z
+  .string()
+  .min(20, 'Token looks too short')
+  .max(200, 'Token looks too long')
+  .regex(/^\d+:[A-Za-z0-9_-]+$/, 'Token must look like 123456789:AAAAA...');
+
+export interface ConfigureChannelResult {
+  agentId: string;
+  agentSlug: string;
+  agentName: string;
+  channel: ChannelKind;
+  status: 'connected';
+  /** Channel-specific display identity (Telegram: bot username, without the @). */
+  identityLabel: string | null;
+}
+
+/**
+ * Channel-neutral connect action. Telegram is the only implemented channel
+ * today — everything else fails loud with 'channel_not_supported_yet' rather
+ * than silently no-opping (invariant #4). Telegram's path does EXACTLY what
+ * `configureAgentTelegramAction` always did (validate via getMe, drain
+ * backlog, persist agents.telegram_*) and additionally mirrors the result
+ * into `channel_bindings` (S2 transitional — see migration 0064's header):
+ * credentials stored as plaintext JSON, matching agents.telegram_bot_token's
+ * current at-rest state until this table becomes the sole writer (S3+).
+ */
+export async function configureAgentChannelAction(
+  raw: unknown,
+): Promise<ActionResult<ConfigureChannelResult>> {
+  try {
+    const session = await getSession();
+    const parsed = ConfigureChannelSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, channel, credentials } = parsed.data;
+
+    if (channel !== 'telegram') {
+      return fail('channel_not_supported_yet', `${channel} isn't connectable yet — coming soon.`);
+    }
+
+    const tokenCheck = TelegramBotTokenSchema.safeParse(credentials['botToken']);
+    if (!tokenCheck.success) {
+      return fail('validation_failed', tokenCheck.error.issues[0]?.message ?? 'Invalid token');
+    }
+    const botToken = tokenCheck.data;
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, slug: agents.slug, name: agents.name })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Validate the token against Telegram's getMe. We need the bot's
+    // username for display anyway, and getMe doubles as a token check.
+    let botInfo: Awaited<ReturnType<typeof getTelegramBotInfo>>;
+    try {
+      botInfo = await getTelegramBotInfo(botToken);
+    } catch (err) {
+      if (err instanceof DeliveryError && err.code === 'telegram_invalid_token') {
+        return fail(
+          'telegram_invalid_token',
+          'Telegram rejected this token. Double-check it from @BotFather.',
+        );
+      }
+      throw err;
+    }
+
+    // Drain any backlog Telegram has buffered for this bot — see
+    // configureAgentTelegramAction's original note (preserved verbatim below,
+    // now delegating here): replaying it would surprise the user.
+    let initialOffset = 0;
+    try {
+      const recent = await getTelegramUpdates({
+        botToken,
+        offset: -1,
+        timeout: 0,
+        limit: 1,
+      });
+      if (recent.length > 0) {
+        initialOffset = Math.max(...recent.map((u) => u.update_id)) + 1;
+      }
+    } catch {
+      // Best-effort drain — a network blip must not block connecting the bot.
+    }
+
+    await db
+      .update(agents)
+      .set({
+        telegramBotToken: botToken,
+        telegramBotUsername: botInfo.username,
+        telegramOffset: initialOffset,
+        updatedAt: new Date(),
+      })
+      .where(eq(agents.id, agentId));
+
+    // Dual-write mirror (S2 transitional, migration 0064): credentials are
+    // plaintext JSON here, same as the migration's back-fill — encryption at
+    // rest arrives when this table becomes the sole writer (S3+).
+    await db
+      .insert(channelBindings)
+      .values({
+        entityId: session.entityId,
+        agentId,
+        channel: 'telegram',
+        credentials: JSON.stringify({ botToken }),
+        botIdentity: { username: botInfo.username ?? undefined },
+        cursor: String(initialOffset),
+        enabled: true,
+      })
+      .onConflictDoUpdate({
+        target: [channelBindings.agentId, channelBindings.channel],
+        set: {
+          credentials: JSON.stringify({ botToken }),
+          botIdentity: { username: botInfo.username ?? undefined },
+          cursor: String(initialOffset),
+          enabled: true,
+          updatedAt: new Date(),
+        },
+      });
+
+    revalidatePath('/agents');
+    revalidatePath(`/agents/${agentId}/channels`);
+
+    return ok({
+      agentId: agent.id,
+      agentSlug: agent.slug,
+      agentName: agent.name,
+      channel: 'telegram',
+      status: 'connected',
+      identityLabel: botInfo.username,
+    });
+  } catch (err) {
+    console.error('[configureAgentChannelAction]', err);
+    return fail('db_error', 'Failed to configure channel');
+  }
+}
+
+const DisconnectChannelSchema = z.object({
+  agentId: z.string().guid(),
+  channel: z.enum(['telegram', 'discord', 'slack', 'whatsapp']),
+});
+
+/** Channel-neutral disconnect action — mirrors configureAgentChannelAction's dual-write. */
+export async function disconnectAgentChannelAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = DisconnectChannelSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, channel } = parsed.data;
+
+    if (channel !== 'telegram') {
+      return fail('channel_not_supported_yet', `${channel} isn't connectable yet — coming soon.`);
+    }
+
+    const db = getDb();
+    const [row] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!row) return fail('not_found', 'Agent not found');
+
+    // Clear the token. The runner's TelegramManager will detect this on its
+    // next refresh tick and abort the poller for this agent.
+    await db
+      .update(agents)
+      .set({
+        telegramBotToken: null,
+        telegramBotUsername: null,
+        telegramOffset: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(agents.id, agentId));
+
+    // Dual-delete the mirrored channel_bindings row (S2 transitional).
+    await db
+      .delete(channelBindings)
+      .where(and(eq(channelBindings.agentId, agentId), eq(channelBindings.channel, 'telegram')));
+
+    revalidatePath('/agents');
+    revalidatePath(`/agents/${agentId}/channels`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[disconnectAgentChannelAction]', err);
+    return fail('db_error', 'Failed to disconnect channel');
+  }
+}
+
 // ─── Telegram Actions ─────────────────────────────────────────────────────────
 //
 // Each agent can have its own Telegram bot. The user pastes a bot token from
@@ -1813,6 +2083,10 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
 // The runner's TelegramManager picks up the new token within ~30s and starts
 // long-polling Telegram for that bot — no public URL required, since this is
 // a local-first product.
+//
+// configureAgentTelegramAction/disconnectAgentTelegramAction below are now
+// thin delegations to the channel-neutral actions above (S4) — kept under
+// their original names/signatures so existing callers don't break.
 
 export type TelegramConfigStatus = 'connected' | 'disconnected';
 
@@ -1872,123 +2146,44 @@ export async function getAgentTelegramConfigAction(
   }
 }
 
+/**
+ * @deprecated Thin delegation to `configureAgentChannelAction` (channel='telegram').
+ * Kept under its original name/signature so existing callers keep working —
+ * new code should call `configureAgentChannelAction` directly.
+ */
 export async function configureAgentTelegramAction(
   raw: unknown,
 ): Promise<ActionResult<TelegramConfigRow>> {
-  try {
-    const session = await getSession();
-    const parsed = ConfigureTelegramSchema.safeParse(raw);
-    if (!parsed.success) {
-      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-    }
-    const { agentId, botToken } = parsed.data;
-
-    const db = getDb();
-    const [agent] = await db
-      .select({ id: agents.id, slug: agents.slug, name: agents.name })
-      .from(agents)
-      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
-    if (!agent) return fail('not_found', 'Agent not found');
-
-    // Validate the token against Telegram's getMe. We need the bot's
-    // username for display anyway, and getMe doubles as a token check.
-    let botInfo: Awaited<ReturnType<typeof getTelegramBotInfo>>;
-    try {
-      botInfo = await getTelegramBotInfo(botToken);
-    } catch (err) {
-      if (err instanceof DeliveryError && err.code === 'telegram_invalid_token') {
-        return fail(
-          'telegram_invalid_token',
-          'Telegram rejected this token. Double-check it from @BotFather.',
-        );
-      }
-      throw err;
-    }
-
-    // Drain any backlog Telegram has buffered for this bot. Otherwise the
-    // poller would replay messages sent BEFORE the (re)connect — including
-    // ones sent during a disconnected window — which surprises the user
-    // ("why is the bot answering my old messages?"). One getUpdates(-1, 0)
-    // call fetches the latest pending update; we set the next offset to
-    // that.update_id + 1 so the poller starts from "now".
-    let initialOffset = 0;
-    try {
-      const recent = await getTelegramUpdates({
-        botToken,
-        offset: -1,
-        timeout: 0,
-        limit: 1,
-      });
-      if (recent.length > 0) {
-        initialOffset = Math.max(...recent.map((u) => u.update_id)) + 1;
-      }
-    } catch {
-      // Best-effort drain. If this single call fails (network blip), we
-      // accept the small UX regression — the poller will still work, just
-      // potentially replay a few seconds of backlog.
-    }
-
-    // Persist. The runner's TelegramManager will pick this up on its next
-    // refresh tick (~30s) and start long-polling Telegram for this bot.
-    await db
-      .update(agents)
-      .set({
-        telegramBotToken: botToken,
-        telegramBotUsername: botInfo.username,
-        telegramOffset: initialOffset,
-        updatedAt: new Date(),
-      })
-      .where(eq(agents.id, agentId));
-
-    revalidatePath('/agents');
-    revalidatePath(`/agents/${agentId}/telegram`);
-
-    return ok({
-      agentId: agent.id,
-      agentSlug: agent.slug,
-      agentName: agent.name,
-      status: 'connected',
-      botUsername: botInfo.username,
-      lastSeenChatIdTelegram: null,
-    });
-  } catch (err) {
-    console.error('[configureAgentTelegramAction]', err);
-    return fail('db_error', 'Failed to configure Telegram');
+  const parsed = ConfigureTelegramSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
   }
+  const result = await configureAgentChannelAction({
+    agentId: parsed.data.agentId,
+    channel: 'telegram',
+    credentials: { botToken: parsed.data.botToken },
+  });
+  if (!result.ok) return result;
+  return ok({
+    agentId: result.data.agentId,
+    agentSlug: result.data.agentSlug,
+    agentName: result.data.agentName,
+    status: 'connected',
+    botUsername: result.data.identityLabel,
+    lastSeenChatIdTelegram: null,
+  });
 }
 
+/**
+ * @deprecated Thin delegation to `disconnectAgentChannelAction` (channel='telegram').
+ * Kept under its original name/signature so existing callers keep working —
+ * new code should call `disconnectAgentChannelAction` directly.
+ */
 export async function disconnectAgentTelegramAction(agentId: string): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(agentId).success) {
-      return fail('validation_failed', 'Invalid agent id');
-    }
-    const db = getDb();
-    const [row] = await db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
-    if (!row) return fail('not_found', 'Agent not found');
-
-    // Clear the token. The runner's TelegramManager will detect this on its
-    // next refresh tick and abort the poller for this agent.
-    await db
-      .update(agents)
-      .set({
-        telegramBotToken: null,
-        telegramBotUsername: null,
-        telegramOffset: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(agents.id, agentId));
-
-    revalidatePath('/agents');
-    revalidatePath(`/agents/${agentId}/telegram`);
-    return ok(undefined);
-  } catch (err) {
-    console.error('[disconnectAgentTelegramAction]', err);
-    return fail('db_error', 'Failed to disconnect Telegram');
+  if (!z.string().guid().safeParse(agentId).success) {
+    return fail('validation_failed', 'Invalid agent id');
   }
+  return disconnectAgentChannelAction({ agentId, channel: 'telegram' });
 }
 
 // ─── Telegram inbound allowlist (H-1) ─────────────────────────────────────────
@@ -2069,6 +2264,7 @@ export async function revokeTelegramChatAction(chatRowId: string): Promise<Actio
         id: telegramAllowedChats.id,
         role: telegramAllowedChats.role,
         agentId: telegramAllowedChats.agentId,
+        chatId: telegramAllowedChats.chatId,
       })
       .from(telegramAllowedChats)
       .where(
@@ -2090,7 +2286,20 @@ export async function revokeTelegramChatAction(chatRowId: string): Promise<Actio
           eq(telegramAllowedChats.entityId, session.entityId),
         ),
       );
-    revalidatePath(`/agents/${row.agentId}/telegram`);
+
+    // Dual-delete (S2 transitional, migration 0064): keep the channel-neutral
+    // mirror in sync with the legacy table this action still writes to.
+    await db
+      .delete(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, row.agentId),
+          eq(channelAllowedConversations.channel, 'telegram'),
+          eq(channelAllowedConversations.conversationId, row.chatId),
+        ),
+      );
+
+    revalidatePath(`/agents/${row.agentId}/channels`);
     return ok(undefined);
   } catch (err) {
     console.error('[revokeTelegramChatAction]', err);
@@ -2114,6 +2323,9 @@ export async function resolveTelegramChatAction(
         id: telegramAllowedChats.id,
         status: telegramAllowedChats.status,
         agentId: telegramAllowedChats.agentId,
+        chatId: telegramAllowedChats.chatId,
+        role: telegramAllowedChats.role,
+        requesterName: telegramAllowedChats.requesterName,
       })
       .from(telegramAllowedChats)
       .where(
@@ -2135,6 +2347,31 @@ export async function resolveTelegramChatAction(
             eq(telegramAllowedChats.entityId, session.entityId),
           ),
         );
+
+      // Dual-write mirror (S2 transitional, migration 0064): upsert rather
+      // than a plain UPDATE because the S3 runner (which owns creating
+      // channel_allowed_conversations rows on inbound contact) may not have
+      // raced this yet — self-heals regardless of ordering.
+      await db
+        .insert(channelAllowedConversations)
+        .values({
+          entityId: session.entityId,
+          agentId: row.agentId,
+          channel: 'telegram',
+          conversationId: row.chatId,
+          kind: row.chatId && row.chatId.startsWith('-') ? 'group' : 'private',
+          role: row.role,
+          status: 'active',
+          requesterName: row.requesterName,
+        })
+        .onConflictDoUpdate({
+          target: [
+            channelAllowedConversations.agentId,
+            channelAllowedConversations.channel,
+            channelAllowedConversations.conversationId,
+          ],
+          set: { status: 'active', updatedAt: new Date() },
+        });
     } else {
       await db
         .delete(telegramAllowedChats)
@@ -2144,8 +2381,18 @@ export async function resolveTelegramChatAction(
             eq(telegramAllowedChats.entityId, session.entityId),
           ),
         );
+
+      await db
+        .delete(channelAllowedConversations)
+        .where(
+          and(
+            eq(channelAllowedConversations.agentId, row.agentId),
+            eq(channelAllowedConversations.channel, 'telegram'),
+            eq(channelAllowedConversations.conversationId, row.chatId),
+          ),
+        );
     }
-    revalidatePath(`/agents/${row.agentId}/telegram`);
+    revalidatePath(`/agents/${row.agentId}/channels`);
     return ok(undefined);
   } catch (err) {
     console.error('[resolveTelegramChatAction]', err);

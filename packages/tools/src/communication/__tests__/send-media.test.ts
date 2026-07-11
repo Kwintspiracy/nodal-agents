@@ -8,10 +8,13 @@ import path from 'node:path';
 import { createSendVideoTool, createSendAudioTool, createSendVoiceTool } from '../send-media';
 import type { ToolContext } from '../../types';
 
-const { videoMock, audioMock, voiceMock } = vi.hoisted(() => ({
-  videoMock: vi.fn(),
-  audioMock: vi.fn(),
-  voiceMock: vi.fn(),
+// S3: the tools dispatch through getAdapter(...).sendMedia — mocked here as
+// the tool-layer boundary. The adapter's own Telegram wire-format translation
+// is covered by packages/delivery/src/tests/telegram-adapter.test.ts. One
+// shared mock, since all three tools go through the same adapter method —
+// per-tool wiring is asserted via the `kind` field in the media argument.
+const { sendMediaMock } = vi.hoisted(() => ({
+  sendMediaMock: vi.fn(),
 }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
@@ -19,9 +22,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return {
     ...actual,
-    sendTelegramVideo: videoMock,
-    sendTelegramAudio: audioMock,
-    sendTelegramVoice: voiceMock,
+    getAdapter: () => ({ sendMedia: sendMediaMock }),
   };
 });
 
@@ -44,8 +45,8 @@ vi.mock('@nodal-agents/db', () => {
   return {
     agents,
     eq,
-    isChatAllowed: isChatAllowedMock,
-    resolveOwnerChatId: resolveOwnerChatIdMock,
+    isConversationAllowed: isChatAllowedMock,
+    resolveOwnerConversation: resolveOwnerChatIdMock,
   };
 });
 
@@ -91,9 +92,7 @@ const SRC_TMP_BIN = path.join(tmpdir(), 'tmp.bin');
 describe('send media tools', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    videoMock.mockResolvedValue({ messageId: 1 });
-    audioMock.mockResolvedValue({ messageId: 2 });
-    voiceMock.mockResolvedValue({ messageId: 3 });
+    sendMediaMock.mockResolvedValue({ messageId: '1' });
     readFileMock.mockResolvedValue(TINY);
     realpathMock.mockImplementation((p: string) => Promise.resolve(p));
     isChatAllowedMock.mockResolvedValue(true);
@@ -107,23 +106,33 @@ describe('send media tools', () => {
     expect(createSendVideoTool().riskLevel).toBe('write');
   });
 
-  it('send_video uploads via sendTelegramVideo and returns { ok, bytes, filename }', async () => {
+  it('send_video uploads via the adapter with kind "video" and returns { ok, bytes, filename }', async () => {
     const ctx = makeCtx({ jobChatId: '4242' });
     const result = await createSendVideoTool().execute({ source: SRC_CLIP }, ctx);
 
-    expect(videoMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: '4242', botToken: 'bot:TOKEN', filename: 'clip.mp4' }),
+    expect(sendMediaMock).toHaveBeenCalledWith(
+      { botToken: 'bot:TOKEN' },
+      '4242',
+      expect.objectContaining({ kind: 'video', filename: 'clip.mp4' }),
     );
     expect(result).toEqual({ ok: true, bytes: TINY.byteLength, filename: 'clip.mp4' });
   });
 
-  it('send_audio routes to sendTelegramAudio; send_voice routes to sendTelegramVoice', async () => {
+  it('send_audio uploads with kind "audio"; send_voice uploads with kind "voice"', async () => {
     const ctx = makeCtx({ jobChatId: '4242' });
     await createSendAudioTool().execute({ source: SRC_SONG }, ctx);
     await createSendVoiceTool().execute({ source: SRC_NOTE }, ctx);
 
-    expect(audioMock).toHaveBeenCalledWith(expect.objectContaining({ filename: 'song.mp3' }));
-    expect(voiceMock).toHaveBeenCalledWith(expect.objectContaining({ filename: 'note.ogg' }));
+    expect(sendMediaMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ kind: 'audio', filename: 'song.mp3' }),
+    );
+    expect(sendMediaMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ kind: 'voice', filename: 'note.ogg' }),
+    );
   });
 
   it('throws no_recipient when no chatId anywhere', async () => {
@@ -131,7 +140,7 @@ describe('send media tools', () => {
     await expect(createSendVideoTool().execute({ source: SRC_CLIP }, ctx)).rejects.toMatchObject({
       name: 'no_recipient',
     });
-    expect(videoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('throws no_bot_token when the agent has no token', async () => {
@@ -139,7 +148,7 @@ describe('send media tools', () => {
     await expect(createSendAudioTool().execute({ source: SRC_SONG }, ctx)).rejects.toMatchObject({
       name: 'no_bot_token',
     });
-    expect(audioMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('throws video_too_large past the 50 MB cap', async () => {
@@ -148,13 +157,17 @@ describe('send media tools', () => {
     await expect(createSendVideoTool().execute({ source: SRC_HUGE }, ctx)).rejects.toMatchObject({
       name: 'video_too_large',
     });
-    expect(videoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('explicit filename overrides the derived name', async () => {
     const ctx = makeCtx({ jobChatId: '4242' });
     await createSendVideoTool().execute({ source: SRC_TMP_BIN, filename: 'final-cut.mp4' }, ctx);
-    expect(videoMock).toHaveBeenCalledWith(expect.objectContaining({ filename: 'final-cut.mp4' }));
+    expect(sendMediaMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ filename: 'final-cut.mp4' }),
+    );
   });
 
   it('throws telegram_chat_not_allowed for an explicit chatId not on the allow-list', async () => {
@@ -164,7 +177,7 @@ describe('send media tools', () => {
     await expect(
       createSendVideoTool().execute({ source: SRC_CLIP, chatId: '00000000' }, ctx),
     ).rejects.toMatchObject({ name: 'telegram_chat_not_allowed' });
-    expect(videoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
@@ -173,7 +186,7 @@ describe('send media tools', () => {
     await createSendVideoTool().execute({ source: SRC_CLIP, chatId: '4242' }, ctx);
 
     expect(isChatAllowedMock).not.toHaveBeenCalled();
-    expect(videoMock).toHaveBeenCalledWith(expect.objectContaining({ chatId: '4242' }));
+    expect(sendMediaMock).toHaveBeenCalledWith(expect.anything(), '4242', expect.anything());
   });
 
   it('throws source_path_not_allowed for a local path outside workspaces/skill store/temp dir', async () => {
@@ -184,6 +197,6 @@ describe('send media tools', () => {
     ).rejects.toMatchObject({ name: 'source_path_not_allowed' });
 
     expect(readFileMock).not.toHaveBeenCalled();
-    expect(videoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 });

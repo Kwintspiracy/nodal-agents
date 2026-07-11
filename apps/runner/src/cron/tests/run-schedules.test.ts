@@ -24,11 +24,19 @@ import type { RunnerDeps } from '../../deps.ts';
 
 // Mock the delivery channel so the budget-exhausted owner notice (F1) can be
 // asserted deterministically without network. Hoisted by vitest — mirrors
-// deliver-results.test.ts's pattern.
+// deliver-results.test.ts's pattern. S3: notifyBudgetExhausted now dispatches
+// via getAdapter(...).sendText — the fake adapter forwards to the same
+// sendTelegramMessageMock so the existing assertions keep working unchanged.
 type SendOpts = { chatId: string; text: string; botToken: string };
 const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
 vi.mock('@nodal-agents/delivery', () => ({
   sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
+  resolveTransportChannel: () => 'telegram',
+  getAdapter: (channel: string) => ({
+    channel,
+    sendText: (creds: { botToken: string }, conversationId: string, text: string) =>
+      sendTelegramMessageMock({ chatId: conversationId, text, botToken: creds.botToken }),
+  }),
 }));
 
 import { runScheduleTick } from '../run-schedules.ts';

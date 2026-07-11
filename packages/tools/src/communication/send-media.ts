@@ -1,32 +1,29 @@
 // communication/send-media.ts — server-side inline media delivery tools.
 //
 // Generic factory behind send_video / send_audio / send_voice: each delivers a
-// file to the user's Telegram chat through the matching native method so it
-// renders inline (video player, music player, voice bubble) — rather than a
-// plain attachment (that's send_file). Same contract as send_image/send_file:
-// pass a path or URL, the runner fetches bytes server-side, ZERO bytes enter the
-// LLM context, the return value is tiny.
+// file to the user's chat through the matching native inline rendering (video
+// player, music player, voice bubble) — rather than a plain attachment (that's
+// send_file). Same contract as send_image/send_file: pass a path or URL, the
+// runner fetches bytes server-side, ZERO bytes enter the LLM context, the
+// return value is tiny.
+//
+// S3 (multichannel plan): uploads through the channel-neutral ChannelAdapter
+// (getAdapter) rather than calling the Telegram media helpers directly — see
+// telegram-send-message.ts's file header for the rationale.
 
 import { z } from 'zod';
-import { sendTelegramVideo, sendTelegramAudio, sendTelegramVoice } from '@nodal-agents/delivery';
+import { getAdapter, type OutboundMedia } from '@nodal-agents/delivery';
 import { readFile } from 'node:fs/promises';
 import {
   resolveBotToken,
   resolveRecipientChatId,
+  resolveChannelForJob,
   assertLocalSourceAllowed,
   fetchBoundedUrl,
 } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 
 const MB = 1024 * 1024;
-
-type MediaSendFn = (opts: {
-  chatId: string;
-  botToken: string;
-  bytes: Uint8Array;
-  filename: string;
-  caption?: string;
-}) => Promise<{ messageId: number }>;
 
 const MediaInput = z.object({
   source: z
@@ -58,7 +55,7 @@ type MediaOutput = { ok: true; bytes: number; filename: string };
 
 type MediaSpec = {
   name: string;
-  send: MediaSendFn;
+  mediaKind: OutboundMedia['kind'];
   maxBytes: number;
   errorName: string;
   defaultFilename: string;
@@ -118,11 +115,11 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
         throw err;
       }
 
-      // 5. Upload via the delivery helper (server-side, zero bytes in context).
+      // 5. Upload via the channel-neutral adapter (server-side, zero bytes in context).
       const filename = input.filename ?? derivedName;
-      await spec.send({
-        chatId,
-        botToken,
+      const adapter = getAdapter(resolveChannelForJob(ctx));
+      await adapter.sendMedia({ botToken }, chatId, {
+        kind: spec.mediaKind,
         bytes,
         filename,
         caption: input.caption,
@@ -136,7 +133,7 @@ function makeSendMediaTool(spec: MediaSpec): ToolDefinition<typeof MediaInput, M
 export function createSendVideoTool(): ToolDefinition<typeof MediaInput, MediaOutput> {
   return makeSendMediaTool({
     name: 'send_video',
-    send: sendTelegramVideo,
+    mediaKind: 'video',
     maxBytes: 50 * MB,
     errorName: 'video_too_large',
     defaultFilename: 'video.mp4',
@@ -162,7 +159,7 @@ Size cap: 50 MB → throws \`video_too_large\`. Other failures: \`no_recipient\`
 export function createSendAudioTool(): ToolDefinition<typeof MediaInput, MediaOutput> {
   return makeSendMediaTool({
     name: 'send_audio',
-    send: sendTelegramAudio,
+    mediaKind: 'audio',
     maxBytes: 50 * MB,
     errorName: 'audio_too_large',
     defaultFilename: 'audio.mp3',
@@ -184,7 +181,7 @@ Size cap: 50 MB → throws \`audio_too_large\`. Other failures: \`no_recipient\`
 export function createSendVoiceTool(): ToolDefinition<typeof MediaInput, MediaOutput> {
   return makeSendMediaTool({
     name: 'send_voice',
-    send: sendTelegramVoice,
+    mediaKind: 'voice',
     maxBytes: 50 * MB,
     errorName: 'voice_too_large',
     defaultFilename: 'voice.ogg',

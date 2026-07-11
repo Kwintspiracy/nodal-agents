@@ -3,10 +3,17 @@
 // Registered per-agent when agents.telegramBotToken IS NOT NULL.
 // The agent calls this tool to send a reply back to a Telegram chat.
 // Credentials are fetched from the DB at execution time (never in closure).
+//
+// S3 (multichannel plan): sends through the channel-neutral ChannelAdapter
+// (getAdapter) rather than calling the Telegram send helper directly. The
+// tool's NAME, Zod schema, and error names are unchanged this phase — only
+// the transport plumbing moved. resolveChannelForJob picks the adapter (today
+// this only ever resolves 'telegram', since that's the only registered
+// transport — see resolveTransportChannel).
 
 import { z } from 'zod';
-import { sendTelegramMessage } from '@nodal-agents/delivery';
-import { resolveBotToken, resolveRecipientChatId } from './delivery-guard';
+import { getAdapter } from '@nodal-agents/delivery';
+import { resolveBotToken, resolveRecipientChatId, resolveChannelForJob } from './delivery-guard';
 import type { ToolDefinition, ToolContext } from '../types';
 
 // ─── Input / Output ───────────────────────────────────────────────────────────
@@ -106,14 +113,12 @@ Fail conditions:
         throw err;
       }
 
-      // 3. Send via the battle-tested delivery helper
-      const res = await sendTelegramMessage({
-        chatId,
-        text: input.text,
-        botToken,
-      });
+      // 3. Send via the channel-neutral adapter (battle-tested Telegram delivery
+      // helper underneath — see channels/telegram-adapter.ts).
+      const adapter = getAdapter(resolveChannelForJob(ctx));
+      const res = await adapter.sendText({ botToken }, chatId, input.text);
 
-      return { messageId: String(res.messageId) };
+      return { messageId: res.messageId };
     },
   };
 }

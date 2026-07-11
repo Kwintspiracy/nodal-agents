@@ -1,8 +1,9 @@
 // communication/delivery-guard.ts — shared boundary checks for the six
-// outbound Telegram delivery tools (telegram_send_message, send_image,
-// send_file, send_video, send_audio, send_voice).
+// outbound delivery tools (telegram_send_message, send_image, send_file,
+// send_video, send_audio, send_voice).
 //
 // Consolidates what used to be copy-pasted per tool:
+//   - transport channel resolution (resolveChannelForJob)
 //   - bot token resolution (resolveBotToken)
 //   - recipient chatId resolution + authorization (resolveRecipientChatId, F1)
 //     — including the hard per-job delivery ceiling (L4)
@@ -15,11 +16,28 @@
 // shared names.
 
 import { eq } from '@nodal-agents/db';
-import { agents, isChatAllowed, resolveOwnerChatId } from '@nodal-agents/db';
+import { agents, resolveOwnerConversation, isConversationAllowed } from '@nodal-agents/db';
+import { resolveTransportChannel, type ChannelKind } from '@nodal-agents/delivery';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ToolContext } from '../types';
+
+// ─── Transport channel ──────────────────────────────────────────────────────
+
+/**
+ * Which ChannelAdapter a delivery tool sends THIS job's messages through
+ * (S3 of the multichannel plan). `ctx.jobChannel` is the job's trigger
+ * origin (`agent_jobs.channel`) — when it already names a registered
+ * transport (today: only 'telegram') it wins; otherwise the job was
+ * triggered by something that isn't itself a transport (cron, webhook,
+ * dashboard, api, …), and the agent's only real transport is its Telegram
+ * binding, so that's the default. See resolveTransportChannel for the shared
+ * rule (also used by deliver-results.ts's channel-return send site).
+ */
+export function resolveChannelForJob(ctx: ToolContext): ChannelKind {
+  return resolveTransportChannel(ctx.jobChannel);
+}
 
 // ─── Bot token ──────────────────────────────────────────────────────────────
 
@@ -29,6 +47,12 @@ import type { ToolContext } from '../types';
  * orchestrator); otherwise fall back to this agent's own token from DB
  * (credential isolation per agent, historical path). Returns undefined when
  * neither is configured — callers throw their own tool-specific error name.
+ *
+ * Named for Telegram specifically (not yet channel-parametric): it resolves
+ * the TELEGRAM binding's token today, which is also the only transport that
+ * exists — see resolveChannelForJob's default. Renaming/generalizing this
+ * arrives once a second channel adapter actually needs its own credential
+ * resolution here.
  */
 export async function resolveBotToken(ctx: ToolContext): Promise<string | undefined> {
   if (ctx.resolvedTelegramBotToken !== undefined) return ctx.resolvedTelegramBotToken;
@@ -88,18 +112,26 @@ export function resetDeliveryCounterForTests(jobId?: string): void {
 /**
  * Resolve the target chatId and authorize it:
  *   - no explicit chatId → falls back to ctx.jobChatId; still null → falls
- *     back to the agent's OWNER chat (see below); no owner either → throws
- *     `noRecipientErrorName` (each tool keeps its historical name).
+ *     back to the agent's OWNER conversation on THIS job's transport channel
+ *     (see below); no owner either → throws `noRecipientErrorName` (each tool
+ *     keeps its historical name).
  *   - explicit chatId === ctx.jobChatId → allowed without a DB lookup (the
  *     job's origin chat is authorized by construction).
  *   - explicit chatId that diverges from ctx.jobChatId → must be an ACTIVE
- *     row in telegram_allowed_chats for this agent or its entity, else
+ *     row for this agent or its entity on the job's transport channel, else
  *     throws `telegram_chat_not_allowed`. No fallback, no silent redirect —
  *     an agent can never message an arbitrary chat id it wasn't approved for.
  *   - hard per-job delivery ceiling (L4): a real jobId that has already hit
  *     MAX_DELIVERIES_PER_JOB successful resolutions throws
  *     `telegram_send_rate_limited` before any lookup runs. An empty/absent
  *     jobId (minimal test contexts) is never counted or rate-limited.
+ *
+ * Channel-parametric (S3): resolves `resolveChannelForJob(ctx)` once and uses
+ * it for both the owner fallback and the allowlist check, via the
+ * channel-neutral `resolveOwnerConversation`/`isConversationAllowed`
+ * (@nodal-agents/db). For channel='telegram' — every job today — these are
+ * byte-identical to the pre-S3 `resolveOwnerChatId`/`isChatAllowed` calls
+ * they replace (both are thin wrappers pinned to channel='telegram').
  */
 export async function resolveRecipientChatId(
   explicitChatId: string | undefined,
@@ -116,6 +148,7 @@ export async function resolveRecipientChatId(
     throw err;
   }
 
+  const channel = resolveChannelForJob(ctx);
   let chatId = explicitChatId ?? ctx.jobChatId;
 
   // Owner fallback: an unsolicited run (cron watcher, notify_on_success=false,
@@ -131,7 +164,7 @@ export async function resolveRecipientChatId(
   // this correctly resolves to null and the child still throws no-recipient;
   // it must deliver through its parent chain, never guess the root's owner.
   if (explicitChatId === undefined && chatId === null) {
-    chatId = await resolveOwnerChatId(ctx.db, ctx.agentId);
+    chatId = await resolveOwnerConversation(ctx.db, ctx.agentId, channel);
   }
 
   if (!chatId) {
@@ -141,10 +174,11 @@ export async function resolveRecipientChatId(
   }
 
   if (explicitChatId !== undefined && explicitChatId !== ctx.jobChatId) {
-    const allowed = await isChatAllowed(ctx.db, {
+    const allowed = await isConversationAllowed(ctx.db, {
       entityId: ctx.entityId,
       agentId: ctx.agentId,
-      chatId: explicitChatId,
+      channel,
+      conversationId: explicitChatId,
     });
     if (!allowed) {
       const err = new Error(

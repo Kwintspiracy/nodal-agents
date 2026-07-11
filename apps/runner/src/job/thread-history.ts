@@ -247,8 +247,15 @@ export async function loadThreadHistory(opts: LoadThreadHistoryOptions): Promise
  * `return_result({status: 'success'})` with no text. Without this lookup we
  * lose the user-visible reply and the next turn's session-memory context
  * comes back empty.
+ *
+ * S3 (multichannel plan): exported so a later phase can extend this map
+ * per-channel once other channels get their OWN send tool name (discord/
+ * slack/whatsapp are in CONVERSATIONAL_CHANNELS above but have no send tool
+ * yet — the 6 delivery tools' NAMES don't change until that phase, so there
+ * is nothing to map them to today; adding an entry here ahead of a real tool
+ * would just point at a name that doesn't exist).
  */
-const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
+export const CHANNEL_SEND_TOOL: Readonly<Record<string, string>> = {
   telegram: 'telegram_send_message',
 };
 

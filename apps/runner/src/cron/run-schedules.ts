@@ -11,10 +11,15 @@
 // conditional UPDATE acts as the lock.
 
 import { and, eq, isNull, lte, or, sql, desc, inArray } from '@nodal-agents/db';
-import { agentSchedules, agentJobs, agents, resolveOwnerChatId } from '@nodal-agents/db';
+import {
+  agentSchedules,
+  agentJobs,
+  resolveOwnerChatId,
+  getBindingCredentials,
+} from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resolveTimezone } from '@nodal-agents/shared';
-import { sendTelegramMessage } from '@nodal-agents/delivery';
+import { getAdapter, resolveTransportChannel } from '@nodal-agents/delivery';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob, type ExecuteJobResult } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
@@ -44,19 +49,18 @@ async function notifyBudgetExhausted(
   try {
     const ownerChatId = await resolveOwnerChatId(db, agentId);
     if (!ownerChatId) return;
-    const [agent] = await db
-      .select({ botToken: agents.telegramBotToken })
-      .from(agents)
-      .where(eq(agents.id, agentId))
-      .limit(1);
-    if (!agent?.botToken) return;
-    await sendTelegramMessage({
-      botToken: agent.botToken,
-      chatId: ownerChatId,
-      text:
-        `Schedule « ${scheduleName} » a atteint son budget quotidien (${dailyBudgetUsd.toFixed(2)} $) ` +
+    // S3: a cron trigger isn't itself a transport — resolveTransportChannel
+    // defaults it to the agent's Telegram binding (today's only transport).
+    const channel = resolveTransportChannel('cron');
+    const creds = await getBindingCredentials(db, agentId, channel);
+    if (!creds) return;
+    const adapter = getAdapter(channel);
+    await adapter.sendText(
+      creds,
+      ownerChatId,
+      `Schedule « ${scheduleName} » a atteint son budget quotidien (${dailyBudgetUsd.toFixed(2)} $) ` +
         `— runs suspendus jusqu'à demain. Ajustez le budget dans Automations si besoin.`,
-    });
+    );
   } catch (err) {
     console.warn(
       `[runScheduleTick] failed to notify owner of budget_exhausted for agent ${agentId}: ${

@@ -410,14 +410,16 @@ describe('Telegram allowlist actions (H-1)', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('revoke deletes a member chat', async () => {
-    currentDb = makeDb([{ id: ID, role: 'member', agentId: ID }]) as typeof currentDb;
+  it('revoke deletes a member chat AND mirrors the delete into channel_allowed_conversations (S4)', async () => {
+    currentDb = makeDb([
+      { id: ID, role: 'member', agentId: ID, chatId: '555666777' },
+    ]) as typeof currentDb;
     const { revokeTelegramChatAction } = await import('../src/lib/actions.ts');
     const r = await revokeTelegramChatAction(ID);
     expect(r.ok).toBe(true);
-    expect(
-      (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete,
-    ).toHaveBeenCalled();
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    // Two deletes: telegram_allowed_chats (legacy) + channel_allowed_conversations (mirror).
+    expect(deleteSpy).toHaveBeenCalledTimes(2);
   });
 
   it('resolve REFUSES a non-pending chat', async () => {
@@ -428,14 +430,43 @@ describe('Telegram allowlist actions (H-1)', () => {
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
-  it('resolve approves a pending chat (activates it)', async () => {
-    currentDb = makeDb([{ id: ID, status: 'pending', agentId: ID }]) as typeof currentDb;
+  it('resolve approves a pending chat (activates it) AND upserts the mirror row (S4)', async () => {
+    currentDb = makeDb([
+      {
+        id: ID,
+        status: 'pending',
+        agentId: ID,
+        chatId: '111222333',
+        role: 'member',
+        requesterName: 'Some Person',
+      },
+    ]) as typeof currentDb;
     const { resolveTelegramChatAction } = await import('../src/lib/actions.ts');
     const r = await resolveTelegramChatAction(ID, 'approve');
     expect(r.ok).toBe(true);
-    expect(
-      (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update,
-    ).toHaveBeenCalled();
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    expect(updateSpy).toHaveBeenCalled();
+
+    // Dual-write mirror: an upsert into channel_allowed_conversations.
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    const valuesSpy = insertSpy.mock.results[0]!.value as { values: ReturnType<typeof vi.fn> };
+    const insertArg = valuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
+    expect(insertArg['channel']).toBe('telegram');
+    expect(insertArg['conversationId']).toBe('111222333');
+    expect(insertArg['status']).toBe('active');
+  });
+
+  it('resolve denies a pending chat AND mirrors the delete (S4)', async () => {
+    currentDb = makeDb([
+      { id: ID, status: 'pending', agentId: ID, chatId: '444555666', role: 'member' },
+    ]) as typeof currentDb;
+    const { resolveTelegramChatAction } = await import('../src/lib/actions.ts');
+    const r = await resolveTelegramChatAction(ID, 'deny');
+    expect(r.ok).toBe(true);
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalledTimes(2);
   });
 
   it('rejects an invalid uuid', async () => {
@@ -443,6 +474,206 @@ describe('Telegram allowlist actions (H-1)', () => {
     const r = await revokeTelegramChatAction('bad-id');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+describe('getAgentChannelsAction (S4)', () => {
+  it('rejects non-uuid agentId', async () => {
+    const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentChannelsAction('not-uuid');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when agent does not belong to entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentChannelsAction('aaaaaaaa-0000-0000-0000-000000000050');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('telegram connected, others coming_soon, when the agent has a bot token', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000051',
+        slug: 'agent-ch',
+        name: 'Agent Ch',
+        botToken: 'tok',
+      },
+    ]) as typeof currentDb;
+    const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentChannelsAction('aaaaaaaa-0000-0000-0000-000000000051');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.channels).toEqual([
+      { channel: 'telegram', status: 'connected' },
+      { channel: 'discord', status: 'coming_soon' },
+      { channel: 'slack', status: 'coming_soon' },
+      { channel: 'whatsapp', status: 'coming_soon' },
+    ]);
+  });
+
+  it('telegram disconnected when the agent has no bot token', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000052',
+        slug: 'agent-ch2',
+        name: 'Agent Ch2',
+        botToken: null,
+      },
+    ]) as typeof currentDb;
+    const { getAgentChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await getAgentChannelsAction('aaaaaaaa-0000-0000-0000-000000000052');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const telegram = r.data.channels.find((c) => c.channel === 'telegram');
+    expect(telegram?.status).toBe('disconnected');
+  });
+});
+
+describe('configureAgentChannelAction — dual-write (S4)', () => {
+  it('fails loud for channels without an adapter yet', async () => {
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000060',
+      channel: 'discord',
+      credentials: { botToken: 'whatever' },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('channel_not_supported_yet');
+  });
+
+  it('persists agents.telegram_* AND upserts a channel_bindings row', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000061', slug: 'agent-dw', name: 'Agent DW' },
+    ]) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { id: 1, is_bot: true, first_name: 'DW', username: 'dw_bot' },
+        }),
+        { status: 200 },
+      ),
+    );
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 }),
+    );
+
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000061',
+      channel: 'telegram',
+      credentials: { botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G' },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.status).toBe('connected');
+      expect(r.data.identityLabel).toBe('dw_bot');
+    }
+
+    // Legacy write: agents.telegram_*.
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const updateSetSpy = updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> };
+    const updateArg = updateSetSpy.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(updateArg['telegramBotToken']).toBe('123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G');
+    expect(updateArg['telegramBotUsername']).toBe('dw_bot');
+
+    // Dual-write: channel_bindings mirror, plaintext JSON credentials (S2
+    // transitional convention, matches migration 0064's back-fill).
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const insertValuesSpy = insertSpy.mock.results[0]!.value as {
+      values: ReturnType<typeof vi.fn>;
+    };
+    const insertArg = insertValuesSpy.values.mock.calls[0]![0] as Record<string, unknown>;
+    expect(insertArg['channel']).toBe('telegram');
+    expect(insertArg['agentId']).toBe('aaaaaaaa-0000-0000-0000-000000000061');
+    expect(JSON.parse(insertArg['credentials'] as string)).toEqual({
+      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+    });
+
+    fetchSpy.mockRestore();
+  });
+});
+
+describe('disconnectAgentChannelAction — dual-delete (S4)', () => {
+  it('fails loud for channels without an adapter yet', async () => {
+    const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentChannelAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000070',
+      channel: 'slack',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('channel_not_supported_yet');
+  });
+
+  it('clears agents.telegram_* AND deletes the channel_bindings row', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000071' }]) as typeof currentDb;
+    const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentChannelAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000071',
+      channel: 'telegram',
+    });
+    expect(r.ok).toBe(true);
+
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    const setArg = (updateSpy.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> }).set.mock
+      .calls[0]![0] as Record<string, unknown>;
+    expect(setArg['telegramBotToken']).toBe(null);
+
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('configureAgentTelegramAction / disconnectAgentTelegramAction — delegation (S4)', () => {
+  it('configureAgentTelegramAction still works unchanged (delegates to configureAgentChannelAction)', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000080', slug: 'agent-legacy', name: 'Agent Legacy' },
+    ]) as typeof currentDb;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { id: 1, is_bot: true, first_name: 'L', username: 'legacy_bot' },
+        }),
+        { status: 200 },
+      ),
+    );
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 }),
+    );
+
+    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentTelegramAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000080',
+      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.status).toBe('connected');
+      expect(r.data.botUsername).toBe('legacy_bot');
+      expect(r.data.lastSeenChatIdTelegram).toBe(null);
+    }
+    // Still dual-writes even through the legacy name.
+    expect(
+      (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert,
+    ).toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it('disconnectAgentTelegramAction still works unchanged (delegates to disconnectAgentChannelAction)', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000081' }]) as typeof currentDb;
+    const { disconnectAgentTelegramAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentTelegramAction('aaaaaaaa-0000-0000-0000-000000000081');
+    expect(r.ok).toBe(true);
+    expect(
+      (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete,
+    ).toHaveBeenCalled();
   });
 });
 

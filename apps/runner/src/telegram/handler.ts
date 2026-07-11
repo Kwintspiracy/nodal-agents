@@ -15,7 +15,12 @@ import { writeFile, mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { eq, and, inArray } from '@nodal-agents/db';
-import { agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agents,
+  telegramAllowedChats,
+  channelAllowedConversations,
+} from '@nodal-agents/db';
 import { getTelegramFile, type TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -499,6 +504,20 @@ function buildMentionRegex(botUsername: string): RegExp {
   return new RegExp(`@${escaped}(?![A-Za-z0-9_])`, 'gi');
 }
 
+/**
+ * Telegram's chat `type` → the channel-neutral `kind` enum
+ * (channel_allowed_conversations.kind: 'private'|'group'|'channel'|'thread').
+ * Telegram never sends 'thread' at the chat level (topics are a message-level
+ * concept there), so only 'private' and 'group'/'supergroup'→'group' are
+ * reachable today; 'channel' is included for completeness against Telegram's
+ * own chat.type union.
+ */
+function chatTypeToConversationKind(chatType: string): 'private' | 'group' | 'channel' | 'thread' {
+  if (chatType === 'private') return 'private';
+  if (chatType === 'channel') return 'channel';
+  return 'group';
+}
+
 type ChatAuthCheck = { authorized: true } | { authorized: false; result: HandleResult };
 
 /**
@@ -567,6 +586,28 @@ async function checkChatAuthorization(args: {
         requesterName: senderName,
       })
       .onConflictDoNothing();
+    // S3 dual-write: mirror the same claim attempt into the channel-neutral
+    // table, in the SAME transaction. Its own unique constraints (the
+    // 3-column unique + the (agent,channel) WHERE role='owner' partial
+    // index — migration 0064, mirroring this table's F-1 fix) resolve the
+    // identical race the same way: the winner's mirror insert lands, a
+    // loser's silently no-ops via onConflictDoNothing, exactly like the
+    // legacy insert above. No re-check needed here — the re-check against
+    // telegramAllowedChats below remains the single source of truth this
+    // phase (see queries/channel-identity.ts's file header).
+    await tx
+      .insert(channelAllowedConversations)
+      .values({
+        entityId,
+        agentId,
+        channel: 'telegram',
+        conversationId: chatId,
+        kind: chatTypeToConversationKind(chatType),
+        role: 'owner',
+        status: 'active',
+        requesterName: senderName,
+      })
+      .onConflictDoNothing();
 
     // F-4: race-safe re-check. `.onConflictDoNothing()` above has no target,
     // so Postgres swallows ANY unique-constraint conflict on this table —
@@ -621,6 +662,22 @@ async function checkChatAuthorization(args: {
     })
     .onConflictDoNothing()
     .returning({ id: telegramAllowedChats.id });
+  // S3 dual-write: mirror the pending-member insert. Same onConflictDoNothing
+  // semantics as above — a repeat DM from an already-pending chat no-ops on
+  // both tables identically.
+  await tx
+    .insert(channelAllowedConversations)
+    .values({
+      entityId,
+      agentId,
+      channel: 'telegram',
+      conversationId: chatId,
+      kind: chatTypeToConversationKind(chatType),
+      role: 'member',
+      status: 'pending',
+      requesterName: senderName,
+    })
+    .onConflictDoNothing();
 
   return {
     authorized: false,

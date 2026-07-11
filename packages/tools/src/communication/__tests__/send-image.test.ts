@@ -16,9 +16,12 @@ import { createSendImageTool } from '../send-image';
 import type { ToolContext } from '../../types';
 
 // ─── Mock @nodal-agents/delivery ─────────────────────────────────────────────
+// S3: the tool dispatches through getAdapter(...).sendMedia — mocked here as
+// the tool-layer boundary. The adapter's own Telegram wire-format translation
+// is covered by packages/delivery/src/tests/telegram-adapter.test.ts.
 
-const { sendTelegramPhotoMock } = vi.hoisted(() => ({
-  sendTelegramPhotoMock: vi.fn(),
+const { sendMediaMock } = vi.hoisted(() => ({
+  sendMediaMock: vi.fn(),
 }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
@@ -26,7 +29,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return {
     ...actual,
-    sendTelegramPhoto: sendTelegramPhotoMock,
+    getAdapter: () => ({ sendMedia: sendMediaMock }),
   };
 });
 
@@ -72,8 +75,8 @@ vi.mock('@nodal-agents/db', () => {
   return {
     agents,
     eq,
-    isChatAllowed: isChatAllowedMock,
-    resolveOwnerChatId: resolveOwnerChatIdMock,
+    isConversationAllowed: isChatAllowedMock,
+    resolveOwnerConversation: resolveOwnerChatIdMock,
   };
 });
 
@@ -112,7 +115,7 @@ const SRC_OUT = path.join(tmpdir(), 'out.png');
 describe('createSendImageTool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sendTelegramPhotoMock.mockResolvedValue({ messageId: 55 });
+    sendMediaMock.mockResolvedValue({ messageId: '55' });
     // Default: readFile returns our tiny PNG buffer
     readFileMock.mockResolvedValue(TINY_PNG);
     realpathMock.mockImplementation((p: string) => Promise.resolve(p));
@@ -126,9 +129,11 @@ describe('createSendImageTool', () => {
 
     const result = await tool.execute({ source: SRC_OUTPUT }, ctx);
 
-    expect(sendTelegramPhotoMock).toHaveBeenCalledOnce();
-    expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: '99887766', botToken: 'bot:TEST_TOKEN' }),
+    expect(sendMediaMock).toHaveBeenCalledOnce();
+    expect(sendMediaMock).toHaveBeenCalledWith(
+      { botToken: 'bot:TEST_TOKEN' },
+      '99887766',
+      expect.objectContaining({ kind: 'photo' }),
     );
     expect(result).toEqual({ ok: true, bytes: TINY_PNG.byteLength });
   });
@@ -156,7 +161,7 @@ describe('createSendImageTool', () => {
       name: 'no_recipient',
     });
 
-    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('(d) throws no_bot_token when agent has no telegramBotToken in DB', async () => {
@@ -167,7 +172,7 @@ describe('createSendImageTool', () => {
       name: 'no_bot_token',
     });
 
-    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('(e) throws image_too_large when file exceeds 10 MB', async () => {
@@ -182,7 +187,7 @@ describe('createSendImageTool', () => {
       name: 'image_too_large',
     });
 
-    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('(f) throws fetch_failed on non-2xx URL response', async () => {
@@ -196,7 +201,7 @@ describe('createSendImageTool', () => {
       tool.execute({ source: 'http://127.0.0.1:8188/view?filename=img.png' }, ctx),
     ).rejects.toMatchObject({ name: 'fetch_failed' });
 
-    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
 
@@ -206,13 +211,12 @@ describe('createSendImageTool', () => {
 
     await tool.execute({ source: SRC_OUT, chatId: '11223344' }, ctx);
 
-    expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: '11223344' }),
-    );
+    expect(sendMediaMock).toHaveBeenCalledWith(expect.anything(), '11223344', expect.anything());
     expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
       entityId: 'entity-xyz',
       agentId: 'agent-abc',
-      chatId: '11223344',
+      channel: 'telegram',
+      conversationId: '11223344',
     });
   });
 
@@ -225,7 +229,7 @@ describe('createSendImageTool', () => {
       name: 'telegram_chat_not_allowed',
     });
 
-    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('(g) skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
@@ -235,9 +239,7 @@ describe('createSendImageTool', () => {
     await tool.execute({ source: SRC_OUT, chatId: '99887766' }, ctx);
 
     expect(isChatAllowedMock).not.toHaveBeenCalled();
-    expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: '99887766' }),
-    );
+    expect(sendMediaMock).toHaveBeenCalledWith(expect.anything(), '99887766', expect.anything());
   });
 
   it('(g) delegated worker: resolvedTelegramBotToken + an entity-approved chatId still sends', async () => {
@@ -246,8 +248,10 @@ describe('createSendImageTool', () => {
 
     await tool.execute({ source: SRC_OUT, chatId: '55555555' }, ctx);
 
-    expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: '55555555', botToken: 'root-token' }),
+    expect(sendMediaMock).toHaveBeenCalledWith(
+      { botToken: 'root-token' },
+      '55555555',
+      expect.anything(),
     );
   });
 
@@ -260,7 +264,7 @@ describe('createSendImageTool', () => {
     ).rejects.toMatchObject({ name: 'source_path_not_allowed' });
 
     expect(readFileMock).not.toHaveBeenCalled();
-    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
+    expect(sendMediaMock).not.toHaveBeenCalled();
   });
 
   it('(h) allows a local path inside a configured workspace root', async () => {
@@ -273,16 +277,18 @@ describe('createSendImageTool', () => {
 
     await tool.execute({ source: path.join(wsRoot, 'render.png') }, ctx);
 
-    expect(sendTelegramPhotoMock).toHaveBeenCalledOnce();
+    expect(sendMediaMock).toHaveBeenCalledOnce();
   });
 
-  it('passes caption to sendTelegramPhoto when provided', async () => {
+  it('passes caption to the adapter when provided', async () => {
     const tool = createSendImageTool();
     const ctx = makeCtx({ jobChatId: '12345' });
 
     await tool.execute({ source: SRC_OUT, caption: 'My image' }, ctx);
 
-    expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
+    expect(sendMediaMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
       expect.objectContaining({ caption: 'My image' }),
     );
   });

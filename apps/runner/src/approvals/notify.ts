@@ -18,7 +18,7 @@
 import { eq, and } from '@nodal-agents/db';
 import { agents, agentJobs, telegramAllowedChats } from '@nodal-agents/db';
 import { redactSecretsForAudit, computeApprovalImpactLine } from '@nodal-agents/shared';
-import { sendTelegramMessage, type TelegramInlineKeyboard } from '@nodal-agents/delivery';
+import { getAdapter, type ApprovalCard } from '@nodal-agents/delivery';
 import type { ApprovalGateRequest } from '@nodal-agents/tools';
 import type { RunnerDeps } from '../deps.ts';
 
@@ -218,14 +218,21 @@ export async function notifyApprovalCreated(
       `\nDetails:\n${detailShort}\n\n` +
       `Tap a button below to decide — or resolve it from the dashboard.`;
 
-    const inlineKeyboard: TelegramInlineKeyboard = [
-      [
-        { text: '✅ Approve', callback_data: approvalCallbackData(req.approvalRequestId, 'a') },
-        { text: '❌ Reject', callback_data: approvalCallbackData(req.approvalRequestId, 'r') },
-      ],
-    ];
-
-    await sendTelegramMessage({ chatId, botToken, text, inlineKeyboard });
+    // Channel-neutral (S3): sent through the ChannelAdapter rather than the
+    // Telegram helper directly. `callbackId` carries the `apr:<id>` prefix so
+    // the adapter's own `:a`/`:r` suffixing reproduces approvalCallbackData's
+    // EXACT format — approval-callback.ts's parser is unchanged. Channel is
+    // always 'telegram' today (resolveApprovalDeliveryTarget only ever walks
+    // Telegram bot tokens); it becomes channel-parametric once a second
+    // channel's delivery target resolution exists.
+    const card: ApprovalCard = {
+      text,
+      approveLabel: '✅ Approve',
+      rejectLabel: '❌ Reject',
+      callbackId: `${APPROVAL_CALLBACK_PREFIX}:${req.approvalRequestId}`,
+    };
+    const adapter = getAdapter('telegram');
+    await adapter.sendApprovalCard!({ botToken }, chatId, card);
   } catch (err) {
     console.warn(
       `[approval-notify] failed to send approval card for ${req.approvalRequestId}: ${

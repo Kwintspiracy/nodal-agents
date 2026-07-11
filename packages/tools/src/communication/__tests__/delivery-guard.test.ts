@@ -1,24 +1,27 @@
 // delivery-guard.test.ts — shared boundary checks used by the 6 outbound
-// Telegram delivery tools (resolveBotToken, resolveRecipientChatId F1,
-// assertLocalSourceAllowed F2, fetchBoundedUrl F3).
+// delivery tools (resolveBotToken, resolveChannelForJob, resolveRecipientChatId
+// F1, assertLocalSourceAllowed F2, fetchBoundedUrl F3).
 //
 // Coverage:
 //   resolveBotToken
 //     - ctx.resolvedTelegramBotToken wins, no DB lookup
 //     - falls back to the agent's own DB row
 //     - undefined when neither is configured
-//   resolveRecipientChatId (F1)
+//   resolveRecipientChatId (F1) — channel-parametric (S3): the isConversationAllowed
+//   / resolveOwnerConversation mocks below stand in for isChatAllowed /
+//   resolveOwnerChatId, always called with channel: 'telegram' (ctx.jobChannel
+//   unset → resolveChannelForJob defaults to 'telegram' — see resolveTransportChannel).
 //     - no chatId anywhere, no owner either → throws the caller's error name
-//     - no chatId anywhere, owner resolves → returns the owner chatId, isChatAllowed
+//     - no chatId anywhere, owner resolves → returns the owner chatId, isConversationAllowed
 //       never called (owner is canonical, not allowlist-checked)
 //     - omitted chatId + jobChatId set → returns it, owner lookup NEVER called (regression)
 //     - explicit chatId === jobChatId → returns it, no DB lookup
-//     - explicit chatId allowed (isChatAllowed true) → returns it, called with right params
+//     - explicit chatId allowed (isConversationAllowed true) → returns it, called with right params
 //     - explicit chatId NOT allowed → throws telegram_chat_not_allowed
 //     - owner-fallback chatId still counted against the per-job delivery ceiling
 //   resolveRecipientChatId — per-job delivery ceiling (L4)
 //     - 30 resolutions on one jobId succeed, the 31st throws telegram_send_rate_limited
-//       without calling isChatAllowed
+//       without calling isConversationAllowed
 //     - two different jobIds have independent counters
 //     - jobId '' is never rate-limited (regression for minimal test contexts)
 //     - the tracked-job map stays bounded past 1000 distinct jobIds (oldest evicted)
@@ -48,8 +51,8 @@ import {
 import type { ToolContext } from '../../types';
 
 // ─── Mock @nodal-agents/db ─────────────────────────────────────────────────────
-// isChatAllowed is mocked here as the authorization BOUNDARY — its own DB logic
-// is covered separately in packages/db/src/tests/telegram-allowed-queries.test.ts.
+// isConversationAllowed is mocked here as the authorization BOUNDARY — its own
+// DB logic is covered separately in packages/db/src/tests/telegram-allowed-queries.test.ts.
 
 const { isChatAllowedMock, resolveOwnerChatIdMock } = vi.hoisted(() => ({
   isChatAllowedMock: vi.fn(),
@@ -62,8 +65,8 @@ vi.mock('@nodal-agents/db', () => {
   return {
     agents,
     eq,
-    isChatAllowed: isChatAllowedMock,
-    resolveOwnerChatId: resolveOwnerChatIdMock,
+    isConversationAllowed: isChatAllowedMock,
+    resolveOwnerConversation: resolveOwnerChatIdMock,
   };
 });
 
@@ -139,7 +142,7 @@ describe('resolveRecipientChatId', () => {
     await expect(resolveRecipientChatId(undefined, ctx, 'my_no_recipient')).rejects.toMatchObject({
       name: 'my_no_recipient',
     });
-    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, 'agent-no-owner');
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, 'agent-no-owner', 'telegram');
     expect(isChatAllowedMock).not.toHaveBeenCalled();
   });
 
@@ -151,7 +154,7 @@ describe('resolveRecipientChatId', () => {
     await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe(
       'owner-chat-999',
     );
-    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, 'agent-with-owner');
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, 'agent-with-owner', 'telegram');
     // Owner is the canonical target, not a guessed/arbitrary chat — never allowlist-checked.
     expect(isChatAllowedMock).not.toHaveBeenCalled();
   });
@@ -173,7 +176,7 @@ describe('resolveRecipientChatId', () => {
     expect(isChatAllowedMock).not.toHaveBeenCalled();
   });
 
-  it('queries isChatAllowed for a divergent explicit chatId and returns it when allowed', async () => {
+  it('queries isConversationAllowed for a divergent explicit chatId and returns it when allowed', async () => {
     isChatAllowedMock.mockClear();
     isChatAllowedMock.mockResolvedValueOnce(true);
     const ctx = makeCtx({ jobChatId: '111', entityId: 'entity-xyz', agentId: 'agent-abc' });
@@ -182,11 +185,12 @@ describe('resolveRecipientChatId', () => {
     expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
       entityId: 'entity-xyz',
       agentId: 'agent-abc',
-      chatId: '222',
+      channel: 'telegram',
+      conversationId: '222',
     });
   });
 
-  it('throws telegram_chat_not_allowed when isChatAllowed resolves false', async () => {
+  it('throws telegram_chat_not_allowed when isConversationAllowed resolves false', async () => {
     isChatAllowedMock.mockClear();
     isChatAllowedMock.mockResolvedValueOnce(false);
     const ctx = makeCtx({ jobChatId: '111' });

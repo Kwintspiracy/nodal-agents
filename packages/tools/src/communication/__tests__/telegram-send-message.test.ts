@@ -1,13 +1,17 @@
 // telegram-send-message.test.ts — createTelegramSendMessageTool
 // Tests:
-//   - happy path: chatId from ctx.jobChatId, sends correct args to sendTelegramMessage
+//   - happy path: chatId from ctx.jobChatId, sends correct args to the adapter's sendText
 //   - happy path: explicit chatId arg overrides ctx.jobChatId (allowed)
 //   - missing chatId + no jobChatId → throws telegram_no_recipient
 //   - missing bot token in DB → throws telegram_no_bot_token
-//   - sendTelegramMessage throws DeliveryError → propagates to caller (fail loud)
+//   - adapter.sendText throws DeliveryError → propagates to caller (fail loud)
 //   - F1: explicit chatId not on the allow-list → throws telegram_chat_not_allowed
 //   - F1: explicit chatId === ctx.jobChatId → sends WITHOUT an allow-list lookup
 //   - F1: delegated worker (resolvedTelegramBotToken + entity-approved chatId) → sends
+//
+// S3: the tool now dispatches through getAdapter(...).sendText — mocked here as
+// the tool-layer boundary. The adapter's own Telegram wire-format translation
+// is covered by packages/delivery/src/tests/telegram-adapter.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { z } from 'zod';
@@ -20,8 +24,8 @@ import { DeliveryError } from '@nodal-agents/delivery';
 // reference variables declared later. Use vi.hoisted to create the mock fn
 // in the hoisted scope so both the factory and the test body can access it.
 
-const { sendTelegramMessageMock } = vi.hoisted(() => ({
-  sendTelegramMessageMock: vi.fn(),
+const { sendTextMock } = vi.hoisted(() => ({
+  sendTextMock: vi.fn(),
 }));
 
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
@@ -29,7 +33,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
   return {
     ...actual,
-    sendTelegramMessage: sendTelegramMessageMock,
+    getAdapter: () => ({ sendText: sendTextMock }),
   };
 });
 
@@ -64,8 +68,8 @@ vi.mock('@nodal-agents/db', () => {
   return {
     agents,
     eq,
-    isChatAllowed: isChatAllowedMock,
-    resolveOwnerChatId: resolveOwnerChatIdMock,
+    isConversationAllowed: isChatAllowedMock,
+    resolveOwnerConversation: resolveOwnerChatIdMock,
   };
 });
 
@@ -95,7 +99,7 @@ function makeCtx(
 describe('createTelegramSendMessageTool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sendTelegramMessageMock.mockResolvedValue({ messageId: 42 });
+    sendTextMock.mockResolvedValue({ messageId: '42' });
     isChatAllowedMock.mockResolvedValue(true);
     resolveOwnerChatIdMock.mockResolvedValue(null);
   });
@@ -106,12 +110,12 @@ describe('createTelegramSendMessageTool', () => {
 
     const result = await tool.execute({ text: 'Hello from cron!' }, ctx);
 
-    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: '99887766',
-      text: 'Hello from cron!',
-      botToken: 'bot:TEST_TOKEN',
-    });
+    expect(sendTextMock).toHaveBeenCalledOnce();
+    expect(sendTextMock).toHaveBeenCalledWith(
+      { botToken: 'bot:TEST_TOKEN' },
+      '99887766',
+      'Hello from cron!',
+    );
     expect(result.messageId).toBe('42');
     // omitted chatId falls back to jobChatId without an allow-list lookup
     expect(isChatAllowedMock).not.toHaveBeenCalled();
@@ -123,15 +127,16 @@ describe('createTelegramSendMessageTool', () => {
 
     await tool.execute({ chatId: '11223344', text: 'Direct message' }, ctx);
 
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: '11223344',
-      text: 'Direct message',
-      botToken: 'bot:TEST_TOKEN',
-    });
+    expect(sendTextMock).toHaveBeenCalledWith(
+      { botToken: 'bot:TEST_TOKEN' },
+      '11223344',
+      'Direct message',
+    );
     expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
       entityId: 'entity-xyz',
       agentId: 'agent-abc',
-      chatId: '11223344',
+      channel: 'telegram',
+      conversationId: '11223344',
     });
   });
 
@@ -143,7 +148,7 @@ describe('createTelegramSendMessageTool', () => {
       message: 'telegram_no_recipient',
     });
 
-    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+    expect(sendTextMock).not.toHaveBeenCalled();
   });
 
   it('throws telegram_no_bot_token when agent has no telegramBotToken in DB', async () => {
@@ -157,13 +162,11 @@ describe('createTelegramSendMessageTool', () => {
       message: 'telegram_no_bot_token',
     });
 
-    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+    expect(sendTextMock).not.toHaveBeenCalled();
   });
 
-  it('propagates DeliveryError from sendTelegramMessage (fail loud)', async () => {
-    sendTelegramMessageMock.mockRejectedValueOnce(
-      new DeliveryError('telegram_rate_limited', 'Rate limited'),
-    );
+  it('propagates DeliveryError from the adapter (fail loud)', async () => {
+    sendTextMock.mockRejectedValueOnce(new DeliveryError('telegram_rate_limited', 'Rate limited'));
 
     const tool = createTelegramSendMessageTool();
     const ctx = makeCtx({ jobChatId: '12345' });
@@ -171,9 +174,7 @@ describe('createTelegramSendMessageTool', () => {
     await expect(tool.execute({ text: 'rate limited?' }, ctx)).rejects.toBeInstanceOf(
       DeliveryError,
     );
-    sendTelegramMessageMock.mockRejectedValueOnce(
-      new DeliveryError('telegram_rate_limited', 'Rate limited'),
-    );
+    sendTextMock.mockRejectedValueOnce(new DeliveryError('telegram_rate_limited', 'Rate limited'));
     await expect(tool.execute({ text: 'rate limited?' }, ctx)).rejects.toMatchObject({
       code: 'telegram_rate_limited',
     });
@@ -188,7 +189,7 @@ describe('createTelegramSendMessageTool', () => {
       name: 'telegram_chat_not_allowed',
     });
 
-    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+    expect(sendTextMock).not.toHaveBeenCalled();
   });
 
   it('F1: skips the allow-list lookup when the explicit chatId equals ctx.jobChatId', async () => {
@@ -198,9 +199,7 @@ describe('createTelegramSendMessageTool', () => {
     await tool.execute({ chatId: '99887766', text: 'same chat' }, ctx);
 
     expect(isChatAllowedMock).not.toHaveBeenCalled();
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatId: '99887766' }),
-    );
+    expect(sendTextMock).toHaveBeenCalledWith(expect.anything(), '99887766', 'same chat');
   });
 
   it('F1: delegated worker — resolvedTelegramBotToken + an entity-approved chatId sends with the resolved token', async () => {
@@ -217,13 +216,14 @@ describe('createTelegramSendMessageTool', () => {
     expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
       entityId: 'entity-root',
       agentId: 'agent-child',
-      chatId: '77778888',
+      channel: 'telegram',
+      conversationId: '77778888',
     });
-    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
-      chatId: '77778888',
-      text: 'delegated reply',
-      botToken: 'root-agent-token',
-    });
+    expect(sendTextMock).toHaveBeenCalledWith(
+      { botToken: 'root-agent-token' },
+      '77778888',
+      'delegated reply',
+    );
   });
 
   it('has correct static metadata', () => {

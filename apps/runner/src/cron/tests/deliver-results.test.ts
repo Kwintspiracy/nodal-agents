@@ -15,10 +15,21 @@ import { agentJobs, agentTasks, agents, telegramAllowedChats } from '@nodal-agen
 
 // Mock the channel send + the LLM resolver so we can assert WHAT gets sent to
 // the channel (the short synthesis) without network/LLM. Hoisted by vitest.
+// S3: deliver-results.ts now dispatches via getAdapter(...).sendText — the
+// fake adapter below forwards to the same sendTelegramMessageMock so the
+// existing assertions (on chatId/text) keep working unchanged.
 type SendOpts = { chatId: string; text: string; botToken: string };
 const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
+const TRANSPORT_CHANNELS = new Set(['telegram', 'discord', 'slack', 'whatsapp']);
 vi.mock('@nodal-agents/delivery', () => ({
   sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
+  resolveTransportChannel: (channel: string | null | undefined) =>
+    channel && TRANSPORT_CHANNELS.has(channel) ? channel : 'telegram',
+  getAdapter: (channel: string) => ({
+    channel,
+    sendText: (creds: { botToken: string }, conversationId: string, text: string) =>
+      sendTelegramMessageMock({ chatId: conversationId, text, botToken: creds.botToken }),
+  }),
 }));
 const resolveAgentLlmClientMock = vi.fn((..._args: unknown[]): unknown => undefined);
 vi.mock('../../job/resolve-llm.ts', () => ({

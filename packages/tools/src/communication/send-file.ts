@@ -3,16 +3,21 @@
 // Registered per-agent when agents.telegramBotToken IS NOT NULL (same condition
 // as telegram_send_message / send_image). The agent passes a source path or URL;
 // the runner fetches the bytes server-side and uploads them to the user's chat
-// via Telegram's sendDocument — which delivers ANY file type (PDF, .md, .txt,
-// .csv, .zip, …) as a downloadable attachment, not just images.
+// as a downloadable attachment (Telegram: sendDocument) — which delivers ANY
+// file type (PDF, .md, .txt, .csv, .zip, …), not just images.
 // ZERO file bytes ever enter the LLM context — the return value is tiny.
+//
+// S3 (multichannel plan): uploads through the channel-neutral ChannelAdapter
+// (getAdapter) rather than calling the Telegram document helper directly —
+// see telegram-send-message.ts's file header for the rationale.
 
 import { z } from 'zod';
-import { sendTelegramDocument } from '@nodal-agents/delivery';
+import { getAdapter } from '@nodal-agents/delivery';
 import { readFile } from 'node:fs/promises';
 import {
   resolveBotToken,
   resolveRecipientChatId,
+  resolveChannelForJob,
   assertLocalSourceAllowed,
   fetchBoundedUrl,
 } from './delivery-guard';
@@ -153,12 +158,12 @@ Fail conditions:
         throw err;
       }
 
-      // 5. Upload via delivery helper (server-side, zero bytes in LLM context)
+      // 5. Upload via the channel-neutral adapter (server-side, zero bytes in LLM context)
       const filename = input.filename ?? derivedName;
-      await sendTelegramDocument({
-        chatId,
-        botToken,
-        document: bytes,
+      const adapter = getAdapter(resolveChannelForJob(ctx));
+      await adapter.sendMedia({ botToken }, chatId, {
+        kind: 'document',
+        bytes,
         filename,
         caption: input.caption,
       });

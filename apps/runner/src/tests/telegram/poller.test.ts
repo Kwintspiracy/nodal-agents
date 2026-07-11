@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } fr
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agents, agentJobs } from '@nodal-agents/db';
+import { agents, agentJobs, channelBindings } from '@nodal-agents/db';
 import { runTelegramPoller } from '../../telegram/poller.ts';
 import type { RunnerDeps } from '../../deps.ts';
 import type { RunnerEnv } from '../../env.ts';
@@ -151,6 +151,47 @@ describe('runTelegramPoller', () => {
     expect(agentRow?.telegramOffset).toBe(102);
     // lastSeenChatIdTelegram must be set to the chat.id from the fixture (555)
     expect(agentRow?.lastSeenChatIdTelegram).toBe('555');
+  });
+
+  it('S3: mirrors the advanced offset into channel_bindings.cursor when a telegram binding exists', async () => {
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      credentials: JSON.stringify({ botToken: FAKE_TOKEN }),
+      cursor: '0',
+    });
+
+    const controller = new AbortController();
+    let getUpdatesCalls = 0;
+    fetchSpy.mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes('/api/worker')) return Promise.resolve(new Response('ok'));
+      getUpdatesCalls += 1;
+      if (getUpdatesCalls === 1) {
+        return Promise.resolve(fakeResponse(200, { ok: true, result: [makeUpdate(200, 'hi')] }));
+      }
+      controller.abort();
+      return Promise.resolve(fakeResponse(200, { ok: true, result: [] }));
+    });
+
+    await runTelegramPoller({
+      agentId: seed.agentId,
+      agentEntityId: seed.entityId,
+      botToken: FAKE_TOKEN,
+      botUsername: 'test_bot',
+      startOffset: 0,
+      signal: controller.signal,
+      deps: makeDeps(db),
+      env: testEnv,
+      longPollSeconds: 1,
+    });
+
+    const [binding] = await db
+      .select({ cursor: channelBindings.cursor })
+      .from(channelBindings)
+      .where(eq(channelBindings.agentId, seed.agentId));
+    expect(binding?.cursor).toBe('201');
   });
 
   it('exits with reason="invalid_token" when Telegram rejects the token', async () => {

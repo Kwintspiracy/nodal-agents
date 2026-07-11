@@ -8,7 +8,12 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and } from '@nodal-agents/db';
-import { agentJobs, agents, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agents,
+  telegramAllowedChats,
+  channelAllowedConversations,
+} from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import { handleTelegramUpdate, pruneTelegramWorkspace } from '../../telegram/handler.ts';
 import type { RunnerDeps } from '../../deps.ts';
@@ -833,6 +838,121 @@ describe('handleTelegramUpdate — H-1 inbound authorization', () => {
     });
     expect(result.jobId).toBeUndefined();
     expect(result.skipped).toBe('no_owner_group');
+  });
+});
+
+describe('handleTelegramUpdate — S3 dual-write (channel_allowed_conversations)', () => {
+  // checkChatAuthorization now mirrors every write it makes to
+  // telegram_allowed_chats into the channel-neutral channel_allowed_conversations
+  // table, in the same transaction. These tests assert the mirror lands with
+  // the SAME final shape as the legacy row — reads still go through the
+  // legacy table this phase (see queries/channel-identity.ts), so this is
+  // purely a write-side regression guard for S4's eventual cutover.
+
+  it('an owner claim mirrors into channel_allowed_conversations (channel, conversationId, kind, role, status)', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('hi', 5001));
+
+    const [mirrored] = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.agentId, agentId));
+    expect(mirrored).toMatchObject({
+      channel: 'telegram',
+      conversationId: '5001',
+      kind: 'private',
+      role: 'owner',
+      status: 'active',
+    });
+  });
+
+  it('a pending member insert mirrors into channel_allowed_conversations as pending', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('owner here', 5101));
+    await call(agentId, dm('let me in', 5102));
+
+    const [mirrored] = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.conversationId, '5102'));
+    expect(mirrored).toMatchObject({
+      channel: 'telegram',
+      conversationId: '5102',
+      role: 'member',
+      status: 'pending',
+    });
+  });
+
+  it('pending→active mirrors on the SAME dual-write path once the owner approves (via a later message)', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('owner claims first', 5201));
+    await call(agentId, dm('me too', 5202));
+
+    // Owner approves — mirrors auth-callback.ts's allow path.
+    await db
+      .update(telegramAllowedChats)
+      .set({ status: 'active' })
+      .where(
+        and(eq(telegramAllowedChats.agentId, agentId), eq(telegramAllowedChats.chatId, '5202')),
+      );
+    await db
+      .update(channelAllowedConversations)
+      .set({ status: 'active' })
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, agentId),
+          eq(channelAllowedConversations.channel, 'telegram'),
+          eq(channelAllowedConversations.conversationId, '5202'),
+        ),
+      );
+
+    const [mirrored] = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.conversationId, '5202'));
+    expect(mirrored?.status).toBe('active');
+  });
+
+  it('an owner-claim race mirrors to exactly one owner on the neutral table too', async () => {
+    const agentId = await freshBot();
+
+    await Promise.all([call(agentId, dm('a first', 5301)), call(agentId, dm('b first', 5302))]);
+
+    const mirrored = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.agentId, agentId));
+    const owners = mirrored.filter((r) => r.role === 'owner' && r.status === 'active');
+    const pendingMembers = mirrored.filter((r) => r.role === 'member' && r.status === 'pending');
+    expect(owners).toHaveLength(1);
+    expect(pendingMembers).toHaveLength(1);
+  });
+
+  it('a group message mirrors kind="group"', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('owner here', 5401)); // bootstrap an owner first
+    const result = await handleTelegramUpdate({
+      update: {
+        update_id: 1,
+        message: {
+          message_id: 1,
+          chat: { id: -5402, type: 'group' },
+          from: { id: 8, first_name: 'Carol', is_bot: false },
+          text: `@auth_bot hello`,
+        },
+      },
+      receivingAgentId: agentId,
+      receivingAgentEntityId: seed.entityId,
+      receivingAgentBotUsername: 'auth_bot',
+      tx: db as unknown as Parameters<typeof handleTelegramUpdate>[0]['tx'],
+    });
+    expect(result.skipped).toBe('awaiting_authorization');
+
+    const [mirrored] = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.conversationId, '-5402'));
+    expect(mirrored?.kind).toBe('group');
   });
 });
 

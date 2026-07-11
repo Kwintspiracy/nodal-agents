@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq, and } from '@nodal-agents/db';
-import { telegramAllowedChats, agents } from '@nodal-agents/db';
+import { telegramAllowedChats, channelAllowedConversations, agents } from '@nodal-agents/db';
 import type { TelegramUpdate } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../../deps.ts';
 import {
@@ -170,5 +170,111 @@ describe('handleAuthCallback — security + effect', () => {
       .from(telegramAllowedChats)
       .where(and(eq(telegramAllowedChats.id, rowId)));
     expect(row?.status).toBe('pending');
+  });
+});
+
+// ─── S3 dual-write mirror (channel_allowed_conversations) ──────────────────
+// handler.ts's checkChatAuthorization dual-writes the neutral table on
+// insert; these tests seed that mirror the way it would exist in production
+// and assert handleAuthCallback's allow/deny paths keep it in sync too.
+
+async function seedNeutralMirror(): Promise<void> {
+  await db
+    .delete(channelAllowedConversations)
+    .where(eq(channelAllowedConversations.agentId, seed.agentId));
+  await db.insert(channelAllowedConversations).values([
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      conversationId: OWNER_CHAT,
+      kind: 'private',
+      role: 'owner',
+      status: 'active',
+    },
+    {
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'telegram',
+      conversationId: STRANGER_CHAT,
+      kind: 'private',
+      role: 'member',
+      status: 'pending',
+      requesterName: 'Bob',
+    },
+  ]);
+}
+
+describe('handleAuthCallback — S3 dual-write mirror', () => {
+  it('OWNER allow also flips the channel_allowed_conversations mirror to active', async () => {
+    const rowId = await seedPending();
+    await seedNeutralMirror();
+
+    await handleAuthCallback({
+      update: tap(rowId, 'a', OWNER_CHAT),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+    });
+
+    const [mirrored] = await db
+      .select({ status: channelAllowedConversations.status })
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, seed.agentId),
+          eq(channelAllowedConversations.channel, 'telegram'),
+          eq(channelAllowedConversations.conversationId, STRANGER_CHAT),
+        ),
+      );
+    expect(mirrored?.status).toBe('active');
+  });
+
+  it('OWNER deny also deletes the channel_allowed_conversations mirror row', async () => {
+    const rowId = await seedPending();
+    await seedNeutralMirror();
+
+    await handleAuthCallback({
+      update: tap(rowId, 'd', OWNER_CHAT),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+    });
+
+    const mirrored = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, seed.agentId),
+          eq(channelAllowedConversations.channel, 'telegram'),
+          eq(channelAllowedConversations.conversationId, STRANGER_CHAT),
+        ),
+      );
+    expect(mirrored).toHaveLength(0);
+  });
+
+  it('a refused (non-owner) tap leaves the mirror row pending, untouched', async () => {
+    const rowId = await seedPending();
+    await seedNeutralMirror();
+
+    await handleAuthCallback({
+      update: tap(rowId, 'a', STRANGER_CHAT),
+      receivingAgentId: seed.agentId,
+      botToken: '123:fake',
+      deps,
+    });
+
+    const [mirrored] = await db
+      .select({ status: channelAllowedConversations.status })
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, seed.agentId),
+          eq(channelAllowedConversations.channel, 'telegram'),
+          eq(channelAllowedConversations.conversationId, STRANGER_CHAT),
+        ),
+      );
+    expect(mirrored?.status).toBe('pending');
   });
 });

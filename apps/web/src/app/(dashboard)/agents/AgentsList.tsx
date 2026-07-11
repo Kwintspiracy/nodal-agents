@@ -54,7 +54,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { PaperPlaneTilt, PencilSimple } from '@phosphor-icons/react';
+import { ChatsCircle, PencilSimple } from '@phosphor-icons/react';
 import {
   reorderAgentsAction,
   deleteAgentAction,
@@ -604,13 +604,13 @@ function RowActions({ agent }: { agent: AgentRow }) {
           screens instead of clipping the buttons against the card edge. */}
       <div className="flex items-center justify-end gap-2">
         <Link
-          href={`/agents/${agent.id}/telegram`}
-          aria-label="Telegram"
-          title="Telegram"
+          href={`/agents/${agent.id}/channels`}
+          aria-label="Channels"
+          title="Channels"
           className="inline-flex items-center gap-1.5 rounded-lg border border-rule-2 px-2.5 py-1.5 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink sm:px-3"
         >
-          <PaperPlaneTilt size={15} className="sm:hidden" />
-          <span className="hidden sm:inline">Telegram</span>
+          <ChatsCircle size={15} className="sm:hidden" />
+          <span className="hidden sm:inline">Channels</span>
         </Link>
         <Link
           href={`/agents/${agent.id}/edit`}

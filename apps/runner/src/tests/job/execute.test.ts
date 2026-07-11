@@ -56,6 +56,57 @@ const { sendTelegramMessageMock, sendTelegramPhotoMock, getActiveLlmClient, setA
     };
   });
 
+// S3 (multichannel plan): the 6 delivery tools + notify.ts now dispatch
+// through getAdapter(...).sendText/sendMedia/sendApprovalCard rather than
+// calling sendTelegramMessage/sendTelegramPhoto directly — telegramAdapter's
+// own methods import those from a RELATIVE path inside @nodal-agents/delivery,
+// so overriding the package's named exports (as this mock did pre-S3) no
+// longer intercepts anything. The fake adapter below reproduces
+// telegramAdapter's exact wire shape (see channels/telegram-adapter.ts) but
+// forwards into the SAME sendTelegramMessageMock/sendTelegramPhotoMock so
+// every existing assertion in this file keeps working unchanged.
+const fakeTelegramAdapter = {
+  channel: 'telegram' as const,
+  capabilities: { buttons: true, threads: false, media: true, editMessage: true },
+  async sendText(creds: { botToken: string }, chatId: string, text: string) {
+    const r = await sendTelegramMessageMock({ chatId, text, botToken: creds.botToken });
+    return { messageId: String(r.messageId) };
+  },
+  async sendMedia(
+    creds: { botToken: string },
+    chatId: string,
+    media: { bytes: unknown; filename: string; caption?: string },
+  ) {
+    const r = await sendTelegramPhotoMock({
+      chatId,
+      botToken: creds.botToken,
+      photo: media.bytes,
+      filename: media.filename,
+      caption: media.caption,
+    });
+    return { messageId: String(r.messageId) };
+  },
+  async sendApprovalCard(
+    creds: { botToken: string },
+    chatId: string,
+    card: { text: string; approveLabel: string; rejectLabel: string; callbackId: string },
+  ) {
+    const inlineKeyboard = [
+      [
+        { text: card.approveLabel, callback_data: `${card.callbackId}:a` },
+        { text: card.rejectLabel, callback_data: `${card.callbackId}:r` },
+      ],
+    ];
+    const r = await sendTelegramMessageMock({
+      chatId,
+      botToken: creds.botToken,
+      text: card.text,
+      inlineKeyboard,
+    });
+    return { messageId: String(r.messageId) };
+  },
+};
+
 vi.mock('@nodal-agents/delivery', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@nodal-agents/delivery')>();
@@ -63,6 +114,7 @@ vi.mock('@nodal-agents/delivery', async (importOriginal) => {
     ...actual,
     sendTelegramMessage: sendTelegramMessageMock,
     sendTelegramPhoto: sendTelegramPhotoMock,
+    getAdapter: () => fakeTelegramAdapter,
   };
 });
 
