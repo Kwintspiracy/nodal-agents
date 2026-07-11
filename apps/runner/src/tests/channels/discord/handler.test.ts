@@ -40,14 +40,26 @@ function dm(
 
 function guildMessage(
   text: string,
-  opts: { mention?: boolean; replyToBotId?: string; channelId?: string } = {},
+  opts: {
+    mention?: boolean;
+    /** Mention via the bot's guild-managed ROLE (`<@&id>`) — what Discord's autocomplete actually inserts. */
+    roleMention?: string;
+    replyToBotId?: string;
+    channelId?: string;
+  } = {},
 ): DiscordInboundMessage {
+  const selfMentionTokens = [
+    ...(opts.mention ? [`<@${BOT_ID}>`, `<@!${BOT_ID}>`] : []),
+    ...(opts.roleMention ? [`<@&${opts.roleMention}>`] : []),
+  ];
   return {
     channelId: opts.channelId ?? 'guild-chan-1',
     channelType: 'guild_text',
     content: text,
     author: { id: 'u7', bot: false, username: 'alice', globalName: 'Alice' },
     mentionedUserIds: opts.mention ? [BOT_ID] : [],
+    mentionsSelf: opts.mention === true || opts.roleMention !== undefined ? true : undefined,
+    selfMentionTokens: selfMentionTokens.length > 0 ? selfMentionTokens : undefined,
     referencedMessageAuthorId: opts.replyToBotId,
     attachments: [],
   };
@@ -208,6 +220,63 @@ describe('handleDiscordMessage — guild channel mention gating', () => {
     expect(job?.task).toContain('[Message from Alice]');
     expect(job?.task).toContain('what time is it');
     expect(job?.task).not.toContain(`<@${BOT_ID}>`);
+  });
+
+  it('responds to a ROLE mention of the bot (what Discord autocomplete actually inserts) — live incident 2026-07-11', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('bootstrap owner', 'dm-owner-guild-role'));
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId,
+      channel: 'discord',
+      conversationId: 'guild-chan-role',
+      kind: 'channel',
+      role: 'member',
+      status: 'active',
+    });
+    // No user mention at all — mentionedUserIds is empty; only the managed
+    // role token, exactly the wire shape observed live (`<@&…> t la ?`).
+    const result = await call(
+      agentId,
+      guildMessage('<@&role-777> t la ?', {
+        roleMention: 'role-777',
+        channelId: 'guild-chan-role',
+      }),
+    );
+    expect(result.jobId).toBeDefined();
+
+    const [job] = await db.select().from(agentJobs).where(eq(agentJobs.id, result.jobId!));
+    expect(job?.task).toContain('[Message from Alice]');
+    expect(job?.task).toContain('t la ?');
+    expect(job?.task).not.toContain('<@&');
+  });
+
+  it('a ROLE mention from an UNKNOWN guild channel opens the pending-approval flow (no silent drop)', async () => {
+    const agentId = await freshBot();
+    await call(agentId, dm('bootstrap owner', 'dm-owner-guild-role2'));
+    const result = await call(
+      agentId,
+      guildMessage('<@&role-888> hello', {
+        roleMention: 'role-888',
+        channelId: 'guild-chan-unknown',
+      }),
+    );
+    expect(result.jobId).toBeUndefined();
+    expect(result.pendingAuth).toBeDefined();
+    expect(result.pendingAuth?.requesterConversationId).toBe('guild-chan-unknown');
+
+    const rows = await db
+      .select()
+      .from(channelAllowedConversations)
+      .where(
+        and(
+          eq(channelAllowedConversations.agentId, agentId),
+          eq(channelAllowedConversations.conversationId, 'guild-chan-unknown'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.status).toBe('pending');
+    expect(rows[0]!.kind).toBe('channel');
   });
 
   it('responds to a reply targeting the bot even without a mention', async () => {

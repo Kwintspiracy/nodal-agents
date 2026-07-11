@@ -64,18 +64,6 @@ export interface DiscordHandleResult {
 /** Discord's own default (non-boosted-server) upload cap — a reasonable inbound bound too. */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-const mentionRegexCache = new Map<string, RegExp>();
-
-/** Matches Discord's own mention wire format for a user id: `<@ID>` or the legacy `<@!ID>` (nickname mention). */
-function mentionRegex(userId: string): RegExp {
-  let re = mentionRegexCache.get(userId);
-  if (!re) {
-    re = new RegExp(`<@!?${userId}>`, 'g');
-    mentionRegexCache.set(userId, re);
-  }
-  return re;
-}
-
 export async function handleDiscordMessage(args: {
   message: DiscordInboundMessage;
   receivingAgentId: string;
@@ -99,8 +87,13 @@ export async function handleDiscordMessage(args: {
   const isGuild = message.channelType === 'guild_text';
   const senderName = sanitizeSenderName(message.author.globalName ?? message.author.username);
 
+  // mentionsSelf (gateway-computed) also covers the bot's guild-managed ROLE
+  // mention (`<@&roleId>`) — what Discord's autocomplete actually inserts when
+  // a human types `@BotName`. Fallback for legacy callers/fixtures: users-only.
   const isMention =
-    receivingAgentBotUserId !== null && message.mentionedUserIds.includes(receivingAgentBotUserId);
+    message.mentionsSelf ??
+    (receivingAgentBotUserId !== null &&
+      message.mentionedUserIds.includes(receivingAgentBotUserId));
   const replyToBot =
     receivingAgentBotUserId !== null &&
     message.referencedMessageAuthorId === receivingAgentBotUserId;
@@ -175,8 +168,17 @@ export async function handleDiscordMessage(args: {
     }
   } else if (isGuild) {
     let body = text;
-    if (isMention && receivingAgentBotUserId) {
-      body = body.replace(mentionRegex(receivingAgentBotUserId), '').trim();
+    if (isMention) {
+      // Strip exactly the tokens that refer to THIS bot (user and/or its
+      // managed role) — other users' mentions stay, they can be meaningful
+      // content ("demande à <@bob>").
+      const tokens =
+        message.selfMentionTokens ??
+        (receivingAgentBotUserId !== null
+          ? [`<@${receivingAgentBotUserId}>`, `<@!${receivingAgentBotUserId}>`]
+          : []);
+      for (const token of tokens) body = body.split(token).join('');
+      body = body.trim();
       if (!body) return { skipped: 'mention_no_text' };
     }
     taskText = `[Message from ${senderName}]: ${body}`;

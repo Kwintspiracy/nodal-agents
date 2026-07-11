@@ -61,8 +61,23 @@ export interface DiscordGatewayHandle {
 }
 
 /** Adapt a live discord.js Message into the neutral shape handler.ts operates on. */
-function toInboundMessage(message: Message): DiscordInboundMessage {
+function toInboundMessage(message: Message, botUserId: string | null): DiscordInboundMessage {
   const isDm = message.channel.type === ChannelType.DM;
+
+  // Bot mention = the bot's USER (`<@id>`/`<@!id>`) OR its guild-managed ROLE
+  // (`<@&roleId>`). Discord's autocomplete offers the role first when a human
+  // types `@BotName`, so most real mentions arrive as role mentions — a
+  // users-only check silently ignored them (live incident 2026-07-11).
+  const userMentioned = botUserId !== null && message.mentions.users.has(botUserId);
+  const managedRole =
+    botUserId !== null
+      ? message.mentions.roles.find((r) => r.tags?.botId === botUserId)
+      : undefined;
+  const selfMentionTokens = [
+    ...(botUserId !== null ? [`<@${botUserId}>`, `<@!${botUserId}>`] : []),
+    ...(managedRole ? [`<@&${managedRole.id}>`] : []),
+  ];
+
   return {
     channelId: message.channelId,
     channelType: isDm ? 'dm' : 'guild_text',
@@ -74,6 +89,8 @@ function toInboundMessage(message: Message): DiscordInboundMessage {
       globalName: message.author.globalName ?? null,
     },
     mentionedUserIds: [...message.mentions.users.keys()],
+    mentionsSelf: userMentioned || managedRole !== undefined,
+    selfMentionTokens,
     referencedMessageAuthorId: message.mentions.repliedUser?.id,
     attachments: [...message.attachments.values()].map((a) => ({
       url: a.url,
@@ -142,7 +159,7 @@ export function startDiscordGateway(opts: DiscordGatewayOpts): DiscordGatewayHan
     // (handleDiscordMessage re-checks this too, for direct unit-test coverage.)
     if (message.author.bot) return;
 
-    const inbound = toInboundMessage(message);
+    const inbound = toInboundMessage(message, client.user?.id ?? null);
     let result: DiscordHandleResult;
     try {
       result = await deps.db.transaction((tx) =>
