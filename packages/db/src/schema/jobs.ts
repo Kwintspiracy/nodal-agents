@@ -20,16 +20,28 @@ import { agentSchedules } from './schedules.ts';
  * Structured provenance for a job fired by an automated trigger, injected into
  * the system prompt's `## Runtime` block (buildRuntimeBlock in
  * packages/orchestration/src/system-prompt.ts) so the agent has a deterministic
- * cursor ("since when") instead of relying on its own memory. `prevRunAt` is the
- * schedule's `last_run` value AS IT WAS before this fire claimed it — null on a
- * schedule's first-ever run. Extensible: a future webhook trigger adds its own
- * `type: 'webhook'` variant; not built yet.
+ * cursor ("since when") instead of relying on its own memory.
+ *
+ * `cron`: `prevRunAt` is the schedule's `last_run` value AS IT WAS before this
+ * fire claimed it — null on a schedule's first-ever run.
+ *
+ * `webhook` (Brique 5): a `webhook_triggers` row fired this job. `slug`
+ * identifies the trigger row itself (stable across renames); `webhookName` is
+ * the human-readable name at fire time; `triggeredAt` is the ISO timestamp the
+ * runner received the request.
  */
-export type JobTriggerContext = {
-  type: 'cron';
-  scheduleName: string;
-  prevRunAt: string | null;
-};
+export type JobTriggerContext =
+  | {
+      type: 'cron';
+      scheduleName: string;
+      prevRunAt: string | null;
+    }
+  | {
+      type: 'webhook';
+      webhookName: string;
+      slug: string;
+      triggeredAt: string;
+    };
 
 export const agentJobs = pgTable(
   'agent_jobs',
@@ -175,7 +187,7 @@ export const agentJobs = pgTable(
     ),
     check(
       'agent_jobs_channel_check',
-      sql`${table.channel} IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard')`,
+      sql`${table.channel} IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook')`,
     ),
   ],
 );

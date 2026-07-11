@@ -51,6 +51,7 @@ import {
   agentMcpServers,
   toolCalls,
   agentSchedules,
+  webhookTriggers,
   entityLlmKeys,
   agentWorkspaces,
   entities,
@@ -6234,6 +6235,211 @@ export async function runScheduleNowAction(
   } catch (err) {
     console.error('[runScheduleNowAction]', err);
     return fail('db_error', 'Failed to run schedule now');
+  }
+}
+
+// ─── Webhook Trigger Actions ──────────────────────────────────────────────────
+// Inbound webhooks: an external service POSTs to /webhooks/:slug/:secret (runner,
+// apps/runner — wired separately) to fire an agent job. `slug` carries a bare
+// UNIQUE constraint (not entity-scoped, see packages/db/src/schema/webhooks.ts)
+// because the runtime route resolves the row by slug alone, before it knows
+// which entity owns it. The secret is only ever returned by create/rotate —
+// list never leaks it, so the UI can only offer a fresh URL right after one of
+// those two actions.
+
+export type WebhookTriggerRow = {
+  id: string;
+  agentId: string | null;
+  agentName: string | null;
+  name: string;
+  slug: string;
+  taskTemplate: string;
+  active: boolean;
+  hasSecret: boolean;
+  lastTriggeredAt: Date | null;
+  triggerCount: number;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+};
+
+function kebabSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+export async function listWebhookTriggersAction(): Promise<ActionResult<WebhookTriggerRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select({
+        id: webhookTriggers.id,
+        agentId: webhookTriggers.agentId,
+        agentName: agents.name,
+        name: webhookTriggers.name,
+        slug: webhookTriggers.slug,
+        taskTemplate: webhookTriggers.taskTemplate,
+        active: webhookTriggers.active,
+        secret: webhookTriggers.secret,
+        lastTriggeredAt: webhookTriggers.lastTriggeredAt,
+        triggerCount: webhookTriggers.triggerCount,
+        createdAt: webhookTriggers.createdAt,
+        updatedAt: webhookTriggers.updatedAt,
+      })
+      .from(webhookTriggers)
+      .leftJoin(agents, eq(agents.id, webhookTriggers.agentId))
+      .where(eq(webhookTriggers.entityId, session.entityId))
+      .orderBy(desc(webhookTriggers.updatedAt));
+
+    return ok(
+      rows.map(({ secret, ...r }) => ({
+        ...r,
+        active: r.active ?? true,
+        triggerCount: r.triggerCount ?? 0,
+        hasSecret: secret != null,
+      })),
+    );
+  } catch (err) {
+    console.error('[listWebhookTriggersAction]', err);
+    return fail('db_error', 'Failed to load webhooks');
+  }
+}
+
+const CreateWebhookTriggerSchema = z.object({
+  agentId: z.string().guid('Pick an agent'),
+  name: z.string().min(1).max(120),
+  taskTemplate: z.string().min(1),
+});
+
+export async function createWebhookTriggerAction(
+  raw: unknown,
+): Promise<ActionResult<{ id: string; slug: string; secret: string; path: string }>> {
+  try {
+    const session = await getSession();
+    const parsed = CreateWebhookTriggerSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+
+    // Verify the agent belongs to this entity.
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // slug is globally unique — append a short random suffix on collision
+    // rather than failing loud on a name someone else already picked.
+    const base = kebabSlug(parsed.data.name) || 'webhook';
+    const [collision] = await db
+      .select({ id: webhookTriggers.id })
+      .from(webhookTriggers)
+      .where(eq(webhookTriggers.slug, base));
+    const slug = collision ? `${base}-${randomBytes(3).toString('hex')}` : base;
+
+    const secret = randomBytes(16).toString('hex');
+
+    const [row] = await db
+      .insert(webhookTriggers)
+      .values({
+        entityId: session.entityId,
+        agentId: parsed.data.agentId,
+        name: parsed.data.name,
+        slug,
+        taskTemplate: parsed.data.taskTemplate,
+        active: true,
+        secret,
+      })
+      .returning({ id: webhookTriggers.id, slug: webhookTriggers.slug });
+    if (!row) return fail('db_error', 'Insert returned no row');
+
+    revalidatePath('/automations');
+    return ok({ id: row.id, slug: row.slug, secret, path: `/webhooks/${row.slug}/${secret}` });
+  } catch (err) {
+    console.error('[createWebhookTriggerAction]', err);
+    return fail('db_error', 'Failed to create webhook');
+  }
+}
+
+export async function rotateWebhookSecretAction(
+  id: string,
+): Promise<ActionResult<{ secret: string; path: string }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid webhook id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: webhookTriggers.id, slug: webhookTriggers.slug })
+      .from(webhookTriggers)
+      .where(and(eq(webhookTriggers.id, id), eq(webhookTriggers.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Webhook not found');
+
+    const secret = randomBytes(16).toString('hex');
+    await db
+      .update(webhookTriggers)
+      .set({ secret, updatedAt: new Date() })
+      .where(eq(webhookTriggers.id, id));
+
+    revalidatePath('/automations');
+    return ok({ secret, path: `/webhooks/${existing.slug}/${secret}` });
+  } catch (err) {
+    console.error('[rotateWebhookSecretAction]', err);
+    return fail('db_error', 'Failed to rotate webhook secret');
+  }
+}
+
+export async function toggleWebhookTriggerAction(
+  id: string,
+  active: boolean,
+): Promise<ActionResult<{ active: boolean }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid webhook id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: webhookTriggers.id })
+      .from(webhookTriggers)
+      .where(and(eq(webhookTriggers.id, id), eq(webhookTriggers.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Webhook not found');
+
+    await db
+      .update(webhookTriggers)
+      .set({ active, updatedAt: new Date() })
+      .where(eq(webhookTriggers.id, id));
+    revalidatePath('/automations');
+    return ok({ active });
+  } catch (err) {
+    console.error('[toggleWebhookTriggerAction]', err);
+    return fail('db_error', 'Failed to toggle webhook');
+  }
+}
+
+export async function deleteWebhookTriggerAction(id: string): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(id).success) {
+      return fail('validation_failed', 'Invalid webhook id');
+    }
+    const db = getDb();
+    const [existing] = await db
+      .select({ id: webhookTriggers.id })
+      .from(webhookTriggers)
+      .where(and(eq(webhookTriggers.id, id), eq(webhookTriggers.entityId, session.entityId)));
+    if (!existing) return fail('not_found', 'Webhook not found');
+    await db.delete(webhookTriggers).where(eq(webhookTriggers.id, id));
+    revalidatePath('/automations');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[deleteWebhookTriggerAction]', err);
+    return fail('db_error', 'Failed to delete webhook');
   }
 }
 

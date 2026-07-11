@@ -2765,6 +2765,215 @@ describe('runScheduleNowAction', () => {
   });
 });
 
+describe('listWebhookTriggersAction', () => {
+  it('returns ok with array and never leaks the secret', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000300',
+        agentId: 'aaaaaaaa-0000-0000-0000-000000000301',
+        agentName: 'Ops bot',
+        name: 'PR opened',
+        slug: 'pr-opened',
+        taskTemplate: 'A PR was opened: {pull_request.title}',
+        active: true,
+        secret: 'a'.repeat(32),
+        lastTriggeredAt: null,
+        triggerCount: 3,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]) as typeof currentDb;
+    const { listWebhookTriggersAction } = await import('../src/lib/actions.ts');
+    const r = await listWebhookTriggersAction();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(Array.isArray(r.data)).toBe(true);
+    const row = r.data[0] as unknown as Record<string, unknown>;
+    expect('secret' in row).toBe(false);
+    expect(row['hasSecret']).toBe(true);
+  });
+
+  it('hasSecret is false when the row has no secret set', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000302',
+        agentId: 'aaaaaaaa-0000-0000-0000-000000000303',
+        agentName: 'Ops bot',
+        name: 'No secret yet',
+        slug: 'no-secret-yet',
+        taskTemplate: 'Task',
+        active: true,
+        secret: null,
+        lastTriggeredAt: null,
+        triggerCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]) as typeof currentDb;
+    const { listWebhookTriggersAction } = await import('../src/lib/actions.ts');
+    const r = await listWebhookTriggersAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data[0]?.hasSecret).toBe(false);
+  });
+});
+
+describe('createWebhookTriggerAction', () => {
+  it('rejects bad agentId', async () => {
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'not-uuid',
+      name: 'X',
+      taskTemplate: 'Y',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('rejects empty task template', async () => {
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000310',
+      name: 'X',
+      taskTemplate: '',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when the agent does not belong to this entity', async () => {
+    currentDb = makeDbMixed({ select: [] }) as typeof currentDb;
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000311',
+      name: 'X',
+      taskTemplate: 'Y',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('derives a kebab slug from the name and mints a 32-char hex secret', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: 'aaaaaaaa-0000-0000-0000-000000000312' }], // agent ownership check
+        [], // slug collision check — no collision
+      ],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000313', slug: 'github-pr-opened' }],
+    }) as typeof currentDb;
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000312',
+      name: 'GitHub PR Opened!!',
+      taskTemplate: 'A PR was opened: {pull_request.title}',
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.slug).toBe('github-pr-opened');
+    expect(r.data.secret).toMatch(/^[0-9a-f]{32}$/);
+    expect(r.data.path).toBe(`/webhooks/github-pr-opened/${r.data.secret}`);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['slug']).toBe('github-pr-opened');
+    expect(values?.['active']).toBe(true);
+  });
+
+  it('appends a 6-hex suffix to the slug on a global collision', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: 'aaaaaaaa-0000-0000-0000-000000000314' }], // agent ownership check
+        [{ id: 'aaaaaaaa-0000-0000-0000-000000000000' }], // slug collision — taken
+      ],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000315', slug: 'daily-digest-abc123' }],
+    }) as typeof currentDb;
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000314',
+      name: 'Daily Digest',
+      taskTemplate: 'Summarize',
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['slug']).toMatch(/^daily-digest-[0-9a-f]{6}$/);
+  });
+});
+
+describe('rotateWebhookSecretAction', () => {
+  it('rejects a non-uuid id', async () => {
+    const { rotateWebhookSecretAction } = await import('../src/lib/actions.ts');
+    const r = await rotateWebhookSecretAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when missing or owned by another entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { rotateWebhookSecretAction } = await import('../src/lib/actions.ts');
+    const r = await rotateWebhookSecretAction('aaaaaaaa-0000-0000-0000-000000000320');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('mints a fresh 32-char hex secret and the matching path', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000321', slug: 'pr-opened' },
+    ]) as typeof currentDb;
+    const { rotateWebhookSecretAction } = await import('../src/lib/actions.ts');
+    const r = await rotateWebhookSecretAction('aaaaaaaa-0000-0000-0000-000000000321');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.secret).toMatch(/^[0-9a-f]{32}$/);
+    expect(r.data.path).toBe(`/webhooks/pr-opened/${r.data.secret}`);
+  });
+});
+
+describe('toggleWebhookTriggerAction', () => {
+  it('rejects a non-uuid id', async () => {
+    const { toggleWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await toggleWebhookTriggerAction('bad', true);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when missing or owned by another entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { toggleWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await toggleWebhookTriggerAction('aaaaaaaa-0000-0000-0000-000000000330', false);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('sets active to the explicit value passed in', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000331' }]) as typeof currentDb;
+    const { toggleWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await toggleWebhookTriggerAction('aaaaaaaa-0000-0000-0000-000000000331', false);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.active).toBe(false);
+  });
+});
+
+describe('deleteWebhookTriggerAction', () => {
+  it('rejects a non-uuid id', async () => {
+    const { deleteWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await deleteWebhookTriggerAction('bad');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when missing or owned by another entity', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { deleteWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await deleteWebhookTriggerAction('aaaaaaaa-0000-0000-0000-000000000340');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+});
+
 const CHAT_CONV_ID = 'aaaaaaaa-0000-0000-0000-000000000400';
 
 describe('sendChatMessageAction', () => {

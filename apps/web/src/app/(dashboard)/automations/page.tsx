@@ -1,13 +1,14 @@
-import { listAgentsAction, listSchedulesAction } from '@/lib/actions.ts';
+import { listAgentsAction, listSchedulesAction, listWebhookTriggersAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
 import AutomationsClient from './AutomationsClient.tsx';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AutomationsPage() {
-  const [agentsResult, schedulesResult] = await Promise.all([
+  const [agentsResult, schedulesResult, webhooksResult] = await Promise.all([
     listAgentsAction(),
     listSchedulesAction(),
+    listWebhookTriggersAction(),
   ]);
 
   if (!schedulesResult.ok) {
@@ -21,6 +22,7 @@ export default async function AutomationsPage() {
   }
 
   const agents = agentsResult.ok ? agentsResult.data : [];
+  const webhooks = webhooksResult.ok ? webhooksResult.data : [];
 
-  return <AutomationsClient agents={agents} schedules={schedulesResult.data} />;
+  return <AutomationsClient agents={agents} schedules={schedulesResult.data} webhooks={webhooks} />;
 }

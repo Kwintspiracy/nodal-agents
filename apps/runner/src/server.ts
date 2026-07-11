@@ -13,6 +13,7 @@ import { workerRoute } from './routes/worker.ts';
 import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
+import { webhookRoute } from './routes/webhook.ts';
 import { installSkillRoute, uninstallSkillRoute } from './routes/skills.ts';
 import { startCronTicker } from './cron/ticker.ts';
 import { startTelegramManager } from './telegram/manager.ts';
@@ -154,6 +155,12 @@ export function createApp(
   // WORKER_SECRET check inside the handlers (web → runner cross-process call).
   app.post('/api/skills/install', (c) => installSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/uninstall', (c) => uninstallSkillRoute(c, deps, runnerEnv));
+
+  // Inbound webhooks (Brique 5) — intentionally OUTSIDE requireRunnerAuth
+  // (that gate is a literal-path app.use on the four /api/* routes above, so
+  // it never matches here regardless). Auth is per-trigger: slug+secret in the
+  // path, checked inside webhookRoute against the webhook_triggers row.
+  app.post('/webhooks/:slug/:secret', (c) => webhookRoute(c, deps, runnerEnv));
 
   // ── 404 fallback ──────────────────────────────────────────────────────────────
   app.notFound((c) => c.json({ error: 'not_found' }, 404));

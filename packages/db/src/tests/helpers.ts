@@ -145,7 +145,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
       agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
       status text DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')),
-      channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard')),
+      channel text NOT NULL CHECK (channel IN ('telegram','api','whatsapp','internal','cron','task-board','slack','discord','dashboard','webhook')),
       task text NOT NULL,
       original_task text,
       chat_id text,
