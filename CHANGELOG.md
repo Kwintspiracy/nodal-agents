@@ -10,15 +10,28 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
-## v0.7.6 — Approval Authority · Jul 8, 2026
+## v0.7.6 — Approval Authority · Jul 11, 2026
 
-A Telegram security fix and a rebuilt chat page.
+A full communication-layer security audit, smarter scheduled runs, and a rebuilt chat page.
 
 **Highlights**
 
 - **Approval cards always go to the bot owner.** When someone you've authorized to talk to your bot (a guest chat) triggers an action that needs approval, the ✅/❌ card now lands in **your** private chat with the bot — never in the guest's. Previously a guest authorized via a private DM could tap ✅ on their own gated action and self-approve; that hole is closed, and guest-triggered approvals in groups no longer leak the card into the group either. Your own actions are unaffected. (Per-guest capability profiles — restricting *which* actions a guest can even request — are designed and coming next.)
 - **Scheduled reports and Telegram deliveries reach you, not a group.** A cron's success summary (and the dashboard's "send result via Telegram") used to target *the last chat the agent was spoken to in* — which a group message silently overwrote, so a report could leak into a group the moment someone @-mentioned the agent there. These now always deliver to the **owner's** private chat. A schedule can still be given an explicit target chat when you deliberately want it to post somewhere specific.
 - **Redesigned chat page.** The conversation view is rebuilt from the ground up: messages in a centered column, agent replies with a lime avatar and a clean name/text layout, dark bubbles for your messages, a floating rounded input, and a distinct Conversations panel. Same speed, same features — just far nicer to look at, in both light and dark themes.
+
+**Communication security (full audit — 11 findings, all fixed)**
+
+- **Agents can only message chats you've approved.** Every Telegram send tool (messages, images, files, media) now verifies an explicit target chat against your approved-chats list — an agent can never message an arbitrary chat id it learned or guessed, and a delegated worker using the entity's bot token is held to the same list. Sends are also hard-capped per job, so a runaway loop can't spam you.
+- **Files an agent sends are confined to its own space.** `send_file`/`send_image` used to read *any* path on the machine — a prompt-injected agent could exfiltrate config or credential files. Sources are now confined to the agent's workspaces, the skill store, and the temp dir; remote fetches are size-capped while streaming and blocked from link-local/metadata addresses, including via redirects. (Localhost stays available — your ComfyUI flow is untouched.)
+- **`/ask` respects each agent's own guest list.** Relaying a message to a sibling agent (`/ask finance-bot …`) now requires the chat to be approved for the *target* agent — otherwise the owner gets a confirmation card naming that agent. A relay can never claim bot ownership.
+- **One owner per bot, guaranteed.** A database constraint makes duplicate owner claims impossible (a race between two first contacts could previously mint two co-owners); requester names on approval cards are sanitized against impersonation tricks; group mentions only trigger on exact @username matches and on replies to *this* bot.
+
+**Scheduled runs got smarter**
+
+- **Cron jobs know "since when".** Every scheduled run now carries its schedule's previous fire time in context ("Previous run of this schedule: …"), so a watcher-style agent can reliably act only on what's *new* — no more re-announcing old items or depending on fragile memory. The groundwork for event-triggered automations.
+- **Silent schedules can still speak up.** A schedule with success-notifications off now lets its agent message *you* (the owner) when it decides something is worth saying — check a feed every 15 minutes, stay silent when nothing changed, ping you the moment something new appears.
+- **Freshly attached MCP servers work on their first job.** Tool caches are stored complete at install time, and a server that fails to spawn is logged loudly instead of silently contributing zero tools.
 
 ## v0.7.5 — The Trustworthy Orchestrator · Jul 8, 2026
 
