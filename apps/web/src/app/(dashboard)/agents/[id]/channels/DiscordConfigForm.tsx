@@ -9,6 +9,7 @@ import {
   type DiscordConfigRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 /**
  * Discord's connect/disconnect form — same shape as TelegramConfigForm, but
@@ -103,22 +104,19 @@ export default function DiscordConfigForm({
           />
         </label>
         <div className="flex items-center gap-2">
-          <button
-            type="submit"
-            disabled={isPending || !token}
-            className="px-4 py-2 text-sm font-medium bg-ok text-ink rounded-lg hover:bg-agent-vivid transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+          <PrimaryButton type="submit" variant="ink" size="sm" disabled={isPending || !token}>
             {isPending ? 'Saving…' : connected ? 'Replace token' : 'Connect'}
-          </button>
+          </PrimaryButton>
           {connected && (
-            <button
+            <PrimaryButton
               type="button"
+              variant="neutral"
+              size="sm"
               onClick={() => setConfirmOpen(true)}
               disabled={isPending}
-              className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-err hover:text-err transition-colors disabled:opacity-50"
             >
               Disconnect
-            </button>
+            </PrimaryButton>
           )}
         </div>
       </form>

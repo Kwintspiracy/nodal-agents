@@ -11,6 +11,7 @@ import {
   type WhatsAppPairingStatus,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 const POLL_INTERVAL_MS = 2000;
 // Statuses that don't need another poll: 'open' and 'logged_out' are stable
@@ -161,14 +162,15 @@ export default function WhatsAppConfigForm({
       </div>
 
       {status === 'disconnected' && (
-        <button
+        <PrimaryButton
           type="button"
+          variant="ink"
+          size="sm"
           onClick={handleConnect}
           disabled={isPending}
-          className="px-4 py-2 text-sm font-medium bg-ok text-ink rounded-lg hover:bg-agent-vivid transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isPending ? 'Starting…' : 'Connect WhatsApp'}
-        </button>
+        </PrimaryButton>
       )}
 
       {(status === 'connecting' || status === 'qr_pending' || status === 'closed') && (
@@ -188,14 +190,15 @@ export default function WhatsAppConfigForm({
       )}
 
       {status === 'open' && (
-        <button
+        <PrimaryButton
           type="button"
+          variant="neutral"
+          size="sm"
           onClick={() => setConfirmOpen(true)}
           disabled={isPending}
-          className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-lg hover:border-err hover:text-err transition-colors disabled:opacity-50"
         >
           Disconnect
-        </button>
+        </PrimaryButton>
       )}
 
       {status === 'logged_out' && (
@@ -203,14 +206,15 @@ export default function WhatsAppConfigForm({
           <p className="text-sm text-warn">
             This session was unlinked from your phone. Reconnect to pair again.
           </p>
-          <button
+          <PrimaryButton
             type="button"
+            variant="ink"
+            size="sm"
             onClick={handleConnect}
             disabled={isPending}
-            className="px-4 py-2 text-sm font-medium bg-ok text-ink rounded-lg hover:bg-agent-vivid transition-colors disabled:opacity-50"
           >
             {isPending ? 'Starting…' : 'Reconnect'}
-          </button>
+          </PrimaryButton>
         </div>
       )}
 
