@@ -15,7 +15,7 @@ import {
   and,
 } from '@nodal-agents/db';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import type { ToolContext, ToolProvisioning } from '../../types';
+import type { ToolContext, ToolProvisioning, ProvisionedMcpTool } from '../../types';
 import { createSkillTool } from './create-skill';
 import { updateSkillTool } from './update-skill';
 import { assignSkillTool } from './assign-skill';
@@ -570,7 +570,7 @@ describe('create_agent', () => {
 
 function fakeProvisioning(opts?: {
   fail?: boolean;
-  tools?: import('../../types').ProvisionedMcpTool[];
+  tools?: ProvisionedMcpTool[];
 }): ToolProvisioning {
   return {
     async connectMcp() {
