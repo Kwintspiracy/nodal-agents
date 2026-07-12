@@ -2016,7 +2016,7 @@ async function runJob(
     "demande d'approbation : elle attend la validation de l'utilisateur avant de s'exécuter. " +
     "Avant que le job se mette en pause, appelle `telegram_send_message` (l'outil d'envoi — il " +
     "livre sur le canal du job) pour dire à l'utilisateur, avec tes propres mots, quelle action " +
-    "tu as lancée et que tu attends son approbation (il pourra valider directement via les " +
+    'tu as lancée et que tu attends son approbation (il pourra valider directement via les ' +
     "boutons ✅/❌, ou depuis le dashboard). N'appelle PAS `return_result` — la mise en pause " +
     'est automatique.';
   // Approval grace window (Lot A1). Read via runnerEnv when available
@@ -3420,11 +3420,7 @@ async function runJob(
         if (toolResultBlocks.length > 0) {
           messages = [...messages, { role: 'tool', content: toolResultBlocks } as ModelMessage];
         }
-        if (
-          requiresToolDelivery &&
-          !toolDelivered &&
-          redeliveryNudges < MAX_REDELIVERY_NUDGES
-        ) {
+        if (requiresToolDelivery && !toolDelivered && redeliveryNudges < MAX_REDELIVERY_NUDGES) {
           redeliveryNudges += 1;
           trace('telegram_approval_nudge', { turn, attempt: redeliveryNudges });
           messages = [...messages, { role: 'user', content: approvalNudge } as ModelMessage];

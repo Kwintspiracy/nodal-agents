@@ -31,7 +31,13 @@ const SCHEMA_MAP_KEYS = new Set(['properties', 'patternProperties', '$defs', 'de
 // Keys whose values are lists of schemas.
 const SCHEMA_LIST_KEYS = new Set(['anyOf', 'oneOf', 'allOf', 'prefixItems']);
 // Keys whose values are a single nested schema.
-const SCHEMA_NODE_KEYS = new Set(['items', 'contains', 'not', 'additionalProperties', 'propertyNames']);
+const SCHEMA_NODE_KEYS = new Set([
+  'items',
+  'contains',
+  'not',
+  'additionalProperties',
+  'propertyNames',
+]);
 
 function isPlainObject(value: unknown): value is JsonSchemaNode {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

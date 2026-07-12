@@ -958,9 +958,7 @@ export default function OnboardingFlow() {
                   <button
                     key={c.value}
                     type="button"
-                    onClick={() =>
-                      finish(agentId ? `/agents/${agentId}/channels#${c.value}` : '/')
-                    }
+                    onClick={() => finish(agentId ? `/agents/${agentId}/channels#${c.value}` : '/')}
                     className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas px-4 py-3 text-left transition-colors hover:border-ink"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element -- static brand svg, same convention as the Channels page cards */}
@@ -1067,7 +1065,9 @@ function ModelField({
                   // can't call tools can't fill that role, so it's always
                   // gated here, not conditionally.
                   disabled={!m.capabilities.tools}
-                  title={!m.capabilities.tools ? "Can't use tools (required for your agent)" : undefined}
+                  title={
+                    !m.capabilities.tools ? "Can't use tools (required for your agent)" : undefined
+                  }
                 >
                   {modelOptionLabel(m)}
                 </option>
@@ -1079,7 +1079,9 @@ function ModelField({
                 key={`${gi}-${m.modelId}`}
                 value={m.modelId}
                 disabled={!m.capabilities.tools}
-                title={!m.capabilities.tools ? "Can't use tools (required for your agent)" : undefined}
+                title={
+                  !m.capabilities.tools ? "Can't use tools (required for your agent)" : undefined
+                }
               >
                 {modelOptionLabel(m)}
               </option>

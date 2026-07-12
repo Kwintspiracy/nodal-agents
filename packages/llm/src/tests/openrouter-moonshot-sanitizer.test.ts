@@ -50,7 +50,9 @@ describe('patchOpenRouterRequestBody', () => {
       tools: [rawKimiTool],
     }) as Record<string, unknown>;
     const tools = body['tools'] as Array<{ function: { parameters: Record<string, unknown> } }>;
-    expect((tools[0]!.function.parameters['properties'] as Record<string, unknown>)['city']).toEqual({
+    expect(
+      (tools[0]!.function.parameters['properties'] as Record<string, unknown>)['city'],
+    ).toEqual({
       type: 'string',
     });
   });

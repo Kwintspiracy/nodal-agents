@@ -132,9 +132,8 @@ describe('onboarding conversation — origin marker (migration 0065)', () => {
   });
 
   it('listConversationsAction never returns the onboarding conversation — whether it was skipped or finished', async () => {
-    const { createConversationAction, listConversationsAction } = await import(
-      '../src/lib/actions.ts'
-    );
+    const { createConversationAction, listConversationsAction } =
+      await import('../src/lib/actions.ts');
 
     // Case 1: started then skipped — the conversation is never touched again
     // after creation (no "mark as skipped" write path exists, by design —
