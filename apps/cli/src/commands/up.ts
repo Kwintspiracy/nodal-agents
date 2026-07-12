@@ -18,6 +18,7 @@ import {
   spawnRunner,
   spawnWeb,
   waitForHealth,
+  assertWebRenders,
   writePids,
   clearPids,
   killProcessTree,
@@ -366,6 +367,10 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
       waitForHealth(runnerUrl, runnerHealthMs),
       waitForHealth(webUrl, webHealthMs),
     ]);
+    // /api/health alone is NOT proof the dashboard renders — see
+    // assertWebRenders' doc (0.7.8 ritual: every page 500'd on a missing
+    // standalone dependency while both health endpoints stayed green).
+    await assertWebRenders(webUrl);
     healthSpinner.succeed(chalk.green('All services healthy'));
   } catch (err) {
     healthSpinner.fail('Health check timed out');

@@ -303,6 +303,37 @@ export async function waitForHealth(url: string, timeoutMs = 30_000): Promise<vo
   throw new Error(`Service at ${url} did not become healthy within ${timeoutMs}ms`);
 }
 
+/**
+ * Prove the web app actually RENDERS, not just that it answers /api/health.
+ * That endpoint is a trivial route: it stays 200 even when every (dashboard)
+ * page 500s — e.g. when a runtime dependency of the standalone build is
+ * missing from the pack's package.json (caught live on the 0.7.8 ritual:
+ * discord.js absent → MODULE_NOT_FOUND on every dashboard route, CLI still
+ * printed "All services healthy"). GET / follows redirects (login/onboarding
+ * are fine landings); anything 5xx after the deadline is a hard failure.
+ */
+export async function assertWebRenders(url: string, timeoutMs = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus = 0;
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${url}/`, { signal: controller.signal });
+      clearTimeout(t);
+      lastStatus = res.status;
+      if (res.status < 500) return;
+    } catch {
+      // Not ready yet
+    }
+    await sleep(1000);
+  }
+  throw new Error(
+    `Web responds on /api/health but page render fails (HTTP ${lastStatus || 'unreachable'}). ` +
+      'Check the web log (~/.nodalai/logs/web.log) for the underlying error.',
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }

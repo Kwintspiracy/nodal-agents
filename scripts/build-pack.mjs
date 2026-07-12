@@ -179,6 +179,17 @@ const packPkg = {
     // that import the adapter tree crash with `ReferenceError: DOMMatrix
     // is not defined`. Declared at top level so npm install hoists it.
     '@napi-rs/canvas': '^0.1.80',
+    // ── Channel SDKs (next.config.ts serverExternalPackages: the standalone
+    // web build does NOT bundle these — dashboard routes `require()` them at
+    // runtime via pack/node_modules, so they MUST be declared here. Missing
+    // them = every (dashboard) route 500s with MODULE_NOT_FOUND while the
+    // runner still boots fine (it bundles its own copies) — caught live on
+    // the 0.7.8 pack ritual, invisible to verify-install until declared.)
+    'discord.js': '^14.26.5',
+    // EXACT pin, no caret: ^6.7.23 resolves to 6.17.16 (chronologically OLDER
+    // despite the higher number), deprecated with a message-spoofing CVE.
+    // Mirrors packages/delivery/package.json.
+    '@whiskeysockets/baileys': '6.7.23',
     // ── Web deps (Next.js standalone server requires these at runtime)
     next: '^16.2.6',
     react: '19.2.4',
