@@ -9,6 +9,7 @@ import PillTabs2 from '@/components/ui/PillTabs2';
 import ChipRow from '@/components/ui/ChipRow';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import EmptyState from '@/components/ui/EmptyState';
 import { Plus } from '@phosphor-icons/react';
 import Modal from '@/components/ui/Modal';
 import McpInstalledTable from './McpInstalledTable.tsx';
@@ -167,29 +168,18 @@ export default function McpClient({ instances, catalog }: Props) {
 
 function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
   return (
-    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[14px] leading-[1.5] text-ink-3">
-        No MCP servers installed yet.
-        <br />
-        Pick one from the Marketplace — its tools become available to any agent you assign it to.
-      </p>
-      <div className="mt-4 inline-flex">
-        <button
-          type="button"
-          onClick={onBrowse}
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-conn-vivid px-3.5 text-[14px] font-medium leading-none text-white transition-[filter] hover:brightness-[0.94]"
-        >
+    <EmptyState
+      title="No MCP servers installed yet."
+      description="Pick one from the Marketplace — its tools become available to any agent you assign it to."
+      action={
+        <PrimaryButton variant="blue" onClick={onBrowse}>
           Browse Marketplace
-        </button>
-      </div>
-    </div>
+        </PrimaryButton>
+      }
+    />
   );
 }
 
 function EmptySearch() {
-  return (
-    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[14px] leading-[1.5] text-ink-3">No servers match your search.</p>
-    </div>
-  );
+  return <EmptyState title="No servers match your search." />;
 }

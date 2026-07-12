@@ -7,6 +7,7 @@ import Modal from '@/components/ui/Modal.tsx';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PageSearchInput from '@/components/ui/PageSearchInput';
+import EmptyState from '@/components/ui/EmptyState';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
 import {
   setReflectionEnabledAction,
@@ -273,18 +274,9 @@ export default function LearnedSkillsClient({
 
       {/* Skills list */}
       {localSkills.length === 0 ? (
-        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-          <p className="text-[14px] leading-[1.5] text-ink-3">
-            Your agents haven&apos;t learned anything yet. Enable agent learning above to get
-            started.
-          </p>
-        </div>
+        <EmptyState title="Your agents haven't learned anything yet. Enable agent learning above to get started." />
       ) : visibleSkills.length === 0 ? (
-        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-          <p className="text-[14px] leading-[1.5] text-ink-3">
-            No learned skills match &ldquo;{query}&rdquo;.
-          </p>
-        </div>
+        <EmptyState title={`No learned skills match "${query}".`} />
       ) : (
         <div className="space-y-2">
           {visibleSkills.map((skill) => (

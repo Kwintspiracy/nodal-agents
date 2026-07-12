@@ -48,6 +48,7 @@ import Disc from '@/components/ui/Disc';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import LiveDot from '@/components/ui/LiveDot';
 import RowActionButton from '@/components/ui/RowActionButton';
+import EmptyState from '@/components/ui/EmptyState';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Trash } from '@phosphor-icons/react';
 import NewMemoryModal from './NewMemoryModal';
@@ -499,12 +500,16 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
       {/* Memory table ───────────────────────────────────────────────────── */}
       <div className="mt-4 overflow-hidden rounded-xl border border-rule-2 bg-paper">
         {filtered.length === 0 ? (
-          <div className="px-6 py-12 text-center text-sm text-ink-4">
-            No memories match these filters.{' '}
-            {tab === 'all' && !q && agentFilter === 'all'
-              ? 'Agents save memories automatically when they call save_memory.'
-              : 'Try a different filter.'}
-          </div>
+          <EmptyState
+            compact
+            className="rounded-none border-0"
+            title="No memories match these filters."
+            description={
+              tab === 'all' && !q && agentFilter === 'all'
+                ? 'Agents save memories automatically when they call save_memory.'
+                : 'Try a different filter.'
+            }
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

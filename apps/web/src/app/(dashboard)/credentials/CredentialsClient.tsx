@@ -10,6 +10,7 @@ import CredentialWizard from './CredentialWizard.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
+import EmptyState from '@/components/ui/EmptyState';
 import type { ActionResult } from '@/lib/actions.ts';
 
 interface Props {
@@ -55,19 +56,16 @@ export default function CredentialsClient({
       }
     >
       {credentials.length === 0 ? (
-        <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-          <p className="text-sm text-ink-3">
-            Credentials store your OAuth client ID and secret securely (encrypted at rest).
-            <br />
-            Once created, multiple connectors can share the same credential.
-          </p>
-          <div className="mt-4 inline-flex">
-            <PrimaryButton variant="ink" onClick={() => setWizardOpen(true)}>
+        <EmptyState
+          title="Credentials store your OAuth client ID and secret securely (encrypted at rest)."
+          description="Once created, multiple connectors can share the same credential."
+          action={
+            <PrimaryButton variant="neutral" onClick={() => setWizardOpen(true)}>
               <Plus size={13} weight="bold" />
               Create your first credential
             </PrimaryButton>
-          </div>
-        </div>
+          }
+        />
       ) : (
         <CredentialsTable
           credentials={credentials}

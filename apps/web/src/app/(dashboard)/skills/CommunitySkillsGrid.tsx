@@ -8,6 +8,7 @@ import { COMMUNITY_SKILL_CATALOG, type CommunitySkillCatalogEntry } from '@nodal
 import { installCommunitySkillAction } from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
+import EmptyState from '@/components/ui/EmptyState';
 
 type Props = {
   /** Slugs already installed in this workspace — drives the "Installed" state. */
@@ -52,13 +53,7 @@ export default function CommunitySkillsGrid({
     );
 
   if (entries.length === 0) {
-    return (
-      <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-        <p className="text-[14px] leading-[1.5] text-ink-3">
-          No community skills match your search.
-        </p>
-      </div>
-    );
+    return <EmptyState title="No community skills match your search." />;
   }
 
   return (

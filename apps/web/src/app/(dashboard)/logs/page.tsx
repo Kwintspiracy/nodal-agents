@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { listAgentsAction, listToolCallsAction, listToolNamesAction } from '@/lib/actions.ts';
 import PageShell from '@/components/ui/PageShell';
+import EmptyState from '@/components/ui/EmptyState';
 import LogFilters from './LogFilters.tsx';
 import LogsTable from './LogsTable.tsx';
 
@@ -54,9 +55,7 @@ export default async function LogsPage({ searchParams }: PageProps) {
     >
       <div className="space-y-6">
         {result.data.items.length === 0 ? (
-          <div className="rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
-            No tool calls yet. Send a task on the Tasks page to generate some.
-          </div>
+          <EmptyState title="No tool calls yet. Send a task on the Tasks page to generate some." />
         ) : (
           <LogsTable items={result.data.items} />
         )}

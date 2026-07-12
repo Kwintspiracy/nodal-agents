@@ -10,6 +10,7 @@ import PillTabs2 from '@/components/ui/PillTabs2';
 import ChipRow from '@/components/ui/ChipRow';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import EmptyState from '@/components/ui/EmptyState';
 import SkillsAssignedTable from './SkillsAssignedTable.tsx';
 import CommunitySkillsGrid from './CommunitySkillsGrid.tsx';
 import InstallCommunitySkillModal from './InstallCommunitySkillModal.tsx';
@@ -113,11 +114,7 @@ export default function SkillsClient({ skills, agents }: Props) {
 
       {tab === 'assigned' ? (
         assignedSkills.length === 0 ? (
-          <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-            <p className="text-[14px] leading-[1.5] text-ink-3">
-              No skills assigned to any agent yet. Browse the Library to add one.
-            </p>
-          </div>
+          <EmptyState title="No skills assigned to any agent yet. Browse the Library to add one." />
         ) : (
           <SkillsAssignedTable skills={filteredAssigned} agents={agents} />
         )

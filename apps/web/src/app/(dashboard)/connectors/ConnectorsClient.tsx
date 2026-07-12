@@ -9,6 +9,7 @@ import PillTabs2 from '@/components/ui/PillTabs2';
 import ChipRow from '@/components/ui/ChipRow';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import EmptyState from '@/components/ui/EmptyState';
 import { Plus } from '@phosphor-icons/react';
 import ConnectorsInstalledTable from './ConnectorsInstalledTable.tsx';
 import ConnectorsMarketplaceGrid from './ConnectorsMarketplaceGrid.tsx';
@@ -125,25 +126,18 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
 
 function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
   return (
-    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[14px] leading-[1.5] text-ink-3">
-        No connectors installed yet.
-        <br />
-        Browse the Marketplace to add one.
-      </p>
-      <div className="mt-4 inline-flex">
+    <EmptyState
+      title="No connectors installed yet."
+      description="Browse the Marketplace to add one."
+      action={
         <PrimaryButton variant="blue" onClick={onBrowse}>
           Browse Marketplace
         </PrimaryButton>
-      </div>
-    </div>
+      }
+    />
   );
 }
 
 function EmptySearch() {
-  return (
-    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[14px] leading-[1.5] text-ink-3">No connectors match your search.</p>
-    </div>
-  );
+  return <EmptyState title="No connectors match your search." />;
 }

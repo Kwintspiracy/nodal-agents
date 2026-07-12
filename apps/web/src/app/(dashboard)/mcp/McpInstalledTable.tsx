@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { GearSix } from '@phosphor-icons/react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
 import Disc from '@/components/ui/Disc';
 import { connIcon, connEmoji } from '../connectors/connector-brand.ts';
 import MonoCode from '@/components/ui/MonoCode';
 import StatusPill from '@/components/ui/StatusPill';
+import RowActionButton from '@/components/ui/RowActionButton';
 import McpServerRow from './McpServerRow.tsx';
 
 const MCP_BLUE = '#3565ff';
@@ -140,13 +142,9 @@ function McpRow({
         {/* Actions */}
         <td className="px-[18px] py-[13px] align-middle">
           <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
-            >
+            <RowActionButton icon={<GearSix size={13} />} onClick={() => setExpanded((v) => !v)}>
               {expanded ? 'Close' : 'Configure'}
-            </button>
+            </RowActionButton>
           </div>
         </td>
       </tr>

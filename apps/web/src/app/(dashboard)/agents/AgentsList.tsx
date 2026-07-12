@@ -55,6 +55,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ChatsCircle, PencilSimple } from '@phosphor-icons/react';
+import RowActionButton from '@/components/ui/RowActionButton';
+import EmptyState from '@/components/ui/EmptyState';
 import {
   reorderAgentsAction,
   deleteAgentAction,
@@ -217,13 +219,7 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
   }
 
   if (groups.length === 0) {
-    return (
-      <div className="bg-paper border border-rule-2 rounded-xl overflow-hidden">
-        <div className="px-6 py-12 text-center text-ink-4 text-sm">
-          No agents yet. Create one above.
-        </div>
-      </div>
-    );
+    return <EmptyState title="No agents yet. Create one above." />;
   }
 
   // IDs for the group-level SortableContext: just the orchestrators that
@@ -603,24 +599,22 @@ function RowActions({ agent }: { agent: AgentRow }) {
       {/* Icon-only on mobile, label on desktop — keeps the row inside narrow
           screens instead of clipping the buttons against the card edge. */}
       <div className="flex items-center justify-end gap-2">
-        <Link
+        <RowActionButton
           href={`/agents/${agent.id}/channels`}
-          aria-label="Channels"
+          icon={<ChatsCircle size={13} />}
           title="Channels"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-rule-2 px-2.5 py-1.5 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink sm:px-3"
+          responsive
         >
-          <ChatsCircle size={15} className="sm:hidden" />
-          <span className="hidden sm:inline">Channels</span>
-        </Link>
-        <Link
+          Channels
+        </RowActionButton>
+        <RowActionButton
           href={`/agents/${agent.id}/edit`}
-          aria-label="Edit"
+          icon={<PencilSimple size={13} />}
           title="Edit"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-rule-2 px-2.5 py-1.5 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink sm:px-3"
+          responsive
         >
-          <PencilSimple size={15} className="sm:hidden" />
-          <span className="hidden sm:inline">Edit</span>
-        </Link>
+          Edit
+        </RowActionButton>
         <DeleteAgentButton id={agent.id} name={agent.name} deleteAction={deleteAgentAction} />
       </div>
     </td>

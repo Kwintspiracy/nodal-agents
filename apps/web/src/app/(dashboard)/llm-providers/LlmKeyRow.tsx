@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { GearSix } from '@phosphor-icons/react';
+import { GearSix, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
 import { deleteLlmKeyAction, setLlmKeyActiveAction, type LlmKeyUiRow } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 
@@ -119,22 +120,17 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
       <div className="flex items-center justify-between border-t border-rule-2 pt-[10px]">
         <AgentUsage count={row.agentCount} keyId={row.id} />
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={onEdit}
-            className="inline-flex h-[28px] items-center gap-1 rounded-md border border-rule px-[10px] text-[12px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
-          >
-            <GearSix size={12} weight="regular" />
+          <RowActionButton icon={<GearSix size={13} weight="regular" />} onClick={onEdit}>
             Configure
-          </button>
-          <button
-            type="button"
+          </RowActionButton>
+          <RowActionButton
+            icon={<Trash size={13} />}
+            tone="danger"
             onClick={() => setConfirmOpen(true)}
             disabled={isPending}
-            className="inline-flex h-[28px] items-center rounded-md border border-err/30 px-[10px] text-[12px] font-medium text-err transition-colors hover:border-err/60 hover:bg-warn-bg disabled:opacity-40"
           >
             Delete
-          </button>
+          </RowActionButton>
         </div>
       </div>
 

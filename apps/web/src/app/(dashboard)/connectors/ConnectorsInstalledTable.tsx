@@ -1,12 +1,20 @@
 'use client';
 
-import { useState } from 'react';
-import type { ConnectorRow, ConnectorCatalogItem } from '@/lib/actions.ts';
+import { useState, useTransition } from 'react';
+import { toast } from 'sonner';
+import { GearSix, Trash } from '@phosphor-icons/react';
+import {
+  deleteConnectorAction,
+  type ConnectorRow,
+  type ConnectorCatalogItem,
+} from '@/lib/actions.ts';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
 import Disc from '@/components/ui/Disc';
 import StatusPill from '@/components/ui/StatusPill';
 import CountPill from '@/components/ui/CountPill';
+import RowActionButton from '@/components/ui/RowActionButton';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import ConnectorForm from './ConnectorForm.tsx';
 import { CONN_BRAND_COLORS, connGlyph, connIcon } from './connector-brand.ts';
 
@@ -94,6 +102,8 @@ function ConnectorRow({
   compatibleCredentials: CompatibleCredential[];
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
   const brandColor = CONN_BRAND_COLORS[instance.slug];
   const glyph = connGlyph(instance.slug, catalogEntry.label);
@@ -102,6 +112,15 @@ function ConnectorRow({
   const scopeList = instance.credentialScopes
     ? instance.credentialScopes.split(/\s+/).filter(Boolean)
     : [];
+
+  function performDelete() {
+    setConfirmOpen(false);
+    startTransition(async () => {
+      const r = await deleteConnectorAction(instance.id);
+      if (!r.ok) toast.error(r.message);
+      else toast.success(`${instance.name} removed`);
+    });
+  }
 
   return (
     <>
@@ -164,13 +183,17 @@ function ConnectorRow({
         {/* Actions */}
         <td className="px-[18px] py-[13px] align-middle">
           <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
-            >
+            <RowActionButton icon={<GearSix size={13} />} onClick={() => setExpanded((v) => !v)}>
               {expanded ? 'Close' : 'Configure'}
-            </button>
+            </RowActionButton>
+            <RowActionButton
+              icon={<Trash size={13} />}
+              tone="danger"
+              disabled={isPending}
+              onClick={() => setConfirmOpen(true)}
+            >
+              Delete
+            </RowActionButton>
           </div>
         </td>
       </tr>
@@ -187,6 +210,19 @@ function ConnectorRow({
           </td>
         </tr>
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`${instance.authType === 'oauth2' ? 'Disconnect' : 'Delete'} "${instance.name}"?`}
+        message={
+          instance.authType === 'oauth2'
+            ? 'Tools that depend on this connector will fail until you reconnect. Existing job history is preserved.'
+            : 'This connector instance will be permanently removed. Existing job history is preserved.'
+        }
+        confirmLabel={instance.authType === 'oauth2' ? 'Disconnect' : 'Delete'}
+        onConfirm={performDelete}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </>
   );
 }

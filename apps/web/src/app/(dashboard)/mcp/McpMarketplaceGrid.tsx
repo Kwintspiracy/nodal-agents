@@ -6,6 +6,7 @@ import { CheckCircle } from '@phosphor-icons/react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
+import EmptyState from '@/components/ui/EmptyState';
 import { connIcon, connEmoji } from '../connectors/connector-brand.ts';
 import Modal from '@/components/ui/Modal';
 import McpAddForm from './McpAddForm.tsx';
@@ -33,9 +34,7 @@ export default function McpMarketplaceGrid({ catalog, instances }: Props) {
     return a.label.localeCompare(b.label);
   });
   return catalog.length === 0 ? (
-    <div className="rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center">
-      <p className="text-[14px] text-ink-3">No servers in this category.</p>
-    </div>
+    <EmptyState title="No servers in this category." />
   ) : (
     <div className="grid auto-rows-fr grid-cols-1 gap-3.5 md:grid-cols-2 lg:grid-cols-4">
       {sortedCatalog.map((item) => {

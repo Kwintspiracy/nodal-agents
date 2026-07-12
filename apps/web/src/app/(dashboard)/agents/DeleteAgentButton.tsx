@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Trash } from '@phosphor-icons/react';
 import type { ActionResult } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
 
 export default function DeleteAgentButton({
   id,
@@ -36,16 +37,16 @@ export default function DeleteAgentButton({
 
   return (
     <>
-      <button
+      <RowActionButton
         onClick={() => setConfirmOpen(true)}
         disabled={isPending}
-        aria-label="Delete"
+        icon={<Trash size={13} />}
+        tone="danger"
         title="Delete"
-        className="inline-flex items-center gap-1.5 rounded-lg border border-rule-2 px-2.5 py-1.5 text-xs font-medium text-ink-3 transition-colors hover:border-err hover:text-err disabled:opacity-50 sm:px-3"
+        responsive
       >
-        <Trash size={15} className="sm:hidden" />
-        <span className="hidden sm:inline">{isPending ? 'Deleting…' : 'Delete'}</span>
-      </button>
+        {isPending ? 'Deleting…' : 'Delete'}
+      </RowActionButton>
       <ConfirmDialog
         open={confirmOpen}
         title={`Delete agent "${name}"?`}

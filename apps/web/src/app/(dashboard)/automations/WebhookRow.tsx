@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { Play, Pause, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import {
   toggleWebhookTriggerAction,
   rotateWebhookSecretAction,
@@ -12,6 +13,8 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import StatusPill from '@/components/ui/StatusPill';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
+import RowActionButton from '@/components/ui/RowActionButton';
+import Menu from '@/components/ui/Menu';
 
 interface Revealed {
   secret: string;
@@ -95,30 +98,30 @@ export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) 
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
+          <RowActionButton
+            icon={w.active ? <Pause size={13} weight="fill" /> : <Play size={13} weight="fill" />}
             onClick={handleToggle}
             disabled={isPending}
-            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
           >
             {w.active ? 'Pause' : 'Enable'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setRotateConfirmOpen(true)}
-            disabled={isPending}
-            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
-          >
-            {revealed ? 'Rotate' : 'Rotate secret…'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setDeleteConfirmOpen(true)}
-            disabled={isPending}
-            className="rounded-md border border-err/30 px-2.5 py-1 text-xs font-medium text-err transition-colors hover:border-err/60 disabled:opacity-40"
-          >
-            Delete
-          </button>
+          </RowActionButton>
+          <Menu
+            items={[
+              {
+                label: revealed ? 'Rotate' : 'Rotate secret…',
+                icon: <ArrowClockwise size={13} />,
+                onSelect: () => setRotateConfirmOpen(true),
+                disabled: isPending,
+              },
+              {
+                label: 'Delete',
+                icon: <Trash size={13} />,
+                onSelect: () => setDeleteConfirmOpen(true),
+                tone: 'danger',
+                disabled: isPending,
+              },
+            ]}
+          />
         </div>
       </div>
 

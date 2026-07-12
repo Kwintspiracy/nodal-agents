@@ -3,12 +3,14 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { Prohibit } from '@phosphor-icons/react';
 import {
   revokeChannelAllowedConversationAction,
   resolveChannelAllowedConversationAction,
   type ChannelAllowedConversationView,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
 
 /**
  * Channel-neutral allowlist widget — same rendering/behavior as
@@ -127,14 +129,15 @@ export default function ChannelAllowlist({
                   Owner
                 </span>
               ) : (
-                <button
-                  type="button"
+                <RowActionButton
+                  icon={<Prohibit size={13} />}
+                  tone="danger"
                   disabled={isPending}
                   onClick={() => setRevokeTarget(c)}
-                  className="text-xs rounded-md border border-rule-2 text-ink-3 px-2.5 py-1 hover:text-err hover:border-err/40 transition-colors disabled:opacity-50 shrink-0"
+                  className="shrink-0"
                 >
                   Revoke
-                </button>
+                </RowActionButton>
               )}
             </div>
           ))}

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { Play, Pause, PencilSimple, Copy, Trash } from '@phosphor-icons/react';
 import {
   toggleScheduleAction,
   deleteScheduleAction,
@@ -14,6 +15,8 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import ScheduleForm from './ScheduleForm.tsx';
 import { humanLabel } from '@/lib/cron.ts';
 import StatusPill from '@/components/ui/StatusPill';
+import RowActionButton from '@/components/ui/RowActionButton';
+import Menu from '@/components/ui/Menu';
 
 interface Props {
   schedule: ScheduleRowData;
@@ -125,48 +128,44 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
+          <RowActionButton
+            icon={<Play size={13} weight="fill" />}
             onClick={handleRunNow}
             disabled={isPending || !s.task}
             title={s.task ? 'Run this automation now, outside its schedule' : 'No task to run'}
-            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
           >
-            ▶ Run now
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            disabled={isPending}
-            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            onClick={handleDuplicate}
-            disabled={isPending}
-            title="Create a paused copy of this automation"
-            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
-          >
-            Duplicate
-          </button>
-          <button
-            type="button"
+            Run now
+          </RowActionButton>
+          <RowActionButton
+            icon={s.active ? <Pause size={13} weight="fill" /> : <Play size={13} weight="fill" />}
             onClick={handleToggle}
             disabled={isPending}
-            className="rounded-md border border-rule-2 px-2.5 py-1 text-xs font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
           >
             {s.active ? 'Pause' : 'Enable'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-            disabled={isPending}
-            className="rounded-md border border-err/30 px-2.5 py-1 text-xs font-medium text-err transition-colors hover:border-err/60 disabled:opacity-40"
-          >
-            Delete
-          </button>
+          </RowActionButton>
+          <Menu
+            items={[
+              {
+                label: 'Edit',
+                icon: <PencilSimple size={13} />,
+                onSelect: () => setEditing(true),
+                disabled: isPending,
+              },
+              {
+                label: 'Duplicate',
+                icon: <Copy size={13} />,
+                onSelect: handleDuplicate,
+                disabled: isPending,
+              },
+              {
+                label: 'Delete',
+                icon: <Trash size={13} />,
+                onSelect: () => setConfirmOpen(true),
+                tone: 'danger',
+                disabled: isPending,
+              },
+            ]}
+          />
         </div>
       </div>
 

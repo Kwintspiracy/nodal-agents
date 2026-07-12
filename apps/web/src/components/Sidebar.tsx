@@ -85,7 +85,7 @@ const NAV: Group[] = [
   {
     section: 'Operate',
     items: [
-      { href: '/automations', label: 'Automation', icon: ClockCountdown },
+      { href: '/automations', label: 'Automations & Webhooks', icon: ClockCountdown },
       { href: '/approvals', label: 'Approvals', icon: ShieldCheck },
       { href: '/logs', label: 'Logs', icon: ListMagnifyingGlass },
     ],

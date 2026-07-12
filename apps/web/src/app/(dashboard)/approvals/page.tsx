@@ -6,6 +6,7 @@ import ApprovalCard from '@/components/ui/ApprovalCard';
 import StatusPill from '@/components/ui/StatusPill';
 import type { StatusVariant } from '@/components/ui/StatusPill';
 import PageShell from '@/components/ui/PageShell';
+import EmptyState from '@/components/ui/EmptyState';
 import ApprovalActions from './ApprovalActions.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -74,11 +75,13 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
       }
     >
       {result.data.length === 0 ? (
-        <div className="rounded-xl border border-rule-2 bg-paper px-6 py-12 text-center text-sm text-ink-4">
-          {status === 'pending'
-            ? 'No pending approvals. Tools that require approval show up here.'
-            : `No ${status} approvals.`}
-        </div>
+        <EmptyState
+          title={
+            status === 'pending'
+              ? 'No pending approvals. Tools that require approval show up here.'
+              : `No ${status} approvals.`
+          }
+        />
       ) : (
         <div className="space-y-3">
           {result.data.map((a) => (

@@ -1,14 +1,15 @@
 'use client';
 
-import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { DotsThree, PencilSimple, Plus, Trash, CloudX } from '@phosphor-icons/react';
+import { PencilSimple, Plus, Trash, CloudX } from '@phosphor-icons/react';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import { deleteSkillAction, uninstallCommunitySkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
 import CountPill from '@/components/ui/CountPill';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import Menu from '@/components/ui/Menu';
 import AssignSkillModal from './AssignSkillModal.tsx';
 
 type Props = {
@@ -67,7 +68,6 @@ function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right'
 function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -130,65 +130,38 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
 
       <td className="px-[18px] py-4 align-middle">
         <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
+          <RowActionButton
+            icon={<Plus size={13} weight="bold" />}
             onClick={() => setAssignOpen(true)}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
           >
-            <Plus size={13} weight="bold" />
             Assign
-          </button>
-          <Link
-            href={`/skills/${skill.id}/edit`}
-            className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-rule bg-paper px-3 text-[12px] font-medium leading-none text-ink-2 transition-colors hover:bg-hover hover:text-ink"
-          >
-            <PencilSimple size={13} />
+          </RowActionButton>
+          <RowActionButton icon={<PencilSimple size={13} />} href={`/skills/${skill.id}/edit`}>
             Customise
-          </Link>
+          </RowActionButton>
           {!skill.isSystem && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setMenuOpen((v) => !v)}
-                aria-label="More actions"
-                className="flex h-[30px] w-[30px] items-center justify-center rounded-[7px] border border-rule bg-paper text-ink-3 transition-colors hover:text-ink"
-              >
-                <DotsThree size={16} weight="bold" />
-              </button>
-              {menuOpen && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                  <div className="absolute top-[calc(100%+4px)] right-0 z-20 min-w-[140px] rounded-[9px] border border-rule-2 bg-paper p-1 shadow-[0_12px_32px_rgba(0,0,0,0.10)]">
-                    {skill.isCommunity && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          setUninstallConfirmOpen(true);
-                        }}
-                        disabled={isPending}
-                        className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-err transition-colors hover:bg-warn-bg disabled:opacity-40"
-                      >
-                        <CloudX size={13} />
-                        Uninstall
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        setConfirmOpen(true);
-                      }}
-                      disabled={isPending}
-                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-err transition-colors hover:bg-warn-bg disabled:opacity-40"
-                    >
-                      <Trash size={13} />
-                      Delete
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            <Menu
+              items={[
+                ...(skill.isCommunity
+                  ? [
+                      {
+                        label: 'Uninstall',
+                        icon: <CloudX size={13} />,
+                        onSelect: () => setUninstallConfirmOpen(true),
+                        tone: 'danger' as const,
+                        disabled: isPending,
+                      },
+                    ]
+                  : []),
+                {
+                  label: 'Delete',
+                  icon: <Trash size={13} />,
+                  onSelect: () => setConfirmOpen(true),
+                  tone: 'danger',
+                  disabled: isPending,
+                },
+              ]}
+            />
           )}
         </div>
         <ConfirmDialog

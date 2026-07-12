@@ -2,9 +2,11 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { PencilSimple, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CountPill from '@/components/ui/CountPill';
 import StatusPill from '@/components/ui/StatusPill';
+import RowActionButton from '@/components/ui/RowActionButton';
 import type { CredentialEntry } from './CredentialCard.tsx';
 import type { ActionResult } from '@/lib/actions.ts';
 
@@ -148,9 +150,6 @@ function CredentialRow({
         ? { variant: 'warn' as const, label: 'Expired' }
         : { variant: 'done' as const, label: 'Connected' };
 
-  const btn =
-    'inline-flex h-[28px] items-center rounded-md border border-rule-2 bg-paper px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-hover hover:text-ink disabled:opacity-40';
-
   return (
     <>
       <tr className="border-b border-rule-2 last:border-0 hover:bg-hover">
@@ -198,32 +197,30 @@ function CredentialRow({
         {/* Actions */}
         <td className={TD}>
           <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              className={btn}
+            <RowActionButton
+              icon={<PencilSimple size={13} />}
               onClick={() => setRenameOpen((v) => !v)}
               disabled={isPending || isRefreshing}
             >
               Rename
-            </button>
+            </RowActionButton>
             {supportsRefresh && (
-              <button
-                type="button"
-                className={btn}
+              <RowActionButton
+                icon={<ArrowClockwise size={13} />}
                 onClick={performRefresh}
                 disabled={isPending || isRefreshing}
               >
                 {isRefreshing ? 'Refreshing…' : 'Refresh'}
-              </button>
+              </RowActionButton>
             )}
-            <button
-              type="button"
-              className="inline-flex h-[28px] items-center rounded-md border border-err/30 px-2.5 text-[12px] font-medium text-err transition-colors hover:border-err disabled:opacity-40"
+            <RowActionButton
+              icon={<Trash size={13} />}
+              tone="danger"
               onClick={() => setDeleteOpen(true)}
               disabled={isPending || isRefreshing}
             >
               Delete
-            </button>
+            </RowActionButton>
           </div>
         </td>
       </tr>
@@ -266,9 +263,7 @@ function CredentialRow({
               >
                 {isPending ? 'Saving…' : 'Save'}
               </button>
-              <button type="button" onClick={() => setRenameOpen(false)} className={btn}>
-                Cancel
-              </button>
+              <RowActionButton onClick={() => setRenameOpen(false)}>Cancel</RowActionButton>
             </div>
           </td>
         </tr>
