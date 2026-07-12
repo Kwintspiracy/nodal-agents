@@ -6865,9 +6865,13 @@ function isNewerVersion(latest: string, current: string): boolean {
 }
 
 // Cache the npm lookup so navigating the dashboard doesn't hit the registry on
-// every sidebar mount. A 30-minute TTL is plenty for an update nudge.
+// every sidebar mount. A 30-minute TTL is plenty for an update nudge — but a
+// FAILED lookup (registry hiccup, offline moment, the 4s abort) must not
+// poison the nudge for that long: null results expire after one minute so the
+// next sidebar mount retries soon.
 let _versionCache: { at: number; latest: string | null } | null = null;
 const VERSION_TTL_MS = 30 * 60 * 1000;
+const VERSION_FAILURE_TTL_MS = 60 * 1000;
 
 /**
  * Version info for the sidebar update badge: the running version, the latest on
@@ -6880,7 +6884,8 @@ export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>>
   let latest: string | null = null;
   try {
     const now = Date.now();
-    if (_versionCache && now - _versionCache.at < VERSION_TTL_MS) {
+    const cacheTtl = _versionCache?.latest === null ? VERSION_FAILURE_TTL_MS : VERSION_TTL_MS;
+    if (_versionCache && now - _versionCache.at < cacheTtl) {
       latest = _versionCache.latest;
     } else {
       const controller = new AbortController();
