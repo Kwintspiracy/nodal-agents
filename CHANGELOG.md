@@ -10,11 +10,24 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
-## v0.7.6 — Approval Authority · Jul 11, 2026
+## v0.7.8 — The Everywhere Release · Jul 12, 2026
 
-A full communication-layer security audit, smarter scheduled runs, and a rebuilt chat page.
+Your agents now live everywhere you already talk: **Discord, Slack, and WhatsApp
+join Telegram**. Plus event-triggered automations, agents that can no longer
+misstate what they did, and a new LLM provider. (Versions 0.7.6 and 0.7.7 were
+never published; their work ships here.)
 
 **Highlights**
+
+- **Four messaging channels.** Connect any agent to **Discord** (server mentions — including the role mentions Discord's autocomplete really inserts — DMs, and tappable approval buttons), **Slack** (Socket Mode, with a ready-to-paste app manifest right in the dashboard), and **WhatsApp** (QR pairing; unofficial-API caveat shown up front), alongside Telegram. Same security model everywhere: the first private conversation claims ownership, every other conversation needs your explicit approval, one owner per agent per channel — guaranteed by the database.
+- **Channels your agents actually know.** Each agent sees which platforms it's connected to and can list the real servers, channels, and conversations it has access to (and which are approved) instead of denying a connection it has.
+- **Event triggers.** Scheduled watchers know exactly "what's new since last run", carry a daily budget, and never overlap themselves; **inbound webhooks** let an external service start a job directly — timing-safe token check, payload isolation against prompt injection, rate-limited, managed from the dashboard.
+- **Agents can't deny their own actions anymore.** Every exchange carries a structural record of the actions it performed; a delegating agent's thread shows what its sub-tasks actually did (tools called, result); and an agent that tries to assert platform state without checking gets stopped by the runtime and made to verify first.
+- **No more silent replies.** The delivery guard that kept Telegram jobs honest now covers Discord and Slack too: a job physically cannot complete without its reply reaching your channel.
+- **Moonshot/Kimi, native.** Kimi K2.6 and K2.7 Code as a first-class provider (thinking handled correctly, temperature managed server-side, and a strict tool-schema sanitizer that also protects Kimi models routed through OpenRouter). Model pickers now show which models can use tools, and a model that can't is blocked from the orchestrator role.
+- **Onboarding, revamped.** The get-acquainted interview no longer shows up in your Chats afterwards, and setup ends with a real choice of messaging channels (brand icons, not emojis).
+
+**Approval authority (from the unpublished 0.7.6)**
 
 - **Approval cards always go to the bot owner.** When someone you've authorized to talk to your bot (a guest chat) triggers an action that needs approval, the ✅/❌ card now lands in **your** private chat with the bot — never in the guest's. Previously a guest authorized via a private DM could tap ✅ on their own gated action and self-approve; that hole is closed, and guest-triggered approvals in groups no longer leak the card into the group either. Your own actions are unaffected. (Per-guest capability profiles — restricting *which* actions a guest can even request — are designed and coming next.)
 - **Scheduled reports and Telegram deliveries reach you, not a group.** A cron's success summary (and the dashboard's "send result via Telegram") used to target *the last chat the agent was spoken to in* — which a group message silently overwrote, so a report could leak into a group the moment someone @-mentioned the agent there. These now always deliver to the **owner's** private chat. A schedule can still be given an explicit target chat when you deliberately want it to post somewhere specific.
