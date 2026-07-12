@@ -7,6 +7,7 @@ import {
   listAgentMcpServersAction,
   listJobsAction,
   getAgentAttachedSkillsAction,
+  listSkillsAction,
   getLanCommandYoloAction,
 } from '@/lib/actions.ts';
 import AgentComposer from './AgentComposer.tsx';
@@ -35,14 +36,24 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const peers = peersResult.ok ? peersResult.data.filter((a) => a.id !== id) : [];
 
   // Per-agent data — fetched after the agent is confirmed to exist.
-  const [connectorsResult, mcpServersResult, jobsResult, skillsResult, lanYoloResult] =
-    await Promise.all([
-      listAgentConnectorsAction(agent.id),
-      listAgentMcpServersAction(agent.id),
-      listJobsAction({ limit: 100 }),
-      getAgentAttachedSkillsAction(agent.id),
-      getLanCommandYoloAction(),
-    ]);
+  const [
+    connectorsResult,
+    mcpServersResult,
+    jobsResult,
+    skillsResult,
+    allSkillsResult,
+    lanYoloResult,
+  ] = await Promise.all([
+    listAgentConnectorsAction(agent.id),
+    listAgentMcpServersAction(agent.id),
+    listJobsAction({ limit: 100 }),
+    getAgentAttachedSkillsAction(agent.id),
+    // Entity-wide skill catalog — powers the "attach from available" list in
+    // the Skills tab (parity with how Connectors already lists everything
+    // installed on the workspace, not just what's assigned to this agent).
+    listSkillsAction(),
+    getLanCommandYoloAction(),
+  ]);
   const connectors = connectorsResult.ok ? connectorsResult.data : [];
   const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
   // Filter jobs to this agent client-side — `listJobsAction` is global at the
@@ -50,6 +61,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const jobs = (jobsResult.ok ? jobsResult.data : []).filter((j) => j.agentId === agent.id);
   // Skills attached to this agent — with per-assignment scriptsAuthorized populated.
   const attachedSkills = skillsResult.ok ? skillsResult.data : [];
+  const allSkills = allSkillsResult.ok ? allSkillsResult.data : [];
 
   const lanCommandYolo = lanYoloResult.ok ? lanYoloResult.data.lanCommandYolo : false;
   const isOwner = lanYoloResult.ok ? lanYoloResult.data.isOwner : false;
@@ -64,6 +76,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       mcpServers={mcpServers}
       jobs={jobs}
       attachedSkills={attachedSkills}
+      allSkills={allSkills}
       lanCommandYolo={lanCommandYolo}
       isOwner={isOwner}
     />

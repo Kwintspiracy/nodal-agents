@@ -64,8 +64,18 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
   const debounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // ── persist (debounced) ──────────────────────────────────────────────────
+  //
+  // `notify`: fires a toast.success on the whole-assignment attach/detach
+  // gesture (the +/✕ IcBtn) — audit UX finding #7: attach/detach was the only
+  // silent action in the dashboard (per-op whitelist edits inside the expanded
+  // panel stay quiet on purpose; the checkbox itself is the feedback there).
   const persistConn = useCallback(
-    (connectorId: string, assigned: boolean, enabledOperations: string[] | null) => {
+    (
+      connectorId: string,
+      assigned: boolean,
+      enabledOperations: string[] | null,
+      notify = false,
+    ) => {
       const key = `conn:${connectorId}`;
       const existing = debounceRef.current.get(key);
       if (existing) clearTimeout(existing);
@@ -77,16 +87,24 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
           assigned,
           enabledOperations,
         ).then((r) => {
-          if (!r.ok) toast.error(r.message);
+          if (!r.ok) {
+            toast.error(r.message);
+            return;
+          }
+          if (notify) {
+            const label =
+              connectors.find((c) => c.connectorId === connectorId)?.label ?? 'Connector';
+            toast.success(assigned ? `${label} attached` : `${label} detached`);
+          }
         });
       }, 300);
       debounceRef.current.set(key, handle);
     },
-    [agentId],
+    [agentId, connectors],
   );
 
   const persistMcp = useCallback(
-    (mcpServerId: string, assigned: boolean, enabledTools: string[] | null) => {
+    (mcpServerId: string, assigned: boolean, enabledTools: string[] | null, notify = false) => {
       const key = `mcp:${mcpServerId}`;
       const existing = debounceRef.current.get(key);
       if (existing) clearTimeout(existing);
@@ -94,13 +112,21 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
         debounceRef.current.delete(key);
         void setAgentMcpServerAssignmentAction(agentId, mcpServerId, assigned, enabledTools).then(
           (r) => {
-            if (!r.ok) toast.error(r.message);
+            if (!r.ok) {
+              toast.error(r.message);
+              return;
+            }
+            if (notify) {
+              const label =
+                mcpServers.find((s) => s.mcpServerId === mcpServerId)?.label ?? 'MCP server';
+              toast.success(assigned ? `${label} attached` : `${label} detached`);
+            }
           },
         );
       }, 300);
       debounceRef.current.set(key, handle);
     },
-    [agentId],
+    [agentId, mcpServers],
   );
 
   // ── API connector toggles ────────────────────────────────────────────────
@@ -108,7 +134,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     setConnStates((prev) => {
       const m = new Map(prev);
       m.set(connectorId, { assigned: nextAssigned, enabledOperations: null });
-      persistConn(connectorId, nextAssigned, null);
+      persistConn(connectorId, nextAssigned, null, true);
       return m;
     });
     if (!nextAssigned) collapse(connectorId);
@@ -155,7 +181,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     setMcpStates((prev) => {
       const m = new Map(prev);
       m.set(mcpServerId, { assigned: nextAssigned, enabledTools: null });
-      persistMcp(mcpServerId, nextAssigned, null);
+      persistMcp(mcpServerId, nextAssigned, null, true);
       return m;
     });
     if (!nextAssigned) collapse(mcpServerId);

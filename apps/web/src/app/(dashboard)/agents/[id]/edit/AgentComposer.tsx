@@ -28,6 +28,8 @@ import {
   setRunCommandYoloAction,
   setSkillScriptsAuthorizedAction,
   setSkillFilesWritableAction,
+  assignSkillAction,
+  unassignSkillAction,
   type AgentRow,
   type AgentEditRow,
   type AgentWorkspaceRow,
@@ -51,7 +53,7 @@ import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
-import EdRow from '@/components/ui/EdRow';
+import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import ModelToolsBadge, { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
@@ -106,6 +108,9 @@ interface Props {
   mcpServers: AgentMcpServerRow[];
   jobs: JobRow[];
   attachedSkills: SkillRow[];
+  /** Every skill in the entity (Library + custom), used by the Skills tab to
+   *  offer attach on top of the already-attached list. */
+  allSkills: SkillRow[];
   /** Whether the workspace owner has opted in to Yolo in non-local-trust mode. */
   lanCommandYolo?: boolean;
   /** Whether the current user is the workspace owner. */
@@ -121,6 +126,7 @@ export default function AgentComposer({
   mcpServers,
   jobs,
   attachedSkills,
+  allSkills,
   lanCommandYolo = false,
   isOwner = false,
 }: Props) {
@@ -289,6 +295,7 @@ export default function AgentComposer({
         <AgentPicker agents={allAgents} activeId={agent.id} />
 
         <HeroCard
+          agentId={agent.id}
           initial={initial}
           avatarUrl={avatarUrl}
           name={agent.name}
@@ -337,7 +344,9 @@ export default function AgentComposer({
             onOpenConnectors={() => setTab('connectors')}
           />
         )}
-        {tab === 'skills' && <SkillsTab skills={attachedSkills} />}
+        {tab === 'skills' && (
+          <SkillsTab agentId={agent.id} attachedSkills={attachedSkills} allSkills={allSkills} />
+        )}
         {tab === 'connectors' && (
           <SectionCard>
             <ConnectorsTabContent
@@ -452,6 +461,7 @@ function AgentPicker({ agents, activeId }: { agents: AgentRow[]; activeId: strin
 // ─── Hero card ────────────────────────────────────────────────────────────────
 
 function HeroCard({
+  agentId,
   initial,
   avatarUrl,
   name,
@@ -464,6 +474,7 @@ function HeroCard({
   stats,
   onConfigure,
 }: {
+  agentId: string;
   initial: string;
   avatarUrl: string | null;
   name: string;
@@ -545,8 +556,26 @@ function HeroCard({
           </div>
         </div>
 
-        {/* CTAs — only Configure (Duplicate + Run dropped on request) */}
+        {/* CTAs — this page is the hub for everything per-agent: Channels and
+            Memory link out to their own pages (channels has enough surface —
+            allowlists, per-channel setup — to warrant a full page rather than
+            a tab; Memory is entity-wide, filtered by agent client-side on
+            /memories). Configure jumps to the Settings tab, in-page. */}
         <div className="flex flex-shrink-0 flex-wrap gap-2">
+          <Link
+            href={`/agents/${agentId}/channels`}
+            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            <ChannelsIcon />
+            Channels
+          </Link>
+          <Link
+            href="/memories"
+            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            <MemoryIcon />
+            Memory
+          </Link>
           <button
             type="button"
             onClick={onConfigure}
@@ -605,6 +634,37 @@ function GearIcon() {
     >
       <circle cx="8" cy="8" r="2" />
       <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5" />
+    </svg>
+  );
+}
+
+function ChannelsIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
+      <path d="M2 3.5h12M2 8h12M2 12.5h8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MemoryIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
+      <path d="M8 1.5a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0v-7a3 3 0 0 0-3-3Z" />
+      <path d="M5 6.5h6M5 9.5h6" strokeLinecap="round" />
     </svg>
   );
 }
@@ -946,28 +1006,194 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
   );
 }
 
-// ─── Skills tab (full page list of attached skills) ──────────────────────────
+// ─── Skills tab — attach/detach on place, parity with the Connectors tab ─────
+//
+// Product decision (audit UX 12/07, HIGH): the agent page is THE entry point
+// for everything per-agent — Skills, Connectors, Channels, Memory. Global
+// pages (/skills, /connectors, /mcp) are for installing/creating; they are
+// NOT where you decide what a given agent uses. This mirrors how Connectors
+// already worked (attach/detach here, browse/install there) — Skills was the
+// odd one out (read-only, textual "manage on /skills" renvoi) and is now
+// brought to parity. The reverse symmetry (assigning agents from /skills) is
+// intentionally NOT built here — /skills keeps its own AssignSkillModal for
+// bulk/multi-agent assignment, this tab is the single-agent surface.
+//
+// `allSkills` (entity-wide, from listSkillsAction) is the source of the
+// "available to attach" list; `assignedIds` starts from `attachedSkills`
+// (this agent's current assignments) and is updated optimistically as the
+// user toggles — same pattern as ConnectorsTabContent's connStates/mcpStates.
 
-function SkillsTab({ skills }: { skills: SkillRow[] }) {
-  if (skills.length === 0) {
+function SkillsTab({
+  agentId,
+  attachedSkills,
+  allSkills,
+}: {
+  agentId: string;
+  attachedSkills: SkillRow[];
+  allSkills: SkillRow[];
+}) {
+  const [assignedIds, setAssignedIds] = useState<Set<string>>(
+    () => new Set(attachedSkills.map((s) => s.id)),
+  );
+
+  function toggle(skill: SkillRow, nextAssigned: boolean) {
+    // Optimistic update, reverted on failure — same shape as
+    // ConnectorsTabContent's connToggleAssigned/mcpToggleAssigned.
+    setAssignedIds((prev) => {
+      const next = new Set(prev);
+      if (nextAssigned) next.add(skill.id);
+      else next.delete(skill.id);
+      return next;
+    });
+    const action = nextAssigned ? assignSkillAction : unassignSkillAction;
+    void action({ skillId: skill.id, agentId }).then((result) => {
+      if (!result.ok) {
+        setAssignedIds((prev) => {
+          const next = new Set(prev);
+          if (nextAssigned) next.delete(skill.id);
+          else next.add(skill.id);
+          return next;
+        });
+        toast.error(result.message);
+        return;
+      }
+      toast.success(nextAssigned ? `"${skill.name}" attached` : `"${skill.name}" detached`);
+    });
+  }
+
+  const attached = allSkills.filter((s) => assignedIds.has(s.id));
+  const available = allSkills.filter((s) => !assignedIds.has(s.id));
+
+  if (allSkills.length === 0) {
     return (
       <SectionCard>
         <SectionHead
-          label="No skills attached"
-          hint="Read-only view. Manage attachments on the /skills page."
+          label="No skills in this workspace yet"
+          hint="Create a custom skill or install one from the community catalog first — you'll then be able to attach it to this agent."
         />
+        <Link
+          href="/skills"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+        >
+          Go to Skills ›
+        </Link>
       </SectionCard>
     );
   }
+
   return (
-    <SectionCard>
-      <SectionHead label={`Attached · ${skills.length}`} />
-      <div className="space-y-2">
-        {skills.map((s) => (
-          <SkillEdRow key={s.id} skill={s} />
-        ))}
-      </div>
-    </SectionCard>
+    <div className="space-y-6">
+      <SectionCard>
+        <SectionHead
+          label={`Attached · ${attached.length}`}
+          hint="Loaded into this agent's system prompt. Detach to remove."
+        />
+        {attached.length === 0 ? (
+          <p className="text-[13px] text-ink-3">
+            No skills attached to this agent yet. Attach one from the list below.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {attached.map((s) => (
+              <SkillToggleRow key={s.id} skill={s} assigned onToggle={() => toggle(s, false)} />
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      {available.length > 0 && (
+        <SectionCard>
+          <SectionHead
+            label={`Available on this workspace · ${available.length}`}
+            hint="Already installed at the workspace level; click + to attach to this agent."
+          />
+          <div className="space-y-2">
+            {available.map((s) => (
+              <SkillToggleRow
+                key={s.id}
+                skill={s}
+                assigned={false}
+                onToggle={() => toggle(s, true)}
+              />
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      <p className="text-[13px] text-ink-3">
+        Need something new?{' '}
+        <Link href="/skills" className="underline hover:text-ink-2">
+          Browse the full library
+        </Link>{' '}
+        to create or install a skill, then attach it here.
+      </p>
+    </div>
+  );
+}
+
+function SkillToggleRow({
+  skill,
+  assigned,
+  onToggle,
+}: {
+  skill: SkillRow;
+  assigned: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <EdRow
+      glyph={
+        <Disc variant="skill" size="lg" shape="square">
+          <span className="font-mono text-[11px] font-semibold uppercase">
+            {skill.slug.slice(0, 2)}
+          </span>
+        </Disc>
+      }
+      name={skill.name}
+      description={skill.description ?? undefined}
+      meta={`@${skill.slug}`}
+      actions={
+        assigned ? (
+          <IcBtn title="Detach from this agent" ariaLabel="Detach" onClick={onToggle}>
+            <SkillDetachIcon />
+          </IcBtn>
+        ) : (
+          <IcBtn title="Attach to this agent" ariaLabel="Attach" onClick={onToggle}>
+            <SkillAttachIcon />
+          </IcBtn>
+        )
+      }
+    />
+  );
+}
+
+function SkillAttachIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+    >
+      <path d="M6 2v8M2 6h8" />
+    </svg>
+  );
+}
+
+function SkillDetachIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
+      <path d="M3 3l6 6M9 3l-6 6" />
+    </svg>
   );
 }
 
@@ -1256,24 +1482,24 @@ function CommandExecutionSection({
               This agent&apos;s Yolo is <b className="font-semibold">dormant</b> — workspace Yolo is
               off, so its commands still require approval. Turn it off here to clear it, or
               re-enable Yolo in{' '}
-              <a
+              <Link
                 href="/settings"
                 className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
               >
                 Settings → Command execution
-              </a>
+              </Link>
               .
             </p>
           )}
           {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
             <p className="mt-2 text-[12px] text-ink-4">
               Yolo is off for this workspace. The owner can enable it in{' '}
-              <a
+              <Link
                 href="/settings"
                 className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
               >
                 Settings → Command execution
-              </a>
+              </Link>
               , or switch to loopback mode.
             </p>
           )}

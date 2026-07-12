@@ -3055,6 +3055,52 @@ describe('unassignSkillAction', () => {
   });
 });
 
+// UX-B3: the agent page's Skills tab now attaches/detaches skills in place
+// (parity with Connectors) by calling these same two actions directly with
+// {skillId, agentId} — no new server action was added. These two tests prove
+// the DB row actually persists on both ends of that toggle: an insert row
+// shaped exactly like assignSkillRepo's upsert, and a delete scoped to the
+// right skillId × agentId × entityId — not just an ok:true envelope.
+describe('assignSkillAction / unassignSkillAction — agent-page attach/detach (UX-B3)', () => {
+  it('assign: inserts an agent_skill_assignments row for skillId × agentId', async () => {
+    const skillId = 'aaaaaaaa-0000-0000-0000-000000000110';
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000111';
+    // assignSkillRepo's select sequence: skill lookup, agent lookup, existing-
+    // assignment check (empty ⇒ not yet assigned, proceeds to insert).
+    currentDb = makeDbSeq([[{ id: skillId }], [{ id: agentId }], []]) as typeof currentDb;
+    const { assignSkillAction } = await import('../src/lib/actions.ts');
+    const r = await assignSkillAction({ skillId, agentId });
+    expect(r.ok).toBe(true);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const valuesCalls = insertSpy.mock.results
+      .flatMap((res) => (res.value as { values?: ReturnType<typeof vi.fn> }).values?.mock?.calls)
+      .filter(Boolean) as unknown[][];
+    const insertedRow = valuesCalls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(insertedRow?.['skillId']).toBe(skillId);
+    expect(insertedRow?.['agentId']).toBe(agentId);
+    expect(insertedRow?.['entityId']).toBe(LOCAL_ENTITY_ID);
+  });
+
+  it('unassign: deletes the row scoped to skillId × agentId × entityId', async () => {
+    const skillId = 'aaaaaaaa-0000-0000-0000-000000000112';
+    const agentId = 'aaaaaaaa-0000-0000-0000-000000000113';
+    currentDb = makeDb([]) as typeof currentDb;
+    const { unassignSkillAction } = await import('../src/lib/actions.ts');
+    const r = await unassignSkillAction({ skillId, agentId });
+    expect(r.ok).toBe(true);
+
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(deleteSpy).toHaveBeenCalled();
+    const chainObj = deleteSpy.mock.results[0]!.value as { where: ReturnType<typeof vi.fn> };
+    const whereArg = chainObj.where.mock.calls[0]?.[0];
+    const serialized = serializeSqlCondition(whereArg);
+    expect(serialized).toContain(skillId);
+    expect(serialized).toContain(agentId);
+    expect(serialized).toContain(LOCAL_ENTITY_ID);
+  });
+});
+
 // ─── Tool Call Logs ───────────────────────────────────────────────────────────
 
 describe('listToolNamesAction', () => {
