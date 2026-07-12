@@ -14,7 +14,7 @@ const LABEL: Record<ModelToolsSupport, string> = {
 
 const TITLE: Record<ModelToolsSupport, string> = {
   yes: 'This model can call tools.',
-  no: "This model can't call tools — it can't act as an agent or orchestrator.",
+  no: "This model can't call tools and can't power an agent.",
   unknown: 'Tool support is unknown for this model (not in the curated catalog).',
 };
 
@@ -50,9 +50,8 @@ export default function ModelToolsBadge({
 export function ModelToolsLegend({ className = '' }: { className?: string }) {
   return (
     <p className={`text-[11.5px] leading-[1.5] text-ink-4 ${className}`}>
-      Models marked <span className="font-medium text-warn">(no tools)</span> can&apos;t call
-      tools — an agent that acts (and any orchestrator) needs a tool-capable model. Custom/live
-      models show no flag: their tool support is unknown until you try them.
+      Models marked <span className="font-medium text-warn">(no tools)</span> can&apos;t power an
+      agent.
     </p>
   );
 }

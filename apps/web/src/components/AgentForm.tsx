@@ -333,7 +333,7 @@ export default function AgentForm(props: Props) {
                           disabled={requireTools && !m.capabilities.tools}
                           title={
                             requireTools && !m.capabilities.tools
-                              ? "Can't use tools — required for a router/planner"
+                              ? "Can't use tools (required for a router/planner)"
                               : undefined
                           }
                         >
@@ -349,7 +349,7 @@ export default function AgentForm(props: Props) {
                         disabled={requireTools && !m.capabilities.tools}
                         title={
                           requireTools && !m.capabilities.tools
-                            ? "Can't use tools — required for a router/planner"
+                            ? "Can't use tools (required for a router/planner)"
                             : undefined
                         }
                       >
@@ -594,7 +594,7 @@ export default function AgentForm(props: Props) {
                                 disabled={requireTools && !m.capabilities.tools}
                                 title={
                                   requireTools && !m.capabilities.tools
-                                    ? "Can't use tools — required for a router/planner"
+                                    ? "Can't use tools (required for a router/planner)"
                                     : undefined
                                 }
                               >
@@ -610,7 +610,7 @@ export default function AgentForm(props: Props) {
                               disabled={requireTools && !m.capabilities.tools}
                               title={
                                 requireTools && !m.capabilities.tools
-                                  ? "Can't use tools — required for a router/planner"
+                                  ? "Can't use tools (required for a router/planner)"
                                   : undefined
                               }
                             >

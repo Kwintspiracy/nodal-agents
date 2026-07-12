@@ -1067,7 +1067,7 @@ function ModelField({
                   // can't call tools can't fill that role, so it's always
                   // gated here, not conditionally.
                   disabled={!m.capabilities.tools}
-                  title={!m.capabilities.tools ? "Can't use tools — required for your agent" : undefined}
+                  title={!m.capabilities.tools ? "Can't use tools (required for your agent)" : undefined}
                 >
                   {modelOptionLabel(m)}
                 </option>
@@ -1079,7 +1079,7 @@ function ModelField({
                 key={`${gi}-${m.modelId}`}
                 value={m.modelId}
                 disabled={!m.capabilities.tools}
-                title={!m.capabilities.tools ? "Can't use tools — required for your agent" : undefined}
+                title={!m.capabilities.tools ? "Can't use tools (required for your agent)" : undefined}
               >
                 {modelOptionLabel(m)}
               </option>
