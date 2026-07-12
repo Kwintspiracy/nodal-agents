@@ -509,6 +509,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
       agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       title text NOT NULL DEFAULT '',
+      -- origin (migration 0065): 'onboarding' rows are excluded from the
+      -- dashboard's Chats list — see chat-messages.ts schema comment.
+      origin text NOT NULL DEFAULT 'user' CHECK (origin IN ('user','onboarding')),
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );

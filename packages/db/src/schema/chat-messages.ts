@@ -21,12 +21,17 @@ export const conversations = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: 'cascade' }),
     title: text('title').notNull().default(''),
+    // Stamped at CREATION time (never rewritten later) so the onboarding
+    // interview conversation never leaks into the dashboard's Chats list —
+    // whether the operator skips it or finishes it (migration 0065).
+    origin: text('origin').notNull().default('user'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     // Bumped on each new turn — drives the recency sort in the sidebar.
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [
     index('idx_conversations_entity_agent').on(table.entityId, table.agentId, table.updatedAt),
+    check('conversations_origin_check', sql`${table.origin} IN ('user','onboarding')`),
   ],
 );
 

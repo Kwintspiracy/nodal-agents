@@ -48,6 +48,7 @@ type ProviderValue =
   | 'groq'
   | 'deepseek'
   | 'minimax'
+  | 'moonshot'
   | 'openai-compatible'
   | 'ollama';
 
@@ -75,8 +76,14 @@ const PROVIDERS: ProviderPreset[] = [
   { value: 'google', label: 'Google (Gemini)', baseUrl: '', needsKey: true },
   { value: 'mistral', label: 'Mistral', baseUrl: 'https://api.mistral.ai/v1', needsKey: true },
   { value: 'groq', label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', needsKey: true },
-  { value: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', needsKey: true },
+  { value: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', needsKey: true },
   { value: 'minimax', label: 'MiniMax', baseUrl: '', needsKey: true },
+  {
+    value: 'moonshot',
+    label: 'Moonshot (Kimi)',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    needsKey: true,
+  },
   { value: 'ollama', label: 'Ollama (local)', baseUrl: 'http://localhost:11434', needsKey: false },
   {
     value: 'openai-compatible',
@@ -192,6 +199,17 @@ function inferAutonomy(answer: string): AutonomyLevel {
 }
 
 const TOTAL_STEPS = 7;
+
+// The 4 messaging channels the product supports today, real brand icons —
+// same set + order as CHANNEL_ORDER in actions.ts (the agent's Channels page).
+// Each choice deep-links to that channel's card on the Channels page (the
+// cards carry a matching #id — see TelegramChannelCard.tsx and siblings).
+const CHANNELS: Array<{ value: string; label: string; icon: string }> = [
+  { value: 'telegram', label: 'Telegram', icon: '/channel-icons/telegram.svg' },
+  { value: 'discord', label: 'Discord', icon: '/channel-icons/discord.svg' },
+  { value: 'slack', label: 'Slack', icon: '/channel-icons/slack.svg' },
+  { value: 'whatsapp', label: 'WhatsApp', icon: '/channel-icons/whatsapp.svg' },
+];
 
 export default function OnboardingFlow() {
   const router = useRouter();
@@ -440,7 +458,9 @@ export default function OnboardingFlow() {
     void (async () => {
       setChatError('');
       setChatBusy(true);
-      const conv = await createConversationAction();
+      // origin: 'onboarding' — this conversation must NEVER surface in the
+      // dashboard's Chats list, whether the operator skips or finishes.
+      const conv = await createConversationAction({ origin: 'onboarding' });
       if (!conv.ok) {
         setChatBusy(false);
         setChatError('Could not start the conversation — you can skip to the dashboard below.');
@@ -920,29 +940,41 @@ export default function OnboardingFlow() {
           {step === 6 && (
             <div className="text-center">
               <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-conn-vivid/15 text-[26px]">
-                ✈️
+                💬
               </div>
               <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-ink">
-                Connect Telegram
+                Connect a messaging channel
               </h1>
               <p className="mx-auto mt-2 max-w-sm text-[13.5px] leading-[1.6] text-ink-3">
                 Talk to {agentName || 'your agent'} from your phone, and let it reach you with
-                updates and questions — right inside Telegram. You can always set this up later.
+                updates and questions — right inside the app you already use. You can always set
+                this up later.
               </p>
-              <div className="mt-6 flex items-center justify-center gap-3">
+
+              <div className="mt-6 grid grid-cols-2 gap-3">
+                {CHANNELS.map((c) => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    onClick={() =>
+                      finish(agentId ? `/agents/${agentId}/channels#${c.value}` : '/')
+                    }
+                    className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas px-4 py-3 text-left transition-colors hover:border-ink"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- static brand svg, same convention as the Channels page cards */}
+                    <img src={c.icon} alt="" aria-hidden="true" className="h-8 w-8 shrink-0" />
+                    <span className="text-[13.5px] font-medium text-ink">{c.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-6 flex items-center justify-center">
                 <button
                   type="button"
                   onClick={() => finish('/')}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md border border-rule-2 bg-canvas px-4 text-[13.5px] font-medium text-ink transition-colors hover:border-ink"
+                  className="text-[13px] text-ink-3 underline hover:text-ink"
                 >
                   Skip for now
-                </button>
-                <button
-                  type="button"
-                  onClick={() => finish(agentId ? `/agents/${agentId}/channels` : '/')}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92]"
-                >
-                  Connect Telegram →
                 </button>
               </div>
             </div>

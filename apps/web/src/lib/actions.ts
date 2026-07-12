@@ -7676,6 +7676,7 @@ const PROVIDER_VALUES = [
   'groq',
   'deepseek',
   'minimax',
+  'moonshot',
 ] as const;
 
 export type LlmProvider = (typeof PROVIDER_VALUES)[number];
@@ -8169,10 +8170,18 @@ const PROVIDER_TEST_CONFIG: Record<
   groq: { canonicalBase: 'https://api.groq.com/openai/v1', path: '/models', auth: 'bearer' },
   'openai-compatible': { canonicalBase: null, path: '/models', auth: 'bearer' },
   ollama: { canonicalBase: null, path: '/api/tags', auth: 'none' },
-  deepseek: { canonicalBase: 'https://api.deepseek.com', path: '/models', auth: 'bearer' },
+  // /v1 matters here — the runtime registry (packages/llm/src/providers/registry.ts,
+  // the source of truth) uses api.deepseek.com/v1; this canonicalBase had
+  // drifted to the bare host (toilettage, audit #2).
+  deepseek: { canonicalBase: 'https://api.deepseek.com/v1', path: '/models', auth: 'bearer' },
   minimax: {
     canonicalBase: 'https://api.minimax.io/anthropic',
     path: '/v1/models',
+    auth: 'bearer',
+  },
+  moonshot: {
+    canonicalBase: 'https://api.moonshot.ai/v1',
+    path: '/models',
     auth: 'bearer',
   },
 };
@@ -8949,7 +8958,15 @@ export async function listConversationsAction(): Promise<
       })
       .from(conversations)
       .where(
-        and(eq(conversations.entityId, session.entityId), eq(conversations.agentId, rootAgentId)),
+        and(
+          eq(conversations.entityId, session.entityId),
+          eq(conversations.agentId, rootAgentId),
+          // The onboarding welcome interview stamps its conversation with
+          // origin='onboarding' at creation time — never rewritten later — so
+          // it never appears in the dashboard's Chats list, whether the
+          // operator skips it or finishes it.
+          eq(conversations.origin, 'user'),
+        ),
       )
       .orderBy(desc(conversations.updatedAt))
       .limit(200);
@@ -8985,7 +9002,9 @@ export async function listConversationsAction(): Promise<
   }
 }
 
-export async function createConversationAction(): Promise<ActionResult<{ id: string }>> {
+export async function createConversationAction(
+  opts: { origin?: 'user' | 'onboarding' } = {},
+): Promise<ActionResult<{ id: string }>> {
   try {
     const session = await getSession();
     const db = getDb();
@@ -8994,7 +9013,12 @@ export async function createConversationAction(): Promise<ActionResult<{ id: str
 
     const [row] = await db
       .insert(conversations)
-      .values({ entityId: session.entityId, agentId: rootAgentId, title: '' })
+      .values({
+        entityId: session.entityId,
+        agentId: rootAgentId,
+        title: '',
+        origin: opts.origin ?? 'user',
+      })
       .returning({ id: conversations.id });
     if (!row) return fail('db_error', 'Failed to create conversation');
     revalidatePath('/chat');

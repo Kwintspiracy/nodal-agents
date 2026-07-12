@@ -22,7 +22,7 @@ export default function WhatsAppChannelCard({
   allowedConversations: ChannelAllowedConversationView[];
 }) {
   return (
-    <div className="bg-paper border border-rule-2 rounded-xl px-5 py-5 space-y-5">
+    <div id="whatsapp" className="bg-paper border border-rule-2 rounded-xl px-5 py-5 space-y-5">
       <div className="flex items-center gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand svg, same convention as ConnectorsInstalledTable */}
         <img

@@ -201,6 +201,24 @@ describe('CHECK constraints', () => {
       }),
     ).rejects.toThrow();
   });
+
+  it('conversations: rejects invalid origin (migration 0065)', async () => {
+    await expect(
+      db.insert(schema.conversations).values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        origin: 'imported',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('conversations: defaults origin to "user" when omitted', async () => {
+    const [row] = await db
+      .insert(schema.conversations)
+      .values({ entityId: seed.entityId, agentId: seed.agentId })
+      .returning();
+    expect(row?.origin).toBe('user');
+  });
 });
 
 // ── FK CASCADE tests ──────────────────────────────────────────────────────────
