@@ -356,7 +356,7 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     // Moonshot (Kimi)
     {
       modelId: 'moonshotai/kimi-k2.6',
-      label: 'Kimi K2.6 (OpenRouter)',
+      label: 'Kimi K2.6',
       // Confirmed multimodal + reasoning via WebFetch (openrouter.ai, 2026-07).
       // K2.6 is below the K2.7 native-tool_calls cutoff in detectAgenticFamily
       // (openrouter.ts) — it emits Kimi's pipe-bracket textual tool-call markup,
