@@ -27,6 +27,7 @@ const BASE_URL_PRESETS: Record<LlmProvider, string> = {
   groq: 'https://api.groq.com/openai/v1',
   deepseek: 'https://api.deepseek.com/v1',
   minimax: 'https://api.minimax.io/anthropic',
+  moonshot: 'https://api.moonshot.ai/v1',
 };
 
 const PROVIDER_OPTIONS: LlmProvider[] = [
@@ -40,6 +41,7 @@ const PROVIDER_OPTIONS: LlmProvider[] = [
   'groq',
   'deepseek',
   'minimax',
+  'moonshot',
 ];
 
 interface CreateProps {

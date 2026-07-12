@@ -15,6 +15,7 @@ const PROVIDERS: ProviderName[] = [
   'openrouter',
   'deepseek',
   'minimax',
+  'moonshot',
 ];
 
 const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [

@@ -148,6 +148,32 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       contextWindow: 200_000,
     },
   ],
+  // ─── Native Moonshot / Kimi (api.moonshot.ai/v1) ────────────────────────────
+  // Both models confirmed multimodal (text + image input) via WebFetch against
+  // openrouter.ai's model pages and platform.kimi.ai/docs (2026-07). Both run
+  // in mandatory thinking mode — moonshot.ts injects `thinking:{type:'enabled'}`
+  // and never sends `temperature` (undocumented for this line) or a competing
+  // `reasoning_effort`. No `forcedToolChoice`: Moonshot's chat API docs don't
+  // mention a `tool_choice` parameter at all — the runtime completion floor
+  // covers it, same treatment as the other undocumented-tool_choice reasoning
+  // models (MiniMax M3, GLM 5.2) in this catalog.
+  // No `pricing` — no native (non-OpenRouter) Moonshot rate card confirmed at
+  // write time; documented debt, same convention as the MiniMax entries above.
+  // kimi-k2-thinking is deliberately NOT catalogued (discontinued by Moonshot).
+  moonshot: [
+    {
+      modelId: 'kimi-k2.6',
+      label: 'Kimi K2.6',
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      contextWindow: 262_144,
+    },
+    {
+      modelId: 'kimi-k2.7-code',
+      label: 'Kimi K2.7 Code',
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      contextWindow: 262_144,
+    },
+  ],
   anthropic: [
     {
       modelId: 'claude-opus-4-8',
@@ -329,6 +355,19 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     },
     // Moonshot (Kimi)
     {
+      modelId: 'moonshotai/kimi-k2.6',
+      label: 'Kimi K2.6 (OpenRouter)',
+      // Confirmed multimodal + reasoning via WebFetch (openrouter.ai, 2026-07).
+      // K2.6 is below the K2.7 native-tool_calls cutoff in detectAgenticFamily
+      // (openrouter.ts) — it emits Kimi's pipe-bracket textual tool-call markup,
+      // so it gets the kimiToolCallMiddleware parser. No pricing field: none of
+      // this file's other OpenRouter entries carry one (OpenRouter self-reports
+      // real cost via providerMetadata.openrouter.usage.cost — see
+      // estimateModelCostUsd's doc comment).
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      contextWindow: 262_144,
+    },
+    {
       modelId: 'moonshotai/kimi-k2.7-code',
       label: 'Kimi K2.7 Code',
       // Always operates in thinking mode and preserves reasoning_content across
@@ -362,6 +401,7 @@ export const VISION_MODEL_IDS = new Set<string>([
   'google/gemini-3.5-flash',
   'google/gemma-4-31b-it',
   'minimax/minimax-m3',
+  'moonshotai/kimi-k2.6',
   'moonshotai/kimi-k2.7-code',
   // Native-provider forms
   'claude-opus-4-8',
@@ -373,6 +413,8 @@ export const VISION_MODEL_IDS = new Set<string>([
   'gemini-2.5-pro',
   'mistral-large-latest',
   'MiniMax-M3',
+  'kimi-k2.6',
+  'kimi-k2.7-code',
 ]);
 
 // Stamp the fetched vision capability onto every catalogued entry so the picker
@@ -473,6 +515,7 @@ const VENDOR_LABELS: Record<string, string> = {
   meta: 'Meta',
   qwen: 'Qwen',
   'meta-llama': 'Meta',
+  moonshotai: 'Moonshot',
 };
 
 /**

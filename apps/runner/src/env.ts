@@ -24,6 +24,7 @@ const envSchema = z.object({
       'openrouter',
       'deepseek',
       'minimax',
+      'moonshot',
     ])
     .optional(),
   LLM_MODEL: z.string().optional(),

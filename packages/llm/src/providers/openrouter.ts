@@ -24,6 +24,7 @@ import { PROVIDER_PRESETS } from './registry';
 import { ProviderConfigError } from '../errors';
 import { kimiToolCallMiddleware, nodalToolCallMiddleware } from './parsers';
 import { createTolerantFetch } from './tolerant-fetch';
+import { isMoonshotModel, sanitizeMoonshotTools } from './moonshot-schema';
 
 type ModelFamily = 'kimi' | 'nodal-format' | null;
 
@@ -48,8 +49,13 @@ export function detectAgenticFamily(modelId: string): ModelFamily {
   }
   if (
     modelId.startsWith('qwen/qwen3-coder') ||
+    // Z.ai's real OpenRouter namespace is hyphenated (`z-ai/`) — the catalog's
+    // z-ai/glm-5.2 entry uses it. The old `zai/` (no hyphen) prefix is kept
+    // too for zero-cost back-compat with any config still using it.
     modelId.startsWith('zai/glm-4.5') ||
-    modelId.startsWith('zai/glm-4.7')
+    modelId.startsWith('zai/glm-4.7') ||
+    modelId.startsWith('z-ai/glm-4.5') ||
+    modelId.startsWith('z-ai/glm-4.7')
   ) {
     return 'nodal-format';
   }
@@ -90,6 +96,52 @@ export function buildOpenRouterExtraBody(modelId: string): Record<string, unknow
   };
 }
 
+/**
+ * Rewrite an outgoing OpenRouter request body so a Kimi model's tool schemas
+ * go through the Moonshot sanitizer (moonshot-schema.ts). Moonshot's flavored-
+ * JSON-Schema rejection applies to its inference regardless of which
+ * aggregator relays the request — a Kimi model routed through OpenRouter
+ * (`moonshotai/kimi-*`, or a further-aggregated `nous/moonshotai/...` slug)
+ * hits the same 400 a direct api.moonshot.ai call would. Detection is by
+ * MODEL NAME (`isMoonshotModel`), not host — OpenRouter is a single shared
+ * host for every model family. Non-Kimi models pass through untouched.
+ * Pure function — exported for unit testing.
+ */
+export function patchOpenRouterRequestBody(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null) return body;
+  const b = body as Record<string, unknown>;
+  const modelId = typeof b['model'] === 'string' ? (b['model'] as string) : undefined;
+  if (isMoonshotModel(modelId) && Array.isArray(b['tools'])) {
+    b['tools'] = sanitizeMoonshotTools(b['tools']);
+  }
+  return body;
+}
+
+function createOpenRouterFetch(
+  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+): typeof globalThis.fetch {
+  const tolerant = createTolerantFetch(baseFetch);
+
+  return async (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: Parameters<typeof globalThis.fetch>[1],
+  ): Promise<Response> => {
+    if (!init?.body) return tolerant(input, init);
+
+    let patchedInit = init;
+    try {
+      const rawBody =
+        typeof init.body === 'string' ? init.body : await new Response(init.body).text();
+      const patched = patchOpenRouterRequestBody(JSON.parse(rawBody));
+      patchedInit = { ...init, body: JSON.stringify(patched) };
+    } catch {
+      // Malformed/streamed body — pass through unchanged rather than break the call.
+    }
+
+    return tolerant(input, patchedInit);
+  };
+}
+
 export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
   if (!config.apiKey) {
     throw new ProviderConfigError('openrouter provider requires an apiKey');
@@ -109,9 +161,19 @@ export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
     // 'strict' is the documented mode for the first-party OpenRouter API
     // ('compatible' is for 3rd-party proxies). We hit openrouter.ai directly.
     compatibility: 'strict',
+    // OpenRouter attribution — surfaces this app in its public rankings/
+    // analytics dashboard. `appUrl`/`appName` are the first-party SDK's typed
+    // fields for this (they set HTTP-Referer / X-OpenRouter-Title internally;
+    // there's no generic `headers` option on OpenRouterProviderSettings).
+    // Static product identity, not per-user, so hardcoding is correct here
+    // (unlike a user-scoped value, which must never be hardcoded).
+    appUrl: 'https://github.com/Kwintspiracy/nodal-agents',
+    appName: 'Nodal-Agents',
     // Normalise non-spec responses (e.g. DeepSeek V4 returning function.arguments
-    // as an object instead of a JSON string) before the SDK's Zod schema sees them.
-    fetch: createTolerantFetch(),
+    // as an object instead of a JSON string) before the SDK's Zod schema sees
+    // them, AND sanitize outgoing tool schemas for any Kimi model (native or
+    // aggregator-routed) before OpenRouter relays them to Moonshot's inference.
+    fetch: createOpenRouterFetch(),
   });
 
   // For reasoning models, explicitly enable reasoning so OpenRouter returns the

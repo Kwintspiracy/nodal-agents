@@ -21,6 +21,7 @@ import { buildGroqModel } from './providers/groq';
 import { buildOpenRouterModel } from './providers/openrouter';
 import { buildDeepSeekModel } from './providers/deepseek';
 import { buildMiniMaxModel } from './providers/minimax';
+import { buildMoonshotModel } from './providers/moonshot';
 
 // ─── Timeout config ───────────────────────────────────────────────────────────
 
@@ -226,6 +227,8 @@ function buildModel(config: ProviderConfig): LanguageModel {
       return buildDeepSeekModel(config);
     case 'minimax':
       return buildMiniMaxModel(config);
+    case 'moonshot':
+      return buildMoonshotModel(config);
     default: {
       // TypeScript exhaustiveness check
       const _exhaustive: never = config.provider;

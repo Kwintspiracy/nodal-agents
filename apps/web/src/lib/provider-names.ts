@@ -24,6 +24,8 @@ export function prettyProviderName(slug: string): string {
       return 'DeepSeek';
     case 'minimax':
       return 'MiniMax';
+    case 'moonshot':
+      return 'Moonshot (Kimi)';
     default:
       return slug;
   }
