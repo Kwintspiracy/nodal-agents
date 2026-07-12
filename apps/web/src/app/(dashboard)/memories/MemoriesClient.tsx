@@ -47,8 +47,9 @@ import ChipRow, { type ChipItem } from '@/components/ui/ChipRow';
 import Disc from '@/components/ui/Disc';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import LiveDot from '@/components/ui/LiveDot';
-import IconButton from '@/components/ui/IconButton';
+import RowActionButton from '@/components/ui/RowActionButton';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import { Trash } from '@phosphor-icons/react';
 import NewMemoryModal from './NewMemoryModal';
 import {
   archiveMemoryAction,
@@ -213,18 +214,15 @@ function RowActions({ id, archived }: { id: string; archived: boolean }) {
         >
           {archived ? 'Restore' : 'Archive'}
         </button>
-        <IconButton
-          size="sm"
+        <RowActionButton
+          icon={<Trash size={13} />}
+          tone="danger"
           disabled={isPending}
           onClick={() => setConfirmOpen(true)}
           title="Delete memory"
         >
-          <svg viewBox="0 0 16 16" fill="currentColor" className="h-[13px] w-[13px]">
-            <circle cx="4" cy="8" r="1.2" />
-            <circle cx="8" cy="8" r="1.2" />
-            <circle cx="12" cy="8" r="1.2" />
-          </svg>
-        </IconButton>
+          Delete
+        </RowActionButton>
       </div>
       <ConfirmDialog
         open={confirmOpen}

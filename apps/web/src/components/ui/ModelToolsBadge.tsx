@@ -24,6 +24,10 @@ const TITLE: Record<ModelToolsSupport, string> = {
  * `<option>` elements in the various model `<select>`s can't host this (plain
  * text only) — those instead use `modelOptionLabel` from
  * `@nodal-agents/shared` to fold the same information into the option text.
+ *
+ * Geometry (h-[22px] rounded-[5px] px-2.5 text-[12px]) matches the rest of
+ * the pill family — StatusPill, StageBadge (audit UX-B1: this badge had
+ * drifted to h-[20px]/px-2/text-[11px]).
  */
 export default function ModelToolsBadge({
   support,
@@ -35,7 +39,7 @@ export default function ModelToolsBadge({
   return (
     <span
       title={TITLE[support]}
-      className={`inline-flex h-[20px] items-center rounded-[5px] px-2 text-[11px] font-medium leading-none ${STYLE[support]} ${className}`}
+      className={`inline-flex h-[22px] items-center rounded-[5px] px-2.5 text-[12px] font-medium leading-none ${STYLE[support]} ${className}`}
     >
       {LABEL[support]}
     </span>

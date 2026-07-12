@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
 
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   children: ReactNode;
@@ -7,6 +7,10 @@ type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   badge?: boolean;
   /** Visual size — `md` is the 34×34 topbar size; `sm` is 30×30 for in-row use. */
   size?: 'sm' | 'md';
+  /** React 19 lets function components accept `ref` as a plain prop — no
+   *  forwardRef needed. Used by Menu.tsx to measure the default trigger for
+   *  panel positioning. */
+  ref?: Ref<HTMLButtonElement>;
 };
 
 /**
@@ -20,11 +24,13 @@ export default function IconButton({
   size = 'md',
   className = '',
   type = 'button',
+  ref,
   ...rest
 }: Props) {
   const dim = size === 'md' ? 'h-[34px] w-[34px] rounded-md' : 'h-[30px] w-[30px] rounded-[7px]';
   return (
     <button
+      ref={ref}
       type={type}
       className={`relative flex shrink-0 items-center justify-center border border-rule-2 bg-paper text-ink-2 transition-colors hover:text-ink ${dim} ${className}`}
       {...rest}

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Bell } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions';
+import IconButton from '@/components/ui/IconButton';
 import { useApprovals, type PendingApproval } from './ApprovalsProvider';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -186,20 +187,19 @@ export default function NotificationsBell() {
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        aria-label="Notifications"
+      {/* IconButton's `badge` prop (audit UX-B1) is a plain presence dot, not a
+          count — it replaces the bespoke numeric bubble this button used to
+          draw itself. The exact pending count is still one click away in the
+          dropdown header ("Pending approvals (N)"), and the aria-label keeps
+          it available to assistive tech even though it's not painted here. */}
+      <IconButton
+        aria-label={count > 0 ? `Notifications (${count} pending)` : 'Notifications'}
         title="Notifications"
         onClick={toggle}
-        className="relative flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-rule-2 bg-paper text-ink-2 transition-colors hover:text-ink"
+        badge={count > 0}
       >
         <Bell size={15} />
-        {count > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-err px-1 text-[11px] font-bold leading-none text-canvas">
-            {count > 99 ? '99+' : count}
-          </span>
-        )}
-      </button>
+      </IconButton>
 
       {open && <ApprovalsDropdown items={pending} onClose={close} onApproved={handleApproved} />}
     </div>

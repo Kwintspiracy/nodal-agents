@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Sun, Moon } from '@phosphor-icons/react';
+import IconButton from './IconButton';
 
 type Theme = 'light' | 'dark';
 const STORAGE_KEY = 'nodal.theme';
@@ -49,18 +50,16 @@ export default function ThemeToggle() {
   const aria = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
 
   return (
-    <button
-      type="button"
+    <IconButton
       onClick={toggle}
       aria-label={aria}
       title={aria}
-      className="flex h-[34px] w-[34px] items-center justify-center rounded-md border border-rule-2 bg-paper text-ink-2 transition-colors hover:text-ink"
       // Avoid a hydration mismatch if the bootstrap script set a non-default theme.
       suppressHydrationWarning
     >
       {/* Until we've read the live data-theme on mount, render whichever icon
           matches the SSR default (light → Moon). After mount, the real one. */}
       {ready ? <Icon size={15} /> : <Moon size={15} />}
-    </button>
+    </IconButton>
   );
 }
