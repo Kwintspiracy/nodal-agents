@@ -2,7 +2,7 @@
 //
 // WHY this exists: before this, the ONLY signal that a job was waiting for
 // approval on Telegram was a *nudge* asking the LLM to call telegram_send_message
-// (execute.ts). That nudge was gated on `!telegramDelivered` and on the model
+// (execute.ts). That nudge was gated on `!toolDelivered` and on the model
 // actually complying — so in common cases (the agent had already sent any
 // message, or simply ignored the nudge) the user got NOTHING and the job paused
 // silently. This module makes the notification deterministic: the runner itself

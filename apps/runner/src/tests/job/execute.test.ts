@@ -22,6 +22,7 @@ import {
   conversations,
   entities,
   telegramAllowedChats,
+  channelBindings,
 } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
@@ -1589,6 +1590,193 @@ describe('executeJob', () => {
     expect(rows[0]?.turn).toBe(1);
 
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
+  // ─── Delivery guard, extended to Discord/Slack (F-multichannel incident) ──
+  // Live incident: job 4eefb5bf-2252-41be-962f-620c9d85e900 (2026-07-12) completed
+  // on Discord with tools_used=[] — the delivery guard existed but only listed
+  // 'telegram' in TOOL_ONLY_DELIVERY_CHANNELS, so a Discord job's return_result
+  // without ever sending was never nudged and the reply silently never reached
+  // the channel. These replay the incident on discord/slack and assert the
+  // nudge names the job's REAL channel, not a hardcoded "Telegram".
+
+  it('delivery guard: discord job replays incident 4eefb5bf — return_result without send is nudged naming Discord, then delivers and completes', async () => {
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken: 'discord-tok' }),
+      enabled: true,
+    });
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        chatId: 'discord-chan-42',
+        task: 'Reply on Discord',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create discord incident-replay test job');
+
+    // Turn 1 replays the incident exactly: return_result ALONE, no delivery tool
+    // call. Turn 2: the agent (now nudged) delivers, then return_result.
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr1', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-tg',
+              toolName: 'telegram_send_message',
+              args: { text: 'enfin livré sur Discord' },
+            },
+            { toolCallId: 'tc-rr2', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      capturedPrompts,
+    );
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+
+    // Turn 2's prompt carries the corrective nudge — it must name the job's
+    // REAL channel (Discord), never the hardcoded "Telegram" the bug shipped with.
+    const nudgedPrompt = JSON.stringify(capturedPrompts[1]);
+    expect(nudgedPrompt).toContain('Tu es sur Discord');
+    expect(nudgedPrompt).not.toContain('Tu es sur Telegram');
+
+    // The reply actually reached the channel (via the fake adapter, forwarding
+    // into sendTelegramMessageMock regardless of channel — see the module mock).
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+    expect(sendTelegramMessageMock).toHaveBeenCalledWith({
+      chatId: 'discord-chan-42',
+      text: 'enfin livré sur Discord',
+      botToken: 'discord-tok',
+    });
+
+    const rows = await db
+      .select({ status: agentJobs.status, turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.turn).toBe(2);
+
+    await db
+      .delete(channelBindings)
+      .where(
+        and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'discord')),
+      );
+  });
+
+  it('delivery guard: slack job is also tool-only-delivery — persistent plain-text fails loud, nudge names Slack', async () => {
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'slack',
+      credentials: JSON.stringify({ botToken: 'slack-tok' }),
+      enabled: true,
+    });
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'slack',
+        chatId: 'slack-chan-7',
+        task: 'Reply on Slack',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create slack delivery-fail test job');
+
+    // The model never uses the tool — every turn is plain text, mirroring the
+    // Telegram non-delivery regression above but on Slack.
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [{ text: 'texte brut, encore et toujours' }],
+      capturedPrompts,
+    );
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error).toBe('telegram_not_delivered');
+    }
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+    // The nudge sent on the retry turns names Slack, not Telegram.
+    const nudgedPrompt = JSON.stringify(capturedPrompts[1]);
+    expect(nudgedPrompt).toContain('Tu es sur Slack');
+    expect(nudgedPrompt).not.toContain('Tu es sur Telegram');
+
+    const rows = await db
+      .select({ status: agentJobs.status, error: agentJobs.error })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('failed');
+    expect(rows[0]?.error).toBe('telegram_not_delivered');
+
+    await db
+      .delete(channelBindings)
+      .where(and(eq(channelBindings.agentId, seed.agentId), eq(channelBindings.channel, 'slack')));
+  });
+
+  it('delivery guard: a dashboard job (non-tool-only channel) that finishes via return_result alone is NOT nudged', async () => {
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'dashboard',
+        task: 'Reply on the dashboard',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create dashboard test job');
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    sendTelegramMessageMock.mockClear();
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    expect(result.status).toBe('completed');
+    expect(sendTelegramMessageMock).not.toHaveBeenCalled();
+
+    // Single turn — no re-prompt was ever issued (the delivery guard doesn't
+    // apply to a channel that isn't tool-only).
+    const rows = await db
+      .select({ status: agentJobs.status, turn: agentJobs.turn })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.turn).toBe(1);
   });
 
   // ─── Brique 18.6: sibling-tool-error guard ────────────────────────────────

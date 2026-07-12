@@ -275,12 +275,21 @@ const DELIVERY_OR_TERMINAL_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...DELIVERY_TOOL_NAME_LIST,
 ]);
 
-// Channels whose ONLY path to the user is a delivery tool call (telegram_send_message).
-// For these, a job that completes without ever delivering is a silent black hole —
-// the delivery guard re-prompts the agent before letting such a job finish. Other
-// channels (api, dashboard, cron, internal, …) expose agent_jobs.result directly, so
-// a text-only completion is fine there. Extend as new tool-only channels ship.
-const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram']);
+// Channels whose ONLY path to the user is a delivery tool call (telegram_send_message,
+// which dispatches through the job's own ChannelAdapter — see CHANNEL_SEND_TOOL in
+// thread-history.ts). For these, a job that completes without ever delivering is a
+// silent black hole — the delivery guard re-prompts the agent before letting such a
+// job finish. Other channels (api, dashboard, cron, internal, …) expose agent_jobs.result
+// directly, so a text-only completion is fine there.
+// Live incident: job 4eefb5bf (2026-07-12) completed on discord with tools_used=[] —
+// the guard already existed but only listed 'telegram', so a discord job's plain-text
+// reply silently never reached the channel. discord/slack register the SAME send tools
+// as telegram (gate at the capabilityTools.push call above keys off
+// deliveryBotToken || hasDiscordBinding || hasSlackBinding), so they belong in this set
+// too. whatsapp does NOT: hasWhatsappBinding is not part of that gate yet (no outbound
+// send tool is registered for a whatsapp job today), so adding it here would nudge the
+// agent to call a tool it doesn't have — join it once whatsapp's outbound tooling ships.
+const TOOL_ONLY_DELIVERY_CHANNELS: ReadonlySet<string> = new Set(['telegram', 'discord', 'slack']);
 
 /** Truncate an oversized tool-result string with an explicit, model-readable marker. */
 export function truncateForContext(value: string): string {
@@ -1944,10 +1953,21 @@ async function runJob(
   // never gets the "done" message they asked for.
   const requiresToolDelivery =
     TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || cronWantsConfirmation;
-  const MAX_TELEGRAM_REDELIVERY_NUDGES = 2;
-  let telegramRedeliveryNudges = 0;
-  let telegramDelivered = false;
-  // B3bis — which delivery tool actually fired (set alongside telegramDelivered
+  // Human-readable capitalization for the nudges below. `job.channel` is one of
+  // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron' via
+  // cronWantsConfirmation — that path is telegram-only (the cron tick sets a
+  // telegram chatId; see the comment above cronWantsConfirmation), so an
+  // unrecognized channel falls back to 'Telegram' rather than guessing.
+  const CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+    telegram: 'Telegram',
+    discord: 'Discord',
+    slack: 'Slack',
+  };
+  const channelDisplayName = CHANNEL_DISPLAY_NAMES[job.channel ?? ''] ?? 'Telegram';
+  const MAX_REDELIVERY_NUDGES = 2;
+  let redeliveryNudges = 0;
+  let toolDelivered = false;
+  // B3bis — which delivery tool actually fired (set alongside toolDelivered
   // below). Feeds withDeliveryNotice: when THIS job is a delegated worker
   // (job.parentJobId set) that delivered directly to the user, its parent needs
   // to know so the orchestrator doesn't re-deliver or treat the task as
@@ -1955,11 +1975,16 @@ async function runJob(
   let deliveredViaToolName: string | null = null;
   // Internal corrective prompt — never sent to the channel; only steers the LLM
   // back to delivering via its tool. Not user-facing text (invariant 2 holds).
+  // The tool is still named `telegram_send_message` regardless of channel (it
+  // dispatches through the job's own ChannelAdapter — renamed in phase C), so the
+  // wording below stays accurate on Discord/Slack by naming the channel but keeping
+  // the literal tool name.
   const deliveryNudge =
-    "[système] Tu es sur Telegram. Tu n'as pas encore livré ta réponse à l'utilisateur. " +
-    'Appelle `telegram_send_message` avec ta réponse, PUIS `return_result`. Ne réponds pas ' +
-    'en texte simple — sur Telegram, seul un message envoyé via `telegram_send_message` est ' +
-    "visible par l'utilisateur.";
+    `[système] Tu es sur ${channelDisplayName}. Tu n'as pas encore livré ta réponse à ` +
+    "l'utilisateur. Appelle `telegram_send_message` (l'outil d'envoi — il livre sur le canal " +
+    'du job) avec ta réponse, PUIS `return_result`. Ne réponds pas en texte simple — sur ' +
+    `${channelDisplayName}, seul un message envoyé via \`telegram_send_message\` est visible ` +
+    "par l'utilisateur.";
 
   // B3bis — append a deterministic, harness-authored delivery notice to the
   // result this job returns, so a PARENT that delegated to it (assign_*, in
@@ -1987,12 +2012,13 @@ async function runJob(
   // invariant 2 holds).
   let approvalPending = false;
   const approvalNudge =
-    '[système] Tu es sur Telegram et une de tes actions vient de créer une demande ' +
-    "d'approbation : elle attend la validation de l'utilisateur avant de s'exécuter. Avant que " +
-    "le job se mette en pause, appelle `telegram_send_message` pour dire à l'utilisateur, avec " +
-    'tes propres mots, quelle action tu as lancée et que tu attends son approbation (il pourra ' +
-    "valider directement depuis Telegram via les boutons ✅/❌, ou depuis le dashboard). N'appelle " +
-    'PAS `return_result` — la mise en pause est automatique.';
+    `[système] Tu es sur ${channelDisplayName} et une de tes actions vient de créer une ` +
+    "demande d'approbation : elle attend la validation de l'utilisateur avant de s'exécuter. " +
+    "Avant que le job se mette en pause, appelle `telegram_send_message` (l'outil d'envoi — il " +
+    "livre sur le canal du job) pour dire à l'utilisateur, avec tes propres mots, quelle action " +
+    "tu as lancée et que tu attends son approbation (il pourra valider directement via les " +
+    "boutons ✅/❌, ou depuis le dashboard). N'appelle PAS `return_result` — la mise en pause " +
+    'est automatique.';
   // Approval grace window (Lot A1). Read via runnerEnv when available
   // (validated, zod default 120_000); cron paths call executeJob without a
   // runnerEnv, so fall back to raw process.env like the other job-level limits
@@ -2659,12 +2685,12 @@ async function runJob(
           // agent to resend via its tool instead of silently completing. Live
           // incident: job 5d84d72e (2026-05-29) completed with the reply only in
           // agent_jobs.result — the Telegram user saw nothing.
-          if (requiresToolDelivery && !telegramDelivered) {
-            if (telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES) {
-              telegramRedeliveryNudges += 1;
+          if (requiresToolDelivery && !toolDelivered) {
+            if (redeliveryNudges < MAX_REDELIVERY_NUDGES) {
+              redeliveryNudges += 1;
               trace('telegram_redelivery_nudge', {
                 turn,
-                attempt: telegramRedeliveryNudges,
+                attempt: redeliveryNudges,
                 via: 'text_branch',
               });
               messages = [...messages, { role: 'user', content: deliveryNudge } as ModelMessage];
@@ -3300,7 +3326,7 @@ async function runJob(
         // Delivery guard: record a successful user-facing delivery so the
         // completion paths know the user actually received something.
         if (toolResult.outcome === 'success' && DELIVERY_TOOL_NAMES.has(call.name)) {
-          telegramDelivered = true;
+          toolDelivered = true;
           deliveredViaToolName = call.name;
         }
 
@@ -3396,11 +3422,11 @@ async function runJob(
         }
         if (
           requiresToolDelivery &&
-          !telegramDelivered &&
-          telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES
+          !toolDelivered &&
+          redeliveryNudges < MAX_REDELIVERY_NUDGES
         ) {
-          telegramRedeliveryNudges += 1;
-          trace('telegram_approval_nudge', { turn, attempt: telegramRedeliveryNudges });
+          redeliveryNudges += 1;
+          trace('telegram_approval_nudge', { turn, attempt: redeliveryNudges });
           messages = [...messages, { role: 'user', content: approvalNudge } as ModelMessage];
           continue;
         }
@@ -3576,11 +3602,11 @@ async function runJob(
           if (
             reason !== '' &&
             requiresToolDelivery &&
-            !telegramDelivered &&
-            telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES
+            !toolDelivered &&
+            redeliveryNudges < MAX_REDELIVERY_NUDGES
           ) {
-            telegramRedeliveryNudges += 1;
-            trace('blocked_delivery_nudge', { turn, attempt: telegramRedeliveryNudges });
+            redeliveryNudges += 1;
+            trace('blocked_delivery_nudge', { turn, attempt: redeliveryNudges });
             toolResultBlocks.push({
               type: 'tool-result',
               toolCallId: returnResultCall.toolCallId,
@@ -3691,12 +3717,12 @@ async function runJob(
         // flow to deliver later — would complete the job silently. Re-prompt the
         // agent to send via its tool first, mirroring the j-pré defer pattern.
         // Live incident: job 5d84d72e (2026-05-29).
-        if (requiresToolDelivery && !telegramDelivered && taskRows.length === 0) {
-          if (telegramRedeliveryNudges < MAX_TELEGRAM_REDELIVERY_NUDGES) {
-            telegramRedeliveryNudges += 1;
+        if (requiresToolDelivery && !toolDelivered && taskRows.length === 0) {
+          if (redeliveryNudges < MAX_REDELIVERY_NUDGES) {
+            redeliveryNudges += 1;
             trace('telegram_redelivery_nudge', {
               turn,
-              attempt: telegramRedeliveryNudges,
+              attempt: redeliveryNudges,
               via: 'return_result_branch',
             });
             toolResultBlocks.push({
