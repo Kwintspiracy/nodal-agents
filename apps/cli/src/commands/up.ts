@@ -370,7 +370,9 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
     // /api/health alone is NOT proof the dashboard renders — see
     // assertWebRenders' doc (0.7.8 ritual: every page 500'd on a missing
     // standalone dependency while both health endpoints stayed green).
-    await assertWebRenders(webUrl);
+    // Same generous budget as the health wait above — dev's first Turbopack
+    // compile of `/` can take minutes on a cold cache (see assertWebRenders).
+    await assertWebRenders(webUrl, webHealthMs);
     healthSpinner.succeed(chalk.green('All services healthy'));
   } catch (err) {
     healthSpinner.fail('Health check timed out');

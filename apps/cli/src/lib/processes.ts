@@ -312,13 +312,19 @@ export async function waitForHealth(url: string, timeoutMs = 30_000): Promise<vo
  * printed "All services healthy"). GET / follows redirects (login/onboarding
  * are fine landings); anything 5xx after the deadline is a hard failure.
  */
-export async function assertWebRenders(url: string, timeoutMs = 60_000): Promise<void> {
+export async function assertWebRenders(url: string, timeoutMs = 300_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastStatus = 0;
   while (Date.now() < deadline) {
     try {
       const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 5000);
+      // Per-attempt budget must survive `next dev`'s cold Turbopack compile of
+      // the dashboard: the FIRST GET / hangs (no response at all) until the
+      // compile finishes — sometimes minutes on a cold cache. A short abort
+      // made every attempt "unreachable" and tore the dev stack down at boot
+      // (live incident, 2026-07-12, right after this probe shipped). The
+      // packed build renders in milliseconds and is unaffected.
+      const t = setTimeout(() => controller.abort(), 60_000);
       const res = await fetch(`${url}/`, { signal: controller.signal });
       clearTimeout(t);
       lastStatus = res.status;
