@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { Play, Pause, ArrowClockwise, Trash } from '@phosphor-icons/react';
+import { Play, Pause, ArrowsClockwise, Trash } from '@phosphor-icons/react';
 import {
   toggleWebhookTriggerAction,
   rotateWebhookSecretAction,
@@ -14,7 +14,6 @@ import StatusPill from '@/components/ui/StatusPill';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
 import RowActionButton from '@/components/ui/RowActionButton';
-import Menu from '@/components/ui/Menu';
 
 interface Revealed {
   secret: string;
@@ -99,28 +98,26 @@ export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) 
 
         <div className="flex items-center gap-1.5">
           <RowActionButton
-            icon={w.active ? <Pause size={13} weight="fill" /> : <Play size={13} weight="fill" />}
+            square
+            icon={w.active ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
+            title={w.active ? 'Pause' : 'Enable'}
             onClick={handleToggle}
             disabled={isPending}
-          >
-            {w.active ? 'Pause' : 'Enable'}
-          </RowActionButton>
-          <Menu
-            items={[
-              {
-                label: revealed ? 'Rotate' : 'Rotate secret…',
-                icon: <ArrowClockwise size={13} />,
-                onSelect: () => setRotateConfirmOpen(true),
-                disabled: isPending,
-              },
-              {
-                label: 'Delete',
-                icon: <Trash size={13} />,
-                onSelect: () => setDeleteConfirmOpen(true),
-                tone: 'danger',
-                disabled: isPending,
-              },
-            ]}
+          />
+          <RowActionButton
+            square
+            icon={<ArrowsClockwise size={16} />}
+            title="Rotate secret"
+            onClick={() => setRotateConfirmOpen(true)}
+            disabled={isPending}
+          />
+          <RowActionButton
+            square
+            icon={<Trash size={16} />}
+            title="Delete"
+            tone="danger"
+            onClick={() => setDeleteConfirmOpen(true)}
+            disabled={isPending}
           />
         </div>
       </div>

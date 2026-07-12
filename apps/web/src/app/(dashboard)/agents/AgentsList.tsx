@@ -596,25 +596,19 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
 function RowActions({ agent }: { agent: AgentRow }) {
   return (
     <td className="px-5 py-3 text-right">
-      {/* Icon-only on mobile, label on desktop — keeps the row inside narrow
-          screens instead of clipping the buttons against the card edge. */}
       <div className="flex items-center justify-end gap-2">
         <RowActionButton
+          square
           href={`/agents/${agent.id}/channels`}
-          icon={<ChatsCircle size={13} />}
+          icon={<ChatsCircle size={16} />}
           title="Channels"
-          responsive
-        >
-          Channels
-        </RowActionButton>
+        />
         <RowActionButton
+          square
           href={`/agents/${agent.id}/edit`}
-          icon={<PencilSimple size={13} />}
+          icon={<PencilSimple size={16} />}
           title="Edit"
-          responsive
-        >
-          Edit
-        </RowActionButton>
+        />
         <DeleteAgentButton id={agent.id} name={agent.name} deleteAction={deleteAgentAction} />
       </div>
     </td>

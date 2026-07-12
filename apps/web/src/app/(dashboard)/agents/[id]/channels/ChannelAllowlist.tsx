@@ -130,14 +130,14 @@ export default function ChannelAllowlist({
                 </span>
               ) : (
                 <RowActionButton
-                  icon={<Prohibit size={13} />}
+                  square
+                  icon={<Prohibit size={16} />}
+                  title="Revoke"
                   tone="danger"
                   disabled={isPending}
                   onClick={() => setRevokeTarget(c)}
                   className="shrink-0"
-                >
-                  Revoke
-                </RowActionButton>
+                />
               )}
             </div>
           ))}

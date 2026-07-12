@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { GearSix, Trash } from '@phosphor-icons/react';
+import { PencilSimple, Trash } from '@phosphor-icons/react';
 import {
   deleteConnectorAction,
   type ConnectorRow,
@@ -183,17 +183,20 @@ function ConnectorRow({
         {/* Actions */}
         <td className="px-[18px] py-[13px] align-middle">
           <div className="flex items-center justify-end gap-2">
-            <RowActionButton icon={<GearSix size={13} />} onClick={() => setExpanded((v) => !v)}>
-              {expanded ? 'Close' : 'Configure'}
-            </RowActionButton>
             <RowActionButton
-              icon={<Trash size={13} />}
+              square
+              icon={<PencilSimple size={16} />}
+              title={expanded ? 'Close' : 'Edit'}
+              onClick={() => setExpanded((v) => !v)}
+            />
+            <RowActionButton
+              square
+              icon={<Trash size={16} />}
+              title={instance.authType === 'oauth2' ? 'Disconnect' : 'Delete'}
               tone="danger"
               disabled={isPending}
               onClick={() => setConfirmOpen(true)}
-            >
-              Delete
-            </RowActionButton>
+            />
           </div>
         </td>
       </tr>

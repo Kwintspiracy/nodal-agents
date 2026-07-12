@@ -2,12 +2,14 @@
 
 import { useState, useTransition, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
+import { UserPlus, Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Modal from '@/components/ui/Modal.tsx';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import EmptyState from '@/components/ui/EmptyState';
+import RowActionButton from '@/components/ui/RowActionButton';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
 import {
   setReflectionEnabledAction,
@@ -311,48 +313,45 @@ export default function LearnedSkillsClient({
                 </button>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Assign button — only for unassigned skills */}
+                  {/* Assign — only for unassigned skills */}
                   {skill.assignedAgentNames.length === 0 && assignableAgents.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => openAssignModal(skill)}
+                    <RowActionButton
+                      square
+                      icon={<UserPlus size={16} />}
+                      title="Assign to agents"
                       disabled={isPending}
-                      className="px-2.5 py-1 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
-                    >
-                      Assign
-                    </button>
+                      onClick={() => openAssignModal(skill)}
+                    />
                   )}
                   {skill.state === 'archived' ? (
-                    <button
-                      type="button"
-                      onClick={() => handleRestore(skill.id, skill.name)}
+                    <RowActionButton
+                      square
+                      icon={<ArrowCounterClockwise size={16} />}
+                      title="Restore"
                       disabled={isPending}
-                      className="px-2.5 py-1 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
-                    >
-                      Restore
-                    </button>
+                      onClick={() => handleRestore(skill.id, skill.name)}
+                    />
                   ) : (
-                    <button
-                      type="button"
+                    <RowActionButton
+                      square
+                      icon={<Archive size={16} />}
+                      title="Archive"
+                      disabled={isPending}
                       onClick={() =>
                         setDialog({ type: 'archive', skillId: skill.id, skillName: skill.name })
                       }
-                      disabled={isPending}
-                      className="px-2.5 py-1 text-[13px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors disabled:opacity-50"
-                    >
-                      Archive
-                    </button>
+                    />
                   )}
-                  <button
-                    type="button"
+                  <RowActionButton
+                    square
+                    icon={<Trash size={16} />}
+                    title="Delete"
+                    tone="danger"
+                    disabled={isPending}
                     onClick={() =>
                       setDialog({ type: 'delete', skillId: skill.id, skillName: skill.name })
                     }
-                    disabled={isPending}
-                    className="px-2.5 py-1 text-[13px] font-medium text-err border border-err/30 rounded-lg hover:bg-err/5 transition-colors disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
+                  />
                 </div>
               </div>
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { GearSix } from '@phosphor-icons/react';
+import { PencilSimple } from '@phosphor-icons/react';
 import type { McpServerInstance, McpCatalogItem } from '@/lib/actions.ts';
 import Disc from '@/components/ui/Disc';
 import { connIcon, connEmoji } from '../connectors/connector-brand.ts';
@@ -142,9 +142,12 @@ function McpRow({
         {/* Actions */}
         <td className="px-[18px] py-[13px] align-middle">
           <div className="flex items-center justify-end gap-2">
-            <RowActionButton icon={<GearSix size={13} />} onClick={() => setExpanded((v) => !v)}>
-              {expanded ? 'Close' : 'Configure'}
-            </RowActionButton>
+            <RowActionButton
+              square
+              icon={<PencilSimple size={16} />}
+              title={expanded ? 'Close' : 'Edit'}
+              onClick={() => setExpanded((v) => !v)}
+            />
           </div>
         </td>
       </tr>

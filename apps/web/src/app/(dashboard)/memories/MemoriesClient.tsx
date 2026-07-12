@@ -50,7 +50,7 @@ import LiveDot from '@/components/ui/LiveDot';
 import RowActionButton from '@/components/ui/RowActionButton';
 import EmptyState from '@/components/ui/EmptyState';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import { Trash } from '@phosphor-icons/react';
+import { Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
 import NewMemoryModal from './NewMemoryModal';
 import {
   archiveMemoryAction,
@@ -153,7 +153,7 @@ function MemoryFact({ fact }: { fact: string }) {
           setExpanded((v) => !v);
         }
       }}
-      className="cursor-pointer text-[13px] leading-snug text-ink"
+      className="cursor-pointer break-words text-[13px] leading-snug text-ink"
     >
       <span className={expanded ? '' : 'line-clamp-2'}>{fact}</span>{' '}
       <span className="text-[11px] font-medium text-ink-4 hover:text-ink-2">
@@ -207,23 +207,23 @@ function RowActions({ id, archived }: { id: string; archived: boolean }) {
   return (
     <>
       <div className="flex items-center justify-end gap-1.5">
-        <button
-          type="button"
-          onClick={handleArchive}
-          disabled={isPending}
-          className="rounded-md border border-rule-2 px-2.5 py-1 text-[11.5px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink disabled:opacity-40"
-        >
-          {archived ? 'Restore' : 'Archive'}
-        </button>
         <RowActionButton
-          icon={<Trash size={13} />}
+          square
+          icon={
+            archived ? <ArrowCounterClockwise size={16} /> : <Archive size={16} weight="regular" />
+          }
+          title={archived ? 'Restore' : 'Archive'}
+          disabled={isPending}
+          onClick={handleArchive}
+        />
+        <RowActionButton
+          square
+          icon={<Trash size={16} />}
+          title="Delete"
           tone="danger"
           disabled={isPending}
           onClick={() => setConfirmOpen(true)}
-          title="Delete memory"
-        >
-          Delete
-        </RowActionButton>
+        />
       </div>
       <ConfirmDialog
         open={confirmOpen}
@@ -559,9 +559,14 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                           >
                             {meta.icon}
                           </Disc>
-                          <div className="min-w-0">
+                          {/* max-w caps the column so a long, space-free fact (a pasted URL
+                              or token) breaks and wraps instead of stretching the whole
+                              table wider than its container (the "catastrophique" overflow
+                              at 1280px) — `break-words` on MemoryFact does the actual
+                              wrapping once this box stops growing. */}
+                          <div className="min-w-0 max-w-[170px]">
                             <MemoryFact fact={m.fact} />
-                            <div className="mt-0.5 font-mono text-[11px] text-ink-4">
+                            <div className="mt-0.5 break-words font-mono text-[11px] text-ink-4">
                               {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
                               {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
                             </div>

@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { Play, Pause, PencilSimple, Copy, Trash } from '@phosphor-icons/react';
+import { Play, Pause, PlayCircle, PencilSimple, Copy, Trash } from '@phosphor-icons/react';
 import {
   toggleScheduleAction,
   deleteScheduleAction,
@@ -16,7 +16,6 @@ import ScheduleForm from './ScheduleForm.tsx';
 import { humanLabel } from '@/lib/cron.ts';
 import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
-import Menu from '@/components/ui/Menu';
 
 interface Props {
   schedule: ScheduleRowData;
@@ -129,42 +128,42 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
 
         <div className="flex items-center gap-1.5">
           <RowActionButton
-            icon={<Play size={13} weight="fill" />}
+            square
+            icon={<Play size={16} weight="fill" />}
+            title={s.task ? 'Run now' : 'No task to run'}
             onClick={handleRunNow}
             disabled={isPending || !s.task}
-            title={s.task ? 'Run this automation now, outside its schedule' : 'No task to run'}
-          >
-            Run now
-          </RowActionButton>
+          />
           <RowActionButton
-            icon={s.active ? <Pause size={13} weight="fill" /> : <Play size={13} weight="fill" />}
+            square
+            icon={
+              s.active ? <Pause size={16} weight="fill" /> : <PlayCircle size={16} weight="fill" />
+            }
+            title={s.active ? 'Pause' : 'Enable'}
             onClick={handleToggle}
             disabled={isPending}
-          >
-            {s.active ? 'Pause' : 'Enable'}
-          </RowActionButton>
-          <Menu
-            items={[
-              {
-                label: 'Edit',
-                icon: <PencilSimple size={13} />,
-                onSelect: () => setEditing(true),
-                disabled: isPending,
-              },
-              {
-                label: 'Duplicate',
-                icon: <Copy size={13} />,
-                onSelect: handleDuplicate,
-                disabled: isPending,
-              },
-              {
-                label: 'Delete',
-                icon: <Trash size={13} />,
-                onSelect: () => setConfirmOpen(true),
-                tone: 'danger',
-                disabled: isPending,
-              },
-            ]}
+          />
+          <RowActionButton
+            square
+            icon={<PencilSimple size={16} />}
+            title="Edit"
+            onClick={() => setEditing(true)}
+            disabled={isPending}
+          />
+          <RowActionButton
+            square
+            icon={<Copy size={16} />}
+            title="Duplicate"
+            onClick={handleDuplicate}
+            disabled={isPending}
+          />
+          <RowActionButton
+            square
+            icon={<Trash size={16} />}
+            title="Delete"
+            tone="danger"
+            onClick={() => setConfirmOpen(true)}
+            disabled={isPending}
           />
         </div>
       </div>

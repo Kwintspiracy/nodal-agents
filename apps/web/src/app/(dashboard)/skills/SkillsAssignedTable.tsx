@@ -2,14 +2,13 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { PencilSimple, Plus, Trash, CloudX } from '@phosphor-icons/react';
+import { PencilSimple, UserPlus, Trash, CloudX } from '@phosphor-icons/react';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import { deleteSkillAction, uninstallCommunitySkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
 import CountPill from '@/components/ui/CountPill';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
-import Menu from '@/components/ui/Menu';
 import AssignSkillModal from './AssignSkillModal.tsx';
 
 type Props = {
@@ -131,36 +130,35 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
       <td className="px-[18px] py-4 align-middle">
         <div className="flex items-center justify-end gap-2">
           <RowActionButton
-            icon={<Plus size={13} weight="bold" />}
+            square
+            icon={<UserPlus size={16} />}
+            title="Assign to agents"
             onClick={() => setAssignOpen(true)}
-          >
-            Assign
-          </RowActionButton>
-          <RowActionButton icon={<PencilSimple size={13} />} href={`/skills/${skill.id}/edit`}>
-            Customise
-          </RowActionButton>
+          />
+          <RowActionButton
+            square
+            icon={<PencilSimple size={16} />}
+            title="Edit"
+            href={`/skills/${skill.id}/edit`}
+          />
+          {!skill.isSystem && skill.isCommunity && (
+            <RowActionButton
+              square
+              icon={<CloudX size={16} />}
+              title="Uninstall"
+              tone="danger"
+              disabled={isPending}
+              onClick={() => setUninstallConfirmOpen(true)}
+            />
+          )}
           {!skill.isSystem && (
-            <Menu
-              items={[
-                ...(skill.isCommunity
-                  ? [
-                      {
-                        label: 'Uninstall',
-                        icon: <CloudX size={13} />,
-                        onSelect: () => setUninstallConfirmOpen(true),
-                        tone: 'danger' as const,
-                        disabled: isPending,
-                      },
-                    ]
-                  : []),
-                {
-                  label: 'Delete',
-                  icon: <Trash size={13} />,
-                  onSelect: () => setConfirmOpen(true),
-                  tone: 'danger',
-                  disabled: isPending,
-                },
-              ]}
+            <RowActionButton
+              square
+              icon={<Trash size={16} />}
+              title="Delete"
+              tone="danger"
+              disabled={isPending}
+              onClick={() => setConfirmOpen(true)}
             />
           )}
         </div>

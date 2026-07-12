@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { GearSix, Trash } from '@phosphor-icons/react';
+import { PencilSimple, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
 import { deleteLlmKeyAction, setLlmKeyActiveAction, type LlmKeyUiRow } from '@/lib/actions.ts';
@@ -120,17 +120,15 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
       <div className="flex items-center justify-between border-t border-rule-2 pt-[10px]">
         <AgentUsage count={row.agentCount} keyId={row.id} />
         <div className="flex items-center gap-1.5">
-          <RowActionButton icon={<GearSix size={13} weight="regular" />} onClick={onEdit}>
-            Configure
-          </RowActionButton>
+          <RowActionButton square icon={<PencilSimple size={16} />} title="Edit" onClick={onEdit} />
           <RowActionButton
-            icon={<Trash size={13} />}
+            square
+            icon={<Trash size={16} />}
+            title="Delete"
             tone="danger"
             onClick={() => setConfirmOpen(true)}
             disabled={isPending}
-          >
-            Delete
-          </RowActionButton>
+          />
         </div>
       </div>
 

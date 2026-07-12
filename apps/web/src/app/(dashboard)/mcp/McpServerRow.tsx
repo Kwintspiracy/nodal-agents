@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { PencilSimple, ArrowClockwise, Trash } from '@phosphor-icons/react';
+import { PencilSimple, ArrowsClockwise, Trash } from '@phosphor-icons/react';
 import {
   deleteMcpServerAction,
   renameMcpServerAction,
@@ -13,7 +13,6 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import McpEditForm from './McpEditForm.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
-import Menu from '@/components/ui/Menu';
 
 interface Props {
   instance: McpServerInstance;
@@ -151,31 +150,29 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
         </div>
         <div className="shrink-0 flex gap-2 flex-wrap justify-end">
           <RowActionButton
-            icon={<PencilSimple size={13} />}
+            square
+            icon={<PencilSimple size={16} />}
+            title={editOpen ? 'Close' : 'Edit config'}
             onClick={() => {
               setEditOpen((v) => !v);
               setRotateOpen(false);
             }}
             disabled={isPending}
-          >
-            {editOpen ? 'Cancel' : 'Edit config'}
-          </RowActionButton>
-          <Menu
-            items={[
-              {
-                label: rotateOpen ? 'Cancel rotate' : 'Rotate key',
-                icon: <ArrowClockwise size={13} />,
-                onSelect: () => setRotateOpen((v) => !v),
-                disabled: isPending,
-              },
-              {
-                label: 'Disconnect',
-                icon: <Trash size={13} />,
-                onSelect: () => setConfirmOpen(true),
-                tone: 'danger',
-                disabled: isPending,
-              },
-            ]}
+          />
+          <RowActionButton
+            square
+            icon={<ArrowsClockwise size={16} />}
+            title={rotateOpen ? 'Cancel rotate' : 'Rotate secret'}
+            onClick={() => setRotateOpen((v) => !v)}
+            disabled={isPending}
+          />
+          <RowActionButton
+            square
+            icon={<Trash size={16} />}
+            title="Disconnect"
+            tone="danger"
+            onClick={() => setConfirmOpen(true)}
+            disabled={isPending}
           />
         </div>
       </div>

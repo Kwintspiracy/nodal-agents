@@ -38,15 +38,13 @@ export default function DeleteAgentButton({
   return (
     <>
       <RowActionButton
+        square
         onClick={() => setConfirmOpen(true)}
         disabled={isPending}
-        icon={<Trash size={13} />}
+        icon={<Trash size={16} />}
         tone="danger"
-        title="Delete"
-        responsive
-      >
-        {isPending ? 'Deleting…' : 'Delete'}
-      </RowActionButton>
+        title={isPending ? 'Deleting…' : 'Delete'}
+      />
       <ConfirmDialog
         open={confirmOpen}
         title={`Delete agent "${name}"?`}

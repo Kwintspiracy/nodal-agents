@@ -198,29 +198,29 @@ function CredentialRow({
         <td className={TD}>
           <div className="flex items-center justify-end gap-2">
             <RowActionButton
-              icon={<PencilSimple size={13} />}
+              square
+              icon={<PencilSimple size={16} />}
+              title={renameOpen ? 'Close' : 'Rename credential'}
               onClick={() => setRenameOpen((v) => !v)}
               disabled={isPending || isRefreshing}
-            >
-              Rename
-            </RowActionButton>
+            />
             {supportsRefresh && (
               <RowActionButton
-                icon={<ArrowClockwise size={13} />}
+                square
+                icon={<ArrowClockwise size={16} />}
+                title={isRefreshing ? 'Refreshing…' : 'Refresh'}
                 onClick={performRefresh}
                 disabled={isPending || isRefreshing}
-              >
-                {isRefreshing ? 'Refreshing…' : 'Refresh'}
-              </RowActionButton>
+              />
             )}
             <RowActionButton
-              icon={<Trash size={13} />}
+              square
+              icon={<Trash size={16} />}
+              title="Delete"
               tone="danger"
               onClick={() => setDeleteOpen(true)}
               disabled={isPending || isRefreshing}
-            >
-              Delete
-            </RowActionButton>
+            />
           </div>
         </td>
       </tr>
