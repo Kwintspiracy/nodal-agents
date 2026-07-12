@@ -112,6 +112,53 @@ describe('modelToolsSupport', () => {
   });
 });
 
+// ─── Google native catalog refresh (2026-07-12: 2.0-flash/2.5-pro dropped,
+// 3.x family added) ────────────────────────────────────────────────────────
+
+describe('google native catalog', () => {
+  it('no longer lists the dead/removed 2.x models', () => {
+    expect(findModelCatalogEntry('google', 'gemini-2.0-flash')).toBeUndefined();
+    expect(findModelCatalogEntry('google', 'gemini-2.5-pro')).toBeUndefined();
+  });
+
+  it('gemini-3.5-flash and gemini-3.1-pro-preview are reasoning + vision + forcedToolChoice:false', () => {
+    for (const modelId of ['gemini-3.5-flash', 'gemini-3.1-pro-preview']) {
+      const entry = findModelCatalogEntry('google', modelId);
+      expect(entry, modelId).toBeDefined();
+      expect(entry?.capabilities.reasoning, modelId).toBe(true);
+      expect(entry?.capabilities.tools, modelId).toBe(true);
+      expect(entry?.capabilities.forcedToolChoice, modelId).toBe(false);
+      expect(entry?.capabilities.vision, modelId).toBe(true);
+      expect(entry?.contextWindow, modelId).toBe(1_048_576);
+    }
+  });
+});
+
+// ─── OpenRouter google reasoning flags (2026-07-12) ───────────────────────────
+
+describe('openrouter google reasoning flags', () => {
+  it('the three Gemini thinking models are flagged reasoning:true', () => {
+    for (const modelId of [
+      'google/gemini-3.1-flash-lite-preview',
+      'google/gemini-3.1-pro-preview',
+      'google/gemini-3.5-flash',
+    ]) {
+      const entry = findModelCatalogEntry('openrouter', modelId);
+      expect(entry, modelId).toBeDefined();
+      expect(entry?.capabilities.reasoning, modelId).toBe(true);
+      // Unlike the M-series/Kimi/GLM reasoning entries, these keep a forced
+      // tool_choice — no evidence Gemini's OpenRouter routes reject it.
+      expect(entry?.capabilities.forcedToolChoice, modelId).toBe(true);
+    }
+  });
+
+  it('gemma (non-thinking) is left untouched', () => {
+    const entry = findModelCatalogEntry('openrouter', 'google/gemma-4-31b-it');
+    expect(entry).toBeDefined();
+    expect(entry?.capabilities.reasoning).toBeUndefined();
+  });
+});
+
 describe('modelOptionLabel', () => {
   it('returns the plain label for a tools:true entry', () => {
     const entry = findModelCatalogEntry('moonshot', 'kimi-k2.6');

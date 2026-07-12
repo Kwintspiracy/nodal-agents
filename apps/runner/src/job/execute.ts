@@ -2634,6 +2634,32 @@ async function runJob(
       // text part is placed before the tool-call parts (valid assistant content
       // shape for both Anthropic and OpenAI formats).
       const hasText = (response.text ?? '').trim().length > 0;
+      // HARNESS FIX (tool-call thoughtSignature round-trip): a tool call from
+      // `response.toolCalls` (== rawToolCalls) carries its signature in
+      // `providerMetadata` (the OUTPUT channel) — same asymmetry as the
+      // reasoning mirror above — but the SDK reads `providerOptions` (the
+      // INPUT channel) when it replays the call on the next turn. On Gemini
+      // 3.x NATIVE this drops the API's `thoughtSignature` and the 2nd
+      // tool-call turn fails with a hard 400 INVALID_ARGUMENT: "Function call
+      // is missing a thought_signature in functionCall parts. This is
+      // required for tools to work correctly" (live test, Gemini 3.x native,
+      // 2026-07-12). Via OpenRouter the same drop is silent — no error, but
+      // reasoning continuity degrades (a benign "reasoning_details missing
+      // signatures" warning can surface from OpenRouter for this path; that's
+      // expected). Mirror providerMetadata into providerOptions so each
+      // provider finds its own namespaced signature where it looks — a safe
+      // no-op for tool calls that carry no such metadata.
+      const toolCallParts = rawToolCalls.map((tc) => {
+        const base = {
+          type: 'tool-call' as const,
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          input: tc.input as Record<string, unknown>,
+        };
+        return tc.providerMetadata != null
+          ? { ...base, providerOptions: tc.providerMetadata }
+          : base;
+      });
       const assistantMsg: ModelMessage = {
         role: 'assistant',
         content:
@@ -2641,12 +2667,7 @@ async function runJob(
             ? [
                 ...reasoningParts,
                 ...(hasText ? [{ type: 'text' as const, text: response.text || '' }] : []),
-                ...rawToolCalls.map((tc) => ({
-                  type: 'tool-call' as const,
-                  toolCallId: tc.toolCallId,
-                  toolName: tc.toolName,
-                  input: tc.input as Record<string, unknown>,
-                })),
+                ...toolCallParts,
               ]
             : reasoningParts.length > 0
               ? [...reasoningParts, { type: 'text' as const, text: response.text || '' }]

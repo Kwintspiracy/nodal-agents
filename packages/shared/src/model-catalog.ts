@@ -208,17 +208,30 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       contextWindow: 400_000,
     },
   ],
+  // ─── Native Google (generativelanguage.googleapis.com) ──────────────────────
+  // gemini-2.0-flash and gemini-2.5-pro were verified live (2026-07-12, real
+  // key) to 404 / be shut down — dropped per product decision (family 3.x
+  // only in the native catalog; gemini-2.5-flash deliberately NOT added).
+  // Both entries below confirmed alive via ai.google.dev/gemini-api/docs/models
+  // and openrouter.ai/google/… (2026-07-12): 1M-token context window, native
+  // reasoning ("thinking") models, multimodal (text/image/video/audio/PDF).
+  // forcedToolChoice:false — matches this file's reasoning-model convention
+  // (MiniMax M3, Moonshot, GLM 5.2): don't force tool_choice on a thinking
+  // model, let the runtime completion floor relax it to 'auto'. google.ts's
+  // fetch shim injects generationConfig.thinkingConfig for these two entries
+  // (reasoning:true gates it) so the API returns the chain-of-thought the
+  // execute.ts round-trip needs across tool-call turns.
   google: [
     {
-      modelId: 'gemini-2.0-flash',
-      label: 'Gemini 2.0 Flash',
-      capabilities: { tools: true, forcedToolChoice: true },
+      modelId: 'gemini-3.5-flash',
+      label: 'Gemini 3.5 Flash',
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
       contextWindow: 1_048_576,
     },
     {
-      modelId: 'gemini-2.5-pro',
-      label: 'Gemini 2.5 Pro',
-      capabilities: { tools: true, forcedToolChoice: true },
+      modelId: 'gemini-3.1-pro-preview',
+      label: 'Gemini 3.1 Pro (preview)',
+      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
       contextWindow: 1_048_576,
     },
   ],
@@ -306,23 +319,30 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
     },
-    // Google
+    // Google — all three are thinking models on OpenRouter (supported_parameters
+    // includes "reasoning", verified via openrouter.ai/google/… 2026-07-12).
+    // reasoning:true makes the OpenRouter provider enable reasoning + round-trip
+    // reasoning_details across tool-call turns. Unlike the M-series/Kimi/GLM
+    // reasoning entries above, forcedToolChoice stays true here — no evidence
+    // (live or documented) that OpenRouter's Gemini routes reject a forced
+    // tool_choice, matching how deepseek/deepseek-v4-flash (also reasoning:true)
+    // keeps forcedToolChoice:true in this file.
     {
       modelId: 'google/gemini-3.1-flash-lite-preview',
       label: 'Gemini 3.1 Flash Lite (preview)',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
       contextWindow: 1_048_576,
     },
     {
       modelId: 'google/gemini-3.1-pro-preview',
       label: 'Gemini 3.1 Pro (preview)',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
       contextWindow: 1_048_576,
     },
     {
       modelId: 'google/gemini-3.5-flash',
       label: 'Gemini 3.5 Flash',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
       contextWindow: 1_048_576,
     },
     {
@@ -409,8 +429,8 @@ export const VISION_MODEL_IDS = new Set<string>([
   'claude-haiku-4-5-20251001',
   'gpt-5',
   'gpt-5-mini',
-  'gemini-2.0-flash',
-  'gemini-2.5-pro',
+  'gemini-3.5-flash',
+  'gemini-3.1-pro-preview',
   'mistral-large-latest',
   'MiniMax-M3',
   'kimi-k2.6',

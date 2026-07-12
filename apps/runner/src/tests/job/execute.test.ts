@@ -157,7 +157,20 @@ function makeMockLlmClient(
      * (P0-B) in execute.ts. When omitted the field is absent from providerMetadata.
      */
     providerName?: string;
-    toolCalls?: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }>;
+    toolCalls?: Array<{
+      toolCallId: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      /**
+       * Simulated per-tool-call providerMetadata, as a reasoning/native provider
+       * (Gemini 3.x, MiniMax M3) attaches a continuation signature to a
+       * functionCall part. Drives the HARNESS FIX in execute.ts (step e) that
+       * mirrors it into providerOptions when the assistant turn is replayed —
+       * without it Gemini 3.x native 400s with "missing thought_signature".
+       * Omitted → no providerMetadata on that content item (the plain case).
+       */
+      providerMetadata?: Record<string, Record<string, string>>;
+    }>;
   }>,
   capturedPrompts?: unknown[],
   configOverride?: { provider: string; model: string },
@@ -179,7 +192,13 @@ function makeMockLlmClient(
       const content: Array<
         | { type: 'text'; text: string }
         | { type: 'reasoning'; text: string }
-        | { type: 'tool-call'; toolCallId: string; toolName: string; input: string }
+        | {
+            type: 'tool-call';
+            toolCallId: string;
+            toolName: string;
+            input: string;
+            providerMetadata?: Record<string, Record<string, string>>;
+          }
       > = [];
       // Reasoning part first — mirrors how a reasoning model streams: think, then act.
       if (response.reasoning) content.push({ type: 'reasoning', text: response.reasoning });
@@ -191,6 +210,7 @@ function makeMockLlmClient(
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
             input: JSON.stringify(tc.args),
+            ...(tc.providerMetadata ? { providerMetadata: tc.providerMetadata } : {}),
           });
         }
       }
@@ -2250,6 +2270,104 @@ describe('executeJob', () => {
     //     the real request body (invariant 5), not a call count.
     expect(capturedPrompts.length).toBe(2);
     expect(JSON.stringify(capturedPrompts[1])).toContain('REASONING-MARKER');
+  });
+
+  // ─── Tool-call thoughtSignature round-trip (regression for Gemini 3.x native
+  // 400 "missing thought_signature") ────────────────────────────────────────
+  // Symmetric to the reasoning round-trip above, but for the tool-call part
+  // itself: Gemini 3.x native attaches a `thoughtSignature` to each functionCall
+  // part via providerMetadata (the OUTPUT channel); replaying a tool-call turn
+  // without mirroring it into providerOptions (the INPUT channel) makes the API
+  // reject the 2nd tool-call turn with a hard 400 INVALID_ARGUMENT (live test,
+  // 2026-07-12). execute.ts step (e) mirrors providerMetadata → providerOptions
+  // on each reconstructed tool-call part; this locks both halves: it's
+  // PERSISTED in the transcript AND actually re-sent to the LLM.
+  it('tool-call thoughtSignature round-trip: providerMetadata on a tool call is mirrored into providerOptions on replay', async () => {
+    const job = await createTestJob(db, seed);
+    const capturedPrompts: unknown[] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-sig',
+              toolName: 'save_memory',
+              args: { fact: 'signed fact', category: 'context' },
+              providerMetadata: { google: { thoughtSignature: 'sig-abc123' } },
+            },
+          ],
+        },
+        { text: 'Done after signed tool call.' },
+      ],
+      capturedPrompts,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    // (1) PERSISTED: the turn-1 assistant tool-call part carries providerOptions
+    //     identical to the simulated providerMetadata.
+    const rows = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const msgs = (rows[0]?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const asst1 = msgs[1];
+    expect(asst1?.role).toBe('assistant');
+    const asst1Parts = Array.isArray(asst1?.content)
+      ? (asst1!.content as Array<{
+          type: string;
+          toolCallId?: string;
+          providerOptions?: unknown;
+        }>)
+      : [];
+    const toolCallPart = asst1Parts.find(
+      (p) => p.type === 'tool-call' && p.toolCallId === 'tc-sig',
+    );
+    expect(toolCallPart?.providerOptions).toEqual({ google: { thoughtSignature: 'sig-abc123' } });
+
+    // (2) REPLAYED: the SECOND LLM call actually received it in its request
+    //     prompt (real request body, invariant 5 — not a call count).
+    expect(capturedPrompts.length).toBe(2);
+    expect(JSON.stringify(capturedPrompts[1])).toContain('sig-abc123');
+  });
+
+  it('tool-call WITHOUT providerMetadata gets no providerOptions on replay (safe no-op)', async () => {
+    const job = await createTestJob(db, seed);
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          {
+            toolCallId: 'tc-plain',
+            toolName: 'save_memory',
+            args: { fact: 'plain fact', category: 'context' },
+          },
+        ],
+      },
+      { text: 'Done.' },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    const rows = await db
+      .select({ messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    const msgs = (rows[0]?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    const asst1 = msgs[1];
+    const asst1Parts = Array.isArray(asst1?.content)
+      ? (asst1!.content as Array<{
+          type: string;
+          toolCallId?: string;
+          providerOptions?: unknown;
+        }>)
+      : [];
+    const toolCallPart = asst1Parts.find(
+      (p) => p.type === 'tool-call' && p.toolCallId === 'tc-plain',
+    );
+    expect(toolCallPart).toBeDefined();
+    expect(toolCallPart?.providerOptions).toBeUndefined();
   });
 
   it('reasoning + parallel tool calls across turns complete without unmatched_tool_use (regression for job 8fc974fb)', async () => {
