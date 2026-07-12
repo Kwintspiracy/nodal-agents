@@ -5,9 +5,11 @@ import { useRouter } from 'next/navigation';
 import {
   MODEL_CATALOG,
   groupModelCatalog,
+  modelOptionLabel,
   DEFAULT_ROOT_GRANTS,
   type AutonomyLevel,
 } from '@nodal-agents/shared';
+import { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
 import {
   createLlmKeyAction,
   updateLlmKeyAction,
@@ -1047,28 +1049,45 @@ function ModelField({
   }
   const groups = groupModelCatalog(entries);
   return (
-    <select
-      value={model}
-      onChange={(e) => onModel(e.target.value)}
-      className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
-    >
-      {groups.map((g, gi) =>
-        g.group ? (
-          <optgroup key={g.group} label={g.group}>
-            {g.models.map((m) => (
-              <option key={m.modelId} value={m.modelId}>
-                {m.label}
+    <>
+      <select
+        value={model}
+        onChange={(e) => onModel(e.target.value)}
+        className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
+      >
+        {groups.map((g, gi) =>
+          g.group ? (
+            <optgroup key={g.group} label={g.group}>
+              {g.models.map((m) => (
+                <option
+                  key={m.modelId}
+                  value={m.modelId}
+                  // Onboarding only ever creates the ROOT orchestrator agent
+                  // (see handleCreateAgent's role: 'router') — a model that
+                  // can't call tools can't fill that role, so it's always
+                  // gated here, not conditionally.
+                  disabled={!m.capabilities.tools}
+                  title={!m.capabilities.tools ? "Can't use tools — required for your agent" : undefined}
+                >
+                  {modelOptionLabel(m)}
+                </option>
+              ))}
+            </optgroup>
+          ) : (
+            g.models.map((m) => (
+              <option
+                key={`${gi}-${m.modelId}`}
+                value={m.modelId}
+                disabled={!m.capabilities.tools}
+                title={!m.capabilities.tools ? "Can't use tools — required for your agent" : undefined}
+              >
+                {modelOptionLabel(m)}
               </option>
-            ))}
-          </optgroup>
-        ) : (
-          g.models.map((m) => (
-            <option key={`${gi}-${m.modelId}`} value={m.modelId}>
-              {m.label}
-            </option>
-          ))
-        ),
-      )}
-    </select>
+            ))
+          ),
+        )}
+      </select>
+      <ModelToolsLegend className="mt-1.5" />
+    </>
   );
 }

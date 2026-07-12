@@ -7,6 +7,8 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   MODEL_CATALOG,
   findModelCatalogEntry,
+  modelToolsSupport,
+  modelOptionLabel,
 } from '../model-catalog';
 
 describe('modelContextWindow', () => {
@@ -75,5 +77,54 @@ describe('providerOrder', () => {
     const entry = findModelCatalogEntry('openrouter', 'deepseek/deepseek-v3.2');
     expect(entry).toBeDefined();
     expect(entry?.providerOrder).toBeUndefined();
+  });
+});
+
+// ─── modelToolsSupport / modelOptionLabel (tools-capability badge, 2026-07) ──
+
+describe('modelToolsSupport', () => {
+  it('is "yes" for a real tools:true catalog entry (moonshot/kimi-k2.6)', () => {
+    expect(modelToolsSupport('moonshot', 'kimi-k2.6')).toBe('yes');
+  });
+
+  it('is "unknown" for a custom/uncatalogued id (never a hard "no")', () => {
+    expect(modelToolsSupport('ollama', 'llama3.2')).toBe('unknown');
+    expect(modelToolsSupport('openrouter', 'some/never-added')).toBe('unknown');
+  });
+
+  it('is "no" for a tools:false catalog entry', () => {
+    // No catalogued model is tools:false today (deliberate curation — MiniMax/
+    // Moonshot/GLM etc. all support tools, just not a FORCED tool_choice). The
+    // mechanism must still work when one is added, so exercise it with a
+    // throwaway fixture provider rather than skipping the branch.
+    MODEL_CATALOG['__fixture_no_tools__'] = [
+      {
+        modelId: 'fixture-no-tools',
+        label: 'Fixture (no tools)',
+        capabilities: { tools: false, forcedToolChoice: false },
+      },
+    ];
+    try {
+      expect(modelToolsSupport('__fixture_no_tools__', 'fixture-no-tools')).toBe('no');
+    } finally {
+      delete MODEL_CATALOG['__fixture_no_tools__'];
+    }
+  });
+});
+
+describe('modelOptionLabel', () => {
+  it('returns the plain label for a tools:true entry', () => {
+    const entry = findModelCatalogEntry('moonshot', 'kimi-k2.6');
+    expect(entry).toBeDefined();
+    expect(modelOptionLabel(entry!)).toBe('Kimi K2.6');
+  });
+
+  it('appends "(no tools)" for a tools:false entry', () => {
+    const fixture = {
+      modelId: 'fixture-no-tools',
+      label: 'Fixture Model',
+      capabilities: { tools: false, forcedToolChoice: false },
+    };
+    expect(modelOptionLabel(fixture)).toBe('Fixture Model (no tools)');
   });
 });

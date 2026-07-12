@@ -218,6 +218,31 @@ vi.mock('@nodal-agents/delivery', async () => {
   };
 });
 
+// ─── Mock @nodal-agents/shared's findModelCatalogEntry ────────────────────────
+// Every REAL catalogued model is tools:true today (a deliberate curation
+// choice — see model-catalog.ts) — so the orchestrator tools-gate's blocking
+// branch (createAgentAction/updateAgentAction) has no real tools:false entry
+// to exercise. Keep the actual catalog for everything else and inject one
+// throwaway fixture pair ('test-no-tools-provider' / 'test-no-tools-model')
+// so that branch is still covered end-to-end.
+vi.mock('@nodal-agents/shared', async () => {
+  const actual =
+    await vi.importActual<typeof import('@nodal-agents/shared')>('@nodal-agents/shared');
+  return {
+    ...actual,
+    findModelCatalogEntry: (provider: string, modelId: string) => {
+      if (provider === 'test-no-tools-provider' && modelId === 'test-no-tools-model') {
+        return {
+          modelId,
+          label: 'Test No-Tools Model',
+          capabilities: { tools: false, forcedToolChoice: false },
+        };
+      }
+      return actual.findModelCatalogEntry(provider, modelId);
+    },
+  };
+});
+
 // ─── Mock cli-config (filesystem access) ─────────────────────────────────────
 const cliConfigMocks: {
   read: ReturnType<typeof vi.fn>;
@@ -1311,6 +1336,109 @@ describe('createAgentAction — db path', () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+});
+
+// ─── Orchestrator model tools gate ────────────────────────────────────────────
+// Router/planner delegate via tool calls — a model that can't call tools can't
+// fill that role. createAgentAction/updateAgentAction re-validate this
+// server-side (the UI's disabled options aren't a trust boundary on their own).
+describe('createAgentAction — orchestrator tools gate', () => {
+  it('rejects a router whose model is catalogued as tools:false', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [[{ provider: 'test-no-tools-provider' }]],
+    }) as typeof currentDb;
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'bad-router',
+      name: 'Bad Router',
+      personality: 'I delegate.',
+      model: 'test-no-tools-model',
+      llmKeyId: '11111111-1111-1111-1111-111111111111',
+      role: 'router',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('validation_failed');
+      expect(r.message).toContain('Test No-Tools Model');
+    }
+  });
+
+  it('allows a router whose model is a real catalogued tools:true entry (moonshot/kimi-k2.6)', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [[{ provider: 'moonshot' }]],
+      insert: [{ id: 'aaaaaaaa-1111-0000-0000-000000000021' }],
+    }) as typeof currentDb;
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'good-router',
+      name: 'Good Router',
+      personality: 'I delegate.',
+      model: 'kimi-k2.6',
+      llmKeyId: '11111111-1111-1111-1111-111111111111',
+      role: 'router',
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('allows a router whose model is unknown/custom (not in the catalog)', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [[{ provider: 'ollama' }]],
+      insert: [{ id: 'aaaaaaaa-1111-0000-0000-000000000022' }],
+    }) as typeof currentDb;
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'custom-router',
+      name: 'Custom Router',
+      personality: 'I delegate.',
+      model: 'llama3.2-custom',
+      llmKeyId: '11111111-1111-1111-1111-111111111111',
+      role: 'router',
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('allows a worker with a tools:false model (the gate only applies to router/planner)', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-1111-0000-0000-000000000023' }]) as typeof currentDb;
+    const { createAgentAction } = await import('../src/lib/actions.ts');
+    const r = await createAgentAction({
+      slug: 'ok-worker',
+      name: 'OK Worker',
+      personality: 'I work.',
+      model: 'test-no-tools-model',
+      llmKeyId: '11111111-1111-1111-1111-111111111111',
+      role: 'worker',
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('updateAgentAction — orchestrator tools gate', () => {
+  it('rejects switching an agent to router when its model is tools:false', async () => {
+    const agentId = 'aaaaaaaa-2222-0000-0000-000000000001';
+    const keyId = '11111111-1111-1111-1111-111111111111';
+    currentDb = makeDbMixed({
+      selectQueue: [
+        // Ownership check (existing agent row, with its current llmKeyId)
+        [{ id: agentId, llmKeyId: keyId }],
+        // Provider lookup for the tools gate
+        [{ provider: 'test-no-tools-provider' }],
+      ],
+    }) as typeof currentDb;
+    const { updateAgentAction } = await import('../src/lib/actions.ts');
+    const r = await updateAgentAction({
+      id: agentId,
+      name: 'A',
+      personality: 'p',
+      model: 'test-no-tools-model',
+      llmKeyId: keyId,
+      role: 'router',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('validation_failed');
+      expect(r.message).toContain('Test No-Tools Model');
+    }
   });
 });
 

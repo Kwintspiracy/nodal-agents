@@ -40,12 +40,19 @@ import {
   type ApprovalRuleUiRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import { MODEL_CATALOG, findModelCatalogEntry, groupModelCatalog } from '@nodal-agents/shared';
+import {
+  MODEL_CATALOG,
+  findModelCatalogEntry,
+  groupModelCatalog,
+  modelOptionLabel,
+  modelToolsSupport,
+} from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
 import EdRow from '@/components/ui/EdRow';
+import ModelToolsBadge, { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 import ConnectorsTabContent from './ConnectorsTabContent.tsx';
@@ -289,6 +296,7 @@ export default function AgentComposer({
           role={initialRole}
           slug={agent.slug}
           model={agent.model}
+          provider={llmKeys.find((k) => k.id === agent.llmKeyId)?.provider ?? null}
           llmKeyLabel={
             llmKeys.find((k) => k.id === agent.llmKeyId)?.nickname ??
             (llmKeys.find((k) => k.id === agent.llmKeyId)?.provider
@@ -451,6 +459,7 @@ function HeroCard({
   role,
   slug,
   model,
+  provider,
   llmKeyLabel,
   stats,
   onConfigure,
@@ -462,6 +471,8 @@ function HeroCard({
   role: AgentRole;
   slug: string;
   model: string | null;
+  /** The saved LLM key's provider slug — drives the tools-capability badge. */
+  provider: string | null;
   llmKeyLabel: string | null;
   stats: {
     connectors: number;
@@ -507,11 +518,12 @@ function HeroCard({
           <p className="mt-2 text-[14px] leading-[1.55] text-ink-3">{personaPreview}</p>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-ink-3">
             {model && (
-              <span>
+              <span className="inline-flex items-center gap-1.5">
                 <span className="text-ink-4">Model:</span>{' '}
                 <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 font-mono text-[12px] text-ink-2">
                   {model}
                 </code>
+                <ModelToolsBadge support={modelToolsSupport(provider ?? '', model)} />
               </span>
             )}
             {llmKeyLabel && (
@@ -1798,6 +1810,11 @@ function SettingsTab(props: {
   // The model is "in the dropdown" if it matches a catalog entry OR a live id.
   const modelInDropdown = modelInCatalog || liveModelIds.includes(model);
 
+  // Router/planner delegate via tool calls — a model that can't call tools
+  // can't function as an orchestrator. Gates the primary model AND every
+  // fallback in the failover chain (all run on the same agent).
+  const requireTools = role !== 'worker';
+
   // ── Workspace management local state ─────────────────────────────────────
   const [wsLabel, setWsLabel] = useState('');
   const [wsPath, setWsPath] = useState('');
@@ -2041,15 +2058,33 @@ function SettingsTab(props: {
                   group ? (
                     <optgroup key={group} label={group}>
                       {models.map((m) => (
-                        <option key={m.modelId} value={m.modelId}>
-                          {m.label}
+                        <option
+                          key={m.modelId}
+                          value={m.modelId}
+                          disabled={requireTools && !m.capabilities.tools}
+                          title={
+                            requireTools && !m.capabilities.tools
+                              ? "Can't use tools — required for a router/planner"
+                              : undefined
+                          }
+                        >
+                          {modelOptionLabel(m)}
                         </option>
                       ))}
                     </optgroup>
                   ) : (
                     models.map((m) => (
-                      <option key={m.modelId} value={m.modelId}>
-                        {m.label}
+                      <option
+                        key={m.modelId}
+                        value={m.modelId}
+                        disabled={requireTools && !m.capabilities.tools}
+                        title={
+                          requireTools && !m.capabilities.tools
+                            ? "Can't use tools — required for a router/planner"
+                            : undefined
+                        }
+                      >
+                        {modelOptionLabel(m)}
                       </option>
                     ))
                   ),
@@ -2077,6 +2112,9 @@ function SettingsTab(props: {
                 }
                 className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
               />
+            )}
+            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+              <ModelToolsLegend className="mt-1.5" />
             )}
           </Field>
         </div>
@@ -2134,15 +2172,33 @@ function SettingsTab(props: {
                                 group ? (
                                   <optgroup key={group} label={group}>
                                     {models.map((m) => (
-                                      <option key={m.modelId} value={m.modelId}>
-                                        {m.label}
+                                      <option
+                                        key={m.modelId}
+                                        value={m.modelId}
+                                        disabled={requireTools && !m.capabilities.tools}
+                                        title={
+                                          requireTools && !m.capabilities.tools
+                                            ? "Can't use tools — required for a router/planner"
+                                            : undefined
+                                        }
+                                      >
+                                        {modelOptionLabel(m)}
                                       </option>
                                     ))}
                                   </optgroup>
                                 ) : (
                                   models.map((m) => (
-                                    <option key={m.modelId} value={m.modelId}>
-                                      {m.label}
+                                    <option
+                                      key={m.modelId}
+                                      value={m.modelId}
+                                      disabled={requireTools && !m.capabilities.tools}
+                                      title={
+                                        requireTools && !m.capabilities.tools
+                                          ? "Can't use tools — required for a router/planner"
+                                          : undefined
+                                      }
+                                    >
+                                      {modelOptionLabel(m)}
                                     </option>
                                   ))
                                 ),

@@ -441,6 +441,34 @@ export function findModelCatalogEntry(
 }
 
 /**
+ * Whether a model can call tools, as three distinct states — NOT a boolean,
+ * because "not in the catalog" (a custom id, a local ollama/openai-compatible
+ * model, or a live id the provider returns that we haven't curated yet) is
+ * genuinely unknown, not a "no". Only 'no' should ever gate a model out of an
+ * orchestrator picker; 'unknown' models stay selectable (see
+ * apps/web's model pickers — the `requireTools` gate only disables 'no').
+ */
+export type ModelToolsSupport = 'yes' | 'no' | 'unknown';
+
+/** Resolve a model's tools capability from the catalog (see `ModelToolsSupport`). */
+export function modelToolsSupport(provider: string, modelId: string): ModelToolsSupport {
+  const entry = findModelCatalogEntry(provider, modelId);
+  if (!entry) return 'unknown';
+  return entry.capabilities.tools ? 'yes' : 'no';
+}
+
+/**
+ * Display label for a catalog entry in a model picker `<option>`. Native
+ * `<option>` elements render plain text only (no colored badge is possible
+ * inside one), so a model that can't call tools gets a plain-text suffix
+ * instead — kept quiet for the common case (tools:true, no suffix) and only
+ * flagging the exceptional one.
+ */
+export function modelOptionLabel(entry: ModelCatalogEntry): string {
+  return entry.capabilities.tools ? entry.label : `${entry.label} (no tools)`;
+}
+
+/**
  * Last-resort context window (tokens) for a model with NO catalogued value AND
  * no configured/probed value (É-3). It is deliberately large, NOT small: the
  * compaction trigger is window-relative (0.7 × window), so a too-SMALL default

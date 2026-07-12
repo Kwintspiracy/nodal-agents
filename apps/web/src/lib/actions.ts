@@ -100,6 +100,7 @@ import {
   enabledMetaTools,
   parseRootGrants,
   redactSecretsForAudit,
+  findModelCatalogEntry,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
 import { requireAuth } from '@nodal-agents/auth';
@@ -654,6 +655,38 @@ export async function reorderAgentsAction(orderedIds: string[]): Promise<ActionR
   }
 }
 
+/**
+ * Gate for orchestrator model selection (router/planner): a router/planner
+ * delegates to sub-agents via tool calls, so a model that can't call tools
+ * can't function in that role. Mirrors the UI gate (the model `<select>`s
+ * disable tools:false options for router/planner) but re-validated here
+ * because the UI alone isn't a trust boundary — a raw action call must be
+ * rejected the same way.
+ *
+ * Returns an error message when the (provider, model) pair is CATALOGUED and
+ * explicitly `tools: false`. Anything not catalogued (custom ids, local
+ * ollama/openai-compatible models, or no llmKeyId to resolve a provider from)
+ * is "unknown", not "no" — those stay allowed, same as the UI.
+ */
+async function orchestratorModelToolsError(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+  llmKeyId: string | null | undefined,
+  model: string,
+): Promise<string | null> {
+  if (!llmKeyId) return null;
+  const [key] = await db
+    .select({ provider: entityLlmKeys.provider })
+    .from(entityLlmKeys)
+    .where(and(eq(entityLlmKeys.id, llmKeyId), eq(entityLlmKeys.entityId, entityId)));
+  if (!key) return null;
+  const entry = findModelCatalogEntry(key.provider, model);
+  if (entry && !entry.capabilities.tools) {
+    return `"${entry.label}" can't use tools — pick a tool-capable model for a router/planner.`;
+  }
+  return null;
+}
+
 export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
   try {
     const session = await getSession();
@@ -673,6 +706,17 @@ export async function createAgentAction(raw: unknown): Promise<ActionResult<{ id
     const { dbRole, orchestratorMode } = mapRoleToDb(parsed.data.role);
 
     const db = getDb();
+
+    if (dbRole === 'orchestrator') {
+      const toolsError = await orchestratorModelToolsError(
+        db,
+        session.entityId,
+        parsed.data.llmKeyId,
+        parsed.data.model,
+      );
+      if (toolsError) return fail('validation_failed', toolsError);
+    }
+
     const result = await createAgentRepo(db, session.entityId, {
       slug: parsed.data.slug,
       name: parsed.data.name,
@@ -776,7 +820,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
 
     // Verify agent exists and belongs to this entity
     const [existing] = await db
-      .select({ id: agents.id })
+      .select({ id: agents.id, llmKeyId: agents.llmKeyId })
       .from(agents)
       .where(and(eq(agents.id, id), eq(agents.entityId, session.entityId)));
     if (!existing) return fail('not_found', 'Agent not found');
@@ -797,6 +841,21 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     }
 
     const { dbRole, orchestratorMode } = mapRoleToDb(role);
+
+    if (dbRole === 'orchestrator') {
+      // llmKeyId undefined means "don't touch" (see the patch below) — resolve
+      // the EFFECTIVE key (new value if provided, else the agent's existing one)
+      // so switching TO router/planner without touching the LLM key still gets
+      // validated against whatever provider/model it already runs on.
+      const effectiveLlmKeyId = llmKeyId !== undefined ? llmKeyId : existing.llmKeyId;
+      const toolsError = await orchestratorModelToolsError(
+        db,
+        session.entityId,
+        effectiveLlmKeyId,
+        model,
+      );
+      if (toolsError) return fail('validation_failed', toolsError);
+    }
 
     // Update core fields. llmKeyId: undefined means "don't touch", null clears.
     // avatarUrl undefined → don't touch (legacy clients don't send it); null

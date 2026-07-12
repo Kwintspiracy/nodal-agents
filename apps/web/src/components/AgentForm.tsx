@@ -12,11 +12,17 @@ import {
   type AgentEditRow,
   type LlmKeyUiRow,
 } from '@/lib/actions.ts';
-import { MODEL_CATALOG, findModelCatalogEntry, groupModelCatalog } from '@nodal-agents/shared';
+import {
+  MODEL_CATALOG,
+  findModelCatalogEntry,
+  groupModelCatalog,
+  modelOptionLabel,
+} from '@nodal-agents/shared';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import { Plus } from '@phosphor-icons/react';
 import PrimaryButton from './ui/PrimaryButton.tsx';
 import AvatarPicker from './AvatarPicker.tsx';
+import { ModelToolsLegend } from './ui/ModelToolsBadge.tsx';
 
 type AgentRole = 'worker' | 'router' | 'planner';
 
@@ -206,6 +212,11 @@ export default function AgentForm(props: Props) {
   const extraLiveIds = liveModelIds.filter((id) => !catalogModelIds.has(id));
   const modelInCatalog = !!findModelCatalogEntry(selectedKey?.provider ?? '', model);
   const modelInDropdown = modelInCatalog || liveModelIds.includes(model);
+  // Router/planner delegate via tool calls — a model that can't call tools
+  // can't function as an orchestrator. Workers aren't gated here (a worker's
+  // own tool needs are whatever its assigned skills require, judged at run
+  // time, not at creation time).
+  const requireTools = role !== 'worker';
 
   // ─── Edit mode: form rendered inline (no modal/portal) ─────────────────────
 
@@ -316,15 +327,33 @@ export default function AgentForm(props: Props) {
                   group ? (
                     <optgroup key={group} label={group}>
                       {models.map((m) => (
-                        <option key={m.modelId} value={m.modelId}>
-                          {m.label}
+                        <option
+                          key={m.modelId}
+                          value={m.modelId}
+                          disabled={requireTools && !m.capabilities.tools}
+                          title={
+                            requireTools && !m.capabilities.tools
+                              ? "Can't use tools — required for a router/planner"
+                              : undefined
+                          }
+                        >
+                          {modelOptionLabel(m)}
                         </option>
                       ))}
                     </optgroup>
                   ) : (
                     models.map((m) => (
-                      <option key={m.modelId} value={m.modelId}>
-                        {m.label}
+                      <option
+                        key={m.modelId}
+                        value={m.modelId}
+                        disabled={requireTools && !m.capabilities.tools}
+                        title={
+                          requireTools && !m.capabilities.tools
+                            ? "Can't use tools — required for a router/planner"
+                            : undefined
+                        }
+                      >
+                        {modelOptionLabel(m)}
                       </option>
                     ))
                   ),
@@ -355,6 +384,9 @@ export default function AgentForm(props: Props) {
                 }
                 className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
               />
+            )}
+            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+              <ModelToolsLegend className="mt-1.5" />
             )}
             {coherenceBanner}
           </div>
@@ -556,15 +588,33 @@ export default function AgentForm(props: Props) {
                         group ? (
                           <optgroup key={group} label={group}>
                             {models.map((m) => (
-                              <option key={m.modelId} value={m.modelId}>
-                                {m.label}
+                              <option
+                                key={m.modelId}
+                                value={m.modelId}
+                                disabled={requireTools && !m.capabilities.tools}
+                                title={
+                                  requireTools && !m.capabilities.tools
+                                    ? "Can't use tools — required for a router/planner"
+                                    : undefined
+                                }
+                              >
+                                {modelOptionLabel(m)}
                               </option>
                             ))}
                           </optgroup>
                         ) : (
                           models.map((m) => (
-                            <option key={m.modelId} value={m.modelId}>
-                              {m.label}
+                            <option
+                              key={m.modelId}
+                              value={m.modelId}
+                              disabled={requireTools && !m.capabilities.tools}
+                              title={
+                                requireTools && !m.capabilities.tools
+                                  ? "Can't use tools — required for a router/planner"
+                                  : undefined
+                              }
+                            >
+                              {modelOptionLabel(m)}
                             </option>
                           ))
                         ),
@@ -595,6 +645,9 @@ export default function AgentForm(props: Props) {
                       }
                       className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
                     />
+                  )}
+                  {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                    <ModelToolsLegend className="mt-1.5" />
                   )}
                   {coherenceBanner}
                 </div>
