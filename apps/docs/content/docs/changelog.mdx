@@ -7,6 +7,78 @@ Notable releases, newest first. Pre-1.0: minor versions can carry breaking
 changes. Every release is published to npm as `nodal-agents` and tagged on
 GitHub — upgrade in place with `nodal-agents update` (your data is preserved).
 
+## v0.7.8 — The Everywhere Release · Jul 12, 2026
+
+Your agents now live everywhere you already talk, and they can no longer misrepresent what they did while they were there.
+
+- **Discord, Slack, and WhatsApp join Telegram.** Every agent speaks on all four channels through one shared identity and delivery model, with the same approval rules everywhere.
+- **Event triggers.** A scheduled job knows exactly how long it slept and catches up correctly. An external service can now start a job directly through an incoming webhook.
+- **Approval authority goes to the owner, every time.** Scheduled deliveries, webhooks, and approval cards can no longer land in the wrong chat. The Chat page also got a full redesign.
+- **Agents can't deny their own actions anymore.** A grounded action record keeps a true history of what ran, and a delegating agent's thread now shows what its sub-tasks actually did.
+- **Moonshot/Kimi joins as a native provider**, alongside a shared schema sanitizer for OpenRouter.
+- **Onboarding, revamped.** The setup interview moves to a hidden chat thread, you choose which messaging channels to connect, and models now show which tools they actually support.
+- **A second communication-layer security audit**, covering recipient authorization, file containment, SSRF protection, and a properly gated ask path.
+
+## v0.7.5 — The Trustworthy Orchestrator · Jul 8, 2026
+
+Approvals you can actually read, delegation that behaves, and a second full security pass.
+
+- **Approvals that explain the real impact.** The line shown before you approve a gated action now genuinely reflects what the command does.
+- **Shared files and delegated delivery, gated properly**, along with new rules for multi-turn conversations.
+- **Delegation with discipline.** Sub-agents follow a stricter loop, and a memory truth check keeps them honest.
+- **A second full security audit**: 9 high and 11 medium findings fixed, a CI guard that blocks hardcoded secrets, and a context-window fix for local and custom models.
+
+## v0.7.2 — The Allowlist Release · Jul 7, 2026
+
+A big security and reliability audit, plus control over who can talk to your agents on Telegram.
+
+- **Telegram allowlist.** The first person to message your bot becomes its owner. Anyone else needs approval before their message starts a job, reviewable from a new dashboard view.
+- **A major security and reliability hardening pass** across multi-tenant isolation, approval and OAuth flows, cron scheduling, and file handling.
+- Memory's background curator got sturdier, with fixes to scheduling, retention, and boot-time reliability.
+
+## v0.7.0 — The Curator Release · Jul 2, 2026
+
+Memory that scales: full-text search, real ranking, and a curator that keeps it tidy.
+
+- **Full-text memory search**, ranked by relevance instead of recency alone.
+- **Curate it yourself.** Star a memory to boost its importance, pin the ones that must never be pruned, or add one by hand.
+- **Consistent autonomy wording** between onboarding and Settings, one source of truth instead of two.
+
+## v0.6.8 — The Web Search Release · Jul 1, 2026
+
+- **Web search, built in.** A unified router tries multiple providers automatically and falls back to a free option, on by default with no setup required.
+- **Onboarding honors your answers.** The autonomy level you choose in the interview is now actually applied, and your first ROOT agent gets its grants turned on.
+
+## v0.6.7 — The Fresh Install Release · Jul 1, 2026
+
+- **Fixed a fresh-install boot break.** A bundled dependency was breaking boot on brand-new installs. The package is slimmer and boots clean again.
+
+## v0.6.6 — The Fresh Machine Release · Jul 1, 2026
+
+- **First boot gets more time to breathe.** The health-check budget on a brand-new machine grew to 5 minutes, so a slower first boot no longer times out before it's healthy.
+
+## v0.6.5 — The Browser-First Release · Jul 1, 2026
+
+Setup happens in the browser now, not the terminal.
+
+- **No more terminal wizard.** First run opens straight into the browser with local-trust on by default. The onboarding interview also finishes there, with a reliable Continue button and an always-available Skip.
+- A cleaner install: bundled dependencies mean no more install-time deprecation warnings.
+
+## v0.6.4 — The First Run Release · Jun 30, 2026
+
+A critical fix for anyone installing for the first time.
+
+- **Fresh installs no longer lock you out.** A bug in the first-run flow could strand a brand-new install before onboarding finished. That flow is restored.
+
+## v0.6.3 — The Toolbar Release · Jun 30, 2026
+
+The dashboard finally feels like one product, and Telegram can send anything.
+
+- **One header, one toolbar across every page.** Plus a new Runs view for delegated work and a rebuilt Skills page.
+- **Full Telegram media support.** Agents can now send video, audio, voice notes, and any document, not just images.
+- **Poyo joins the connector marketplace** for quick image generation, and the marketplace grid is now alphabetized with verified badges.
+- Small fixes: a Weekly/Daily toggle on the home activity chart, and consistent "installed" wording on Skills and Connector tiles.
+
 ## v0.6.2 — The Recall Release · Jun 28, 2026
 
 Your agents remember — within a conversation, and across everything they've ever done.
