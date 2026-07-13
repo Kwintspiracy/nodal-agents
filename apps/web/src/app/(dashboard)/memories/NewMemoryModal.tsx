@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextArea from '@/components/ui/TextArea';
+import Select from '@/components/ui/Select';
+import FieldLabel from '@/components/ui/FieldLabel';
 import { createMemoryAction } from '@/lib/actions';
 
 type Props = {
@@ -121,48 +124,36 @@ export default function NewMemoryModal({ open, onClose }: Props) {
     >
       <div className="space-y-4">
         {/* Fact */}
-        <div className="space-y-1.5">
-          <label htmlFor="memory-fact" className="block text-[13px] font-medium text-ink-2">
-            Fact
-          </label>
-          <textarea
-            id="memory-fact"
-            value={fact}
-            onChange={(e) => setFact(e.target.value.slice(0, MAX_FACT_CHARS))}
-            rows={4}
-            maxLength={MAX_FACT_CHARS}
-            placeholder="e.g. Prefers concise, formal replies."
-            disabled={isPending}
-            className="w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] leading-[1.5] text-ink placeholder:text-ink-4 focus:border-rule-2 focus:outline-none disabled:opacity-50"
-          />
-          <div className="text-right text-[11px] text-ink-4">
-            {fact.length} / {MAX_FACT_CHARS}
-          </div>
-        </div>
+        <TextArea
+          id="memory-fact"
+          label="Fact"
+          value={fact}
+          onChange={(e) => setFact(e.target.value.slice(0, MAX_FACT_CHARS))}
+          rows={4}
+          maxLength={MAX_FACT_CHARS}
+          showCount
+          placeholder="e.g. Prefers concise, formal replies."
+          disabled={isPending}
+        />
 
         {/* Category */}
-        <div className="space-y-1.5">
-          <label htmlFor="memory-category" className="block text-[13px] font-medium text-ink-2">
-            Category
-          </label>
-          <select
-            id="memory-category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value as Category)}
-            disabled={isPending}
-            className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-rule-2 focus:outline-none disabled:opacity-50"
-          >
-            {CATEGORIES.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          id="memory-category"
+          label="Category"
+          value={category}
+          onChange={(e) => setCategory(e.target.value as Category)}
+          disabled={isPending}
+        >
+          {CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </Select>
 
         {/* Importance */}
         <div className="space-y-1.5">
-          <span className="block text-[13px] font-medium text-ink-2">Importance</span>
+          <FieldLabel>Importance</FieldLabel>
           <StarPicker value={importance} onChange={setImportance} />
         </div>
       </div>

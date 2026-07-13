@@ -55,6 +55,9 @@ export default function CronBuilder({ name = 'cronExpr', initial }: Props) {
 
   return (
     <div className="space-y-3">
+      {/* eslint-disable-next-line no-restricted-syntax -- native hidden field
+          carrying the derived cron expression into the enclosing form's
+          FormData; not a visible field, no design-system counterpart. */}
       <input type="hidden" name={name} value={expr} />
 
       <div className="grid grid-cols-2 gap-3">

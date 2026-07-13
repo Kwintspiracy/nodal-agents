@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { Children, cloneElement, isValidElement, useEffect, useState } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import PrimaryButton from './PrimaryButton';
 
 interface Props {
   open: boolean;
@@ -143,7 +145,23 @@ export default function Modal({
  *
  * Reference usage: NewMemoryModal (Cancel + Save), ConnectorForm (Disconnect
  * on the left via `danger`, Close on the right).
+ *
+ * Every button in a footer renders at the same `md` (34px) size — enforced
+ * mechanically below, not just documented, because it already drifted once
+ * (ConnectorForm's `danger` Disconnect was `size="sm"` next to a default-size
+ * Close — audit UX-DS Phase 1). `forceFooterButtonSize` clones any direct
+ * `PrimaryButton` child and overrides its `size` prop, so a stray `size="sm"`
+ * at a call site can no longer produce a mismatched footer.
  */
+function forceFooterButtonSize(node: ReactNode): ReactNode {
+  return Children.map(node, (child) => {
+    if (isValidElement(child) && child.type === PrimaryButton) {
+      return cloneElement(child as ReactElement<{ size?: 'sm' | 'md' }>, { size: 'md' });
+    }
+    return child;
+  });
+}
+
 export function ModalFooter({
   children,
   danger,
@@ -161,8 +179,8 @@ export function ModalFooter({
         danger ? 'justify-between' : 'justify-end'
       } ${className}`}
     >
-      {danger}
-      <div className="flex items-center gap-2">{children}</div>
+      {forceFooterButtonSize(danger)}
+      <div className="flex items-center gap-2">{forceFooterButtonSize(children)}</div>
     </div>
   );
 }

@@ -173,6 +173,9 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
           className="space-y-5"
         >
           {/* Hidden returnTo field — propagated through OAuth state cookie */}
+          {/* eslint-disable-next-line no-restricted-syntax -- native hidden
+              field required for the browser's own POST redirect into the
+              OAuth flow; not a visible field, no design-system counterpart. */}
           <input type="hidden" name="returnTo" value={returnTo} />
 
           {/* Instructions */}

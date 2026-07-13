@@ -34,10 +34,50 @@ const noNativeDialogs = {
   },
 };
 
+// Raw form/button JSX elements bypass the design system (mismatched button
+// sizes side by side in footers, hand-styled inputs with 3+ divergent
+// geometries — the UX-DS Phase 1 audit). Ban them everywhere under src/ EXCEPT
+// inside components/ui/ itself, where the design-system primitives live and
+// are allowed to touch the native element once.
+//
+// `warn` for now — this surfaces the exact per-file backlog for the Phase 2
+// migration (see the ESLint output) without breaking the build. Phase 2 flips
+// this to `error` once every consumer above is migrated.
+const noRawFormElements = {
+  files: ['src/**/*.{ts,tsx}'],
+  ignores: ['src/components/ui/**'],
+  rules: {
+    'no-restricted-syntax': [
+      'warn',
+      {
+        selector: "JSXOpeningElement[name.name='button']",
+        message:
+          'Use the design-system component (PrimaryButton/RowActionButton/IconButton/TextInput/TextArea/Select/Checkbox) instead of a raw <button>.',
+      },
+      {
+        selector: "JSXOpeningElement[name.name='input']",
+        message:
+          'Use the design-system component (PrimaryButton/RowActionButton/IconButton/TextInput/TextArea/Select/Checkbox) instead of a raw <input>.',
+      },
+      {
+        selector: "JSXOpeningElement[name.name='select']",
+        message:
+          'Use the design-system component (PrimaryButton/RowActionButton/IconButton/TextInput/TextArea/Select/Checkbox) instead of a raw <select>.',
+      },
+      {
+        selector: "JSXOpeningElement[name.name='textarea']",
+        message:
+          'Use the design-system component (PrimaryButton/RowActionButton/IconButton/TextInput/TextArea/Select/Checkbox) instead of a raw <textarea>.',
+      },
+    ],
+  },
+};
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   noNativeDialogs,
+  noRawFormElements,
   globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
 ]);
 

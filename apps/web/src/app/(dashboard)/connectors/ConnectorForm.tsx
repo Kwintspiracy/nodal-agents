@@ -487,9 +487,11 @@ export default function ConnectorForm({
       <ModalFooter
         className="-mx-5 -mb-5 mt-1 rounded-b-xl"
         danger={
+          // `size` is irrelevant here — ModalFooter forces every button in a
+          // footer to `md` (UX-DS Phase 1: this `size="sm"` used to render
+          // smaller than the `Close` button on the right until that fix).
           <PrimaryButton
             variant="danger"
-            size="sm"
             onClick={() => setConfirmOpen(true)}
             disabled={isPending || isRefreshing}
           >
