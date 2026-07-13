@@ -10,6 +10,22 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.7.9 — The Design System Release · Jul 13, 2026
+
+The entire dashboard was brought under one enforced design system: every interactive
+element is now a shared component, consistency is guaranteed by CI rather than
+vigilance, and the whole thing was verified page by page in both themes. Plus the
+Google Gemini provider was rebuilt.
+
+**Highlights**
+
+- **One visual language, enforced.** Buttons, inputs, selects, badges, pills, menus, and modals were all migrated onto a set of shared UI primitives (245 hand-styled raw elements replaced). A lint rule now makes any raw `button`/`input`/`select`/`textarea` outside the component library fail the build, so the consistency can't silently drift back. Verified route by route, modal by modal, in light and dark.
+- **Edit is always a modal.** List editing no longer expands an inline accordion that pushes the page around; every edit opens a non-dismissable dialog (backdrop and Escape inert, Save/Cancel only), with one canonical footer template used site-wide — never zero, never two action rows.
+- **One row-action grammar.** Per-row actions are icon-only squares with a mandatory tooltip; one concept = one verb = one icon; Delete/Disconnect/Uninstall is always last; no kebab menus for standard actions.
+- **End-to-end channel connection guides.** Connecting an agent to Discord, Slack, WhatsApp, or Telegram now has a step-by-step guide — app/token setup, the ownership DM, the invite, and a "verify it works" check — written from the real handler code and shown in a cleanly formatted modal.
+- **Google Gemini, rebuilt.** Native and OpenRouter Gemini paths were reworked: thought-signature round-tripping on tool-call parts (native returns a hard 400 without it), native thinking config, and a 3.x-only native catalog — so tool-calling agents run correctly on Gemini.
+- **Polish.** The Settings page body was widened to match every other page (it had been a third narrower). Learned Skills now reuses the Skills page's per-agent assign/unassign toggle list, so you can finally unassign a learned skill. Slack logs a clear line on connection, and the file-sending tools resolve relative paths against the workspace.
+
 ## v0.7.8 — The Everywhere Release · Jul 12, 2026
 
 Your agents now live everywhere you already talk: **Discord, Slack, and WhatsApp

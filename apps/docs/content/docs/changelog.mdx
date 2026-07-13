@@ -7,6 +7,17 @@ Notable releases, newest first. Pre-1.0: minor versions can carry breaking
 changes. Every release is published to npm as `nodal-agents` and tagged on
 GitHub — upgrade in place with `nodal-agents update` (your data is preserved).
 
+## v0.7.9 — The Design System Release · Jul 13, 2026
+
+The whole dashboard now speaks one visual language, enforced so it can't drift — plus a rebuilt Google Gemini provider.
+
+- **One consistent interface.** Every button, field, badge, pill, menu, and modal across the app is now a shared component. A lint rule makes raw, off-system elements fail the build, so the consistency holds for good — verified page by page, in light and dark.
+- **Editing always happens in a modal.** No more inline accordions that shove the page around; every list edit opens a clean, non-dismissable dialog with a single Save/Cancel footer.
+- **One grammar for row actions.** Icon-only square buttons with tooltips, one verb per icon, Delete always last, no hidden kebab menus.
+- **End-to-end channel setup guides.** Connecting Discord, Slack, WhatsApp, or Telegram now walks you all the way to the first message — token setup, the ownership DM, the invite, and a "verify it works" step — in a properly formatted modal.
+- **Google Gemini, rebuilt.** The native and OpenRouter Gemini paths were reworked (thought-signature round-trip on tool calls, native thinking config, 3.x catalog) so tool-calling agents run correctly on Gemini.
+- **Polish.** The Settings page is now the same width as every other page, and Learned Skills uses the same per-agent assign/unassign toggle list as the Skills page — so you can finally unassign a learned skill.
+
 ## v0.7.8 — The Everywhere Release · Jul 12, 2026
 
 Your agents now live everywhere you already talk, and they can no longer misrepresent what they did while they were there.
