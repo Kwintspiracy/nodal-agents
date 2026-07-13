@@ -302,13 +302,35 @@ export function startSlackSocket(opts: SlackSocketOpts): SlackSocketHandle {
     });
   });
 
-  void app.start().catch((err) => {
-    console.warn(
-      `[slack-socket agent=${agentId}] start failed (invalid token(s)?): ${
-        err instanceof Error ? err.message : String(err)
-      }; will retry on the manager's next refresh`,
-    );
-  });
+  void app
+    .start()
+    .then(async () => {
+      // Same observability discipline as discord/gateway.ts's ClientReady log
+      // ("logged in as ...") — without it, confirming a socket actually
+      // connected (and as which bot identity) requires a DB round-trip
+      // instead of a grep. auth.test() is a single, cheap identity call made
+      // once per successful connect, not per event.
+      try {
+        const identity = await app.client.auth.test();
+        console.warn(
+          `[slack-socket agent=${agentId}] connected (socket mode) as ${identity.user ?? 'unknown'} ` +
+            `(team=${identity.team ?? 'unknown'})`,
+        );
+      } catch (err) {
+        console.warn(
+          `[slack-socket agent=${agentId}] connected (socket mode), but auth.test failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn(
+        `[slack-socket agent=${agentId}] start failed (invalid token(s)?): ${
+          err instanceof Error ? err.message : String(err)
+        }; will retry on the manager's next refresh`,
+      );
+    });
 
   return {
     async stop(): Promise<void> {

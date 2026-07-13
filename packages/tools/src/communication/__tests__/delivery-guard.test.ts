@@ -535,6 +535,58 @@ describe('assertLocalSourceAllowed', () => {
       }
     },
   );
+
+  // ─── Relative-path resolution (fix for the send_file ENOENT incident) ─────
+  // Before this fix, a relative `source` was handed straight to realpath(),
+  // which resolves against the RUNNER PROCESS's CWD — a different root than
+  // file_read/file_write use (the agent's workspace). A relative filename
+  // `file_write` had just accepted therefore came back ENOENT from send_file.
+  // These tests exercise the real filesystem (no mocking), same as the rest
+  // of this describe block, and never touch process.cwd() itself so they
+  // can't leak fixtures into the repo checkout.
+  describe('relative source resolution', () => {
+    it('resolves a relative source against the agent workspace, not process.cwd()', async () => {
+      const file = path.join(workspaceDir, 'relative-report.md');
+      await writeFile(file, 'x');
+      const ctx = makeCtx({ workspaces: [{ label: 'ws', path: workspaceDir }] });
+
+      // No file named this exists anywhere near process.cwd() — if this
+      // resolved against the CWD (the old, buggy behavior) it would ENOENT
+      // instead of resolving to the workspace copy.
+      await expect(assertLocalSourceAllowed('relative-report.md', ctx)).resolves.toBe(file);
+    });
+
+    it('throws source_path_not_allowed naming the workspace-resolved path (not the CWD) for a missing relative source', async () => {
+      const ctx = makeCtx({ workspaces: [{ label: 'ws', path: workspaceDir }] });
+
+      let rejection: Error | undefined;
+      try {
+        await assertLocalSourceAllowed('does-not-exist.md', ctx);
+      } catch (e) {
+        rejection = e as Error;
+      }
+      expect(rejection?.name).toBe('source_path_not_allowed');
+      expect(rejection?.message).toContain('does-not-exist.md');
+      // Proves the message talks about the WORKSPACE path, not the CWD.
+      expect(rejection?.message.toLowerCase()).toContain(path.basename(workspaceDir).toLowerCase());
+    });
+
+    it('still blocks a relative source that tries to escape the workspace via ../..', async () => {
+      const ctx = makeCtx({ workspaces: [{ label: 'ws', path: workspaceDir }] });
+
+      await expect(assertLocalSourceAllowed('../../secret.env', ctx)).rejects.toMatchObject({
+        name: 'source_path_not_allowed',
+      });
+    });
+
+    it('throws source_path_not_allowed (not a raw ENOENT) for a relative source when no workspace is configured', async () => {
+      const ctx = makeCtx();
+
+      await expect(assertLocalSourceAllowed('anything.md', ctx)).rejects.toMatchObject({
+        name: 'source_path_not_allowed',
+      });
+    });
+  });
 });
 
 // ─── fetchBoundedUrl (F3) ───────────────────────────────────────────────────

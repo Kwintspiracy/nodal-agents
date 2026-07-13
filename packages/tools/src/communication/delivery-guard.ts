@@ -27,6 +27,7 @@ import { resolveTransportChannel, type ChannelKind } from '@nodal-agents/deliver
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { resolveAndCheckPath, WorkspaceError } from '../builtin/file-ops/workspace';
 import type { ToolContext } from '../types';
 
 // ─── Transport channel ──────────────────────────────────────────────────────
@@ -285,9 +286,49 @@ export async function resolveRecipientChatId(
  * `C:\workspace-evil` matching `C:\workspace` by comparing with a trailing
  * separator. Returns the resolved real path on success; throws
  * `source_path_not_allowed` otherwise.
+ *
+ * A RELATIVE `source` is resolved against the agent's workspace(s) via the
+ * SAME `resolveAndCheckPath` file_read/file_write use — never against the
+ * runner process's CWD. Before this, a relative path that `file_write` had
+ * just accepted (workspace-relative) came back ENOENT from `realpath()`
+ * here, because it silently resolved against `process.cwd()` instead: one
+ * call site used the agent's workspace as the relative root, the other used
+ * the process's. An absolute `source` is untouched by this and keeps its
+ * historical behavior (checked directly against the allowed roots below,
+ * which is how the skill store and the OS temp dir — neither reachable
+ * through workspace-label resolution — stay reachable).
  */
 export async function assertLocalSourceAllowed(source: string, ctx: ToolContext): Promise<string> {
-  const real = await realpath(source);
+  let candidate = source;
+  if (!path.isAbsolute(source)) {
+    try {
+      candidate = await resolveAndCheckPath(ctx, source);
+    } catch (err) {
+      if (err instanceof WorkspaceError) {
+        const wrapped = new Error(`source_path_not_allowed: ${err.message}`);
+        wrapped.name = 'source_path_not_allowed';
+        throw wrapped;
+      }
+      throw err;
+    }
+  }
+
+  let real: string;
+  try {
+    real = await realpath(candidate);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      const wrapped = new Error(
+        path.isAbsolute(source)
+          ? `source_path_not_allowed: no file found at "${source}".`
+          : `source_path_not_allowed: no file found at workspace-relative path "${source}" ` +
+              `(resolved to "${candidate}").`,
+      );
+      wrapped.name = 'source_path_not_allowed';
+      throw wrapped;
+    }
+    throw err;
+  }
 
   const roots: string[] = [
     ...(ctx.workspaces ?? []).map((w) => w.path),
