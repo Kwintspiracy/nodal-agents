@@ -119,15 +119,6 @@ export default function AgentForm(props: Props) {
     setModel(nextModel);
   }
 
-  useEffect(() => {
-    if (!open || isEdit) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, isEdit]);
-
   // Prefetch live model list for the initially-selected key.
   useEffect(() => {
     if (!llmKeyId || liveModelsCache[llmKeyId] !== undefined) return;

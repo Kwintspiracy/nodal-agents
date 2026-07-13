@@ -14,6 +14,7 @@ import TextInput from '@/components/ui/TextInput';
 import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
 import Checkbox from '@/components/ui/Checkbox';
+import { ModalFooter } from '@/components/ui/Modal';
 
 interface CreateProps {
   mode?: 'create';
@@ -217,16 +218,7 @@ export default function ScheduleForm(props: Props) {
         </p>
       </div>
 
-      <div className="flex gap-2 pt-1">
-        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
-          {isPending
-            ? isEdit
-              ? 'Saving…'
-              : 'Creating…'
-            : isEdit
-              ? 'Save changes'
-              : 'Create schedule'}
-        </PrimaryButton>
+      <ModalFooter className="-mx-5 -mb-5 mt-1 rounded-b-xl">
         <PrimaryButton
           variant="neutral"
           onClick={() => {
@@ -236,7 +228,16 @@ export default function ScheduleForm(props: Props) {
         >
           Cancel
         </PrimaryButton>
-      </div>
+        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
+          {isPending
+            ? isEdit
+              ? 'Saving…'
+              : 'Creating…'
+            : isEdit
+              ? 'Save changes'
+              : 'Create schedule'}
+        </PrimaryButton>
+      </ModalFooter>
     </form>
   );
 }

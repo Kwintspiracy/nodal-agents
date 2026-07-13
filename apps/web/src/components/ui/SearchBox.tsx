@@ -59,7 +59,7 @@ export default function SearchBox({
         ref={ref}
         type="search"
         placeholder={placeholder}
-        className="flex-1 border-0 bg-transparent text-[14px] leading-none text-ink outline-none placeholder:text-ink-4"
+        className="h-full flex-1 border-0 bg-transparent text-[14px] leading-none text-ink outline-none placeholder:text-ink-4"
       />
       <span className="rounded-[5px] border border-rule bg-black/5 px-1.5 py-[1px] font-mono text-[12px] leading-none text-ink-4 dark:bg-white/[0.06]">
         /

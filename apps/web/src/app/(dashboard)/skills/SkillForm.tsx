@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import RowActionButton from '@/components/ui/RowActionButton';
 import TextInput from '@/components/ui/TextInput';
 import TextArea from '@/components/ui/TextArea';
+import { ModalFooter } from '@/components/ui/Modal';
 
 interface CreateProps {
   mode?: 'create';
@@ -203,7 +204,13 @@ export default function SkillForm(props: Props) {
         className="min-h-[440px] leading-relaxed"
       />
 
-      <div className="flex gap-2 pt-1">
+      <ModalFooter className="-mx-5 -mb-5 mt-1 rounded-b-xl">
+        <PrimaryButton
+          variant="neutral"
+          onClick={() => (props.onClose ? props.onClose() : router.push('/skills'))}
+        >
+          Cancel
+        </PrimaryButton>
         <PrimaryButton variant="ink" type="submit" disabled={isPending}>
           {isPending
             ? isEdit
@@ -213,13 +220,7 @@ export default function SkillForm(props: Props) {
               ? 'Save changes'
               : 'Create skill'}
         </PrimaryButton>
-        <PrimaryButton
-          variant="neutral"
-          onClick={() => (props.onClose ? props.onClose() : router.push('/skills'))}
-        >
-          Cancel
-        </PrimaryButton>
-      </div>
+      </ModalFooter>
     </form>
   );
 }

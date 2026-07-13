@@ -25,6 +25,11 @@ const STAR_PATH = 'M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3l-3.8 2 .7-4.3-3.1-3 
  * you" badge that lets the user hand control back to the curator). Both call
  * sites rendered their own star-button loop with identical markup before this
  * was extracted (audit DS Phase 2C).
+ *
+ * Row-action-size exemption (DS Phase 4 crawler): the individual star buttons
+ * render at 16px (`md`) / 12px (`sm`), under the usual row-action minimum —
+ * this is intentional. They're a rating control (five toggles forming one
+ * input), not row actions, so the row-action hit-target rule doesn't apply.
  */
 export default function StarRating({
   value,

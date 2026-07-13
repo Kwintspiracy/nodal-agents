@@ -5,6 +5,7 @@ import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import EmptyState from '@/components/ui/EmptyState';
+import Modal from '@/components/ui/Modal';
 import type {
   AgentRow,
   ScheduleRow as ScheduleRowData,
@@ -23,8 +24,10 @@ interface Props {
 
 /**
  * AutomationsClient — owns the create-form open state so the "New schedule"
- * trigger can live in the page toolbar (right-aligned) while the form renders
- * in the body. The schedule list stays in the body.
+ * / "New webhook" triggers can live in the page toolbar (right-aligned)
+ * while each form renders in its own non-dismissable Modal — the same
+ * pattern ScheduleRow/WebhookRow use for editing (UX-DS Phase 4: create and
+ * edit share one pattern per entity, no separate inline page panel).
  *
  * Also owns `revealedWebhooks`: webhook secrets are write-once (list never
  * returns them), so the map of ids → {secret, path} minted by a create/rotate
@@ -71,7 +74,18 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
       }
     >
       <div className="space-y-6">
-        {formOpen && <ScheduleForm agents={agents} open={formOpen} onOpenChange={setFormOpen} />}
+        {/* New schedule — same non-dismissable Modal as Edit (ScheduleRow),
+            not an inline page panel (UX-DS Phase 4: create vs. edit must
+            share one pattern per entity). ScheduleForm renders its own "New
+            schedule" heading. */}
+        <Modal
+          open={formOpen}
+          onClose={() => setFormOpen(false)}
+          dismissable={false}
+          className="max-w-xl"
+        >
+          <ScheduleForm agents={agents} open={formOpen} onOpenChange={setFormOpen} />
+        </Modal>
 
         {schedules.length === 0 ? (
           <EmptyState
@@ -96,7 +110,14 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
           </p>
         </div>
 
-        {webhookFormOpen && (
+        {/* New webhook — same non-dismissable Modal pattern as schedules
+            (UX-DS Phase 4). WebhookForm renders its own heading. */}
+        <Modal
+          open={webhookFormOpen}
+          onClose={() => setWebhookFormOpen(false)}
+          dismissable={false}
+          className="max-w-xl"
+        >
           <WebhookForm
             agents={agents}
             open={webhookFormOpen}
@@ -105,7 +126,7 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
               setRevealedWebhooks((prev) => ({ ...prev, [id]: revealed }))
             }
           />
-        )}
+        </Modal>
 
         {webhooks.length === 0 ? (
           <EmptyState
