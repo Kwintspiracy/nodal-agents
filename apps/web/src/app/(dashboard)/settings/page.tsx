@@ -67,7 +67,7 @@ export default async function SettingsPage() {
 
   return (
     <PageShell title="Settings" subtitle="Security mode and network access for this workspace.">
-      <div className="max-w-2xl">
+      <div>
         <SetBlock label="Auth">
           <SetPane>
             <SetRow label="Mode">
