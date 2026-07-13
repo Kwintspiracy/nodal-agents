@@ -54,6 +54,7 @@ import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
+import RowActionButton from '@/components/ui/RowActionButton';
 import ModelToolsBadge, { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
@@ -778,13 +779,7 @@ function OverviewTab({
             label={`Connectors used · ${connectorsAssigned.length}`}
             right={
               hasConnectors ? (
-                <button
-                  type="button"
-                  onClick={onOpenConnectors}
-                  className="text-[12px] text-ink-3 underline hover:text-ink-2"
-                >
-                  Manage
-                </button>
+                <RowActionButton onClick={onOpenConnectors}>Manage</RowActionButton>
               ) : undefined
             }
           />
@@ -797,13 +792,7 @@ function OverviewTab({
           ) : (
             <p className="text-[13px] text-ink-3">
               No connectors assigned yet.{' '}
-              <button
-                type="button"
-                onClick={onOpenConnectors}
-                className="underline hover:text-ink-2"
-              >
-                Wire one →
-              </button>
+              <RowActionButton onClick={onOpenConnectors}>Wire one →</RowActionButton>
             </p>
           )}
           {mcpsAssignedCount > 0 && (
@@ -820,15 +809,7 @@ function OverviewTab({
         <SectionHead
           label={`Skills attached · ${attachedSkills.length}`}
           right={
-            hasSkills ? (
-              <button
-                type="button"
-                onClick={onOpenSkills}
-                className="text-[12px] text-ink-3 underline hover:text-ink-2"
-              >
-                Manage
-              </button>
-            ) : undefined
+            hasSkills ? <RowActionButton onClick={onOpenSkills}>Manage</RowActionButton> : undefined
           }
         />
         {hasSkills ? (
@@ -2192,9 +2173,9 @@ function SettingsTab(props: {
               onChange={(e) => onChangeRole(e.target.value as AgentRole)}
               className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-ink-3 focus:outline-none"
             >
-              <option value="worker">Worker — runs its own tools</option>
-              <option value="router">Router — delegates one at a time</option>
-              <option value="planner">Planner — parallel sub-agents</option>
+              <option value="worker">Worker (runs its own tools)</option>
+              <option value="router">Router (delegates one at a time)</option>
+              <option value="planner">Planner (parallel sub-agents)</option>
             </select>
           </Field>
         </div>

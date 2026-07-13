@@ -18,6 +18,8 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AVATAR_CATALOG } from '@/lib/avatar-catalog.ts';
+import { ModalFooter } from '@/components/ui/Modal.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 
 interface Props {
   value: string | null;
@@ -78,37 +80,35 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="bg-paper border border-rule-2 rounded-2xl p-5 max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+              className="bg-paper border border-rule-2 rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto"
             >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-ink">Pick an avatar</h3>
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  className="text-ink-3 hover:text-ink text-xs"
-                >
-                  Close (Esc)
-                </button>
-              </div>
+              <div className="p-5 pb-4">
+                <h3 className="text-sm font-semibold text-ink mb-4">Pick an avatar</h3>
 
-              <div className="grid grid-cols-6 gap-3">
-                {/* "None" cell — clears the avatar. First so the user sees it. */}
-                <PickerTile
-                  selected={value === null}
-                  onClick={() => pick(null)}
-                  label="None"
-                  url={null}
-                />
-                {AVATAR_CATALOG.map((a) => (
+                <div className="grid grid-cols-6 gap-3">
+                  {/* "None" cell — clears the avatar. First so the user sees it. */}
                   <PickerTile
-                    key={a.id}
-                    selected={value === a.url}
-                    onClick={() => pick(a.url)}
-                    label={a.id}
-                    url={a.url}
+                    selected={value === null}
+                    onClick={() => pick(null)}
+                    label="None"
+                    url={null}
                   />
-                ))}
+                  {AVATAR_CATALOG.map((a) => (
+                    <PickerTile
+                      key={a.id}
+                      selected={value === a.url}
+                      onClick={() => pick(a.url)}
+                      label={a.id}
+                      url={a.url}
+                    />
+                  ))}
+                </div>
               </div>
+              <ModalFooter className="rounded-b-2xl">
+                <PrimaryButton variant="neutral" onClick={() => setOpen(false)}>
+                  Close
+                </PrimaryButton>
+              </ModalFooter>
             </div>
           </div>,
           document.body,

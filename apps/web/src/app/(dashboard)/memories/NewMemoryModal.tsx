@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import Modal from '@/components/ui/Modal';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import { createMemoryAction } from '@/lib/actions';
 
@@ -91,7 +91,34 @@ export default function NewMemoryModal({ open, onClose }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={handleClose} title="New Memory">
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title="New Memory"
+      dismissable={false}
+      footer={
+        <ModalFooter>
+          <PrimaryButton variant="neutral" onClick={handleClose}>
+            Cancel
+          </PrimaryButton>
+          <PrimaryButton
+            variant="ink"
+            onClick={handleSubmit}
+            disabled={isPending || !fact.trim()}
+            className="disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isPending ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Saving…
+              </>
+            ) : (
+              'Save memory'
+            )}
+          </PrimaryButton>
+        </ModalFooter>
+      }
+    >
       <div className="space-y-4">
         {/* Fact */}
         <div className="space-y-1.5">
@@ -137,29 +164,6 @@ export default function NewMemoryModal({ open, onClose }: Props) {
         <div className="space-y-1.5">
           <span className="block text-[13px] font-medium text-ink-2">Importance</span>
           <StarPicker value={importance} onChange={setImportance} />
-        </div>
-
-        {/* Actions — standard PrimaryButton variants (neutral/ink) so text/bg
-            contrast is guaranteed by the design system, not hand-rolled. */}
-        <div className="flex justify-end gap-2 pt-1">
-          <PrimaryButton variant="neutral" onClick={handleClose}>
-            Cancel
-          </PrimaryButton>
-          <PrimaryButton
-            variant="ink"
-            onClick={handleSubmit}
-            disabled={isPending || !fact.trim()}
-            className="disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isPending ? (
-              <>
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Saving…
-              </>
-            ) : (
-              'Save memory'
-            )}
-          </PrimaryButton>
         </div>
       </div>
     </Modal>

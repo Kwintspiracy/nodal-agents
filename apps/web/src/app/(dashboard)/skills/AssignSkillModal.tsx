@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import Link from 'next/link';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import { assignSkillAction, unassignSkillAction } from '@/lib/actions.ts';
-import Modal from '@/components/ui/Modal';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 type Props = {
   open: boolean;
@@ -21,7 +22,18 @@ type Props = {
  */
 export default function AssignSkillModal({ open, onClose, skill, agents }: Props) {
   return (
-    <Modal open={open} onClose={onClose} title={`Assign "${skill.name}"`}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Assign "${skill.name}"`}
+      footer={
+        <ModalFooter>
+          <PrimaryButton variant="neutral" onClick={onClose}>
+            Close
+          </PrimaryButton>
+        </ModalFooter>
+      }
+    >
       <AssignPanel skill={skill} agents={agents} onClose={onClose} />
     </Modal>
   );
@@ -46,7 +58,7 @@ function AssignPanel({
   if (agents.length === 0) {
     return (
       <div className="space-y-3 py-6 text-center">
-        <p className="text-sm text-ink-3">No agents yet — create one first.</p>
+        <p className="text-sm text-ink-3">No agents yet, create one first.</p>
         <Link
           href="/agents"
           onClick={onClose}

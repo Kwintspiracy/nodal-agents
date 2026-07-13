@@ -7,7 +7,7 @@ import { Plus } from '@phosphor-icons/react';
 import { sendTaskAction } from '@/lib/actions.ts';
 import type { AgentRow } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
-import Modal from '@/components/ui/Modal';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
 
 /**
  * SendTaskForm — the "New task" CTA for the Runs page. A neutral (white) toolbar
@@ -30,7 +30,7 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
         toast.error(result.message);
         return;
       }
-      toast.success('Task sent — job created');
+      toast.success('Task sent, job created');
       setOpen(false);
       router.push(`/jobs/${result.data.jobId}`);
     });
@@ -43,7 +43,7 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
         New task
       </PrimaryButton>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="New task">
+      <Modal open={open} onClose={() => setOpen(false)} title="New task" dismissable={false}>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-xs text-ink-3" htmlFor="task-prompt">
@@ -111,18 +111,14 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
             </label>
           )}
 
-          <div className="flex gap-2 pt-1">
+          <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
+            <PrimaryButton variant="neutral" type="button" onClick={() => setOpen(false)}>
+              Cancel
+            </PrimaryButton>
             <PrimaryButton variant="ink" type="submit" disabled={isPending}>
               {isPending ? 'Sending…' : 'New task'}
             </PrimaryButton>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="rounded-lg border border-rule px-4 py-2 text-sm font-medium text-ink-3 hover:border-rule-2"
-            >
-              Cancel
-            </button>
-          </div>
+          </ModalFooter>
         </form>
       </Modal>
     </>

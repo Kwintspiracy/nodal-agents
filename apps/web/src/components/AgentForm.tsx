@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -21,6 +20,7 @@ import {
 import { prettyProviderName } from '@/lib/provider-names.ts';
 import { Plus } from '@phosphor-icons/react';
 import PrimaryButton from './ui/PrimaryButton.tsx';
+import Modal, { ModalFooter } from './ui/Modal.tsx';
 import AvatarPicker from './AvatarPicker.tsx';
 import { ModelToolsLegend } from './ui/ModelToolsBadge.tsx';
 
@@ -402,9 +402,9 @@ export default function AgentForm(props: Props) {
             onChange={(e) => setRole(e.target.value as AgentRole)}
             className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
-            <option value="worker">Worker — runs its own tools and tasks</option>
-            <option value="router">Router — delegates to one sub-agent at a time</option>
-            <option value="planner">Planner — creates parallel tasks for sub-agents</option>
+            <option value="worker">Worker (runs its own tools and tasks)</option>
+            <option value="router">Router (delegates to one sub-agent at a time)</option>
+            <option value="planner">Planner (creates parallel tasks for sub-agents)</option>
           </select>
         </div>
 
@@ -447,285 +447,257 @@ export default function AgentForm(props: Props) {
             connectors there. */}
 
         <div className="flex gap-2 pt-1">
-          <button
-            type="submit"
-            disabled={isPending || noLlmKeys}
-            className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+          <PrimaryButton variant="ink" type="submit" disabled={isPending || noLlmKeys}>
             {isPending ? 'Saving…' : 'Save changes'}
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push('/agents')}
-            className="px-4 py-2 text-sm font-medium border border-rule text-ink-3 rounded-lg hover:border-rule transition-colors"
-          >
+          </PrimaryButton>
+          <PrimaryButton variant="neutral" type="button" onClick={() => router.push('/agents')}>
             Cancel
-          </button>
+          </PrimaryButton>
         </div>
       </form>
     );
   }
 
-  // ─── Create mode: toggle button + portal modal ──────────────────────────────
+  // ─── Create mode: toggle button + shared Modal ──────────────────────────────
 
-  const modal = open
-    ? createPortal(
-        <>
-          <div
-            className="fixed inset-0 bg-black/60 z-40 animate-[fadeIn_150ms_ease]"
-            onClick={() => setOpen(false)}
-            aria-hidden="true"
-          />
-
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="New agent"
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+  const modal = (
+    <Modal
+      open={open}
+      onClose={() => setOpen(false)}
+      title="New agent"
+      dismissable={false}
+      footer={
+        <ModalFooter>
+          <PrimaryButton variant="neutral" type="button" onClick={() => setOpen(false)}>
+            Cancel
+          </PrimaryButton>
+          <PrimaryButton
+            variant="ink"
+            type="submit"
+            form="new-agent-form"
+            disabled={isPending || noLlmKeys}
           >
-            <form
-              ref={formRef}
-              onSubmit={handleSubmit}
-              className="pointer-events-auto w-full max-w-lg max-h-[90vh] overflow-y-auto bg-paper border border-rule-2 rounded-xl p-6 space-y-4 shadow-2xl animate-[scaleIn_150ms_ease]"
-            >
-              <h3 className="text-sm font-semibold text-ink">New agent</h3>
+            {isPending ? 'Creating…' : 'Create agent'}
+          </PrimaryButton>
+        </ModalFooter>
+      }
+    >
+      <form id="new-agent-form" ref={formRef} onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-slug">
+              Slug
+            </label>
+            <input
+              id="agent-slug"
+              name="slug"
+              required
+              pattern="[a-z0-9\-]+"
+              placeholder="my-agent"
+              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-name">
+              Name
+            </label>
+            <input
+              id="agent-name"
+              name="name"
+              required
+              placeholder="My Agent"
+              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+            />
+          </div>
+        </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-slug">
-                    Slug
-                  </label>
-                  <input
-                    id="agent-slug"
-                    name="slug"
-                    required
-                    pattern="[a-z0-9\-]+"
-                    placeholder="my-agent"
-                    className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-name">
-                    Name
-                  </label>
-                  <input
-                    id="agent-name"
-                    name="name"
-                    required
-                    placeholder="My Agent"
-                    className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-                  />
-                </div>
-              </div>
+        <AvatarPicker value={avatarUrl} onChange={setAvatarUrl} />
 
-              <AvatarPicker value={avatarUrl} onChange={setAvatarUrl} />
+        <div>
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-personality">
+            Personality / System prompt
+          </label>
+          <textarea
+            id="agent-personality"
+            name="personality"
+            required
+            rows={4}
+            placeholder="You are a helpful assistant..."
+            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-none"
+          />
+        </div>
 
-              <div>
-                <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-personality">
-                  Personality / System prompt
-                </label>
-                <textarea
-                  id="agent-personality"
-                  name="personality"
-                  required
-                  rows={4}
-                  placeholder="You are a helpful assistant..."
-                  className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-llm-key">
-                    LLM provider
-                  </label>
-                  {noLlmKeys ? (
-                    <p className="text-xs text-warn mt-1">
-                      No active LLM providers. Add one in{' '}
-                      <a href="/settings" className="underline">
-                        Settings → LLM providers
-                      </a>
-                      .
-                    </p>
-                  ) : (
-                    <select
-                      id="agent-llm-key"
-                      value={llmKeyId}
-                      onChange={(e) => handleLlmKeyChange(e.target.value)}
-                      required
-                      className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
-                    >
-                      {activeKeys.map((k) => (
-                        <option key={k.id} value={k.id}>
-                          {(k.nickname ?? prettyProviderName(k.provider)) +
-                            ' (' +
-                            prettyProviderName(k.provider) +
-                            ')'}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-llm-key">
+              LLM provider
+            </label>
+            {noLlmKeys ? (
+              <p className="text-xs text-warn mt-1">
+                No active LLM providers. Add one in{' '}
+                <a href="/settings" className="underline">
+                  Settings → LLM providers
+                </a>
+                .
+              </p>
+            ) : (
+              <select
+                id="agent-llm-key"
+                value={llmKeyId}
+                onChange={(e) => handleLlmKeyChange(e.target.value)}
+                required
+                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+              >
+                {activeKeys.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {(k.nickname ?? prettyProviderName(k.provider)) +
+                      ' (' +
+                      prettyProviderName(k.provider) +
+                      ')'}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
+              {liveModelsLoading &&
+              selectedKey?.id !== undefined &&
+              liveModelsCache[selectedKey.id] === undefined
+                ? 'Model (loading…)'
+                : 'Model'}
+            </label>
+            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+              <select
+                id="agent-model"
+                value={modelInDropdown ? model : '__custom__'}
+                onChange={(e) =>
+                  handleModelChange(e.target.value === '__custom__' ? '' : e.target.value)
+                }
+                required={modelInDropdown}
+                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none mb-2"
+              >
+                {groupModelCatalog(modelCatalog).map(({ group, models }) =>
+                  group ? (
+                    <optgroup key={group} label={group}>
+                      {models.map((m) => (
+                        <option
+                          key={m.modelId}
+                          value={m.modelId}
+                          disabled={requireTools && !m.capabilities.tools}
+                          title={
+                            requireTools && !m.capabilities.tools
+                              ? "Can't use tools (required for a router/planner)"
+                              : undefined
+                          }
+                        >
+                          {modelOptionLabel(m)}
                         </option>
                       ))}
-                    </select>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-model">
-                    {liveModelsLoading &&
-                    selectedKey?.id !== undefined &&
-                    liveModelsCache[selectedKey.id] === undefined
-                      ? 'Model (loading…)'
-                      : 'Model'}
-                  </label>
-                  {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-                    <select
-                      id="agent-model"
-                      value={modelInDropdown ? model : '__custom__'}
-                      onChange={(e) =>
-                        handleModelChange(e.target.value === '__custom__' ? '' : e.target.value)
-                      }
-                      required={modelInDropdown}
-                      className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none mb-2"
-                    >
-                      {groupModelCatalog(modelCatalog).map(({ group, models }) =>
-                        group ? (
-                          <optgroup key={group} label={group}>
-                            {models.map((m) => (
-                              <option
-                                key={m.modelId}
-                                value={m.modelId}
-                                disabled={requireTools && !m.capabilities.tools}
-                                title={
-                                  requireTools && !m.capabilities.tools
-                                    ? "Can't use tools (required for a router/planner)"
-                                    : undefined
-                                }
-                              >
-                                {modelOptionLabel(m)}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : (
-                          models.map((m) => (
-                            <option
-                              key={m.modelId}
-                              value={m.modelId}
-                              disabled={requireTools && !m.capabilities.tools}
-                              title={
-                                requireTools && !m.capabilities.tools
-                                  ? "Can't use tools (required for a router/planner)"
-                                  : undefined
-                              }
-                            >
-                              {modelOptionLabel(m)}
-                            </option>
-                          ))
-                        ),
-                      )}
-                      {extraLiveIds.length > 0 && (
-                        <optgroup label="Live from provider">
-                          {extraLiveIds.map((id) => (
-                            <option key={id} value={id}>
-                              {id}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      <option value="__custom__">Custom…</option>
-                    </select>
-                  )}
-                  {!modelInDropdown && (
-                    <input
-                      id="agent-model"
-                      name="model"
-                      type="text"
-                      required
-                      value={model}
-                      onChange={(e) => handleModelChange(e.target.value)}
-                      placeholder={
-                        MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
-                        'e.g. claude-haiku-4-5-20251001'
-                      }
-                      className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
-                    />
-                  )}
-                  {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-                    <ModelToolsLegend className="mt-1.5" />
-                  )}
-                  {coherenceBanner}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-role">
-                  Role
-                </label>
-                <select
-                  id="agent-role"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as AgentRole)}
-                  className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
-                >
-                  <option value="worker">Worker — runs its own tools and tasks</option>
-                  <option value="router">Router — delegates to one sub-agent at a time</option>
-                  <option value="planner">Planner — creates parallel tasks for sub-agents</option>
-                </select>
-              </div>
-
-              {showSubAgents && (
-                <div>
-                  <label className="block text-xs text-ink-3 mb-1">
-                    Sub-agents <span className="text-ink-4">({subAgentIds.length} selected)</span>
-                  </label>
-                  {noAgentsForPicker ? (
-                    <p className="text-xs text-warn mt-1">
-                      Create at least one worker agent first — orchestrators need someone to
-                      delegate to.
-                    </p>
+                    </optgroup>
                   ) : (
-                    <div className="max-h-40 overflow-y-auto bg-hover border border-rule rounded-lg divide-y divide-neutral-800">
-                      {agents.map((a) => {
-                        const checked = subAgentIds.includes(a.id);
-                        return (
-                          <label
-                            key={a.id}
-                            className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-hover/80"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleSubAgent(a.id)}
-                              className="accent-violet-500"
-                            />
-                            <span className="text-ink">{a.name}</span>
-                            <span className="font-mono text-xs text-ink-3 ml-auto">{a.slug}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="submit"
-                  disabled={isPending || noLlmKeys}
-                  className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-lg hover:brightness-[0.92] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isPending ? 'Creating…' : 'Create agent'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  className="px-4 py-2 text-sm font-medium border border-rule text-ink-3 rounded-lg hover:border-rule transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+                    models.map((m) => (
+                      <option
+                        key={m.modelId}
+                        value={m.modelId}
+                        disabled={requireTools && !m.capabilities.tools}
+                        title={
+                          requireTools && !m.capabilities.tools
+                            ? "Can't use tools (required for a router/planner)"
+                            : undefined
+                        }
+                      >
+                        {modelOptionLabel(m)}
+                      </option>
+                    ))
+                  ),
+                )}
+                {extraLiveIds.length > 0 && (
+                  <optgroup label="Live from provider">
+                    {extraLiveIds.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <option value="__custom__">Custom…</option>
+              </select>
+            )}
+            {!modelInDropdown && (
+              <input
+                id="agent-model"
+                name="model"
+                type="text"
+                required
+                value={model}
+                onChange={(e) => handleModelChange(e.target.value)}
+                placeholder={
+                  MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                  'e.g. claude-haiku-4-5-20251001'
+                }
+                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+              />
+            )}
+            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+              <ModelToolsLegend className="mt-1.5" />
+            )}
+            {coherenceBanner}
           </div>
-        </>,
-        document.body,
-      )
-    : null;
+        </div>
+
+        <div>
+          <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-role">
+            Role
+          </label>
+          <select
+            id="agent-role"
+            value={role}
+            onChange={(e) => setRole(e.target.value as AgentRole)}
+            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+          >
+            <option value="worker">Worker (runs its own tools and tasks)</option>
+            <option value="router">Router (delegates to one sub-agent at a time)</option>
+            <option value="planner">Planner (creates parallel tasks for sub-agents)</option>
+          </select>
+        </div>
+
+        {showSubAgents && (
+          <div>
+            <label className="block text-xs text-ink-3 mb-1">
+              Sub-agents <span className="text-ink-4">({subAgentIds.length} selected)</span>
+            </label>
+            {noAgentsForPicker ? (
+              <p className="text-xs text-warn mt-1">
+                Create at least one worker agent first — orchestrators need someone to delegate to.
+              </p>
+            ) : (
+              <div className="max-h-40 overflow-y-auto bg-hover border border-rule rounded-lg divide-y divide-neutral-800">
+                {agents.map((a) => {
+                  const checked = subAgentIds.includes(a.id);
+                  return (
+                    <label
+                      key={a.id}
+                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-hover/80"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSubAgent(a.id)}
+                        className="accent-violet-500"
+                      />
+                      <span className="text-ink">{a.name}</span>
+                      <span className="font-mono text-xs text-ink-3 ml-auto">{a.slug}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </form>
+    </Modal>
+  );
 
   return (
     <>

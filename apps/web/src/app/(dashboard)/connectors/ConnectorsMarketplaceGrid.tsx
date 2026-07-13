@@ -116,12 +116,14 @@ function ConnectorMarketCard({
       <Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title={isInstalled ? `Add account — ${catalogItem.label}` : `Install ${catalogItem.label}`}
+        title={isInstalled ? `Add account - ${catalogItem.label}` : `Install ${catalogItem.label}`}
+        dismissable={false}
       >
         <ConnectorAddForm
           catalogItem={catalogItem}
           compatibleCredentials={compatibleCredentials}
           onDone={handleDone}
+          onCancel={() => setAddOpen(false)}
           onCreateNew={() => {
             setAddOpen(false);
             setWizardOpen(true);

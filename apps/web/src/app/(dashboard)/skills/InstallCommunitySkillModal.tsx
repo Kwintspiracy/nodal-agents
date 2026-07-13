@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Warning } from '@phosphor-icons/react';
 import { installCommunitySkillAction, type CommunitySkillInstallResult } from '@/lib/actions.ts';
-import Modal from '@/components/ui/Modal';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 type Props = {
   open: boolean;
@@ -60,13 +61,41 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={handleClose} title="Install community skill">
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title="Install community skill"
+      dismissable={false}
+      footer={
+        <ModalFooter>
+          <PrimaryButton variant="neutral" onClick={handleClose}>
+            {successSkill ? 'Close' : 'Cancel'}
+          </PrimaryButton>
+          {!successSkill && (
+            <PrimaryButton
+              variant="coral"
+              onClick={handleInstall}
+              disabled={isPending || !source.trim()}
+            >
+              {isPending ? (
+                <>
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Installing…
+                </>
+              ) : (
+                'Install'
+              )}
+            </PrimaryButton>
+          )}
+        </ModalFooter>
+      }
+    >
       <div className="space-y-4">
         {/* Static trust warning — always shown */}
         <div className="flex gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-3">
           <Warning size={16} weight="fill" className="mt-[1px] shrink-0 text-amber-400" />
           <p className="text-[13px] leading-[1.5] text-amber-300">
-            Only install skills from sources you trust — a skill&apos;s instructions run with your
+            Only install skills from sources you trust - a skill&apos;s instructions run with your
             agent&apos;s tools.
           </p>
         </div>
@@ -124,7 +153,7 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
                     <p className="text-[13px] leading-[1.4] text-amber-300/80">
                       They run only for an agent that has the{' '}
                       <span className="font-mono">command-execution</span> capability and only after
-                      you authorize them — and every run is gated by your approval. Otherwise just
+                      you authorize them, and every run is gated by your approval. Otherwise just
                       the skill&apos;s instructions are used.
                     </p>
                     <ul className="mt-2 space-y-0.5">
@@ -146,34 +175,6 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
             )}
           </div>
         )}
-
-        {/* Actions */}
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="inline-flex h-[34px] items-center rounded-md border border-rule px-3.5 text-[14px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
-          >
-            {successSkill ? 'Close' : 'Cancel'}
-          </button>
-          {!successSkill && (
-            <button
-              type="button"
-              onClick={handleInstall}
-              disabled={isPending || !source.trim()}
-              className="inline-flex h-[34px] items-center gap-1.5 rounded-md bg-skill-vivid px-3.5 text-[14px] font-medium text-white transition-[filter] hover:brightness-[0.94] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isPending ? (
-                <>
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  Installing…
-                </>
-              ) : (
-                'Install'
-              )}
-            </button>
-          )}
-        </div>
       </div>
     </Modal>
   );

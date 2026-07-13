@@ -9,6 +9,8 @@ import {
 } from '@/lib/actions.ts';
 import HelpSteps from '@/components/HelpSteps.tsx';
 import { APIKEY_GUIDES } from '@/lib/connector-help.ts';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import { ModalFooter } from '@/components/ui/Modal.tsx';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 
 interface Props {
@@ -17,6 +19,9 @@ interface Props {
   compatibleCredentials: CompatibleCredential[];
   /** Called after a successful connection so the parent modal can close. */
   onDone?: () => void;
+  /** Closes the wrapping modal without connecting (the modal is
+   *  non-dismissable while this draft form is open — see UX-B7). */
+  onCancel?: () => void;
   /**
    * Called when the user clicks "or create new" in the OAuth branch.
    * The grid owns the CredentialWizard to avoid nesting two z-50 portals.
@@ -34,6 +39,7 @@ export default function ConnectorAddForm({
   catalogItem,
   compatibleCredentials,
   onDone,
+  onCancel,
   onCreateNew,
 }: Props) {
   const [isPending, startTransition] = useTransition();
@@ -86,7 +92,7 @@ export default function ConnectorAddForm({
       <form onSubmit={handleApiKeySubmit} className="space-y-3">
         <div>
           <label htmlFor={`add-name-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
-            Name <span className="text-ink-4">(e.g. &quot;Notion — perso&quot;)</span>
+            Name <span className="text-ink-4">(e.g. &quot;Notion perso&quot;)</span>
           </label>
           <input
             id={`add-name-${catalogItem.slug}`}
@@ -122,15 +128,16 @@ export default function ConnectorAddForm({
             className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
           />
         </div>
-        <div className="pt-1">
-          <button
-            type="submit"
-            disabled={isPending}
-            className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
-          >
+        <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
+          {onCancel && (
+            <PrimaryButton variant="neutral" type="button" onClick={onCancel}>
+              Cancel
+            </PrimaryButton>
+          )}
+          <PrimaryButton variant="ink" type="submit" disabled={isPending}>
             {isPending ? 'Connecting…' : 'Connect'}
-          </button>
-        </div>
+          </PrimaryButton>
+        </ModalFooter>
       </form>
     );
   }
@@ -154,23 +161,23 @@ export default function ConnectorAddForm({
             ))}
           </select>
         </div>
-        <div className="flex gap-2 items-center pt-1">
-          <button
-            type="button"
+        <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
+          {onCancel && (
+            <PrimaryButton variant="neutral" type="button" onClick={onCancel}>
+              Cancel
+            </PrimaryButton>
+          )}
+          <PrimaryButton variant="neutral" onClick={() => onCreateNew?.()}>
+            or create new
+          </PrimaryButton>
+          <PrimaryButton
+            variant="ink"
             onClick={() => selectedCredentialId && performOAuthAssign(selectedCredentialId)}
             disabled={isPending || !selectedCredentialId}
-            className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
           >
             {isPending ? 'Connecting…' : 'Connect'}
-          </button>
-          <button
-            type="button"
-            onClick={() => onCreateNew?.()}
-            className="px-3 py-1.5 text-xs text-ink-3 hover:text-ink underline"
-          >
-            or create new
-          </button>
-        </div>
+          </PrimaryButton>
+        </ModalFooter>
       </div>
     );
   }
@@ -182,13 +189,16 @@ export default function ConnectorAddForm({
   return (
     <div className="space-y-3">
       <p className="text-xs text-ink-3">{catalogItem.docsHint}</p>
-      <button
-        type="button"
-        onClick={() => onCreateNew?.()}
-        className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92]"
-      >
-        Create credential
-      </button>
+      <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
+        {onCancel && (
+          <PrimaryButton variant="neutral" type="button" onClick={onCancel}>
+            Cancel
+          </PrimaryButton>
+        )}
+        <PrimaryButton variant="ink" onClick={() => onCreateNew?.()}>
+          Create credential
+        </PrimaryButton>
+      </ModalFooter>
     </div>
   );
 }

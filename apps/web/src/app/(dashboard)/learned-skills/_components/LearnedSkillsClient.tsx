@@ -4,7 +4,8 @@ import { useState, useTransition, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { UserPlus, Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import Modal from '@/components/ui/Modal.tsx';
+import Modal, { ModalFooter } from '@/components/ui/Modal.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PageSearchInput from '@/components/ui/PageSearchInput';
@@ -269,7 +270,7 @@ export default function LearnedSkillsClient({
             active={mode === 'approval'}
             onClick={() => handleModeChange('approval')}
             name="Require my approval"
-            description="New skills are created unassigned — you assign them manually from this page."
+            description="New skills are created unassigned - you assign them manually from this page."
           />
         </div>
       </div>
@@ -391,6 +392,20 @@ export default function LearnedSkillsClient({
         open={assignModal !== null}
         onClose={() => setAssignModal(null)}
         title={assignModal ? `Assign "${assignModal.skillName}"` : undefined}
+        footer={
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={() => setAssignModal(null)}>
+              Cancel
+            </PrimaryButton>
+            <PrimaryButton
+              variant="ink"
+              onClick={handleAssignConfirm}
+              disabled={!assigningAgentId || isPending}
+            >
+              Assign
+            </PrimaryButton>
+          </ModalFooter>
+        }
       >
         {assignModal && (
           <div className="space-y-4">
@@ -414,23 +429,6 @@ export default function LearnedSkillsClient({
                   </option>
                 ))}
               </select>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setAssignModal(null)}
-                className="px-3 py-1.5 text-[14px] font-medium text-ink-2 border border-rule rounded-lg hover:border-rule-2 hover:text-ink transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleAssignConfirm}
-                disabled={!assigningAgentId || isPending}
-                className="px-3 py-1.5 text-[14px] font-medium text-white bg-conn-vivid rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                Assign
-              </button>
             </div>
           </div>
         )}

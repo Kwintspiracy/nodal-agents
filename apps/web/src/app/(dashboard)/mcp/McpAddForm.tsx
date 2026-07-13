@@ -25,11 +25,16 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { createMcpServerFromCatalogAction, type McpCatalogItem } from '@/lib/actions.ts';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import { ModalFooter } from '@/components/ui/Modal.tsx';
 
 interface Props {
   catalogItem: McpCatalogItem;
   /** Called after a successful connection so the parent modal can close. */
   onDone?: () => void;
+  /** Closes the wrapping modal without connecting (the modal is
+   *  non-dismissable while this draft form is open — see UX-B7). */
+  onCancel?: () => void;
 }
 
 type AuthScheme = 'header' | 'query' | 'bearer';
@@ -39,7 +44,7 @@ interface EnvRow {
   value: string;
 }
 
-export default function McpAddForm({ catalogItem, onDone }: Props) {
+export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
   const [isPending, startTransition] = useTransition();
 
   // Common
@@ -244,7 +249,7 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
       {/* Name — common to all flavors. */}
       <div>
         <label htmlFor={`mcp-name-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
-          Name <span className="text-ink-4">(e.g. &quot;Cortex — perso&quot;)</span>
+          Name <span className="text-ink-4">(e.g. &quot;Cortex perso&quot;)</span>
         </label>
         <input
           id={`mcp-name-${catalogItem.slug}`}
@@ -379,7 +384,7 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
             >
               Arguments{' '}
               <span className="text-ink-4">
-                (one per line — edit placeholders like &lt;root-directory&gt;)
+                (one per line, edit placeholders like &lt;root-directory&gt;)
               </span>
             </label>
             <textarea
@@ -532,13 +537,16 @@ export default function McpAddForm({ catalogItem, onDone }: Props) {
         </>
       )}
 
-      <button
-        type="submit"
-        disabled={isPending || !name.trim()}
-        className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
-      >
-        {isPending ? 'Connecting…' : 'Connect'}
-      </button>
+      <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
+        {onCancel && (
+          <PrimaryButton variant="neutral" type="button" onClick={onCancel}>
+            Cancel
+          </PrimaryButton>
+        )}
+        <PrimaryButton variant="ink" type="submit" disabled={isPending || !name.trim()}>
+          {isPending ? 'Connecting…' : 'Connect'}
+        </PrimaryButton>
+      </ModalFooter>
     </form>
   );
 }

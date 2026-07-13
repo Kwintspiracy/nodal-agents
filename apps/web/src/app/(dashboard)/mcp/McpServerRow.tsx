@@ -2,14 +2,13 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { ArrowsClockwise, Trash } from '@phosphor-icons/react';
 import {
   deleteMcpServerAction,
   updateMcpServerApiKeyAction,
   type McpServerInstance,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import RowActionButton from '@/components/ui/RowActionButton';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import McpEditForm from './McpEditForm.tsx';
 
 interface Props {
@@ -79,34 +78,41 @@ export default function McpServerRow({ instance, catalogLabel, description, onCl
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-wider text-ink-3">
-            {catalogLabel}
-          </p>
-          {description && <p className="mt-0.5 text-xs text-ink-3">{description}</p>}
-          <p className="mt-1 text-xs text-ink-4">
-            {instance.toolCount} tool{instance.toolCount === 1 ? '' : 's'} discovered
-            {instance.apiKeyLast4 ? ` · key …${instance.apiKeyLast4}` : ''}
-          </p>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <RowActionButton
-            square
-            icon={<ArrowsClockwise size={16} />}
-            title={rotateOpen ? 'Cancel rotate' : 'Rotate secret'}
-            onClick={() => setRotateOpen((v) => !v)}
-            disabled={isPending}
-          />
-          <RowActionButton
-            square
-            icon={<Trash size={16} />}
-            title="Disconnect"
-            tone="danger"
-            onClick={() => setConfirmOpen(true)}
-            disabled={isPending}
-          />
-        </div>
+      {/* Metadata — no action buttons in this row (UX-B7: buttons in the
+          header used to overlap adjacent content on narrow widths). Actions
+          live in their own row below instead. */}
+      <div className="min-w-0">
+        <p className="font-mono text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+          {catalogLabel}
+        </p>
+        {description && <p className="mt-0.5 text-xs text-ink-3">{description}</p>}
+        <p className="mt-1 text-xs text-ink-4">
+          {instance.toolCount} tool{instance.toolCount === 1 ? '' : 's'} discovered
+          {instance.apiKeyLast4 ? ` · key …${instance.apiKeyLast4}` : ''}
+        </p>
+      </div>
+
+      {/* Contextual actions — PrimaryButton row in the body (UX-B7). Rotate
+          is a neutral toggle; Disconnect uses the danger variant so it reads
+          as destructive without needing its own isolated footer slot (the
+          modal's actual footer, below, belongs to McpEditForm's Save/Cancel). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <PrimaryButton
+          variant="neutral"
+          size="sm"
+          onClick={() => setRotateOpen((v) => !v)}
+          disabled={isPending}
+        >
+          {rotateOpen ? 'Cancel rotate' : 'Rotate secret'}
+        </PrimaryButton>
+        <PrimaryButton
+          variant="danger"
+          size="sm"
+          onClick={() => setConfirmOpen(true)}
+          disabled={isPending}
+        >
+          Disconnect
+        </PrimaryButton>
       </div>
 
       {/* Rotate API key panel. Verifies the new key against the MCP server
@@ -136,29 +142,29 @@ export default function McpServerRow({ instance, catalogLabel, description, onCl
               className="w-full rounded-md border border-rule bg-hover px-2 py-1.5 font-mono text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
             />
             <p className="mt-1 text-[12px] text-ink-4">
-              Agent assignments stay intact — the key is verified against the server before being
+              Agent assignments stay intact - the key is verified against the server before being
               saved.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
+            <PrimaryButton
+              variant="ink"
+              size="sm"
               onClick={performRotate}
               disabled={isPending || !newApiKey.trim()}
-              className="rounded-md bg-ink px-4 py-2 text-sm font-semibold text-canvas hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Verifying…' : 'Save new key'}
-            </button>
-            <button
-              type="button"
+            </PrimaryButton>
+            <PrimaryButton
+              variant="neutral"
+              size="sm"
               onClick={() => {
                 setNewApiKey('');
                 setRotateOpen(false);
               }}
-              className="text-xs text-ink-3 underline hover:text-ink"
             >
               Cancel
-            </button>
+            </PrimaryButton>
           </div>
         </div>
       )}

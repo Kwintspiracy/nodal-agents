@@ -125,7 +125,12 @@ export default function McpClient({ instances, catalog }: Props) {
         <McpMarketplaceGrid catalog={filteredMarketplace} instances={instances} />
       )}
 
-      <Modal open={customOpen} onClose={() => setCustomOpen(false)} title="Add a custom MCP server">
+      <Modal
+        open={customOpen}
+        onClose={() => setCustomOpen(false)}
+        title="Add a custom MCP server"
+        dismissable={false}
+      >
         <div className="space-y-3">
           <div className="flex gap-2">
             {(['stdio', 'http'] as const).map((flavor) => (
@@ -156,6 +161,7 @@ export default function McpClient({ instances, catalog }: Props) {
                 setCustomOpen(false);
                 router.refresh();
               }}
+              onCancel={() => setCustomOpen(false)}
             />
           ) : (
             <p className="text-xs text-err">Custom MCP option is unavailable.</p>
@@ -170,7 +176,7 @@ function EmptyInstalled({ onBrowse }: { onBrowse: () => void }) {
   return (
     <EmptyState
       title="No MCP servers installed yet."
-      description="Pick one from the Marketplace — its tools become available to any agent you assign it to."
+      description="Pick one from the Marketplace, its tools become available to any agent you assign it to."
       action={
         <PrimaryButton variant="blue" onClick={onBrowse}>
           Browse Marketplace

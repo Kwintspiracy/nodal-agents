@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import { ModalFooter } from '@/components/ui/Modal';
 
 interface Props {
   open: boolean;
@@ -55,10 +57,6 @@ export default function ConfirmDialog({
 
   if (!open || !mounted) return null;
 
-  const confirmClasses = destructive
-    ? 'bg-err hover:brightness-[0.94] text-ink'
-    : 'bg-ink hover:brightness-[0.92] text-canvas';
-
   return createPortal(
     <div
       role="dialog"
@@ -71,28 +69,23 @@ export default function ConfirmDialog({
         onClick={onCancel}
         aria-hidden="true"
       />
-      <div className="relative bg-paper border border-rule-2 rounded-xl p-6 max-w-md w-full shadow-2xl">
-        <h2 id="confirm-dialog-title" className="text-base font-semibold text-ink">
-          {title}
-        </h2>
-        {message && <p className="mt-2 text-sm text-ink-3 leading-relaxed">{message}</p>}
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            ref={cancelRef}
-            type="button"
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium border border-rule text-ink-2 rounded-lg hover:border-rule hover:text-ink transition-colors"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${confirmClasses}`}
-          >
-            {confirmLabel}
-          </button>
+      <div className="relative bg-paper border border-rule-2 rounded-xl max-w-md w-full shadow-2xl">
+        <div className="p-6">
+          <h2 id="confirm-dialog-title" className="text-base font-semibold text-ink">
+            {title}
+          </h2>
+          {message && <p className="mt-2 text-sm text-ink-3 leading-relaxed">{message}</p>}
         </div>
+        {/* Same footer template as every other modal in the app (UX-B7):
+            border separator, Cancel (neutral) then the confirm action last. */}
+        <ModalFooter className="rounded-b-xl">
+          <PrimaryButton variant="neutral" onClick={onCancel} ref={cancelRef}>
+            {cancelLabel}
+          </PrimaryButton>
+          <PrimaryButton variant={destructive ? 'danger' : 'ink'} onClick={onConfirm}>
+            {confirmLabel}
+          </PrimaryButton>
+        </ModalFooter>
       </div>
     </div>,
     document.body,

@@ -9,6 +9,16 @@ interface Props {
   /** Optional heading rendered above children. */
   title?: ReactNode;
   children: ReactNode;
+  /**
+   * Optional footer, rendered below children. Compose with the exported
+   * `ModalFooter` helper (below) so every modal in the app shares the same
+   * action-row layout — see its docstring for the convention. Modals with
+   * no explicit save/cancel step (pure info, or state that saves itself,
+   * like AssignSkillModal's toggle list) should still pass a `ModalFooter`
+   * with a single "Close" action for visual consistency with the rest of
+   * the site.
+   */
+  footer?: ReactNode;
   /** Extra Tailwind classes on the panel (e.g. custom max-w). */
   className?: string;
   /**
@@ -38,6 +48,7 @@ export default function Modal({
   onClose,
   title,
   children,
+  footer,
   className = '',
   dismissable = true,
 }: Props) {
@@ -103,9 +114,55 @@ export default function Modal({
             </div>
           )}
           <div className="p-6 pt-5">{children}</div>
+          {footer}
         </div>
       </div>
     </>,
     document.body,
+  );
+}
+
+/**
+ * ModalFooter — THE footer template for every modal in the app (UX-B7).
+ * Self-contained (owns its own `border-t border-rule-2` separator + padding)
+ * so it renders identically whether it's passed to `Modal`'s `footer` prop
+ * by the component that owns the `<Modal>` call site, or rendered directly
+ * inside `children` by a nested component that only owns the form/actions
+ * (e.g. ConnectorForm, McpEditForm) — either way there is exactly one
+ * bordered action row at the bottom of the panel, never zero, never two.
+ *
+ * Layout convention (non-negotiable — this is what UX-B7 standardises):
+ *   - `children` are the right-aligned action buttons, in DOM order
+ *     secondary-first: Cancel/Close (`<PrimaryButton variant="neutral">`)
+ *     THEN the primary action last, so it lands at the far right.
+ *   - `danger`, if passed, is a single destructive action (Disconnect/
+ *     Delete) rendered isolated on the LEFT, visually separated from the
+ *     Cancel/Save group on the right.
+ *   - Every button inside is a `PrimaryButton` — never a bare `<button>` or
+ *     underlined text.
+ *
+ * Reference usage: NewMemoryModal (Cancel + Save), ConnectorForm (Disconnect
+ * on the left via `danger`, Close on the right).
+ */
+export function ModalFooter({
+  children,
+  danger,
+  className = '',
+}: {
+  /** Right-aligned buttons, secondary-first, primary last. */
+  children: ReactNode;
+  /** Isolated destructive action, rendered on the left. */
+  danger?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-2 border-t border-rule-2 px-6 py-4 ${
+        danger ? 'justify-between' : 'justify-end'
+      } ${className}`}
+    >
+      {danger}
+      <div className="flex items-center gap-2">{children}</div>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   deleteConnectorAction,
@@ -12,7 +12,23 @@ import {
 } from '@/lib/actions.ts';
 import { refreshCredentialAction } from '@/lib/credentials.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import StatusPill from '@/components/ui/StatusPill.tsx';
+import { ModalFooter } from '@/components/ui/Modal.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
+
+/** One labelled row in the connector's metadata block — replaces the old
+ *  unlabelled "gmail · oauth2" stack (UX-B7: raw values with no context). */
+function MetaField({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10.5px] font-medium uppercase tracking-wider text-ink-4">{label}</dt>
+      <dd className={`mt-0.5 truncate text-[13px] text-ink-2 ${mono ? 'font-mono' : ''}`}>
+        {value}
+      </dd>
+    </div>
+  );
+}
 
 /** Credential types that do not support access-token refresh (Notion). */
 const OAUTH_NO_REFRESH_SLUGS: ReadonlySet<string> = new Set(['notion-oauth']);
@@ -178,9 +194,12 @@ export default function ConnectorForm({
 
   return (
     <div className="bg-paper border border-rule-2 rounded-xl p-5 space-y-4">
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
+      {/* Header row — name + status ONLY. Action buttons used to live here
+          too (UX-B6) and would wrap onto a second line that overlapped the
+          status pill on anything narrower than the modal's max width; they
+          now live in their own row in the body (below), well clear of it. */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
           {/* Instance name — inline rename */}
           {isRenaming ? (
             <div className="flex items-center gap-2">
@@ -197,24 +216,19 @@ export default function ConnectorForm({
                 }}
                 className="bg-hover border border-rule rounded-md px-2 py-1 text-sm text-ink focus:border-ink-3 focus:outline-none w-full max-w-xs"
               />
-              <button
-                type="button"
-                onClick={performRename}
-                disabled={isPending}
-                className="text-xs text-ok hover:text-ok disabled:opacity-40"
-              >
+              <PrimaryButton variant="ink" size="sm" onClick={performRename} disabled={isPending}>
                 Save
-              </button>
-              <button
-                type="button"
+              </PrimaryButton>
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
                 onClick={() => {
                   setRenameValue(instance.name);
                   setIsRenaming(false);
                 }}
-                className="text-xs text-ink-3 hover:text-ink-2"
               >
                 Cancel
-              </button>
+              </PrimaryButton>
             </div>
           ) : (
             <div className="flex items-center gap-2">
@@ -228,90 +242,77 @@ export default function ConnectorForm({
               >
                 ✎
               </button>
-              <span
-                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider ${
-                  status === 'connected' ? 'bg-agent-vivid/15 text-ok' : 'bg-warn-bg text-warn'
-                }`}
-              >
-                {status}
-              </span>
             </div>
           )}
-          <p className="text-xs text-ink-3 mt-1 font-mono">
-            {catalogEntry.slug} · {instance.authType}
-          </p>
-          {connectedAccountName && (
-            <p className="text-xs text-ink-3 mt-1">{connectedAccountName}</p>
-          )}
-          {isApiKey && instance.hasApiKey && (
-            <p className="text-xs text-ink-4 mt-0.5 font-mono">
-              key: …{instance.credentialId ?? '????'}
-            </p>
-          )}
         </div>
+        <StatusPill
+          variant={status === 'connected' ? 'done' : 'warn'}
+          label={status === 'connected' ? 'Connected' : 'Needs auth'}
+          className="shrink-0"
+        />
+      </div>
 
-        {/* Action buttons */}
-        <div className="flex gap-2 shrink-0 flex-wrap justify-end items-start">
-          {isOAuth ? (
-            <>
-              {supportsRefresh && (
-                <button
-                  type="button"
-                  onClick={performRefresh}
-                  disabled={isRefreshing || isPending}
-                  className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
-                >
-                  {isRefreshing ? 'Refreshing…' : 'Refresh now'}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setWizardOpen(true)}
+      {/* Labelled metadata — replaces the old unlabelled "gmail / oauth2 /
+          account" stack (UX-B7: raw values with no context). */}
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-lg border border-rule-2 bg-hover/40 px-4 py-3">
+        <MetaField label="Provider" value={catalogEntry.label} />
+        <MetaField label="Auth method" value={instance.authType} mono />
+        {connectedAccountName && <MetaField label="Account" value={connectedAccountName} />}
+        {isOAuth && connectedCredentialName && (
+          <MetaField label="Credential" value={connectedCredentialName} />
+        )}
+        {isApiKey && instance.hasApiKey && (
+          <MetaField label="Credential" value={`…${instance.credentialId ?? '????'}`} mono />
+        )}
+      </dl>
+
+      {catalogEntry.docsHint && <p className="text-xs text-ink-3">{catalogEntry.docsHint}</p>}
+
+      {/* Contextual actions — a row of neutral PrimaryButtons in the body,
+          not the header (UX-B7). Disconnect/Delete is NOT here: it's the
+          destructive action, isolated in the modal's ModalFooter below. */}
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        {isOAuth ? (
+          <>
+            {supportsRefresh && (
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={performRefresh}
+                disabled={isRefreshing || isPending}
+              >
+                {isRefreshing ? 'Refreshing…' : 'Refresh now'}
+              </PrimaryButton>
+            )}
+            <PrimaryButton
+              variant="neutral"
+              size="sm"
+              onClick={() => setWizardOpen(true)}
+              disabled={isPending || isRefreshing}
+            >
+              Reconnect
+            </PrimaryButton>
+            {compatibleCredentials.length > 0 && (
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
+                onClick={() => setSwitchOpen((v) => !v)}
                 disabled={isPending || isRefreshing}
-                className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
               >
-                Reconnect
-              </button>
-              {compatibleCredentials.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setSwitchOpen((v) => !v)}
-                  disabled={isPending || isRefreshing}
-                  className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
-                >
-                  {switchOpen ? 'Cancel' : 'Switch credential'}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={isPending || isRefreshing}
-                className="px-3 py-1.5 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err/30 hover:text-err disabled:opacity-40"
-              >
-                Disconnect
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => setRotateOpen((v) => !v)}
-                disabled={isPending}
-                className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
-              >
-                {rotateOpen ? 'Cancel' : 'Rotate key'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={isPending}
-                className="px-3 py-1.5 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err/30 hover:text-err disabled:opacity-40"
-              >
-                Delete
-              </button>
-            </>
-          )}
-        </div>
+                {switchOpen ? 'Cancel' : 'Switch credential'}
+              </PrimaryButton>
+            )}
+          </>
+        ) : (
+          <PrimaryButton
+            variant="neutral"
+            size="sm"
+            onClick={() => setRotateOpen((v) => !v)}
+            disabled={isPending}
+          >
+            {rotateOpen ? 'Cancel' : 'Rotate key'}
+          </PrimaryButton>
+        )}
       </div>
 
       {/* Rotate API key panel — api_key connectors only.
@@ -341,33 +342,31 @@ export default function ConnectorForm({
               className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
             />
             <p className="text-[12px] text-ink-4 mt-1">
-              Agent assignments stay intact — only the stored key changes.
+              Agent assignments stay intact - only the stored key changes.
             </p>
           </div>
           <div className="flex gap-2 items-center">
-            <button
-              type="button"
+            <PrimaryButton
+              variant="ink"
+              size="sm"
               onClick={performRotate}
               disabled={isPending || !newApiKey.trim()}
-              className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Saving…' : 'Save new key'}
-            </button>
-            <button
-              type="button"
+            </PrimaryButton>
+            <PrimaryButton
+              variant="neutral"
+              size="sm"
               onClick={() => {
                 setNewApiKey('');
                 setRotateOpen(false);
               }}
-              className="text-xs text-ink-3 hover:text-ink underline"
             >
               Cancel
-            </button>
+            </PrimaryButton>
           </div>
         </div>
       )}
-
-      {catalogEntry.docsHint && <p className="text-xs text-ink-3">{catalogEntry.docsHint}</p>}
 
       {/* Connected OAuth status panel */}
       {isOAuth && connectedCredentialId && (
@@ -419,55 +418,43 @@ export default function ConnectorForm({
                 </select>
               </div>
               <div className="flex gap-2 items-center pt-1">
-                <button
-                  type="button"
+                <PrimaryButton
+                  variant="ink"
+                  size="sm"
                   onClick={() => selectedCredentialId && performAssign(selectedCredentialId)}
                   disabled={isPending || !selectedCredentialId}
-                  className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
                 >
                   {isPending ? 'Saving…' : 'Save'}
-                </button>
-                <button
-                  type="button"
+                </PrimaryButton>
+                <PrimaryButton
+                  variant="neutral"
+                  size="sm"
                   onClick={() => {
                     setSwitchOpen(false);
                     setWizardOpen(true);
                   }}
-                  className="px-3 py-1.5 text-xs text-ink-3 hover:text-ink underline"
                 >
                   or create new
-                </button>
+                </PrimaryButton>
               </div>
             </>
           ) : (
-            <p className="text-xs text-ink-3">
-              No compatible credentials found.{' '}
-              <button
-                type="button"
+            <div className="flex items-center gap-2 text-xs text-ink-3">
+              No compatible credentials found.
+              <PrimaryButton
+                variant="neutral"
+                size="sm"
                 onClick={() => {
                   setSwitchOpen(false);
                   setWizardOpen(true);
                 }}
-                className="text-indigo-400 hover:text-indigo-300 underline"
               >
                 Create one
-              </button>
-            </p>
+              </PrimaryButton>
+            </div>
           )}
         </div>
       )}
-
-      {/* Modal footer — the one explicit way to close besides a successful
-          delete above (the wrapping Modal is non-dismissable). */}
-      <div className="flex justify-end pt-2 border-t border-rule-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-3 py-1.5 text-xs font-medium text-ink-3 hover:text-ink underline"
-        >
-          Close
-        </button>
-      </div>
 
       {/* Delete / Disconnect confirmation */}
       <ConfirmDialog
@@ -491,6 +478,29 @@ export default function ConnectorForm({
           onClose={() => setWizardOpen(false)}
         />
       )}
+
+      {/* Modal footer — Disconnect/Delete isolated on the left (the wrapping
+          Modal is non-dismissable, so Close is the only way out besides a
+          successful delete above). Negative margins cancel this card's own
+          p-5 so the separator + buttons run edge-to-edge like every other
+          modal footer in the app. */}
+      <ModalFooter
+        className="-mx-5 -mb-5 mt-1 rounded-b-xl"
+        danger={
+          <PrimaryButton
+            variant="danger"
+            size="sm"
+            onClick={() => setConfirmOpen(true)}
+            disabled={isPending || isRefreshing}
+          >
+            {isOAuth ? 'Disconnect' : 'Delete'}
+          </PrimaryButton>
+        }
+      >
+        <PrimaryButton variant="neutral" onClick={onClose}>
+          Close
+        </PrimaryButton>
+      </ModalFooter>
     </div>
   );
 }

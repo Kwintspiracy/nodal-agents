@@ -99,7 +99,7 @@ function McpMarketCard({
               {isPending && (
                 <span
                   className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 font-sans text-[12px] font-medium text-warn"
-                  title="Not yet verified end-to-end — connection params may need adjusting."
+                  title="Not yet verified end-to-end, connection params may need adjusting."
                 >
                   Test pending
                 </span>
@@ -125,9 +125,14 @@ function McpMarketCard({
       <Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title={isInstalled ? `Add account — ${catalogItem.label}` : `Install ${catalogItem.label}`}
+        title={isInstalled ? `Add account - ${catalogItem.label}` : `Install ${catalogItem.label}`}
+        dismissable={false}
       >
-        <McpAddForm catalogItem={catalogItem} onDone={handleDone} />
+        <McpAddForm
+          catalogItem={catalogItem}
+          onDone={handleDone}
+          onCancel={() => setAddOpen(false)}
+        />
       </Modal>
     </>
   );

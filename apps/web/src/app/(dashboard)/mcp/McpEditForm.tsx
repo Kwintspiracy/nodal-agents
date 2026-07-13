@@ -19,6 +19,8 @@ import {
   updateMcpServerConfigAction,
   type McpServerConfig,
 } from '@/lib/actions.ts';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import { ModalFooter } from '@/components/ui/Modal.tsx';
 
 type AuthScheme = 'header' | 'query' | 'bearer';
 interface EnvRow {
@@ -266,7 +268,7 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={
                 config.apiKeyLast4
-                  ? `•••• ${config.apiKeyLast4} — leave blank to keep`
+                  ? `•••• ${config.apiKeyLast4} - leave blank to keep`
                   : 'Paste a key'
               }
               className={`${INPUT} font-mono`}
@@ -313,7 +315,7 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
           <div>
             <p className="block text-xs text-ink-3 mb-1">
               Environment variables{' '}
-              <span className="text-ink-4">(encrypted — leave value blank to keep)</span>
+              <span className="text-ink-4">(encrypted, leave value blank to keep)</span>
             </p>
             <div className="space-y-2">
               {envRows.map((row, idx) => (
@@ -355,24 +357,16 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
         </>
       )}
 
-      <div className="flex gap-2 items-center pt-1">
-        <button
-          type="submit"
-          disabled={isPending || !name.trim()}
-          className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
-        >
-          {isPending ? 'Verifying…' : 'Save changes'}
-        </button>
+      <ModalFooter className="-mx-5 -mb-4 mt-1 rounded-b-xl">
         {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="text-xs text-ink-3 hover:text-ink underline"
-          >
+          <PrimaryButton variant="neutral" type="button" onClick={onCancel}>
             Cancel
-          </button>
+          </PrimaryButton>
         )}
-      </div>
+        <PrimaryButton variant="ink" type="submit" disabled={isPending || !name.trim()}>
+          {isPending ? 'Verifying…' : 'Save changes'}
+        </PrimaryButton>
+      </ModalFooter>
     </form>
   );
 }

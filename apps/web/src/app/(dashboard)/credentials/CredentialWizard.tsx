@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import HelpSteps from '@/components/HelpSteps.tsx';
 import { OAUTH_GUIDES } from '@/lib/connector-help.ts';
+import Modal, { ModalFooter } from '@/components/ui/Modal.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 
 export type CredentialWizardType = 'google-oauth' | 'notion-oauth' | 'airtable-oauth';
 
@@ -77,7 +78,6 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
     initialType ?? null,
   );
   const [redirectUri, setRedirectUri] = useState<string>('');
-  const [mounted, setMounted] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   // Compute origin on the client side to avoid SSR hydration mismatch.
@@ -89,22 +89,6 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
       `${window.location.origin}${selectedType ? PROVIDER_CONFIGS[selectedType].callbackPath : ''}`,
     );
   }, [selectedType]);
-
-  // SSR-safe portal gate: createPortal needs document, only present after hydration.
-  // Setting state in this effect is intentional.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMounted(true);
-  }, []);
-
-  // ESC to close
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   function handleTypeSelect(type: CredentialWizardType) {
     setSelectedType(type);
@@ -127,176 +111,143 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
     : '/credentials';
 
   const formAction = selectedType ? `/api/oauth/${selectedType}/start` : '#';
+  const title =
+    step === 'type'
+      ? 'New credential'
+      : config
+        ? `Configure ${config.label} credential`
+        : 'Configure credential';
 
-  if (!mounted) return null;
-
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="wizard-title"
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={title}
+      // Step 1 is a plain selector (nothing to lose) so it stays dismissable.
+      // Step 2 collects typed credentials (draft) — non-dismissable, same
+      // rule as every other draft form in the app (UX-B7).
+      dismissable={step === 'type'}
+      footer={
+        step === 'type' ? (
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={onClose}>
+              Cancel
+            </PrimaryButton>
+          </ModalFooter>
+        ) : undefined
+      }
     >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-
-      {/* Panel */}
-      <div className="relative bg-paper border border-rule-2 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
-        {/* Header — sticky so close button is always visible */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-rule-2 shrink-0">
-          <h2 id="wizard-title" className="text-base font-semibold text-ink">
-            {step === 'type'
-              ? 'New credential'
-              : config
-                ? `Configure ${config.label} credential`
-                : 'Configure credential'}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-ink-3 hover:text-ink transition-colors text-xl leading-none"
-            aria-label="Close"
-          >
-            ×
-          </button>
+      {/* Step 1 — Type selection */}
+      {step === 'type' && (
+        <div className="space-y-3">
+          <p className="text-sm text-ink-3">
+            Choose the OAuth provider to connect to Nodal-Agents.
+          </p>
+          <div className="space-y-2">
+            {TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.type}
+                type="button"
+                onClick={() => handleTypeSelect(opt.type)}
+                className="w-full text-left px-4 py-3 rounded-lg border border-rule-2 hover:border-rule hover:bg-hover transition-colors group"
+              >
+                <div className="text-sm font-semibold text-ink group-hover:text-ink">
+                  {opt.label}
+                </div>
+                <div className="text-xs text-ink-3 mt-0.5">{opt.description}</div>
+              </button>
+            ))}
+          </div>
         </div>
+      )}
 
-        {/* Step 1 — Type selection */}
-        {step === 'type' && (
-          <div className="overflow-y-auto px-6 py-5 space-y-3">
-            <p className="text-sm text-ink-3">
-              Choose the OAuth provider to connect to Nodal-Agents.
+      {/* Step 2 — Setup screen. Its own ModalFooter (not the Modal `footer`
+          prop) so the submit button stays a DESCENDANT of the <form> — it's
+          a native POST redirect into the OAuth flow, not a JS handler. */}
+      {step === 'setup' && config && selectedType && (
+        <form
+          ref={formRef}
+          method="POST"
+          action={formAction}
+          encType="application/x-www-form-urlencoded"
+          className="space-y-5"
+        >
+          {/* Hidden returnTo field — propagated through OAuth state cookie */}
+          <input type="hidden" name="returnTo" value={returnTo} />
+
+          {/* Instructions */}
+          <div className="space-y-2">
+            <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider">
+              Setup instructions
             </p>
-            <div className="space-y-2">
-              {TYPE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.type}
-                  type="button"
-                  onClick={() => handleTypeSelect(opt.type)}
-                  className="w-full text-left px-4 py-3 rounded-lg border border-rule-2 hover:border-rule hover:bg-hover transition-colors group"
-                >
-                  <div className="text-sm font-semibold text-ink group-hover:text-ink">
-                    {opt.label}
-                  </div>
-                  <div className="text-xs text-ink-3 mt-0.5">{opt.description}</div>
-                </button>
-              ))}
-            </div>
-            <div className="pt-2 flex justify-end">
+            <HelpSteps guide={OAUTH_GUIDES[selectedType]} />
+          </div>
+
+          {/* Redirect URI copy box */}
+          <div className="space-y-1">
+            <p className="text-xs text-ink-3">Authorized redirect URI</p>
+            <div className="flex items-center gap-2 bg-hover border border-rule rounded-md px-3 py-2">
+              <code className="text-xs text-ink-2 font-mono flex-1 break-all">
+                {redirectUri || '…'}
+              </code>
               <button
                 type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
+                onClick={copyRedirectUri}
+                className="shrink-0 px-2 py-0.5 text-xs font-medium border border-rule text-ink-3 rounded hover:border-ink-3 hover:text-ink transition-colors"
               >
-                Cancel
+                Copy
               </button>
             </div>
           </div>
-        )}
 
-        {/* Step 2 — Setup screen */}
-        {step === 'setup' && config && selectedType && (
-          <form
-            ref={formRef}
-            method="POST"
-            action={formAction}
-            encType="application/x-www-form-urlencoded"
-            className="overflow-y-auto px-6 py-5 space-y-5"
-          >
-            {/* Hidden returnTo field — propagated through OAuth state cookie */}
-            <input type="hidden" name="returnTo" value={returnTo} />
-
-            {/* Instructions */}
-            <div className="space-y-2">
-              <p className="text-xs text-ink-3 font-semibold uppercase tracking-wider">
-                Setup instructions
-              </p>
-              <HelpSteps guide={OAUTH_GUIDES[selectedType]} />
+          {/* Form fields */}
+          <div className="space-y-3 border-t border-rule-2 pt-4">
+            <div>
+              <label className="block text-xs text-ink-3 mb-1">
+                Display name <span className="text-ink-4">(optional)</span>
+              </label>
+              <input
+                name="name"
+                placeholder={config.namePlaceholder}
+                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              />
             </div>
-
-            {/* Redirect URI copy box */}
-            <div className="space-y-1">
-              <p className="text-xs text-ink-3">Authorized redirect URI</p>
-              <div className="flex items-center gap-2 bg-hover border border-rule rounded-md px-3 py-2">
-                <code className="text-xs text-ink-2 font-mono flex-1 break-all">
-                  {redirectUri || '…'}
-                </code>
-                <button
-                  type="button"
-                  onClick={copyRedirectUri}
-                  className="shrink-0 px-2 py-0.5 text-xs font-medium border border-rule text-ink-3 rounded hover:border-ink-3 hover:text-ink transition-colors"
-                >
-                  Copy
-                </button>
-              </div>
+            <div>
+              <label className="block text-xs text-ink-3 mb-1">{config.clientIdLabel}</label>
+              <input
+                name="clientId"
+                required
+                autoComplete="off"
+                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
+              />
             </div>
-
-            {/* Form fields */}
-            <div className="space-y-3 border-t border-rule-2 pt-4">
-              <div>
-                <label className="block text-xs text-ink-3 mb-1">
-                  Display name <span className="text-ink-4">(optional)</span>
-                </label>
-                <input
-                  name="name"
-                  placeholder={config.namePlaceholder}
-                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-ink-3 mb-1">{config.clientIdLabel}</label>
-                <input
-                  name="clientId"
-                  required
-                  autoComplete="off"
-                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-ink-3 mb-1">{config.clientSecretLabel}</label>
-                <input
-                  name="clientSecret"
-                  type="password"
-                  required
-                  autoComplete="off"
-                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
-                />
-              </div>
+            <div>
+              <label className="block text-xs text-ink-3 mb-1">{config.clientSecretLabel}</label>
+              <input
+                name="clientSecret"
+                type="password"
+                required
+                autoComplete="off"
+                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
+              />
             </div>
+          </div>
 
-            {/* Actions */}
-            <div className="flex gap-2 justify-end pt-1">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
-              >
-                Cancel
-              </button>
-              {!initialType && (
-                <button
-                  type="button"
-                  onClick={() => setStep('type')}
-                  className="px-4 py-2 text-sm font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
-                >
-                  Back
-                </button>
-              )}
-              <button
-                type="submit"
-                className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92]"
-              >
-                Continue with {config.label}
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>,
-    document.body,
+          <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
+            <PrimaryButton variant="neutral" type="button" onClick={onClose}>
+              Cancel
+            </PrimaryButton>
+            {!initialType && (
+              <PrimaryButton variant="neutral" type="button" onClick={() => setStep('type')}>
+                Back
+              </PrimaryButton>
+            )}
+            <PrimaryButton variant="ink" type="submit">
+              Continue with {config.label}
+            </PrimaryButton>
+          </ModalFooter>
+        </form>
+      )}
+    </Modal>
   );
 }

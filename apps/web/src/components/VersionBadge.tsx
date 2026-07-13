@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { ArrowClockwise, CheckCircle, Copy } from '@phosphor-icons/react';
-import Modal from '@/components/ui/Modal';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 import { getVersionInfoAction, type VersionInfo } from '@/lib/actions.ts';
 
 const UPDATE_CMD = 'nodal-agents update';
@@ -68,10 +69,21 @@ export default function VersionBadge() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Update Nodal-Agents">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Update Nodal-Agents"
+        footer={
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={() => setOpen(false)}>
+              Close
+            </PrimaryButton>
+          </ModalFooter>
+        }
+      >
         <div className="space-y-4">
           <p className="text-[13px] leading-relaxed text-ink-2">
-            A new version is available — <span className="font-mono text-ink-3">v{current}</span> →{' '}
+            A new version is available - <span className="font-mono text-ink-3">v{current}</span> →{' '}
             <span className="font-mono font-medium text-ink">v{latest}</span>. Run this in your
             terminal, then restart Nodal-Agents:
           </p>
