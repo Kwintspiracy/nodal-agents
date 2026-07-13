@@ -20,6 +20,8 @@ import { createPortal } from 'react-dom';
 import { AVATAR_CATALOG } from '@/lib/avatar-catalog.ts';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import IconTextButton from '@/components/ui/IconTextButton.tsx';
+import SelectableTile from '@/components/ui/SelectableTile.tsx';
 
 interface Props {
   value: string | null;
@@ -54,19 +56,15 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
   return (
     <div>
       {label && <label className="block text-xs text-ink-3 mb-1">{label}</label>}
-      <button
-        type="button"
+      <IconTextButton
         onClick={() => setOpen(true)}
-        className="group flex items-center gap-3 bg-hover border border-rule hover:border-rule rounded-md px-3 py-2 text-left transition-colors w-full max-w-xs"
-      >
-        <AvatarPreview url={value} size={36} />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm text-ink truncate">
-            {value ? value.split('/').pop()?.replace('.png', '') : 'No avatar'}
-          </p>
-          <p className="text-[12px] text-ink-3">Click to {value ? 'change' : 'pick'}</p>
-        </div>
-      </button>
+        className="group max-w-xs gap-3 rounded-md border border-rule bg-hover px-3 py-2 hover:border-rule"
+        icon={<AvatarPreview url={value} size={36} />}
+        title={value ? value.split('/').pop()?.replace('.png', '') : 'No avatar'}
+        titleClassName="text-sm text-ink"
+        subtitle={`Click to ${value ? 'change' : 'pick'}`}
+        subtitleClassName="text-[12px] text-ink-3"
+      />
 
       {mounted &&
         open &&
@@ -153,19 +151,8 @@ function PickerTile({
   url: string | null;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      aria-pressed={selected}
-      className={`aspect-square rounded-lg p-1 flex items-center justify-center transition-all ${
-        selected
-          ? 'bg-ink/10 ring-2 ring-emerald-400'
-          : 'bg-hover hover:bg-hover ring-1 ring-transparent hover:ring-neutral-700'
-      }`}
-    >
+    <SelectableTile selected={selected} onClick={onClick} label={label}>
       <AvatarPreview url={url} size={56} />
-    </button>
+    </SelectableTile>
   );
 }

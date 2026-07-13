@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTransition } from 'react';
 import type { AgentRow } from '@/lib/actions.ts';
+import Select from '@/components/ui/Select';
 
 interface Props {
   agents: AgentRow[];
@@ -33,11 +34,11 @@ export default function LogFilters({ agents, toolNames }: Props) {
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-rule-2 bg-paper px-4 py-3">
       <div className="min-w-[180px] flex-1">
         <label className="mb-1 block text-[11px] uppercase tracking-wider text-ink-3">Agent</label>
-        <select
+        <Select
           value={agentId}
           onChange={(e) => update({ agent: e.target.value || null })}
           disabled={isPending}
-          className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
+          className="bg-canvas"
         >
           <option value="">All agents</option>
           {agents.map((a) => (
@@ -45,18 +46,18 @@ export default function LogFilters({ agents, toolNames }: Props) {
               {a.name}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
 
       <div className="min-w-[200px] flex-1">
         <label className="mb-1 block text-[11px] uppercase tracking-wider text-ink-3">
           Tool name
         </label>
-        <select
+        <Select
           value={toolName}
           onChange={(e) => update({ tool: e.target.value || null })}
           disabled={isPending}
-          className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 font-mono text-sm text-ink focus:border-ink-3 focus:outline-none"
+          className="bg-canvas font-mono"
         >
           <option value="">All tools</option>
           {toolNames.map((name) => (
@@ -64,7 +65,7 @@ export default function LogFilters({ agents, toolNames }: Props) {
               {name}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
     </div>
   );

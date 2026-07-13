@@ -12,6 +12,8 @@ import { toast } from 'sonner';
 import { setWorkspaceTimezoneAction } from '@/lib/actions.ts';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextInput from '@/components/ui/TextInput';
 
 interface Props {
   initial: string;
@@ -83,25 +85,20 @@ export default function TimezoneForm({ initial, isExplicit }: Props) {
             {nowLabel ? ` It is currently ${nowLabel} there.` : ''}
           </p>
           <div className="flex items-center gap-2">
-            <input
+            <TextInput
               list="tz-options"
               value={tz}
               onChange={(e) => setTz(e.target.value)}
               placeholder="e.g. Europe/Paris"
-              className="w-full rounded-[9px] border border-rule-2 bg-canvas px-3 py-2.5 text-[14px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-1 focus:ring-ink/20"
             />
             <datalist id="tz-options">
               {options.map((z) => (
                 <option key={z} value={z} />
               ))}
             </datalist>
-            <button
-              type="button"
-              onClick={detectFromBrowser}
-              className="shrink-0 rounded-[9px] border border-rule-2 px-3 py-2.5 text-[13px] text-ink-2 hover:bg-canvas-2"
-            >
+            <RowActionButton onClick={detectFromBrowser} className="shrink-0">
               Detect
-            </button>
+            </RowActionButton>
           </div>
         </div>
         <SetCtaRow onCancel={() => setTz(initial)} pending={isPending} />

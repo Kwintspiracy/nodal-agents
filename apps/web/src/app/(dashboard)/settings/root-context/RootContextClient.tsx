@@ -10,7 +10,10 @@ import {
   deleteMemoryAction,
 } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextArea from '@/components/ui/TextArea';
 import PageShell from '@/components/ui/PageShell';
+import DisclosureButton from '@/components/ui/DisclosureButton';
 
 /**
  * RootContextClient — view + edit every piece of context the ROOT agent is fed:
@@ -21,8 +24,7 @@ import PageShell from '@/components/ui/PageShell';
 type Skill = { id: string; name: string; description: string | null; content: string };
 type Memory = { id: string; fact: string; category: string };
 
-const TEXTAREA =
-  'mt-2 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2.5 font-mono text-[13px] leading-[1.55] text-ink';
+const TEXTAREA_CLASS = 'mt-2 font-mono text-[13px] leading-[1.55]';
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -112,22 +114,22 @@ export default function RootContextClient({
               The complete context assembled per turn: identity, personality, runtime, built-in
               capabilities, workspaces, memory, and every skill. Read-only — edit the pieces below.
             </p>
-            <textarea
+            <TextArea
               readOnly
               value={systemPrompt}
               rows={18}
-              className="mt-2 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2.5 font-mono text-[12px] leading-[1.5] text-ink-2"
+              className="mt-2 font-mono text-[12px] leading-[1.5] text-ink-2"
             />
           </section>
 
           {/* Identity / personality */}
           <section>
             <SectionLabel>Identity &amp; personality</SectionLabel>
-            <textarea
+            <TextArea
               value={personality}
               onChange={(e) => setPersonality(e.target.value)}
               rows={12}
-              className={TEXTAREA}
+              className={TEXTAREA_CLASS}
             />
             <div className="mt-2 flex justify-end">
               <PrimaryButton onClick={savePersonality} size="sm">
@@ -151,14 +153,10 @@ export default function RootContextClient({
                     key={s.id}
                     className="overflow-hidden rounded-xl border border-rule-2 bg-paper"
                   >
-                    <button
-                      type="button"
+                    <DisclosureButton
+                      open={open}
                       onClick={() => setOpenSkills((o) => ({ ...o, [s.id]: !o[s.id] }))}
-                      className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-hover"
                     >
-                      <span className="w-3 shrink-0 text-[12px] text-ink-4">
-                        {open ? '▾' : '▸'}
-                      </span>
                       <span className="shrink-0 text-[14px] font-semibold text-ink">{s.name}</span>
                       {s.description && (
                         <span className="min-w-0 truncate text-[13px] text-ink-3">
@@ -168,16 +166,16 @@ export default function RootContextClient({
                       <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-4">
                         {(skillContent[s.id] ?? '').length} chars
                       </span>
-                    </button>
+                    </DisclosureButton>
                     {open && (
                       <div className="px-4 pb-4">
-                        <textarea
+                        <TextArea
                           value={skillContent[s.id] ?? ''}
                           onChange={(e) =>
                             setSkillContent((prev) => ({ ...prev, [s.id]: e.target.value }))
                           }
                           rows={12}
-                          className={TEXTAREA}
+                          className={TEXTAREA_CLASS}
                         />
                         <div className="mt-2 flex justify-end">
                           <PrimaryButton onClick={() => saveSkill(s)} size="sm">
@@ -202,12 +200,12 @@ export default function RootContextClient({
               Operator notes about this machine (endpoints, model names, paths) — injected into
               every agent&apos;s ## Runtime block.
             </p>
-            <textarea
+            <TextArea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={6}
               placeholder="e.g. ComfyUI runs on port 8000; substitute models, don't block."
-              className={TEXTAREA}
+              className={TEXTAREA_CLASS}
             />
             <div className="mt-2 flex justify-end">
               <PrimaryButton onClick={saveNotes} size="sm">
@@ -234,13 +232,13 @@ export default function RootContextClient({
                   <span className="min-w-0 flex-1 text-[14px] leading-[1.5] text-ink">
                     {m.fact}
                   </span>
-                  <button
-                    type="button"
+                  <RowActionButton
+                    tone="danger"
                     onClick={() => removeMemory(m.id)}
-                    className="shrink-0 text-[13px] text-ink-3 transition-colors hover:text-warn"
+                    className="shrink-0"
                   >
                     Remove
-                  </button>
+                  </RowActionButton>
                 </div>
               ))}
               {memories.length === 0 && (

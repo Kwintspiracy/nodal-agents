@@ -55,6 +55,13 @@ import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import RowActionButton from '@/components/ui/RowActionButton';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextInput from '@/components/ui/TextInput';
+import TextArea from '@/components/ui/TextArea';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
+import Switch from '@/components/ui/Switch';
+import SegmentedControl from '@/components/ui/SegmentedControl';
 import ModelToolsBadge, { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
@@ -577,14 +584,13 @@ function HeroCard({
             <MemoryIcon />
             Memory
           </Link>
-          <button
-            type="button"
+          <RowActionButton
             onClick={onConfigure}
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+            icon={<GearIcon />}
+            className="!h-[34px] !gap-1.5 !rounded-lg !border-rule !px-3.5 !text-[13px] hover:!bg-transparent hover:!border-rule-2"
           >
-            <GearIcon />
             Configure
-          </button>
+          </RowActionButton>
         </div>
       </div>
 
@@ -690,16 +696,27 @@ function TabsBar({
     { id: 'settings', label: 'Settings' },
   ];
   return (
-    <div className="flex gap-1 border-b border-rule-2">
+    <div className="flex gap-1 border-b border-rule-2" role="tablist">
       {TABS.map((t) => {
         const isActive = tab === t.id;
         return (
-          <button
+          // Underline tab, not a bordered/pill button — no existing DS button
+          // primitive models this chrome, so this follows the same role="tab"
+          // div pattern already used for ConversationRow/OptionRadio elsewhere.
+          <div
             key={t.id}
-            type="button"
+            role="tab"
+            aria-selected={isActive}
+            tabIndex={0}
             onClick={() => onChange(t.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onChange(t.id);
+              }
+            }}
             className={[
-              'relative -mb-px border-b-2 px-4 pt-2.5 pb-3 text-[14px] font-medium transition-colors',
+              'relative -mb-px cursor-pointer border-b-2 px-4 pt-2.5 pb-3 text-[14px] font-medium transition-colors',
               isActive ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2',
             ].join(' ')}
           >
@@ -711,7 +728,7 @@ function TabsBar({
                 {t.count}
               </span>
             )}
-          </button>
+          </div>
         );
       })}
     </div>
@@ -1493,31 +1510,24 @@ function CommandExecutionSection({
         </div>
 
         {/* Toggle */}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={yoloEnabled}
+        <Switch
+          checked={yoloEnabled}
+          onChange={() => handleToggle(!yoloEnabled)}
           disabled={saving || !canToggle}
-          onClick={() => handleToggle(!yoloEnabled)}
-          className={[
-            'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
-            // Dormant (rule exists but workspace Yolo is off): show it in the ON
-            // position but neutral grey, not active red — it's inert at runtime.
+          // Dormant (rule exists but workspace Yolo is off): show it in the ON
+          // position but neutral grey, not active red — it's inert at runtime.
+          trackClassName={
             isDormant
-              ? 'border-ink-4/40 bg-ink-4/20'
+              ? 'mt-0.5 border-ink-4/40 bg-ink-4/20'
               : yoloEnabled
-                ? 'border-err/40 bg-err/20'
-                : 'border-rule-2 bg-canvas',
+                ? 'mt-0.5 border-err/40 bg-err/20'
+                : 'mt-0.5 border-rule-2 bg-canvas'
+          }
+          thumbClassName={[
+            yoloEnabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
+            isDormant ? 'bg-ink-4' : yoloEnabled ? 'bg-err' : 'bg-ink-3',
           ].join(' ')}
-        >
-          <span
-            className={[
-              'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
-              yoloEnabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
-              isDormant ? 'bg-ink-4' : yoloEnabled ? 'bg-err' : 'bg-ink-3',
-            ].join(' ')}
-          />
-        </button>
+        />
       </div>
 
       {/* Confirm dialog — ESLint bans window.confirm; use ConfirmDialog instead */}
@@ -1664,25 +1674,16 @@ function ScriptAuthRow({
       </div>
 
       {/* Toggle */}
-      <button
-        type="button"
-        role="switch"
-        aria-checked={authorized}
-        aria-label={`Allow scripts for ${skill.name}`}
+      <Switch
+        checked={authorized}
+        onChange={handleToggle}
         disabled={saving || !canToggle}
-        onClick={handleToggle}
-        className={[
-          'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
-          authorized ? 'border-warn/40 bg-warn/20' : 'border-rule-2 bg-canvas',
-        ].join(' ')}
-      >
-        <span
-          className={[
-            'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
-            authorized ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3',
-          ].join(' ')}
-        />
-      </button>
+        ariaLabel={`Allow scripts for ${skill.name}`}
+        trackClassName={
+          authorized ? 'mt-0.5 border-warn/40 bg-warn/20' : 'mt-0.5 border-rule-2 bg-canvas'
+        }
+        thumbClassName={authorized ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3'}
+      />
 
       {/* Confirm dialog — window.confirm is banned; ConfirmDialog is the correct replacement */}
       <ConfirmDialog
@@ -1812,25 +1813,16 @@ function FileWriteAuthRow({
         )}
       </div>
 
-      <button
-        type="button"
-        role="switch"
-        aria-checked={writable}
-        aria-label={`Allow file writes for ${skill.name}`}
+      <Switch
+        checked={writable}
+        onChange={handleToggle}
         disabled={saving || !canToggle}
-        onClick={handleToggle}
-        className={[
-          'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
-          writable ? 'border-warn/40 bg-warn/20' : 'border-rule-2 bg-canvas',
-        ].join(' ')}
-      >
-        <span
-          className={[
-            'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
-            writable ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3',
-          ].join(' ')}
-        />
-      </button>
+        ariaLabel={`Allow file writes for ${skill.name}`}
+        trackClassName={
+          writable ? 'mt-0.5 border-warn/40 bg-warn/20' : 'mt-0.5 border-rule-2 bg-canvas'
+        }
+        thumbClassName={writable ? 'translate-x-[18px] bg-warn' : 'translate-x-[2px] bg-ink-3'}
+      />
 
       <ConfirmDialog
         open={confirmOpen}
@@ -1883,44 +1875,32 @@ function AutonomyToolRow({
       </div>
 
       {/* 3-way control */}
-      <div
-        className="flex shrink-0 overflow-hidden rounded-lg border border-rule-2"
-        role="group"
-        aria-label={`Approval policy for ${op.name}`}
-      >
-        {(
-          [
-            { action: 'auto_approve' as const, label: 'Autonomous' },
-            { action: 'require_approval' as const, label: 'Ask first' },
-            { action: 'block' as const, label: 'Block' },
-          ] as { action: ApprovalAction; label: string }[]
-        ).map(({ action, label }, idx) => {
-          const isActive = value === action;
-          const activeClass =
-            action === 'block'
-              ? 'bg-err/15 text-err border-err/30'
-              : action === 'require_approval'
-                ? 'bg-warn/15 text-warn border-warn/30'
-                : 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30';
-          return (
-            <button
-              key={action}
-              type="button"
-              disabled={saving}
-              onClick={() => onChange(action)}
-              data-testid={`autonomy-btn-${op.slug}-${action}`}
-              className={[
-                'relative h-[32px] px-3 text-[13px] font-medium transition-colors',
-                idx > 0 ? 'border-l border-rule-2' : '',
-                isActive ? activeClass : 'bg-canvas text-ink-3 hover:bg-hover hover:text-ink-2',
-                saving ? 'cursor-wait opacity-60' : '',
-              ].join(' ')}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
+      <SegmentedControl
+        value={value}
+        onChange={onChange}
+        disabled={saving}
+        ariaLabel={`Approval policy for ${op.name}`}
+        options={[
+          {
+            value: 'auto_approve' as const,
+            label: 'Autonomous',
+            activeClassName: 'bg-agent-vivid/15 text-agent-vivid border-agent-vivid/30',
+            testId: `autonomy-btn-${op.slug}-auto_approve`,
+          },
+          {
+            value: 'require_approval' as const,
+            label: 'Ask first',
+            activeClassName: 'bg-warn/15 text-warn border-warn/30',
+            testId: `autonomy-btn-${op.slug}-require_approval`,
+          },
+          {
+            value: 'block' as const,
+            label: 'Block',
+            activeClassName: 'bg-err/15 text-err border-err/30',
+            testId: `autonomy-btn-${op.slug}-block`,
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -2130,12 +2110,12 @@ function SettingsTab(props: {
         <SectionHead label="Identity" hint="Slug is immutable. Avatar is used across the app." />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Name">
-            <input
+            <TextInput
               type="text"
               value={name}
               onChange={(e) => onChangeName(e.target.value)}
               placeholder="Agent name"
-              className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="!rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
             />
           </Field>
           <Field label="Slug (read-only)">
@@ -2158,25 +2138,25 @@ function SettingsTab(props: {
           hint="Persona is the system prompt. Updating it invalidates the prompt cache for new jobs."
         />
         <Field label="Persona / system prompt">
-          <textarea
+          <TextArea
             value={personality}
             onChange={(e) => onChangePersonality(e.target.value)}
             rows={24}
             placeholder="You are a helpful assistant…"
-            className="min-h-[560px] w-full resize-y rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] leading-[1.55] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+            className="min-h-[560px] !rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px] leading-[1.55]"
           />
         </Field>
         <div className="mt-4">
           <Field label="Role">
-            <select
+            <Select
               value={role}
               onChange={(e) => onChangeRole(e.target.value as AgentRole)}
-              className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-ink-3 focus:outline-none"
+              className="!rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
             >
               <option value="worker">Worker (runs its own tools)</option>
               <option value="router">Router (delegates one at a time)</option>
               <option value="planner">Planner (parallel sub-agents)</option>
-            </select>
+            </Select>
           </Field>
         </div>
         {showSubAgents && (
@@ -2196,11 +2176,10 @@ function SettingsTab(props: {
                         key={a.id}
                         className="flex cursor-pointer items-center gap-3 px-3 py-2 text-[14px] transition-colors hover:bg-hover"
                       >
-                        <input
-                          type="checkbox"
+                        <Checkbox
+                          tone="agent"
                           checked={checked}
                           onChange={() => onToggleSubAgent(a.id)}
-                          className="accent-agent-vivid"
                         />
                         <span className="text-ink">{a.name}</span>
                         <span className="ml-auto font-mono text-[12px] text-ink-3">{a.slug}</span>
@@ -2228,10 +2207,10 @@ function SettingsTab(props: {
                 .
               </p>
             ) : (
-              <select
+              <Select
                 value={llmKeyId}
                 onChange={(e) => onChangeLlmKey(e.target.value)}
-                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-ink-3 focus:outline-none"
+                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
               >
                 {activeKeys.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -2241,7 +2220,7 @@ function SettingsTab(props: {
                       ')'}
                   </option>
                 ))}
-              </select>
+              </Select>
             )}
           </Field>
           <Field
@@ -2254,12 +2233,12 @@ function SettingsTab(props: {
             }
           >
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-              <select
+              <Select
                 value={modelInDropdown ? model : '__custom__'}
                 onChange={(e) =>
                   onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
                 }
-                className="mb-2 w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink focus:border-ink-3 focus:outline-none"
+                className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
               >
                 {groupModelCatalog(modelCatalog).map(({ group, models }) =>
                   group ? (
@@ -2306,10 +2285,10 @@ function SettingsTab(props: {
                   </optgroup>
                 )}
                 <option value="__custom__">Custom…</option>
-              </select>
+              </Select>
             )}
             {!modelInDropdown && (
-              <input
+              <TextInput
                 type="text"
                 value={model}
                 onChange={(e) => onChangeModel(e.target.value)}
@@ -2317,7 +2296,7 @@ function SettingsTab(props: {
                   MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
                   'e.g. claude-haiku-4-5-20251001'
                 }
-                className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                className="!rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px]"
               />
             )}
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
@@ -2350,11 +2329,10 @@ function SettingsTab(props: {
                     return (
                       <div key={k.id} className="space-y-1.5">
                         <label className="flex cursor-pointer items-center gap-2.5 select-none">
-                          <input
-                            type="checkbox"
+                          <Checkbox
+                            tone="ink"
                             checked={checked}
                             onChange={() => onToggleFallback(k.id)}
-                            className="accent-ink"
                           />
                           <span className="text-[14px] text-ink-2">
                             {(k.nickname ?? prettyProviderName(k.provider)) +
@@ -2370,10 +2348,10 @@ function SettingsTab(props: {
                         </label>
                         {checked &&
                           (fbCatalog.length > 0 ? (
-                            <select
+                            <Select
                               value={fbModel}
                               onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-[13px]"
                             >
                               {groupModelCatalog(fbCatalog).map(({ group, models }) =>
                                 group ? (
@@ -2410,14 +2388,14 @@ function SettingsTab(props: {
                                   ))
                                 ),
                               )}
-                            </select>
+                            </Select>
                           ) : (
-                            <input
+                            <TextInput
                               type="text"
                               value={fbModel}
                               onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
                               placeholder="model id (e.g. llama-3.3-70b)"
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] rounded-lg border border-rule bg-canvas px-3 py-1.5 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 font-mono !text-[13px]"
                             />
                           ))}
                       </div>
@@ -2457,14 +2435,14 @@ function SettingsTab(props: {
                     </span>
                     <span className="font-mono text-[12px] text-ink-3 break-all">{ws.path}</span>
                   </div>
-                  <button
-                    type="button"
+                  <RowActionButton
+                    tone="danger"
                     onClick={() => setWsRemoveId(ws.id)}
                     disabled={wsIsPending}
-                    className="shrink-0 rounded border border-rule px-2 py-0.5 text-[12px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
+                    className="!h-auto shrink-0 !rounded !border-rule !px-2 !py-0.5 !text-[12px] hover:!border-err/40 hover:!bg-err/5"
                   >
                     Remove
-                  </button>
+                  </RowActionButton>
                 </div>
 
                 {/* File list */}
@@ -2488,14 +2466,14 @@ function SettingsTab(props: {
                                 ? `${(f.size / 1024).toFixed(0)} KB`
                                 : `${f.size} B`}
                           </span>
-                          <button
-                            type="button"
+                          <RowActionButton
+                            tone="danger"
                             onClick={() => handleDeleteFile(ws.label, f.name)}
                             disabled={wsFilesPending}
-                            className="shrink-0 rounded border border-rule px-1.5 py-0.5 text-[11px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50"
+                            className="!h-auto shrink-0 !rounded !border-rule !px-1.5 !py-0.5 !text-[11px] hover:!border-err/40 hover:!bg-err/5"
                           >
                             Delete
-                          </button>
+                          </RowActionButton>
                         </div>
                       ))}
                     </div>
@@ -2529,7 +2507,7 @@ function SettingsTab(props: {
                     {wsUploading && wsUploadLabel === ws.label
                       ? 'Uploading…'
                       : 'Upload file (.docx .xlsx .pptx .pdf .txt .md .csv — max 25 MB)'}
-                    <input
+                    <TextInput
                       type="file"
                       className="sr-only"
                       accept=".docx,.xlsx,.pptx,.pdf,.txt,.md,.csv"
@@ -2554,29 +2532,29 @@ function SettingsTab(props: {
         <div className="flex flex-col gap-2">
           <Field label="Add folder">
             <div className="flex gap-2">
-              <input
+              <TextInput
                 type="text"
                 value={wsLabel}
                 onChange={(e) => setWsLabel(e.target.value)}
                 placeholder="Label (e.g. notes)"
                 maxLength={80}
-                className="w-28 shrink-0 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                className="w-28 shrink-0 !rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px]"
               />
-              <input
+              <TextInput
                 type="text"
                 value={wsPath}
                 onChange={(e) => setWsPath(e.target.value)}
                 placeholder="/home/you/notes  or  C:\Users\you\docs"
-                className="min-w-0 flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+                className="min-w-0 flex-1 !rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px]"
               />
-              <button
-                type="button"
+              <PrimaryButton
+                variant="neutral"
                 onClick={handleAddWorkspace}
                 disabled={wsIsPending || wsAdding || !wsLabel.trim() || !wsPath.trim()}
-                className="shrink-0 rounded-lg border border-rule px-4 py-2 text-[14px] font-medium text-ink-2 hover:border-rule-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                className="!h-auto shrink-0 !rounded-lg !px-4 !py-2 !text-[14px]"
               >
                 {wsAdding ? 'Adding…' : 'Add'}
-              </button>
+              </PrimaryButton>
             </div>
           </Field>
           <p className="text-[12px] text-ink-4">
@@ -2626,23 +2604,23 @@ function SettingsTab(props: {
           )}
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
+          <PrimaryButton
+            variant="neutral"
             onClick={onReset}
             disabled={isPending || !dirty}
-            className="rounded-lg border border-rule px-4 py-2 text-[14px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="!h-auto !rounded-lg !border-rule !px-4 !py-2 !text-[14px] !text-ink-3 hover:!text-ink-2"
           >
             Reset
-          </button>
-          <button
-            type="button"
+          </PrimaryButton>
+          <PrimaryButton
+            variant="ink"
             onClick={onSave}
             disabled={isPending || noLlmKeys || !dirty}
             title={!dirty ? 'No changes to save' : undefined}
-            className="rounded-lg bg-ink px-5 py-2 text-[14px] font-semibold text-canvas transition-colors hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-50"
+            className="!h-auto !rounded-lg !px-5 !py-2 !text-[14px]"
           >
             {isPending ? 'Saving…' : 'Save'}
-          </button>
+          </PrimaryButton>
         </div>
       </div>
     </div>

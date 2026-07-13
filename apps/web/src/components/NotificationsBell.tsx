@@ -6,6 +6,7 @@ import { Bell } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions';
 import IconButton from '@/components/ui/IconButton';
+import RowActionButton from '@/components/ui/RowActionButton';
 import { useApprovals, type PendingApproval } from './ApprovalsProvider';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,18 +62,17 @@ function ApproveButton({ item, onApproved }: { item: PendingApproval; onApproved
   }
 
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.preventDefault(); // don't follow the parent Link
-        e.stopPropagation();
-        handleApprove();
-      }}
-      disabled={isPending}
-      className="shrink-0 rounded-md bg-ok px-2.5 py-1 text-[12px] font-semibold text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-40"
-    >
-      {isPending ? '…' : 'Approve'}
-    </button>
+    // Stops the click from bubbling to the parent Link (the item body
+    // navigates to the job; Approve must act in place instead).
+    <span onClick={(e) => e.stopPropagation()}>
+      <RowActionButton
+        onClick={handleApprove}
+        disabled={isPending}
+        className="!border-ok/30 !bg-ok font-semibold !text-canvas hover:!bg-ok hover:brightness-[0.92]"
+      >
+        {isPending ? '…' : 'Approve'}
+      </RowActionButton>
+    </span>
   );
 }
 

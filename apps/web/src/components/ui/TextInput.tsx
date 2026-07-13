@@ -1,10 +1,11 @@
 import { forwardRef, useId } from 'react';
-import type { InputHTMLAttributes } from 'react';
+import type { InputHTMLAttributes, ReactNode } from 'react';
 import FieldLabel from './FieldLabel';
 
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, 'className'> & {
-  /** Optional built-in label — renders a `FieldLabel` wired to the input via `htmlFor`/`id`. */
-  label?: string;
+  /** Optional built-in label — renders a `FieldLabel` wired to the input via `htmlFor`/`id`.
+   *  Usually a string; a fragment is fine too (e.g. a trailing "(optional)" hint). */
+  label?: ReactNode;
   /** Validation message shown below the field in `text-err`; also flips the border to `border-err`. */
   error?: string;
   /** Classes on the field itself (input). Use `containerClassName` for the wrapping `<div>`. */

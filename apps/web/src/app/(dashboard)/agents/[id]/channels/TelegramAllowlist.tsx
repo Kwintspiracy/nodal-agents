@@ -9,6 +9,7 @@ import {
   type TelegramAllowedChatView,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
 
 export default function TelegramAllowlist({
   chats,
@@ -79,22 +80,20 @@ export default function TelegramAllowlist({
                 <p className="text-xs text-warn">Waiting for your approval</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
+                <RowActionButton
+                  tone="success"
                   disabled={isPending}
                   onClick={() => resolve(c.id, 'approve')}
-                  className="text-xs rounded-md bg-ok/15 text-ok px-2.5 py-1 hover:bg-ok/25 transition-colors disabled:opacity-50"
                 >
                   Approve
-                </button>
-                <button
-                  type="button"
+                </RowActionButton>
+                <RowActionButton
+                  tone="danger"
                   disabled={isPending}
                   onClick={() => resolve(c.id, 'deny')}
-                  className="text-xs rounded-md bg-err/15 text-err px-2.5 py-1 hover:bg-err/25 transition-colors disabled:opacity-50"
                 >
                   Deny
-                </button>
+                </RowActionButton>
               </div>
             </div>
           ))}
@@ -118,14 +117,14 @@ export default function TelegramAllowlist({
                   Owner
                 </span>
               ) : (
-                <button
-                  type="button"
+                <RowActionButton
+                  tone="danger"
                   disabled={isPending}
                   onClick={() => setRevokeTarget(c)}
-                  className="text-xs rounded-md border border-rule-2 text-ink-3 px-2.5 py-1 hover:text-err hover:border-err/40 transition-colors disabled:opacity-50 shrink-0"
+                  className="shrink-0"
                 >
                   Revoke
-                </button>
+                </RowActionButton>
               )}
             </div>
           ))}

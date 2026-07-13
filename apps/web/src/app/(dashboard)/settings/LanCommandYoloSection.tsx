@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { setLanCommandYoloAction, type LanCommandYoloView } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Banner from '@/components/ui/Banner';
+import Switch from '@/components/ui/Switch';
 
 interface Props {
   initial: LanCommandYoloView;
@@ -99,24 +100,15 @@ export default function LanCommandYoloSection({ initial }: Props) {
       </div>
 
       {/* Toggle */}
-      <button
-        type="button"
-        role="switch"
-        aria-checked={enabled}
-        disabled={isDisabled}
-        onClick={handleToggle}
-        className={[
-          'relative mt-0.5 inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
-          enabled ? 'border-err/40 bg-err/20' : 'border-rule-2 bg-canvas',
-        ].join(' ')}
-      >
-        <span
-          className={[
-            'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
-            enabled ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3',
-          ].join(' ')}
+      <div className="mt-0.5">
+        <Switch
+          checked={enabled}
+          onChange={handleToggle}
+          disabled={isDisabled}
+          trackClassName={enabled ? 'border-err/40 bg-err/20' : 'border-rule-2 bg-canvas'}
+          thumbClassName={enabled ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3'}
         />
-      </button>
+      </div>
 
       <ConfirmDialog
         open={confirmOpen}

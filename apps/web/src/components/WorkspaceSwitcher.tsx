@@ -3,8 +3,12 @@
 import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { X } from '@phosphor-icons/react';
 import FleetPicker, { type Fleet } from './ui/FleetPicker';
 import EmojiPicker, { WORKSPACE_EMOJI_PRESETS } from './ui/EmojiPicker';
+import TextInput from './ui/TextInput';
+import PrimaryButton from './ui/PrimaryButton';
+import RowActionButton from './ui/RowActionButton';
 import { switchWorkspaceAction, createWorkspaceAction, type WorkspaceRow } from '@/lib/actions';
 
 /**
@@ -135,7 +139,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
             <EmojiPicker value={newIcon} onChange={setNewIcon} disabled={isCreating} />
           </div>
           <div className="flex gap-1.5">
-            <input
+            <TextInput
               ref={inputRef}
               type="text"
               value={newName}
@@ -143,23 +147,25 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
               placeholder="Name…"
               maxLength={60}
               disabled={isCreating}
-              className="min-w-0 flex-1 rounded-md border border-rule bg-canvas px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none disabled:opacity-50"
+              containerClassName="min-w-0 flex-1"
+              className="bg-canvas py-1.5 text-[13px]"
             />
-            <button
+            <PrimaryButton
+              variant="ink"
+              size="sm"
               type="submit"
               disabled={isCreating || !newName.trim()}
-              className="shrink-0 rounded-md bg-ink px-3 py-1.5 text-[13px] font-medium text-canvas hover:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="shrink-0"
             >
               {isCreating ? '…' : 'Create'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowNewForm(false)}
+            </PrimaryButton>
+            <RowActionButton
+              square
+              title="Cancel"
+              icon={<X size={13} />}
               disabled={isCreating}
-              className="shrink-0 rounded-md border border-rule px-2.5 py-1.5 text-[13px] text-ink-3 hover:border-rule-2 hover:text-ink-2 disabled:opacity-50"
-            >
-              ✕
-            </button>
+              onClick={() => setShowNewForm(false)}
+            />
           </div>
         </form>
       )}

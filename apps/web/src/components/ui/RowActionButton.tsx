@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
-type Tone = 'default' | 'danger';
+type Tone = 'default' | 'danger' | 'success';
 
 type CommonProps = {
   tone?: Tone;
@@ -40,15 +40,17 @@ type Props =
 const TONE_STYLES: Record<Tone, string> = {
   default: 'border-rule-2 text-ink-2 hover:bg-hover hover:text-ink',
   danger: 'border-err/30 text-err hover:border-err hover:bg-warn-bg',
+  success: 'border-ok/30 text-ok hover:border-ok hover:bg-ok-bg',
 };
 
-// Square mode reads "light at rest, full at hover" for danger (spec: legible
-// but not shouty sitting in a row of otherwise-neutral squares) — a fainter
-// icon colour than the labeled shape's, which has a text label to carry the
-// weight instead.
+// Square mode reads "light at rest, full at hover" for danger/success (spec:
+// legible but not shouty sitting in a row of otherwise-neutral squares) — a
+// fainter icon colour than the labeled shape's, which has a text label to
+// carry the weight instead.
 const SQUARE_TONE_STYLES: Record<Tone, string> = {
   default: 'border-rule-2 text-ink-2 hover:bg-hover hover:text-ink',
   danger: 'border-err/20 text-err/70 hover:border-err hover:bg-warn-bg hover:text-err',
+  success: 'border-ok/20 text-ok/70 hover:border-ok hover:bg-ok-bg hover:text-ok',
 };
 
 /**

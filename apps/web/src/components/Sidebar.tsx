@@ -24,6 +24,7 @@ import {
   ArrowSquareOut,
   type Icon as PhosphorIcon,
 } from '@phosphor-icons/react';
+import IconButton from './ui/IconButton';
 import BrandMark from './ui/BrandMark';
 import SidebarSection from './ui/SidebarSection';
 import SidebarLink from './ui/SidebarLink';
@@ -157,16 +158,16 @@ export default function Sidebar({
           actions (notifications, theme) on the right. The desktop <Topbar> is
           hidden on mobile so there is exactly ONE bar, not two stacked ones. */}
       <header className="fixed top-0 right-0 left-0 z-40 flex h-16 items-center gap-1 border-b border-rule-2 bg-sidebar px-2 lg:hidden">
-        <button
-          type="button"
+        <IconButton
+          ghost
           onClick={() => setOpen(true)}
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-ink-2 transition-colors hover:bg-hover hover:text-ink active:bg-hover"
+          className="h-12 w-12 rounded-xl hover:bg-hover active:bg-hover"
           aria-label="Open menu"
           aria-controls="primary-nav"
           aria-expanded={open}
         >
           <List size={26} />
-        </button>
+        </IconButton>
         <div className="flex min-w-0 items-center gap-2 pl-1 text-[15px] font-medium tracking-[-0.005em] text-ink">
           <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[11px] font-semibold text-canvas">
             N
@@ -203,14 +204,14 @@ export default function Sidebar({
             </span>
             <span className="truncate">Nodal-Agents</span>
           </div>
-          <button
-            type="button"
+          <IconButton
+            ghost
             onClick={() => setOpen(false)}
-            className="-mr-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ink-2 transition-colors hover:bg-hover hover:text-ink active:bg-hover"
+            className="-mr-2 h-10 w-10 rounded-xl hover:bg-hover active:bg-hover"
             aria-label="Close menu"
           >
             <X size={24} />
-          </button>
+          </IconButton>
         </div>
 
         {/* Desktop: the standard brand block (close button collapses away). */}

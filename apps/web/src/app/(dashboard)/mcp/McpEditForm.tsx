@@ -14,12 +14,18 @@
 
 import { useEffect, useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { Trash } from '@phosphor-icons/react';
 import {
   getMcpServerConfigAction,
   updateMcpServerConfigAction,
   type McpServerConfig,
 } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextInput from '@/components/ui/TextInput';
+import TextArea from '@/components/ui/TextArea';
+import FieldLabel from '@/components/ui/FieldLabel';
+import McpAuthSchemePicker from '@/components/ui/McpAuthSchemePicker';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 
 type AuthScheme = 'header' | 'query' | 'bearer';
@@ -34,9 +40,6 @@ interface Props {
   onDone?: () => void;
   onCancel?: () => void;
 }
-
-const INPUT =
-  'w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none';
 
 export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
   const [config, setConfig] = useState<McpServerConfig | null>(null);
@@ -180,16 +183,13 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
 
       {/* Name */}
       <div>
-        <label htmlFor={`edit-name-${config.id}`} className="block text-xs text-ink-3 mb-1">
-          Name
-        </label>
-        <input
+        <FieldLabel htmlFor={`edit-name-${config.id}`}>Name</FieldLabel>
+        <TextInput
           id={`edit-name-${config.id}`}
           type="text"
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className={INPUT}
         />
       </div>
 
@@ -197,70 +197,46 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
       {!isStdio && (
         <>
           <div>
-            <label htmlFor={`edit-url-${config.id}`} className="block text-xs text-ink-3 mb-1">
-              Server URL
-            </label>
-            <input
+            <FieldLabel htmlFor={`edit-url-${config.id}`}>Server URL</FieldLabel>
+            <TextInput
               id={`edit-url-${config.id}`}
               type="url"
               required
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://…"
-              className={`${INPUT} font-mono`}
+              className="font-mono"
             />
           </div>
 
           <div className="space-y-2">
             <p className="block text-xs text-ink-3">Auth scheme</p>
-            <div className="flex flex-wrap gap-2">
-              {(['header', 'query', 'bearer'] as const).map((scheme) => (
-                <label
-                  key={scheme}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs cursor-pointer border ${
-                    authScheme === scheme
-                      ? 'bg-hover border-ink-3 text-ink'
-                      : 'bg-paper border-rule text-ink-3 hover:border-rule'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name={`edit-scheme-${config.id}`}
-                    value={scheme}
-                    checked={authScheme === scheme}
-                    onChange={() => setAuthScheme(scheme)}
-                    className="sr-only"
-                  />
-                  {scheme === 'header' ? 'Header' : scheme === 'query' ? 'Query param' : 'Bearer'}
-                </label>
-              ))}
-            </div>
+            <McpAuthSchemePicker
+              name={`edit-scheme-${config.id}`}
+              value={authScheme}
+              onChange={setAuthScheme}
+            />
             {authScheme !== 'bearer' && (
               <div>
-                <label
-                  htmlFor={`edit-auth-param-${config.id}`}
-                  className="block text-xs text-ink-3 mb-1"
-                >
+                <FieldLabel htmlFor={`edit-auth-param-${config.id}`}>
                   {authScheme === 'header' ? 'Header name' : 'Query param name'}
-                </label>
-                <input
+                </FieldLabel>
+                <TextInput
                   id={`edit-auth-param-${config.id}`}
                   type="text"
                   required
                   value={authParamName}
                   onChange={(e) => setAuthParamName(e.target.value)}
                   placeholder={authScheme === 'header' ? 'x-api-key' : 'api_key'}
-                  className={`${INPUT} font-mono`}
+                  className="font-mono"
                 />
               </div>
             )}
           </div>
 
           <div>
-            <label htmlFor={`edit-key-${config.id}`} className="block text-xs text-ink-3 mb-1">
-              API key
-            </label>
-            <input
+            <FieldLabel htmlFor={`edit-key-${config.id}`}>API key</FieldLabel>
+            <TextInput
               id={`edit-key-${config.id}`}
               type="password"
               autoComplete="off"
@@ -271,7 +247,7 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
                   ? `•••• ${config.apiKeyLast4} - leave blank to keep`
                   : 'Paste a key'
               }
-              className={`${INPUT} font-mono`}
+              className="font-mono"
             />
             <p className="text-[12px] text-ink-4 mt-1">
               Leave blank to keep the current key. The new config is verified against the live
@@ -285,30 +261,28 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
       {isStdio && (
         <>
           <div>
-            <label htmlFor={`edit-command-${config.id}`} className="block text-xs text-ink-3 mb-1">
-              Command
-            </label>
-            <input
+            <FieldLabel htmlFor={`edit-command-${config.id}`}>Command</FieldLabel>
+            <TextInput
               id={`edit-command-${config.id}`}
               type="text"
               required
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder="npx"
-              className={`${INPUT} font-mono`}
+              className="font-mono"
             />
           </div>
 
           <div>
-            <label htmlFor={`edit-args-${config.id}`} className="block text-xs text-ink-3 mb-1">
+            <FieldLabel htmlFor={`edit-args-${config.id}`}>
               Arguments <span className="text-ink-4">(one per line)</span>
-            </label>
-            <textarea
+            </FieldLabel>
+            <TextArea
               id={`edit-args-${config.id}`}
               rows={Math.max(3, argsText.split('\n').length)}
               value={argsText}
               onChange={(e) => setArgsText(e.target.value)}
-              className={`${INPUT} font-mono resize-none`}
+              className="font-mono resize-none"
             />
           </div>
 
@@ -320,39 +294,36 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
             <div className="space-y-2">
               {envRows.map((row, idx) => (
                 <div key={idx} className="flex gap-2">
-                  <input
+                  <TextInput
                     type="text"
                     value={row.key}
                     onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
                     placeholder="VAR_NAME"
-                    className={`${INPUT} flex-1 font-mono`}
+                    containerClassName="flex-1"
+                    className="font-mono"
                   />
-                  <input
+                  <TextInput
                     type="password"
                     autoComplete="off"
                     value={row.value}
                     onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
                     placeholder={config.envKeys.includes(row.key) ? 'leave blank to keep' : 'value'}
-                    className={`${INPUT} flex-1 font-mono`}
+                    containerClassName="flex-1"
+                    className="font-mono"
                   />
-                  <button
-                    type="button"
+                  <RowActionButton
+                    square
+                    tone="danger"
                     onClick={() => removeEnvRow(idx)}
-                    aria-label="Remove env var"
-                    className="px-2 text-ink-3 hover:text-err"
-                  >
-                    ×
-                  </button>
+                    title="Remove variable"
+                    icon={<Trash size={14} />}
+                  />
                 </div>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={addEnvRow}
-              className="mt-2 text-[12px] text-ink-3 hover:text-ink"
-            >
+            <RowActionButton onClick={addEnvRow} className="mt-2">
               + Add variable
-            </button>
+            </RowActionButton>
           </div>
         </>
       )}

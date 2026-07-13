@@ -1,6 +1,6 @@
 'use client';
 
-import { toast } from 'sonner';
+import CopyButton from '@/components/ui/CopyButton';
 
 /**
  * Ready-to-paste Slack app manifest — declares every scope/event the adapter
@@ -58,27 +58,16 @@ const SLACK_APP_MANIFEST_JSON = JSON.stringify(SLACK_APP_MANIFEST, null, 2);
 
 /** Copyable code block for the manifest above — client-only for the clipboard call. */
 export default function SlackManifestBlock() {
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(SLACK_APP_MANIFEST_JSON);
-      toast.success('Manifest copied');
-    } catch {
-      toast.error('Could not copy');
-    }
-  }
-
   return (
     <div className="relative">
       <pre className="max-h-64 overflow-auto rounded-lg bg-canvas border border-rule-2 px-3 py-3 text-xs font-mono text-ink-2">
         {SLACK_APP_MANIFEST_JSON}
       </pre>
-      <button
-        type="button"
-        onClick={copy}
-        className="absolute top-2 right-2 rounded-md border border-rule-2 bg-paper px-2.5 py-1 text-xs font-medium text-ink-3 hover:border-rule hover:text-ink transition-colors"
-      >
-        Copy
-      </button>
+      <CopyButton
+        value={SLACK_APP_MANIFEST_JSON}
+        successMessage="Manifest copied"
+        className="absolute top-2 right-2"
+      />
     </div>
   );
 }

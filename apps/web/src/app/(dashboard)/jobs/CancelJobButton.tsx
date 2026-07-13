@@ -16,6 +16,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
 import { cancelJobAction } from '@/lib/actions.ts';
 
 interface Props {
@@ -45,14 +46,9 @@ export default function CancelJobButton({ jobId }: Props) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        disabled={isPending}
-        className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-rule px-3 text-[13px] font-medium leading-none text-ink-3 transition-colors hover:border-warn/60 hover:bg-warn-bg hover:text-warn disabled:cursor-not-allowed disabled:opacity-50"
-      >
+      <RowActionButton tone="danger" onClick={() => setOpen(true)} disabled={isPending}>
         {isPending ? 'Cancelling…' : 'Cancel'}
-      </button>
+      </RowActionButton>
       <ConfirmDialog
         open={open}
         title="Cancel this job?"

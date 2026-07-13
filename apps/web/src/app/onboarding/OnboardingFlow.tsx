@@ -10,6 +10,13 @@ import {
   type AutonomyLevel,
 } from '@nodal-agents/shared';
 import { ModelToolsLegend } from '@/components/ui/ModelToolsBadge.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import TextInput from '@/components/ui/TextInput.tsx';
+import TextArea from '@/components/ui/TextArea.tsx';
+import Select from '@/components/ui/Select.tsx';
+import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
+import ChoiceTile from '@/components/ui/ChoiceTile.tsx';
+import TextButton from '@/components/ui/TextButton.tsx';
 import {
   createLlmKeyAction,
   updateLlmKeyAction,
@@ -581,13 +588,9 @@ export default function OnboardingFlow() {
                 Let&apos;s set up your first AI agent. It takes about a minute: connect a model,
                 give your agent a personality, and say hello.
               </p>
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="mt-6 inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92]"
-              >
+              <PrimaryButton className="mt-6" onClick={() => setStep(1)}>
                 Get started →
-              </button>
+              </PrimaryButton>
             </div>
           )}
 
@@ -600,17 +603,17 @@ export default function OnboardingFlow() {
               />
 
               <label className="mt-5 block text-[12px] font-medium text-ink-3">Provider</label>
-              <select
+              <Select
                 value={provider.value}
                 onChange={(e) => pickProvider(e.target.value)}
-                className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
+                className="mt-1.5 bg-canvas text-[13.5px]"
               >
                 {PROVIDERS.map((p) => (
                   <option key={p.value} value={p.value}>
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </Select>
 
               <label className="mt-4 block text-[12px] font-medium text-ink-3">Model</label>
               <ModelField providerValue={provider.value} model={model} onModel={setModel} />
@@ -621,33 +624,33 @@ export default function OnboardingFlow() {
               )}
 
               <label className="mt-4 block text-[12px] font-medium text-ink-3">Base URL</label>
-              <input
+              <TextInput
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://…"
-                className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
+                className="mt-1.5 bg-canvas text-[13.5px]"
               />
 
               <label className="mt-4 block text-[12px] font-medium text-ink-3">
                 API key {provider.needsKey ? '' : '(optional for local)'}
               </label>
-              <input
+              <TextInput
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 type="password"
                 placeholder={provider.needsKey ? 'sk-…' : 'leave blank for local'}
-                className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
+                className="mt-1.5 bg-canvas text-[13.5px]"
               />
 
               <div className="mt-4 flex items-center gap-3">
-                <button
-                  type="button"
+                <PrimaryButton
+                  variant="neutral"
                   onClick={handleTest}
                   disabled={testState === 'testing'}
-                  className="inline-flex h-[34px] items-center rounded-md border border-rule-2 bg-canvas px-3.5 text-[13px] font-medium text-ink transition-colors hover:border-ink disabled:opacity-50"
+                  className="bg-canvas"
                 >
                   {testState === 'testing' ? 'Connecting…' : 'Test connection'}
-                </button>
+                </PrimaryButton>
                 {testState === 'ok' && (
                   <span className="text-[12.5px] font-medium text-lime-600">✓ {testMsg}</span>
                 )}
@@ -659,21 +662,15 @@ export default function OnboardingFlow() {
               {keyError && <p className="mt-3 text-[12.5px] text-warn">{keyError}</p>}
 
               <div className="mt-6 flex items-center justify-between">
-                <button
-                  type="button"
+                <TextButton
                   onClick={() => setStep(0)}
                   className="text-[13px] text-ink-3 hover:text-ink"
                 >
                   ← Back
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveKeyAndContinue}
-                  disabled={savingKey}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
-                >
+                </TextButton>
+                <PrimaryButton onClick={handleSaveKeyAndContinue} disabled={savingKey}>
                   {savingKey ? 'Saving…' : 'Continue →'}
-                </button>
+                </PrimaryButton>
               </div>
             </div>
           )}
@@ -687,19 +684,19 @@ export default function OnboardingFlow() {
               />
 
               <label className="mt-5 block text-[12px] font-medium text-ink-3">Name</label>
-              <input
+              <TextInput
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder="e.g. Friday"
-                className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
+                className="mt-1.5 bg-canvas text-[13.5px]"
               />
 
               <label className="mt-4 block text-[12px] font-medium text-ink-3">Personality</label>
-              <textarea
+              <TextArea
                 value={personality}
                 onChange={(e) => setPersonality(e.target.value)}
                 rows={11}
-                className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 font-mono text-[12px] leading-[1.55] text-ink"
+                className="mt-1.5 bg-canvas font-mono text-[12px] leading-[1.55]"
               />
 
               <label className="mt-4 block text-[12px] font-medium text-ink-3">Model</label>
@@ -708,21 +705,15 @@ export default function OnboardingFlow() {
               {agentError && <p className="mt-3 text-[12.5px] text-warn">{agentError}</p>}
 
               <div className="mt-6 flex items-center justify-between">
-                <button
-                  type="button"
+                <TextButton
                   onClick={() => setStep(1)}
                   className="text-[13px] text-ink-3 hover:text-ink"
                 >
                   ← Back
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCreateAgent}
-                  disabled={creatingAgent}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
-                >
+                </TextButton>
+                <PrimaryButton onClick={handleCreateAgent} disabled={creatingAgent}>
                   {creatingAgent ? 'Creating…' : 'Create agent →'}
-                </button>
+                </PrimaryButton>
               </div>
             </div>
           )}
@@ -761,20 +752,12 @@ export default function OnboardingFlow() {
                 to know you. Or head straight to the dashboard.
               </p>
               <div className="mt-6 flex items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => finish('/')}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md border border-rule-2 bg-canvas px-4 text-[13.5px] font-medium text-ink transition-colors hover:border-ink"
-                >
+                <PrimaryButton variant="neutral" className="bg-canvas" onClick={() => finish('/')}>
                   Skip to dashboard
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStep(4)}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92]"
-                >
+                </PrimaryButton>
+                <PrimaryButton onClick={() => setStep(4)}>
                   Meet {agentName || 'your agent'} →
-                </button>
+                </PrimaryButton>
               </div>
             </div>
           )}
@@ -827,7 +810,7 @@ export default function OnboardingFlow() {
               {/* The input stays available the whole time so the operator can
                   keep chatting even after Continue appears. */}
               <div className="mt-3 flex items-center gap-2">
-                <input
+                <TextInput
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -838,37 +821,30 @@ export default function OnboardingFlow() {
                   }}
                   disabled={chatBusy || msgs.length === 0}
                   placeholder="Type your answer…"
-                  className="h-[38px] flex-1 rounded-md border border-rule-2 bg-canvas px-3 text-[13.5px] text-ink disabled:opacity-50"
+                  containerClassName="flex-1"
+                  className="bg-canvas text-[13.5px]"
                 />
-                <button
-                  type="button"
+                <PrimaryButton
                   onClick={() => void sendAnswer()}
                   disabled={chatBusy || !chatInput.trim()}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-4 text-[13.5px] font-medium text-canvas disabled:opacity-40"
+                  className="px-4"
                 >
                   Send
-                </button>
+                </PrimaryButton>
               </div>
 
               {/* Skip is ALWAYS available — a slow or stuck model must never trap
                   the operator here. Continue appears as soon as the interview has
                   run its course (answer count), independent of the done-marker. */}
               <div className="mt-3 flex items-center justify-between">
-                <button
-                  type="button"
+                <TextButton
                   onClick={() => setStep(5)}
                   className="text-[12.5px] text-ink-3 underline hover:text-ink"
                 >
                   Skip for now
-                </button>
+                </TextButton>
                 {canContinue && (
-                  <button
-                    type="button"
-                    onClick={() => setStep(5)}
-                    className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92]"
-                  >
-                    Continue →
-                  </button>
+                  <PrimaryButton onClick={() => setStep(5)}>Continue →</PrimaryButton>
                 )}
               </div>
             </div>
@@ -888,36 +864,16 @@ export default function OnboardingFlow() {
                 approve its actions before running them, while carrying out what you ask.
               </p>
 
-              <div className="mt-5 flex flex-col gap-2.5">
-                {AUTONOMY_OPTIONS.map((m) => {
-                  const active = autonomy === m.value;
-                  return (
-                    <button
-                      key={m.value}
-                      type="button"
-                      onClick={() => setAutonomy(m.value)}
-                      className={`rounded-lg border px-4 py-3 text-left transition-colors ${
-                        active
-                          ? 'border-ink bg-ink/[0.03]'
-                          : 'border-rule-2 bg-canvas hover:border-ink-4'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
-                            active ? 'border-ink' : 'border-rule-2'
-                          }`}
-                        >
-                          {active && <span className="h-2 w-2 rounded-full bg-ink" />}
-                        </span>
-                        <span className="text-[13.5px] font-medium text-ink">{m.name}</span>
-                      </div>
-                      <p className="mt-1 pl-6 text-[12.5px] leading-[1.5] text-ink-3">
-                        {m.description}
-                      </p>
-                    </button>
-                  );
-                })}
+              <div className="mt-5" role="radiogroup" aria-label="Autonomy level">
+                {AUTONOMY_OPTIONS.map((m) => (
+                  <OptionRadio
+                    key={m.value}
+                    active={autonomy === m.value}
+                    onClick={() => setAutonomy(m.value)}
+                    name={m.name}
+                    description={m.description}
+                  />
+                ))}
               </div>
 
               <p className="mt-3 text-[11.5px] text-ink-4">
@@ -927,14 +883,12 @@ export default function OnboardingFlow() {
               {autonomyError && <p className="mt-3 text-[12.5px] text-warn">{autonomyError}</p>}
 
               <div className="mt-6 flex items-center justify-end">
-                <button
-                  type="button"
+                <PrimaryButton
                   onClick={() => void applyAutonomyAndContinue()}
                   disabled={applyingAutonomy}
-                  className="inline-flex h-[38px] items-center justify-center rounded-md bg-ink px-5 text-[13.5px] font-medium text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
                 >
                   {applyingAutonomy ? 'Saving…' : 'Continue →'}
-                </button>
+                </PrimaryButton>
               </div>
             </div>
           )}
@@ -955,27 +909,25 @@ export default function OnboardingFlow() {
 
               <div className="mt-6 grid grid-cols-2 gap-3">
                 {CHANNELS.map((c) => (
-                  <button
+                  <ChoiceTile
                     key={c.value}
-                    type="button"
                     onClick={() => finish(agentId ? `/agents/${agentId}/channels#${c.value}` : '/')}
-                    className="flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas px-4 py-3 text-left transition-colors hover:border-ink"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element -- static brand svg, same convention as the Channels page cards */}
-                    <img src={c.icon} alt="" aria-hidden="true" className="h-8 w-8 shrink-0" />
-                    <span className="text-[13.5px] font-medium text-ink">{c.label}</span>
-                  </button>
+                    icon={
+                      // eslint-disable-next-line @next/next/no-img-element -- static brand svg, same convention as the Channels page cards
+                      <img src={c.icon} alt="" aria-hidden="true" className="h-8 w-8" />
+                    }
+                    label={c.label}
+                  />
                 ))}
               </div>
 
               <div className="mt-6 flex items-center justify-center">
-                <button
-                  type="button"
+                <TextButton
                   onClick={() => finish('/')}
                   className="text-[13px] text-ink-3 underline hover:text-ink"
                 >
                   Skip for now
-                </button>
+                </TextButton>
               </div>
             </div>
           )}
@@ -1037,21 +989,21 @@ function ModelField({
   const entries = MODEL_CATALOG[providerValue] ?? [];
   if (entries.length === 0) {
     return (
-      <input
+      <TextInput
         value={model}
         onChange={(e) => onModel(e.target.value)}
         placeholder="e.g. llama3.2 — type your local model name"
-        className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
+        className="mt-1.5 bg-canvas text-[13.5px]"
       />
     );
   }
   const groups = groupModelCatalog(entries);
   return (
     <>
-      <select
+      <Select
         value={model}
         onChange={(e) => onModel(e.target.value)}
-        className="mt-1.5 w-full rounded-md border border-rule-2 bg-canvas px-3 py-2 text-[13.5px] text-ink"
+        className="mt-1.5 bg-canvas text-[13.5px]"
       >
         {groups.map((g, gi) =>
           g.group ? (
@@ -1088,7 +1040,7 @@ function ModelField({
             ))
           ),
         )}
-      </select>
+      </Select>
       <ModelToolsLegend className="mt-1.5" />
     </>
   );

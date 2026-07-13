@@ -2,6 +2,7 @@
 
 import { useState, useTransition, type ReactNode } from 'react';
 import { toast } from 'sonner';
+import { PencilSimple } from '@phosphor-icons/react';
 import {
   deleteConnectorAction,
   renameConnectorAction,
@@ -13,7 +14,11 @@ import {
 import { refreshCredentialAction } from '@/lib/credentials.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
 import StatusPill from '@/components/ui/StatusPill.tsx';
+import TextInput from '@/components/ui/TextInput';
+import Select from '@/components/ui/Select';
+import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
 
@@ -203,7 +208,7 @@ export default function ConnectorForm({
           {/* Instance name — inline rename */}
           {isRenaming ? (
             <div className="flex items-center gap-2">
-              <input
+              <TextInput
                 autoFocus
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
@@ -214,7 +219,7 @@ export default function ConnectorForm({
                     setIsRenaming(false);
                   }
                 }}
-                className="bg-hover border border-rule rounded-md px-2 py-1 text-sm text-ink focus:border-ink-3 focus:outline-none w-full max-w-xs"
+                containerClassName="max-w-xs w-full"
               />
               <PrimaryButton variant="ink" size="sm" onClick={performRename} disabled={isPending}>
                 Save
@@ -233,15 +238,12 @@ export default function ConnectorForm({
           ) : (
             <div className="flex items-center gap-2">
               <h3 className="text-base font-semibold text-ink truncate">{instance.name}</h3>
-              <button
-                type="button"
+              <RowActionButton
+                square
                 onClick={() => setIsRenaming(true)}
-                aria-label="Rename connector"
-                className="text-ink-4 hover:text-ink-3 transition-colors text-xs leading-none"
                 title="Rename"
-              >
-                ✎
-              </button>
+                icon={<PencilSimple size={14} />}
+              />
             </div>
           )}
         </div>
@@ -321,10 +323,8 @@ export default function ConnectorForm({
       {isApiKey && rotateOpen && (
         <div className="space-y-3 pt-2 border-t border-rule-2">
           <div>
-            <label htmlFor={`rotate-${instance.id}`} className="block text-xs text-ink-3 mb-1">
-              New API key
-            </label>
-            <input
+            <FieldLabel htmlFor={`rotate-${instance.id}`}>New API key</FieldLabel>
+            <TextInput
               id={`rotate-${instance.id}`}
               type="password"
               autoComplete="off"
@@ -339,7 +339,7 @@ export default function ConnectorForm({
                 }
               }}
               placeholder="Paste the new key"
-              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+              className="font-mono"
             />
             <p className="text-[12px] text-ink-4 mt-1">
               Agent assignments stay intact - only the stored key changes.
@@ -403,11 +403,10 @@ export default function ConnectorForm({
           {compatibleCredentials.length > 0 ? (
             <>
               <div>
-                <label className="block text-xs text-ink-3 mb-1">Use credential</label>
-                <select
+                <FieldLabel>Use credential</FieldLabel>
+                <Select
                   value={selectedCredentialId}
                   onChange={(e) => setSelectedCredentialId(e.target.value)}
-                  className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
                 >
                   {compatibleCredentials.map((cred) => (
                     <option key={cred.id} value={cred.id}>
@@ -415,7 +414,7 @@ export default function ConnectorForm({
                       {cred.accountName ? ` (${cred.accountName})` : ''}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <div className="flex gap-2 items-center pt-1">
                 <PrimaryButton

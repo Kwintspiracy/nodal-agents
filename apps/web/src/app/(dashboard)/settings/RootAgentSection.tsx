@@ -24,6 +24,7 @@ import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
+import Checkbox from '@/components/ui/Checkbox';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -139,19 +140,14 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
                       },
                     ] as const
                   ).map(({ key, label }) => (
-                    <label
+                    <Checkbox
                       key={key}
-                      className="flex cursor-pointer items-center gap-2.5 select-none"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={grants[key]}
-                        onChange={() => toggleGrant(key)}
-                        disabled={isSaving}
-                        className="h-4 w-4 cursor-pointer rounded border border-rule bg-canvas accent-conn-vivid disabled:opacity-50"
-                      />
-                      <span className="text-[14px] text-ink-2">{label}</span>
-                    </label>
+                      tone="connector"
+                      checked={grants[key]}
+                      onChange={() => toggleGrant(key)}
+                      disabled={isSaving}
+                      label={<span className="text-[14px] text-ink-2">{label}</span>}
+                    />
                   ))}
                 </div>
               </div>

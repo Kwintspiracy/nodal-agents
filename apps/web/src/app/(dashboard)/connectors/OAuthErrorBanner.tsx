@@ -1,6 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { X } from '@phosphor-icons/react';
+import RowActionButton from '@/components/ui/RowActionButton';
 
 interface Props {
   /** OAuth error code (RFC 6749 + internal). */
@@ -40,14 +42,15 @@ export default function OAuthErrorBanner({ code, message }: Props) {
           </div>
           <p className="text-err leading-relaxed">{message}</p>
         </div>
-        <button
-          type="button"
-          onClick={dismiss}
-          aria-label="Dismiss"
-          className="shrink-0 text-err/70 hover:text-err transition-colors text-lg leading-none px-2 -mt-0.5"
-        >
-          ×
-        </button>
+        <div className="-mt-0.5 shrink-0">
+          <RowActionButton
+            square
+            tone="danger"
+            title="Dismiss"
+            icon={<X size={14} />}
+            onClick={dismiss}
+          />
+        </div>
       </div>
     </div>
   );

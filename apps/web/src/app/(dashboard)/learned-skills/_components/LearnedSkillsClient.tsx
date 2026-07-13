@@ -12,6 +12,8 @@ import PageSearchInput from '@/components/ui/PageSearchInput';
 import EmptyState from '@/components/ui/EmptyState';
 import RowActionButton from '@/components/ui/RowActionButton';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
+import Switch from '@/components/ui/Switch';
+import Select from '@/components/ui/Select';
 import {
   setReflectionEnabledAction,
   archiveLearnedSkillAction,
@@ -225,24 +227,16 @@ export default function LearnedSkillsClient({
               can review and undo everything here.
             </p>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-labelledby="agent-learning-label"
-            aria-describedby="agent-learning-desc"
-            aria-checked={enabled}
-            onClick={handleToggle}
+          <Switch
+            checked={enabled}
+            onChange={handleToggle}
             disabled={isPending}
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
-              enabled ? 'bg-ok' : 'bg-ink-4'
-            }`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform duration-200 ${
-                enabled ? 'translate-x-4' : 'translate-x-0'
-              }`}
-            />
-          </button>
+            size="sm"
+            ariaLabelledBy="agent-learning-label"
+            ariaDescribedBy="agent-learning-desc"
+            trackClassName={enabled ? 'bg-ok' : 'bg-ink-4'}
+            thumbClassName={`bg-white ${enabled ? 'translate-x-4' : 'translate-x-0'}`}
+          />
         </div>
       </div>
 
@@ -288,10 +282,21 @@ export default function LearnedSkillsClient({
               className="rounded-2xl border border-rule-2 bg-paper overflow-hidden"
             >
               <div className="flex items-center gap-3 px-5 py-3.5">
-                <button
-                  type="button"
+                {/* A whole multi-line block (name + badges + description + assignment
+                    line) is the click target — a real <button> can't hold this rich
+                    content well, so this follows the same role="button" div pattern as
+                    ChatClient's ConversationRow / MemoriesClient's MemoryFact. */}
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setExpandedId(expandedId === skill.id ? null : skill.id)}
-                  className="flex-1 min-w-0 text-left"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setExpandedId(expandedId === skill.id ? null : skill.id);
+                    }
+                  }}
+                  className="min-w-0 flex-1 cursor-pointer text-left"
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-[14px] font-medium text-ink truncate">{skill.name}</span>
@@ -311,7 +316,7 @@ export default function LearnedSkillsClient({
                       ? `Assigned to ${skill.assignedAgentNames.join(', ')}`
                       : 'Not assigned'}
                   </p>
-                </button>
+                </div>
 
                 <div className="flex items-center gap-2 shrink-0">
                   {/* Assign — only for unassigned skills */}
@@ -410,26 +415,18 @@ export default function LearnedSkillsClient({
         {assignModal && (
           <div className="space-y-4">
             <p className="text-[13px] text-ink-3">Select an agent to assign this skill to.</p>
-            <div>
-              <label
-                htmlFor="assign-agent-select"
-                className="mb-1.5 block text-[13px] font-medium text-ink"
-              >
-                Agent
-              </label>
-              <select
-                id="assign-agent-select"
-                value={assigningAgentId}
-                onChange={(e) => setAssigningAgentId(e.target.value)}
-                className="w-full rounded-lg border border-rule-2 bg-canvas px-3 py-2 text-[14px] text-ink focus:border-conn-vivid focus:outline-none"
-              >
-                {assignableAgents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              id="assign-agent-select"
+              label="Agent"
+              value={assigningAgentId}
+              onChange={(e) => setAssigningAgentId(e.target.value)}
+            >
+              {assignableAgents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </Select>
           </div>
         )}
       </Modal>

@@ -12,6 +12,8 @@ import type { OperationDescriptor } from '@nodal-agents/shared';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import EdAddButton from '@/components/ui/EdAddButton';
 import Disc from '@/components/ui/Disc';
+import RowActionButton from '@/components/ui/RowActionButton';
+import Checkbox from '@/components/ui/Checkbox';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 
 /**
@@ -372,24 +374,26 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                     const checked =
                       state.enabledOperations === null || state.enabledOperations.includes(op.slug);
                     return (
-                      <label
+                      <Checkbox
                         key={op.slug}
-                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[13px] transition-colors hover:bg-hover"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => connToggleOp(c.connectorId, op.slug, ops)}
-                          className="shrink-0 accent-agent-vivid"
-                        />
-                        <code className="shrink-0 font-mono text-[12px] text-ink-2">{op.slug}</code>
-                        <RiskBadge op={op} />
-                        {op.description && (
-                          <span className="truncate text-[12px] italic text-ink-4">
-                            {op.description}
-                          </span>
-                        )}
-                      </label>
+                        tone="agent"
+                        checked={checked}
+                        onChange={() => connToggleOp(c.connectorId, op.slug, ops)}
+                        containerClassName="rounded px-1 py-1 text-[13px] transition-colors hover:bg-hover"
+                        label={
+                          <>
+                            <code className="shrink-0 font-mono text-[12px] text-ink-2">
+                              {op.slug}
+                            </code>
+                            <RiskBadge op={op} />
+                            {op.description && (
+                              <span className="truncate text-[12px] italic text-ink-4">
+                                {op.description}
+                              </span>
+                            )}
+                          </>
+                        }
+                      />
                     );
                   })}
                 </div>
@@ -465,23 +469,25 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                   const checked =
                     state.enabledTools === null || state.enabledTools.includes(tool.name);
                   return (
-                    <label
+                    <Checkbox
                       key={tool.name}
-                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[13px] transition-colors hover:bg-hover"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => mcpToggleTool(s.mcpServerId, tool.name, allTools)}
-                        className="shrink-0 accent-agent-vivid"
-                      />
-                      <code className="shrink-0 font-mono text-[12px] text-ink-2">{tool.name}</code>
-                      {tool.description && (
-                        <span className="truncate text-[12px] italic text-ink-4">
-                          {tool.description}
-                        </span>
-                      )}
-                    </label>
+                      tone="agent"
+                      checked={checked}
+                      onChange={() => mcpToggleTool(s.mcpServerId, tool.name, allTools)}
+                      containerClassName="rounded px-1 py-1 text-[13px] transition-colors hover:bg-hover"
+                      label={
+                        <>
+                          <code className="shrink-0 font-mono text-[12px] text-ink-2">
+                            {tool.name}
+                          </code>
+                          {tool.description && (
+                            <span className="truncate text-[12px] italic text-ink-4">
+                              {tool.description}
+                            </span>
+                          )}
+                        </>
+                      }
+                    />
                   );
                 })}
               </div>
@@ -524,15 +530,7 @@ function KindTag({ kind }: { kind: 'API' | 'MCP' }) {
 }
 
 function MiniBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded border border-rule px-2 py-1 text-[12px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
-    >
-      {children}
-    </button>
-  );
+  return <RowActionButton onClick={onClick}>{children}</RowActionButton>;
 }
 
 function RiskBadge({ op }: { op: OperationDescriptor }) {

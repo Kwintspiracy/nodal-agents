@@ -17,6 +17,9 @@ import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import { TagMini } from '@/components/ui/TagMini.tsx';
 import EmojiPicker, { WORKSPACE_EMOJI_PRESETS } from '@/components/ui/EmojiPicker.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextInput from '@/components/ui/TextInput';
 
 interface Props {
   initial: WorkspaceRow[];
@@ -154,29 +157,26 @@ export default function WorkspacesSection({ initial }: Props) {
                           disabled={isRenamePending}
                         />
                         <div className="flex items-center gap-1.5">
-                          <input
+                          <TextInput
                             autoFocus
                             type="text"
                             value={renameValue}
                             onChange={(e) => setRenameValue(e.target.value)}
                             maxLength={60}
                             disabled={isRenamePending}
-                            className="w-44 rounded-md border border-rule bg-canvas px-2 py-1 text-[13px] text-ink focus:border-ink-3 focus:outline-none"
+                            containerClassName="w-44"
                           />
-                          <button
+                          <PrimaryButton
+                            variant="ink"
+                            size="sm"
                             type="submit"
                             disabled={!renameValue.trim()}
-                            className="rounded-md bg-ink px-2.5 py-1 text-[12px] font-medium text-canvas hover:brightness-90 disabled:opacity-50"
                           >
                             Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelRename}
-                            className="rounded-md border border-rule px-2 py-1 text-[12px] text-ink-3 hover:border-rule-2 hover:text-ink-2"
-                          >
+                          </PrimaryButton>
+                          <RowActionButton type="button" onClick={cancelRename}>
                             Cancel
-                          </button>
+                          </RowActionButton>
                         </div>
                       </form>
                     ) : (
@@ -193,32 +193,19 @@ export default function WorkspacesSection({ initial }: Props) {
                   <div className="flex shrink-0 items-center gap-2">
                     {ws.active && <TagMini variant="ok">ACTIVE</TagMini>}
                     {!ws.active && (
-                      <button
-                        type="button"
-                        onClick={() => handleSwitch(ws.id)}
-                        className="rounded-md border border-rule px-2.5 py-1 text-[12px] text-ink-3 hover:border-rule-2 hover:text-ink-2 transition-colors"
-                      >
-                        Switch
-                      </button>
+                      <RowActionButton onClick={() => handleSwitch(ws.id)}>Switch</RowActionButton>
                     )}
                     {!isRenaming && (
-                      <button
-                        type="button"
-                        onClick={() => startRename(ws)}
-                        className="rounded-md border border-rule px-2.5 py-1 text-[12px] text-ink-3 hover:border-rule-2 hover:text-ink-2 transition-colors"
-                      >
-                        Rename
-                      </button>
+                      <RowActionButton onClick={() => startRename(ws)}>Rename</RowActionButton>
                     )}
                     {ws.role === 'owner' && !ws.active && (
-                      <button
-                        type="button"
+                      <RowActionButton
+                        tone="danger"
                         onClick={() => setDeleteTarget(ws)}
                         disabled={isDeleting}
-                        className="rounded-md border border-rule px-2.5 py-1 text-[12px] text-err hover:border-err/40 hover:bg-err/5 disabled:opacity-50 transition-colors"
                       >
                         Delete
-                      </button>
+                      </RowActionButton>
                     )}
                   </div>
                 </div>
@@ -234,14 +221,14 @@ export default function WorkspacesSection({ initial }: Props) {
               <EmojiPicker value={newIcon} onChange={setNewIcon} disabled={isCreating} />
             </div>
             <div className="flex gap-2 items-center">
-              <input
+              <TextInput
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Workspace name"
                 maxLength={60}
                 disabled={isCreating}
-                className="min-w-0 flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none disabled:opacity-50"
+                containerClassName="min-w-0 flex-1"
               />
             </div>
             <SetCtaRow onCancel={() => setNewName('')} pending={isCreating} saveLabel="Create" />

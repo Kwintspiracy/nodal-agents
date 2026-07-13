@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { setInstallNotesAction } from '@/lib/actions.ts';
 import { SetForm } from '@/components/ui/SetForm.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
+import TextArea from '@/components/ui/TextArea';
 
 interface Props {
   initial: string;
@@ -50,15 +51,14 @@ export default function InstallNotesForm({ initial }: Props) {
             example: &ldquo;ComfyUI runs on :8188&rdquo;, a local GPU, a local API path, or services
             the agent should call directly.
           </p>
-          <textarea
+          <TextArea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={5}
             maxLength={4000}
+            showCount
             placeholder="e.g. ComfyUI runs on :8188 with no auth. GPU: RTX 4090. Ollama on :11434."
-            className="w-full resize-y rounded-[9px] border border-rule-2 bg-canvas px-3 py-2.5 text-[14px] leading-[1.55] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-1 focus:ring-ink/20"
           />
-          <div className="text-right text-[12px] text-ink-4">{notes.length} / 4000</div>
         </div>
         <SetCtaRow onCancel={handleReset} pending={isPending} />
       </SetForm>

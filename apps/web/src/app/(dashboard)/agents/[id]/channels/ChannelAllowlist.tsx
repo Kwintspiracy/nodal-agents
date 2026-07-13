@@ -90,22 +90,20 @@ export default function ChannelAllowlist({
                 <p className="text-xs text-warn">Waiting for your approval</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
+                <RowActionButton
+                  tone="success"
                   disabled={isPending}
                   onClick={() => resolve(c.id, 'approve')}
-                  className="text-xs rounded-md bg-ok/15 text-ok px-2.5 py-1 hover:bg-ok/25 transition-colors disabled:opacity-50"
                 >
                   Approve
-                </button>
-                <button
-                  type="button"
+                </RowActionButton>
+                <RowActionButton
+                  tone="danger"
                   disabled={isPending}
                   onClick={() => resolve(c.id, 'deny')}
-                  className="text-xs rounded-md bg-err/15 text-err px-2.5 py-1 hover:bg-err/25 transition-colors disabled:opacity-50"
                 >
                   Deny
-                </button>
+                </RowActionButton>
               </div>
             </div>
           ))}

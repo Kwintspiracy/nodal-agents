@@ -8,6 +8,9 @@ import { sendTaskAction } from '@/lib/actions.ts';
 import type { AgentRow } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import Modal, { ModalFooter } from '@/components/ui/Modal';
+import TextArea from '@/components/ui/TextArea';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
 
 /**
  * SendTaskForm — the "New task" CTA for the Runs page. A neutral (white) toolbar
@@ -49,13 +52,13 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
             <label className="mb-1 block text-xs text-ink-3" htmlFor="task-prompt">
               Task description
             </label>
-            <textarea
+            <TextArea
               id="task-prompt"
               name="prompt"
               required
               rows={6}
               placeholder="Summarise the last 10 emails from my inbox…"
-              className="min-h-[80px] w-full resize-y rounded-lg border border-rule bg-hover px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="min-h-[80px] rounded-lg"
             />
           </div>
 
@@ -64,13 +67,13 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
               <label className="mb-1 block text-xs text-ink-3" htmlFor="task-agent">
                 Assign to
               </label>
-              <select
+              <Select
                 id="task-agent"
                 name="agentId"
                 required
                 value={selectedAgentId}
                 onChange={(e) => setSelectedAgentId(e.target.value)}
-                className="w-full rounded-lg border border-rule bg-hover px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+                className="rounded-lg"
               >
                 <option value="" disabled>
                   Select agent
@@ -80,35 +83,32 @@ export default function SendTaskForm({ agents }: { agents: AgentRow[] }) {
                     {a.name} ({a.slug})
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="mb-1 block text-xs text-ink-3" htmlFor="task-priority">
                 Priority
               </label>
-              <select
+              <Select
                 id="task-priority"
                 name="priority"
                 defaultValue="medium"
-                className="w-full rounded-lg border border-rule bg-hover px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+                className="rounded-lg"
               >
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
-              </select>
+              </Select>
             </div>
           </div>
 
           {selectedAgent?.telegramBotToken && (
-            <label className="flex items-center gap-2 text-sm text-ink-2">
-              <input
-                type="checkbox"
-                name="sendViaTelegram"
-                value="true"
-                className="rounded border border-rule bg-hover accent-white"
-              />
-              Send result via Telegram
-            </label>
+            <Checkbox
+              name="sendViaTelegram"
+              value="true"
+              label="Send result via Telegram"
+              className="bg-hover"
+            />
           )}
 
           <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">

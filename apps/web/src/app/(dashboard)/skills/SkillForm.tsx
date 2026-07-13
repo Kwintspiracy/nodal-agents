@@ -10,6 +10,10 @@ import {
   type SkillRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextInput from '@/components/ui/TextInput';
+import TextArea from '@/components/ui/TextArea';
 
 interface CreateProps {
   mode?: 'create';
@@ -96,13 +100,9 @@ export default function SkillForm(props: Props) {
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="px-4 py-2 text-sm font-medium bg-ink text-canvas rounded-lg hover:brightness-[0.92]"
-      >
+      <PrimaryButton variant="ink" onClick={() => setOpen(true)}>
         + New skill
-      </button>
+      </PrimaryButton>
     );
   }
 
@@ -116,15 +116,14 @@ export default function SkillForm(props: Props) {
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-ink">{isEdit ? 'Edit skill' : 'New skill'}</h3>
         {canReset && (
-          <button
-            type="button"
+          <RowActionButton
             onClick={() => setConfirmResetOpen(true)}
             disabled={isPending}
             title="Restore the catalog default content for this skill"
-            className="text-xs px-2.5 py-1 rounded border border-warn/30 text-warn hover:bg-warn-bg transition-colors disabled:opacity-50"
+            className="!border-warn/30 !text-warn hover:!bg-warn-bg hover:!text-warn"
           >
             Reset to default
-          </button>
+          </RowActionButton>
         )}
       </div>
       <ConfirmDialog
@@ -139,77 +138,55 @@ export default function SkillForm(props: Props) {
       />
 
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-slug">
-            Slug {isEdit && <span className="text-ink-4">(stable — not editable)</span>}
-          </label>
-          <input
-            id="skill-slug"
-            name="slug"
-            required={!isEdit}
-            readOnly={isEdit}
-            disabled={isEdit}
-            pattern={isEdit ? undefined : '[a-z0-9\\-]+'}
-            placeholder="my-skill"
-            defaultValue={initial?.slug}
-            title={isEdit ? 'Slug is a stable identifier and cannot be changed' : undefined}
-            className={
-              isEdit
-                ? 'w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink-3 cursor-not-allowed font-mono'
-                : 'w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono'
-            }
-          />
-        </div>
-        <div>
-          <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-name">
-            Name
-          </label>
-          <input
-            id="skill-name"
-            name="name"
-            required
-            placeholder="My Skill"
-            defaultValue={initial?.name}
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-          />
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-description">
-          Description <span className="text-ink-4">(optional)</span>
-        </label>
-        <input
-          id="skill-description"
-          name="description"
-          maxLength={500}
-          placeholder="What does this skill teach the agent?"
-          defaultValue={initial?.description ?? ''}
-          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+        <TextInput
+          id="skill-slug"
+          label={<>Slug {isEdit && <span className="text-ink-4">(stable — not editable)</span>}</>}
+          name="slug"
+          required={!isEdit}
+          readOnly={isEdit}
+          disabled={isEdit}
+          pattern={isEdit ? undefined : '[a-z0-9\\-]+'}
+          placeholder="my-skill"
+          defaultValue={initial?.slug}
+          title={isEdit ? 'Slug is a stable identifier and cannot be changed' : undefined}
+          className={isEdit ? 'cursor-not-allowed font-mono text-ink-3' : 'font-mono'}
         />
-      </div>
-
-      <div>
-        <label className="block text-xs text-ink-3 mb-1" htmlFor="skill-content">
-          Instructions
-        </label>
-        <textarea
-          id="skill-content"
-          name="content"
+        <TextInput
+          id="skill-name"
+          label="Name"
+          name="name"
           required
-          rows={18}
-          placeholder="Step-by-step instructions or context the agent gets when this skill is enabled."
-          defaultValue={initial?.content}
-          className="w-full bg-hover border border-rule rounded-md px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y min-h-[440px]"
+          placeholder="My Skill"
+          defaultValue={initial?.name}
         />
       </div>
+
+      <TextInput
+        id="skill-description"
+        label={
+          <>
+            Description <span className="text-ink-4">(optional)</span>
+          </>
+        }
+        name="description"
+        maxLength={500}
+        placeholder="What does this skill teach the agent?"
+        defaultValue={initial?.description ?? ''}
+      />
+
+      <TextArea
+        id="skill-content"
+        label="Instructions"
+        name="content"
+        required
+        rows={18}
+        placeholder="Step-by-step instructions or context the agent gets when this skill is enabled."
+        defaultValue={initial?.content}
+        className="min-h-[440px] leading-relaxed"
+      />
 
       <div className="flex gap-2 pt-1">
-        <button
-          type="submit"
-          disabled={isPending}
-          className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
-        >
+        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
           {isPending
             ? isEdit
               ? 'Saving…'
@@ -217,14 +194,13 @@ export default function SkillForm(props: Props) {
             : isEdit
               ? 'Save changes'
               : 'Create skill'}
-        </button>
-        <button
-          type="button"
+        </PrimaryButton>
+        <PrimaryButton
+          variant="neutral"
           onClick={() => (isEdit ? router.push('/skills') : setOpen(false))}
-          className="px-4 py-2 text-sm font-medium border border-rule text-ink-3 rounded-md hover:border-rule"
         >
           Cancel
-        </button>
+        </PrimaryButton>
       </div>
     </form>
   );

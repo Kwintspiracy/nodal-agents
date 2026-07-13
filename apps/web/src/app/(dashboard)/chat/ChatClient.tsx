@@ -14,6 +14,10 @@ import {
   X,
 } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import IconButton from '@/components/ui/IconButton';
+import TextArea from '@/components/ui/TextArea';
+import TextInput from '@/components/ui/TextInput';
 
 // useLayoutEffect runs synchronously after DOM mutation, BEFORE paint — so the
 // scroll lands before the user ever sees the top. SSR-safe alias (no window on
@@ -262,14 +266,14 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
         {/* Mobile-only header: title + button to open the history drawer. */}
         <div className="flex items-center justify-between gap-2 border-b border-rule-2 px-1 py-2 lg:hidden">
           <span className="truncate text-[13px] font-medium text-ink">{rootName ?? 'Chat'}</span>
-          <button
-            type="button"
+          <RowActionButton
             onClick={() => setShowHistory(true)}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-rule px-2.5 py-1 text-[11px] font-medium text-ink-2 transition-colors hover:bg-hover"
-            aria-label="Show conversations"
+            icon={<List size={14} />}
+            title="Show conversations"
+            className="!px-2.5 !py-1 !text-[11px]"
           >
-            <List size={14} /> Conversations
-          </button>
+            Conversations
+          </RowActionButton>
         </div>
 
         {/* Messages — scroll area; content lives in a 680px column centered in it. */}
@@ -319,7 +323,8 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
             onSubmit={(e) => void handleSubmit(e)}
             className="mx-auto w-full max-w-[680px] rounded-[22px] border border-rule-2 bg-paper shadow-[0_12px_20px_rgba(14,14,12,0.10)]"
           >
-            <textarea
+            <TextArea
+              bare
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -330,34 +335,34 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
               }}
               rows={1}
               placeholder={`Message ${rootName ?? 'your ROOT agent'}…`}
-              className="max-h-40 min-h-[24px] w-full resize-none border-0 bg-transparent px-4 pt-3.5 text-[13px] text-ink placeholder:text-ink-4 focus:outline-none"
+              className="max-h-40 min-h-[24px] resize-none px-4 pt-3.5 text-[13px]"
             />
             <div className="flex items-center justify-between px-2.5 pt-1 pb-2.5">
               <div className="flex items-center gap-1">
-                <button
-                  type="button"
+                <IconButton
+                  ghost
                   aria-label="Attachments — not available yet"
-                  className="flex size-8 items-center justify-center rounded-[10px] text-ink-4 transition-colors hover:bg-hover"
+                  className="!size-8 !rounded-[10px] !text-ink-4 hover:!bg-hover hover:!text-ink-4"
                 >
                   <Paperclip size={15} />
-                </button>
-                <button
-                  type="button"
+                </IconButton>
+                <IconButton
+                  ghost
                   aria-label="Mention an agent — not available yet"
-                  className="flex size-8 items-center justify-center rounded-[10px] text-ink-4 transition-colors hover:bg-hover"
+                  className="!size-8 !rounded-[10px] !text-ink-4 hover:!bg-hover hover:!text-ink-4"
                 >
                   <At size={15} />
-                </button>
+                </IconButton>
                 <span className="pl-1 text-[11px] text-ink-3">⌘ ↵ to send</span>
               </div>
-              <button
+              <IconButton
                 type="submit"
                 disabled={sending || input.trim().length === 0}
                 aria-label="Send message"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-hover-2 text-ink-2 transition-colors hover:bg-hover disabled:opacity-40"
+                className="!size-8 !shrink-0 !rounded-full !border-0 !bg-hover-2 !text-ink-2 hover:!bg-hover disabled:!opacity-40"
               >
                 <PaperPlaneTilt size={14} />
-              </button>
+              </IconButton>
             </div>
           </form>
         </div>
@@ -387,24 +392,23 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
+            <IconButton
+              ghost
               onClick={() => setShowHistory(false)}
-              className="text-ink-3 transition-colors hover:text-ink lg:hidden"
               aria-label="Close conversations"
+              className="!size-auto !p-0 !text-ink-3 hover:!text-ink lg:hidden"
             >
               <X size={16} />
-            </button>
+            </IconButton>
             <span className="text-sm font-semibold text-ink">Conversations</span>
           </div>
-          <button
-            type="button"
+          <IconButton
             onClick={() => void handleNew()}
             aria-label="New conversation"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-ink text-canvas transition-[filter] hover:brightness-[0.92]"
+            className="!size-7 !rounded-full !border-0 !bg-ink !text-canvas transition-[filter] hover:!bg-ink hover:!brightness-[0.92]"
           >
             <Plus size={14} weight="bold" />
-          </button>
+          </IconButton>
         </div>
 
         {/* Search */}
@@ -414,12 +418,12 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
               size={14}
               className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-4"
             />
-            <input
+            <TextInput
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search chats…"
-              className="w-full rounded-lg border border-rule bg-canvas py-1.5 pr-3 pl-8 text-xs text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="!rounded-lg !bg-canvas !pr-3 !pl-8 !text-xs"
             />
           </div>
         </div>
@@ -501,17 +505,23 @@ function ConversationRow({
           <span className="truncate text-[13px] font-medium text-ink">{title}</span>
           <div className="flex shrink-0 items-center gap-1">
             <span className="text-[11px] text-ink-4">{time}</span>
-            <button
-              type="button"
+            {/* A real <button> nested inside the row's own role="button" div
+                (ConversationRow) — valid, since that ancestor is a div, not an
+                actual interactive element. stopPropagation on both events so
+                neither the click nor the Enter/Space keydown also triggers the
+                row's own onSelect. */}
+            <IconButton
+              ghost
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete();
               }}
+              onKeyDown={(e) => e.stopPropagation()}
               aria-label="Delete conversation"
-              className="ml-0.5 hidden rounded p-0.5 text-ink-4 transition-colors group-hover:inline-flex hover:text-err"
+              className="ml-0.5 !hidden !size-auto !rounded !p-0.5 !text-ink-4 group-hover:!inline-flex hover:!text-err"
             >
               <Trash size={12} />
-            </button>
+            </IconButton>
           </div>
         </div>
         {preview && <p className="truncate text-[12px] text-ink-4">{preview}</p>}

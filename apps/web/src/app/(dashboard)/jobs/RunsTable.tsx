@@ -11,6 +11,7 @@ import type { JobRow, AgentRow } from '@/lib/actions.ts';
 import PillTabs from '@/components/ui/PillTabs';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
+import TextInput from '@/components/ui/TextInput';
 import { MagnifyingGlass } from '@phosphor-icons/react';
 
 type Tab = 'All' | 'Running' | 'Failed';
@@ -108,14 +109,17 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
           variant="dark-active"
           onChange={(v) => setTab(v as Tab)}
         />
-        <div className="ml-auto flex h-[34px] min-w-[240px] items-center gap-2 rounded-md border border-rule-2 bg-paper px-3 text-[13px] text-ink-4">
-          <MagnifyingGlass size={13} className="shrink-0" />
-          <input
+        <div className="relative ml-auto min-w-[240px]">
+          <MagnifyingGlass
+            size={13}
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-4"
+          />
+          <TextInput
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by task or agent…"
-            className="flex-1 border-0 bg-transparent text-[14px] leading-none text-ink outline-none placeholder:text-ink-4"
+            className="pl-8 text-[13px]"
           />
         </div>
       </div>

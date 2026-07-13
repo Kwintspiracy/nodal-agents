@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 /**
  * Shown when AUTH_MODE=local-trust — no real auth, just a friendly entry point.
@@ -26,13 +27,9 @@ export default function LocalTrustBanner() {
             <code className="text-ok">LAN</code> at <code>nodal-agents init</code> to enable email +
             password authentication.
           </p>
-          <button
-            type="button"
-            onClick={() => router.push('/')}
-            className="w-full rounded-lg bg-agent-vivid text-canvas py-2.5 text-sm font-semibold hover:bg-agent-vivid transition-colors"
-          >
+          <PrimaryButton variant="agent" className="w-full" onClick={() => router.push('/')}>
             Enter dashboard
-          </button>
+          </PrimaryButton>
         </div>
       </div>
     </div>

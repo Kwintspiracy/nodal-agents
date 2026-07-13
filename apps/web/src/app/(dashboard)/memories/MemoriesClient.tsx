@@ -49,6 +49,7 @@ import AgentAvatar from '@/components/ui/AgentAvatar';
 import LiveDot from '@/components/ui/LiveDot';
 import RowActionButton from '@/components/ui/RowActionButton';
 import EmptyState from '@/components/ui/EmptyState';
+import StarRating from '@/components/ui/StarRating';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
 import NewMemoryModal from './NewMemoryModal';
@@ -277,54 +278,14 @@ function ImportanceStars({
   }
 
   return (
-    <div className="inline-flex items-center gap-1">
-      <div
-        className="inline-flex items-center gap-0.5"
-        aria-label={`Importance ${importance} of 5`}
-      >
-        {[1, 2, 3, 4, 5].map((value) => (
-          <button
-            key={value}
-            type="button"
-            disabled={isPending}
-            onClick={() => handleClick(value)}
-            title={`Set importance to ${value}`}
-            className="p-0.5 text-ink-4 transition-colors hover:text-amber-500 disabled:opacity-50"
-          >
-            <svg
-              viewBox="0 0 16 16"
-              className="h-[12px] w-[12px]"
-              fill={value <= importance ? '#f5a623' : 'none'}
-              stroke={value <= importance ? '#f5a623' : 'currentColor'}
-              strokeWidth="1.3"
-            >
-              <path d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3l-3.8 2 .7-4.3-3.1-3 4.3-.6z" />
-            </svg>
-          </button>
-        ))}
-      </div>
-      {locked && (
-        <button
-          type="button"
-          disabled={isPending}
-          onClick={handleUnpin}
-          title="Pinned by you — click to let the curator manage it again"
-          className="group inline-flex h-[20px] cursor-pointer items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 text-[10px] font-medium text-amber-600 transition-colors hover:border-rule hover:bg-hover hover:text-ink disabled:cursor-default disabled:opacity-50"
-        >
-          <svg viewBox="0 0 16 16" className="h-[9px] w-[9px] shrink-0" fill="currentColor">
-            <path d="M8 1a3 3 0 0 0-3 3v2H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-1V4a3 3 0 0 0-3-3zm-1.5 5V4a1.5 1.5 0 0 1 3 0v2z" />
-          </svg>
-          {/* Both labels are always placed in the same grid cell (stacked) so
-              the pill's intrinsic width is driven by the wider word ("Pinned")
-              at all times — toggling `visibility` on hover swaps which one is
-              seen without ever reflowing the button (and the table below it). */}
-          <span className="grid">
-            <span className="col-start-1 row-start-1 group-hover:invisible">Pinned</span>
-            <span className="invisible col-start-1 row-start-1 group-hover:visible">Unpin</span>
-          </span>
-        </button>
-      )}
-    </div>
+    <StarRating
+      value={importance}
+      onChange={handleClick}
+      size="sm"
+      disabled={isPending}
+      locked={locked}
+      onUnpin={handleUnpin}
+    />
   );
 }
 

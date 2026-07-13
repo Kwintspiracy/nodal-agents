@@ -9,6 +9,11 @@ import {
   type ScheduleRow,
 } from '@/lib/actions.ts';
 import CronBuilder from '@/components/CronBuilder.tsx';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextInput from '@/components/ui/TextInput';
+import TextArea from '@/components/ui/TextArea';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
 
 interface CreateProps {
   mode?: 'create';
@@ -100,15 +105,14 @@ export default function ScheduleForm(props: Props) {
     // here when closed.
     if (controlled) return null;
     return (
-      <button
-        type="button"
+      <PrimaryButton
+        variant="ink"
         onClick={() => setOpen(true)}
         disabled={props.agents.length === 0}
-        className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[14px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:cursor-not-allowed disabled:opacity-40"
         title={props.agents.length === 0 ? 'Create an agent first' : ''}
       >
         + New schedule
-      </button>
+      </PrimaryButton>
     );
   }
 
@@ -133,66 +137,50 @@ export default function ScheduleForm(props: Props) {
       </h3>
 
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-agent">
-            Agent
-          </label>
-          <select
-            id="schedule-agent"
-            name="agentId"
-            required
-            value={agentId}
-            onChange={(e) => setAgentId(e.target.value)}
-            className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
-          >
-            <option value="">Select…</option>
-            {props.agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-name">
-            Name
-          </label>
-          <input
-            id="schedule-name"
-            name="name"
-            required
-            defaultValue={nameDefault}
-            placeholder="Daily standup"
-            className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
-          />
-        </div>
+        <Select
+          id="schedule-agent"
+          label="Agent"
+          name="agentId"
+          required
+          value={agentId}
+          onChange={(e) => setAgentId(e.target.value)}
+        >
+          <option value="">Select…</option>
+          {props.agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </Select>
+        <TextInput
+          id="schedule-name"
+          label="Name"
+          name="name"
+          required
+          defaultValue={nameDefault}
+          placeholder="Daily standup"
+        />
       </div>
 
       <CronBuilder name="cronExpr" initial={cronDefault} />
 
-      <div>
-        <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-task">
-          Task instructions
-        </label>
-        <textarea
-          id="schedule-task"
-          name="task"
-          required
-          rows={4}
-          defaultValue={taskDefault}
-          placeholder="What should the agent do each time this fires?"
-          className="w-full resize-y rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
-        />
-      </div>
+      <TextArea
+        id="schedule-task"
+        label="Task instructions"
+        name="task"
+        required
+        rows={4}
+        defaultValue={taskDefault}
+        placeholder="What should the agent do each time this fires?"
+      />
 
       <div className="space-y-2">
         <label className="flex items-start gap-2.5 rounded-md border border-rule bg-canvas px-3 py-2.5 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             name="notifyOnSuccess"
             checked={notifyOnSuccess}
             onChange={(e) => setNotifyOnSuccess(e.target.checked)}
-            className="mt-0.5 h-4 w-4 shrink-0 accent-ink"
+            className="mt-0.5"
           />
           <span>
             <span className="font-medium text-ink">Notify me on Telegram when it succeeds</span>
@@ -212,11 +200,9 @@ export default function ScheduleForm(props: Props) {
       </div>
 
       <div>
-        <label className="mb-1 block text-xs text-ink-3" htmlFor="schedule-daily-budget">
-          Daily budget ($)
-        </label>
-        <input
+        <TextInput
           id="schedule-daily-budget"
+          label="Daily budget ($)"
           name="dailyBudgetUsd"
           type="number"
           required
@@ -224,7 +210,7 @@ export default function ScheduleForm(props: Props) {
           max={100}
           step={0.5}
           defaultValue={dailyBudgetDefault}
-          className="w-32 rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
+          className="w-32"
         />
         <p className="mt-1 text-xs text-ink-3">
           Runs pause automatically once this schedule spends this much in a day, resuming the next.
@@ -232,11 +218,7 @@ export default function ScheduleForm(props: Props) {
       </div>
 
       <div className="flex gap-2 pt-1">
-        <button
-          type="submit"
-          disabled={isPending}
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[14px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
-        >
+        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
           {isPending
             ? isEdit
               ? 'Saving…'
@@ -244,17 +226,16 @@ export default function ScheduleForm(props: Props) {
             : isEdit
               ? 'Save changes'
               : 'Create schedule'}
-        </button>
-        <button
-          type="button"
+        </PrimaryButton>
+        <PrimaryButton
+          variant="neutral"
           onClick={() => {
             if (isEdit) props.onDone?.();
             else setOpen(false);
           }}
-          className="inline-flex h-[34px] items-center rounded-md border border-rule-2 px-3.5 text-[14px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink"
         >
           Cancel
-        </button>
+        </PrimaryButton>
       </div>
     </form>
   );

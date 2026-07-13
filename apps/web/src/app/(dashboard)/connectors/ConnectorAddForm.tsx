@@ -10,6 +10,9 @@ import {
 import HelpSteps from '@/components/HelpSteps.tsx';
 import { APIKEY_GUIDES } from '@/lib/connector-help.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import TextInput from '@/components/ui/TextInput';
+import Select from '@/components/ui/Select';
+import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import type { CompatibleCredential } from './ConnectorForm.tsx';
 
@@ -91,15 +94,14 @@ export default function ConnectorAddForm({
     return (
       <form onSubmit={handleApiKeySubmit} className="space-y-3">
         <div>
-          <label htmlFor={`add-name-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
+          <FieldLabel htmlFor={`add-name-${catalogItem.slug}`}>
             Name <span className="text-ink-4">(e.g. &quot;Notion perso&quot;)</span>
-          </label>
-          <input
+          </FieldLabel>
+          <TextInput
             id={`add-name-${catalogItem.slug}`}
             name="name"
             required
             placeholder={catalogItem.label}
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </div>
         {APIKEY_GUIDES[catalogItem.slug as keyof typeof APIKEY_GUIDES] && (
@@ -113,19 +115,14 @@ export default function ConnectorAddForm({
           </details>
         )}
         <div>
-          <label
-            htmlFor={`add-apikey-${catalogItem.slug}`}
-            className="block text-xs text-ink-3 mb-1"
-          >
-            API key
-          </label>
-          <input
+          <FieldLabel htmlFor={`add-apikey-${catalogItem.slug}`}>API key</FieldLabel>
+          <TextInput
             id={`add-apikey-${catalogItem.slug}`}
             name="apiKey"
             type="password"
             required
             autoComplete="off"
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+            className="font-mono"
           />
         </div>
         <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
@@ -147,11 +144,10 @@ export default function ConnectorAddForm({
     return (
       <div className="space-y-3">
         <div>
-          <label className="block text-xs text-ink-3 mb-1">Use existing credential</label>
-          <select
+          <FieldLabel>Use existing credential</FieldLabel>
+          <Select
             value={selectedCredentialId}
             onChange={(e) => setSelectedCredentialId(e.target.value)}
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           >
             {compatibleCredentials.map((cred) => (
               <option key={cred.id} value={cred.id}>
@@ -159,7 +155,7 @@ export default function ConnectorAddForm({
                 {cred.accountName ? ` (${cred.accountName})` : ''}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <ModalFooter className="-mx-6 -mb-6 mt-2 rounded-b-xl">
           {onCancel && (

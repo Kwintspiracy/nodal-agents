@@ -7,6 +7,8 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CountPill from '@/components/ui/CountPill';
 import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import TextInput from '@/components/ui/TextInput';
 import type { CredentialEntry } from './CredentialCard.tsx';
 import type { ActionResult } from '@/lib/actions.ts';
 
@@ -243,7 +245,7 @@ function CredentialRow({
         <tr className="border-b border-rule-2 last:border-0 bg-hover/40">
           <td colSpan={6} className="px-[18px] py-3">
             <div className="flex items-center gap-2">
-              <input
+              <TextInput
                 type="text"
                 value={renameName}
                 onChange={(e) => setRenameName(e.target.value)}
@@ -252,17 +254,12 @@ function CredentialRow({
                   if (e.key === 'Escape') setRenameOpen(false);
                 }}
                 autoFocus
-                className="w-full max-w-sm rounded-md border border-rule bg-paper px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
+                containerClassName="w-full max-w-sm"
                 placeholder="New display name"
               />
-              <button
-                type="button"
-                onClick={performRename}
-                disabled={isPending}
-                className="inline-flex h-[30px] items-center rounded-md bg-ink px-3 text-xs font-semibold text-canvas hover:brightness-[0.92] disabled:opacity-50"
-              >
+              <PrimaryButton variant="ink" size="sm" onClick={performRename} disabled={isPending}>
                 {isPending ? 'Saving…' : 'Save'}
-              </button>
+              </PrimaryButton>
               <RowActionButton onClick={() => setRenameOpen(false)}>Cancel</RowActionButton>
             </div>
           </td>

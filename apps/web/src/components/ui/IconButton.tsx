@@ -5,8 +5,17 @@ type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   /** When true a small coral dot is shown at the top-right of the button.
    *  Maps to `.icon-btn .badge` in the design bundle — used for the bell. */
   badge?: boolean;
-  /** Visual size — `md` is the 34×34 topbar size; `sm` is 30×30 for in-row use. */
+  /** Visual size — `md` is the 34×34 topbar size; `sm` is 30×30 for in-row use.
+   *  Ignored when `ghost` is set (see below). */
   size?: 'sm' | 'md';
+  /** Borderless, backgroundless variant — for an icon control embedded inside
+   *  another surface (the show/hide toggle inside a password field, the
+   *  sidebar's mobile hamburger/close, the user-menu sign-out icon) where the
+   *  usual chrome square would visually clash. `size` is ignored in this mode
+   *  — the caller sizes it directly via `className` instead, since ghost call
+   *  sites tend to need bespoke/responsive dimensions the two fixed sizes
+   *  don't cover. */
+  ghost?: boolean;
   /** React 19 lets function components accept `ref` as a plain prop — no
    *  forwardRef needed. Used by Menu.tsx to measure the default trigger for
    *  panel positioning. */
@@ -22,6 +31,7 @@ export default function IconButton({
   children,
   badge,
   size = 'md',
+  ghost = false,
   className = '',
   type = 'button',
   ref,
@@ -32,7 +42,9 @@ export default function IconButton({
     <button
       ref={ref}
       type={type}
-      className={`relative flex shrink-0 items-center justify-center border border-rule-2 bg-paper text-ink-2 transition-colors hover:text-ink ${dim} ${className}`}
+      className={`relative flex shrink-0 items-center justify-center text-ink-2 transition-colors hover:text-ink ${
+        ghost ? '' : `border border-rule-2 bg-paper ${dim}`
+      } ${className}`}
       {...rest}
     >
       {children}

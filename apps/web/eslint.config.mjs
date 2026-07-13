@@ -40,15 +40,17 @@ const noNativeDialogs = {
 // inside components/ui/ itself, where the design-system primitives live and
 // are allowed to touch the native element once.
 //
-// `warn` for now — this surfaces the exact per-file backlog for the Phase 2
-// migration (see the ESLint output) without breaking the build. Phase 2 flips
-// this to `error` once every consumer above is migrated.
+// `error` — Phase 2 migrated every consumer to a design-system component
+// (245 violations → 0) and Phase 2R reconciled the remaining temporary
+// disables (SegmentedControl, CopyButton, DisclosureButton). This is the
+// permanent lock: any new raw <button>/<input>/<select>/<textarea> outside
+// components/ui/ now fails CI instead of warning.
 const noRawFormElements = {
   files: ['src/**/*.{ts,tsx}'],
   ignores: ['src/components/ui/**'],
   rules: {
     'no-restricted-syntax': [
-      'warn',
+      'error',
       {
         selector: "JSXOpeningElement[name.name='button']",
         message:

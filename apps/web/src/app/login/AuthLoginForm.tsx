@@ -3,6 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeSlash } from '@phosphor-icons/react';
+import PillTabs from '@/components/ui/PillTabs';
+import TextInput from '@/components/ui/TextInput';
+import IconButton from '@/components/ui/IconButton';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 type Mode = 'signin' | 'signup';
 
@@ -99,32 +103,23 @@ export default function AuthLoginForm() {
           <p className="text-sm text-ink-3 mt-1">Sign in or create an account to continue</p>
         </div>
 
-        <div className="flex mb-6 rounded-lg bg-paper p-1 border border-rule-2">
-          <button
-            type="button"
-            onClick={() => resetMode('signin')}
-            className={`flex-1 py-2 text-xs font-medium rounded-md transition-colors ${
-              mode === 'signin' ? 'bg-hover text-ink' : 'text-ink-3 hover:text-ink-2'
-            }`}
-          >
-            Sign in
-          </button>
-          <button
-            type="button"
-            onClick={() => resetMode('signup')}
-            className={`flex-1 py-2 text-xs font-medium rounded-md transition-colors ${
-              mode === 'signup' ? 'bg-hover text-ink' : 'text-ink-3 hover:text-ink-2'
-            }`}
-          >
-            Create account
-          </button>
-        </div>
+        <PillTabs
+          tabs={[
+            { value: 'signin', label: 'Sign in' },
+            { value: 'signup', label: 'Create account' },
+          ]}
+          value={mode}
+          onChange={(v) => resetMode(v as Mode)}
+          variant="inset"
+          fullWidth
+          className="mb-6 border border-rule-2"
+        />
 
         <div className="rounded-2xl border border-rule-2 bg-paper/60 p-6 space-y-4">
           <form onSubmit={mode === 'signin' ? handleSignIn : handleSignUp} className="space-y-3">
             <div>
               <label className="block text-xs text-ink-3 mb-1.5">Email address</label>
-              <input
+              <TextInput
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -132,42 +127,43 @@ export default function AuthLoginForm() {
                 required
                 autoFocus
                 data-testid="email-input"
-                className="w-full rounded-lg border border-rule-2 bg-hover px-3 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule transition-colors"
+                className="rounded-lg border-rule-2 bg-hover py-2.5 focus:border-rule"
               />
             </div>
 
             <div>
               <label className="block text-xs text-ink-3 mb-1.5">Password</label>
               <div className="relative">
-                <input
+                <TextInput
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
                   data-testid="password-input"
-                  className="w-full rounded-lg border border-rule-2 bg-hover px-3 py-2.5 pr-10 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule transition-colors"
+                  className="rounded-lg border-rule-2 bg-hover py-2.5 pr-10 focus:border-rule"
                 />
-                <button
+                <IconButton
+                  ghost
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink-2 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink-2"
                 >
                   {showPassword ? <EyeSlash size={15} /> : <Eye size={15} />}
-                </button>
+                </IconButton>
               </div>
             </div>
 
             {mode === 'signup' && (
               <div>
                 <label className="block text-xs text-ink-3 mb-1.5">Confirm password</label>
-                <input
+                <TextInput
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full rounded-lg border border-rule-2 bg-hover px-3 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule transition-colors"
+                  className="rounded-lg border-rule-2 bg-hover py-2.5 focus:border-rule"
                 />
               </div>
             )}
@@ -180,14 +176,15 @@ export default function AuthLoginForm() {
 
             {info && <p className="text-xs text-ok">{info}</p>}
 
-            <button
+            <PrimaryButton
+              variant="agent"
               type="submit"
               disabled={loading}
               data-testid="login-button"
-              className="w-full rounded-lg bg-agent-vivid text-canvas py-2.5 text-sm font-semibold hover:bg-agent-vivid transition-colors disabled:opacity-40 disabled:cursor-not-allowed mt-1"
+              className="mt-1 w-full"
             >
               {loading ? '…' : mode === 'signin' ? 'Sign in' : 'Create account'}
-            </button>
+            </PrimaryButton>
           </form>
         </div>
       </div>

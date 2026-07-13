@@ -3,6 +3,10 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { createMcpServerFromCatalogAction, type McpCatalogItem } from '@/lib/actions.ts';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import TextInput from '@/components/ui/TextInput';
+import Select from '@/components/ui/Select';
+import FieldLabel from '@/components/ui/FieldLabel';
 
 interface Props {
   /** Catalog entries available for new connections. */
@@ -62,43 +66,31 @@ export default function McpServerForm({ catalog }: Props) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-ink-3 mb-1" htmlFor="mcp-slug">
-            Connector
-          </label>
-          <select
-            id="mcp-slug"
-            value={slug}
-            onChange={(ev) => setSlug(ev.target.value)}
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
-          >
+          <FieldLabel htmlFor="mcp-slug">Connector</FieldLabel>
+          <Select id="mcp-slug" value={slug} onChange={(ev) => setSlug(ev.target.value)}>
             {catalog.map((e) => (
               <option key={e.slug} value={e.slug}>
                 {e.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
-          <label className="block text-xs text-ink-3 mb-1" htmlFor="mcp-name">
-            Name
-          </label>
-          <input
+          <FieldLabel htmlFor="mcp-name">Name</FieldLabel>
+          <TextInput
             id="mcp-name"
             type="text"
             required
             value={name}
             onChange={(ev) => setName(ev.target.value)}
             placeholder={selected?.label ?? ''}
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-xs text-ink-3 mb-1" htmlFor="mcp-key">
-          API key
-        </label>
-        <input
+        <FieldLabel htmlFor="mcp-key">API key</FieldLabel>
+        <TextInput
           id="mcp-key"
           name="apiKey"
           type="password"
@@ -107,7 +99,7 @@ export default function McpServerForm({ catalog }: Props) {
           value={apiKey}
           onChange={(ev) => setApiKey(ev.target.value)}
           placeholder={selected ? `${selected.keyPrefix}…` : ''}
-          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+          className="font-mono"
         />
       </div>
 
@@ -117,13 +109,9 @@ export default function McpServerForm({ catalog }: Props) {
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={isPending || !name.trim() || !apiKey.trim()}
-        className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
-      >
+      <PrimaryButton type="submit" disabled={isPending || !name.trim() || !apiKey.trim()}>
         {isPending ? 'Connecting…' : 'Connect'}
-      </button>
+      </PrimaryButton>
     </form>
   );
 }

@@ -7,6 +7,7 @@ import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import { assignSkillAction, unassignSkillAction } from '@/lib/actions.ts';
 import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import Checkbox from '@/components/ui/Checkbox';
 
 type Props = {
   open: boolean;
@@ -122,12 +123,11 @@ function AssignPanel({
               key={agent.id}
               className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-hover"
             >
-              <input
-                type="checkbox"
+              <Checkbox
+                tone="skill"
                 checked={assigned}
                 disabled={pending}
                 onChange={() => toggle(agent.id)}
-                className="h-4 w-4 shrink-0 accent-skill-vivid"
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-ink">{agent.name}</span>

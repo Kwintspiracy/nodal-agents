@@ -336,8 +336,11 @@ function SortableTeamHeader({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={`mb-2 flex items-center gap-2 ${isDragging ? 'opacity-50' : ''}`}
     >
-      <button
-        type="button"
+      {/* dnd-kit's own `attributes` already provide role="button" + tabIndex —
+          this is dnd-kit's documented pattern for a drag handle that isn't a
+          real <button> (a fixed-size boxed IconButton would misalign this
+          inline glyph against the non-sortable spacer column). */}
+      <span
         {...attributes}
         {...listeners}
         aria-label="Drag team"
@@ -345,7 +348,7 @@ function SortableTeamHeader({
         className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-2 transition-colors leading-none touch-none"
       >
         ⋮⋮
-      </button>
+      </span>
       <h2 className="text-xs font-semibold text-ink-3 uppercase tracking-wider">
         Team — {orchestrator.name}
       </h2>
@@ -438,8 +441,7 @@ function SortableWorkerRow({
     >
       <td className={`px-5 py-3 ${indent ? 'pl-10' : ''}`}>
         <div className="flex items-center gap-3">
-          <button
-            type="button"
+          <span
             {...attributes}
             {...listeners}
             aria-label="Drag row"
@@ -447,7 +449,7 @@ function SortableWorkerRow({
             className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-3 transition-colors leading-none touch-none select-none"
           >
             ⋮⋮
-          </button>
+          </span>
           <AgentAvatar agent={agent} />
           <AgentLabel agent={agent} />
           <ActivityBadge agent={agent} activity={activity} />

@@ -3,6 +3,8 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions.ts';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextArea from '@/components/ui/TextArea';
 
 interface Props {
   approvalId: string;
@@ -47,43 +49,46 @@ export default function ApprovalActions({ approvalId }: Props) {
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
-        <button
-          type="button"
+        <PrimaryButton
+          variant="ink"
+          size="sm"
           onClick={handleApprove}
           disabled={isPending}
-          className="rounded-md bg-ok px-3 py-1.5 text-xs font-semibold text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-40"
+          className="!bg-ok !text-xs !text-canvas hover:!brightness-[0.92]"
         >
           Approve
-        </button>
-        <button
-          type="button"
+        </PrimaryButton>
+        <PrimaryButton
+          variant="danger"
+          size="sm"
           onClick={handleReject}
           disabled={isPending}
-          className="rounded-md border border-err/30 px-3 py-1.5 text-xs font-semibold text-err transition-colors hover:border-err/60 disabled:opacity-40"
+          className="!text-xs"
         >
           {showRejectInput ? 'Confirm reject' : 'Reject'}
-        </button>
+        </PrimaryButton>
         {showRejectInput && (
-          <button
-            type="button"
+          <PrimaryButton
+            variant="neutral"
+            size="sm"
+            className="!border-0 !bg-transparent !text-ink-3 hover:!text-ink"
             onClick={() => {
               setShowRejectInput(false);
               setNotes('');
             }}
-            className="px-3 py-1.5 text-xs text-ink-3 hover:text-ink"
           >
             Cancel
-          </button>
+          </PrimaryButton>
         )}
       </div>
       {showRejectInput && (
-        <textarea
+        <TextArea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Reason for rejection (optional, shown to the agent)"
           rows={2}
           maxLength={500}
-          className="w-full resize-none rounded-md border border-rule bg-canvas px-2 py-1.5 text-xs text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
+          className="!resize-none !bg-canvas text-xs"
         />
       )}
     </div>

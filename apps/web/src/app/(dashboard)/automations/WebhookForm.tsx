@@ -5,6 +5,10 @@ import { toast } from 'sonner';
 import { createWebhookTriggerAction, type AgentRow } from '@/lib/actions.ts';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
+import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextInput from '@/components/ui/TextInput';
+import TextArea from '@/components/ui/TextArea';
+import Select from '@/components/ui/Select';
 
 interface Props {
   agents: AgentRow[];
@@ -65,13 +69,9 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
           Paste this URL into the service that should notify this agent. It contains the secret —
           treat it like a password.
         </p>
-        <button
-          type="button"
-          onClick={handleDone}
-          className="inline-flex h-[34px] items-center rounded-md border-0 bg-ink px-3.5 text-[14px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92]"
-        >
+        <PrimaryButton variant="ink" onClick={handleDone}>
           Done
-        </button>
+        </PrimaryButton>
       </div>
     );
   }
@@ -84,51 +84,38 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
       <h3 className="text-sm font-semibold text-ink">New webhook</h3>
 
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="mb-1 block text-xs text-ink-3" htmlFor="webhook-agent">
-            Agent
-          </label>
-          <select
-            id="webhook-agent"
-            name="agentId"
-            required
-            value={agentId}
-            onChange={(e) => setAgentId(e.target.value)}
-            className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
-          >
-            <option value="">Select…</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-ink-3" htmlFor="webhook-name">
-            Name
-          </label>
-          <input
-            id="webhook-name"
-            name="name"
-            required
-            placeholder="GitHub PR opened"
-            className="w-full rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
-          />
-        </div>
+        <Select
+          id="webhook-agent"
+          label="Agent"
+          name="agentId"
+          required
+          value={agentId}
+          onChange={(e) => setAgentId(e.target.value)}
+        >
+          <option value="">Select…</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </Select>
+        <TextInput
+          id="webhook-name"
+          label="Name"
+          name="name"
+          required
+          placeholder="GitHub PR opened"
+        />
       </div>
 
       <div>
-        <label className="mb-1 block text-xs text-ink-3" htmlFor="webhook-task">
-          Task template
-        </label>
-        <textarea
+        <TextArea
           id="webhook-task"
+          label="Task template"
           name="taskTemplate"
           required
           rows={4}
           placeholder="A new pull request was opened: {pull_request.title}"
-          className="w-full resize-y rounded-md border border-rule bg-canvas px-2 py-1.5 text-sm text-ink placeholder-ink-4 focus:border-ink-3 focus:outline-none"
         />
         <p className="mt-1 text-xs text-ink-3">
           Use {'{field.subfield}'} to inject data from the incoming JSON payload (e.g.{' '}
@@ -137,20 +124,12 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
       </div>
 
       <div className="flex gap-2 pt-1">
-        <button
-          type="submit"
-          disabled={isPending}
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-0 bg-ink px-3.5 text-[14px] font-medium leading-none text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
-        >
+        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
           {isPending ? 'Creating…' : 'Create webhook'}
-        </button>
-        <button
-          type="button"
-          onClick={() => onOpenChange(false)}
-          className="inline-flex h-[34px] items-center rounded-md border border-rule-2 px-3.5 text-[14px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink"
-        >
+        </PrimaryButton>
+        <PrimaryButton variant="neutral" onClick={() => onOpenChange(false)}>
           Cancel
-        </button>
+        </PrimaryButton>
       </div>
     </form>
   );

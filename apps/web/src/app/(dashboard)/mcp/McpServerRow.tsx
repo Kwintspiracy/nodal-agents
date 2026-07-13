@@ -9,6 +9,8 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import TextInput from '@/components/ui/TextInput';
+import FieldLabel from '@/components/ui/FieldLabel';
 import McpEditForm from './McpEditForm.tsx';
 
 interface Props {
@@ -121,10 +123,8 @@ export default function McpServerRow({ instance, catalogLabel, description, onCl
       {rotateOpen && (
         <div className="space-y-3 border-t border-rule-2 pt-3">
           <div>
-            <label htmlFor={`mcp-rotate-${instance.id}`} className="mb-1 block text-xs text-ink-3">
-              New API key
-            </label>
-            <input
+            <FieldLabel htmlFor={`mcp-rotate-${instance.id}`}>New API key</FieldLabel>
+            <TextInput
               id={`mcp-rotate-${instance.id}`}
               type="password"
               autoComplete="off"
@@ -139,7 +139,7 @@ export default function McpServerRow({ instance, catalogLabel, description, onCl
                 }
               }}
               placeholder="Paste the new key"
-              className="w-full rounded-md border border-rule bg-hover px-2 py-1.5 font-mono text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="font-mono"
             />
             <p className="mt-1 text-[12px] text-ink-4">
               Agent assignments stay intact - the key is verified against the server before being

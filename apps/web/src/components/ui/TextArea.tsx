@@ -13,6 +13,11 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'className'> & {
   showCount?: boolean;
   className?: string;
   containerClassName?: string;
+  /** Drops the canonical border/bg/padding chrome — for a textarea embedded in
+   *  its own custom-chromed container (e.g. ChatClient's message composer,
+   *  which sits inside a rounded floating card and needs to blend into it
+   *  seamlessly). The caller's `className` then owns all visual styling. */
+  bare?: boolean;
 };
 
 /**
@@ -30,6 +35,7 @@ const TextArea = forwardRef<HTMLTextAreaElement, Props>(function TextArea(
     containerClassName = '',
     maxLength,
     value,
+    bare = false,
     ...rest
   },
   ref,
@@ -45,9 +51,13 @@ const TextArea = forwardRef<HTMLTextAreaElement, Props>(function TextArea(
         maxLength={maxLength}
         value={value}
         aria-invalid={error ? true : undefined}
-        className={`w-full resize-y rounded-md border bg-hover px-2 py-1.5 text-sm leading-[1.5] text-ink placeholder:text-ink-4 transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
-          error ? 'border-err focus:border-err' : 'border-rule focus:border-ink-3'
-        } ${className}`}
+        className={
+          bare
+            ? `w-full text-ink placeholder:text-ink-4 transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${className}`
+            : `w-full resize-y rounded-md border bg-hover px-2 py-1.5 text-sm leading-[1.5] text-ink placeholder:text-ink-4 transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
+                error ? 'border-err focus:border-err' : 'border-rule focus:border-ink-3'
+              } ${className}`
+        }
         {...rest}
       />
       {showCount && maxLength !== undefined && typeof value === 'string' && (

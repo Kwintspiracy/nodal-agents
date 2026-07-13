@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import PrimaryButton from '@/components/ui/PrimaryButton';
 
 interface ErrorProps {
   error: Error & { digest?: string };
@@ -22,12 +23,9 @@ export default function GlobalError({ error, reset }: ErrorProps) {
           An unexpected error occurred. Try again, or refresh the page — the details have been
           logged.
         </p>
-        <button
-          onClick={reset}
-          className="rounded-lg bg-agent-vivid px-4 py-2 text-sm font-semibold text-canvas transition-[filter] hover:brightness-[0.92]"
-        >
+        <PrimaryButton variant="agent" onClick={reset}>
           Try again
-        </button>
+        </PrimaryButton>
         {error.digest && (
           <p className="font-mono text-[12px] text-ink-4">Reference: {error.digest}</p>
         )}

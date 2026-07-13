@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { PencilSimple, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
+import Switch from '@/components/ui/Switch';
 import { deleteLlmKeyAction, setLlmKeyActiveAction, type LlmKeyUiRow } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
 
@@ -75,25 +76,14 @@ export default function LlmKeyRow({ row, onEdit, onDeleted }: Props) {
         </div>
 
         {/* Active toggle */}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={row.isActive}
-          aria-label={row.isActive ? 'Deactivate provider' : 'Activate provider'}
-          onClick={handleToggleActive}
+        <Switch
+          checked={row.isActive}
+          onChange={handleToggleActive}
           disabled={togglingActive || isPending}
-          className={[
-            'relative inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
-            row.isActive ? 'border-ok/40 bg-ok/20' : 'border-rule-2 bg-canvas',
-          ].join(' ')}
-        >
-          <span
-            className={[
-              'inline-block h-[16px] w-[16px] rounded-full shadow-sm transition-transform',
-              row.isActive ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-4',
-            ].join(' ')}
-          />
-        </button>
+          ariaLabel={row.isActive ? 'Deactivate provider' : 'Activate provider'}
+          trackClassName={row.isActive ? 'border-ok/40 bg-ok/20' : 'border-rule-2 bg-canvas'}
+          thumbClassName={row.isActive ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-4'}
+        />
       </div>
 
       {/* Detail row: base URL + API key indicator */}

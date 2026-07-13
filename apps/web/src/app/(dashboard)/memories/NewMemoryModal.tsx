@@ -8,6 +8,7 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
 import FieldLabel from '@/components/ui/FieldLabel';
+import StarRating from '@/components/ui/StarRating';
 import { createMemoryAction } from '@/lib/actions';
 
 type Props = {
@@ -25,38 +26,6 @@ const CATEGORIES = [
 type Category = (typeof CATEGORIES)[number]['value'];
 
 const MAX_FACT_CHARS = 2000;
-
-/**
- * Presentational, controlled 1-5 star picker for the "New Memory" form.
- * Distinct from the per-row ImportanceStars in MemoriesClient.tsx — that one
- * persists immediately per-row; this one is just local form state until
- * submit.
- */
-function StarPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  return (
-    <div className="inline-flex items-center gap-0.5" aria-label={`Importance ${value} of 5`}>
-      {[1, 2, 3, 4, 5].map((star) => (
-        <button
-          key={star}
-          type="button"
-          onClick={() => onChange(star)}
-          title={`Set importance to ${star}`}
-          className="p-0.5 text-ink-4 transition-colors hover:text-amber-500"
-        >
-          <svg
-            viewBox="0 0 16 16"
-            className="h-[16px] w-[16px]"
-            fill={star <= value ? '#f5a623' : 'none'}
-            stroke={star <= value ? '#f5a623' : 'currentColor'}
-            strokeWidth="1.3"
-          >
-            <path d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3l-3.8 2 .7-4.3-3.1-3 4.3-.6z" />
-          </svg>
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /**
  * NewMemoryModal — manual "New Memory" entry point on /memories. Writes a
@@ -154,7 +123,7 @@ export default function NewMemoryModal({ open, onClose }: Props) {
         {/* Importance */}
         <div className="space-y-1.5">
           <FieldLabel>Importance</FieldLabel>
-          <StarPicker value={importance} onChange={setImportance} />
+          <StarRating value={importance} onChange={setImportance} size="md" />
         </div>
       </div>
     </Modal>

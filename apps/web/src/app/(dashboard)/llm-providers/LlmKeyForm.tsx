@@ -10,6 +10,11 @@ import {
   type LlmProvider,
 } from '@/lib/actions.ts';
 import { prettyProviderName } from '@/lib/provider-names.ts';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextInput from '@/components/ui/TextInput';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
 
 // Inline preset table — packages/llm is server-only, so we can't import its
 // PROVIDER_PRESETS map into a client component. Canonical URLs shown as
@@ -69,7 +74,6 @@ type TestResult =
 const labelCls = 'block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4 mb-1.5';
 const inputCls =
   'w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink placeholder-ink-4 transition-colors focus:border-ink-3 focus:outline-none';
-const inputMonoCls = `${inputCls} font-mono`;
 
 export default function LlmKeyForm(props: Props) {
   const isEdit = props.mode === 'edit';
@@ -210,18 +214,17 @@ export default function LlmKeyForm(props: Props) {
               All providers already configured. Edit an existing key instead.
             </p>
           ) : (
-            <select
+            <Select
               id="llm-provider"
               value={provider}
               onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
-              className={inputCls}
             >
               {availableProviders.map((p) => (
                 <option key={p} value={p}>
                   {prettyProviderName(p)}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
       </div>
@@ -239,7 +242,7 @@ export default function LlmKeyForm(props: Props) {
             </span>
           )}
         </label>
-        <input
+        <TextInput
           id="llm-base-url"
           type="text"
           required={provider === 'openai-compatible' || provider === 'ollama'}
@@ -249,7 +252,7 @@ export default function LlmKeyForm(props: Props) {
             markStale();
           }}
           placeholder={baseUrlPlaceholder || 'leave blank to use the provider default'}
-          className={inputMonoCls}
+          className="font-mono"
         />
       </div>
 
@@ -261,7 +264,7 @@ export default function LlmKeyForm(props: Props) {
               optional
             </span>
           </label>
-          <input
+          <TextInput
             id="llm-context-window"
             type="number"
             min={1}
@@ -269,7 +272,7 @@ export default function LlmKeyForm(props: Props) {
             value={contextWindow}
             onChange={(e) => setContextWindow(e.target.value)}
             placeholder="auto-detected — e.g. 8192"
-            className={inputMonoCls}
+            className="font-mono"
           />
           <p className="mt-1.5 text-[12px] text-ink-4">
             The model&rsquo;s maximum context in tokens. Leave blank to auto-detect it from the
@@ -289,20 +292,18 @@ export default function LlmKeyForm(props: Props) {
               {'••••••••'}
               {initial.apiKeyLast4}
             </div>
-            <button
-              type="button"
+            <RowActionButton
               onClick={() => {
                 setReplacingApiKey(true);
                 markStale();
               }}
-              className="shrink-0 rounded-md border border-rule px-3 py-2 text-[13px] font-medium text-ink-3 transition-colors hover:border-ink-3 hover:text-ink"
             >
               Replace
-            </button>
+            </RowActionButton>
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <input
+            <TextInput
               id="llm-api-key"
               type="password"
               autoComplete="new-password"
@@ -312,34 +313,30 @@ export default function LlmKeyForm(props: Props) {
                 markStale();
               }}
               placeholder={isEdit && !replacingApiKey ? 'Leave blank to keep current' : ''}
-              className={`flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[14px] text-ink placeholder-ink-4 transition-colors focus:border-ink-3 focus:outline-none`}
+              containerClassName="flex-1"
+              className="font-mono"
             />
             {isEdit && replacingApiKey && (
-              <button
-                type="button"
+              <RowActionButton
                 onClick={() => {
                   setReplacingApiKey(false);
                   setApiKey('');
                   markStale();
                 }}
-                className="shrink-0 px-3 py-2 text-[13px] font-medium text-ink-4 transition-colors hover:text-ink-2"
               >
                 Cancel
-              </button>
+              </RowActionButton>
             )}
           </div>
         )}
       </div>
 
-      <label className="flex cursor-pointer items-center gap-2.5 text-[14px] text-ink-2">
-        <input
-          type="checkbox"
-          checked={isActive}
-          onChange={(e) => setIsActive(e.target.checked)}
-          className="accent-conn-vivid"
-        />
-        <span>Active — agents may select this provider</span>
-      </label>
+      <Checkbox
+        tone="connector"
+        checked={isActive}
+        onChange={(e) => setIsActive(e.target.checked)}
+        label="Active — agents may select this provider"
+      />
 
       {/* Test result inline */}
       {testResult.state === 'pass' && (
@@ -354,22 +351,22 @@ export default function LlmKeyForm(props: Props) {
       )}
 
       <div className="flex items-center gap-2 pt-1">
-        <button
+        <PrimaryButton
+          variant="neutral"
           type="button"
           onClick={handleTest}
           disabled={testResult.state === 'testing' || isPending}
-          className="inline-flex h-[34px] items-center rounded-md border border-rule px-3.5 text-[14px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink disabled:opacity-50"
         >
           {testResult.state === 'testing' ? 'Testing…' : 'Test connection'}
-        </button>
-        <button
+        </PrimaryButton>
+        <PrimaryButton
+          variant="ink"
           type="submit"
           disabled={
             isPending ||
             testResult.state === 'testing' ||
             (testResult.state !== 'pass' && !apiKeyUntouched)
           }
-          className="inline-flex h-[34px] items-center rounded-md bg-ink px-3.5 text-[14px] font-semibold text-canvas transition-[filter] hover:brightness-[0.92] disabled:opacity-50"
           title={
             testResult.state !== 'pass' && !apiKeyUntouched
               ? 'Test the connection before saving'
@@ -377,14 +374,10 @@ export default function LlmKeyForm(props: Props) {
           }
         >
           {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Add provider'}
-        </button>
-        <button
-          type="button"
-          onClick={() => props.onDone('cancelled')}
-          className="inline-flex h-[34px] items-center px-3.5 text-[14px] font-medium text-ink-3 transition-colors hover:text-ink-2"
-        >
+        </PrimaryButton>
+        <PrimaryButton variant="neutral" type="button" onClick={() => props.onDone('cancelled')}>
           Cancel
-        </button>
+        </PrimaryButton>
       </div>
     </form>
   );

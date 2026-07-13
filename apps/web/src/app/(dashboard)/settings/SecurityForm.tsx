@@ -9,6 +9,9 @@ import Banner from '@/components/ui/Banner';
 import { SetMini } from '@/components/ui/SetMini.tsx';
 import { SetCtaRow } from '@/components/ui/SetCtaRow.tsx';
 import { SetForm } from '@/components/ui/SetForm.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextInput from '@/components/ui/TextInput';
+import FieldLabel from '@/components/ui/FieldLabel';
 
 interface Props {
   initial: SecurityView;
@@ -86,22 +89,17 @@ export default function SecurityForm({ initial }: Props) {
               }
               action={
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditGoogle((v) => !v)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-rule text-ink-3 rounded-[7px] hover:border-rule-2 hover:text-ink transition-colors"
-                  >
+                  <RowActionButton onClick={() => setEditGoogle((v) => !v)}>
                     {editGoogle ? 'Hide fields' : initial.googleConfigured ? 'Rotate' : 'Add'}
-                  </button>
+                  </RowActionButton>
                   {initial.googleConfigured && (
-                    <button
-                      type="button"
+                    <RowActionButton
+                      tone="danger"
                       onClick={() => setConfirmOpen(true)}
                       disabled={isPending}
-                      className="px-3 py-1.5 text-xs font-medium border border-warn/40 text-warn rounded-[7px] hover:border-warn hover:bg-warn-bg disabled:opacity-40 transition-colors"
                     >
                       Remove
-                    </button>
+                    </RowActionButton>
                   )}
                 </div>
               }
@@ -110,27 +108,23 @@ export default function SecurityForm({ initial }: Props) {
             {editGoogle && (
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 px-1">
                 <div>
-                  <label className="block text-xs text-ink-3 mb-1" htmlFor="google-client-id">
-                    Client ID
-                  </label>
-                  <input
+                  <FieldLabel htmlFor="google-client-id">Client ID</FieldLabel>
+                  <TextInput
                     id="google-client-id"
                     name="googleClientId"
                     type="text"
                     placeholder="xxx.apps.googleusercontent.com"
-                    className="w-full bg-canvas border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    className="font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-ink-3 mb-1" htmlFor="google-client-secret">
-                    Client secret
-                  </label>
-                  <input
+                  <FieldLabel htmlFor="google-client-secret">Client secret</FieldLabel>
+                  <TextInput
                     id="google-client-secret"
                     name="googleClientSecret"
                     type="password"
                     placeholder={initial.googleConfigured ? '•••••••• (overwrite)' : ''}
-                    className="w-full bg-canvas border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    className="font-mono"
                   />
                 </div>
                 <p className="sm:col-span-2 text-[12px] text-ink-4">

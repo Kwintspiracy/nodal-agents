@@ -5,6 +5,9 @@ import { toast } from 'sonner';
 import Link from 'next/link';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CountPill from '@/components/ui/CountPill';
+import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import TextInput from '@/components/ui/TextInput';
+import FieldLabel from '@/components/ui/FieldLabel';
 
 import type { ActionResult } from '@/lib/actions.ts';
 
@@ -154,32 +157,32 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
 
         {/* Actions */}
         <div className="flex gap-2 shrink-0 flex-wrap justify-end">
-          <button
-            type="button"
+          <PrimaryButton
+            variant="neutral"
+            size="sm"
             onClick={() => setRenameOpen(true)}
             disabled={isPending || isRefreshing}
-            className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
           >
             Rename
-          </button>
+          </PrimaryButton>
           {supportsRefresh && (
-            <button
-              type="button"
+            <PrimaryButton
+              variant="neutral"
+              size="sm"
               onClick={performRefresh}
               disabled={isRefreshing || isPending}
-              className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink disabled:opacity-40"
             >
               {isRefreshing ? 'Refreshing…' : 'Refresh'}
-            </button>
+            </PrimaryButton>
           )}
-          <button
-            type="button"
+          <PrimaryButton
+            variant="danger"
+            size="sm"
             onClick={() => setDeleteOpen(true)}
             disabled={isPending || isRefreshing}
-            className="px-3 py-1.5 text-xs font-medium border border-err/30 text-err rounded-md hover:border-err hover:text-err disabled:opacity-40"
           >
             Delete
-          </button>
+          </PrimaryButton>
         </div>
       </div>
 
@@ -218,8 +221,8 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
       {/* Rename inline form */}
       {renameOpen && (
         <div className="pt-2 border-t border-rule-2 space-y-2">
-          <label className="block text-xs text-ink-3">New display name</label>
-          <input
+          <FieldLabel>New display name</FieldLabel>
+          <TextInput
             type="text"
             value={renameName}
             onChange={(e) => setRenameName(e.target.value)}
@@ -228,27 +231,21 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
               if (e.key === 'Escape') setRenameOpen(false);
             }}
             autoFocus
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none"
           />
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={performRename}
-              disabled={isPending}
-              className="px-3 py-1.5 text-xs font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
-            >
+            <PrimaryButton variant="ink" size="sm" onClick={performRename} disabled={isPending}>
               {isPending ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              type="button"
+            </PrimaryButton>
+            <PrimaryButton
+              variant="neutral"
+              size="sm"
               onClick={() => {
                 setRenameOpen(false);
                 setRenameName(credential.name);
               }}
-              className="px-3 py-1.5 text-xs font-medium border border-rule-2 text-ink-3 rounded-md hover:border-rule hover:text-ink"
             >
               Cancel
-            </button>
+            </PrimaryButton>
           </div>
         </div>
       )}

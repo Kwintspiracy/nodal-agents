@@ -23,6 +23,10 @@ import PrimaryButton from './ui/PrimaryButton.tsx';
 import Modal, { ModalFooter } from './ui/Modal.tsx';
 import AvatarPicker from './AvatarPicker.tsx';
 import { ModelToolsLegend } from './ui/ModelToolsBadge.tsx';
+import TextInput from './ui/TextInput.tsx';
+import TextArea from './ui/TextArea.tsx';
+import Select from './ui/Select.tsx';
+import Checkbox from './ui/Checkbox.tsx';
 
 type AgentRole = 'worker' | 'router' | 'planner';
 
@@ -232,26 +236,26 @@ export default function AgentForm(props: Props) {
             <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-slug">
               Slug
             </label>
-            <input
+            <TextInput
               id="agent-slug"
               name="slug"
               readOnly
               defaultValue={initial.slug}
               title="Slug is not editable"
-              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink-3 cursor-not-allowed"
+              className="rounded-lg text-ink-3 cursor-not-allowed"
             />
           </div>
           <div>
             <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-name">
               Name
             </label>
-            <input
+            <TextInput
               id="agent-name"
               name="name"
               required
               defaultValue={initial.name}
               placeholder="My Agent"
-              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="rounded-lg"
             />
           </div>
         </div>
@@ -262,14 +266,14 @@ export default function AgentForm(props: Props) {
           <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-personality">
             Personality / System prompt
           </label>
-          <textarea
+          <TextArea
             id="agent-personality"
             name="personality"
             required
             rows={6}
             defaultValue={initial.personality}
             placeholder="You are a helpful assistant..."
-            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-y"
+            className="resize-y rounded-lg"
           />
         </div>
 
@@ -287,12 +291,12 @@ export default function AgentForm(props: Props) {
                 .
               </p>
             ) : (
-              <select
+              <Select
                 id="agent-llm-key"
                 value={llmKeyId}
                 onChange={(e) => handleLlmKeyChange(e.target.value)}
                 required
-                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+                className="rounded-lg"
               >
                 {activeKeys.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -302,7 +306,7 @@ export default function AgentForm(props: Props) {
                       ')'}
                   </option>
                 ))}
-              </select>
+              </Select>
             )}
           </div>
           <div>
@@ -314,14 +318,14 @@ export default function AgentForm(props: Props) {
                 : 'Model'}
             </label>
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-              <select
+              <Select
                 id="agent-model"
                 value={modelInDropdown ? model : '__custom__'}
                 onChange={(e) =>
                   handleModelChange(e.target.value === '__custom__' ? '' : e.target.value)
                 }
                 required={modelInDropdown}
-                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none mb-2"
+                className="mb-2 rounded-lg"
               >
                 {groupModelCatalog(modelCatalog).map(({ group, models }) =>
                   group ? (
@@ -368,10 +372,10 @@ export default function AgentForm(props: Props) {
                   </optgroup>
                 )}
                 <option value="__custom__">Custom…</option>
-              </select>
+              </Select>
             )}
             {!modelInDropdown && (
-              <input
+              <TextInput
                 id="agent-model"
                 name="model"
                 type="text"
@@ -382,7 +386,7 @@ export default function AgentForm(props: Props) {
                   MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
                   'e.g. claude-haiku-4-5-20251001'
                 }
-                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                className="rounded-lg font-mono"
               />
             )}
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
@@ -396,16 +400,16 @@ export default function AgentForm(props: Props) {
           <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-role">
             Role
           </label>
-          <select
+          <Select
             id="agent-role"
             value={role}
             onChange={(e) => setRole(e.target.value as AgentRole)}
-            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+            className="rounded-lg"
           >
             <option value="worker">Worker (runs its own tools and tasks)</option>
             <option value="router">Router (delegates to one sub-agent at a time)</option>
             <option value="planner">Planner (creates parallel tasks for sub-agents)</option>
-          </select>
+          </Select>
         </div>
 
         {showSubAgents && (
@@ -422,19 +426,19 @@ export default function AgentForm(props: Props) {
                 {agents.map((a) => {
                   const checked = subAgentIds.includes(a.id);
                   return (
-                    <label
+                    <Checkbox
                       key={a.id}
-                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-hover/80"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleSubAgent(a.id)}
-                        className="accent-violet-500"
-                      />
-                      <span className="text-ink">{a.name}</span>
-                      <span className="font-mono text-xs text-ink-3 ml-auto">{a.slug}</span>
-                    </label>
+                      tone="agent"
+                      checked={checked}
+                      onChange={() => toggleSubAgent(a.id)}
+                      containerClassName="px-3 py-2 hover:bg-hover/80"
+                      label={
+                        <>
+                          <span className="text-ink">{a.name}</span>
+                          <span className="ml-auto font-mono text-xs text-ink-3">{a.slug}</span>
+                        </>
+                      }
+                    />
                   );
                 })}
               </div>
@@ -488,25 +492,25 @@ export default function AgentForm(props: Props) {
             <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-slug">
               Slug
             </label>
-            <input
+            <TextInput
               id="agent-slug"
               name="slug"
               required
               pattern="[a-z0-9\-]+"
               placeholder="my-agent"
-              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="rounded-lg"
             />
           </div>
           <div>
             <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-name">
               Name
             </label>
-            <input
+            <TextInput
               id="agent-name"
               name="name"
               required
               placeholder="My Agent"
-              className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
+              className="rounded-lg"
             />
           </div>
         </div>
@@ -517,13 +521,13 @@ export default function AgentForm(props: Props) {
           <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-personality">
             Personality / System prompt
           </label>
-          <textarea
+          <TextArea
             id="agent-personality"
             name="personality"
             required
             rows={4}
             placeholder="You are a helpful assistant..."
-            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none resize-none"
+            className="resize-none rounded-lg"
           />
         </div>
 
@@ -541,12 +545,12 @@ export default function AgentForm(props: Props) {
                 .
               </p>
             ) : (
-              <select
+              <Select
                 id="agent-llm-key"
                 value={llmKeyId}
                 onChange={(e) => handleLlmKeyChange(e.target.value)}
                 required
-                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+                className="rounded-lg"
               >
                 {activeKeys.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -556,7 +560,7 @@ export default function AgentForm(props: Props) {
                       ')'}
                   </option>
                 ))}
-              </select>
+              </Select>
             )}
           </div>
           <div>
@@ -568,14 +572,14 @@ export default function AgentForm(props: Props) {
                 : 'Model'}
             </label>
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-              <select
+              <Select
                 id="agent-model"
                 value={modelInDropdown ? model : '__custom__'}
                 onChange={(e) =>
                   handleModelChange(e.target.value === '__custom__' ? '' : e.target.value)
                 }
                 required={modelInDropdown}
-                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none mb-2"
+                className="mb-2 rounded-lg"
               >
                 {groupModelCatalog(modelCatalog).map(({ group, models }) =>
                   group ? (
@@ -622,10 +626,10 @@ export default function AgentForm(props: Props) {
                   </optgroup>
                 )}
                 <option value="__custom__">Custom…</option>
-              </select>
+              </Select>
             )}
             {!modelInDropdown && (
-              <input
+              <TextInput
                 id="agent-model"
                 name="model"
                 type="text"
@@ -636,7 +640,7 @@ export default function AgentForm(props: Props) {
                   MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
                   'e.g. claude-haiku-4-5-20251001'
                 }
-                className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                className="rounded-lg font-mono"
               />
             )}
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
@@ -650,16 +654,16 @@ export default function AgentForm(props: Props) {
           <label className="block text-xs text-ink-3 mb-1" htmlFor="agent-role">
             Role
           </label>
-          <select
+          <Select
             id="agent-role"
             value={role}
             onChange={(e) => setRole(e.target.value as AgentRole)}
-            className="w-full bg-hover border border-rule rounded-lg px-3 py-2 text-sm text-ink focus:border-ink-3 focus:outline-none"
+            className="rounded-lg"
           >
             <option value="worker">Worker (runs its own tools and tasks)</option>
             <option value="router">Router (delegates to one sub-agent at a time)</option>
             <option value="planner">Planner (creates parallel tasks for sub-agents)</option>
-          </select>
+          </Select>
         </div>
 
         {showSubAgents && (
@@ -676,19 +680,19 @@ export default function AgentForm(props: Props) {
                 {agents.map((a) => {
                   const checked = subAgentIds.includes(a.id);
                   return (
-                    <label
+                    <Checkbox
                       key={a.id}
-                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-hover/80"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleSubAgent(a.id)}
-                        className="accent-violet-500"
-                      />
-                      <span className="text-ink">{a.name}</span>
-                      <span className="font-mono text-xs text-ink-3 ml-auto">{a.slug}</span>
-                    </label>
+                      tone="agent"
+                      checked={checked}
+                      onChange={() => toggleSubAgent(a.id)}
+                      containerClassName="px-3 py-2 hover:bg-hover/80"
+                      label={
+                        <>
+                          <span className="text-ink">{a.name}</span>
+                          <span className="ml-auto font-mono text-xs text-ink-3">{a.slug}</span>
+                        </>
+                      }
+                    />
                   );
                 })}
               </div>

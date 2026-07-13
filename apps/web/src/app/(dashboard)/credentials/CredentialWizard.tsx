@@ -5,6 +5,10 @@ import HelpSteps from '@/components/HelpSteps.tsx';
 import { OAUTH_GUIDES } from '@/lib/connector-help.ts';
 import Modal, { ModalFooter } from '@/components/ui/Modal.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import { OptionRadio } from '@/components/ui/OptionRadio';
+import TextInput from '@/components/ui/TextInput';
+import FieldLabel from '@/components/ui/FieldLabel';
+import CopyButton from '@/components/ui/CopyButton';
 
 export type CredentialWizardType = 'google-oauth' | 'notion-oauth' | 'airtable-oauth';
 
@@ -95,14 +99,6 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
     setStep('setup');
   }
 
-  function copyRedirectUri() {
-    if (redirectUri) {
-      void navigator.clipboard.writeText(redirectUri).then(() => {
-        // No toast here — visual feedback via button text change is enough.
-      });
-    }
-  }
-
   const config = selectedType ? PROVIDER_CONFIGS[selectedType] : null;
 
   // returnTo value propagated into the OAuth state cookie.
@@ -145,17 +141,13 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
           </p>
           <div className="space-y-2">
             {TYPE_OPTIONS.map((opt) => (
-              <button
+              <OptionRadio
                 key={opt.type}
-                type="button"
+                active={selectedType === opt.type}
                 onClick={() => handleTypeSelect(opt.type)}
-                className="w-full text-left px-4 py-3 rounded-lg border border-rule-2 hover:border-rule hover:bg-hover transition-colors group"
-              >
-                <div className="text-sm font-semibold text-ink group-hover:text-ink">
-                  {opt.label}
-                </div>
-                <div className="text-xs text-ink-3 mt-0.5">{opt.description}</div>
-              </button>
+                name={opt.label}
+                description={opt.description}
+              />
             ))}
           </div>
         </div>
@@ -193,45 +185,30 @@ export default function CredentialWizard({ initialType, returnToConnectorSlug, o
               <code className="text-xs text-ink-2 font-mono flex-1 break-all">
                 {redirectUri || '…'}
               </code>
-              <button
-                type="button"
-                onClick={copyRedirectUri}
-                className="shrink-0 px-2 py-0.5 text-xs font-medium border border-rule text-ink-3 rounded hover:border-ink-3 hover:text-ink transition-colors"
-              >
-                Copy
-              </button>
+              <CopyButton value={redirectUri} className="shrink-0" />
             </div>
           </div>
 
           {/* Form fields */}
           <div className="space-y-3 border-t border-rule-2 pt-4">
             <div>
-              <label className="block text-xs text-ink-3 mb-1">
+              <FieldLabel>
                 Display name <span className="text-ink-4">(optional)</span>
-              </label>
-              <input
-                name="name"
-                placeholder={config.namePlaceholder}
-                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
-              />
+              </FieldLabel>
+              <TextInput name="name" placeholder={config.namePlaceholder} />
             </div>
             <div>
-              <label className="block text-xs text-ink-3 mb-1">{config.clientIdLabel}</label>
-              <input
-                name="clientId"
-                required
-                autoComplete="off"
-                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
-              />
+              <FieldLabel>{config.clientIdLabel}</FieldLabel>
+              <TextInput name="clientId" required autoComplete="off" className="font-mono" />
             </div>
             <div>
-              <label className="block text-xs text-ink-3 mb-1">{config.clientSecretLabel}</label>
-              <input
+              <FieldLabel>{config.clientSecretLabel}</FieldLabel>
+              <TextInput
                 name="clientSecret"
                 type="password"
                 required
                 autoComplete="off"
-                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink focus:border-ink-3 focus:outline-none font-mono"
+                className="font-mono"
               />
             </div>
           </div>

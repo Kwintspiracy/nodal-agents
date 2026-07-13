@@ -24,8 +24,14 @@
 
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
+import { Trash } from '@phosphor-icons/react';
 import { createMcpServerFromCatalogAction, type McpCatalogItem } from '@/lib/actions.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
+import RowActionButton from '@/components/ui/RowActionButton';
+import TextInput from '@/components/ui/TextInput';
+import TextArea from '@/components/ui/TextArea';
+import FieldLabel from '@/components/ui/FieldLabel';
+import McpAuthSchemePicker from '@/components/ui/McpAuthSchemePicker';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 
 interface Props {
@@ -248,27 +254,26 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
 
       {/* Name — common to all flavors. */}
       <div>
-        <label htmlFor={`mcp-name-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
+        <FieldLabel htmlFor={`mcp-name-${catalogItem.slug}`}>
           Name <span className="text-ink-4">(e.g. &quot;Cortex perso&quot;)</span>
-        </label>
-        <input
+        </FieldLabel>
+        <TextInput
           id={`mcp-name-${catalogItem.slug}`}
           type="text"
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={catalogItem.label}
-          className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
         />
       </div>
 
       {/* Server slug — custom only. Drives the tool-name prefix at runtime. */}
       {(isCustomHttp || isCustomStdio) && (
         <div>
-          <label htmlFor={`mcp-slug-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
+          <FieldLabel htmlFor={`mcp-slug-${catalogItem.slug}`}>
             Server slug <span className="text-ink-4">(tool name prefix)</span>
-          </label>
-          <input
+          </FieldLabel>
+          <TextInput
             id={`mcp-slug-${catalogItem.slug}`}
             type="text"
             required
@@ -276,7 +281,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             onChange={(e) => setCustomSlug(e.target.value)}
             placeholder="my-server"
             pattern="[a-z0-9-]+"
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+            className="font-mono"
           />
           <p className="text-[12px] text-ink-4 mt-1">
             Tools will be named like <span className="font-mono text-ink-3">{slugPreview}</span>.
@@ -288,17 +293,15 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
       {/* HTTP-only: URL when catalog requires it. */}
       {needsUrl && (
         <div>
-          <label htmlFor={`mcp-url-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
-            Server URL
-          </label>
-          <input
+          <FieldLabel htmlFor={`mcp-url-${catalogItem.slug}`}>Server URL</FieldLabel>
+          <TextInput
             id={`mcp-url-${catalogItem.slug}`}
             type="url"
             required
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://…"
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+            className="font-mono"
           />
         </div>
       )}
@@ -307,45 +310,25 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
       {isCustomHttp && (
         <div className="space-y-2">
           <p className="block text-xs text-ink-3">Auth scheme</p>
-          <div className="flex flex-wrap gap-2">
-            {(['header', 'query', 'bearer'] as const).map((scheme) => (
-              <label
-                key={scheme}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs cursor-pointer border ${
-                  customAuthScheme === scheme
-                    ? 'bg-hover border-ink-3 text-ink'
-                    : 'bg-paper border-rule text-ink-3 hover:border-rule'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name={`mcp-scheme-${catalogItem.slug}`}
-                  value={scheme}
-                  checked={customAuthScheme === scheme}
-                  onChange={() => setCustomAuthScheme(scheme)}
-                  className="sr-only"
-                />
-                {scheme === 'header' ? 'Header' : scheme === 'query' ? 'Query param' : 'Bearer'}
-              </label>
-            ))}
-          </div>
+          <McpAuthSchemePicker
+            name={`mcp-scheme-${catalogItem.slug}`}
+            value={customAuthScheme}
+            onChange={setCustomAuthScheme}
+          />
 
           {customAuthScheme !== 'bearer' && (
             <div>
-              <label
-                htmlFor={`mcp-auth-param-${catalogItem.slug}`}
-                className="block text-xs text-ink-3 mb-1"
-              >
+              <FieldLabel htmlFor={`mcp-auth-param-${catalogItem.slug}`}>
                 {customAuthScheme === 'header' ? 'Header name' : 'Query param name'}
-              </label>
-              <input
+              </FieldLabel>
+              <TextInput
                 id={`mcp-auth-param-${catalogItem.slug}`}
                 type="text"
                 required
                 value={customAuthParamName}
                 onChange={(e) => setCustomAuthParamName(e.target.value)}
                 placeholder={customAuthScheme === 'header' ? 'x-api-key' : 'api_key'}
-                className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                className="font-mono"
               />
             </div>
           )}
@@ -355,10 +338,8 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
       {/* HTTP-only: API key. */}
       {!isStdio && (
         <div>
-          <label htmlFor={`mcp-key-${catalogItem.slug}`} className="block text-xs text-ink-3 mb-1">
-            API key
-          </label>
-          <input
+          <FieldLabel htmlFor={`mcp-key-${catalogItem.slug}`}>API key</FieldLabel>
+          <TextInput
             id={`mcp-key-${catalogItem.slug}`}
             type="password"
             required
@@ -366,7 +347,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={catalogItem.keyPrefix[0] ? `${catalogItem.keyPrefix[0]}…` : ''}
-            className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+            className="font-mono"
           />
           {catalogItem.docsHint && (
             <p className="text-[12px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
@@ -378,21 +359,18 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
       {isPrefilledStdio && (
         <>
           <div>
-            <label
-              htmlFor={`mcp-prefilled-args-${catalogItem.slug}`}
-              className="block text-xs text-ink-3 mb-1"
-            >
+            <FieldLabel htmlFor={`mcp-prefilled-args-${catalogItem.slug}`}>
               Arguments{' '}
               <span className="text-ink-4">
                 (one per line, edit placeholders like &lt;root-directory&gt;)
               </span>
-            </label>
-            <textarea
+            </FieldLabel>
+            <TextArea
               id={`mcp-prefilled-args-${catalogItem.slug}`}
               rows={Math.max(3, (catalogItem.args ?? []).length + 1)}
               value={prefilledArgsText}
               onChange={(e) => setPrefilledArgsText(e.target.value)}
-              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
+              className="font-mono resize-none"
             />
             <p className="text-[12px] text-ink-4 mt-1">
               Command: <span className="font-mono text-ink-3">{catalogItem.command ?? 'npx'}</span>
@@ -407,40 +385,37 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
               <div className="space-y-2">
                 {envRows.map((row, idx) => (
                   <div key={idx} className="flex gap-2">
-                    <input
+                    <TextInput
                       type="text"
                       value={row.key}
                       onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
                       placeholder="VAR_NAME"
-                      className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                      containerClassName="flex-1"
+                      className="font-mono"
                     />
-                    <input
+                    <TextInput
                       type="password"
                       autoComplete="off"
                       value={row.value}
                       onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
                       placeholder="value"
-                      className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                      containerClassName="flex-1"
+                      className="font-mono"
                     />
-                    <button
-                      type="button"
+                    <RowActionButton
+                      square
+                      tone="danger"
                       onClick={() => removeEnvRow(idx)}
                       disabled={envRows.length === 1}
-                      aria-label="Remove env var"
-                      className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
-                    >
-                      ×
-                    </button>
+                      title="Remove variable"
+                      icon={<Trash size={14} />}
+                    />
                   </div>
                 ))}
               </div>
-              <button
-                type="button"
-                onClick={addEnvRow}
-                className="mt-2 text-[12px] text-ink-3 hover:text-ink"
-              >
+              <RowActionButton onClick={addEnvRow} className="mt-2">
                 + Add variable
-              </button>
+              </RowActionButton>
             </div>
           )}
 
@@ -452,20 +427,15 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
       {isCustomStdio && (
         <>
           <div>
-            <label
-              htmlFor={`mcp-command-${catalogItem.slug}`}
-              className="block text-xs text-ink-3 mb-1"
-            >
-              Command
-            </label>
-            <input
+            <FieldLabel htmlFor={`mcp-command-${catalogItem.slug}`}>Command</FieldLabel>
+            <TextInput
               id={`mcp-command-${catalogItem.slug}`}
               type="text"
               required
               value={customCommand}
               onChange={(e) => setCustomCommand(e.target.value)}
               placeholder="npx"
-              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+              className="font-mono"
             />
             <p className="text-[12px] text-ink-4 mt-1">
               Executable name (resolved via PATH) or absolute path.
@@ -473,19 +443,16 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
           </div>
 
           <div>
-            <label
-              htmlFor={`mcp-args-${catalogItem.slug}`}
-              className="block text-xs text-ink-3 mb-1"
-            >
+            <FieldLabel htmlFor={`mcp-args-${catalogItem.slug}`}>
               Arguments <span className="text-ink-4">(one per line)</span>
-            </label>
-            <textarea
+            </FieldLabel>
+            <TextArea
               id={`mcp-args-${catalogItem.slug}`}
               rows={3}
               value={customArgsText}
               onChange={(e) => setCustomArgsText(e.target.value)}
               placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path/to/folder'}
-              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono resize-none"
+              className="font-mono resize-none"
             />
           </div>
 
@@ -496,40 +463,37 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             <div className="space-y-2">
               {envRows.map((row, idx) => (
                 <div key={idx} className="flex gap-2">
-                  <input
+                  <TextInput
                     type="text"
                     value={row.key}
                     onChange={(e) => updateEnvRow(idx, { key: e.target.value })}
                     placeholder="GITHUB_TOKEN"
-                    className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    containerClassName="flex-1"
+                    className="font-mono"
                   />
-                  <input
+                  <TextInput
                     type="password"
                     autoComplete="off"
                     value={row.value}
                     onChange={(e) => updateEnvRow(idx, { value: e.target.value })}
                     placeholder="value"
-                    className="flex-1 bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+                    containerClassName="flex-1"
+                    className="font-mono"
                   />
-                  <button
-                    type="button"
+                  <RowActionButton
+                    square
+                    tone="danger"
                     onClick={() => removeEnvRow(idx)}
                     disabled={envRows.length === 1}
-                    aria-label="Remove env var"
-                    className="px-2 text-ink-3 hover:text-err disabled:opacity-30"
-                  >
-                    ×
-                  </button>
+                    title="Remove variable"
+                    icon={<Trash size={14} />}
+                  />
                 </div>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={addEnvRow}
-              className="mt-2 text-[12px] text-ink-3 hover:text-ink"
-            >
+            <RowActionButton onClick={addEnvRow} className="mt-2">
               + Add variable
-            </button>
+            </RowActionButton>
             {catalogItem.docsHint && (
               <p className="text-[12px] text-ink-4 mt-2">{catalogItem.docsHint}</p>
             )}

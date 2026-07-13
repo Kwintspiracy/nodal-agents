@@ -10,6 +10,7 @@ import {
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextInput from '@/components/ui/TextInput';
 
 /**
  * Discord's connect/disconnect form — same shape as TelegramConfigForm, but
@@ -93,14 +94,15 @@ export default function DiscordConfigForm({
       <form onSubmit={handleSubmit} className="space-y-3">
         <label className="block">
           <span className="text-xs font-medium text-ink-2 uppercase tracking-wider">Bot token</span>
-          <input
+          <TextInput
             type="text"
             autoComplete="off"
             spellCheck={false}
             value={token}
             onChange={(e) => setToken(e.target.value)}
             placeholder="MTIzNDU2Nzg5MDEyMzQ1Njc4.G…"
-            className="mt-2 w-full px-3 py-2 bg-canvas border border-rule-2 rounded-lg text-sm font-mono text-ink placeholder:text-ink-4 focus:outline-none focus:border-rule"
+            containerClassName="mt-2"
+            className="font-mono"
           />
         </label>
         <div className="flex items-center gap-2">

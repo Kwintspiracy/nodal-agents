@@ -22,6 +22,12 @@ type Props<T extends string> = {
    *   The two ship together because they share geometry and a11y wiring;
    *   the only difference is colour mapping. */
   variant?: 'inset' | 'dark-active';
+  /** Stretches the well to its container's width with each tab sharing it
+   *  equally (`flex-1`) — the login page's Sign in / Create account switch,
+   *  as opposed to the default content-sized inline well used everywhere
+   *  else (filter bars, chart ranges). */
+  fullWidth?: boolean;
+  className?: string;
 };
 
 /**
@@ -39,6 +45,8 @@ export default function PillTabs<T extends string>({
   defaultValue,
   onChange,
   variant = 'inset',
+  fullWidth = false,
+  className = '',
 }: Props<T>) {
   const [internal, setInternal] = useState<T>(value ?? defaultValue ?? tabs[0]!.value);
   const active = value ?? internal;
@@ -50,7 +58,10 @@ export default function PillTabs<T extends string>({
       : 'bg-ink text-canvas';
 
   return (
-    <div className={`inline-flex gap-0.5 rounded-md p-[3px] ${wellBg}`} role="tablist">
+    <div
+      className={`${fullWidth ? 'flex' : 'inline-flex'} gap-0.5 rounded-md p-[3px] ${wellBg} ${className}`}
+      role="tablist"
+    >
       {tabs.map((t) => {
         const isActive = t.value === active;
         return (
@@ -63,9 +74,9 @@ export default function PillTabs<T extends string>({
               if (value === undefined) setInternal(t.value);
               onChange?.(t.value);
             }}
-            className={`inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border-0 px-3 text-[12px] font-medium leading-none transition-colors ${
-              isActive ? activeBg : 'bg-transparent text-ink-3 hover:text-ink-2'
-            }`}
+            className={`inline-flex h-[26px] items-center justify-center gap-1.5 rounded-[6px] border-0 px-3 text-[12px] font-medium leading-none transition-colors ${
+              fullWidth ? 'flex-1' : ''
+            } ${isActive ? activeBg : 'bg-transparent text-ink-3 hover:text-ink-2'}`}
           >
             {t.label}
             {t.count !== undefined && (

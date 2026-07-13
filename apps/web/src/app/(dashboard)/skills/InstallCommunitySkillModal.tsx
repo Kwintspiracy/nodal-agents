@@ -7,6 +7,7 @@ import { Warning } from '@phosphor-icons/react';
 import { installCommunitySkillAction, type CommunitySkillInstallResult } from '@/lib/actions.ts';
 import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextInput from '@/components/ui/TextInput';
 
 type Props = {
   open: boolean;
@@ -105,7 +106,7 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
           <label htmlFor="skill-source" className="block text-[13px] font-medium text-ink-2">
             Source
           </label>
-          <input
+          <TextInput
             id="skill-source"
             type="text"
             value={source}
@@ -115,7 +116,6 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
             }}
             placeholder="owner/repo, GitHub URL, or skills.sh path"
             disabled={isPending}
-            className="w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink placeholder:text-ink-4 focus:border-rule-2 focus:outline-none disabled:opacity-50"
           />
         </div>
 
