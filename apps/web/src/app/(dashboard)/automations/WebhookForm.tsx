@@ -6,6 +6,7 @@ import { createWebhookTriggerAction, type AgentRow } from '@/lib/actions.ts';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import { ModalFooter } from '@/components/ui/Modal';
 import TextInput from '@/components/ui/TextInput';
 import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
@@ -66,12 +67,14 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
         <h3 className="text-sm font-semibold text-ink">Webhook created</h3>
         <SetUrl subtitle="Webhook URL" url={successUrl} />
         <p className="text-xs text-ink-3">
-          Paste this URL into the service that should notify this agent. It contains the secret —
+          Paste this URL into the service that should notify this agent. It contains the secret:
           treat it like a password.
         </p>
-        <PrimaryButton variant="ink" onClick={handleDone}>
-          Done
-        </PrimaryButton>
+        <ModalFooter className="-mx-5 -mb-5 mt-1 rounded-b-xl">
+          <PrimaryButton variant="ink" onClick={handleDone}>
+            Done
+          </PrimaryButton>
+        </ModalFooter>
       </div>
     );
   }
@@ -123,14 +126,14 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
         </p>
       </div>
 
-      <div className="flex gap-2 pt-1">
-        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
-          {isPending ? 'Creating…' : 'Create webhook'}
-        </PrimaryButton>
+      <ModalFooter className="-mx-5 -mb-5 mt-1 rounded-b-xl">
         <PrimaryButton variant="neutral" onClick={() => onOpenChange(false)}>
           Cancel
         </PrimaryButton>
-      </div>
+        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
+          {isPending ? 'Creating…' : 'Create webhook'}
+        </PrimaryButton>
+      </ModalFooter>
     </form>
   );
 }
