@@ -9,7 +9,9 @@ import AvatarStack from '@/components/ui/AvatarStack';
 import CountPill from '@/components/ui/CountPill';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
+import Modal from '@/components/ui/Modal.tsx';
 import AssignSkillModal from './AssignSkillModal.tsx';
+import SkillForm from './SkillForm.tsx';
 
 type Props = {
   skills: SkillRow[];
@@ -68,6 +70,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const performDelete = () => {
@@ -139,7 +142,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
             square
             icon={<PencilSimple size={16} />}
             title="Edit"
-            href={`/skills/${skill.id}/edit`}
+            onClick={() => setEditOpen(true)}
           />
           {!skill.isSystem && skill.isCommunity && (
             <RowActionButton
@@ -184,6 +187,19 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
           skill={skill}
           agents={agents}
         />
+        {/* Edit — non-dismissable Modal (UX-B6: editing a list object is
+            always a modal, never a page navigation from the row). The
+            dedicated /skills/[id]/edit route stays live for deep-links; both
+            hosts render the same SkillForm. */}
+        <Modal
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          title={skill.name}
+          dismissable={false}
+          className="max-w-3xl"
+        >
+          <SkillForm mode="edit" initial={skill} onClose={() => setEditOpen(false)} />
+        </Modal>
       </td>
     </tr>
   );

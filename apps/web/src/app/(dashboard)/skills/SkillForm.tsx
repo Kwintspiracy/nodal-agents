@@ -19,14 +19,22 @@ interface CreateProps {
   mode?: 'create';
   initial?: undefined;
   /** When true the form renders open without the "+ New skill" toggle.
-   *  Used by the dedicated /skills/new page. */
+   *  Used by the dedicated /skills/new page and by modal hosts (the modal
+   *  itself is the toggle, so the internal one would be redundant). */
   defaultOpen?: boolean;
+  /** Closes the wrapping edit/create Modal (UX-B6: list-row skill editing is
+   *  a Modal, never an inline accordion or page navigation). When omitted,
+   *  this component is page-hosted (/skills/new, /skills/[id]/edit) and
+   *  falls back to its original router.push('/skills') navigation. */
+  onClose?: () => void;
 }
 
 interface EditProps {
   mode: 'edit';
   initial: SkillRow;
   defaultOpen?: undefined;
+  /** See CreateProps.onClose. */
+  onClose?: () => void;
 }
 
 type Props = CreateProps | EditProps;
@@ -77,7 +85,12 @@ export default function SkillForm(props: Props) {
           return;
         }
         toast.success('Skill updated');
-        router.push('/skills');
+        if (props.onClose) {
+          props.onClose();
+          router.refresh();
+        } else {
+          router.push('/skills');
+        }
       });
     } else {
       startTransition(async () => {
@@ -93,7 +106,12 @@ export default function SkillForm(props: Props) {
         }
         toast.success('Skill created');
         form.reset();
-        setOpen(false);
+        if (props.onClose) {
+          props.onClose();
+          router.refresh();
+        } else {
+          router.push('/skills');
+        }
       });
     }
   }
@@ -197,7 +215,7 @@ export default function SkillForm(props: Props) {
         </PrimaryButton>
         <PrimaryButton
           variant="neutral"
-          onClick={() => (isEdit ? router.push('/skills') : setOpen(false))}
+          onClick={() => (props.onClose ? props.onClose() : router.push('/skills'))}
         >
           Cancel
         </PrimaryButton>

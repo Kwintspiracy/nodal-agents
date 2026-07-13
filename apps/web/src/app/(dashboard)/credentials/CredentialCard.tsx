@@ -7,7 +7,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CountPill from '@/components/ui/CountPill';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import TextInput from '@/components/ui/TextInput';
-import FieldLabel from '@/components/ui/FieldLabel';
+import Modal, { ModalFooter } from '@/components/ui/Modal.tsx';
 
 import type { ActionResult } from '@/lib/actions.ts';
 
@@ -95,10 +95,15 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
     });
   }
 
+  function closeRename() {
+    setRenameOpen(false);
+    setRenameName(credential.name);
+  }
+
   function performRename() {
     const trimmed = renameName.trim();
     if (!trimmed || trimmed === credential.name) {
-      setRenameOpen(false);
+      closeRename();
       return;
     }
     startTransition(async () => {
@@ -218,37 +223,36 @@ export default function CredentialCard({ credential, onDelete, onRename, onRefre
         </div>
       )}
 
-      {/* Rename inline form */}
-      {renameOpen && (
-        <div className="pt-2 border-t border-rule-2 space-y-2">
-          <FieldLabel>New display name</FieldLabel>
-          <TextInput
-            type="text"
-            value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') performRename();
-              if (e.key === 'Escape') setRenameOpen(false);
-            }}
-            autoFocus
-          />
-          <div className="flex gap-2">
-            <PrimaryButton variant="ink" size="sm" onClick={performRename} disabled={isPending}>
-              {isPending ? 'Saving…' : 'Save'}
-            </PrimaryButton>
-            <PrimaryButton
-              variant="neutral"
-              size="sm"
-              onClick={() => {
-                setRenameOpen(false);
-                setRenameName(credential.name);
-              }}
-            >
+      {/* Rename — non-dismissable Modal (UX-B6), replaces the old inline
+          form: closing happens only via Cancel/Save below. */}
+      <Modal
+        open={renameOpen}
+        onClose={closeRename}
+        title="Rename credential"
+        dismissable={false}
+        footer={
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={closeRename}>
               Cancel
             </PrimaryButton>
-          </div>
-        </div>
-      )}
+            <PrimaryButton variant="ink" onClick={performRename} disabled={isPending}>
+              {isPending ? 'Saving…' : 'Save'}
+            </PrimaryButton>
+          </ModalFooter>
+        }
+      >
+        <TextInput
+          label="New display name"
+          type="text"
+          value={renameName}
+          onChange={(e) => setRenameName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') performRename();
+          }}
+          autoFocus
+          placeholder="New display name"
+        />
+      </Modal>
 
       {/* Delete confirmation */}
       <ConfirmDialog

@@ -12,6 +12,7 @@ import {
   type ScheduleRow as ScheduleRowData,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import Modal from '@/components/ui/Modal.tsx';
 import ScheduleForm from './ScheduleForm.tsx';
 import { humanLabel } from '@/lib/cron.ts';
 import StatusPill from '@/components/ui/StatusPill';
@@ -58,14 +59,6 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
       if (!r.ok) toast.error(r.message);
       else toast.success(`Duplicated "${s.name}" — paused; enable it when ready`);
     });
-  }
-
-  if (editing) {
-    return (
-      <div className="space-y-2">
-        <ScheduleForm mode="edit" agents={agents} initial={s} onDone={() => setEditing(false)} />
-      </div>
-    );
   }
 
   return (
@@ -185,6 +178,18 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
         onConfirm={performDelete}
         onCancel={() => setConfirmOpen(false)}
       />
+
+      {/* Edit — non-dismissable Modal (UX-B6), replaces the old in-place row
+          swap (the whole card used to be replaced by ScheduleForm). No
+          `title` here: ScheduleForm renders its own "Edit schedule" heading. */}
+      <Modal
+        open={editing}
+        onClose={() => setEditing(false)}
+        dismissable={false}
+        className="max-w-xl"
+      >
+        <ScheduleForm mode="edit" agents={agents} initial={s} onDone={() => setEditing(false)} />
+      </Modal>
     </div>
   );
 }

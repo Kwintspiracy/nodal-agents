@@ -11,9 +11,11 @@ import ChipRow from '@/components/ui/ChipRow';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import EmptyState from '@/components/ui/EmptyState';
+import Modal from '@/components/ui/Modal.tsx';
 import SkillsAssignedTable from './SkillsAssignedTable.tsx';
 import CommunitySkillsGrid from './CommunitySkillsGrid.tsx';
 import InstallCommunitySkillModal from './InstallCommunitySkillModal.tsx';
+import SkillForm from './SkillForm.tsx';
 
 type Tab = 'assigned' | 'library';
 
@@ -47,6 +49,7 @@ export default function SkillsClient({ skills, agents }: Props) {
   const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
   const [installModalOpen, setInstallModalOpen] = useState(false);
+  const [newSkillOpen, setNewSkillOpen] = useState(false);
 
   const filteredAssigned = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -89,7 +92,7 @@ export default function SkillsClient({ skills, agents }: Props) {
                   <CloudArrowDown size={13} weight="bold" />
                   Install skill
                 </PrimaryButton>
-                <PrimaryButton variant="coral" href="/skills/new">
+                <PrimaryButton variant="coral" onClick={() => setNewSkillOpen(true)}>
                   <Plus size={13} weight="bold" />
                   New Skill
                 </PrimaryButton>
@@ -111,6 +114,20 @@ export default function SkillsClient({ skills, agents }: Props) {
         open={installModalOpen}
         onClose={() => setInstallModalOpen(false)}
       />
+
+      {/* New skill — non-dismissable Modal (UX-B6). The dedicated /skills/new
+          route stays live for deep-links; both hosts render the same
+          SkillForm. `defaultOpen` skips the form's own collapsed toggle —
+          the Modal itself is the toggle here. */}
+      <Modal
+        open={newSkillOpen}
+        onClose={() => setNewSkillOpen(false)}
+        title="New skill"
+        dismissable={false}
+        className="max-w-3xl"
+      >
+        <SkillForm mode="create" defaultOpen onClose={() => setNewSkillOpen(false)} />
+      </Modal>
 
       {tab === 'assigned' ? (
         assignedSkills.length === 0 ? (

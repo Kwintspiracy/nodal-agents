@@ -9,6 +9,7 @@ import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import TextInput from '@/components/ui/TextInput';
+import Modal, { ModalFooter } from '@/components/ui/Modal.tsx';
 import type { CredentialEntry } from './CredentialCard.tsx';
 import type { ActionResult } from '@/lib/actions.ts';
 
@@ -48,7 +49,8 @@ const TD = 'px-[18px] py-[13px] align-middle';
 /**
  * CredentialsTable — saved OAuth credentials as a table (Provider · Account ·
  * Scopes · Status · Used by · Actions), matching the connectors / skills tables.
- * Rename opens an inline expand row; delete confirms; refresh is inline.
+ * Rename opens a non-dismissable Modal (UX-B6: editing a list object is always
+ * a modal, never an inline expand row); delete confirms; refresh is inline.
  */
 export default function CredentialsTable({
   credentials,
@@ -124,9 +126,13 @@ function CredentialRow({
       else toast.error(r.message);
     });
   }
+  function closeRename() {
+    setRenameOpen(false);
+    setRenameName(credential.name);
+  }
   function performRename() {
     const trimmed = renameName.trim();
-    if (!trimmed || trimmed === credential.name) return setRenameOpen(false);
+    if (!trimmed || trimmed === credential.name) return closeRename();
     startTransition(async () => {
       const r = await onRename(credential.id, trimmed);
       if (!r.ok) toast.error(r.message);
@@ -202,8 +208,8 @@ function CredentialRow({
             <RowActionButton
               square
               icon={<PencilSimple size={16} />}
-              title={renameOpen ? 'Close' : 'Rename credential'}
-              onClick={() => setRenameOpen((v) => !v)}
+              title="Rename credential"
+              onClick={() => setRenameOpen(true)}
               disabled={isPending || isRefreshing}
             />
             {supportsRefresh && (
@@ -240,31 +246,36 @@ function CredentialRow({
         </tr>
       )}
 
-      {/* Rename expand row */}
-      {renameOpen && (
-        <tr className="border-b border-rule-2 last:border-0 bg-hover/40">
-          <td colSpan={6} className="px-[18px] py-3">
-            <div className="flex items-center gap-2">
-              <TextInput
-                type="text"
-                value={renameName}
-                onChange={(e) => setRenameName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') performRename();
-                  if (e.key === 'Escape') setRenameOpen(false);
-                }}
-                autoFocus
-                containerClassName="w-full max-w-sm"
-                placeholder="New display name"
-              />
-              <PrimaryButton variant="ink" size="sm" onClick={performRename} disabled={isPending}>
-                {isPending ? 'Saving…' : 'Save'}
-              </PrimaryButton>
-              <RowActionButton onClick={() => setRenameOpen(false)}>Cancel</RowActionButton>
-            </div>
-          </td>
-        </tr>
-      )}
+      {/* Rename — non-dismissable Modal (UX-B6), replaces the old inline
+          expand row: closing happens only via Cancel/Save below. */}
+      <Modal
+        open={renameOpen}
+        onClose={closeRename}
+        title="Rename credential"
+        dismissable={false}
+        footer={
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={closeRename}>
+              Cancel
+            </PrimaryButton>
+            <PrimaryButton variant="ink" onClick={performRename} disabled={isPending}>
+              {isPending ? 'Saving…' : 'Save'}
+            </PrimaryButton>
+          </ModalFooter>
+        }
+      >
+        <TextInput
+          label="New display name"
+          type="text"
+          value={renameName}
+          onChange={(e) => setRenameName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') performRename();
+          }}
+          autoFocus
+          placeholder="New display name"
+        />
+      </Modal>
 
       <ConfirmDialog
         open={deleteOpen}

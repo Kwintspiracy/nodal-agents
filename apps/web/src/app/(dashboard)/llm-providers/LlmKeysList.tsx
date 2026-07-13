@@ -7,6 +7,7 @@ import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import EmptyState from '@/components/ui/EmptyState';
+import Modal from '@/components/ui/Modal.tsx';
 import LlmKeyRow from './LlmKeyRow.tsx';
 import LlmKeyForm from './LlmKeyForm.tsx';
 
@@ -74,16 +75,26 @@ export default function LlmKeysList({ initialRows }: Props) {
             }}
           />
         )}
-        {formState.kind === 'edit' && (
-          <LlmKeyForm
-            mode="edit"
-            initial={formState.row}
-            onDone={(action) => {
-              setFormState({ kind: 'closed' });
-              if (action === 'saved') refresh();
-            }}
-          />
-        )}
+        {/* Edit — non-dismissable Modal (UX-B6), replaces the old inline form
+            that used to render below the grid. Closing happens only via
+            LlmKeyForm's own Save/Cancel. */}
+        <Modal
+          open={formState.kind === 'edit'}
+          onClose={() => setFormState({ kind: 'closed' })}
+          title="Edit LLM provider"
+          dismissable={false}
+        >
+          {formState.kind === 'edit' && (
+            <LlmKeyForm
+              mode="edit"
+              initial={formState.row}
+              onDone={(action) => {
+                setFormState({ kind: 'closed' });
+                if (action === 'saved') refresh();
+              }}
+            />
+          )}
+        </Modal>
       </div>
     </PageShell>
   );
