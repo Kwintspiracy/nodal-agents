@@ -11,6 +11,17 @@ interface Props {
   children: ReactNode;
   /** Extra Tailwind classes on the panel (e.g. custom max-w). */
   className?: string;
+  /**
+   * Whether the backdrop click, Esc, and corner ✕ can dismiss the modal.
+   * Defaults to `true` (existing behaviour, e.g. VersionBadge-style info
+   * modals).
+   *
+   * Product rule: any EDIT modal (mutable data, risk of losing in-progress
+   * changes) must pass `dismissable={false}` — closing then only happens via
+   * explicit Save/Cancel buttons in the modal's own content. Read-only /
+   * informational modals keep the default `true`.
+   */
+  dismissable?: boolean;
 }
 
 /**
@@ -20,8 +31,16 @@ interface Props {
  *
  * Backdrop: click → close. Esc → close. Body scroll locked while open.
  * Renders null when !open (no DOM footprint when closed).
+ * Pass `dismissable={false}` to disable backdrop/Esc/✕ dismissal (edit forms).
  */
-export default function Modal({ open, onClose, title, children, className = '' }: Props) {
+export default function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  className = '',
+  dismissable = true,
+}: Props) {
   // SSR-safe portal gate — createPortal needs document, which is only present
   // after hydration. Setting state in this effect is intentional (same pattern
   // as ConfirmDialog).
@@ -31,12 +50,12 @@ export default function Modal({ open, onClose, title, children, className = '' }
     setMounted(true);
   }, []);
 
-  // Esc to close + body scroll lock.
+  // Esc to close (skipped when non-dismissable) + body scroll lock.
   useEffect(() => {
     if (!open) return;
 
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && dismissable) onClose();
     }
     window.addEventListener('keydown', handleKey);
     const prev = document.body.style.overflow;
@@ -45,7 +64,7 @@ export default function Modal({ open, onClose, title, children, className = '' }
       window.removeEventListener('keydown', handleKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open, onClose, dismissable]);
 
   if (!open || !mounted) return null;
 
@@ -54,7 +73,7 @@ export default function Modal({ open, onClose, title, children, className = '' }
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-40 bg-black/60 animate-[fadeIn_150ms_ease]"
-        onClick={onClose}
+        onClick={dismissable ? onClose : undefined}
         aria-hidden="true"
       />
 
@@ -71,14 +90,16 @@ export default function Modal({ open, onClose, title, children, className = '' }
           {title !== undefined && (
             <div className="flex items-center justify-between gap-2 px-6 pt-5 pb-4 border-b border-rule-2">
               <h3 className="text-sm font-semibold text-ink">{title}</h3>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="text-ink-3 hover:text-ink transition-colors"
-              >
-                ✕
-              </button>
+              {dismissable && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="Close"
+                  className="text-ink-3 hover:text-ink transition-colors"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           )}
           <div className="p-6 pt-5">{children}</div>

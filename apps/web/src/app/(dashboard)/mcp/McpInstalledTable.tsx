@@ -8,6 +8,7 @@ import { connIcon, connEmoji } from '../connectors/connector-brand.ts';
 import MonoCode from '@/components/ui/MonoCode';
 import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
+import Modal from '@/components/ui/Modal';
 import McpServerRow from './McpServerRow.tsx';
 
 const MCP_BLUE = '#3565ff';
@@ -20,6 +21,11 @@ type Props = {
 /**
  * McpInstalledTable — the design's `.conn-tbl` pattern adapted for MCP servers.
  * Columns: Server, Tools discovered, Transport, Status, Actions.
+ *
+ * Edit → non-dismissable Modal with the full edit surface (McpServerRow).
+ * No more row accordion (UX-B6): the old accordion nested a SECOND "Edit
+ * config" accordion inside it, the exact double-Edit pattern flagged as bad
+ * UX. The modal closes only via its own Save/Cancel/Disconnect actions.
  */
 export default function McpInstalledTable({ instances, catalog }: Props) {
   return (
@@ -79,7 +85,7 @@ function McpRow({
   description: string;
   transport: 'http' | 'stdio';
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const glyph = catalogLabel.slice(0, 2).toUpperCase();
   const iconSrc = connIcon(instance.slug);
   const emoji = connEmoji(instance.slug);
@@ -145,25 +151,27 @@ function McpRow({
             <RowActionButton
               square
               icon={<PencilSimple size={16} />}
-              title={expanded ? 'Close' : 'Edit'}
-              onClick={() => setExpanded((v) => !v)}
+              title="Edit"
+              onClick={() => setEditOpen(true)}
             />
           </div>
         </td>
       </tr>
 
-      {/* Expanded McpServerRow panel */}
-      {expanded && (
-        <tr className="border-b border-rule-2 last:border-0 bg-hover/40">
-          <td colSpan={5} className="px-[18px] py-3">
-            <McpServerRow
-              instance={instance}
-              catalogLabel={catalogLabel}
-              description={description}
-            />
-          </td>
-        </tr>
-      )}
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title={instance.name}
+        dismissable={false}
+        className="max-w-xl"
+      >
+        <McpServerRow
+          instance={instance}
+          catalogLabel={catalogLabel}
+          description={description}
+          onClose={() => setEditOpen(false)}
+        />
+      </Modal>
     </>
   );
 }

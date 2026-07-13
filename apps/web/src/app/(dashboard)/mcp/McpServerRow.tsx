@@ -1,38 +1,48 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { PencilSimple, ArrowsClockwise, Trash } from '@phosphor-icons/react';
+import { ArrowsClockwise, Trash } from '@phosphor-icons/react';
 import {
   deleteMcpServerAction,
-  renameMcpServerAction,
   updateMcpServerApiKeyAction,
   type McpServerInstance,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import McpEditForm from './McpEditForm.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
+import McpEditForm from './McpEditForm.tsx';
 
 interface Props {
   instance: McpServerInstance;
   /** Catalog label for the slug (e.g. "Cogni Cortex"). Falls back to instance.name. */
   catalogLabel: string;
   description: string;
+  /** Closes the wrapping edit Modal (UX-B6). Called after a successful
+   *  Disconnect (the instance no longer exists), after Save/Cancel on the
+   *  structural config form, and after a successful key rotation — the modal
+   *  is non-dismissable so this is the only way out besides those. */
+  onClose: () => void;
 }
 
-export default function McpServerRow({ instance, catalogLabel, description }: Props) {
-  const router = useRouter();
+/**
+ * McpServerRow — the full edit surface for one installed MCP server,
+ * rendered inside the Modal that McpInstalledTable's Edit action opens.
+ *
+ * Previously this was itself an accordion (toggled by the row's Edit icon)
+ * that contained its OWN "Edit config" icon, which toggled a SECOND nested
+ * accordion (McpEditForm) — the exact double-Edit pattern flagged as the
+ * worst UX in the app (UX-B6). Fixed by flattening: McpEditForm's fields are
+ * always shown here (no inner toggle), and its Name field already covers
+ * renaming (it submits `name` as part of updateMcpServerConfigAction), so the
+ * old inline rename pencil is gone too. Rotate-key and Disconnect stay as
+ * distinct, clearly-labelled actions (not another "Edit").
+ */
+export default function McpServerRow({ instance, catalogLabel, description, onClose }: Props) {
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-
-  // Rename state
-  const [isRenaming, setIsRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState(instance.name);
 
   // Rotate-key state. Collapsed by default so the sensitive input isn't
-  // sitting visible on the page; same UX as ConnectorForm.
+  // sitting visible on the page; revealed via its own button.
   const [rotateOpen, setRotateOpen] = useState(false);
   const [newApiKey, setNewApiKey] = useState('');
 
@@ -45,23 +55,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
         return;
       }
       toast.success(`${instance.name} disconnected`);
-    });
-  }
-
-  function performRename() {
-    const trimmed = renameValue.trim();
-    if (!trimmed || trimmed === instance.name) {
-      setIsRenaming(false);
-      return;
-    }
-    startTransition(async () => {
-      const r = await renameMcpServerAction(instance.id, trimmed);
-      if (!r.ok) {
-        toast.error(r.message);
-      } else {
-        toast.success('Renamed');
-        setIsRenaming(false);
-      }
+      onClose();
     });
   }
 
@@ -84,81 +78,19 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
   }
 
   return (
-    <div className="bg-paper border border-rule-2 rounded-xl px-5 py-4">
+    <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          {/* Instance name — inline rename */}
-          {isRenaming ? (
-            <div className="flex items-center gap-2">
-              <input
-                autoFocus
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') performRename();
-                  if (e.key === 'Escape') {
-                    setRenameValue(instance.name);
-                    setIsRenaming(false);
-                  }
-                }}
-                className="bg-hover border border-rule rounded-md px-2 py-1 text-sm text-ink focus:border-ink-3 focus:outline-none w-full max-w-xs"
-              />
-              <button
-                type="button"
-                onClick={performRename}
-                disabled={isPending}
-                className="text-xs text-ok hover:text-ok disabled:opacity-40"
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setRenameValue(instance.name);
-                  setIsRenaming(false);
-                }}
-                className="text-xs text-ink-3 hover:text-ink-2"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-ink font-medium">{instance.name}</span>
-              <button
-                type="button"
-                onClick={() => setIsRenaming(true)}
-                aria-label="Rename MCP server"
-                className="text-ink-4 hover:text-ink-3 transition-colors text-xs leading-none"
-                title="Rename"
-              >
-                ✎
-              </button>
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 font-mono">
-                {catalogLabel}
-              </span>
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-ok">
-                connected
-              </span>
-            </div>
-          )}
-          {description && <p className="text-xs text-ink-3 mt-0.5">{description}</p>}
-          <p className="text-xs text-ink-4 mt-1">
+        <div className="min-w-0">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+            {catalogLabel}
+          </p>
+          {description && <p className="mt-0.5 text-xs text-ink-3">{description}</p>}
+          <p className="mt-1 text-xs text-ink-4">
             {instance.toolCount} tool{instance.toolCount === 1 ? '' : 's'} discovered
             {instance.apiKeyLast4 ? ` · key …${instance.apiKeyLast4}` : ''}
           </p>
         </div>
-        <div className="shrink-0 flex gap-2 flex-wrap justify-end">
-          <RowActionButton
-            square
-            icon={<PencilSimple size={16} />}
-            title={editOpen ? 'Close' : 'Edit config'}
-            onClick={() => {
-              setEditOpen((v) => !v);
-              setRotateOpen(false);
-            }}
-            disabled={isPending}
-          />
+        <div className="flex shrink-0 gap-2">
           <RowActionButton
             square
             icon={<ArrowsClockwise size={16} />}
@@ -181,9 +113,9 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
           (tools/list + optional probe) BEFORE persisting, so a bad paste
           can't silently break the next job. */}
       {rotateOpen && (
-        <div className="space-y-3 pt-3 mt-3 border-t border-rule-2">
+        <div className="space-y-3 border-t border-rule-2 pt-3">
           <div>
-            <label htmlFor={`mcp-rotate-${instance.id}`} className="block text-xs text-ink-3 mb-1">
+            <label htmlFor={`mcp-rotate-${instance.id}`} className="mb-1 block text-xs text-ink-3">
               New API key
             </label>
             <input
@@ -201,19 +133,19 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
                 }
               }}
               placeholder="Paste the new key"
-              className="w-full bg-hover border border-rule rounded-md px-2 py-1.5 text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none font-mono"
+              className="w-full rounded-md border border-rule bg-hover px-2 py-1.5 font-mono text-sm text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none"
             />
-            <p className="text-[12px] text-ink-4 mt-1">
+            <p className="mt-1 text-[12px] text-ink-4">
               Agent assignments stay intact — the key is verified against the server before being
               saved.
             </p>
           </div>
-          <div className="flex gap-2 items-center">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={performRotate}
               disabled={isPending || !newApiKey.trim()}
-              className="px-4 py-2 text-sm font-semibold bg-ink text-canvas rounded-md hover:brightness-[0.92] disabled:opacity-50"
+              className="rounded-md bg-ink px-4 py-2 text-sm font-semibold text-canvas hover:brightness-[0.92] disabled:opacity-50"
             >
               {isPending ? 'Verifying…' : 'Save new key'}
             </button>
@@ -223,7 +155,7 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
                 setNewApiKey('');
                 setRotateOpen(false);
               }}
-              className="text-xs text-ink-3 hover:text-ink underline"
+              className="text-xs text-ink-3 underline hover:text-ink"
             >
               Cancel
             </button>
@@ -231,18 +163,10 @@ export default function McpServerRow({ instance, catalogLabel, description }: Pr
         </div>
       )}
 
-      {editOpen && (
-        <div className="mt-3">
-          <McpEditForm
-            mcpServerId={instance.id}
-            onDone={() => {
-              setEditOpen(false);
-              router.refresh();
-            }}
-            onCancel={() => setEditOpen(false)}
-          />
-        </div>
-      )}
+      {/* Structural config — always visible, no nested Edit toggle. */}
+      <div className="border-t border-rule-2 pt-3">
+        <McpEditForm mcpServerId={instance.id} onDone={onClose} onCancel={onClose} />
+      </div>
 
       <ConfirmDialog
         open={confirmOpen}

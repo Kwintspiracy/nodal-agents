@@ -56,9 +56,19 @@ interface Props {
   catalogEntry: ConnectorCatalogItem;
   /** OAuth credentials compatible with this connector's credentialType. Empty for api_key connectors. */
   compatibleCredentials: CompatibleCredential[];
+  /** Closes the wrapping edit Modal (UX-B6). Called automatically after a
+   *  successful delete/disconnect (the instance no longer exists) and by the
+   *  explicit "Close" button — the modal itself is non-dismissable so this is
+   *  the only way out besides those. */
+  onClose: () => void;
 }
 
-export default function ConnectorForm({ instance, catalogEntry, compatibleCredentials }: Props) {
+export default function ConnectorForm({
+  instance,
+  catalogEntry,
+  compatibleCredentials,
+  onClose,
+}: Props) {
   const [isPending, startTransition] = useTransition();
   const [isRefreshing, startRefreshTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -98,8 +108,12 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
     setConfirmOpen(false);
     startTransition(async () => {
       const r = await deleteConnectorAction(instance.id);
-      if (!r.ok) toast.error(r.message);
-      else toast.success(`${instance.name} removed`);
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success(`${instance.name} removed`);
+      onClose();
     });
   }
 
@@ -442,6 +456,18 @@ export default function ConnectorForm({ instance, catalogEntry, compatibleCreden
           )}
         </div>
       )}
+
+      {/* Modal footer — the one explicit way to close besides a successful
+          delete above (the wrapping Modal is non-dismissable). */}
+      <div className="flex justify-end pt-2 border-t border-rule-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-1.5 text-xs font-medium text-ink-3 hover:text-ink underline"
+        >
+          Close
+        </button>
+      </div>
 
       {/* Delete / Disconnect confirmation */}
       <ConfirmDialog

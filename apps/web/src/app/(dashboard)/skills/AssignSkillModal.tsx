@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
@@ -37,7 +36,6 @@ function AssignPanel({
   agents: AgentRow[];
   onClose: () => void;
 }) {
-  const router = useRouter();
   // Track assigned agent IDs locally so the toggles reflect optimistic state
   // immediately while the server confirms in the background.
   const [assignedIds, setAssignedIds] = useState<Set<string>>(
@@ -89,7 +87,13 @@ function AssignPanel({
       }
 
       toast.success(isAssigned ? 'Skill unassigned' : 'Skill assigned');
-      router.refresh();
+      // No router.refresh() here: assignSkillAction/unassignSkillAction already
+      // call revalidatePath('/skills') server-side, which — since this call
+      // runs inside the startTransition above — auto-refreshes the current
+      // page's Server Components on its own. An explicit router.refresh() on
+      // top of that fired a SECOND full-route rerender back to back, which is
+      // what made every checkbox in the list blink on each toggle. Same
+      // pattern (no manual refresh) as ConnectorForm's rename/rotate actions.
     });
   }
 
