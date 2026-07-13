@@ -35,7 +35,7 @@ export type LearnedSkillRow = {
   archivedAt: Date | null;
   createdAt: Date | null;
   updatedAt: Date | null;
-  assignedAgentNames: string[];
+  assignedAgents: { id: string; name: string }[];
   createdByAgentId: string | null;
   createdByAgentName: string | null;
 };
@@ -139,12 +139,16 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
       )
       .orderBy(sql`${agentSkills.lastUsedAt} DESC NULLS LAST`, desc(agentSkills.createdAt));
 
-    // Fetch assigned agent names for all returned skills
+    // Fetch assigned agents (id + name) for all returned skills
     const skillIds = rows.map((r) => r.id);
-    const assignedAgentNamesMap = new Map<string, string[]>();
+    const assignedAgentsMap = new Map<string, { id: string; name: string }[]>();
     if (skillIds.length > 0) {
       const assignments = await db
-        .select({ skillId: agentSkillAssignments.skillId, agentName: agents.name })
+        .select({
+          skillId: agentSkillAssignments.skillId,
+          agentId: agentSkillAssignments.agentId,
+          agentName: agents.name,
+        })
         .from(agentSkillAssignments)
         .innerJoin(agents, eq(agents.id, agentSkillAssignments.agentId))
         .where(
@@ -154,9 +158,9 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
           ),
         );
       for (const a of assignments) {
-        const existing = assignedAgentNamesMap.get(a.skillId) ?? [];
-        existing.push(a.agentName);
-        assignedAgentNamesMap.set(a.skillId, existing);
+        const existing = assignedAgentsMap.get(a.skillId) ?? [];
+        existing.push({ id: a.agentId, name: a.agentName });
+        assignedAgentsMap.set(a.skillId, existing);
       }
     }
 
@@ -189,7 +193,7 @@ export async function listLearnedSkillsAction(): Promise<ActionResult<LearnedSki
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         createdByAgentId: r.createdByAgentId,
-        assignedAgentNames: assignedAgentNamesMap.get(r.id) ?? [],
+        assignedAgents: assignedAgentsMap.get(r.id) ?? [],
         createdByAgentName: r.createdByAgentId
           ? (createdByAgentNameMap.get(r.createdByAgentId) ?? null)
           : null,
@@ -397,5 +401,45 @@ export async function assignLearnedSkillAction(
   } catch (err) {
     console.error('[assignLearnedSkillAction]', err);
     return fail('db_error', 'Failed to assign skill');
+  }
+}
+
+// ─── unassignLearnedSkillAction ───────────────────────────────────────────────
+
+export async function unassignLearnedSkillAction(
+  skillId: unknown,
+  agentId: unknown,
+): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsedSkill = z.string().uuid().safeParse(skillId);
+    const parsedAgent = z.string().uuid().safeParse(agentId);
+    if (!parsedSkill.success) return fail('validation_failed', 'Invalid skill id');
+    if (!parsedAgent.success) return fail('validation_failed', 'Invalid agent id');
+
+    const db = getDb();
+    const [row] = await db
+      .select({ id: agentSkills.id, createdBy: agentSkills.createdBy })
+      .from(agentSkills)
+      .where(and(eq(agentSkills.id, parsedSkill.data), eq(agentSkills.entityId, session.entityId)))
+      .limit(1);
+    if (!row) return fail('not_found', 'Skill not found');
+    if (row.createdBy !== 'agent')
+      return fail('forbidden', 'Only agent-authored skills can be unassigned here');
+
+    await db
+      .delete(agentSkillAssignments)
+      .where(
+        and(
+          eq(agentSkillAssignments.skillId, parsedSkill.data),
+          eq(agentSkillAssignments.agentId, parsedAgent.data),
+          eq(agentSkillAssignments.entityId, session.entityId),
+        ),
+      );
+    revalidatePath('/learned-skills');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[unassignLearnedSkillAction]', err);
+    return fail('db_error', 'Failed to unassign skill');
   }
 }

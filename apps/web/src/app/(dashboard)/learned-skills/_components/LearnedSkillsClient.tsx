@@ -1,11 +1,9 @@
 'use client';
 
-import { useState, useTransition, useCallback, useMemo } from 'react';
+import { useState, useTransition, useMemo } from 'react';
 import { toast } from 'sonner';
 import { UserPlus, Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import Modal, { ModalFooter } from '@/components/ui/Modal.tsx';
-import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PageSearchInput from '@/components/ui/PageSearchInput';
@@ -13,7 +11,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import RowActionButton from '@/components/ui/RowActionButton';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
 import Switch from '@/components/ui/Switch';
-import Select from '@/components/ui/Select';
+import AssignSkillModal from '@/app/(dashboard)/skills/AssignSkillModal.tsx';
 import {
   setReflectionEnabledAction,
   archiveLearnedSkillAction,
@@ -21,6 +19,7 @@ import {
   deleteLearnedSkillAction,
   setSkillAssignmentModeAction,
   assignLearnedSkillAction,
+  unassignLearnedSkillAction,
 } from '@/lib/learned-skills-actions.ts';
 import type { LearnedSkillRow } from '@/lib/learned-skills-actions.ts';
 
@@ -37,12 +36,6 @@ type DialogState =
   | { type: 'archive'; skillId: string; skillName: string }
   | { type: 'delete'; skillId: string; skillName: string }
   | null;
-
-type AssignModalState = {
-  skillId: string;
-  skillName: string;
-  defaultAgentId: string | null;
-} | null;
 
 function StateBadge({ state }: { state: string }) {
   if (state === 'active') {
@@ -78,9 +71,10 @@ export default function LearnedSkillsClient({
   const [dialog, setDialog] = useState<DialogState>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [localSkills, setLocalSkills] = useState<LearnedSkillRow[]>(skills);
-  const [assignModal, setAssignModal] = useState<AssignModalState>(null);
-  const [assigningAgentId, setAssigningAgentId] = useState<string>('');
+  const [assignSkillId, setAssignSkillId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+
+  const assignSkill = assignSkillId ? localSkills.find((s) => s.id === assignSkillId) : undefined;
 
   const visibleSkills = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -167,42 +161,18 @@ export default function LearnedSkillsClient({
     });
   }
 
-  const openAssignModal = useCallback(
-    (skill: LearnedSkillRow) => {
-      const defaultAgentId = skill.createdByAgentId ?? null;
-      setAssigningAgentId(defaultAgentId ?? assignableAgents[0]?.id ?? '');
-      setAssignModal({ skillId: skill.id, skillName: skill.name, defaultAgentId });
-    },
-    [assignableAgents],
-  );
-
-  function handleAssignConfirm() {
-    if (!assignModal || !assigningAgentId) return;
-    const { skillId, skillName } = assignModal;
-    setAssignModal(null);
-
-    startTransition(async () => {
-      const result = await assignLearnedSkillAction(skillId, assigningAgentId);
-      if (!result.ok) {
-        toast.error(result.message);
-        return;
-      }
-      const agent = assignableAgents.find((a) => a.id === assigningAgentId);
-      const agentName = agent?.name ?? 'agent';
-      toast.success(`"${skillName}" assigned to ${agentName}`);
-      setLocalSkills((prev) =>
-        prev.map((s) =>
-          s.id === skillId
-            ? {
-                ...s,
-                assignedAgentNames: s.assignedAgentNames.includes(agentName)
-                  ? s.assignedAgentNames
-                  : [...s.assignedAgentNames, agentName],
-              }
-            : s,
-        ),
-      );
-    });
+  function handleAssignToggled(agentId: string, assigned: boolean) {
+    const agent = assignableAgents.find((a) => a.id === agentId);
+    setLocalSkills((prev) =>
+      prev.map((s) => {
+        if (s.id !== assignSkillId) return s;
+        if (assigned) {
+          if (!agent || s.assignedAgents.some((a) => a.id === agentId)) return s;
+          return { ...s, assignedAgents: [...s.assignedAgents, { id: agentId, name: agent.name }] };
+        }
+        return { ...s, assignedAgents: s.assignedAgents.filter((a) => a.id !== agentId) };
+      }),
+    );
   }
 
   return (
@@ -312,21 +282,20 @@ export default function LearnedSkillsClient({
                   )}
                   {/* Assignment line */}
                   <p className="mt-0.5 text-[12px] text-ink-3">
-                    {skill.assignedAgentNames.length > 0
-                      ? `Assigned to ${skill.assignedAgentNames.join(', ')}`
+                    {skill.assignedAgents.length > 0
+                      ? `Assigned to ${skill.assignedAgents.map((a) => a.name).join(', ')}`
                       : 'Not assigned'}
                   </p>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Assign — only for unassigned skills */}
-                  {skill.assignedAgentNames.length === 0 && assignableAgents.length > 0 && (
+                  {assignableAgents.length > 0 && (
                     <RowActionButton
                       square
                       icon={<UserPlus size={16} />}
                       title="Assign to agents"
                       disabled={isPending}
-                      onClick={() => openAssignModal(skill)}
+                      onClick={() => setAssignSkillId(skill.id)}
                     />
                   )}
                   {skill.state === 'archived' ? (
@@ -392,44 +361,18 @@ export default function LearnedSkillsClient({
         onCancel={() => setDialog(null)}
       />
 
-      {/* Assign modal */}
-      <Modal
-        open={assignModal !== null}
-        onClose={() => setAssignModal(null)}
-        title={assignModal ? `Assign "${assignModal.skillName}"` : undefined}
-        footer={
-          <ModalFooter>
-            <PrimaryButton variant="neutral" onClick={() => setAssignModal(null)}>
-              Cancel
-            </PrimaryButton>
-            <PrimaryButton
-              variant="ink"
-              onClick={handleAssignConfirm}
-              disabled={!assigningAgentId || isPending}
-            >
-              Assign
-            </PrimaryButton>
-          </ModalFooter>
-        }
-      >
-        {assignModal && (
-          <div className="space-y-4">
-            <p className="text-[13px] text-ink-3">Select an agent to assign this skill to.</p>
-            <Select
-              id="assign-agent-select"
-              label="Agent"
-              value={assigningAgentId}
-              onChange={(e) => setAssigningAgentId(e.target.value)}
-            >
-              {assignableAgents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-        )}
-      </Modal>
+      {/* Assign modal — same per-agent toggle list as the Skills page */}
+      {assignSkill && (
+        <AssignSkillModal
+          open
+          onClose={() => setAssignSkillId(null)}
+          skill={assignSkill}
+          agents={assignableAgents}
+          assign={({ skillId, agentId }) => assignLearnedSkillAction(skillId, agentId)}
+          unassign={({ skillId, agentId }) => unassignLearnedSkillAction(skillId, agentId)}
+          onToggled={handleAssignToggled}
+        />
+      )}
     </PageShell>
   );
 }

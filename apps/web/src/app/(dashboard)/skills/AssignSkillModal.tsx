@@ -3,25 +3,44 @@
 import { useState, useTransition } from 'react';
 import { toast } from 'sonner';
 import Link from 'next/link';
-import type { SkillRow, AgentRow } from '@/lib/actions.ts';
 import { assignSkillAction, unassignSkillAction } from '@/lib/actions.ts';
 import Modal, { ModalFooter } from '@/components/ui/Modal';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import Checkbox from '@/components/ui/Checkbox';
 
+type AssignResult = { ok: true } | { ok: false; message: string };
+
+type AssignableSkill = { id: string; name: string; assignedAgents: { id: string }[] };
+type AssignableAgent = { id: string; name: string; slug: string };
+
 type Props = {
   open: boolean;
   onClose: () => void;
-  skill: SkillRow;
-  agents: AgentRow[];
+  skill: AssignableSkill;
+  agents: AssignableAgent[];
+  /** Server actions invoked on toggle. Default to the /skills actions;
+   *  Learned Skills passes its own pair (same shape, agent-authored guards). */
+  assign?: (p: { skillId: string; agentId: string }) => Promise<AssignResult>;
+  unassign?: (p: { skillId: string; agentId: string }) => Promise<AssignResult>;
+  /** Fires after a toggle is confirmed server-side, so pages that keep local
+   *  row state (Learned Skills) can mirror the change without a refetch. */
+  onToggled?: (agentId: string, assigned: boolean) => void;
 };
 
 /**
  * AssignSkillModal — the per-agent assign/unassign toggle list for a skill.
- * Shared by the Library grid cards and the "My skills" table so there's a
- * single assignment surface (no duplicated picker).
+ * Shared by the Library grid cards, the "My skills" table and the Learned
+ * Skills page so there's a single assignment surface (no duplicated picker).
  */
-export default function AssignSkillModal({ open, onClose, skill, agents }: Props) {
+export default function AssignSkillModal({
+  open,
+  onClose,
+  skill,
+  agents,
+  assign = assignSkillAction,
+  unassign = unassignSkillAction,
+  onToggled,
+}: Props) {
   return (
     <Modal
       open={open}
@@ -35,7 +54,14 @@ export default function AssignSkillModal({ open, onClose, skill, agents }: Props
         </ModalFooter>
       }
     >
-      <AssignPanel skill={skill} agents={agents} onClose={onClose} />
+      <AssignPanel
+        skill={skill}
+        agents={agents}
+        onClose={onClose}
+        assign={assign}
+        unassign={unassign}
+        onToggled={onToggled}
+      />
     </Modal>
   );
 }
@@ -44,10 +70,16 @@ function AssignPanel({
   skill,
   agents,
   onClose,
+  assign,
+  unassign,
+  onToggled,
 }: {
-  skill: SkillRow;
-  agents: AgentRow[];
+  skill: AssignableSkill;
+  agents: AssignableAgent[];
   onClose: () => void;
+  assign: NonNullable<Props['assign']>;
+  unassign: NonNullable<Props['unassign']>;
+  onToggled: Props['onToggled'];
 }) {
   // Track assigned agent IDs locally so the toggles reflect optimistic state
   // immediately while the server confirms in the background.
@@ -83,9 +115,7 @@ function AssignPanel({
 
     startTransition(async () => {
       const payload = { skillId: skill.id, agentId };
-      const result = isAssigned
-        ? await unassignSkillAction(payload)
-        : await assignSkillAction(payload);
+      const result = isAssigned ? await unassign(payload) : await assign(payload);
 
       if (!result.ok) {
         // Revert optimistic update on failure
@@ -100,6 +130,7 @@ function AssignPanel({
       }
 
       toast.success(isAssigned ? 'Skill unassigned' : 'Skill assigned');
+      onToggled?.(agentId, !isAssigned);
       // No router.refresh() here: assignSkillAction/unassignSkillAction already
       // call revalidatePath('/skills') server-side, which — since this call
       // runs inside the startTransition above — auto-refreshes the current
