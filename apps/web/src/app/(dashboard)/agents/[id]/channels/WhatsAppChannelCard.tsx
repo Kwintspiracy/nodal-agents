@@ -2,6 +2,7 @@ import type { ChannelAllowedConversationView } from '@/lib/actions.ts';
 import Banner from '@/components/ui/Banner.tsx';
 import WhatsAppConfigForm from './WhatsAppConfigForm.tsx';
 import ChannelAllowlist from './ChannelAllowlist.tsx';
+import WhatsAppConnectGuide from './WhatsAppConnectGuide.tsx';
 
 /**
  * WhatsApp's card in the Channels grid — same shell Telegram/Discord/Slack
@@ -49,6 +50,8 @@ export default function WhatsAppChannelCard({
       {status === 'connected' && (
         <ChannelAllowlist agentId={agentId} chats={allowedConversations} />
       )}
+
+      <WhatsAppConnectGuide />
     </div>
   );
 }

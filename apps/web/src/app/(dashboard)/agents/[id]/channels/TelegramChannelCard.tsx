@@ -1,6 +1,7 @@
 import type { TelegramConfigRow, TelegramAllowedChatView } from '@/lib/actions.ts';
 import TelegramConfigForm from './TelegramConfigForm.tsx';
 import TelegramAllowlist from './TelegramAllowlist.tsx';
+import TelegramConnectGuide from './TelegramConnectGuide.tsx';
 
 /**
  * Telegram's card in the Channels grid — the pre-S4 /telegram page's content,
@@ -53,36 +54,7 @@ export default function TelegramChannelCard({
         )}
       </div>
 
-      <details className="text-sm text-ink-3">
-        <summary className="cursor-pointer hover:text-ink-2">How to get a bot token</summary>
-        <ol className="mt-3 ml-5 list-decimal space-y-1.5">
-          <li>
-            Open{' '}
-            <a
-              href="https://t.me/BotFather"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-ok hover:underline"
-            >
-              @BotFather
-            </a>{' '}
-            on Telegram.
-          </li>
-          <li>
-            Send <span className="font-mono text-ink-2">/newbot</span> and follow the prompts to
-            pick a name and username.
-          </li>
-          <li>
-            BotFather replies with a token of the form{' '}
-            <span className="font-mono">123456789:ABC...</span> — paste it above.
-          </li>
-          <li>
-            For group chats: also send <span className="font-mono text-ink-2">/setprivacy</span> →
-            choose your bot → <span className="font-mono">Disable</span> so it can read all
-            messages, otherwise it only sees commands.
-          </li>
-        </ol>
-      </details>
+      <TelegramConnectGuide />
     </div>
   );
 }
