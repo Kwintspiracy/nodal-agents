@@ -53,6 +53,7 @@ import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
+import Tabs from '@/components/ui/Tabs';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import RowActionButton from '@/components/ui/RowActionButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -695,44 +696,7 @@ function TabsBar({
     { id: 'autonomy', label: 'Autonomy' },
     { id: 'settings', label: 'Settings' },
   ];
-  return (
-    <div className="flex gap-1 border-b border-rule-2" role="tablist">
-      {TABS.map((t) => {
-        const isActive = tab === t.id;
-        return (
-          // Underline tab, not a bordered/pill button — no existing DS button
-          // primitive models this chrome, so this follows the same role="tab"
-          // div pattern already used for ConversationRow/OptionRadio elsewhere.
-          <div
-            key={t.id}
-            role="tab"
-            aria-selected={isActive}
-            tabIndex={0}
-            onClick={() => onChange(t.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onChange(t.id);
-              }
-            }}
-            className={[
-              'relative -mb-px cursor-pointer border-b-2 px-4 pt-2.5 pb-3 text-[14px] font-medium transition-colors',
-              isActive ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2',
-            ].join(' ')}
-          >
-            {t.label}
-            {t.count !== undefined && t.count > 0 && (
-              <span
-                className={`ml-1.5 font-mono text-[11px] ${isActive ? 'text-ink-2' : 'text-ink-4'}`}
-              >
-                {t.count}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <Tabs tabs={TABS} value={tab} onChange={onChange} />;
 }
 
 // ─── Section card wrapper ────────────────────────────────────────────────────
