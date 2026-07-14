@@ -54,6 +54,7 @@ import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
 import Tabs from '@/components/ui/Tabs';
+import AgentPill from '@/components/ui/AgentPill';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import RowActionButton from '@/components/ui/RowActionButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
@@ -445,24 +446,14 @@ function AgentPicker({ agents, activeId }: { agents: AgentRow[]; activeId: strin
   if (agents.length <= 1) return null;
   return (
     <div className="flex flex-wrap gap-2">
-      {agents.map((a) => {
-        const isActive = a.id === activeId;
-        return (
-          <Link
-            key={a.id}
-            href={`/agents/${a.id}/edit`}
-            className={[
-              'inline-flex h-[34px] items-center gap-2 rounded-full border px-3.5 text-[14px] font-medium transition-colors',
-              isActive
-                ? 'border-rule-2 bg-paper text-ink'
-                : 'border-rule bg-canvas text-ink-3 hover:border-rule-2 hover:text-ink-2',
-            ].join(' ')}
-          >
-            <span className="inline-block h-[7px] w-[7px] rounded-full bg-agent-vivid" />
-            {a.name}
-          </Link>
-        );
-      })}
+      {agents.map((a) => (
+        <AgentPill
+          key={a.id}
+          name={a.name}
+          href={`/agents/${a.id}/edit`}
+          active={a.id === activeId}
+        />
+      ))}
     </div>
   );
 }
