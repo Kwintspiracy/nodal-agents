@@ -10,6 +10,21 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.7.95 — The Living Design System Release · Jul 16, 2026
+
+The design system stopped being a snapshot and became a loop: the Figma library and
+the code are now mechanically tied together, checked by machine in both directions,
+and the last stock-browser UI (the select dropdown) was brought under the system.
+
+**Highlights**
+
+- **Figma ↔ code, closed loop.** All 73 shared UI components are mapped to the Figma library via Code Connect. A drift detector (`figma:drift`) fails when a component, variant, or mapping diverges between the file and the repo, a DS lockfile (`figma:ds-lock`/`ds-diff`) captures the library state, and a lint guard blocks any arbitrary text size from sneaking past the type ramp.
+- **The select menu finally speaks DS.** Dropdowns use the new customizable-select standard (`appearance: base-select`, Chrome/Edge): the open menu renders the design-system panel — paper surface, popover shadow, hover/selected states, the DS caret and check glyphs — with grouped options getting real section headers (styled `<optgroup>` legends). Other browsers keep their native picker, cleanly. Placeholders now grey out like every other field, and the field is pixel-checked against the Figma spec by machine (47 automated conformance checks).
+- **Agents page, redesigned.** Orchestrators are cards with their workers inside; dragging a worker across cards reassigns it. Delete moved to a type-to-confirm danger zone in Settings, and channel connections live in an in-page Channels tab.
+- **Pick where notifications land.** Schedules and webhooks gained a "Notify via" selector — results go to the channel you chose (Telegram, Discord, Slack), and if that channel isn't connected the run fails loudly instead of falling back silently.
+- **Docs, audited page by page.** Ten pages corrected against the real code, four end-to-end channel connection guides (Discord, Slack, WhatsApp, event triggers), and the README now documents the dev command that actually boots the stack.
+- **Fixes.** Multichannel transport resolves the reply channel per conversation; incoming webhooks moved to `/wh/v1`; an MCP server failing to load its tools no longer kills the whole job; sidebar labels no longer clip letter descenders; segmented controls no longer render a phantom empty segment; the dead "+ New connector" button is gone.
+
 ## v0.7.9 — The Design System Release · Jul 13, 2026
 
 The entire dashboard was brought under one enforced design system: every interactive

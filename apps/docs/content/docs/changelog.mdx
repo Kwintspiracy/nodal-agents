@@ -7,6 +7,17 @@ Notable releases, newest first. Pre-1.0: minor versions can carry breaking
 changes. Every release is published to npm as `nodal-agents` and tagged on
 GitHub — upgrade in place with `nodal-agents update` (your data is preserved).
 
+## v0.7.95 — The Living Design System Release · Jul 16, 2026
+
+The design system became a loop: Figma and the code are now mechanically tied together and checked by machine — and the last stock-browser UI joined the system.
+
+- **Figma ↔ code, closed loop.** Every shared component is mapped to the Figma library, a drift check fails when they diverge, and a lint guard keeps all text on the type ramp.
+- **Design-system dropdowns.** Select menus render the DS panel — surface, shadow, hover and selected states, section headers for grouped options — on Chrome/Edge, with a clean native fallback elsewhere. Placeholders grey out like every other field.
+- **Agents page, redesigned.** Orchestrator cards with their workers, drag a worker across cards to reassign it, type-to-confirm delete in a danger zone, channels in their own tab.
+- **Pick where notifications land.** Schedules and webhooks gained "Notify via" — results go to the channel you chose, and an unconnected channel fails loudly instead of falling back silently.
+- **Docs, audited.** Ten pages corrected against the real code and four end-to-end channel connection guides.
+- **Fixes.** Per-conversation reply channel, `/wh/v1` webhooks, MCP tool-load errors no longer kill jobs, plus a sweep of visual conformance fixes.
+
 ## v0.7.9 — The Design System Release · Jul 13, 2026
 
 The whole dashboard now speaks one visual language, enforced so it can't drift — plus a rebuilt Google Gemini provider.
