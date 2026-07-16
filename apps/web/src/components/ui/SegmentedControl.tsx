@@ -42,8 +42,11 @@ export default function SegmentedControl<T extends string>({
   className = '',
 }: Props<T>) {
   return (
+    // w-fit : la bordure doit épouser les segments. Sans elle, posé dans un
+    // parent block (ex. une modale), le conteneur flex s'étire et la zone vide
+    // après le dernier segment ressemble à un segment cassé.
     <div
-      className={`flex shrink-0 overflow-hidden rounded-lg border border-rule-2 ${className}`}
+      className={`flex w-fit shrink-0 overflow-hidden rounded-lg border border-rule-2 ${className}`}
       role="group"
       aria-label={ariaLabel}
     >
@@ -57,7 +60,7 @@ export default function SegmentedControl<T extends string>({
             onClick={() => onChange(opt.value)}
             data-testid={opt.testId}
             className={[
-              'relative h-[32px] px-3 text-[13px] font-medium transition-colors',
+              'relative h-[32px] px-3 text-medium-13 transition-colors',
               idx > 0 ? 'border-l border-rule-2' : '',
               isActive ? (opt.activeClassName ?? DEFAULT_ACTIVE) : INACTIVE,
               disabled ? 'cursor-wait opacity-60' : '',

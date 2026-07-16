@@ -44,7 +44,9 @@ export default function MarketplaceCardActions({
   const lead = icon ?? <Plus size={12} weight="bold" />;
   return (
     <>
-      <span className="min-w-0 flex-1 truncate text-[13px] leading-none whitespace-nowrap text-ink-3">
+      {/* pas de leading-none avec truncate : overflow:hidden clipperait les
+          descendantes ; la line-height de la ramp body-13 contient les glyphes */}
+      <span className="min-w-0 flex-1 truncate text-body-13 whitespace-nowrap text-ink-3">
         {status}
       </span>
       {secondary}

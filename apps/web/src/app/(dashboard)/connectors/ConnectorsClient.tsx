@@ -10,7 +10,6 @@ import ChipRow from '@/components/ui/ChipRow';
 import PageSearchInput from '@/components/ui/PageSearchInput';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import EmptyState from '@/components/ui/EmptyState';
-import { Plus } from '@phosphor-icons/react';
 import ConnectorsInstalledTable from './ConnectorsInstalledTable.tsx';
 import ConnectorsMarketplaceGrid from './ConnectorsMarketplaceGrid.tsx';
 import { catalogCategory, CONNECTOR_CATEGORIES } from './categories.ts';
@@ -68,6 +67,11 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
       subtitle="Wire your agents to external services."
       toolbar={
         <>
+          {/* Pas de CTA "+ New connector" : un connecteur API s'installe depuis
+              la Library (onglet ci-contre), il ne se crée pas depuis l'UI — le
+              custom passe par un MCP server (page MCP). Décision 2026-07-16 :
+              l'ancien bouton ne faisait que setTab('marketplace'), un faux
+              verbe de création. */}
           <PageTopBar
             tabs={
               <PillTabs2
@@ -88,12 +92,6 @@ export default function ConnectorsClient({ instances, catalog, credsByType }: Pr
                 onChange={setQuery}
                 placeholder={tab === 'installed' ? 'Search connectors…' : 'Search providers…'}
               />
-            }
-            cta={
-              <PrimaryButton variant="blue" onClick={() => setTab('marketplace')}>
-                <Plus size={13} weight="bold" />
-                New connector
-              </PrimaryButton>
             }
           />
           <ChipRow

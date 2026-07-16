@@ -44,9 +44,12 @@ export default function SidebarLink({ href, label, icon, dot, count, pill, isAct
     <Link
       href={href}
       title={label}
-      className={`group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-[16px] transition-colors lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-[13px] lg:leading-none ${
+      className={`group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-legacy-16 transition-colors lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-body-13 lg:leading-none! ${
         active
-          ? 'bg-paper text-ink font-medium shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
+          ? // font-medium! — the "active" row must stay bold at every breakpoint,
+            // including desktop where lg:text-body-13 now also sets font-weight:400;
+            // without `!` the ramp utility's bundled weight wins the cascade tie.
+            'bg-paper text-ink font-medium! shadow-[0_1px_2px_rgba(0,0,0,0.04)]'
           : 'text-ink-2 hover:bg-hover'
       }`}
     >
@@ -73,14 +76,16 @@ export default function SidebarLink({ href, label, icon, dot, count, pill, isAct
           {icon}
         </span>
       )}
-      <span className="flex-1 truncate">{label}</span>
+      {/* leading-5: truncate = overflow:hidden, et la line box du leading-none!
+          hérité du Link (13px) tronquerait les descendantes (g, y). */}
+      <span className="flex-1 truncate leading-5">{label}</span>
       {pill !== undefined ? (
-        <span className="rounded-full bg-err/12 px-2 py-0.5 text-[13px] font-medium text-err lg:px-1.5 lg:py-0 lg:text-[11px]">
+        <span className="rounded-full bg-err/12 px-2 py-0.5 text-medium-13 text-err lg:px-1.5 lg:py-0 lg:text-micro-11">
           {pill > 99 ? '99+' : pill}
         </span>
       ) : (
         count !== undefined && (
-          <span className="font-mono text-[13px] tracking-[0.02em] text-ink-4 lg:text-[11px]">
+          <span className="text-mono-13 tracking-[0.02em] text-ink-4 lg:text-mono-11">
             {count}
           </span>
         )

@@ -168,8 +168,8 @@ export default function Sidebar({
         >
           <List size={26} />
         </IconButton>
-        <div className="flex min-w-0 items-center gap-2 pl-1 text-[15px] font-medium tracking-[-0.005em] text-ink">
-          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[11px] font-semibold text-canvas">
+        <div className="flex min-w-0 items-center gap-2 pl-1 text-medium-15 tracking-[-0.005em] text-ink">
+          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-ink font-mono text-label-11 text-canvas">
             N
           </span>
           <span className="truncate">Nodal-Agents</span>
@@ -198,8 +198,8 @@ export default function Sidebar({
         {/* Mobile: brand + close share one centred row, so the ✕ sits in the
             top-right corner perfectly level with the "Nodal-Agents" wordmark. */}
         <div className="flex items-center justify-between px-4 pb-1 lg:hidden">
-          <div className="flex min-w-0 items-center gap-2 text-[16px] font-medium tracking-[-0.005em] text-ink">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-ink font-mono text-[12px] font-semibold text-canvas">
+          <div className="flex min-w-0 items-center gap-2 text-legacy-16 font-medium tracking-[-0.005em] text-ink">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-ink font-mono text-legacy-12 font-semibold text-canvas">
               N
             </span>
             <span className="truncate">Nodal-Agents</span>
@@ -234,7 +234,7 @@ export default function Sidebar({
                     href={it.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-[15px] font-medium text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-[12.5px] lg:leading-none"
+                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-medium-15 text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-legacy-12-5 lg:leading-none!"
                   >
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5">
                       <ArrowSquareOut
@@ -243,7 +243,7 @@ export default function Sidebar({
                         className="h-5 w-5 lg:h-3.5 lg:w-3.5"
                       />
                     </span>
-                    <span className="flex-1 truncate">{it.label}</span>
+                    <span className="flex-1 truncate leading-5">{it.label}</span>
                   </a>
                 ) : it.external ? (
                   // Plain external link (e.g. Documentation) — mirrors SidebarLink's
@@ -254,12 +254,12 @@ export default function Sidebar({
                     href={it.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-[16px] text-ink-2 transition-colors hover:bg-hover lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-[13px] lg:leading-none"
+                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl px-3 text-legacy-16 text-ink-2 transition-colors hover:bg-hover lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-body-13 lg:leading-none!"
                   >
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center text-ink-3 group-hover:text-ink-2 lg:h-3.5 lg:w-3.5">
                       {it.icon ? <it.icon size={20} className="h-5 w-5 lg:h-3.5 lg:w-3.5" /> : null}
                     </span>
-                    <span className="flex-1 truncate">{it.label}</span>
+                    <span className="flex-1 truncate leading-5">{it.label}</span>
                     <ArrowSquareOut
                       size={14}
                       weight="bold"
