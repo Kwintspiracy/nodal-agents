@@ -44,7 +44,6 @@ vi.mock('@/lib/server.ts', () => ({
     entityId: _testEntityId,
   })),
   requireAuthWithEntity: vi.fn(),
-  requireUser: vi.fn(),
   requireUserWithEntity: vi.fn(),
   applyActiveEntity: vi.fn(async (session: unknown) => session),
   ACTIVE_ENTITY_COOKIE: 'nodalai_active_entity',

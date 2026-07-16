@@ -71,9 +71,9 @@ type TestResult =
   | { state: 'fail'; message: string };
 
 // Shared field chrome classes
-const labelCls = 'block font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4 mb-1.5';
+const labelCls = 'block text-mono-11 uppercase tracking-[0.12em] text-ink-4 mb-1.5';
 const inputCls =
-  'w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-[14px] text-ink placeholder-ink-4 transition-colors focus:border-ink-3 focus:outline-none';
+  'w-full rounded-lg border border-rule bg-canvas px-3 py-2 text-body-14 text-ink placeholder-ink-4 transition-colors focus:border-ink-3 focus:outline-none';
 
 export default function LlmKeyForm(props: Props) {
   const isEdit = props.mode === 'edit';
@@ -210,7 +210,7 @@ export default function LlmKeyForm(props: Props) {
               {prettyProviderName(provider)}
             </div>
           ) : availableProviders.length === 0 ? (
-            <p className="text-[13px] text-warn">
+            <p className="text-body-13 text-warn">
               All providers already configured. Edit an existing key instead.
             </p>
           ) : (
@@ -233,11 +233,11 @@ export default function LlmKeyForm(props: Props) {
         <label className={labelCls} htmlFor="llm-base-url">
           Base URL
           {provider === 'openai-compatible' || provider === 'ollama' ? (
-            <span className="ml-2 normal-case font-sans text-[12px] tracking-normal text-warn">
+            <span className="ml-2 normal-case font-sans text-body-12 tracking-normal text-warn">
               required
             </span>
           ) : (
-            <span className="ml-2 normal-case font-sans text-[12px] tracking-normal text-ink-4">
+            <span className="ml-2 normal-case font-sans text-body-12 tracking-normal text-ink-4">
               optional
             </span>
           )}
@@ -260,7 +260,7 @@ export default function LlmKeyForm(props: Props) {
         <div>
           <label className={labelCls} htmlFor="llm-context-window">
             Context window
-            <span className="ml-2 normal-case font-sans text-[12px] tracking-normal text-ink-4">
+            <span className="ml-2 normal-case font-sans text-body-12 tracking-normal text-ink-4">
               optional
             </span>
           </label>
@@ -274,7 +274,7 @@ export default function LlmKeyForm(props: Props) {
             placeholder="auto-detected — e.g. 8192"
             className="font-mono"
           />
-          <p className="mt-1.5 text-[12px] text-ink-4">
+          <p className="mt-1.5 text-body-12 text-ink-4">
             The model&rsquo;s maximum context in tokens. Leave blank to auto-detect it from the
             endpoint (LM Studio); set it by hand if detection fails. Used to compact long
             conversations before the model overflows.
@@ -288,7 +288,7 @@ export default function LlmKeyForm(props: Props) {
         </label>
         {showMasked ? (
           <div className="flex items-center gap-2">
-            <div className="flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-[14px] tracking-widest text-ink-3 select-none">
+            <div className="flex-1 rounded-lg border border-rule bg-canvas px-3 py-2 font-mono text-legacy-14 tracking-widest text-ink-3 select-none">
               {'••••••••'}
               {initial.apiKeyLast4}
             </div>
@@ -340,12 +340,12 @@ export default function LlmKeyForm(props: Props) {
 
       {/* Test result inline */}
       {testResult.state === 'pass' && (
-        <div className="rounded-md border border-ok/30 bg-ok-bg px-3 py-2 text-[13px] text-ok">
+        <div className="rounded-md border border-ok/30 bg-ok-bg px-3 py-2 text-body-13 text-ok">
           {testResult.message}
         </div>
       )}
       {testResult.state === 'fail' && (
-        <div className="rounded-md border border-err/30 bg-warn-bg px-3 py-2 text-[13px] text-err break-all">
+        <div className="rounded-md border border-err/30 bg-warn-bg px-3 py-2 text-body-13 text-err break-all">
           {testResult.message}
         </div>
       )}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -35,6 +35,15 @@ interface CreateProps {
   llmKeys: LlmKeyUiRow[];
   agents?: AgentRow[];
   initial?: undefined;
+  /** Preset role the create modal opens with — e.g. AgentsList's "New
+   *  orchestrator" footer button opens this same modal pre-set to 'router'
+   *  instead of the default 'worker'. Ignored in edit mode. */
+  initialRole?: AgentRole;
+  /** Custom trigger, replacing the default "+ New agent" button. Receives a
+   *  function that opens the modal — e.g. AgentsList renders its own dashed
+   *  "New orchestrator" button here so one create flow powers both entry
+   *  points instead of duplicating the form. */
+  renderTrigger?: (open: () => void) => ReactNode;
 }
 
 interface EditProps {
@@ -72,7 +81,7 @@ export default function AgentForm(props: Props) {
   // Derive initial role state from initial prop (edit) or default (create).
   const initialRole: AgentRole = isEdit
     ? dbRoleToUiRole(props.initial.role ?? null, props.initial.orchestratorMode ?? null)
-    : 'worker';
+    : (props.initialRole ?? 'worker');
 
   const [role, setRole] = useState<AgentRole>(initialRole);
   const [subAgentIds, setSubAgentIds] = useState<string[]>(isEdit ? props.initial.subAgentIds : []);
@@ -174,7 +183,7 @@ export default function AgentForm(props: Props) {
         }
         toast.success('Agent created');
         formRef.current?.reset();
-        setRole('worker');
+        setRole(initialRole);
         setSubAgentIds([]);
         setLlmKeyId(activeKeys[0]?.id ?? '');
         setModel('');
@@ -696,10 +705,14 @@ export default function AgentForm(props: Props) {
 
   return (
     <>
-      <PrimaryButton variant="agent" onClick={() => setOpen(true)}>
-        <Plus size={13} weight="bold" />
-        New agent
-      </PrimaryButton>
+      {props.renderTrigger ? (
+        props.renderTrigger(() => setOpen(true))
+      ) : (
+        <PrimaryButton variant="agent" onClick={() => setOpen(true)}>
+          <Plus size={13} weight="bold" />
+          New agent
+        </PrimaryButton>
+      )}
       {modal}
     </>
   );

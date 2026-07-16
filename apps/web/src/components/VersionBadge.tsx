@@ -49,7 +49,7 @@ export default function VersionBadge() {
       ) : (
         <div className="flex items-center gap-1.5 px-2.5 py-1 text-ink-4">
           <CheckCircle size={12} className="shrink-0" />
-          <span className="font-mono text-[10.5px]">Nodal v{current}</span>
+          <span className="font-mono text-legacy-10-5">Nodal v{current}</span>
         </div>
       )}
 
@@ -66,16 +66,16 @@ export default function VersionBadge() {
         }
       >
         <div className="space-y-4">
-          <p className="text-[13px] leading-relaxed text-ink-2">
+          <p className="text-body-13 leading-relaxed! text-ink-2">
             A new version is available - <span className="font-mono text-ink-3">v{current}</span> →{' '}
             <span className="font-mono font-medium text-ink">v{latest}</span>. Run this in your
             terminal, then restart Nodal-Agents:
           </p>
           <div className="flex items-center gap-2 rounded-lg border border-rule-2 bg-hover px-3 py-2.5">
-            <code className="flex-1 font-mono text-[13px] text-ink">{UPDATE_CMD}</code>
+            <code className="flex-1 text-mono-13 text-ink">{UPDATE_CMD}</code>
             <CopyButton value={UPDATE_CMD} successMessage="Command copied" />
           </div>
-          <p className="text-[12px] leading-relaxed text-ink-4">
+          <p className="text-body-12 leading-relaxed! text-ink-4">
             On macOS/Linux, prefix with <span className="font-mono">sudo</span> if the global
             install needs elevated permissions.
           </p>

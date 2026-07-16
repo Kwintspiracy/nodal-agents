@@ -175,7 +175,7 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
       onSubmit={handleSubmit}
       className="bg-paper border border-rule-2 rounded-xl px-5 py-4 space-y-3"
     >
-      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-ink-4 font-mono">
+      <div className="flex items-center gap-2 text-label-11 uppercase tracking-wider text-ink-4 font-mono">
         <span>{config.slug}</span>
         <span>·</span>
         <span>{config.transport}</span>
@@ -249,7 +249,7 @@ export default function McpEditForm({ mcpServerId, onDone, onCancel }: Props) {
               }
               className="font-mono"
             />
-            <p className="text-[12px] text-ink-4 mt-1">
+            <p className="text-body-12 text-ink-4 mt-1">
               Leave blank to keep the current key. The new config is verified against the live
               server before saving.
             </p>

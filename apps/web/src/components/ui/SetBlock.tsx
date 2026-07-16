@@ -14,8 +14,8 @@ export function SetBlock({
 }) {
   return (
     <section className="mt-7">
-      <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-ink-4">{label}</div>
-      {lede && <p className="text-[14px] leading-[1.5] text-ink-3 mt-1.5">{lede}</p>}
+      <div className="text-mono-11 tracking-[0.18em] uppercase text-ink-4">{label}</div>
+      {lede && <p className="text-body-14 leading-[1.5]! text-ink-3 mt-1.5">{lede}</p>}
       {children}
     </section>
   );

@@ -39,7 +39,7 @@ export default function ModelToolsBadge({
   return (
     <span
       title={TITLE[support]}
-      className={`inline-flex h-[22px] items-center rounded-[5px] px-2.5 text-[12px] font-medium leading-none ${STYLE[support]} ${className}`}
+      className={`inline-flex h-[22px] items-center rounded-[5px] px-2.5 text-medium-12 leading-none! ${STYLE[support]} ${className}`}
     >
       {LABEL[support]}
     </span>
@@ -53,7 +53,7 @@ export default function ModelToolsBadge({
  */
 export function ModelToolsLegend({ className = '' }: { className?: string }) {
   return (
-    <p className={`text-[11.5px] leading-[1.5] text-ink-4 ${className}`}>
+    <p className={`text-legacy-11-5 leading-[1.5]! text-ink-4 ${className}`}>
       Models marked <span className="font-medium text-warn">(no tools)</span> can&apos;t power an
       agent.
     </p>

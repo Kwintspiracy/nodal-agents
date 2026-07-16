@@ -24,11 +24,11 @@ export default function LiveCard({ runningAgents, throughput, fill = 0.36 }: Pro
   const pct = Math.max(0, Math.min(1, fill)) * 100;
   return (
     <div className="mx-3 mt-2.5 rounded-[10px] border border-rule-2 bg-paper px-3 pt-2.5 pb-3">
-      <div className="flex items-center gap-1.5 font-mono text-[11px] uppercase leading-none tracking-[0.14em] text-ink-3">
+      <div className="flex items-center gap-1.5 text-mono-11 uppercase leading-none! tracking-[0.14em] text-ink-3">
         <LiveDot variant="lime" />
         Live
       </div>
-      <div className="mt-1.5 text-[13px] leading-[1.35] text-ink-2">
+      <div className="mt-1.5 text-body-13 leading-[1.35]! text-ink-2">
         <b className="font-semibold text-ink">{runningAgents} agents</b>
         {throughput ? ` running · ${throughput}` : ' running'}
       </div>

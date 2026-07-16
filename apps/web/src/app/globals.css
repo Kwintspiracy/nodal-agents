@@ -150,6 +150,231 @@
   --radius-2xl: 14px;
 }
 
+/* --- Type ramp — mirrors the Figma Design System text styles --------
+   One @utility per named style (Display/Heading/Title/Label/Body/Medium/
+   Micro/Numeral/Mono), each bundling font-size + line-height + weight so
+   a single class fully replaces the old `text-[Npx] font-*` pairs. Name
+   convention: Figma "Group/Size" → `text-group-size` (slash → dash).
+   Source: Design System audit, 2026-07-16 (see memory/project_figma_design_system.md).
+
+   ⚠ Cascade-order gotcha: these @utility rules are written AFTER
+   `@import 'tailwindcss'`, so in the compiled stylesheet they land AFTER
+   Tailwind's own utilities (leading-*, font-medium, font-semibold, ...) —
+   on an equal-specificity tie, whichever rule is LATER wins, which means a
+   ramp/legacy text-* class silently beats a plain `font-medium`/`leading-*`
+   class placed elsewhere on the SAME element (e.g. an `active ? 'font-medium'
+   : ...'` branch). Found live in SidebarLink's active state (2026-07-16) —
+   fixed by suffixing the conditional class with `!` (`font-medium!`) to force
+   it to win. Do the same for any future case: append `!` to whichever
+   Tailwind utility MUST override a ramp/legacy text-* class's bundled
+   weight/line-height. */
+@utility text-display-28 {
+  font-size: 28px;
+  line-height: 32px;
+  font-weight: 600;
+}
+@utility text-display-22 {
+  font-size: 22px;
+  line-height: 26px;
+  font-weight: 600;
+}
+@utility text-heading-20 {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 600;
+}
+@utility text-title-16 {
+  font-size: 16px;
+  line-height: 21px;
+  font-weight: 600;
+}
+@utility text-title-15 {
+  font-size: 15px;
+  line-height: 21px;
+  font-weight: 600;
+}
+@utility text-title-13 {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+@utility text-label-11 {
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 600;
+}
+@utility text-body-15 {
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 400;
+}
+@utility text-body-14 {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+}
+@utility text-body-13 {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+@utility text-body-12 {
+  font-size: 12px;
+  line-height: 17px;
+  font-weight: 400;
+}
+@utility text-medium-15 {
+  font-size: 15px;
+  line-height: 21px;
+  font-weight: 500;
+}
+@utility text-medium-14 {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+@utility text-medium-13 {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}
+@utility text-medium-12 {
+  font-size: 12px;
+  line-height: 17px;
+  font-weight: 500;
+}
+@utility text-micro-11 {
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 500;
+}
+@utility text-micro-10 {
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+}
+@utility text-numeral-56 {
+  font-size: 56px;
+  line-height: 56px;
+  font-weight: 500;
+}
+@utility text-numeral-22 {
+  font-size: 22px;
+  line-height: 26px;
+  font-weight: 500;
+}
+@utility text-mono-13 {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+}
+@utility text-mono-12 {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 17px;
+  font-weight: 400;
+}
+@utility text-mono-11 {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 400;
+}
+@utility text-mono-11-caps {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* --- Legacy fractional / one-off / off-ramp sizes ---------------------
+   Two kinds of leftovers from the pre-migration `text-[Npx]` sweep:
+   fractional px (12.5, 13.5, 11.5, 10.5, 9.5) and one-off whole sizes
+   (34, 30, 26, 24) that simply aren't in the ramp; PLUS a few whole
+   sizes that ARE in the ramp (11, 12, 14, 16, 20, 22) but only for a
+   font-weight/mono pairing the ramp doesn't define at that size (e.g.
+   plain-regular 11px, or font-mono+font-semibold 12px badge letters) —
+   forcing those onto the nearest ramp utility would add or drop weight
+   that wasn't there before, so they get a legacy token instead.
+   Every token here keeps the spot pixel-identical: same font-size, and
+   line-height:1.45 (unitless — matches `body`'s inherited default, which
+   is what these elements rendered at before the arbitrary `text-[Npx]`
+   utility was removed, since that utility never carried a line-height of
+   its own). Weight is deliberately NOT bundled here — it stays on
+   whatever font-weight/font-mono class the call site already had.
+   To be rabattu sur l'échelle un jour (décision Quentin), pas aujourd'hui. */
+@utility text-legacy-9-5 {
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+@utility text-legacy-10 {
+  font-size: 10px;
+  line-height: 1.45;
+}
+@utility text-legacy-10-5 {
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+@utility text-legacy-11-5 {
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+@utility text-legacy-12-5 {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+@utility text-legacy-13-5 {
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+@utility text-legacy-11 {
+  font-size: 11px;
+  line-height: 1.45;
+}
+@utility text-legacy-12 {
+  font-size: 12px;
+  line-height: 1.45;
+}
+@utility text-legacy-14 {
+  font-size: 14px;
+  line-height: 1.45;
+}
+@utility text-legacy-16 {
+  font-size: 16px;
+  line-height: 1.45;
+}
+@utility text-legacy-20 {
+  font-size: 20px;
+  line-height: 1.45;
+}
+@utility text-legacy-22 {
+  font-size: 22px;
+  line-height: 1.45;
+}
+@utility text-legacy-24 {
+  font-size: 24px;
+  line-height: 1.45;
+}
+@utility text-legacy-26 {
+  font-size: 26px;
+  line-height: 1.45;
+}
+@utility text-legacy-28 {
+  font-size: 28px;
+  line-height: 1.45;
+}
+@utility text-legacy-30 {
+  font-size: 30px;
+  line-height: 1.45;
+}
+@utility text-legacy-34 {
+  font-size: 34px;
+  line-height: 1.45;
+}
+
 /* --- Base ------------------------------------------------------------ */
 *,
 *::before,
@@ -205,6 +430,83 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--border-focus);
+}
+
+/* --- Select menu — DS "Open" state (Figma Select, node 27-19) --------
+   Customizable select: où `appearance: base-select` est supporté
+   (Chrome/Edge 135+), le menu déroulé est rendu par le DS : panneau paper,
+   bordure rule-2, radius-md, ombre popover, options Body/14 avec hover et
+   check Phosphor sur la sélection. Ailleurs la seconde déclaration
+   `appearance` est invalide → retombe sur `none` (flèche masquée, caret DS
+   du composant) et le picker reste celui de l'OS. */
+/* NOTE : ne PAS écrire le fallback en cascade (`appearance: none` puis
+   `appearance: base-select` dans le même bloc) — Lightning CSS minifie en ne
+   gardant que la dernière déclaration, ce qui perdrait le fallback. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+}
+@supports (appearance: base-select) {
+  select {
+    appearance: base-select;
+  }
+}
+select::picker-icon {
+  display: none; /* le caret DS est dessiné par le composant Select */
+}
+::picker(select) {
+  appearance: base-select;
+  margin-top: 6px;
+  background: var(--c-paper);
+  border: 1px solid var(--c-rule-2);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1); /* Elevation/Popover */
+}
+select option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  font-size: 14px; /* Body/14 */
+  line-height: 20px;
+  color: var(--c-ink);
+}
+select optgroup legend {
+  /* Section header (toggle "Sections" du Select Figma) — le composant Select
+     injecte ce <legend> depuis l'attribut label de l'optgroup ; contrairement
+     au label rendu par l'UA, sa géométrie est contrôlable : padding-left 8px
+     aligne le titre sur le texte des options, paddings verticaux symétriques.
+     Typo = SidebarSection (Mono/11 caps ink-4). */
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--c-ink-4);
+}
+select option:hover,
+select option:focus {
+  background: var(--c-hover);
+}
+select option:checked {
+  background: var(--c-hover-2);
+}
+select option::checkmark {
+  /* Check bold de @phosphor-icons (le glyphe du DS), à droite, teinté ink */
+  order: 1;
+  margin-left: auto;
+  content: '';
+  width: 12px;
+  height: 12px;
+  background: var(--c-ink);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath d='M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath d='M232.49,80.49l-128,128a12,12,0,0,1-17,0l-56-56a12,12,0,1,1,17-17L96,183,215.51,63.51a12,12,0,0,1,17,17Z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
 }
 
 /* --- Legacy utility classes used by unmigrated pages ---------------- */

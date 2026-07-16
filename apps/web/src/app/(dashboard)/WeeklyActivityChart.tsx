@@ -96,10 +96,10 @@ function WeeklyLegend({ payload }: { payload?: LegendItem[] }) {
   const modelItems = items.filter((p) => p.type !== 'rect');
 
   return (
-    <div className="flex flex-col gap-2 px-1 pt-3 text-[12px] text-ink-3">
+    <div className="flex flex-col gap-2 px-1 pt-3 text-body-12 text-ink-3">
       {statusItems.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-4">
+          <span className="font-mono text-legacy-10 uppercase tracking-[0.14em] text-ink-4">
             Status
           </span>
           {statusItems.map((p) => (
@@ -115,7 +115,7 @@ function WeeklyLegend({ payload }: { payload?: LegendItem[] }) {
       )}
       {modelItems.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-4">
+          <span className="font-mono text-legacy-10 uppercase tracking-[0.14em] text-ink-4">
             Models
           </span>
           {modelItems.map((p) => (
@@ -152,7 +152,7 @@ export default function WeeklyActivityChart({ weekly, daily }: Props) {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">Activity</h2>
+        <h2 className="text-mono-11 uppercase tracking-[0.16em] text-ink-4">Activity</h2>
         <PillTabs<Granularity>
           tabs={[
             { value: 'weekly', label: 'Weekly' },

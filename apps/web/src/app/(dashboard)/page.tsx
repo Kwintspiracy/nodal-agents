@@ -97,7 +97,7 @@ export default async function DashboardPage() {
       title={
         <span className="inline-flex flex-wrap items-baseline gap-3">
           {greet}
-          <span className="text-[14px] font-medium leading-none text-ink-3">{todayLabel}</span>
+          <span className="text-medium-14 leading-none! text-ink-3">{todayLabel}</span>
         </span>
       }
       subtitle={
@@ -183,7 +183,7 @@ export default async function DashboardPage() {
       {/* 5 — Job status breakdown -------------------------------------- */}
       {Object.keys(s.statusCounts).length > 0 && (
         <div className="mt-7">
-          <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">
+          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">
             Job status
           </h2>
           <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
@@ -213,23 +213,23 @@ export default async function DashboardPage() {
       {/* 6 — Per agent ------------------------------------------------- */}
       {s.perAgent.length > 0 && (
         <div className="mt-7">
-          <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-4">
+          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">
             Per agent
           </h2>
           <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-rule-2">
-                  <th className="px-5 py-3 text-left font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
+                  <th className="px-5 py-3 text-left text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
                     Agent
                   </th>
-                  <th className="px-5 py-3 text-right font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
+                  <th className="px-5 py-3 text-right text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
                     Jobs
                   </th>
-                  <th className="hidden px-5 py-3 text-right font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
+                  <th className="hidden px-5 py-3 text-right text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
                     Input tk
                   </th>
-                  <th className="hidden px-5 py-3 text-right font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
+                  <th className="hidden px-5 py-3 text-right text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
                     Output tk
                   </th>
                 </tr>

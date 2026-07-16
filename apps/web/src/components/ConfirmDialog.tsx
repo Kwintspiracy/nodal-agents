@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import PrimaryButton from '@/components/ui/PrimaryButton';
+import TextInput from '@/components/ui/TextInput';
 import { ModalFooter } from '@/components/ui/Modal';
 
 interface Props {
@@ -13,6 +14,10 @@ interface Props {
   cancelLabel?: string;
   /** Red destructive styling for the confirm button. Default true since most uses are deletes. */
   destructive?: boolean;
+  /** Typed-confirmation guard: when set, the user must type this exact text
+   *  (e.g. the agent's name) before the confirm button enables. Reserve it
+   *  for the truly irreversible deletes. */
+  typeToConfirm?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -32,11 +37,25 @@ export default function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   destructive = true,
+  typeToConfirm,
   onConfirm,
   onCancel,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);
+  const [typed, setTyped] = useState('');
+
+  // Fresh guard on every open — a previous confirmation must never
+  // pre-unlock the next one. Render-time derived-state reset (the documented
+  // getDerivedStateFromProps equivalent), not an effect — see AgentsList.tsx
+  // for the same pattern.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
+    if (open) setTyped('');
+  }
+
+  const confirmBlocked = Boolean(typeToConfirm) && typed !== typeToConfirm;
 
   useEffect(() => {
     // SSR-safe portal gate: createPortal needs document, which is only present
@@ -75,6 +94,23 @@ export default function ConfirmDialog({
             {title}
           </h2>
           {message && <p className="mt-2 text-sm text-ink-3 leading-relaxed">{message}</p>}
+          {typeToConfirm && (
+            <div className="mt-4">
+              <p className="text-body-13 text-ink-3">
+                Type <span className="font-mono font-semibold text-ink">{typeToConfirm}</span> to
+                confirm.
+              </p>
+              <TextInput
+                type="text"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                placeholder={typeToConfirm}
+                autoComplete="off"
+                spellCheck={false}
+                className="mt-2"
+              />
+            </div>
+          )}
         </div>
         {/* Same footer template as every other modal in the app (UX-B7):
             border separator, Cancel (neutral) then the confirm action last. */}
@@ -82,7 +118,12 @@ export default function ConfirmDialog({
           <PrimaryButton variant="neutral" onClick={onCancel} ref={cancelRef}>
             {cancelLabel}
           </PrimaryButton>
-          <PrimaryButton variant={destructive ? 'danger' : 'ink'} onClick={onConfirm}>
+          <PrimaryButton
+            variant={destructive ? 'danger' : 'ink'}
+            onClick={onConfirm}
+            disabled={confirmBlocked}
+            className={confirmBlocked ? 'cursor-not-allowed opacity-40' : ''}
+          >
             {confirmLabel}
           </PrimaryButton>
         </ModalFooter>

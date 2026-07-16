@@ -16,7 +16,7 @@ export default function CountPill({ items, noun }: { items: string[]; noun: stri
   return (
     <span
       title={items.join('\n')}
-      className="inline-flex cursor-help items-center gap-1.5 rounded-md border border-rule-2 bg-hover px-2 py-1 font-mono text-[11px] whitespace-nowrap text-ink-2"
+      className="inline-flex cursor-help items-center gap-1.5 rounded-md border border-rule-2 bg-hover px-2 py-1 text-mono-11 whitespace-nowrap text-ink-2"
     >
       <ListBullets size={12} weight="bold" className="text-ink-4" />
       {n} {noun}

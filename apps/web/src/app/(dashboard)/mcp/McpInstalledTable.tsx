@@ -64,7 +64,7 @@ export default function McpInstalledTable({ instances, catalog }: Props) {
 function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
   return (
     <th
-      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
+      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-legacy-9-5 font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
       scope="col"
@@ -106,18 +106,18 @@ function McpRow({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={iconSrc} alt="" className="h-4 w-4 object-contain" />
               ) : emoji ? (
-                <span className="text-[15px] leading-none">{emoji}</span>
+                <span className="text-body-15 leading-none!">{emoji}</span>
               ) : (
-                <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
+                <span className="font-mono text-micro-10 tracking-[0.04em]">
                   {glyph}
                 </span>
               )}
             </Disc>
             <div className="min-w-0">
-              <div className="text-[13.5px] font-medium leading-[1.2] text-ink">
+              <div className="text-legacy-13-5 font-medium leading-[1.2]! text-ink">
                 {instance.name}
               </div>
-              <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
+              <div className="mt-0.5 font-mono text-legacy-10-5 uppercase tracking-[0.12em] text-ink-4">
                 {catalogLabel}
               </div>
             </div>
@@ -126,9 +126,9 @@ function McpRow({
 
         {/* Tools */}
         <td className="px-[18px] py-[13px] align-middle">
-          <span className="font-mono text-[12.5px] text-ink-2">{instance.toolCount}</span>
+          <span className="font-mono text-legacy-12-5 text-ink-2">{instance.toolCount}</span>
           {instance.toolCount === 0 && (
-            <span className="ml-1 font-mono text-[11px] text-ink-4">none</span>
+            <span className="ml-1 text-mono-11 text-ink-4">none</span>
           )}
         </td>
 

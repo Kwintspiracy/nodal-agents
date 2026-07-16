@@ -142,7 +142,7 @@ export default function McpClient({ instances, catalog }: Props) {
               { value: 'http', label: 'Remote server (HTTP)' },
             ]}
           />
-          <p className="text-[12px] text-ink-4">
+          <p className="text-body-12 text-ink-4">
             {customFlavor === 'stdio'
               ? 'Run any MCP package locally (npx, python, a binary…). Provide the command, args, and env vars.'
               : 'Connect any Streamable-HTTP MCP server. Provide the URL, auth scheme, and API key.'}

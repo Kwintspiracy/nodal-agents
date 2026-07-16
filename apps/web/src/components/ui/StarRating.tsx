@@ -75,7 +75,7 @@ export default function StarRating({
           disabled={disabled}
           onClick={onUnpin}
           title="Pinned by you — click to let the curator manage it again"
-          className="group inline-flex h-[20px] cursor-pointer items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 text-[10px] font-medium text-amber-600 transition-colors hover:border-rule hover:bg-hover hover:text-ink disabled:cursor-default disabled:opacity-50"
+          className="group inline-flex h-[20px] cursor-pointer items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 text-legacy-10 font-medium text-amber-600 transition-colors hover:border-rule hover:bg-hover hover:text-ink disabled:cursor-default disabled:opacity-50"
         >
           <svg viewBox="0 0 16 16" className="h-[9px] w-[9px] shrink-0" fill="currentColor">
             <path d="M8 1a3 3 0 0 0-3 3v2H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-1V4a3 3 0 0 0-3-3zm-1.5 5V4a1.5 1.5 0 0 1 3 0v2z" />

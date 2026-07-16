@@ -65,6 +65,7 @@ import {
   setSkillScriptsAuthorized,
   setSkillFilesWritable,
   resolveOwnerChatId,
+  resolveOwnerConversation,
   channelBindings,
   channelAllowedConversations,
   listChannelBindings,
@@ -76,6 +77,7 @@ import {
   getTelegramBotInfo,
   getTelegramUpdates,
   getAdapter,
+  listActiveChannelsForAgent,
   type ChannelKind,
   type BotIdentity,
   type WhatsAppStatus,
@@ -652,6 +654,91 @@ export async function reorderAgentsAction(orderedIds: string[]): Promise<ActionR
   } catch (err) {
     console.error('[reorderAgentsAction]', err);
     return fail('db_error', 'Failed to reorder agents');
+  }
+}
+
+const MoveWorkerAssignmentSchema = z.object({
+  workerId: z.string().guid(),
+  // null = Standalone (no orchestrator owns this worker).
+  fromOrchestratorId: z.string().guid().nullable(),
+  toOrchestratorId: z.string().guid().nullable(),
+});
+
+/**
+ * Cross-group drag-and-drop on the /agents page: moves a worker from one
+ * orchestrator's team to another (or to/from the Standalone bucket).
+ * `fromOrchestratorId` / `toOrchestratorId` are nullable — null means
+ * Standalone on either side.
+ *
+ * Cross-entity safety: worker + both orchestrator ids (whichever are
+ * non-null) must all belong to the caller's entity, checked in one batch
+ * SELECT — fail loud on any mismatch rather than partially applying the
+ * move.
+ */
+export async function moveWorkerAssignmentAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = MoveWorkerAssignmentSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { workerId, fromOrchestratorId, toOrchestratorId } = parsed.data;
+
+    // Dropped back onto the same group it came from — nothing to do.
+    if (fromOrchestratorId === toOrchestratorId) {
+      return ok(undefined);
+    }
+
+    const db = getDb();
+    const ids = Array.from(
+      new Set([workerId, fromOrchestratorId, toOrchestratorId].filter((id): id is string => id !== null)),
+    );
+    const found = await db
+      .select({ id: agents.id, role: agents.role })
+      .from(agents)
+      .where(and(inArray(agents.id, ids), eq(agents.entityId, session.entityId)));
+    const byId = new Map(found.map((a) => [a.id, a]));
+
+    if (byId.size !== ids.length) {
+      return fail('not_found', 'One or more agents not in this workspace');
+    }
+    // An orchestrator doesn't get dropped into a team as someone else's
+    // sub-agent — it's a parent by role, not a worker.
+    if (byId.get(workerId)?.role === 'orchestrator') {
+      return fail('validation_failed', 'An orchestrator cannot be assigned as a worker');
+    }
+    if (toOrchestratorId && byId.get(toOrchestratorId)?.role !== 'orchestrator') {
+      return fail('validation_failed', 'Target is not an orchestrator');
+    }
+
+    await db.transaction(async (tx) => {
+      if (fromOrchestratorId) {
+        await tx
+          .delete(agentAssignments)
+          .where(
+            and(
+              eq(agentAssignments.orchestratorId, fromOrchestratorId),
+              eq(agentAssignments.subAgentId, workerId),
+            ),
+          );
+      }
+      if (toOrchestratorId) {
+        await tx
+          .insert(agentAssignments)
+          .values({ orchestratorId: toOrchestratorId, subAgentId: workerId, entityId: session.entityId })
+          // Same team twice (double-drop race, or the worker was already a
+          // multi-team member of this orchestrator) — dedup, don't throw.
+          .onConflictDoNothing({
+            target: [agentAssignments.orchestratorId, agentAssignments.subAgentId],
+          });
+      }
+    });
+
+    revalidatePath('/agents');
+    return ok(undefined);
+  } catch (err) {
+    console.error('[moveWorkerAssignmentAction]', err);
+    return fail('db_error', 'Failed to move worker assignment');
   }
 }
 
@@ -1878,8 +1965,10 @@ export async function cancelJobAction(id: string): Promise<ActionResult<{ status
 }
 
 // ─── Channels Actions (S4 — generalizes the per-agent Telegram config into a
-// channel-neutral surface: /agents/[id]/channels renders one card per channel
-// from CHANNEL_ORDER, Telegram being the only one with a real adapter today).
+// channel-neutral surface: one card per channel from CHANNEL_ORDER, Telegram
+// being the only one with a real adapter today. Rendered in the Channels tab
+// of /agents/[id]/edit — that route used to be its own page at
+// /agents/[id]/channels, which now just redirects there).
 
 const CHANNEL_ORDER: readonly ChannelKind[] = ['telegram', 'discord', 'slack', 'whatsapp'];
 
@@ -4089,42 +4178,6 @@ export async function createMcpServerFromCatalogAction(
   } catch (err) {
     console.error('[createMcpServerFromCatalogAction]', err);
     return fail('db_error', 'Failed to save MCP connector');
-  }
-}
-
-/**
- * Multi-instance brique: rename an MCP server instance. Used by the /mcp
- * Active Servers list to let users disambiguate
- * (e.g. "Cogni Cortex" → "Cortex — perso").
- */
-export async function renameMcpServerAction(
-  mcpServerId: string,
-  name: string,
-): Promise<ActionResult<void>> {
-  try {
-    const session = await getSession();
-    if (!z.string().guid().safeParse(mcpServerId).success) {
-      return fail('validation_failed', 'Invalid MCP server id');
-    }
-    const nameParsed = z.string().min(1, 'Name is required').max(120).safeParse(name);
-    if (!nameParsed.success) {
-      return fail('validation_failed', nameParsed.error.issues[0]?.message ?? 'Invalid name');
-    }
-    const db = getDb();
-    const [existing] = await db
-      .select({ id: mcpServers.id })
-      .from(mcpServers)
-      .where(and(eq(mcpServers.id, mcpServerId), eq(mcpServers.entityId, session.entityId)));
-    if (!existing) return fail('not_found', 'MCP connector not found');
-    await db
-      .update(mcpServers)
-      .set({ name: nameParsed.data, updatedAt: new Date() })
-      .where(eq(mcpServers.id, mcpServerId));
-    revalidatePath('/mcp');
-    return ok(undefined);
-  } catch (err) {
-    console.error('[renameMcpServerAction]', err);
-    return fail('db_error', 'Failed to rename MCP server');
   }
 }
 
@@ -6778,6 +6831,7 @@ export async function getActiveJobsByAgentAction(): Promise<ActionResult<ActiveA
   }
 }
 
+
 // ─── Settings Action ──────────────────────────────────────────────────────────
 
 export type SettingsView = {
@@ -6913,6 +6967,16 @@ export async function getVersionInfoAction(): Promise<ActionResult<VersionInfo>>
 
 // ─── Automation Actions ───────────────────────────────────────────────────────
 
+// Channels the "Notify via" selector offers (B1, notify-channel-choice plan).
+// A subset of CHANNEL_ORDER: whatsapp has no outbound send tool registered for
+// a job yet (TOOL_ONLY_DELIVERY_CHANNELS, apps/runner/src/job/execute.ts) —
+// picking it as a schedule's notify channel would set triggerWantsConfirmation
+// (chatId resolves fine via resolveOwnerConversation) but then force the agent
+// to deliver via a tool it was never given, deadlocking the run. Kept in the DB
+// column's check constraint for forward-compat once whatsapp grows send tools,
+// just not offered here.
+const NOTIFY_CHANNEL_OPTIONS: readonly ChannelKind[] = ['telegram', 'discord', 'slack'];
+
 export type ScheduleRow = {
   id: string;
   agentId: string;
@@ -6926,10 +6990,40 @@ export type ScheduleRow = {
   nextRun: Date | null;
   lastStatus: string | null;
   notifyOnSuccess: boolean;
+  notifyChannel: ChannelKind | null;
   dailyBudgetUsd: number;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
+
+/**
+ * Active (bound + enabled) notify channels for an agent, for the ScheduleForm's
+ * "Notify via" selector — reloaded whenever the form's agent selection changes.
+ * Excludes whatsapp (see NOTIFY_CHANNEL_OPTIONS above) even if the agent has a
+ * live whatsapp binding.
+ */
+export async function listAgentNotifyChannelsAction(
+  agentId: string,
+): Promise<ActionResult<ChannelKind[]>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const active = await listActiveChannelsForAgent(db, agentId);
+    return ok(active.filter((c) => NOTIFY_CHANNEL_OPTIONS.includes(c)));
+  } catch (err) {
+    console.error('[listAgentNotifyChannelsAction]', err);
+    return fail('db_error', 'Failed to load channels');
+  }
+}
 
 export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>> {
   try {
@@ -6949,6 +7043,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
         nextRun: agentSchedules.nextRun,
         lastStatus: agentSchedules.lastStatus,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        notifyChannel: agentSchedules.notifyChannel,
         dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
         createdAt: agentSchedules.createdAt,
         updatedAt: agentSchedules.updatedAt,
@@ -6963,6 +7058,7 @@ export async function listSchedulesAction(): Promise<ActionResult<ScheduleRow[]>
         ...r,
         active: r.active ?? true,
         notifyOnSuccess: r.notifyOnSuccess ?? false,
+        notifyChannel: (r.notifyChannel as ChannelKind | null) ?? null,
         dailyBudgetUsd: r.dailyBudgetUsd ?? 5,
       })) as ScheduleRow[],
     );
@@ -6978,8 +7074,28 @@ const CreateScheduleSchema = z.object({
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
   notifyOnSuccess: z.boolean().optional().default(false),
+  // null = auto (first active channel by priority — unchanged behavior).
+  notifyChannel: z.enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]]).nullable().optional().default(null),
   dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
 });
+
+/**
+ * A non-null notifyChannel must be a channel this agent actually has bound —
+ * choosing a channel with no live binding would silently never notify (fail
+ * loud at save time instead of discovering it at the first fire).
+ */
+async function assertNotifyChannelActive(
+  db: ReturnType<typeof getDb>,
+  agentId: string,
+  channel: ChannelKind | null,
+): Promise<string | null> {
+  if (!channel) return null;
+  const active = await listActiveChannelsForAgent(db, agentId);
+  if (!active.includes(channel)) {
+    return `This agent has no active ${channel} connection — connect it first, or choose Auto.`;
+  }
+  return null;
+}
 
 export async function createScheduleAction(raw: unknown): Promise<ActionResult<{ id: string }>> {
   try {
@@ -6996,6 +7112,13 @@ export async function createScheduleAction(raw: unknown): Promise<ActionResult<{
       .from(agents)
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
+
+    const notifyChannelError = await assertNotifyChannelActive(
+      db,
+      parsed.data.agentId,
+      parsed.data.notifyChannel,
+    );
+    if (notifyChannelError) return fail('validation_failed', notifyChannelError);
 
     const nextRun = computeNextRun(parsed.data.cronExpr);
     if (!nextRun) {
@@ -7014,6 +7137,7 @@ export async function createScheduleAction(raw: unknown): Promise<ActionResult<{
         active: true,
         nextRun,
         notifyOnSuccess: parsed.data.notifyOnSuccess,
+        notifyChannel: parsed.data.notifyChannel,
         dailyBudgetUsd: parsed.data.dailyBudgetUsd,
       })
       .returning({ id: agentSchedules.id });
@@ -7049,6 +7173,7 @@ export async function duplicateScheduleAction(id: string): Promise<ActionResult<
         cronExpr: agentSchedules.cronExpr,
         task: agentSchedules.task,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        notifyChannel: agentSchedules.notifyChannel,
         dailyBudgetUsd: agentSchedules.dailyBudgetUsd,
       })
       .from(agentSchedules)
@@ -7067,6 +7192,7 @@ export async function duplicateScheduleAction(id: string): Promise<ActionResult<
         active: false, // paused — review + enable when ready, never double-fire
         nextRun: null,
         notifyOnSuccess: src.notifyOnSuccess ?? false,
+        notifyChannel: src.notifyChannel,
         dailyBudgetUsd: src.dailyBudgetUsd ?? 5,
       })
       .returning({ id: agentSchedules.id });
@@ -7087,6 +7213,7 @@ const UpdateScheduleSchema = z.object({
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
   notifyOnSuccess: z.boolean().optional().default(false),
+  notifyChannel: z.enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]]).nullable().optional().default(null),
   dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
 });
 
@@ -7115,6 +7242,13 @@ export async function updateScheduleAction(raw: unknown): Promise<ActionResult<v
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
+    const notifyChannelError = await assertNotifyChannelActive(
+      db,
+      parsed.data.agentId,
+      parsed.data.notifyChannel,
+    );
+    if (notifyChannelError) return fail('validation_failed', notifyChannelError);
+
     const nextRun = computeNextRun(parsed.data.cronExpr);
     if (!nextRun) {
       return fail('validation_failed', 'Invalid cron expression');
@@ -7129,6 +7263,7 @@ export async function updateScheduleAction(raw: unknown): Promise<ActionResult<v
         task: parsed.data.task,
         nextRun,
         notifyOnSuccess: parsed.data.notifyOnSuccess,
+        notifyChannel: parsed.data.notifyChannel,
         dailyBudgetUsd: parsed.data.dailyBudgetUsd,
         updatedAt: new Date(),
       })
@@ -7213,6 +7348,7 @@ export async function runScheduleNowAction(
         task: agentSchedules.task,
         chatId: agentSchedules.chatId,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        notifyChannel: agentSchedules.notifyChannel,
         name: agentSchedules.name,
         // Manual "run now": prevRunAt is still "when did this schedule last
         // actually run" — this fire deliberately doesn't touch last_run itself
@@ -7233,8 +7369,19 @@ export async function runScheduleNowAction(
     // target wins; otherwise fall back to the bot owner's 1:1 — never the
     // agent's lastSeenChatIdTelegram, which a group message can silently
     // overwrite (see resolveOwnerChatId).
+    //
+    // B1: an explicit notifyChannel resolves the owner conversation ON THAT
+    // CHANNEL (channel-parametric resolveOwnerConversation) instead of the
+    // telegram-only wrapper — same rule run-schedules.ts's runScheduleTick
+    // applies, so "Run now" behaves identically to a real fire. A resolution
+    // failure here is surfaced to the user directly (this action returns
+    // ActionResult synchronously) rather than via lastStatus — there is no
+    // schedule-row status transition to attach it to for a one-off manual run.
     const resolvedChatId = schedule.notifyOnSuccess
-      ? (schedule.chatId ?? (await resolveOwnerChatId(db, schedule.agentId)) ?? null)
+      ? schedule.notifyChannel
+        ? (schedule.chatId ??
+          (await resolveOwnerConversation(db, schedule.agentId, schedule.notifyChannel)))
+        : (schedule.chatId ?? (await resolveOwnerChatId(db, schedule.agentId)) ?? null)
       : null;
 
     const [job] = await db
@@ -7252,6 +7399,7 @@ export async function runScheduleNowAction(
           type: 'cron',
           scheduleName: schedule.name,
           prevRunAt: schedule.lastRun ? schedule.lastRun.toISOString() : null,
+          notifyChannel: (schedule.notifyChannel as ChannelKind | null) ?? null,
         },
       })
       .returning({ id: agentJobs.id });
@@ -7304,6 +7452,8 @@ export type WebhookTriggerRow = {
   hasSecret: boolean;
   lastTriggeredAt: Date | null;
   triggerCount: number;
+  notifyOnSuccess: boolean;
+  notifyChannel: ChannelKind | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -7332,6 +7482,8 @@ export async function listWebhookTriggersAction(): Promise<ActionResult<WebhookT
         secret: webhookTriggers.secret,
         lastTriggeredAt: webhookTriggers.lastTriggeredAt,
         triggerCount: webhookTriggers.triggerCount,
+        notifyOnSuccess: webhookTriggers.notifyOnSuccess,
+        notifyChannel: webhookTriggers.notifyChannel,
         createdAt: webhookTriggers.createdAt,
         updatedAt: webhookTriggers.updatedAt,
       })
@@ -7345,6 +7497,8 @@ export async function listWebhookTriggersAction(): Promise<ActionResult<WebhookT
         ...r,
         active: r.active ?? true,
         triggerCount: r.triggerCount ?? 0,
+        notifyOnSuccess: r.notifyOnSuccess ?? false,
+        notifyChannel: (r.notifyChannel as ChannelKind | null) ?? null,
         hasSecret: secret != null,
       })),
     );
@@ -7358,6 +7512,13 @@ const CreateWebhookTriggerSchema = z.object({
   agentId: z.string().guid('Pick an agent'),
   name: z.string().min(1).max(120),
   taskTemplate: z.string().min(1),
+  notifyOnSuccess: z.boolean().optional().default(false),
+  // null = auto (first active channel by priority — see routes/webhook.ts).
+  notifyChannel: z
+    .enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]])
+    .nullable()
+    .optional()
+    .default(null),
 });
 
 export async function createWebhookTriggerAction(
@@ -7377,6 +7538,13 @@ export async function createWebhookTriggerAction(
       .from(agents)
       .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
+
+    const notifyChannelError = await assertNotifyChannelActive(
+      db,
+      parsed.data.agentId,
+      parsed.data.notifyChannel,
+    );
+    if (notifyChannelError) return fail('validation_failed', notifyChannelError);
 
     // slug is globally unique — append a short random suffix on collision
     // rather than failing loud on a name someone else already picked.
@@ -7399,6 +7567,8 @@ export async function createWebhookTriggerAction(
         taskTemplate: parsed.data.taskTemplate,
         active: true,
         secret,
+        notifyOnSuccess: parsed.data.notifyOnSuccess,
+        notifyChannel: parsed.data.notifyChannel,
       })
       .returning({ id: webhookTriggers.id, slug: webhookTriggers.slug });
     if (!row) return fail('db_error', 'Insert returned no row');

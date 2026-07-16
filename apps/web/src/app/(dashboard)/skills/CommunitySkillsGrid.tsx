@@ -95,7 +95,7 @@ function CommunitySkillCard({
 
   // Footer shows just the host ("github"); the full owner/repo is on hover.
   const badge = (
-    <span className="cursor-help font-mono text-[12px] text-ink-4" title={repoOf(entry.source)}>
+    <span className="cursor-help text-mono-12 text-ink-4" title={repoOf(entry.source)}>
       {hostLabel(entry.sourceHost).toLowerCase()}
     </span>
   );
@@ -109,7 +109,7 @@ function CommunitySkillCard({
         installed ? (
           <>
             <span className="min-w-0 flex-1 truncate">{badge}</span>
-            <span className="inline-flex h-[30px] shrink-0 items-center rounded-[7px] border border-rule bg-paper px-3 text-[13px] font-medium text-ink-4">
+            <span className="inline-flex h-[30px] shrink-0 items-center rounded-[7px] border border-rule bg-paper px-3 text-medium-13 text-ink-4">
               Installed
             </span>
           </>

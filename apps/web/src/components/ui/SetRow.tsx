@@ -13,12 +13,12 @@ export function SetRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-3.5 px-[18px] py-3.5 border-b border-rule-2 last:border-b-0 text-[14px] leading-[1.4] text-ink-2">
+    <div className="flex items-center gap-3.5 px-[18px] py-3.5 border-b border-rule-2 last:border-b-0 text-body-14 leading-[1.4]! text-ink-2">
       <span className="flex-1 min-w-0 text-ink-2">
         {label}
         {sub && <span className="block text-xs text-ink-4 mt-0.5">{sub}</span>}
       </span>
-      <span className="inline-flex items-center gap-2 text-[14px] text-ink-2 shrink-0">
+      <span className="inline-flex items-center gap-2 text-body-14 text-ink-2 shrink-0">
         {children}
       </span>
     </div>

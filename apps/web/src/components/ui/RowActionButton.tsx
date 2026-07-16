@@ -143,7 +143,7 @@ export default function RowActionButton(props: Props) {
   }
 
   const { icon, children, title, responsive = false } = props;
-  const classes = `inline-flex h-[30px] items-center gap-1.5 rounded-md border bg-paper px-3 text-[12px] font-medium leading-none transition-colors disabled:opacity-40 ${TONE_STYLES[tone]} ${className}`;
+  const classes = `inline-flex h-[30px] items-center gap-1.5 rounded-md border bg-paper px-3 text-medium-12 leading-none! transition-colors disabled:opacity-40 ${TONE_STYLES[tone]} ${className}`;
 
   const iconEl = icon ? (
     <span className={responsive ? 'sm:hidden' : 'inline-flex shrink-0'}>{icon}</span>

@@ -84,7 +84,7 @@ export default function McpServerRow({ instance, catalogLabel, description, onCl
           header used to overlap adjacent content on narrow widths). Actions
           live in their own row below instead. */}
       <div className="min-w-0">
-        <p className="font-mono text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+        <p className="font-mono text-label-11 uppercase tracking-wider text-ink-3">
           {catalogLabel}
         </p>
         {description && <p className="mt-0.5 text-xs text-ink-3">{description}</p>}
@@ -141,7 +141,7 @@ export default function McpServerRow({ instance, catalogLabel, description, onCl
               placeholder="Paste the new key"
               className="font-mono"
             />
-            <p className="mt-1 text-[12px] text-ink-4">
+            <p className="mt-1 text-body-12 text-ink-4">
               Agent assignments stay intact - the key is verified against the server before being
               saved.
             </p>

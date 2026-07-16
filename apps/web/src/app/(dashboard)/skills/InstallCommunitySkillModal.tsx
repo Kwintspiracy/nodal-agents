@@ -95,7 +95,7 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
         {/* Static trust warning — always shown */}
         <div className="flex gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-3">
           <Warning size={16} weight="fill" className="mt-[1px] shrink-0 text-amber-400" />
-          <p className="text-[13px] leading-[1.5] text-amber-300">
+          <p className="text-body-13 leading-[1.5]! text-amber-300">
             Only install skills from sources you trust - a skill&apos;s instructions run with your
             agent&apos;s tools.
           </p>
@@ -103,7 +103,7 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
 
         {/* Source input */}
         <div className="space-y-1.5">
-          <label htmlFor="skill-source" className="block text-[13px] font-medium text-ink-2">
+          <label htmlFor="skill-source" className="block text-medium-13 text-ink-2">
             Source
           </label>
           <TextInput
@@ -122,7 +122,7 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
         {/* Error state */}
         {errorMessage && !successSkill && (
           <div className="rounded-lg border border-err/30 bg-err/10 px-3.5 py-3">
-            <p className="text-[13px] leading-[1.5] text-err">{errorMessage}</p>
+            <p className="text-body-13 leading-[1.5]! text-err">{errorMessage}</p>
           </div>
         )}
 
@@ -130,12 +130,12 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
         {successSkill && (
           <div className="space-y-3">
             <div className="rounded-lg border border-ok/30 bg-ok/10 px-3.5 py-3">
-              <p className="text-[13px] font-medium leading-[1.5] text-ok">
+              <p className="text-medium-13 leading-[1.5]! text-ok">
                 {successSkill.reinstalled ? 'Reinstalled' : 'Installed'}:{' '}
                 <span className="font-semibold">{successSkill.name}</span>
               </p>
               {successSkill.description && (
-                <p className="mt-1 text-[13px] leading-[1.4] text-ok/70">
+                <p className="mt-1 text-body-13 leading-[1.4]! text-ok/70">
                   {successSkill.description}
                 </p>
               )}
@@ -147,10 +147,10 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
                 <div className="flex gap-2.5">
                   <Warning size={15} weight="fill" className="mt-[1px] shrink-0 text-amber-400" />
                   <div className="space-y-1.5">
-                    <p className="text-[13px] font-medium leading-[1.4] text-amber-300">
+                    <p className="text-medium-13 leading-[1.4]! text-amber-300">
                       This skill bundles executable scripts.
                     </p>
-                    <p className="text-[13px] leading-[1.4] text-amber-300/80">
+                    <p className="text-body-13 leading-[1.4]! text-amber-300/80">
                       They run only for an agent that has the{' '}
                       <span className="font-mono">command-execution</span> capability and only after
                       you authorize them, and every run is gated by your approval. Otherwise just
@@ -160,9 +160,9 @@ export default function InstallCommunitySkillModal({ open, onClose }: Props) {
                       {successSkill.installedScripts.map((s) => (
                         <li
                           key={s.path}
-                          className="flex items-center gap-2 font-mono text-[12px] text-amber-300/70"
+                          className="flex items-center gap-2 text-mono-12 text-amber-300/70"
                         >
-                          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[11px] uppercase">
+                          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-legacy-11 uppercase">
                             {s.language}
                           </span>
                           <span className="truncate">{s.path}</span>

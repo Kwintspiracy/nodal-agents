@@ -36,7 +36,7 @@ export default function OAuthErrorBanner({ code, message }: Props) {
               !
             </span>
             <p className="font-semibold text-err">OAuth connection failed</p>
-            <code className="font-mono text-[11px] text-err/80 bg-warn-bg px-1.5 py-0.5 rounded">
+            <code className="text-mono-11 text-err/80 bg-warn-bg px-1.5 py-0.5 rounded">
               {code}
             </code>
           </div>

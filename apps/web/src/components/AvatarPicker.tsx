@@ -63,7 +63,7 @@ export default function AvatarPicker({ value, onChange, label = 'Avatar' }: Prop
         title={value ? value.split('/').pop()?.replace('.png', '') : 'No avatar'}
         titleClassName="text-sm text-ink"
         subtitle={`Click to ${value ? 'change' : 'pick'}`}
-        subtitleClassName="text-[12px] text-ink-3"
+        subtitleClassName="text-body-12 text-ink-3"
       />
 
       {mounted &&

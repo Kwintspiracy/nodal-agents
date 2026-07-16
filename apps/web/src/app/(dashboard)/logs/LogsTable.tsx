@@ -57,22 +57,22 @@ export default function LogsTable({ items }: Props) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-rule-2">
-              <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3">
+              <th className="px-5 py-3 text-left text-micro-10 uppercase tracking-wider whitespace-nowrap text-ink-3">
                 Time
               </th>
-              <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3">
+              <th className="px-5 py-3 text-left text-micro-10 uppercase tracking-wider whitespace-nowrap text-ink-3">
                 Lvl
               </th>
-              <th className="px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3">
+              <th className="px-5 py-3 text-left text-micro-10 uppercase tracking-wider whitespace-nowrap text-ink-3">
                 Tool
               </th>
-              <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3 md:table-cell">
+              <th className="hidden px-5 py-3 text-left text-micro-10 uppercase tracking-wider whitespace-nowrap text-ink-3 md:table-cell">
                 Agent
               </th>
-              <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3 lg:table-cell">
+              <th className="hidden px-5 py-3 text-left text-micro-10 uppercase tracking-wider whitespace-nowrap text-ink-3 lg:table-cell">
                 Duration
               </th>
-              <th className="hidden px-5 py-3 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-3 lg:table-cell">
+              <th className="hidden px-5 py-3 text-left text-micro-10 uppercase tracking-wider whitespace-nowrap text-ink-3 lg:table-cell">
                 Job
               </th>
             </tr>
@@ -93,7 +93,7 @@ export default function LogsTable({ items }: Props) {
                   >
                     <td className="px-5 py-3 font-mono text-xs text-ink-4 whitespace-nowrap">
                       {c.createdAt ? new Date(c.createdAt).toLocaleTimeString() : '—'}
-                      <div className="text-[10px] text-ink-4 opacity-60">
+                      <div className="text-legacy-10 text-ink-4 opacity-60">
                         {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : ''}
                       </div>
                     </td>
@@ -107,7 +107,7 @@ export default function LogsTable({ items }: Props) {
                         {c.toolName}
                       </code>
                       {c.turn !== null && (
-                        <span className="ml-2 text-[10px] text-ink-4">turn {c.turn}</span>
+                        <span className="ml-2 text-legacy-10 text-ink-4">turn {c.turn}</span>
                       )}
                     </td>
                     <td
@@ -152,19 +152,19 @@ export default function LogsTable({ items }: Props) {
                       <td colSpan={6} className="px-5 py-4">
                         <div className="grid gap-4 md:grid-cols-2">
                           <div>
-                            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-3">
+                            <div className="mb-1.5 text-legacy-10 uppercase tracking-wider text-ink-3">
                               Input
                             </div>
-                            <pre className="max-h-96 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-rule bg-paper px-3 py-2 font-mono text-[11px] text-ink-2">
+                            <pre className="max-h-96 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-rule bg-paper px-3 py-2 text-mono-11 text-ink-2">
                               {prettyJson(c.toolInput)}
                             </pre>
                           </div>
                           <div>
-                            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-3">
+                            <div className="mb-1.5 text-legacy-10 uppercase tracking-wider text-ink-3">
                               Output
                             </div>
                             <pre
-                              className={`max-h-96 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all rounded-md border px-3 py-2 font-mono text-[11px] ${
+                              className={`max-h-96 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all rounded-md border px-3 py-2 text-mono-11 ${
                                 isErr
                                   ? 'border-err/25 text-err bg-paper'
                                   : 'border-rule bg-paper text-ink-2'

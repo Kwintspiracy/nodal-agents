@@ -126,7 +126,7 @@ function CategoryChip({ category }: { category: string | null | undefined }) {
   return (
     <span
       style={{ background: m.color + '22', color: m.color }}
-      className="inline-flex h-[24px] items-center gap-1.5 rounded-[6px] px-2.5 text-[11.5px] font-medium leading-none capitalize [&_svg]:h-[12px] [&_svg]:w-[12px]"
+      className="inline-flex h-[24px] items-center gap-1.5 rounded-[6px] px-2.5 text-legacy-11-5 font-medium leading-none! capitalize [&_svg]:h-[12px] [&_svg]:w-[12px]"
     >
       {m.icon}
       {m.label}
@@ -154,10 +154,10 @@ function MemoryFact({ fact }: { fact: string }) {
           setExpanded((v) => !v);
         }
       }}
-      className="cursor-pointer break-words text-[13px] leading-snug text-ink"
+      className="cursor-pointer break-words text-body-13 leading-snug! text-ink"
     >
       <span className={expanded ? '' : 'line-clamp-2'}>{fact}</span>{' '}
-      <span className="text-[11px] font-medium text-ink-4 hover:text-ink-2">
+      <span className="text-micro-11 text-ink-4 hover:text-ink-2">
         {expanded ? 'less' : '… more'}
       </span>
     </div>
@@ -456,7 +456,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
       />
 
       {/* Light loading affordance for the debounced FTS search roundtrip */}
-      {isSearching && <div className="mt-2 text-[11px] text-ink-4">Searching…</div>}
+      {isSearching && <div className="mt-2 text-legacy-11 text-ink-4">Searching…</div>}
 
       {/* Memory table ───────────────────────────────────────────────────── */}
       <div className="mt-4 overflow-hidden rounded-xl border border-rule-2 bg-paper">
@@ -476,22 +476,22 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-rule-2">
-                  <th className="px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
+                  <th className="px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
                     Memory
                   </th>
-                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 md:table-cell">
+                  <th className="hidden px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 md:table-cell">
                     Agent
                   </th>
-                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 lg:table-cell">
+                  <th className="hidden px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 lg:table-cell">
                     Category
                   </th>
-                  <th className="px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
+                  <th className="px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
                     Importance
                   </th>
-                  <th className="hidden px-5 py-3 text-left text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 xl:table-cell">
+                  <th className="hidden px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 xl:table-cell">
                     Last accessed
                   </th>
-                  <th className="px-5 py-3 text-right text-[10.5px] font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
+                  <th className="px-5 py-3 text-right text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
                     Actions
                   </th>
                 </tr>
@@ -527,7 +527,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                               wrapping once this box stops growing. */}
                           <div className="min-w-0 max-w-[170px]">
                             <MemoryFact fact={m.fact} />
-                            <div className="mt-0.5 break-words font-mono text-[11px] text-ink-4">
+                            <div className="mt-0.5 break-words text-mono-11 text-ink-4">
                               {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
                               {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
                             </div>
@@ -540,7 +540,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
                         {m.agentName ? (
                           <Link
                             href={`/agents`}
-                            className="inline-flex items-center gap-2 text-[12px] text-ink-2 transition-colors hover:text-ink"
+                            className="inline-flex items-center gap-2 text-body-12 text-ink-2 transition-colors hover:text-ink"
                           >
                             <AgentAvatar name={m.agentName} size="sm" />
                             {m.agentName}
@@ -567,7 +567,7 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
 
                       {/* Last accessed */}
                       <td className="hidden px-5 py-3.5 align-top xl:table-cell">
-                        <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-ink-3">
+                        <span className="inline-flex items-center gap-1.5 text-mono-12 text-ink-3">
                           {formatAccessed(m.last_accessed_at)}
                           {recent && <LiveDot variant="ok" size="sm" />}
                         </span>

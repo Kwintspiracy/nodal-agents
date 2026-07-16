@@ -25,7 +25,7 @@ export default function AgentPill({ name, href, active = false }: Props) {
     <Link
       href={href}
       className={[
-        'inline-flex h-[34px] items-center gap-2 rounded-full border px-3.5 text-[14px] font-medium transition-colors',
+        'inline-flex h-[34px] items-center gap-2 rounded-full border px-3.5 text-medium-14 transition-colors',
         active
           ? 'border-rule-2 bg-paper text-ink'
           : 'border-rule bg-canvas text-ink-3 hover:border-rule-2 hover:text-ink-2',

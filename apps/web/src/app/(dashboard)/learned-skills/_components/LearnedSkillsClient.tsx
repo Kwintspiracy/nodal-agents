@@ -11,6 +11,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import RowActionButton from '@/components/ui/RowActionButton';
 import { OptionRadio } from '@/components/ui/OptionRadio.tsx';
 import Switch from '@/components/ui/Switch';
+import StatusPill from '@/components/ui/StatusPill';
 import AssignSkillModal from '@/app/(dashboard)/skills/AssignSkillModal.tsx';
 import {
   setReflectionEnabledAction,
@@ -38,25 +39,9 @@ type DialogState =
   | null;
 
 function StateBadge({ state }: { state: string }) {
-  if (state === 'active') {
-    return (
-      <span className="inline-flex items-center rounded-full bg-ok/15 px-2 py-0.5 text-[12px] font-medium text-ok">
-        active
-      </span>
-    );
-  }
-  if (state === 'stale') {
-    return (
-      <span className="inline-flex items-center rounded-full bg-warn/15 px-2 py-0.5 text-[12px] font-medium text-warn">
-        stale
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center rounded-full bg-ink-5/40 px-2 py-0.5 text-[12px] font-medium text-ink-3">
-      archived
-    </span>
-  );
+  if (state === 'active') return <StatusPill variant="lvl-ok" label="active" />;
+  if (state === 'stale') return <StatusPill variant="lvl-warn" label="stale" />;
+  return <StatusPill variant="idle" label="archived" />;
 }
 
 export default function LearnedSkillsClient({
@@ -189,10 +174,10 @@ export default function LearnedSkillsClient({
       <div className="mb-4 rounded-2xl border border-rule-2 bg-paper p-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p id="agent-learning-label" className="text-[14px] font-medium text-ink">
+            <p id="agent-learning-label" className="text-medium-14 text-ink">
               Agent learning
             </p>
-            <p id="agent-learning-desc" className="mt-0.5 text-[13px] leading-[1.5] text-ink-3">
+            <p id="agent-learning-desc" className="mt-0.5 text-body-13 leading-[1.5]! text-ink-3">
               When on, your agents save reusable techniques as skills after substantial tasks. You
               can review and undo everything here.
             </p>
@@ -212,10 +197,10 @@ export default function LearnedSkillsClient({
 
       {/* Assignment mode section */}
       <div className="mb-6 rounded-2xl border border-rule-2 bg-paper p-5">
-        <p id="assign-mode-label" className="mb-1 text-[14px] font-medium text-ink">
+        <p id="assign-mode-label" className="mb-1 text-medium-14 text-ink">
           When an agent learns a new skill
         </p>
-        <p id="assign-mode-desc" className="mb-4 text-[13px] leading-[1.5] text-ink-3">
+        <p id="assign-mode-desc" className="mb-4 text-body-13 leading-[1.5]! text-ink-3">
           Control whether new agent-authored skills are instantly assigned back to the agent, or
           held for your review first.
         </p>
@@ -269,19 +254,19 @@ export default function LearnedSkillsClient({
                   className="min-w-0 flex-1 cursor-pointer text-left"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="text-[14px] font-medium text-ink truncate">{skill.name}</span>
+                    <span className="text-medium-14 text-ink truncate">{skill.name}</span>
                     <StateBadge state={skill.state} />
                     {skill.patchCount > 0 && (
-                      <span className="text-[12px] text-ink-3">
+                      <span className="text-body-12 text-ink-3">
                         {skill.patchCount} patch{skill.patchCount !== 1 ? 'es' : ''}
                       </span>
                     )}
                   </div>
                   {skill.description && (
-                    <p className="mt-0.5 text-[13px] text-ink-3 truncate">{skill.description}</p>
+                    <p className="mt-0.5 text-body-13 text-ink-3 truncate">{skill.description}</p>
                   )}
                   {/* Assignment line */}
-                  <p className="mt-0.5 text-[12px] text-ink-3">
+                  <p className="mt-0.5 text-body-12 text-ink-3">
                     {skill.assignedAgents.length > 0
                       ? `Assigned to ${skill.assignedAgents.map((a) => a.name).join(', ')}`
                       : 'Not assigned'}
@@ -332,7 +317,7 @@ export default function LearnedSkillsClient({
 
               {expandedId === skill.id && (
                 <div className="border-t border-rule-2 bg-canvas/50 px-5 py-4">
-                  <pre className="whitespace-pre-wrap text-[13px] text-ink-2 font-mono leading-relaxed">
+                  <pre className="whitespace-pre-wrap text-mono-13 text-ink-2 leading-relaxed!">
                     {skill.content}
                   </pre>
                 </div>

@@ -169,7 +169,7 @@ export default async function JobDetailPage({ params }: Props) {
               ['Completed', formatDate(job.completedAt)],
             ].map(([label, value]) => (
               <div key={label} className="bg-canvas border border-rule-2 rounded-lg px-3 py-2">
-                <p className="text-[11px] text-ink-4 uppercase tracking-wider mb-0.5">{label}</p>
+                <p className="text-legacy-11 text-ink-4 uppercase tracking-wider mb-0.5">{label}</p>
                 <p className="text-ink-3 font-mono truncate">{value ?? '—'}</p>
               </div>
             ))}

@@ -132,7 +132,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
           onSubmit={handleCreateSubmit}
           className="mx-3.5 mt-1 rounded-[9px] border border-rule-2 bg-paper p-2.5"
         >
-          <p className="mb-1.5 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-4">
+          <p className="mb-1.5 text-mono-11 uppercase tracking-[0.1em] text-ink-4">
             New workspace
           </p>
           <div className="mb-2">
@@ -148,7 +148,7 @@ export default function WorkspaceSwitcher({ workspaces }: Props) {
               maxLength={60}
               disabled={isCreating}
               containerClassName="min-w-0 flex-1"
-              className="bg-canvas py-1.5 text-[13px]"
+              className="bg-canvas py-1.5 text-body-13"
             />
             <PrimaryButton
               variant="ink"

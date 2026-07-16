@@ -118,12 +118,12 @@ function ApprovalsDropdown({
     >
       {/* Header */}
       <div className="border-b border-rule-2 px-4 py-3">
-        <p className="text-[14px] font-semibold text-ink">Pending approvals ({items.length})</p>
+        <p className="text-legacy-14 font-semibold text-ink">Pending approvals ({items.length})</p>
       </div>
 
       {/* Body */}
       {items.length === 0 ? (
-        <p className="px-4 py-5 text-center text-[13px] text-ink-3">No pending approvals.</p>
+        <p className="px-4 py-5 text-center text-body-13 text-ink-3">No pending approvals.</p>
       ) : (
         <ul className="max-h-[340px] divide-y divide-rule-2 overflow-y-auto">
           {items.map((item) => (
@@ -135,17 +135,17 @@ function ApprovalsDropdown({
                 className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium text-ink">
+                  <p className="truncate text-medium-13 text-ink">
                     {item.agentName ?? 'Agent'}
                     <span className="mx-1 text-ink-4">·</span>
-                    <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[12px] text-ink-2">
+                    <code className="rounded bg-canvas px-1 py-0.5 text-mono-12 text-ink-2">
                       {item.toolName}
                     </code>
                   </p>
-                  <p className="mt-0.5 truncate text-[12px] text-ink-3">
+                  <p className="mt-0.5 truncate text-body-12 text-ink-3">
                     {inputSnippet(item.toolInput as Record<string, unknown> | null)}
                   </p>
-                  <p className="mt-0.5 text-[11px] text-ink-4">{relativeTime(item.requestedAt)}</p>
+                  <p className="mt-0.5 text-legacy-11 text-ink-4">{relativeTime(item.requestedAt)}</p>
                 </div>
                 <ApproveButton item={item} onApproved={onApproved} />
               </Link>
@@ -159,7 +159,7 @@ function ApprovalsDropdown({
         <Link
           href="/approvals"
           onClick={onClose}
-          className="text-[13px] font-medium text-ink-2 transition-colors hover:text-ink"
+          className="text-medium-13 text-ink-2 transition-colors hover:text-ink"
         >
           See all approvals →
         </Link>

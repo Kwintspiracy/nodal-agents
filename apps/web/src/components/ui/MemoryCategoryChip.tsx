@@ -45,7 +45,7 @@ export default function MemoryCategoryChip({ category, className = '' }: Props) 
 
   return (
     <span
-      className={`inline-flex h-[22px] items-center rounded-[5px] px-2.5 text-[12px] font-medium leading-none ${style} ${className}`}
+      className={`inline-flex h-[22px] items-center rounded-[5px] px-2.5 text-medium-12 leading-none! ${style} ${className}`}
     >
       {label}
     </span>

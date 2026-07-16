@@ -41,7 +41,7 @@ export default function CopyButton({
     <button
       type="button"
       onClick={handleCopy}
-      className={`inline-flex h-[28px] shrink-0 items-center gap-1.5 rounded-md border border-rule-2 bg-paper px-2.5 text-[12px] font-medium text-ink-3 transition-colors hover:text-ink ${className}`}
+      className={`inline-flex h-[28px] shrink-0 items-center gap-1.5 rounded-md border border-rule-2 bg-paper px-2.5 text-medium-12 text-ink-3 transition-colors hover:text-ink ${className}`}
     >
       <Copy size={13} /> {label}
     </button>

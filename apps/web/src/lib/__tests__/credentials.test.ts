@@ -59,7 +59,6 @@ vi.mock('@/lib/server.ts', () => ({
   getAuthProvider: vi.fn(),
   requireAuth: vi.fn(),
   requireAuthWithEntity: vi.fn(),
-  requireUser: vi.fn(),
   requireUserWithEntity: vi.fn(),
 }));
 

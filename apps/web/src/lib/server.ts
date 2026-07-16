@@ -125,25 +125,6 @@ export function getBetterAuth() {
 // ─── Request-level helpers ─────────────────────────────────────────────────────
 
 /**
- * Resolves the current user session from a Request object, or null.
- * Safe to call from Server Components and Server Actions.
- */
-export async function getCurrentUser(req: Request): Promise<AuthSession | null> {
-  const provider = getAuthProvider();
-  const session = await provider.getSession(req);
-  return session ? applyActiveEntity(session, req) : null;
-}
-
-/**
- * Resolves the session and throws AuthError if unauthenticated.
- * Use inside Server Actions that require a logged-in user.
- */
-export async function requireUser(req: Request): Promise<AuthSession> {
-  const session = await requireAuth(req, getAuthProvider());
-  return applyActiveEntity(session, req);
-}
-
-/**
  * Resolves the session AND verifies the user has an entity membership.
  * Throws AuthError (unauthenticated) or NoEntityError (no workspace).
  */

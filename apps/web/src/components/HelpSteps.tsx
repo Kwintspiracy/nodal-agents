@@ -45,7 +45,7 @@ export default function HelpSteps({ guide }: Props) {
         {guide.steps.map((step) => (
           <li key={step.number} className="flex gap-2">
             {/* Numbered circle */}
-            <span className="shrink-0 w-5 h-5 rounded-full bg-hover text-ink-3 text-[11px] font-bold flex items-center justify-center mt-0.5">
+            <span className="shrink-0 w-5 h-5 rounded-full bg-hover text-ink-3 text-legacy-11 font-bold flex items-center justify-center mt-0.5">
               {step.number}
             </span>
 

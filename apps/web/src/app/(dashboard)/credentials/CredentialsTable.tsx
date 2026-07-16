@@ -43,7 +43,7 @@ function expiryText(date: Date | null): string {
 }
 
 const TH =
-  'px-[18px] pt-3.5 pb-2.5 text-left font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4';
+  'px-[18px] pt-3.5 pb-2.5 text-left font-mono text-legacy-9-5 font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4';
 const TD = 'px-[18px] py-[13px] align-middle';
 
 /**
@@ -164,22 +164,22 @@ function CredentialRow({
         {/* Provider */}
         <td className={TD}>
           <div className="flex items-center gap-2.5">
-            <span className="inline-flex shrink-0 rounded bg-indigo-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-indigo-400 uppercase">
+            <span className="inline-flex shrink-0 rounded bg-indigo-500/15 px-2 py-0.5 font-mono text-micro-10 tracking-wider text-indigo-400 uppercase">
               {typeLabel}
             </span>
-            <span className="truncate text-[13.5px] font-medium text-ink">{credential.name}</span>
+            <span className="truncate text-legacy-13-5 font-medium text-ink">{credential.name}</span>
           </div>
         </td>
 
         {/* Account */}
-        <td className={`${TD} text-[13px] text-ink-2`}>{credential.accountName ?? '—'}</td>
+        <td className={`${TD} text-body-13 text-ink-2`}>{credential.accountName ?? '—'}</td>
 
         {/* Scopes */}
         <td className={TD}>
           {scopeList.length > 0 ? (
             <CountPill items={scopeList} noun="scope" />
           ) : (
-            <span className="font-mono text-[11px] text-ink-4">—</span>
+            <span className="text-mono-11 text-ink-4">—</span>
           )}
         </td>
 
@@ -187,7 +187,7 @@ function CredentialRow({
         <td className={TD}>
           <StatusPill variant={status.variant} label={status.label} />
           {!supportsRefresh && !credential.decryptError && credential.expiresAt && (
-            <div className="mt-0.5 text-[10.5px] text-ink-4">
+            <div className="mt-0.5 text-legacy-10-5 text-ink-4">
               {expiryText(credential.expiresAt)}
             </div>
           )}
@@ -198,7 +198,7 @@ function CredentialRow({
           {usedBy.length > 0 ? (
             <CountPill items={usedBy} noun="connector" />
           ) : (
-            <span className="font-mono text-[11px] text-ink-4">—</span>
+            <span className="text-mono-11 text-ink-4">—</span>
           )}
         </td>
 

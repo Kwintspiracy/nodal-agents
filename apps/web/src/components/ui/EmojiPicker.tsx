@@ -40,7 +40,7 @@ export default function EmojiPicker({ value, onChange, disabled }: Props) {
             disabled={disabled}
             aria-pressed={active}
             onClick={() => onChange(emoji)}
-            className={`flex h-8 w-8 items-center justify-center rounded-md border text-[16px] leading-none transition-colors disabled:opacity-50 ${
+            className={`flex h-8 w-8 items-center justify-center rounded-md border text-legacy-16 leading-none! transition-colors disabled:opacity-50 ${
               active ? 'border-ink bg-hover-2' : 'border-rule-2 hover:bg-hover'
             }`}
           >

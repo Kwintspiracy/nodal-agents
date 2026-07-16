@@ -41,7 +41,7 @@ export default function ChipRow<T extends string>({
             key={it.value}
             type="button"
             onClick={() => onChange(it.value)}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-[9px] border px-3.5 text-[13px] font-medium leading-none transition-colors ${
+            className={`inline-flex h-8 items-center gap-1.5 rounded-[9px] border px-3.5 text-medium-13 leading-none! transition-colors ${
               isActive
                 ? 'border-ink bg-ink text-canvas'
                 : 'border-rule-2 bg-paper text-ink-2 hover:bg-hover'
@@ -50,7 +50,7 @@ export default function ChipRow<T extends string>({
             {it.label}
             {it.count !== undefined && (
               <span
-                className={`font-mono text-[12px] leading-none ${isActive ? 'opacity-65' : 'opacity-55'}`}
+                className={`text-mono-12 leading-none! ${isActive ? 'opacity-65' : 'opacity-55'}`}
               >
                 {it.count}
               </span>

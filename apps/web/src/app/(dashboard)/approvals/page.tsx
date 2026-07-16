@@ -102,10 +102,10 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                     const impact = computeApprovalImpactLine(a.toolName, a.toolInput);
                     return (
                       <div className="space-y-0.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
-                        <p className="text-[13px] text-ink">
+                        <p className="text-body-13 text-ink">
                           ➤ {purpose || 'Purpose not specified by the agent.'}
                         </p>
-                        <p className="text-[12px] text-warn">⚠️ {impact}</p>
+                        <p className="text-body-12 text-warn">⚠️ {impact}</p>
                       </div>
                     );
                   })()}
@@ -135,10 +135,10 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                   </div>
                   {a.jobTask && <p className="italic text-ink-3">&ldquo;{a.jobTask}&rdquo;</p>}
                   <details className="mt-1 rounded-md border border-rule bg-canvas">
-                    <summary className="cursor-pointer px-3 py-2 text-[12px] text-ink-3 hover:text-ink-2">
+                    <summary className="cursor-pointer px-3 py-2 text-body-12 text-ink-3 hover:text-ink-2">
                       Tool input
                     </summary>
-                    <pre className="whitespace-pre-wrap break-words px-3 pb-3 font-mono text-[12px] text-ink-2">
+                    <pre className="whitespace-pre-wrap break-words px-3 pb-3 text-mono-12 text-ink-2">
                       {JSON.stringify(a.toolInput, null, 2)}
                     </pre>
                   </details>
@@ -155,7 +155,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                   <StatusPill variant={STATUS_TO_VARIANT[a.status] ?? 'idle'} label={a.status} />
                   <Link
                     href={`/jobs/${a.jobId}`}
-                    className="rounded-md border border-rule-2 px-2.5 py-1 text-[12px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink"
+                    className="rounded-md border border-rule-2 px-2.5 py-1 text-medium-12 text-ink-3 transition-colors hover:border-rule hover:text-ink"
                   >
                     View job
                   </Link>

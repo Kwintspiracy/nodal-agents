@@ -62,17 +62,17 @@ export default function FleetPicker({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-disabled={disabled || undefined}
-        className={`flex h-12 w-full items-center gap-3 rounded-xl border border-rule-2 bg-paper px-3 text-[15px] leading-none text-ink lg:h-[38px] lg:gap-2.5 lg:rounded-[9px] lg:px-2.5 lg:text-[13px] ${
+        className={`flex h-12 w-full items-center gap-3 rounded-xl border border-rule-2 bg-paper px-3 text-body-15 leading-none! text-ink lg:h-[38px] lg:gap-2.5 lg:rounded-[9px] lg:px-2.5 lg:text-body-13 ${
           disabled ? 'cursor-default' : 'cursor-pointer hover:bg-hover-2/40'
         }`}
       >
         <span
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-[12px] font-semibold leading-none tracking-[0.04em] text-[#0a0a0a] lg:h-[22px] lg:w-[22px] lg:rounded-[5px] lg:text-[10.5px]"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-legacy-12 font-semibold leading-none! tracking-[0.04em] text-[#0a0a0a] lg:h-[22px] lg:w-[22px] lg:rounded-[5px] lg:text-legacy-10-5"
           style={{ background: active.color }}
         >
           {active.icon ?? active.tag.slice(0, 2)}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left text-[15px] font-medium text-ink lg:text-[12.5px]">
+        <span className="min-w-0 flex-1 truncate text-left text-medium-15 text-ink lg:text-legacy-12-5">
           {active.name}
         </span>
         {!disabled && <CaretDown size={12} className="h-4 w-4 shrink-0 text-ink-3 lg:h-3 lg:w-3" />}
@@ -94,12 +94,12 @@ export default function FleetPicker({
                   onChange?.(f.id);
                   setOpen(false);
                 }}
-                className={`flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-[15px] leading-[1.2] text-ink-2 hover:bg-hover lg:gap-2.5 lg:rounded-md lg:px-2 lg:py-1.5 lg:text-[12.5px] ${
+                className={`flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-body-15 leading-[1.2]! text-ink-2 hover:bg-hover lg:gap-2.5 lg:rounded-md lg:px-2 lg:py-1.5 lg:text-legacy-12-5 ${
                   isActive ? 'bg-hover-2' : ''
                 }`}
               >
                 <span
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-[12px] font-semibold leading-none tracking-[0.04em] text-[#0a0a0a] lg:h-5 lg:w-5 lg:rounded-[5px] lg:text-[10px]"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-legacy-12 font-semibold leading-none! tracking-[0.04em] text-[#0a0a0a] lg:h-5 lg:w-5 lg:rounded-[5px] lg:text-micro-10"
                   style={{ background: f.color }}
                 >
                   {f.icon ?? f.tag.slice(0, 2)}
@@ -120,9 +120,9 @@ export default function FleetPicker({
                 setOpen(false);
                 onNewWorkspace();
               }}
-              className="mt-1 flex w-full items-center gap-3 rounded-lg border-t border-rule px-2.5 py-2.5 text-[15px] font-medium text-ink-3 transition-colors hover:bg-hover hover:text-ink-2 lg:gap-2 lg:rounded-md lg:px-2 lg:py-1.5 lg:text-[12px]"
+              className="mt-1 flex w-full items-center gap-3 rounded-lg border-t border-rule px-2.5 py-2.5 text-medium-15 text-ink-3 transition-colors hover:bg-hover hover:text-ink-2 lg:gap-2 lg:rounded-md lg:px-2 lg:py-1.5 lg:text-medium-12"
             >
-              <span className="flex h-5 w-5 items-center justify-center rounded text-[16px] leading-none lg:h-4 lg:w-4 lg:text-[12px]">
+              <span className="flex h-5 w-5 items-center justify-center rounded text-legacy-16 leading-none! lg:h-4 lg:w-4 lg:text-body-12">
                 +
               </span>
               New workspace

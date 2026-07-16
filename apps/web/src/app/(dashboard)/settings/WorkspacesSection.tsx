@@ -130,7 +130,7 @@ export default function WorkspacesSection({ initial }: Props) {
         {/* Workspace list */}
         <div className="mt-3.5 rounded-xl border border-rule-2 bg-paper overflow-hidden">
           {workspaces.length === 0 ? (
-            <p className="px-[18px] py-4 text-[14px] text-ink-4">No workspaces found.</p>
+            <p className="px-[18px] py-4 text-body-14 text-ink-4">No workspaces found.</p>
           ) : (
             workspaces.map((ws) => {
               const isRenaming = renamingId === ws.id;
@@ -140,7 +140,7 @@ export default function WorkspacesSection({ initial }: Props) {
                   className="flex items-center gap-3 px-[18px] py-3.5 border-b border-rule-2 last:border-b-0"
                 >
                   {/* Icon badge */}
-                  <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-md border border-rule-2 bg-canvas font-mono text-[14px] leading-none">
+                  <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-md border border-rule-2 bg-canvas font-mono text-legacy-14 leading-none!">
                     {ws.icon ?? ws.name.slice(0, 1).toUpperCase()}
                   </span>
 
@@ -180,11 +180,11 @@ export default function WorkspacesSection({ initial }: Props) {
                         </div>
                       </form>
                     ) : (
-                      <span className="text-[14px] font-medium text-ink leading-none">
+                      <span className="text-medium-14 text-ink leading-none!">
                         {ws.name}
                       </span>
                     )}
-                    <span className="font-mono text-[11px] text-ink-4 leading-none mt-0.5">
+                    <span className="text-mono-11 text-ink-4 leading-none! mt-0.5">
                       {ws.role}
                     </span>
                   </span>

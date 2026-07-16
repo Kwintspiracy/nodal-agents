@@ -283,7 +283,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             pattern="[a-z0-9-]+"
             className="font-mono"
           />
-          <p className="text-[12px] text-ink-4 mt-1">
+          <p className="text-body-12 text-ink-4 mt-1">
             Tools will be named like <span className="font-mono text-ink-3">{slugPreview}</span>.
             Lowercase letters, digits, dashes.
           </p>
@@ -350,7 +350,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             className="font-mono"
           />
           {catalogItem.docsHint && (
-            <p className="text-[12px] text-ink-4 mt-1">{catalogItem.docsHint}</p>
+            <p className="text-body-12 text-ink-4 mt-1">{catalogItem.docsHint}</p>
           )}
         </div>
       )}
@@ -372,7 +372,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
               onChange={(e) => setPrefilledArgsText(e.target.value)}
               className="font-mono resize-none"
             />
-            <p className="text-[12px] text-ink-4 mt-1">
+            <p className="text-body-12 text-ink-4 mt-1">
               Command: <span className="font-mono text-ink-3">{catalogItem.command ?? 'npx'}</span>
             </p>
           </div>
@@ -419,7 +419,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             </div>
           )}
 
-          {catalogItem.docsHint && <p className="text-[12px] text-ink-4">{catalogItem.docsHint}</p>}
+          {catalogItem.docsHint && <p className="text-body-12 text-ink-4">{catalogItem.docsHint}</p>}
         </>
       )}
 
@@ -437,7 +437,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
               placeholder="npx"
               className="font-mono"
             />
-            <p className="text-[12px] text-ink-4 mt-1">
+            <p className="text-body-12 text-ink-4 mt-1">
               Executable name (resolved via PATH) or absolute path.
             </p>
           </div>
@@ -495,7 +495,7 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
               + Add variable
             </RowActionButton>
             {catalogItem.docsHint && (
-              <p className="text-[12px] text-ink-4 mt-2">{catalogItem.docsHint}</p>
+              <p className="text-body-12 text-ink-4 mt-2">{catalogItem.docsHint}</p>
             )}
           </div>
         </>

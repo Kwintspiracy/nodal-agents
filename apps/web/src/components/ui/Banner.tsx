@@ -51,7 +51,7 @@ export default function Banner({ variant, title, children, className = '' }: Pro
   const Icon = ICON[variant];
   return (
     <div
-      className={`flex items-start gap-2.5 rounded-[9px] px-3.5 py-2.5 text-[13px] leading-[1.5] text-ink-2 ${s.bg} ${className}`}
+      className={`flex items-start gap-2.5 rounded-[9px] px-3.5 py-2.5 text-body-13 leading-[1.5]! text-ink-2 ${s.bg} ${className}`}
     >
       <Icon size={16} weight="regular" className={`mt-0.5 shrink-0 ${s.iconColor}`} />
       <div className="min-w-0 flex-1">

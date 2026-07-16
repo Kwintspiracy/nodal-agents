@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import {
   getSettingsAction,
   getSecuritySettingsAction,
@@ -78,7 +79,7 @@ export default async function SettingsPage() {
               {s.workerSecretConfigured ? (
                 <CheckOk>configured</CheckOk>
               ) : (
-                <span className="text-[14px] font-medium text-warn">
+                <span className="text-medium-14 text-warn">
                   missing — runner calls will 403
                 </span>
               )}
@@ -141,8 +142,13 @@ export default async function SettingsPage() {
             <SetRow label="Runner URL">
               <MonoCode>{s.runnerUrl}</MonoCode>
             </SetRow>
-            <SetRow label="Webhook ingress">
-              <MonoCode>{s.appUrl}/wh/v1</MonoCode>
+            <SetRow label="Webhooks" sub="Each automation trigger has its own webhook URL.">
+              <Link
+                href="/automations"
+                className="text-xs text-ink-3 hover:text-ink-2 transition-colors"
+              >
+                Manage webhooks in Automations
+              </Link>
             </SetRow>
             <SetRow
               label="Shared workspace"

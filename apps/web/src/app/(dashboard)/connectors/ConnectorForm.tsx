@@ -27,8 +27,8 @@ import CredentialWizard, { type CredentialWizardType } from '../credentials/Cred
 function MetaField({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10.5px] font-medium uppercase tracking-wider text-ink-4">{label}</dt>
-      <dd className={`mt-0.5 truncate text-[13px] text-ink-2 ${mono ? 'font-mono' : ''}`}>
+      <dt className="text-legacy-10-5 font-medium uppercase tracking-wider text-ink-4">{label}</dt>
+      <dd className={`mt-0.5 truncate text-body-13 text-ink-2 ${mono ? 'font-mono' : ''}`}>
         {value}
       </dd>
     </div>
@@ -341,7 +341,7 @@ export default function ConnectorForm({
               placeholder="Paste the new key"
               className="font-mono"
             />
-            <p className="text-[12px] text-ink-4 mt-1">
+            <p className="text-body-12 text-ink-4 mt-1">
               Agent assignments stay intact - only the stored key changes.
             </p>
           </div>
@@ -381,7 +381,7 @@ export default function ConnectorForm({
               {connectedScopes.split(/\s+/).map((scope) => (
                 <span
                   key={scope}
-                  className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-[11px] font-mono"
+                  className="px-1.5 py-0.5 bg-hover text-ink-3 rounded text-mono-11"
                 >
                   {scope}
                 </span>

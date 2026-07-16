@@ -56,7 +56,7 @@ export default function SkillsAssignedTable({ skills, agents }: Props) {
 function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
   return (
     <th
-      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
+      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-legacy-9-5 font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
       scope="col"
@@ -97,15 +97,15 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
         <div className="flex items-center gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-[13.5px] font-medium leading-[1.2] text-ink">{skill.name}</span>
+              <span className="text-legacy-13-5 font-medium leading-[1.2]! text-ink">{skill.name}</span>
               {skill.isCommunity && (
-                <span className="shrink-0 rounded bg-skill-vivid/15 px-1.5 py-0.5 font-mono text-[9.5px] font-medium uppercase tracking-[0.08em] text-skill-vivid">
+                <span className="shrink-0 rounded bg-skill-vivid/15 px-1.5 py-0.5 font-mono text-legacy-9-5 font-medium uppercase tracking-[0.08em] text-skill-vivid">
                   community
                 </span>
               )}
             </div>
             <div
-              className="mt-0.5 line-clamp-2 max-w-[460px] text-[12px] leading-[1.3] text-ink-3"
+              className="mt-0.5 line-clamp-2 max-w-[460px] text-body-12 leading-[1.3]! text-ink-3"
               title={skill.description ?? skill.slug}
             >
               {skill.description ?? <span className="font-mono text-ink-4">{skill.slug}</span>}
@@ -118,7 +118,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
         {skill.assignmentCount > 0 ? (
           <AvatarStack avatars={skill.assignedAgents} max={4} label={`+${skill.assignmentCount}`} />
         ) : (
-          <span className="font-mono text-[11px] text-ink-4">Unassigned</span>
+          <span className="text-mono-11 text-ink-4">Unassigned</span>
         )}
       </td>
 
@@ -126,7 +126,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
         {skill.requiredBuiltins.length > 0 ? (
           <CountPill items={skill.requiredBuiltins} noun="built-in" />
         ) : (
-          <span className="font-mono text-[11px] text-ink-4">none</span>
+          <span className="text-mono-11 text-ink-4">none</span>
         )}
       </td>
 

@@ -84,7 +84,7 @@ function ModeBadge({ icon, label, hint }: { icon: React.ReactNode; label: string
       <div className="shrink-0 text-ok">{icon}</div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium leading-tight text-ink lg:text-xs">{label}</p>
-        {hint && <p className="mt-0.5 truncate text-[12px] text-ink-3 lg:text-[10px]">{hint}</p>}
+        {hint && <p className="mt-0.5 truncate text-body-12 text-ink-3 lg:text-legacy-10">{hint}</p>}
       </div>
     </div>
   );

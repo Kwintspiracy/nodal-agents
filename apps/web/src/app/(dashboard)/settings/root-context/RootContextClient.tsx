@@ -24,11 +24,11 @@ import DisclosureButton from '@/components/ui/DisclosureButton';
 type Skill = { id: string; name: string; description: string | null; content: string };
 type Memory = { id: string; fact: string; category: string };
 
-const TEXTAREA_CLASS = 'mt-2 font-mono text-[13px] leading-[1.55]';
+const TEXTAREA_CLASS = 'mt-2 text-mono-13 leading-[1.55]!';
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-ink-4">{children}</div>
+    <div className="text-mono-11 tracking-[0.18em] uppercase text-ink-4">{children}</div>
   );
 }
 
@@ -101,7 +101,7 @@ export default function RootContextClient({
       </Link>
 
       {!rootName ? (
-        <div className="mt-6 rounded-xl border border-rule-2 bg-paper p-5 text-[14px] text-ink-3">
+        <div className="mt-6 rounded-xl border border-rule-2 bg-paper p-5 text-legacy-14 text-ink-3">
           No ROOT agent yet. Create your first agent — the workspace&apos;s origin orchestrator
           becomes the ROOT.
         </div>
@@ -110,7 +110,7 @@ export default function RootContextClient({
           {/* Full assembled system prompt — the real artifact */}
           <section>
             <SectionLabel>Full system prompt — exactly what {rootName} receives</SectionLabel>
-            <p className="mt-1 text-[13px] text-ink-3">
+            <p className="mt-1 text-body-13 text-ink-3">
               The complete context assembled per turn: identity, personality, runtime, built-in
               capabilities, workspaces, memory, and every skill. Read-only — edit the pieces below.
             </p>
@@ -118,7 +118,7 @@ export default function RootContextClient({
               readOnly
               value={systemPrompt}
               rows={18}
-              className="mt-2 font-mono text-[12px] leading-[1.5] text-ink-2"
+              className="mt-2 text-mono-12 leading-[1.5]! text-ink-2"
             />
           </section>
 
@@ -141,7 +141,7 @@ export default function RootContextClient({
           {/* Skills */}
           <section>
             <SectionLabel>Skills ({skills.length})</SectionLabel>
-            <p className="mt-1 text-[13px] text-ink-3">
+            <p className="mt-1 text-body-13 text-ink-3">
               Each skill&apos;s full markdown is injected into the prompt. Edit here to change how
               the agent behaves.
             </p>
@@ -157,13 +157,13 @@ export default function RootContextClient({
                       open={open}
                       onClick={() => setOpenSkills((o) => ({ ...o, [s.id]: !o[s.id] }))}
                     >
-                      <span className="shrink-0 text-[14px] font-semibold text-ink">{s.name}</span>
+                      <span className="shrink-0 text-legacy-14 font-semibold text-ink">{s.name}</span>
                       {s.description && (
-                        <span className="min-w-0 truncate text-[13px] text-ink-3">
+                        <span className="min-w-0 truncate text-body-13 text-ink-3">
                           — {s.description}
                         </span>
                       )}
-                      <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-4">
+                      <span className="ml-auto shrink-0 text-mono-11 text-ink-4">
                         {(skillContent[s.id] ?? '').length} chars
                       </span>
                     </DisclosureButton>
@@ -188,7 +188,7 @@ export default function RootContextClient({
                 );
               })}
               {skills.length === 0 && (
-                <div className="text-[13px] text-ink-4">No skills attached.</div>
+                <div className="text-body-13 text-ink-4">No skills attached.</div>
               )}
             </div>
           </section>
@@ -196,7 +196,7 @@ export default function RootContextClient({
           {/* Install notes */}
           <section>
             <SectionLabel>Install notes (Runtime block)</SectionLabel>
-            <p className="mt-1 text-[13px] text-ink-3">
+            <p className="mt-1 text-body-13 text-ink-3">
               Operator notes about this machine (endpoints, model names, paths) — injected into
               every agent&apos;s ## Runtime block.
             </p>
@@ -217,7 +217,7 @@ export default function RootContextClient({
           {/* Memories */}
           <section>
             <SectionLabel>Persistent memory ({memories.length})</SectionLabel>
-            <p className="mt-1 text-[13px] text-ink-3">
+            <p className="mt-1 text-body-13 text-ink-3">
               Durable facts injected into the prompt. Remove anything stale or wrong.
             </p>
             <div className="mt-3 flex flex-col gap-2">
@@ -226,10 +226,10 @@ export default function RootContextClient({
                   key={m.id}
                   className="flex items-start gap-3 rounded-lg border border-rule-2 bg-paper px-3.5 py-2.5"
                 >
-                  <span className="mt-0.5 shrink-0 rounded bg-conn-vivid/12 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wide text-ink-3">
+                  <span className="mt-0.5 shrink-0 rounded bg-conn-vivid/12 px-1.5 py-0.5 text-mono-11 uppercase tracking-wide text-ink-3">
                     {m.category}
                   </span>
-                  <span className="min-w-0 flex-1 text-[14px] leading-[1.5] text-ink">
+                  <span className="min-w-0 flex-1 text-legacy-14 leading-[1.5]! text-ink">
                     {m.fact}
                   </span>
                   <RowActionButton
@@ -242,7 +242,7 @@ export default function RootContextClient({
                 </div>
               ))}
               {memories.length === 0 && (
-                <div className="text-[13px] text-ink-4">No memories yet.</div>
+                <div className="text-body-13 text-ink-4">No memories yet.</div>
               )}
             </div>
           </section>

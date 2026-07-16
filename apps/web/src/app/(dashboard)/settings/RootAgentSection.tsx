@@ -85,7 +85,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
       {rootAgent === null ? (
         /* Empty state — no ROOT yet (no orchestrator has been created) */
         <div className="mt-3.5 rounded-xl border border-rule-2 bg-paper px-[18px] py-4">
-          <p className="text-[14px] text-ink-3">
+          <p className="text-body-14 text-ink-3">
             No ROOT agent yet.{' '}
             <a
               href="/agents"
@@ -101,15 +101,15 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
           <SetForm>
             {/* ── ROOT agent (read-only — designated automatically) ─────────── */}
             <div className="mb-4">
-              <div className="mb-1.5 text-[14px] leading-none text-ink-3">ROOT agent</div>
+              <div className="mb-1.5 text-body-14 leading-none! text-ink-3">ROOT agent</div>
               <div className="flex items-center gap-2 rounded-lg border border-rule bg-paper px-3 py-2">
-                <span className="text-[14px] font-medium text-ink">{rootAgent.name}</span>
-                <span className="rounded-full border border-rule-2 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-4">
+                <span className="text-medium-14 text-ink">{rootAgent.name}</span>
+                <span className="rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 uppercase tracking-wide text-ink-4">
                   Origin orchestrator
                 </span>
                 <a
                   href="/settings/root-context"
-                  className="ml-auto text-[13px] font-medium text-ink-3 underline decoration-rule underline-offset-[3px] hover:text-ink hover:decoration-ink-3"
+                  className="ml-auto text-medium-13 text-ink-3 underline decoration-rule underline-offset-[3px] hover:text-ink hover:decoration-ink-3"
                 >
                   View &amp; edit context →
                 </a>
@@ -120,7 +120,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
             <>
               {/* Grant toggles */}
               <div className="mb-4">
-                <div className="mb-2 text-[14px] leading-none text-ink-3">Allowed actions</div>
+                <div className="mb-2 text-body-14 leading-none! text-ink-3">Allowed actions</div>
                 <div className="flex flex-col gap-1.5">
                   {(
                     [
@@ -146,7 +146,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
                       checked={grants[key]}
                       onChange={() => toggleGrant(key)}
                       disabled={isSaving}
-                      label={<span className="text-[14px] text-ink-2">{label}</span>}
+                      label={<span className="text-body-14 text-ink-2">{label}</span>}
                     />
                   ))}
                 </div>
@@ -154,7 +154,7 @@ export default function RootAgentSection({ agents, initialRootAgentId, initialGr
 
               {/* Autonomy level */}
               <div className="mb-1">
-                <div className="mb-2.5 text-[14px] leading-none text-ink-3">Autonomy level</div>
+                <div className="mb-2.5 text-body-14 leading-none! text-ink-3">Autonomy level</div>
                 <div role="radiogroup" aria-label="Autonomy level">
                   {AUTONOMY_OPTIONS.map((opt) => (
                     <OptionRadio

@@ -3,8 +3,8 @@
  *
  * Validates two features on the /automations dashboard page:
  *
- * A — Garde-fou warning: When "Notify me on Telegram when it succeeds" is checked
- *     for a bot-less agent, a warning paragraph containing "has no Telegram bot"
+ * A — Garde-fou warning: When "Notify me when it succeeds" is checked
+ *     for a bot-less agent, a warning paragraph containing "has no channel connected"
  *     appears. When unchecked it disappears.
  *
  * B — Run now button: Creating a schedule with a task and clicking "▶ Run now"
@@ -72,18 +72,49 @@ test.describe('Scenario A — Garde-fou: Telegram notify warning for bot-less ag
     await agentSelect.selectOption(firstAgentValue);
 
     // The warning must NOT be visible yet (notify is unchecked by default).
-    await expect(page.getByText(/has no Telegram bot/i)).not.toBeVisible();
+    await expect(page.getByText(/has no channel connected/i)).not.toBeVisible();
 
-    // Check the "Notify me on Telegram when it succeeds" checkbox.
-    const notifyCheckbox = page.getByRole('checkbox', { name: /notify me on telegram/i });
+    // Check the "Notify me when it succeeds" checkbox.
+    const notifyCheckbox = page.getByRole('checkbox', { name: /notify me when it succeeds/i });
     await notifyCheckbox.check();
 
-    // The warning paragraph should now appear.
-    await expect(page.getByText(/has no Telegram bot/i)).toBeVisible({ timeout: 5_000 });
+    // The warning is per-agent now (it appears only for an agent with ZERO
+    // active channel bindings), and the bindings lookup is async — after an
+    // agent switch the panel resolves to either the warning OR the "Notify
+    // via" select. Iterate the real agents until one shows the warning; skip
+    // if every agent has a channel (nothing to assert without seeding, and
+    // seeding assertion data is banned).
+    const warning = page.getByText(/has no channel connected/i);
+    const notifyVia = page.getByLabel(/notify via/i);
+    let channelLessFound = false;
+    for (const opt of agentOptions) {
+      const v = await opt.getAttribute('value');
+      if (!v || v.trim() === '') continue;
+      await agentSelect.selectOption(v);
+      // Wait for the async bindings fetch to SETTLE. The "Notify via" select
+      // stays mounted but DISABLED while the fetch is in flight, so mere
+      // visibility is a transient state — the settled signals are: warning
+      // visible, or the select visible AND enabled.
+      await expect
+        .poll(
+          async () =>
+            (await warning.isVisible()) || ((await notifyVia.isVisible()) && (await notifyVia.isEnabled())),
+          { timeout: 5_000 },
+        )
+        .toBe(true);
+      if (await warning.isVisible()) {
+        channelLessFound = true;
+        break;
+      }
+    }
+    if (!channelLessFound) {
+      test.skip(true, 'Every agent has an active channel — garde-fou not observable on this data');
+      return;
+    }
 
     // Uncheck — warning should disappear.
     await notifyCheckbox.uncheck();
-    await expect(page.getByText(/has no Telegram bot/i)).not.toBeVisible();
+    await expect(warning).not.toBeVisible();
 
     // Close the form (Cancel button).
     await page.getByRole('button', { name: /cancel/i }).click();
@@ -228,12 +259,13 @@ test.describe('Scenario C — Notify persistence: checkbox survives edit + save'
     });
 
     // Check the notify checkbox.
-    const notifyCheckbox = page.getByRole('checkbox', { name: /notify me on telegram/i });
+    const notifyCheckbox = page.getByRole('checkbox', { name: /notify me when it succeeds/i });
     await expect(notifyCheckbox).toBeVisible({ timeout: 5_000 });
     await notifyCheckbox.check();
 
-    // The warning should appear (bot-less agent).
-    await expect(page.getByText(/has no Telegram bot/i)).toBeVisible({ timeout: 5_000 });
+    // (No warning assertion here: whether one appears depends on the selected
+    // agent's real channel bindings — scenario A owns that behavior. This
+    // scenario only cares that the checkbox state survives the edit round-trip.)
 
     // Save.
     await page.getByRole('button', { name: /save changes/i }).click();
@@ -249,7 +281,7 @@ test.describe('Scenario C — Notify persistence: checkbox survives edit + save'
     await expect(page.getByRole('heading', { name: /edit schedule/i })).toBeVisible({
       timeout: 5_000,
     });
-    const notifyCheckboxAgain = page.getByRole('checkbox', { name: /notify me on telegram/i });
+    const notifyCheckboxAgain = page.getByRole('checkbox', { name: /notify me when it succeeds/i });
     await expect(notifyCheckboxAgain).toBeChecked({ timeout: 5_000 });
 
     // Cancel edit.

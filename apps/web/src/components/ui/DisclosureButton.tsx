@@ -30,7 +30,7 @@ export default function DisclosureButton({ open, onClick, children, className = 
       aria-expanded={open}
       className={`flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-hover ${className}`}
     >
-      <span className="w-3 shrink-0 text-[12px] text-ink-4">{open ? '▾' : '▸'}</span>
+      <span className="w-3 shrink-0 text-body-12 text-ink-4">{open ? '▾' : '▸'}</span>
       {children}
     </button>
   );

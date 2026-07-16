@@ -45,7 +45,7 @@ export default function InstallNotesForm({ initial }: Props) {
     <form onSubmit={handleSubmit}>
       <SetForm>
         <div className="space-y-2">
-          <p className="text-[13px] leading-[1.5] text-ink-3">
+          <p className="text-body-13 leading-[1.5]! text-ink-3">
             These notes are injected into every agent&apos;s runtime context and apply live (no
             restart needed). Use them for machine-specifics the system can&apos;t auto-detect — for
             example: &ldquo;ComfyUI runs on :8188&rdquo;, a local GPU, a local API path, or services

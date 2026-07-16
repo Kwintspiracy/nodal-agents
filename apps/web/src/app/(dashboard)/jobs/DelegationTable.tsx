@@ -123,7 +123,7 @@ function abbrevTokens(n: number): string {
 }
 
 const TH =
-  'px-4 py-2.5 font-mono text-[11px] font-normal uppercase tracking-[0.12em] text-ink-3 whitespace-nowrap';
+  'px-4 py-2.5 text-mono-11 uppercase tracking-[0.12em] text-ink-3 whitespace-nowrap';
 const TD = 'px-4 py-3 align-middle';
 
 export default function DelegationTable({
@@ -169,13 +169,13 @@ export default function DelegationTable({
         {/* Legend — decodes the trigger icons */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 border-b border-rule-2 px-5 py-3">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-4">
+            <span className="font-mono text-legacy-10 uppercase tracking-[0.12em] text-ink-4">
               Trigger
             </span>
             {TRIGGER_LEGEND.map((t) => (
               <span
                 key={t.label}
-                className="inline-flex items-center gap-1.5 text-[11px] text-ink-3"
+                className="inline-flex items-center gap-1.5 text-legacy-11 text-ink-3"
               >
                 <span
                   className={`inline-flex size-[16px] items-center justify-center rounded ${t.cls}`}
@@ -189,7 +189,7 @@ export default function DelegationTable({
         </div>
 
         {filtered.length === 0 ? (
-          <div className="px-6 py-12 text-center text-[14px] text-ink-4">
+          <div className="px-6 py-12 text-center text-body-14 text-ink-4">
             {rows.length === 0 ? 'No runs yet.' : 'No runs match the search.'}
           </div>
         ) : (
@@ -263,7 +263,7 @@ function JobRowTr({
           )}
           <AgentAvatar name={r.agentName} imageUrl={r.agentAvatarUrl} size="md" />
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-[13px] text-ink">
+            <div className="flex items-center gap-1.5 text-body-13 text-ink">
               {/* Agent name ONLY — the task text lives in the row tooltip
                   (title={r.task}), never as visible cell text: the design pass
                   (b29bdf2) removed it because it blows the table width and
@@ -279,7 +279,7 @@ function JobRowTr({
               )}
             </div>
             {delegated && r.fromAgentName && (
-              <div className="truncate text-[11px] leading-tight text-ink-3">
+              <div className="truncate text-legacy-11 leading-tight! text-ink-3">
                 from {r.fromAgentName}
               </div>
             )}
@@ -300,31 +300,31 @@ function JobRowTr({
             {trig === CRON && r.scheduleName && (
               <span
                 title={r.scheduleName}
-                className="max-w-[140px] truncate text-[11px] leading-tight text-ink-3"
+                className="max-w-[140px] truncate text-legacy-11 leading-tight! text-ink-3"
               >
                 {r.scheduleName}
               </span>
             )}
           </div>
         ) : (
-          <span className="text-[12.5px] text-ink-4">—</span>
+          <span className="text-legacy-12-5 text-ink-4">—</span>
         )}
       </td>
       <td
-        className={`${TD} hidden text-left text-[12.5px] whitespace-nowrap text-ink-2 md:table-cell`}
+        className={`${TD} hidden text-left text-legacy-12-5 whitespace-nowrap text-ink-2 md:table-cell`}
       >
         {startedLabel(r.createdAt, r.status)}
       </td>
       <td
-        className={`${TD} hidden text-right font-mono text-[12.5px] whitespace-nowrap text-ink-2 lg:table-cell`}
+        className={`${TD} hidden text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2 lg:table-cell`}
       >
         {durationLabel(r.createdAt, r.completedAt, r.status)}
       </td>
-      <td className={`${TD} text-right font-mono text-[12.5px] whitespace-nowrap text-ink-2`}>
+      <td className={`${TD} text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2`}>
         {abbrevTokens(tokens)}
       </td>
       <td
-        className={`${TD} hidden text-right font-mono text-[12.5px] whitespace-nowrap text-ink-2 sm:table-cell`}
+        className={`${TD} hidden text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2 sm:table-cell`}
       >
         {r.costUsd > 0 ? `$${r.costUsd.toFixed(2)}` : '—'}
       </td>
@@ -365,11 +365,11 @@ function ConversationRows({
             )}
             <AgentAvatar name={row.agentName} imageUrl={row.agentAvatarUrl} size="md" />
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5 truncate text-[13px] text-ink">
+              <div className="flex items-center gap-1.5 truncate text-body-13 text-ink">
                 <ChatCircleDots size={13} className="shrink-0 text-ink-4" />
                 {row.agentName}
               </div>
-              <div className="truncate text-[11px] leading-tight text-ink-3">
+              <div className="truncate text-legacy-11 leading-tight! text-ink-3">
                 {row.exchangeCount} exchange{row.exchangeCount === 1 ? '' : 's'}
               </div>
             </div>
@@ -384,20 +384,20 @@ function ConversationRows({
               <trig.Icon size={13} weight="fill" />
             </span>
           ) : (
-            <span className="text-[12.5px] text-ink-4">—</span>
+            <span className="text-legacy-12-5 text-ink-4">—</span>
           )}
         </td>
         <td
-          className={`${TD} hidden text-left text-[12.5px] whitespace-nowrap text-ink-2 md:table-cell`}
+          className={`${TD} hidden text-left text-legacy-12-5 whitespace-nowrap text-ink-2 md:table-cell`}
         >
           {rangeLabel(row.firstCreatedAt, row.lastActivityAt)}
         </td>
-        <td className={`${TD} hidden text-right text-[12.5px] text-ink-4 lg:table-cell`}>—</td>
-        <td className={`${TD} text-right font-mono text-[12.5px] whitespace-nowrap text-ink-2`}>
+        <td className={`${TD} hidden text-right text-legacy-12-5 text-ink-4 lg:table-cell`}>—</td>
+        <td className={`${TD} text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2`}>
           {abbrevTokens(row.totalTokens)}
         </td>
         <td
-          className={`${TD} hidden text-right font-mono text-[12.5px] whitespace-nowrap text-ink-2 sm:table-cell`}
+          className={`${TD} hidden text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2 sm:table-cell`}
         >
           {row.totalCostUsd > 0 ? `$${row.totalCostUsd.toFixed(2)}` : '—'}
         </td>

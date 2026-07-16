@@ -29,7 +29,7 @@ export default function PageSearchInput({
 }: Props) {
   return (
     <div
-      className={`flex h-[34px] items-center gap-2 rounded-[9px] border border-rule-2 bg-paper px-3 text-[13px] text-ink-4 ${className}`}
+      className={`flex h-[34px] items-center gap-2 rounded-[9px] border border-rule-2 bg-paper px-3 text-body-13 text-ink-4 ${className}`}
       style={{ minWidth }}
     >
       <MagnifyingGlass size={13} className="shrink-0" />
@@ -38,7 +38,7 @@ export default function PageSearchInput({
         value={value}
         onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="flex-1 border-0 bg-transparent text-[14px] leading-none text-ink outline-none placeholder:text-ink-4"
+        className="flex-1 border-0 bg-transparent text-body-14 leading-none! text-ink outline-none placeholder:text-ink-4"
       />
     </div>
   );

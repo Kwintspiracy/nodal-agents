@@ -578,13 +578,13 @@ export default function OnboardingFlow() {
         <div className="rounded-2xl border border-rule-2 bg-paper px-7 py-8 shadow-sm">
           {step === 0 && (
             <div className="text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-ink text-[22px] text-canvas">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-ink text-legacy-22 text-canvas">
                 ◆
               </div>
-              <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-ink">
+              <h1 className="text-display-22 tracking-[-0.01em] text-ink">
                 Welcome to Nodal-Agents
               </h1>
-              <p className="mx-auto mt-2 max-w-sm text-[13.5px] leading-[1.6] text-ink-3">
+              <p className="mx-auto mt-2 max-w-sm text-legacy-13-5 leading-[1.6]! text-ink-3">
                 Let&apos;s set up your first AI agent. It takes about a minute: connect a model,
                 give your agent a personality, and say hello.
               </p>
@@ -602,11 +602,11 @@ export default function OnboardingFlow() {
                 sub="The brain your agent thinks with. Your key stays on this machine."
               />
 
-              <label className="mt-5 block text-[12px] font-medium text-ink-3">Provider</label>
+              <label className="mt-5 block text-medium-12 text-ink-3">Provider</label>
               <Select
                 value={provider.value}
                 onChange={(e) => pickProvider(e.target.value)}
-                className="mt-1.5 bg-canvas text-[13.5px]"
+                className="mt-1.5 bg-canvas text-legacy-13-5"
               >
                 {PROVIDERS.map((p) => (
                   <option key={p.value} value={p.value}>
@@ -615,23 +615,23 @@ export default function OnboardingFlow() {
                 ))}
               </Select>
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-3">Model</label>
+              <label className="mt-4 block text-medium-12 text-ink-3">Model</label>
               <ModelField providerValue={provider.value} model={model} onModel={setModel} />
               {catalogModels.length > 0 && (
-                <p className="mt-1.5 text-[11.5px] text-ink-4">
+                <p className="mt-1.5 text-legacy-11-5 text-ink-4">
                   {catalogModels.length} supported models for {provider.label}.
                 </p>
               )}
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-3">Base URL</label>
+              <label className="mt-4 block text-medium-12 text-ink-3">Base URL</label>
               <TextInput
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://…"
-                className="mt-1.5 bg-canvas text-[13.5px]"
+                className="mt-1.5 bg-canvas text-legacy-13-5"
               />
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-3">
+              <label className="mt-4 block text-medium-12 text-ink-3">
                 API key {provider.needsKey ? '' : '(optional for local)'}
               </label>
               <TextInput
@@ -639,7 +639,7 @@ export default function OnboardingFlow() {
                 onChange={(e) => setApiKey(e.target.value)}
                 type="password"
                 placeholder={provider.needsKey ? 'sk-…' : 'leave blank for local'}
-                className="mt-1.5 bg-canvas text-[13.5px]"
+                className="mt-1.5 bg-canvas text-legacy-13-5"
               />
 
               <div className="mt-4 flex items-center gap-3">
@@ -652,19 +652,19 @@ export default function OnboardingFlow() {
                   {testState === 'testing' ? 'Connecting…' : 'Test connection'}
                 </PrimaryButton>
                 {testState === 'ok' && (
-                  <span className="text-[12.5px] font-medium text-lime-600">✓ {testMsg}</span>
+                  <span className="text-legacy-12-5 font-medium text-lime-600">✓ {testMsg}</span>
                 )}
                 {testState === 'fail' && (
-                  <span className="text-[12.5px] font-medium text-warn">{testMsg}</span>
+                  <span className="text-legacy-12-5 font-medium text-warn">{testMsg}</span>
                 )}
               </div>
 
-              {keyError && <p className="mt-3 text-[12.5px] text-warn">{keyError}</p>}
+              {keyError && <p className="mt-3 text-legacy-12-5 text-warn">{keyError}</p>}
 
               <div className="mt-6 flex items-center justify-between">
                 <TextButton
                   onClick={() => setStep(0)}
-                  className="text-[13px] text-ink-3 hover:text-ink"
+                  className="text-body-13 text-ink-3 hover:text-ink"
                 >
                   ← Back
                 </TextButton>
@@ -683,31 +683,31 @@ export default function OnboardingFlow() {
                 sub="A name and a personality. It also ships with built-in codes of conduct (safe tool use, verify before done, task planning…)."
               />
 
-              <label className="mt-5 block text-[12px] font-medium text-ink-3">Name</label>
+              <label className="mt-5 block text-medium-12 text-ink-3">Name</label>
               <TextInput
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder="e.g. Friday"
-                className="mt-1.5 bg-canvas text-[13.5px]"
+                className="mt-1.5 bg-canvas text-legacy-13-5"
               />
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-3">Personality</label>
+              <label className="mt-4 block text-medium-12 text-ink-3">Personality</label>
               <TextArea
                 value={personality}
                 onChange={(e) => setPersonality(e.target.value)}
                 rows={11}
-                className="mt-1.5 bg-canvas font-mono text-[12px] leading-[1.55]"
+                className="mt-1.5 bg-canvas text-mono-12 leading-[1.55]!"
               />
 
-              <label className="mt-4 block text-[12px] font-medium text-ink-3">Model</label>
+              <label className="mt-4 block text-medium-12 text-ink-3">Model</label>
               <ModelField providerValue={provider.value} model={model} onModel={setModel} />
 
-              {agentError && <p className="mt-3 text-[12.5px] text-warn">{agentError}</p>}
+              {agentError && <p className="mt-3 text-legacy-12-5 text-warn">{agentError}</p>}
 
               <div className="mt-6 flex items-center justify-between">
                 <TextButton
                   onClick={() => setStep(1)}
-                  className="text-[13px] text-ink-3 hover:text-ink"
+                  className="text-body-13 text-ink-3 hover:text-ink"
                 >
                   ← Back
                 </TextButton>
@@ -741,13 +741,13 @@ export default function OnboardingFlow() {
                 </svg>
               </div>
               <h1
-                className={`text-[22px] font-semibold tracking-[-0.01em] text-ink transition-all duration-500 ${
+                className={`text-display-22 tracking-[-0.01em] text-ink transition-all duration-500 ${
                   shown ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
                 }`}
               >
                 {agentName || 'Your agent'} is ready
               </h1>
-              <p className="mx-auto mt-2 max-w-sm text-[13.5px] leading-[1.6] text-ink-3">
+              <p className="mx-auto mt-2 max-w-sm text-legacy-13-5 leading-[1.6]! text-ink-3">
                 Take a minute to meet {agentName || 'your agent'} — a few quick questions so it gets
                 to know you. Or head straight to the dashboard.
               </p>
@@ -764,7 +764,7 @@ export default function OnboardingFlow() {
 
           {step === 4 && (
             <div>
-              <div className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-ink-4">
+              <div className="font-mono text-legacy-10-5 tracking-[0.18em] uppercase text-ink-4">
                 Meet {agentName || 'your agent'}
               </div>
 
@@ -775,7 +775,7 @@ export default function OnboardingFlow() {
                 {msgs.length === 0 && !chatError && (
                   <div className="m-auto flex flex-col items-center gap-2.5 text-ink-4">
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-rule-2 border-t-ink" />
-                    <span className="text-[12.5px]">Waking up your agent…</span>
+                    <span className="text-legacy-12-5">Waking up your agent…</span>
                   </div>
                 )}
                 {msgs.map((m, i) => (
@@ -784,7 +784,7 @@ export default function OnboardingFlow() {
                     className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-[13px] leading-[1.5] ${
+                      className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-body-13 leading-[1.5]! ${
                         m.role === 'user'
                           ? 'bg-ink text-canvas'
                           : 'border border-rule-2 bg-paper text-ink'
@@ -805,7 +805,7 @@ export default function OnboardingFlow() {
                 )}
               </div>
 
-              {chatError && <p className="mt-3 text-[12.5px] text-warn">{chatError}</p>}
+              {chatError && <p className="mt-3 text-legacy-12-5 text-warn">{chatError}</p>}
 
               {/* The input stays available the whole time so the operator can
                   keep chatting even after Continue appears. */}
@@ -822,7 +822,7 @@ export default function OnboardingFlow() {
                   disabled={chatBusy || msgs.length === 0}
                   placeholder="Type your answer…"
                   containerClassName="flex-1"
-                  className="bg-canvas text-[13.5px]"
+                  className="bg-canvas text-legacy-13-5"
                 />
                 <PrimaryButton
                   onClick={() => void sendAnswer()}
@@ -839,7 +839,7 @@ export default function OnboardingFlow() {
               <div className="mt-3 flex items-center justify-between">
                 <TextButton
                   onClick={() => setStep(5)}
-                  className="text-[12.5px] text-ink-3 underline hover:text-ink"
+                  className="text-legacy-12-5 text-ink-3 underline hover:text-ink"
                 >
                   Skip for now
                 </TextButton>
@@ -852,13 +852,13 @@ export default function OnboardingFlow() {
 
           {step === 5 && (
             <div>
-              <div className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-ink-4">
+              <div className="font-mono text-legacy-10-5 tracking-[0.18em] uppercase text-ink-4">
                 How {agentName || 'your agent'} should work
               </div>
-              <h1 className="mt-1 text-[20px] font-semibold tracking-[-0.01em] text-ink">
+              <h1 className="mt-1 text-heading-20 tracking-[-0.01em] text-ink">
                 Set the autonomy level
               </h1>
-              <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">
+              <p className="mt-1.5 text-body-13 leading-[1.5]! text-ink-3">
                 Based on what you told {agentName || 'your agent'}, we&apos;ve pre-selected a level.
                 Adjust it if you like — it decides whether {agentName || 'your agent'} asks you to
                 approve its actions before running them, while carrying out what you ask.
@@ -876,11 +876,11 @@ export default function OnboardingFlow() {
                 ))}
               </div>
 
-              <p className="mt-3 text-[11.5px] text-ink-4">
+              <p className="mt-3 text-legacy-11-5 text-ink-4">
                 You can change this anytime in Settings → Autonomy.
               </p>
 
-              {autonomyError && <p className="mt-3 text-[12.5px] text-warn">{autonomyError}</p>}
+              {autonomyError && <p className="mt-3 text-legacy-12-5 text-warn">{autonomyError}</p>}
 
               <div className="mt-6 flex items-center justify-end">
                 <PrimaryButton
@@ -895,13 +895,13 @@ export default function OnboardingFlow() {
 
           {step === 6 && (
             <div className="text-center">
-              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-conn-vivid/15 text-[26px]">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-conn-vivid/15 text-legacy-26">
                 💬
               </div>
-              <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-ink">
+              <h1 className="text-display-22 tracking-[-0.01em] text-ink">
                 Connect a messaging channel
               </h1>
-              <p className="mx-auto mt-2 max-w-sm text-[13.5px] leading-[1.6] text-ink-3">
+              <p className="mx-auto mt-2 max-w-sm text-legacy-13-5 leading-[1.6]! text-ink-3">
                 Talk to {agentName || 'your agent'} from your phone, and let it reach you with
                 updates and questions — right inside the app you already use. You can always set
                 this up later.
@@ -911,7 +911,9 @@ export default function OnboardingFlow() {
                 {CHANNELS.map((c) => (
                   <ChoiceTile
                     key={c.value}
-                    onClick={() => finish(agentId ? `/agents/${agentId}/channels#${c.value}` : '/')}
+                    onClick={() =>
+                      finish(agentId ? `/agents/${agentId}/edit?tab=channels#${c.value}` : '/')
+                    }
                     icon={
                       // eslint-disable-next-line @next/next/no-img-element -- static brand svg, same convention as the Channels page cards
                       <img src={c.icon} alt="" aria-hidden="true" className="h-8 w-8" />
@@ -924,7 +926,7 @@ export default function OnboardingFlow() {
               <div className="mt-6 flex items-center justify-center">
                 <TextButton
                   onClick={() => finish('/')}
-                  className="text-[13px] text-ink-3 underline hover:text-ink"
+                  className="text-body-13 text-ink-3 underline hover:text-ink"
                 >
                   Skip for now
                 </TextButton>
@@ -938,14 +940,14 @@ export default function OnboardingFlow() {
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-canvas">
           <div className="relative mb-6 flex h-20 w-20 items-center justify-center">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-2xl bg-ink/10" />
-            <span className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-ink text-[30px] text-canvas">
+            <span className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-ink text-legacy-30 text-canvas">
               ◆
             </span>
           </div>
-          <div className="text-[15px] font-semibold tracking-[-0.01em] text-ink">
+          <div className="text-title-15 tracking-[-0.01em] text-ink">
             Entering Nodal-Agents
           </div>
-          <div className="mt-1 text-[12.5px] text-ink-3">
+          <div className="mt-1 text-legacy-12-5 text-ink-3">
             Waking up {agentName || 'your agent'}…
           </div>
           <div className="mt-6 h-1 w-52 overflow-hidden rounded-full bg-rule-2">
@@ -964,11 +966,11 @@ export default function OnboardingFlow() {
 function StepHeader({ n, title, sub }: { n: number; title: string; sub: string }) {
   return (
     <div>
-      <div className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-ink-4">
+      <div className="font-mono text-legacy-10-5 tracking-[0.18em] uppercase text-ink-4">
         Step {n} of 3
       </div>
-      <h1 className="mt-1 text-[20px] font-semibold tracking-[-0.01em] text-ink">{title}</h1>
-      <p className="mt-1.5 text-[13px] leading-[1.5] text-ink-3">{sub}</p>
+      <h1 className="mt-1 text-heading-20 tracking-[-0.01em] text-ink">{title}</h1>
+      <p className="mt-1.5 text-body-13 leading-[1.5]! text-ink-3">{sub}</p>
     </div>
   );
 }
@@ -993,7 +995,7 @@ function ModelField({
         value={model}
         onChange={(e) => onModel(e.target.value)}
         placeholder="e.g. llama3.2 — type your local model name"
-        className="mt-1.5 bg-canvas text-[13.5px]"
+        className="mt-1.5 bg-canvas text-legacy-13-5"
       />
     );
   }
@@ -1003,7 +1005,7 @@ function ModelField({
       <Select
         value={model}
         onChange={(e) => onModel(e.target.value)}
-        className="mt-1.5 bg-canvas text-[13.5px]"
+        className="mt-1.5 bg-canvas text-legacy-13-5"
       >
         {groups.map((g, gi) =>
           g.group ? (

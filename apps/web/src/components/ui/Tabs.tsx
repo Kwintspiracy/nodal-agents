@@ -53,14 +53,14 @@ export default function Tabs<T extends string>({
               }
             }}
             className={[
-              'relative -mb-px cursor-pointer border-b-2 px-4 pt-2.5 pb-3 text-[14px] font-medium transition-colors',
+              'relative -mb-px cursor-pointer border-b-2 px-4 pt-2.5 pb-3 text-medium-14 transition-colors',
               isActive ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2',
             ].join(' ')}
           >
             {t.label}
             {t.count !== undefined && t.count > 0 && (
               <span
-                className={`ml-1.5 font-mono text-[11px] ${isActive ? 'text-ink-2' : 'text-ink-4'}`}
+                className={`ml-1.5 text-mono-11 ${isActive ? 'text-ink-2' : 'text-ink-4'}`}
               >
                 {t.count}
               </span>

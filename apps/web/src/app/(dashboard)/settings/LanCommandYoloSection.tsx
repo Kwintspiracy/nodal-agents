@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { setLanCommandYoloAction, type LanCommandYoloView } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Banner from '@/components/ui/Banner';
+import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import Switch from '@/components/ui/Switch';
 
 interface Props {
@@ -65,14 +66,12 @@ export default function LanCommandYoloSection({ initial }: Props) {
     <div className="flex items-start gap-4 rounded-xl border border-rule-2 bg-paper px-[18px] py-4">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-[14px] font-medium text-ink">
+          <span className="text-medium-14 text-ink">
             Allow command auto-run (Yolo) in LAN / multi-user mode
           </span>
-          <span className="inline-flex h-[18px] items-center rounded-full bg-err/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-err">
-            owner only
-          </span>
+          <MonoMicroTag tone="err">owner only</MonoMicroTag>
         </div>
-        <p className="mt-1 text-[13px] leading-[1.4] text-ink-3">
+        <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
           When on, workspace agents with the{' '}
           <span className="font-medium text-ink-2">command-execution</span> skill can be set to
           auto-run shell commands with no per-command approval. The toggle on each agent&apos;s
@@ -80,7 +79,7 @@ export default function LanCommandYoloSection({ initial }: Props) {
         </p>
 
         {!initial.isOwner && (
-          <p className="mt-2 text-[12px] text-ink-4">
+          <p className="mt-2 text-body-12 text-ink-4">
             Only the workspace owner can change this setting.
           </p>
         )}

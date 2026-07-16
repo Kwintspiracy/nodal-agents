@@ -80,6 +80,7 @@ function makeDb(rows: unknown[] = []) {
   const db = {
     select: vi.fn().mockReturnValue(c),
     selectDistinct: vi.fn().mockReturnValue(c),
+    selectDistinctOn: vi.fn().mockReturnValue(c),
     insert: vi.fn().mockReturnValue(c),
     delete: vi.fn().mockReturnValue(c),
     update: vi.fn().mockReturnValue(c),
@@ -127,6 +128,9 @@ function makeDbMixed(opts: {
     selectDistinct: opts.selectQueue
       ? vi.fn(nextSelect)
       : vi.fn().mockReturnValue(chain(opts.select ?? [])),
+    selectDistinctOn: opts.selectQueue
+      ? vi.fn(nextSelect)
+      : vi.fn().mockReturnValue(chain(opts.select ?? [])),
     insert: vi.fn().mockReturnValue(chain(opts.insert ?? [])),
     delete: vi.fn().mockReturnValue(chain([])),
     update: vi.fn().mockReturnValue(chain(opts.update ?? [])),
@@ -156,7 +160,6 @@ vi.mock('../src/lib/server.ts', async () => {
     getAuthProvider: vi.fn(() => provider),
     requireAuth: vi.fn(),
     requireAuthWithEntity: vi.fn(),
-    requireUser: vi.fn(),
     requireUserWithEntity: vi.fn(),
     // Active-workspace override is a no-op in tests (no cookie): passthrough.
     applyActiveEntity: vi.fn(async (session: unknown) => session),
@@ -205,8 +208,17 @@ vi.mock('@nodal-agents/adapter-mcp', () => ({
 // below) — this mock only matters for Discord's configureAgentChannelAction
 // branch, which resolves its adapter via the registry. Mocked at the adapter
 // boundary rather than depending on the real discord adapter landing first.
+//
+// listActiveChannelsForAgent (B1, notify-channel-choice) is ALSO mocked here —
+// the real implementation issues its own two SELECTs against `db` (agents +
+// channel_bindings), which would otherwise consume slots out of a test's
+// makeDbMixed selectQueue never meant for it. Defaults to an empty array
+// (falls through to createScheduleAction/updateScheduleAction's own agent
+// SELECT unaffected); schedule tests that need an active channel override it
+// per-test via mockResolvedValueOnce.
 const deliveryMocks = {
   getAdapter: vi.fn(),
+  listActiveChannelsForAgent: vi.fn(async () => [] as string[]),
 };
 
 vi.mock('@nodal-agents/delivery', async () => {
@@ -215,6 +227,8 @@ vi.mock('@nodal-agents/delivery', async () => {
   return {
     ...actual,
     getAdapter: (...args: unknown[]) => deliveryMocks.getAdapter(...args),
+    listActiveChannelsForAgent: (...args: unknown[]) =>
+      deliveryMocks.listActiveChannelsForAgent(...args),
   };
 });
 
@@ -1571,6 +1585,131 @@ describe('listAgentGroupsAction', () => {
     const r = await listAgentGroupsAction();
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data).toEqual([]);
+  });
+});
+
+describe('moveWorkerAssignmentAction', () => {
+  const workerId = 'aaaaaaaa-0000-0000-0000-000000000001';
+  const fromOrch = 'aaaaaaaa-0000-0000-0000-000000000002';
+  const toOrch = 'aaaaaaaa-0000-0000-0000-000000000003';
+
+  it('rejects a non-uuid workerId', async () => {
+    const { moveWorkerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await moveWorkerAssignmentAction({
+      workerId: 'nope',
+      fromOrchestratorId: null,
+      toOrchestratorId: null,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('is a no-op when from and to are the same group (no insert/delete)', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { moveWorkerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await moveWorkerAssignmentAction({
+      workerId,
+      fromOrchestratorId: fromOrch,
+      toOrchestratorId: fromOrch,
+    });
+    expect(r.ok).toBe(true);
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses to assign an orchestrator as a worker', async () => {
+    currentDb = makeDb([
+      { id: workerId, role: 'orchestrator' },
+      { id: toOrch, role: 'orchestrator' },
+    ]) as typeof currentDb;
+    const { moveWorkerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await moveWorkerAssignmentAction({
+      workerId,
+      fromOrchestratorId: null,
+      toOrchestratorId: toOrch,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('refuses a cross-entity move when an id is not found in the session entity', async () => {
+    // Only the worker resolves — toOrch belongs to another tenant (or doesn't exist).
+    currentDb = makeDb([{ id: workerId, role: 'agent' }]) as typeof currentDb;
+    const { moveWorkerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await moveWorkerAssignmentAction({
+      workerId,
+      fromOrchestratorId: null,
+      toOrchestratorId: toOrch,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('deletes the old assignment row and inserts the new one (team → team)', async () => {
+    currentDb = makeDb([
+      { id: workerId, role: 'agent' },
+      { id: fromOrch, role: 'orchestrator' },
+      { id: toOrch, role: 'orchestrator' },
+    ]) as typeof currentDb;
+    const { moveWorkerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await moveWorkerAssignmentAction({
+      workerId,
+      fromOrchestratorId: fromOrch,
+      toOrchestratorId: toOrch,
+    });
+    expect(r.ok).toBe(true);
+
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    const deleteChain = deleteSpy.mock.results[0]!.value as { where: ReturnType<typeof vi.fn> };
+    const serializedDelete = serializeSqlCondition(deleteChain.where.mock.calls[0]?.[0]);
+    expect(serializedDelete).toContain(fromOrch);
+    expect(serializedDelete).toContain(workerId);
+
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const insertChain = insertSpy.mock.results[0]!.value as { values: ReturnType<typeof vi.fn> };
+    expect(insertChain.values.mock.calls[0]?.[0]).toEqual({
+      orchestratorId: toOrch,
+      subAgentId: workerId,
+      entityId: LOCAL_ENTITY_ID,
+    });
+  });
+
+  it('only inserts when leaving Standalone to join a team (from=null)', async () => {
+    currentDb = makeDb([
+      { id: workerId, role: 'agent' },
+      { id: toOrch, role: 'orchestrator' },
+    ]) as typeof currentDb;
+    const { moveWorkerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await moveWorkerAssignmentAction({
+      workerId,
+      fromOrchestratorId: null,
+      toOrchestratorId: toOrch,
+    });
+    expect(r.ok).toBe(true);
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('only deletes when dropping to Standalone (to=null)', async () => {
+    currentDb = makeDb([
+      { id: workerId, role: 'agent' },
+      { id: fromOrch, role: 'orchestrator' },
+    ]) as typeof currentDb;
+    const { moveWorkerAssignmentAction } = await import('../src/lib/actions.ts');
+    const r = await moveWorkerAssignmentAction({
+      workerId,
+      fromOrchestratorId: fromOrch,
+      toOrchestratorId: null,
+    });
+    expect(r.ok).toBe(true);
+    const deleteSpy = (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete;
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+    expect(insertSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -3256,6 +3395,36 @@ describe('listSchedulesAction', () => {
   });
 });
 
+describe('listAgentNotifyChannelsAction', () => {
+  it('rejects a non-uuid agentId', async () => {
+    const { listAgentNotifyChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentNotifyChannelsAction('not-uuid');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('returns not_found when the agent does not exist', async () => {
+    currentDb = makeDb([]) as typeof currentDb;
+    const { listAgentNotifyChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentNotifyChannelsAction('aaaaaaaa-0000-0000-0000-000000000150');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('not_found');
+  });
+
+  it('returns the active channels, excluding whatsapp even if bound', async () => {
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000151' }]) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce([
+      'telegram',
+      'whatsapp',
+      'discord',
+    ]);
+    const { listAgentNotifyChannelsAction } = await import('../src/lib/actions.ts');
+    const r = await listAgentNotifyChannelsAction('aaaaaaaa-0000-0000-0000-000000000151');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toEqual(['telegram', 'discord']);
+  });
+});
+
 describe('createScheduleAction', () => {
   it('rejects bad agentId', async () => {
     const { createScheduleAction } = await import('../src/lib/actions.ts');
@@ -3327,6 +3496,85 @@ describe('createScheduleAction', () => {
     )?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(valuesOff?.['notifyOnSuccess']).toBe(false);
   });
+
+  // ─── B1 (notify-channel-choice) ────────────────────────────────────────────
+
+  it('rejects a notifyChannel the agent has no active binding for', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000139' },
+    ]) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce([]);
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000139',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+      notifyChannel: 'discord',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('validation_failed');
+      expect(r.message).toContain('discord');
+    }
+  });
+
+  it('rejects a notifyChannel outside the offered enum (e.g. whatsapp — not offered in B1)', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000140' },
+    ]) as typeof currentDb;
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000140',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+      notifyChannel: 'whatsapp',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('accepts a notifyChannel that IS active for the agent and persists it', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000141' },
+    ]) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce(['discord']);
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000141',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+      notifyChannel: 'discord',
+    });
+    expect(r.ok).toBe(true);
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['notifyChannel']).toBe('discord');
+  });
+
+  it('notifyChannel omitted or null persists null (auto, unchanged behavior)', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000142' },
+    ]) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockClear();
+    const { createScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await createScheduleAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000142',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+    });
+    expect(r.ok).toBe(true);
+    // No active-channel check should even run when notifyChannel is omitted.
+    expect(deliveryMocks.listActiveChannelsForAgent).not.toHaveBeenCalled();
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['notifyChannel']).toBeNull();
+  });
 });
 
 describe('duplicateScheduleAction', () => {
@@ -3355,6 +3603,7 @@ describe('duplicateScheduleAction', () => {
           cronExpr: '0 9 * * *',
           task: 'Summarize the day',
           notifyOnSuccess: true,
+          notifyChannel: 'discord',
         },
       ],
       insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000202' }],
@@ -3371,11 +3620,56 @@ describe('duplicateScheduleAction', () => {
     expect(values?.['cronExpr']).toBe('0 9 * * *');
     expect(values?.['task']).toBe('Summarize the day');
     expect(values?.['notifyOnSuccess']).toBe(true);
+    expect(values?.['notifyChannel']).toBe('discord');
     // …with a "(copy)" name…
     expect(values?.['name']).toBe('Daily digest (copy)');
     // …and the safety behavior: paused, no carried-over next run.
     expect(values?.['active']).toBe(false);
     expect(values?.['nextRun']).toBeNull();
+  });
+});
+
+describe('updateScheduleAction', () => {
+  it('rejects a notifyChannel the agent has no active binding for', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000210' },
+    ]) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce([]);
+    const { updateScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await updateScheduleAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000211',
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000210',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+      notifyChannel: 'slack',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('validation_failed');
+      expect(r.message).toContain('slack');
+    }
+  });
+
+  it('accepts a notifyChannel that IS active for the agent and persists it', async () => {
+    currentDb = makeDb([
+      { id: 'aaaaaaaa-0000-0000-0000-000000000212' },
+    ]) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce(['slack']);
+    const { updateScheduleAction } = await import('../src/lib/actions.ts');
+    const r = await updateScheduleAction({
+      id: 'aaaaaaaa-0000-0000-0000-000000000213',
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000212',
+      name: 'Daily',
+      cronExpr: '0 9 * * *',
+      task: 'Summarize the day',
+      notifyChannel: 'slack',
+    });
+    expect(r.ok).toBe(true);
+    const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const values = (updateSpy.mock.results.at(-1)?.value as { set?: ReturnType<typeof vi.fn> })
+      ?.set?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['notifyChannel']).toBe('slack');
   });
 });
 
@@ -3612,6 +3906,7 @@ describe('runScheduleNowAction', () => {
       type: 'cron',
       scheduleName: 'Inbox watcher',
       prevRunAt: priorRun.toISOString(),
+      notifyChannel: null,
     });
     fetchSpy.mockRestore();
   });
@@ -3648,6 +3943,7 @@ describe('runScheduleNowAction', () => {
       type: 'cron',
       scheduleName: 'Fresh schedule',
       prevRunAt: null,
+      notifyChannel: null,
     });
     fetchSpy.mockRestore();
   });
@@ -3702,6 +3998,62 @@ describe('listWebhookTriggersAction', () => {
     const r = await listWebhookTriggersAction();
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data[0]?.hasSecret).toBe(false);
+  });
+
+  // ─── B2 (notify-channel-choice) ────────────────────────────────────────────
+
+  it('returns the notifyOnSuccess/notifyChannel columns when set', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000304',
+        agentId: 'aaaaaaaa-0000-0000-0000-000000000305',
+        agentName: 'Ops bot',
+        name: 'PR opened',
+        slug: 'pr-opened-2',
+        taskTemplate: 'A PR was opened: {pull_request.title}',
+        active: true,
+        secret: 'a'.repeat(32),
+        lastTriggeredAt: null,
+        triggerCount: 3,
+        notifyOnSuccess: true,
+        notifyChannel: 'discord',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]) as typeof currentDb;
+    const { listWebhookTriggersAction } = await import('../src/lib/actions.ts');
+    const r = await listWebhookTriggersAction();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data[0]?.notifyOnSuccess).toBe(true);
+    expect(r.data[0]?.notifyChannel).toBe('discord');
+  });
+
+  it('defaults notifyOnSuccess to false and notifyChannel to null when unset', async () => {
+    currentDb = makeDb([
+      {
+        id: 'aaaaaaaa-0000-0000-0000-000000000306',
+        agentId: 'aaaaaaaa-0000-0000-0000-000000000307',
+        agentName: 'Ops bot',
+        name: 'PR opened',
+        slug: 'pr-opened-3',
+        taskTemplate: 'A PR was opened: {pull_request.title}',
+        active: true,
+        secret: 'a'.repeat(32),
+        lastTriggeredAt: null,
+        triggerCount: 0,
+        notifyOnSuccess: null,
+        notifyChannel: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]) as typeof currentDb;
+    const { listWebhookTriggersAction } = await import('../src/lib/actions.ts');
+    const r = await listWebhookTriggersAction();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data[0]?.notifyOnSuccess).toBe(false);
+    expect(r.data[0]?.notifyChannel).toBeNull();
   });
 });
 
@@ -3788,6 +4140,96 @@ describe('createWebhookTriggerAction', () => {
     const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
       ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(values?.['slug']).toMatch(/^daily-digest-[0-9a-f]{6}$/);
+  });
+
+  // ─── B2 (notify-channel-choice) — same validation as createScheduleAction ──
+
+  it('rejects a notifyChannel the agent has no active binding for', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: 'aaaaaaaa-0000-0000-0000-000000000316' }], // agent ownership check
+      ],
+    }) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce([]);
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000316',
+      name: 'Daily digest',
+      taskTemplate: 'Summarize',
+      notifyOnSuccess: true,
+      notifyChannel: 'discord',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('validation_failed');
+      expect(r.message).toContain('discord');
+    }
+  });
+
+  it('rejects a notifyChannel outside the offered enum (e.g. whatsapp — not offered)', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [[{ id: 'aaaaaaaa-0000-0000-0000-000000000317' }]],
+    }) as typeof currentDb;
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000317',
+      name: 'Daily digest',
+      taskTemplate: 'Summarize',
+      notifyOnSuccess: true,
+      notifyChannel: 'whatsapp',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+  });
+
+  it('accepts a notifyChannel that IS active for the agent and persists notifyOnSuccess+notifyChannel', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: 'aaaaaaaa-0000-0000-0000-000000000318' }], // agent ownership check
+        [], // slug collision check — no collision
+      ],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000319', slug: 'daily-digest' }],
+    }) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce(['discord']);
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000318',
+      name: 'Daily digest',
+      taskTemplate: 'Summarize',
+      notifyOnSuccess: true,
+      notifyChannel: 'discord',
+    });
+    expect(r.ok).toBe(true);
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['notifyOnSuccess']).toBe(true);
+    expect(values?.['notifyChannel']).toBe('discord');
+  });
+
+  it('notifyOnSuccess/notifyChannel omitted default to false/null (auto, unchanged behavior)', async () => {
+    currentDb = makeDbMixed({
+      selectQueue: [
+        [{ id: 'aaaaaaaa-0000-0000-0000-000000000330' }], // agent ownership check
+        [], // slug collision check — no collision
+      ],
+      insert: [{ id: 'aaaaaaaa-0000-0000-0000-000000000331', slug: 'no-notify' }],
+    }) as typeof currentDb;
+    deliveryMocks.listActiveChannelsForAgent.mockClear();
+    const { createWebhookTriggerAction } = await import('../src/lib/actions.ts');
+    const r = await createWebhookTriggerAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000330',
+      name: 'No notify',
+      taskTemplate: 'Summarize',
+    });
+    expect(r.ok).toBe(true);
+    // No active-channel check should even run when notifyChannel is omitted.
+    expect(deliveryMocks.listActiveChannelsForAgent).not.toHaveBeenCalled();
+    const insertSpy = (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert;
+    const values = (insertSpy.mock.results.at(-1)?.value as { values?: ReturnType<typeof vi.fn> })
+      ?.values?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(values?.['notifyOnSuccess']).toBe(false);
+    expect(values?.['notifyChannel']).toBeNull();
   });
 });
 

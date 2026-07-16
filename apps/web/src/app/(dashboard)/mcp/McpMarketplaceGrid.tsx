@@ -83,9 +83,9 @@ function McpMarketCard({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={iconSrc} alt="" className="h-6 w-6 object-contain" />
           ) : emoji ? (
-            <span className="text-[20px] leading-none">{emoji}</span>
+            <span className="text-legacy-20 leading-none!">{emoji}</span>
           ) : (
-            <span className="font-mono text-[11px] font-semibold tracking-[0.04em]">{glyph}</span>
+            <span className="font-mono text-label-11 tracking-[0.04em]">{glyph}</span>
           )
         }
         glyphVariant="conn"
@@ -98,14 +98,14 @@ function McpMarketCard({
             <span className="flex items-center gap-1.5">
               {isPending && (
                 <span
-                  className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 font-sans text-[12px] font-medium text-warn"
+                  className="inline-flex items-center rounded-[6px] bg-warn-bg px-2 py-1 font-sans text-medium-12 text-warn"
                   title="Not yet verified end-to-end, connection params may need adjusting."
                 >
                   Test pending
                 </span>
               )}
               {isInstalled && (
-                <span className="inline-flex items-center gap-1 rounded-[6px] bg-ok-bg px-2 py-1 font-sans text-[12px] font-medium text-ok">
+                <span className="inline-flex items-center gap-1 rounded-[6px] bg-ok-bg px-2 py-1 font-sans text-medium-12 text-ok">
                   <CheckCircle size={11} weight="regular" />
                   {installedCount} installed
                 </span>

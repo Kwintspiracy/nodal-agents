@@ -89,7 +89,7 @@ export default function ConnectorsInstalledTable({ instances, credsByType }: Pro
 function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
   return (
     <th
-      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-[9.5px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
+      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-legacy-9-5 font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
         align === 'right' ? 'text-right' : 'text-left'
       }`}
       scope="col"
@@ -145,16 +145,16 @@ function ConnectorRow({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={iconSrc} alt="" className="h-4 w-4 object-contain" />
               ) : (
-                <span className="font-mono text-[10px] font-semibold tracking-[0.04em]">
+                <span className="font-mono text-micro-10 tracking-[0.04em]">
                   {glyph}
                 </span>
               )}
             </Disc>
             <div className="min-w-0">
-              <div className="text-[13.5px] font-medium leading-[1.2] text-ink">
+              <div className="text-legacy-13-5 font-medium leading-[1.2]! text-ink">
                 {catalogEntry.label}
               </div>
-              <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-4">
+              <div className="mt-0.5 font-mono text-legacy-10-5 uppercase tracking-[0.12em] text-ink-4">
                 {catalogEntry.authType}
               </div>
             </div>
@@ -163,7 +163,7 @@ function ConnectorRow({
 
         {/* Account */}
         <td className="px-[18px] py-[13px] align-middle">
-          <span className="font-sans text-[13px] leading-[1.3] text-ink-2">
+          <span className="font-sans text-body-13 leading-[1.3]! text-ink-2">
             {instance.credentialAccountName ?? instance.name}
           </span>
         </td>
@@ -173,7 +173,7 @@ function ConnectorRow({
           {scopeList.length > 0 ? (
             <CountPill items={scopeList} noun="scope" />
           ) : (
-            <span className="font-mono text-[11px] text-ink-4">
+            <span className="text-mono-11 text-ink-4">
               {instance.authType === 'api_key' ? 'api_key' : '—'}
             </span>
           )}

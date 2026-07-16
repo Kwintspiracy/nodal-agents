@@ -22,7 +22,10 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'className'> & {
 
 /**
  * TextArea — same field language as `TextInput` (rounded-md border-rule
- * bg-hover px-2 py-1.5 text-sm, focus:border-ink-3), resizable vertically.
+ * bg-hover px-2 py-1.5 text-[14px], focus:border-ink-3), resizable
+ * vertically. 14px explicit (not text-sm=15) — same field-type step as
+ * TextInput/Select since Quentin's 2026-07-16 DS pass (Figma Body/14);
+ * padding stays symmetric px-2 here (multiline, no caret-hug issue).
  * See TextInput's docstring for why this geometry was chosen as canonical.
  */
 const TextArea = forwardRef<HTMLTextAreaElement, Props>(function TextArea(
@@ -54,14 +57,14 @@ const TextArea = forwardRef<HTMLTextAreaElement, Props>(function TextArea(
         className={
           bare
             ? `w-full text-ink placeholder:text-ink-4 transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${className}`
-            : `w-full resize-y rounded-md border bg-hover px-2 py-1.5 text-sm leading-[1.5] text-ink placeholder:text-ink-4 transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
+            : `w-full resize-y rounded-md border bg-hover px-2 py-1.5 text-body-14 leading-[1.5]! text-ink placeholder:text-ink-4 transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
                 error ? 'border-err focus:border-err' : 'border-rule focus:border-ink-3'
               } ${className}`
         }
         {...rest}
       />
       {showCount && maxLength !== undefined && typeof value === 'string' && (
-        <div className="mt-1 text-right text-[11px] text-ink-4">
+        <div className="mt-1 text-right text-legacy-11 text-ink-4">
           {value.length} / {maxLength}
         </div>
       )}

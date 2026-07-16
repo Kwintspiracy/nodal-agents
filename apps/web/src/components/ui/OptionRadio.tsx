@@ -48,8 +48,8 @@ export function OptionRadio({
         {active && <span className="w-2 h-2 rounded-full bg-conn-vivid" />}
       </span>
       <span className="flex-1 min-w-0">
-        <span className="block text-[14px] font-medium leading-[1.3] text-ink">{name}</span>
-        <span className="block text-[13px] leading-[1.4] text-ink-3 mt-0.5">{description}</span>
+        <span className="block text-medium-14 leading-[1.3]! text-ink">{name}</span>
+        <span className="block text-body-13 leading-[1.4]! text-ink-3 mt-0.5">{description}</span>
       </span>
     </div>
   );

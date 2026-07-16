@@ -16,6 +16,7 @@ import {
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
 import IconButton from '@/components/ui/IconButton';
+import Drawer from '@/components/ui/Drawer';
 import TextArea from '@/components/ui/TextArea';
 import TextInput from '@/components/ui/TextInput';
 
@@ -259,18 +260,82 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const historyPanel = (
+    <>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2">
+          <IconButton
+            ghost
+            onClick={() => setShowHistory(false)}
+            aria-label="Close conversations"
+            className="!size-auto !p-0 !text-ink-3 hover:!text-ink lg:hidden"
+          >
+            <X size={16} />
+          </IconButton>
+          <span className="text-sm font-semibold text-ink">Conversations</span>
+        </div>
+        <IconButton
+          onClick={() => void handleNew()}
+          aria-label="New conversation"
+          shape="round"
+          fill="ink"
+          size="xs"
+        >
+          <Plus size={14} weight="bold" />
+        </IconButton>
+      </div>
+
+      {/* Search */}
+      <div className="px-3 pb-2.5">
+        <div className="relative">
+          <MagnifyingGlass
+            size={14}
+            className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-4"
+          />
+          <TextInput
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search chats…"
+            className="!rounded-lg !bg-canvas !pr-3 !pl-8 !text-xs"
+          />
+        </div>
+      </div>
+
+      {/* Conversation list — flat by recency (no date-group headers) */}
+      <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+        {filtered.length === 0 ? (
+          <p className="px-4 py-6 text-center text-xs text-ink-4">
+            {search.trim() ? 'No conversations match.' : 'No conversations yet — say hello.'}
+          </p>
+        ) : (
+          filtered.map((c) => (
+            <ConversationRow
+              key={c.id}
+              conversation={c}
+              active={c.id === activeId}
+              onSelect={() => void selectConversation(c.id)}
+              onDelete={() => setConfirmDeleteId(c.id)}
+            />
+          ))
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="relative flex h-full min-h-0 gap-4">
       {/* ── Thread (main, LEFT) — messages + input in a centered 680px column ── */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile-only header: title + button to open the history drawer. */}
         <div className="flex items-center justify-between gap-2 border-b border-rule-2 px-1 py-2 lg:hidden">
-          <span className="truncate text-[13px] font-medium text-ink">{rootName ?? 'Chat'}</span>
+          <span className="truncate text-medium-13 text-ink">{rootName ?? 'Chat'}</span>
           <RowActionButton
             onClick={() => setShowHistory(true)}
             icon={<List size={14} />}
             title="Show conversations"
-            className="!px-2.5 !py-1 !text-[11px]"
+            className="!px-2.5 !py-1 !text-legacy-11"
           >
             Conversations
           </RowActionButton>
@@ -284,17 +349,17 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
         >
           <div className="mx-auto w-full max-w-[680px] px-4 py-6">
             {loadingThread ? (
-              <p className="py-8 text-center text-[13px] text-ink-4">Loading…</p>
+              <p className="py-8 text-center text-body-13 text-ink-4">Loading…</p>
             ) : messages.length === 0 && !lastIsUser ? (
               <div className="flex h-full items-center justify-center">
-                <p className="text-center text-[13px] text-ink-4">
+                <p className="text-center text-body-13 text-ink-4">
                   Say hello to {rootName ?? 'your ROOT agent'} 👋
                 </p>
               </div>
             ) : (
               <div className="flex flex-col gap-7">
                 <div className="flex items-center justify-center">
-                  <span className="text-[11px] uppercase tracking-[0.14em] text-ink-3">Today</span>
+                  <span className="text-legacy-11 uppercase tracking-[0.14em] text-ink-3">Today</span>
                 </div>
                 {messages.map((m) => (
                   <MessageBubble key={m.id} message={m} rootName={rootName} />
@@ -303,10 +368,10 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                   <div className="flex gap-3">
                     <AgentAvatar rootName={rootName} />
                     <div className="min-w-0 flex-1 border-l-2 border-ink/10 pl-4">
-                      <span className="text-[13px] font-medium text-ink">
+                      <span className="text-medium-13 text-ink">
                         {rootName ?? 'Agent'}
                       </span>
-                      <span className="mt-0.5 flex items-center gap-1.5 text-[13px] text-ink-4">
+                      <span className="mt-0.5 flex items-center gap-1.5 text-body-13 text-ink-4">
                         <span className="animate-pulse">●</span> thinking…
                       </span>
                     </div>
@@ -335,7 +400,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
               }}
               rows={1}
               placeholder={`Message ${rootName ?? 'your ROOT agent'}…`}
-              className="max-h-40 min-h-[24px] resize-none px-4 pt-3.5 text-[13px]"
+              className="max-h-40 min-h-[24px] resize-none px-4 pt-3.5 text-body-13"
             />
             <div className="flex items-center justify-between px-2.5 pt-1 pb-2.5">
               <div className="flex items-center gap-1">
@@ -353,13 +418,15 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                 >
                   <At size={15} />
                 </IconButton>
-                <span className="pl-1 text-[11px] text-ink-3">⌘ ↵ to send</span>
+                <span className="pl-1 text-legacy-11 text-ink-3">⌘ ↵ to send</span>
               </div>
               <IconButton
                 type="submit"
                 disabled={sending || input.trim().length === 0}
                 aria-label="Send message"
-                className="!size-8 !shrink-0 !rounded-full !border-0 !bg-hover-2 !text-ink-2 hover:!bg-hover disabled:!opacity-40"
+                shape="round"
+                fill="subtle"
+                size="sm"
               >
                 <PaperPlaneTilt size={14} />
               </IconButton>
@@ -368,85 +435,21 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
         </div>
       </div>
 
-      {/* Backdrop — mobile only, dims the thread when the history drawer is open. */}
-      {showHistory && (
-        <div
-          className="absolute inset-0 z-10 bg-black/40 lg:hidden"
-          onClick={() => setShowHistory(false)}
-          aria-hidden
-        />
-      )}
-
       {/* ── Conversation history ──────────────────────────────────────────
-          Desktop (lg+): floating white card, static right pane, always shown.
-          Mobile: a plain show/hide overlay — `hidden` (display:none) when
-          closed so it can NEVER cover the thread, an absolute overlay when
-          open. No transforms (which left it stuck visible). */}
-      <aside
-        className={`flex-col bg-paper lg:flex lg:static lg:z-auto lg:w-80 lg:shrink-0 lg:rounded-2xl lg:border lg:border-rule-2 lg:shadow-sm ${
-          showHistory
-            ? 'absolute inset-y-0 right-0 z-20 flex w-[85%] max-w-[320px] border-l border-rule-2 shadow-xl'
-            : 'hidden'
-        }`}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-2">
-            <IconButton
-              ghost
-              onClick={() => setShowHistory(false)}
-              aria-label="Close conversations"
-              className="!size-auto !p-0 !text-ink-3 hover:!text-ink lg:hidden"
-            >
-              <X size={16} />
-            </IconButton>
-            <span className="text-sm font-semibold text-ink">Conversations</span>
-          </div>
-          <IconButton
-            onClick={() => void handleNew()}
-            aria-label="New conversation"
-            className="!size-7 !rounded-full !border-0 !bg-ink !text-canvas transition-[filter] hover:!bg-ink hover:!brightness-[0.92]"
-          >
-            <Plus size={14} weight="bold" />
-          </IconButton>
-        </div>
-
-        {/* Search */}
-        <div className="px-3 pb-2.5">
-          <div className="relative">
-            <MagnifyingGlass
-              size={14}
-              className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-4"
-            />
-            <TextInput
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search chats…"
-              className="!rounded-lg !bg-canvas !pr-3 !pl-8 !text-xs"
-            />
-          </div>
-        </div>
-
-        {/* Conversation list — flat by recency (no date-group headers) */}
-        <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-          {filtered.length === 0 ? (
-            <p className="px-4 py-6 text-center text-xs text-ink-4">
-              {search.trim() ? 'No conversations match.' : 'No conversations yet — say hello.'}
-            </p>
-          ) : (
-            filtered.map((c) => (
-              <ConversationRow
-                key={c.id}
-                conversation={c}
-                active={c.id === activeId}
-                onSelect={() => void selectConversation(c.id)}
-                onDelete={() => setConfirmDeleteId(c.id)}
-              />
-            ))
-          )}
-        </div>
+          Desktop (lg+): a static floating pane, always shown.
+          Mobile: the same panel content inside a Drawer overlay (backdrop +
+          slide-over), scoped to the thread area via position="absolute". */}
+      <aside className="hidden w-80 shrink-0 flex-col rounded-2xl border border-rule-2 bg-paper shadow-sm lg:flex">
+        {historyPanel}
       </aside>
+      <Drawer
+        open={showHistory}
+        onClose={() => setShowHistory(false)}
+        position="absolute"
+        className="lg:hidden"
+      >
+        {historyPanel}
+      </Drawer>
 
       {/* ── Delete confirm dialog ────────────────────────────────────────── */}
       <ConfirmDialog
@@ -502,9 +505,9 @@ function ConversationRow({
       />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] font-medium text-ink">{title}</span>
+          <span className="truncate text-medium-13 text-ink">{title}</span>
           <div className="flex shrink-0 items-center gap-1">
-            <span className="text-[11px] text-ink-4">{time}</span>
+            <span className="text-legacy-11 text-ink-4">{time}</span>
             {/* A real <button> nested inside the row's own role="button" div
                 (ConversationRow) — valid, since that ancestor is a div, not an
                 actual interactive element. stopPropagation on both events so
@@ -524,7 +527,7 @@ function ConversationRow({
             </IconButton>
           </div>
         </div>
-        {preview && <p className="truncate text-[12px] text-ink-4">{preview}</p>}
+        {preview && <p className="truncate text-body-12 text-ink-4">{preview}</p>}
       </div>
     </div>
   );
@@ -533,7 +536,7 @@ function ConversationRow({
 function AgentAvatar({ rootName }: { rootName: string | null }) {
   const initial = (rootName ?? 'A').charAt(0).toUpperCase();
   return (
-    <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-[10px] bg-agent-vivid text-[11px] font-semibold text-ink">
+    <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-[10px] bg-agent-vivid text-label-11 text-ink">
       {initial}
     </div>
   );
@@ -553,11 +556,11 @@ function MessageBubble({
     return (
       <div className="flex flex-col items-end">
         {/* Bubble: rounded 16 all corners except a tucked bottom-right (the tail). */}
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-ink px-4 py-2.5 text-[13px] leading-[20px] text-canvas">
+        <div className="max-w-[80%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-ink px-4 py-2.5 text-body-13 leading-[20px]! text-canvas">
           {message.content}
         </div>
         {sent && (
-          <div className="flex items-center gap-1 pt-1.5 text-[11px] text-ink-3">
+          <div className="flex items-center gap-1 pt-1.5 text-legacy-11 text-ink-3">
             {/* Time slot stays empty until ChatMessageView carries a timestamp —
                 the sent indicator (double check) is real: the turn persisted. */}
             <Checks size={13} />
@@ -573,11 +576,11 @@ function MessageBubble({
       {/* Faint vertical rule down the content — the "avatar · line · name" motif. */}
       <div className="min-w-0 flex-1 border-l-2 border-ink/10 pl-4">
         <div className="flex items-baseline gap-1.5">
-          <span className="text-[13px] font-medium text-ink">{rootName ?? 'Agent'}</span>
+          <span className="text-medium-13 text-ink">{rootName ?? 'Agent'}</span>
           {/* Time slot — no per-message timestamp in the data, so left empty. */}
         </div>
         {message.content.trim() !== '' && (
-          <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-[1.6] text-ink">
+          <p className="mt-0.5 whitespace-pre-wrap text-body-13 leading-[1.6]! text-ink">
             {message.content}
           </p>
         )}
@@ -614,7 +617,7 @@ function Pill({
   const dotCls = done ? 'bg-ok' : failed ? 'bg-err' : 'bg-run';
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-[8px] px-1.5 py-0.5 text-[11px] font-medium ${styles[variant]}`}
+      className={`inline-flex items-center gap-1 rounded-[8px] px-1.5 py-0.5 text-micro-11 ${styles[variant]}`}
     >
       {status && variant === 'neutral' && (
         <span

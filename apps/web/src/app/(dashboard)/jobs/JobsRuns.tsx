@@ -40,7 +40,7 @@ export default function JobsRuns({
       </div>
 
       {error && (
-        <div className="mb-4 rounded-xl border border-warn/40 bg-warn-bg p-4 text-[14px] text-warn">
+        <div className="mb-4 rounded-xl border border-warn/40 bg-warn-bg p-4 text-body-14 text-warn">
           {error}
         </div>
       )}

@@ -119,7 +119,7 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by task or agent…"
-            className="pl-8 text-[13px]"
+            className="pl-8 text-body-13"
           />
         </div>
       </div>
@@ -127,7 +127,7 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
       {/* Table card */}
       <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
         {filtered.length === 0 ? (
-          <div className="px-6 py-12 text-center text-[14px] text-ink-4">
+          <div className="px-6 py-12 text-center text-body-14 text-ink-4">
             {jobs.length === 0
               ? 'No runs yet. Use the form above to send your first task to an agent.'
               : 'No runs match the current filter.'}
@@ -164,16 +164,16 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
                               shape="round"
                             />
                             <div className="min-w-0">
-                              <div className="truncate text-[14px] font-medium leading-[1.2] text-ink">
+                              <div className="truncate text-medium-14 leading-[1.2]! text-ink">
                                 {agent.name}
                               </div>
-                              <div className="truncate font-mono text-[11px] leading-none text-ink-4">
+                              <div className="truncate text-mono-11 leading-none! text-ink-4">
                                 {agent.slug}
                               </div>
                             </div>
                           </div>
                         ) : (
-                          <span className="font-mono text-[12px] text-ink-4">—</span>
+                          <span className="text-mono-12 text-ink-4">—</span>
                         )}
                       </td>
 
@@ -181,7 +181,7 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
                       <td className="max-w-[320px] px-[18px] py-3 align-middle">
                         <Link
                           href={`/jobs/${job.id}`}
-                          className="line-clamp-1 text-[14px] text-ink-2 hover:text-ink transition-colors"
+                          className="line-clamp-1 text-body-14 text-ink-2 hover:text-ink transition-colors"
                           title={job.task}
                         >
                           {truncate(job.task, 72)}
@@ -189,12 +189,12 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
                       </td>
 
                       {/* Channel */}
-                      <td className="hidden px-[18px] py-3 align-middle font-mono text-[12px] text-ink-4 md:table-cell">
+                      <td className="hidden px-[18px] py-3 align-middle text-mono-12 text-ink-4 md:table-cell">
                         {job.channel}
                       </td>
 
                       {/* Started */}
-                      <td className="hidden px-[18px] py-3 align-middle font-mono text-[12px] text-ink-4 lg:table-cell">
+                      <td className="hidden px-[18px] py-3 align-middle text-mono-12 text-ink-4 lg:table-cell">
                         {formatDate(job.createdAt)}
                       </td>
 
@@ -227,7 +227,7 @@ function Th({
 }) {
   return (
     <th
-      className={`border-b border-rule-2 px-[18px] pt-1.5 pb-2.5 font-mono text-[11px] font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
+      className={`border-b border-rule-2 px-[18px] pt-1.5 pb-2.5 text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
         align === 'right' ? 'text-right' : 'text-left'
       } ${className}`}
     >

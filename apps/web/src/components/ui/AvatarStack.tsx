@@ -38,7 +38,7 @@ function initials(name: string): string {
 export default function AvatarStack({ avatars, max = 5, label, className = '' }: Props) {
   if (avatars.length === 0) {
     return label ? (
-      <span className={`font-sans text-[13px] leading-none text-ink-3 ${className}`}>{label}</span>
+      <span className={`font-sans text-body-13 leading-none! text-ink-3 ${className}`}>{label}</span>
     ) : null;
   }
   const head = avatars.slice(0, max);
@@ -50,7 +50,7 @@ export default function AvatarStack({ avatars, max = 5, label, className = '' }:
         {head.map((a, i) => (
           <span
             key={a.id}
-            className={`flex h-6 w-6 items-center justify-center overflow-hidden rounded-full border-2 border-paper bg-agent-vivid text-[11px] font-semibold leading-none tracking-[0.04em] text-[#0a0a0a] ${
+            className={`flex h-6 w-6 items-center justify-center overflow-hidden rounded-full border-2 border-paper bg-agent-vivid text-label-11 leading-none! tracking-[0.04em] text-[#0a0a0a] ${
               i === 0 ? '' : '-ml-[7px]'
             }`}
             title={a.name}
@@ -64,12 +64,12 @@ export default function AvatarStack({ avatars, max = 5, label, className = '' }:
           </span>
         ))}
         {overflow > 0 && (
-          <span className="flex h-6 w-6 -ml-[7px] items-center justify-center rounded-full border-2 border-paper bg-hover text-[11px] font-semibold leading-none text-ink-3">
+          <span className="flex h-6 w-6 -ml-[7px] items-center justify-center rounded-full border-2 border-paper bg-hover text-label-11 leading-none! text-ink-3">
             +{overflow}
           </span>
         )}
       </span>
-      {label && <span className="font-sans text-[13px] leading-none text-ink-3">{label}</span>}
+      {label && <span className="font-sans text-body-13 leading-none! text-ink-3">{label}</span>}
     </span>
   );
 }

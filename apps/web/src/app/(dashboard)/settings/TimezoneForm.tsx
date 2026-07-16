@@ -78,7 +78,7 @@ export default function TimezoneForm({ initial, isExplicit }: Props) {
     <form onSubmit={handleSubmit}>
       <SetForm>
         <div className="space-y-2">
-          <p className="text-[13px] leading-[1.5] text-ink-3">
+          <p className="text-body-13 leading-[1.5]! text-ink-3">
             The timezone your agents use to tell the time and schedule automations. Detected from
             your browser at setup
             {isExplicit ? '' : ' (currently the server default — set it to be sure)'}.

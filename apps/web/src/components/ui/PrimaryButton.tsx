@@ -56,8 +56,8 @@ type Props = AsButton | AsLink;
 const PrimaryButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Props>(
   function PrimaryButton(props, ref) {
     const { children, variant = 'ink', size = 'md', className = '' } = props;
-    const dim = size === 'md' ? 'h-[34px] px-3.5 text-[14px]' : 'h-[30px] px-3 text-[13px]';
-    const cls = `inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium leading-none transition-[filter,background-color] ${dim} ${VARIANT[variant]} ${className}`;
+    const dim = size === 'md' ? 'h-[34px] px-3.5 text-medium-14' : 'h-[30px] px-3 text-medium-13';
+    const cls = `inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md leading-none! transition-[filter,background-color] ${dim} ${VARIANT[variant]} ${className}`;
 
     if ('href' in props && props.href) {
       // anchor-flavour

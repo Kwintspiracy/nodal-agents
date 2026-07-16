@@ -1,4 +1,4 @@
-type Variant = 'ok' | 'lime' | 'coral' | 'blue';
+type Variant = 'ok' | 'lime' | 'coral' | 'blue' | 'warn';
 
 type Props = {
   variant?: Variant;
@@ -13,6 +13,7 @@ const BG: Record<Variant, string> = {
   lime: 'bg-agent-vivid',
   coral: 'bg-skill-vivid',
   blue: 'bg-conn-vivid',
+  warn: 'bg-warn',
 };
 
 const BLIP: Record<Variant, string> = {
@@ -20,6 +21,11 @@ const BLIP: Record<Variant, string> = {
   lime: 'animate-[blip-lime_1.5s_ease-out_infinite]',
   coral: 'animate-[blip-coral_1.4s_ease-out_infinite]',
   blue: 'animate-[blip-blue_1.4s_ease-out_infinite]',
+  // Reuses the coral halo (no dedicated `blip-warn` keyframe) — bg-warn and
+  // bg-skill-vivid share the same rgba(255,86,49) value in dark mode, and are
+  // close enough in light mode that a second near-identical keyframe isn't
+  // worth the extra globals.css entry.
+  warn: 'animate-[blip-coral_1.4s_ease-out_infinite]',
 };
 
 /**

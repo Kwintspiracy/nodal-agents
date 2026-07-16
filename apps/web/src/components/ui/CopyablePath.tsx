@@ -30,7 +30,7 @@ export default function CopyablePath({
   const chip = (
     <span
       title={value}
-      className="block truncate rounded-md bg-hover px-2 py-1 font-mono text-[12.5px] text-ink-2"
+      className="block truncate rounded-md bg-hover px-2 py-1 font-mono text-legacy-12-5 text-ink-2"
     >
       {display}
     </span>
@@ -51,7 +51,7 @@ export default function CopyablePath({
         type="button"
         onClick={copy}
         title="Copy full path"
-        className="inline-flex h-[28px] shrink-0 items-center gap-1.5 rounded-md border border-rule-2 px-2.5 text-[12px] font-medium text-ink-3 transition-colors hover:border-rule hover:text-ink"
+        className="inline-flex h-[28px] shrink-0 items-center gap-1.5 rounded-md border border-rule-2 px-2.5 text-medium-12 text-ink-3 transition-colors hover:border-rule hover:text-ink"
       >
         <Copy size={13} /> Copy
       </button>

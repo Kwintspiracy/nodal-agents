@@ -69,7 +69,7 @@ export default function NetworkForm({ initial }: Props) {
               );
             })}
 
-            <p className="text-[13px] leading-[1.5] text-ink-4 mt-2.5 mx-1">
+            <p className="text-body-13 leading-[1.5]! text-ink-4 mt-2.5 mx-1">
               Windows Defender may prompt the first time another device tries to connect — allow
               access on private networks.
             </p>
@@ -97,13 +97,13 @@ export default function NetworkForm({ initial }: Props) {
           <Banner variant="warn">
             <b className="block font-medium text-ink">Config file missing</b>
             ~/.nodalai/config.json wasn&apos;t found. Save will fail until you&apos;ve run{' '}
-            <code className="font-mono text-[12px]">nodal-agents init</code> at least once.
+            <code className="text-mono-12">nodal-agents init</code> at least once.
           </Banner>
         )}
 
         {restartHint && (
           <Banner variant="info" title="Saved. Restart required.">
-            Run <code className="font-mono text-[12px]">nodal-agents down && nodal-agents up</code>{' '}
+            Run <code className="text-mono-12">nodal-agents down && nodal-agents up</code>{' '}
             to activate the new network mode.
           </Banner>
         )}
