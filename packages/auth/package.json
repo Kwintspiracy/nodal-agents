@@ -15,12 +15,10 @@
   },
   "dependencies": {
     "@nodal-agents/db": "workspace:*",
-    "@nodal-agents/shared": "workspace:*",
     "better-auth": "^1.6.10",
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.2.17",
     "@types/node": "^25.7.0"
   }
 }

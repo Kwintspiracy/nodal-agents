@@ -4,7 +4,15 @@
 // the runner picks it up and runs it. riskLevel 'write'.
 
 import { z } from 'zod';
-import { eq, and, agentSchedules, agentJobs, resolveOwnerChatId } from '@nodal-agents/db';
+import {
+  eq,
+  and,
+  agentSchedules,
+  agentJobs,
+  resolveOwnerChatId,
+  resolveOwnerConversation,
+} from '@nodal-agents/db';
+import type { ChannelKind } from '@nodal-agents/delivery';
 import type { ToolDefinition } from '../../types';
 
 const RunScheduleInput = z.object({
@@ -29,6 +37,8 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
         task: agentSchedules.task,
         chatId: agentSchedules.chatId,
         notifyOnSuccess: agentSchedules.notifyOnSuccess,
+        // B1 (notify-channel-choice): the schedule's explicit channel choice, if any.
+        notifyChannel: agentSchedules.notifyChannel,
         // Manual "run now": prevRunAt is still "when did this schedule last
         // actually run" — this fire doesn't change that semantic.
         lastRun: agentSchedules.lastRun,
@@ -44,9 +54,13 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
     // into a success confirmation (else it runs silently, like a normal fire).
     // An explicit schedule.chatId wins; otherwise fall back to the bot owner's
     // 1:1 — never the agent's last-seen chat, which a group message silently
-    // overwrites (see resolveOwnerChatId).
+    // overwrites (see resolveOwnerChatId). A notify_channel choice resolves the
+    // owner conversation ON THAT CHANNEL (channel-parametric resolveOwnerConversation)
+    // instead — same rule run-schedules.ts's runScheduleTick applies.
     const resolvedChatId = sched.notifyOnSuccess
-      ? (sched.chatId ?? (await resolveOwnerChatId(ctx.db, sched.agentId)) ?? null)
+      ? sched.notifyChannel
+        ? (sched.chatId ?? (await resolveOwnerConversation(ctx.db, sched.agentId, sched.notifyChannel)))
+        : (sched.chatId ?? (await resolveOwnerChatId(ctx.db, sched.agentId)) ?? null)
       : null;
 
     const [job] = await ctx.db
@@ -64,6 +78,7 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
           type: 'cron',
           scheduleName: input.name,
           prevRunAt: sched.lastRun ? sched.lastRun.toISOString() : null,
+          notifyChannel: (sched.notifyChannel as ChannelKind | null) ?? null,
         },
       })
       .returning({ id: agentJobs.id });

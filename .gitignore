@@ -62,3 +62,5 @@ apps/web/playwright.local-trust.config.ts
 apps/web/pw-onboarding-verify.cjs
 apps/web/pw-onboarding-verify.mjs
 /dogfood-root-context.md
+/dogfood-boot*.log
+/dogfood-pg.log

@@ -163,7 +163,6 @@ const testEnv: RunnerEnv = {
   APP_URL: 'http://localhost:3099',
   NODE_ENV: 'test',
   REFLECTION_ENABLED: 'false',
-  REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
   CURATOR_STALE_DAYS: 30,

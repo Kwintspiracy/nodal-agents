@@ -623,7 +623,6 @@ describe('reflection-convergence — E: tool-call iteration gate', () => {
     APP_URL: 'http://localhost:3099',
     NODE_ENV: 'test',
     REFLECTION_ENABLED: 'true',
-    REFLECTION_MIN_TURNS: 1,
     REFLECTION_MIN_TOOL_ITERS: minToolIters,
     REFLECTION_MAX_PER_HOUR: 20,
     REFLECTION_MAX_TURNS: 5,

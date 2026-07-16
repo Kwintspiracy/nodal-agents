@@ -35,12 +35,29 @@ export type JobTriggerContext =
       type: 'cron';
       scheduleName: string;
       prevRunAt: string | null;
+      /**
+       * The schedule's EXPLICITLY chosen notify channel (agent_schedules.notify_channel),
+       * carried onto the job so both delivery paths (delivery-guard's send tools
+       * AND deliver-results.ts's adapter-direct return) honor the SAME channel the
+       * chatId was resolved against — never one path picking the chosen channel
+       * and the other falling back to priority-order. Absent/null when the
+       * schedule left it on auto (see run-schedules.ts).
+       */
+      notifyChannel?: 'telegram' | 'discord' | 'slack' | 'whatsapp' | null;
     }
   | {
       type: 'webhook';
       webhookName: string;
       slug: string;
       triggeredAt: string;
+      /**
+       * The trigger's EXPLICITLY chosen notify channel (webhook_triggers.notify_channel,
+       * B2). Same purpose as the cron variant's `notifyChannel` above — carried
+       * onto the job so both delivery paths agree on which channel the chatId
+       * was resolved against. Absent/null when the trigger left it on auto
+       * (see routes/webhook.ts).
+       */
+      notifyChannel?: 'telegram' | 'discord' | 'slack' | 'whatsapp' | null;
     };
 
 export const agentJobs = pgTable(

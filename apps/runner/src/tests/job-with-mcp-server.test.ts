@@ -160,7 +160,6 @@ const testEnv: RunnerEnv = {
   APP_URL: 'http://localhost:3099',
   NODE_ENV: 'test',
   REFLECTION_ENABLED: 'false',
-  REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
   CURATOR_STALE_DAYS: 30,
@@ -345,6 +344,75 @@ describe('job-with-mcp-server: MCP resolver path', () => {
       .set({ apiKey: encrypt(COGNI_KEY) })
       .where(eq(mcpServers.id, mcpServerId));
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
+  });
+
+  it('a stdio server with a tampered/rotated-master-key env var is logged loud and skipped (F3, invariant #4)', async () => {
+    // Before this fix, a stdio server's env-var decrypt failure hit a bare
+    // `continue` — the twin http/apiKey failure a few lines down already
+    // logged loud. This asserts the stdio path now matches it.
+    mcpMock.createMcpTools.mockReset();
+    mcpMock.createLazyMcpTools.mockReset();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const [stdioRow] = await db
+      .insert(mcpServers)
+      .values({
+        entityId: seed.entityId,
+        name: 'Tampered Stdio',
+        slug: 'tampered-stdio',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['some-stdio-server'],
+        envVars: { TOKEN: 'not-actually-encrypted' }, // missing enc:v1: prefix → decrypt() throws
+        active: true,
+      })
+      .returning();
+    if (!stdioRow) throw new Error('Failed to insert stdio mcp_servers row');
+
+    await db
+      .insert(agentMcpServers)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        mcpServerId: stdioRow.id,
+        enabledTools: null,
+      })
+      .onConflictDoNothing();
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Should not reach the tampered stdio server',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create job');
+
+    // The stdio tool never makes it into the whitelist → the LLM just answers with text.
+    const client = makeMockLlmClient([{ text: 'No stdio access available.' }]);
+    const result = await executeJob(job.id as JobId, makeDeps(client), testEnv);
+    expect(result.status).toBe('completed');
+
+    // Tampered env var → the runner skipped the server before ever connecting.
+    expect(mcpMock.createMcpTools).not.toHaveBeenCalled();
+    expect(mcpMock.createLazyMcpTools).not.toHaveBeenCalled();
+
+    const loggedEnvVarFailure = errorSpy.mock.calls.some(
+      (args) =>
+        typeof args[0] === 'string' &&
+        args[0].includes('tampered-stdio') &&
+        args[0].includes('master key'),
+    );
+    expect(loggedEnvVarFailure).toBe(true);
+
+    errorSpy.mockRestore();
+    await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, seed.agentId));
+    await db.delete(mcpServers).where(eq(mcpServers.id, stdioRow.id));
   });
 });
 

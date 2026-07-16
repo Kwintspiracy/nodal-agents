@@ -198,6 +198,46 @@ describe('resolveBotToken', () => {
       expect(getChannelBindingMock).not.toHaveBeenCalled();
     });
   });
+
+  // B1 (notify-channel-choice): ctx.notifyChannelOverride — a cron fire whose
+  // schedule chose an explicit notify channel (run-schedules.ts). Wins over the
+  // resolveTransportChannel(jobChannel, activeChannels) default, but a send
+  // tool's OWN explicit `channel` argument still wins over the override.
+  describe('notifyChannelOverride (B1)', () => {
+    beforeEach(() => {
+      getChannelBindingMock.mockReset();
+      getBindingCredentialsMock.mockReset();
+    });
+
+    it('wins over the resolveTransportChannel default when no explicit channel arg is given', async () => {
+      getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
+      // jobChannel/activeChannels absent — the historical default would be
+      // 'telegram'; notifyChannelOverride redirects it to 'discord'.
+      const ctx = makeCtx({ notifyChannelOverride: 'discord' });
+
+      await expect(resolveBotToken(ctx)).resolves.toBe('discord-token');
+      expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
+      // No cross-channel binding check — override IS the job's own default channel.
+      expect(getChannelBindingMock).not.toHaveBeenCalled();
+    });
+
+    it("does NOT override a send tool's own explicit channel argument", async () => {
+      getChannelBindingMock.mockResolvedValueOnce({ enabled: true });
+      getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'slack-token' });
+      const ctx = makeCtx({ notifyChannelOverride: 'discord' });
+
+      await expect(resolveBotToken(ctx, 'slack')).resolves.toBe('slack-token');
+      expect(getChannelBindingMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'slack');
+      expect(getBindingCredentialsMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'slack');
+    });
+
+    it('is a no-op when absent — falls through to resolveTransportChannel (regression)', async () => {
+      const ctx = makeCtx({ db: makeFakeDb([{ telegramBotToken: 'agent-token' }]) as unknown as ToolContext['db'] });
+
+      await expect(resolveBotToken(ctx)).resolves.toBe('agent-token');
+      expect(getBindingCredentialsMock).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // ─── resolveRecipientChatId (F1) ────────────────────────────────────────────
@@ -329,6 +369,25 @@ describe('resolveRecipientChatId — explicit cross-channel target', () => {
       '111',
     );
     expect(isChatAllowedMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── resolveRecipientChatId — notifyChannelOverride (B1) ───────────────────
+
+describe('resolveRecipientChatId — notifyChannelOverride (B1)', () => {
+  beforeEach(() => {
+    resolveOwnerChatIdMock.mockReset();
+    isChatAllowedMock.mockReset();
+  });
+
+  it('resolves the owner conversation on the OVERRIDE channel, not ctx.jobChatId or telegram', async () => {
+    resolveOwnerChatIdMock.mockResolvedValueOnce('discord-owner-chat');
+    const ctx = makeCtx({ jobChatId: null, notifyChannelOverride: 'discord' });
+
+    await expect(resolveRecipientChatId(undefined, ctx, 'no_recipient')).resolves.toBe(
+      'discord-owner-chat',
+    );
+    expect(resolveOwnerChatIdMock).toHaveBeenCalledWith(ctx.db, ctx.agentId, 'discord');
   });
 });
 

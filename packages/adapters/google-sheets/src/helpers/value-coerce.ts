@@ -35,11 +35,3 @@ export function coerceGrid(
   return grid.map(coerceRow);
 }
 
-/**
- * Count rows and columns in a 2D grid.
- */
-export function gridDimensions(grid: unknown[][]): { rows: number; cols: number } {
-  const rows = grid.length;
-  const cols = grid.reduce((max, row) => Math.max(max, row.length), 0);
-  return { rows, cols };
-}

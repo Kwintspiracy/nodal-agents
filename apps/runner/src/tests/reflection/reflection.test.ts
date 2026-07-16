@@ -223,7 +223,6 @@ afterAll(() => {
   setActiveLlmClient(null);
   delete process.env['DATABASE_URL'];
   delete process.env['REFLECTION_ENABLED'];
-  delete process.env['REFLECTION_MIN_TURNS'];
   delete process.env['REFLECTION_MIN_TOOL_ITERS'];
   delete process.env['REFLECTION_MAX_PER_HOUR'];
   delete process.env['REFLECTION_MAX_TURNS'];
@@ -240,7 +239,6 @@ beforeEach(async () => {
   process.env['DATABASE_URL'] = 'test://local';
   // Default env for the gate-passing tests; individual tests override + reset.
   process.env['REFLECTION_ENABLED'] = 'true';
-  process.env['REFLECTION_MIN_TURNS'] = '3';
   // Gate 4 was changed from turn-count to tool-call-iteration count. Set
   // REFLECTION_MIN_TOOL_ITERS=1 so the single-tool-call job in insertCompletedJob
   // passes the complexity gate in every existing test. Tests that want to exercise
@@ -733,10 +731,8 @@ describe('reflection — anti-lesson prompt', () => {
 // deferred promise the test releases only AFTER asserting completion).
 describe('reflection — non-blocking', () => {
   it('executeJob returns completed before the fire-and-forget reflection resolves', async () => {
-    // The work loop completes in ONE turn (turn=1), so lower MIN_TURNS to 1 for
-    // this test — we are exercising the non-blocking wiring, not the turn gate
-    // (which has its own dedicated test above).
-    process.env['REFLECTION_MIN_TURNS'] = '1';
+    // The work loop completes in ONE turn — we are exercising the non-blocking
+    // wiring here, not the complexity gate (which has its own dedicated test above).
     _resetEnvCache();
 
     let releaseReflection!: () => void;

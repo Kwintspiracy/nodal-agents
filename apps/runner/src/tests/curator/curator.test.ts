@@ -193,7 +193,6 @@ function makeCuratorEnv(
     APP_URL: 'http://localhost:3001',
     NODE_ENV: 'test',
     REFLECTION_ENABLED: overrides.reflectionEnabled ?? 'false',
-    REFLECTION_MIN_TURNS: 3,
     REFLECTION_MAX_PER_HOUR: 6,
     REFLECTION_MAX_TURNS: 3,
     REFLECTION_MODEL: overrides.reflectionModel,

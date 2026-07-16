@@ -12,7 +12,7 @@
 //      known workspace root; anything else is path_traversal_blocked.
 
 import { realpath, stat } from 'node:fs/promises';
-import { resolve as resolvePath, sep, isAbsolute, basename } from 'node:path';
+import { resolve as resolvePath, sep, isAbsolute } from 'node:path';
 import type { ToolContext } from '../../types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -472,6 +472,3 @@ export async function computeSharedOverwriteApproval(
   return exists ? 'require_approval' : undefined;
 }
 
-// Keep `basename` in scope so other modules importing workspace.ts can use it
-// without a direct path import (avoids duplicate imports in callers).
-export { basename };

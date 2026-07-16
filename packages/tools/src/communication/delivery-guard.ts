@@ -33,6 +33,18 @@ import type { ToolContext } from '../types';
 // ─── Transport channel ──────────────────────────────────────────────────────
 
 /**
+ * The channel a job delivers on BEFORE considering a send tool's own explicit
+ * `channel` argument. `ctx.notifyChannelOverride` (B1: a cron fire whose
+ * schedule chose an explicit notify channel) wins when present — it must
+ * agree with the channel the job's chatId was resolved against
+ * (run-schedules.ts). Otherwise falls through to the historical
+ * `resolveTransportChannel(jobChannel, activeChannels)` default.
+ */
+function defaultChannelForJob(ctx: ToolContext): ChannelKind {
+  return ctx.notifyChannelOverride ?? resolveTransportChannel(ctx.jobChannel, ctx.activeChannels);
+}
+
+/**
  * Which ChannelAdapter a delivery tool sends THIS job's messages through
  * (S3 of the multichannel plan, extended for cross-channel sends). `explicitChannel`
  * is the send tool's optional `channel` argument — a caller targeting a
@@ -45,16 +57,18 @@ import type { ToolContext } from '../types';
  * (the job's trigger origin — `agent_jobs.channel`) wins when it already names
  * a registered transport (today: telegram/discord/slack/whatsapp); otherwise
  * the job was triggered by something that isn't itself a transport (cron,
- * webhook, dashboard, api, …), and the agent's only real transport is its
- * Telegram binding, so that's the default. See resolveTransportChannel for the
- * shared default rule (also used by deliver-results.ts's channel-return send
- * site).
+ * webhook, dashboard, api, …), and the default is the agent's own active
+ * channel (`ctx.activeChannels`, populated by the runner from the same checks
+ * that gate comm-tool registration) — or `'telegram'` when that's absent/empty.
+ * See resolveTransportChannel for the shared default rule (also used by
+ * deliver-results.ts's, run-schedules.ts's, and notify.ts's channel-return
+ * send sites).
  */
 export async function resolveChannelForJob(
   ctx: ToolContext,
   explicitChannel?: ChannelKind,
 ): Promise<ChannelKind> {
-  const jobChannel = resolveTransportChannel(ctx.jobChannel);
+  const jobChannel = defaultChannelForJob(ctx);
   if (explicitChannel === undefined || explicitChannel === jobChannel) {
     return jobChannel;
   }
@@ -216,8 +230,7 @@ export async function resolveRecipientChatId(
   }
 
   const channel = await resolveChannelForJob(ctx, explicitChannel);
-  const crossChannel =
-    explicitChannel !== undefined && explicitChannel !== resolveTransportChannel(ctx.jobChannel);
+  const crossChannel = explicitChannel !== undefined && explicitChannel !== defaultChannelForJob(ctx);
   let chatId = explicitChatId ?? (crossChannel ? null : ctx.jobChatId);
 
   // Owner fallback: an unsolicited run (cron watcher, notify_on_success=false,

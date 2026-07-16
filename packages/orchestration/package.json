@@ -16,7 +16,6 @@
   "dependencies": {
     "@nodal-agents/catalog": "workspace:*",
     "@nodal-agents/db": "workspace:*",
-    "@nodal-agents/llm": "workspace:*",
     "@nodal-agents/memory": "workspace:*",
     "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
@@ -24,7 +23,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.2.17",
     "@types/node": "^25.7.0"
   }
 }

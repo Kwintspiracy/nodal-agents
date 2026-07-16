@@ -31,6 +31,17 @@ export const agentSchedules = pgTable(
     // forces the agent to send the user a success confirmation before finishing.
     // Default false → the cron runs silently (the user must opt in per schedule).
     notifyOnSuccess: boolean('notify_on_success').notNull().default(false),
+    // Explicit notify channel choice (B1, notify-channel-choice plan). One of
+    // 'telegram'|'discord'|'slack'|'whatsapp', or NULL = auto (the historical
+    // behavior: first active channel by CHANNEL_PRIORITY — see run-schedules.ts).
+    // Choosing a channel here LINKS chatId resolution to it: the owner
+    // conversation resolved at fire time is the owner's conversation ON THIS
+    // CHANNEL, not whichever channel happened to win priority. 'whatsapp' is
+    // accepted at the DB layer for forward-compat but the UI does not offer it
+    // yet — no outbound send tool exists for whatsapp (TOOL_ONLY_DELIVERY_CHANNELS,
+    // execute.ts), so a whatsapp notify would only ever reach the user through
+    // deliver-results.ts's adapter-direct path, never a mid-run agent send.
+    notifyChannel: text('notify_channel'),
     // Per-schedule daily cost ceiling in USD (Event Triggers, Brique 3). Rolled
     // up against agent_jobs.total_cost_usd for this schedule since the start
     // of its local day — see runScheduleTick (apps/runner/src/cron/run-schedules.ts).
@@ -46,7 +57,11 @@ export const agentSchedules = pgTable(
     check('agent_schedules_type_check', sql`${table.type} IN ('cron','heartbeat')`),
     check(
       'agent_schedules_last_status_check',
-      sql`${table.lastStatus} IN ('success','failed','no_action','budget_exhausted') OR ${table.lastStatus} IS NULL`,
+      sql`${table.lastStatus} IN ('success','failed','no_action','budget_exhausted','notify_unreachable') OR ${table.lastStatus} IS NULL`,
+    ),
+    check(
+      'agent_schedules_notify_channel_check',
+      sql`${table.notifyChannel} IN ('telegram','discord','slack','whatsapp') OR ${table.notifyChannel} IS NULL`,
     ),
   ],
 );

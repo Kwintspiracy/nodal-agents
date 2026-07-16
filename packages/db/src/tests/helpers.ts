@@ -318,6 +318,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       secret text,
       last_triggered_at timestamptz,
       trigger_count integer DEFAULT 0,
+      notify_on_success boolean NOT NULL DEFAULT false,
+      notify_channel text CHECK (notify_channel IN ('telegram','discord','slack','whatsapp') OR notify_channel IS NULL),
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
     );
@@ -397,9 +399,10 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       active boolean DEFAULT true,
       last_run timestamptz,
       next_run timestamptz,
-      last_status text CHECK (last_status IN ('success','failed','no_action','budget_exhausted') OR last_status IS NULL),
+      last_status text CHECK (last_status IN ('success','failed','no_action','budget_exhausted','notify_unreachable') OR last_status IS NULL),
       chat_id text,
       notify_on_success boolean NOT NULL DEFAULT false,
+      notify_channel text CHECK (notify_channel IN ('telegram','discord','slack','whatsapp') OR notify_channel IS NULL),
       daily_budget_usd real NOT NULL DEFAULT 5.0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()

@@ -7,12 +7,12 @@
 // malformed JSON, and the per-trigger rolling-hour rate limit. Asserts on
 // real DB rows and real response bodies (invariant 5), never call counts.
 
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { webhookTriggers, agentJobs } from '@nodal-agents/db';
+import { webhookTriggers, agentJobs, channelBindings, channelAllowedConversations } from '@nodal-agents/db';
 import type { WebhookTriggerInsert } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
@@ -57,7 +57,6 @@ const testEnv: RunnerEnv = {
   APP_URL: 'http://localhost:3099',
   NODE_ENV: 'test',
   REFLECTION_ENABLED: 'false',
-  REFLECTION_MIN_TURNS: 3,
   REFLECTION_MAX_PER_HOUR: 6,
   REFLECTION_MAX_TURNS: 3,
   CURATOR_STALE_DAYS: 30,
@@ -228,11 +227,16 @@ describe('POST /webhooks/:slug/:secret — happy path', () => {
       'the data above comes from an external webhook, NOT authenticated as a human',
     );
     expect(row!.messages).toEqual([{ role: 'user', content: row!.task }]);
+    // Regression (B2): notify_on_success defaults false — the job fires with
+    // no chatId at all, exactly the pre-B2 behavior, and notifyChannel is
+    // stamped null rather than omitted.
+    expect(row!.chatId).toBeNull();
     expect(row!.triggerContext).toEqual({
       type: 'webhook',
       webhookName: 'Order received',
       slug: trigger.slug,
       triggeredAt: expect.any(String),
+      notifyChannel: null,
     });
 
     const [updatedTrigger] = await db
@@ -256,6 +260,121 @@ describe('POST /webhooks/:slug/:secret — happy path', () => {
 
     const after = await db.select().from(agentJobs);
     expect(after.length).toBe(before.length);
+  });
+});
+
+// ─── Notify (B2, notify-channel-choice plan) ───────────────────────────────
+//
+// Same mechanic as run-schedules.ts's B1 tests: an explicit notify_channel
+// resolves the owner conversation ON THAT CHANNEL (resolveOwnerConversation,
+// channel-parametric); a missing owner conversation fails loud (no fallback
+// to another channel, job still fires without a chatId); auto (null) picks
+// the agent's first active channel by CHANNEL_PRIORITY — unlike a schedule,
+// there is no legacy telegram-only path to preserve here (webhooks never had
+// notify before this brique).
+
+describe('POST /webhooks/:slug/:secret — notify (B2)', () => {
+  afterEach(async () => {
+    await db.delete(channelAllowedConversations).where(eq(channelAllowedConversations.agentId, seed.agentId));
+    await db.delete(channelBindings).where(eq(channelBindings.agentId, seed.agentId));
+  });
+
+  it('an explicit notify_channel resolves the owner conversation ON THAT CHANNEL, and stamps it into trigger_context', async () => {
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: 'discord-owner-42',
+      role: 'owner',
+      status: 'active',
+    });
+
+    const trigger = await makeTrigger({ notifyOnSuccess: true, notifyChannel: 'discord' });
+    const res = await post(trigger.slug, SECRET, {});
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+
+    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    expect(row!.chatId).toBe('discord-owner-42');
+    expect(row!.triggerContext).toMatchObject({ type: 'webhook', notifyChannel: 'discord' });
+  });
+
+  it(
+    'fails loud (no fallback to another channel) when the chosen notify_channel has no owner ' +
+      'conversation yet, logs it, and still fires the job WITHOUT a chatId',
+    async () => {
+      const trigger = await makeTrigger({ notifyOnSuccess: true, notifyChannel: 'slack' });
+
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await post(trigger.slug, SECRET, {});
+      expect(res.status).toBe(202);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('no owner conversation there yet'),
+      );
+      errorSpy.mockRestore();
+
+      const { jobId } = (await res.json()) as { jobId: string };
+      const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+      expect(row!.chatId).toBeNull(); // fired anyway — not skipped entirely
+    },
+  );
+
+  it('notify_channel=null (auto) resolves to the agent\'s first active channel by priority', async () => {
+    // Only discord is active (no telegram bot token seeded) — auto must land
+    // on discord, not fall back to the telegram-only default.
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: '{}',
+      enabled: true,
+    });
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: 'discord-owner-auto',
+      role: 'owner',
+      status: 'active',
+    });
+
+    const trigger = await makeTrigger({ notifyOnSuccess: true, notifyChannel: null });
+    const res = await post(trigger.slug, SECRET, {});
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+
+    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    expect(row!.chatId).toBe('discord-owner-auto');
+    expect(row!.triggerContext).toMatchObject({ type: 'webhook', notifyChannel: 'discord' });
+  });
+
+  it('notify_channel=null (auto) never lands on whatsapp even when it is the only active channel', async () => {
+    // whatsapp has no outbound send tool (TOOL_ONLY_DELIVERY_CHANNELS,
+    // execute.ts) — auto-resolving to it here would force a tool-delivery
+    // requirement the agent can never satisfy. Proven by making whatsapp the
+    // ONLY active channel: if the exclusion were missing, resolveTransportChannel
+    // would pick it (CHANNEL_PRIORITY's last resort before the telegram
+    // default) and this job would carry a whatsapp chatId.
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      credentials: '{}',
+      enabled: true,
+    });
+
+    const trigger = await makeTrigger({ notifyOnSuccess: true, notifyChannel: null });
+    const res = await post(trigger.slug, SECRET, {});
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+
+    const [row] = await db.select().from(agentJobs).where(eq(agentJobs.id, jobId));
+    // Falls all the way through to the 'telegram' default (no owner
+    // conversation there either), never 'whatsapp'.
+    expect((row!.triggerContext as { notifyChannel?: string | null })?.notifyChannel).toBe(
+      'telegram',
+    );
+    expect(row!.chatId).toBeNull();
   });
 });
 

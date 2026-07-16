@@ -36,9 +36,6 @@ const envSchema = z.object({
   EMBEDDING_MODEL: z.string().optional(),
   EMBEDDING_BASE_URL: z.string().optional(),
 
-  // Delivery
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-
   // Auth
   AUTH_MODE: z.enum(['local-trust', 'local-auth', 'bearer-token']).default('local-trust'),
   WORKER_SECRET: z.string().default(''),
@@ -68,8 +65,6 @@ const envSchema = z.object({
   // Enable reflection per entity via the dashboard toggle — NOT via this env var.
   // The other knobs gate WHICH jobs qualify and bound the pass.
   REFLECTION_ENABLED: z.string().default(''),
-  // Minimum job turns before a completed job is "substantial" enough to reflect on.
-  REFLECTION_MIN_TURNS: z.coerce.number().default(3),
   // Per-entity rolling-hour cap on reflection passes (rate limit / cost guard).
   REFLECTION_MAX_PER_HOUR: z.coerce.number().default(6),
   // Max LLM turns inside a single reflection pass (the reflection loop itself).

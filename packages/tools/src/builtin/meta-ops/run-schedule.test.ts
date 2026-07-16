@@ -202,6 +202,7 @@ describe('run_schedule', () => {
       type: 'cron',
       scheduleName: 'run-sched-trigger-ctx',
       prevRunAt: priorRun.toISOString(),
+      notifyChannel: null,
     });
   });
 
@@ -225,6 +226,7 @@ describe('run_schedule', () => {
       type: 'cron',
       scheduleName: 'run-sched-trigger-ctx-first',
       prevRunAt: null,
+      notifyChannel: null,
     });
   });
 });

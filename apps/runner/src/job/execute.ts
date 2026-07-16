@@ -24,7 +24,7 @@ import {
   getDecryptedCredentialById,
   getChannelBinding,
 } from '@nodal-agents/db';
-import type { ApprovalRequestRow } from '@nodal-agents/db';
+import type { ApprovalRequestRow, JobTriggerContext } from '@nodal-agents/db';
 import {
   enabledMetaTools,
   parseRootGrants,
@@ -75,6 +75,7 @@ import type {
   ToolProvisioning,
   ApprovalGateRequest,
 } from '@nodal-agents/tools';
+import type { ChannelKind } from '@nodal-agents/delivery';
 import {
   ChainCounters,
   DEFAULT_LIMITS,
@@ -984,17 +985,32 @@ async function runJob(
   // the agent's last-seen chat at execute time — that would override the
   // explicit "no Telegram" intent expressed by a NULL chat_id (e.g. dashboard
   // checkbox unticked).
-  // A cron job that carries a chatId opted into a success confirmation (the cron
-  // tick only sets chat_id when the schedule's notify_on_success is on). Surface
-  // that intent to the agent so it ends with a confirmation, and engage the
-  // delivery guard below so the send is actually enforced.
-  const cronWantsConfirmation = job.channel === 'cron' && job.chatId != null;
+  // A cron or webhook job that carries a chatId opted into a success
+  // confirmation (the cron tick / webhook route — routes/webhook.ts — only set
+  // chat_id when the trigger's notify_on_success is on). Surface that intent to
+  // the agent so it ends with a confirmation, and engage the delivery guard
+  // below so the send is actually enforced.
+  const triggerWantsConfirmation =
+    (job.channel === 'cron' || job.channel === 'webhook') && job.chatId != null;
+  // B1/B2 (notify-channel-choice): a cron or webhook fire whose trigger chose
+  // an EXPLICIT notify channel carries it in triggerContext (run-schedules.ts /
+  // routes/webhook.ts) — surfaced here as the ToolContext override so every
+  // delivery-guard call this job makes (the 6 send tools AND
+  // deliver-results.ts's own return-channel pick, via its own triggerContext
+  // read) defaults to the SAME channel the chatId above was resolved against,
+  // instead of resolveTransportChannel's priority order. Undefined for every
+  // other job, and for a cron/webhook fire left on auto.
+  const jobTriggerContext = job.triggerContext as JobTriggerContext | null;
+  const notifyChannelOverride: ChannelKind | undefined =
+    jobTriggerContext?.type === 'cron' || jobTriggerContext?.type === 'webhook'
+      ? (jobTriggerContext.notifyChannel ?? undefined)
+      : undefined;
   const deployment = await getDeploymentContext(db, job.entityId ?? undefined);
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     ...(job.task ? { task: job.task } : {}),
     ...(job.chatId ? { telegramChatId: job.chatId } : {}),
-    ...(cronWantsConfirmation ? { notifyOnSuccess: true } : {}),
+    ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
     deployment,
@@ -1112,6 +1128,21 @@ async function runJob(
     // already approved for) instead of denying a binding it actually has.
     capabilityTools.push(createListConversationsTool() as unknown as AnyToolDef);
   }
+
+  // This job's active transport channels, reusing the EXACT same gate the
+  // capabilityTools push above just used (a Telegram token, an enabled
+  // discord/slack binding) rather than re-deriving it — fed into every
+  // ToolContext below so resolveTransportChannel (delivery-guard.ts) can
+  // default a non-transport job origin (cron, webhook, dashboard, api, …) to
+  // THIS agent's own channel instead of unconditionally 'telegram'. whatsapp
+  // is intentionally excluded: no outbound send tool is registered for it yet
+  // (see TOOL_ONLY_DELIVERY_CHANNELS above), so it isn't a real send-tool
+  // target for this ToolContext even when a whatsapp binding exists.
+  const activeChannels: ChannelKind[] = [
+    ...(deliveryBotToken ? (['telegram'] as const) : []),
+    ...(hasDiscordBinding ? (['discord'] as const) : []),
+    ...(hasSlackBinding ? (['slack'] as const) : []),
+  ];
 
   // Close callbacks for per-job MCP transports — invoked in the LLM loop's
   // finally so the Streamable HTTP connections never leak.
@@ -1316,8 +1347,16 @@ async function runJob(
             decryptedEnv = Object.fromEntries(
               Object.entries(rawEnv).map(([k, v]) => [k, decrypt(v)]),
             );
-          } catch {
-            continue; // tampered env var — skip silently
+          } catch (err) {
+            // Log loudly (F3, invariant #4) — a wrong/rotated master key
+            // silently dropping an MCP server surfaces later as a missing tool.
+            console.error(
+              `[execute] MCP server '${ms.slug}' env vars failed to decrypt ` +
+                `(tampered, or wrong/rotated master key): ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+            );
+            continue;
           }
           const connectOpts = {
             transport: 'stdio' as const,
@@ -1769,6 +1808,8 @@ async function runJob(
                 db,
                 jobChatId: job.chatId ?? null,
                 jobChannel: job.channel,
+                activeChannels,
+                notifyChannelOverride,
                 resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
@@ -1947,17 +1988,20 @@ async function runJob(
   // is reached while still false, we re-prompt the agent (bounded) before letting
   // it finish. In-memory/intra-run: in the router/delegation case the parent makes
   // its final send in the same run it finalizes, so the flag is evaluated correctly.
-  // Tool-only channels (Telegram) always require a tool delivery. A cron job
-  // that opted into a success confirmation (chat_id set by the tick) is held to
-  // the same bar: the agent must deliver before completing, otherwise the user
-  // never gets the "done" message they asked for.
+  // Tool-only channels (Telegram) always require a tool delivery. A cron or
+  // webhook job that opted into a success confirmation (chat_id set by the
+  // tick / route) is held to the same bar: the agent must deliver before
+  // completing, otherwise the user never gets the "done" message they asked
+  // for.
   const requiresToolDelivery =
-    TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || cronWantsConfirmation;
+    TOOL_ONLY_DELIVERY_CHANNELS.has(job.channel ?? '') || triggerWantsConfirmation;
   // Human-readable capitalization for the nudges below. `job.channel` is one of
-  // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron' via
-  // cronWantsConfirmation — that path is telegram-only (the cron tick sets a
-  // telegram chatId; see the comment above cronWantsConfirmation), so an
-  // unrecognized channel falls back to 'Telegram' rather than guessing.
+  // TOOL_ONLY_DELIVERY_CHANNELS (telegram/discord/slack) here, OR 'cron'/'webhook'
+  // via triggerWantsConfirmation — B1/B2 made both multi-channel (see
+  // notifyChannelOverride above the comment over triggerWantsConfirmation), but
+  // this display name is only used for an in-agent nudge (never user-facing,
+  // invariant #2), so an unrecognized channel falls back to 'Telegram' rather
+  // than guessing.
   const CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
     telegram: 'Telegram',
     discord: 'Discord',
@@ -2864,6 +2908,8 @@ async function runJob(
         db,
         jobChatId: job.chatId ?? null,
         jobChannel: job.channel,
+        activeChannels,
+        notifyChannelOverride,
         resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
         embeddingClient: deps.embeddingClient,
         workspaces: agentWorkspacesList,
@@ -3144,6 +3190,8 @@ async function runJob(
                 db,
                 jobChatId: job.chatId ?? null,
                 jobChannel: job.channel,
+                activeChannels,
+                notifyChannelOverride,
                 resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,

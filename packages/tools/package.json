@@ -20,7 +20,6 @@
     "@nodal-agents/llm": "workspace:*",
     "@nodal-agents/memory": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
-    "ai": "^6.0.177",
     "zod": "^4.4.3",
     "cron-parser": "^5.5.0",
     "exceljs": "^4.4.0",
@@ -31,7 +30,6 @@
     "jszip": "^3.10.1"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.2.17",
     "@types/node": "^25.7.0",
     "fflate": "^0.8.3"
   }

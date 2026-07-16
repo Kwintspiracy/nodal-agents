@@ -5,6 +5,7 @@ import type { z } from 'zod';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import type { EmbeddingClient } from '@nodal-agents/llm';
 import type { OperationRiskLevel } from '@nodal-agents/shared';
+import type { ChannelKind } from '@nodal-agents/delivery';
 
 // RiskLevel is OperationRiskLevel — single source of truth from @nodal-agents/shared
 export type RiskLevel = OperationRiskLevel;
@@ -41,6 +42,35 @@ export interface ToolContext {
    * lightweight test contexts, which get the same 'telegram' default.
    */
   jobChannel?: string;
+  /**
+   * Every transport channel this agent has a live credential for (S3
+   * extension: no-transport-origin default), telegram-first then
+   * CHANNEL_PRIORITY order — see `listActiveChannelsForAgent`
+   * (@nodal-agents/delivery). Populated by the runner from the SAME checks
+   * that gate which comm tools this job's whitelist gets (a Telegram bot
+   * token, an enabled discord/slack/whatsapp `channel_bindings` row). Used by
+   * delivery-guard's resolveChannelForJob so a job whose `jobChannel` isn't
+   * itself a transport (cron, webhook, dashboard, api, …) defaults to the
+   * agent's OWN active channel instead of unconditionally 'telegram' — an
+   * agent bound only to Discord no longer fails with `telegram_no_bot_token`
+   * just because its job was triggered by cron. Absent or empty ⇒
+   * resolveTransportChannel falls back to its historical 'telegram' default.
+   */
+  activeChannels?: readonly ChannelKind[];
+  /**
+   * Explicit notify-channel override (B1, notify-channel-choice plan): set by
+   * the runner from a fired cron job's `triggerContext.notifyChannel` when the
+   * schedule EXPLICITLY chose a delivery channel (agent_schedules.notify_channel
+   * non-null). When present, it wins over the `resolveTransportChannel(jobChannel,
+   * activeChannels)` default that delivery-guard's resolveChannelForJob would
+   * otherwise compute — the schedule's choice is what the job's chatId was
+   * ALSO resolved against (run-schedules.ts), so both must agree. It does NOT
+   * override an EXPLICIT `channel` argument a send tool call itself provides —
+   * that caller-specified target still wins; this only changes the DEFAULT.
+   * Absent for every job that isn't a cron fire with an explicit notify
+   * channel — behavior is unchanged (falls through to the historical default).
+   */
+  notifyChannelOverride?: ChannelKind;
   /**
    * Telegram bot token the runner resolved for THIS job's delivery tools, when
    * it differs from the agent's own `agents.telegram_bot_token` — e.g. a
