@@ -50,6 +50,13 @@ import {
   createToolRegistry,
   registerBuiltins,
   ALWAYS_ON_TOOLS,
+  createTelegramSendMessageTool,
+  createSendImageTool,
+  createSendFileTool,
+  createSendVideoTool,
+  createSendAudioTool,
+  createSendVoiceTool,
+  createListConversationsTool,
   type RiskLevel,
 } from '@nodal-agents/tools';
 
@@ -475,6 +482,27 @@ const gatedSections = [...gatedGroups.entries()]
   })
   .join('\n\n');
 
+// Channel tools — capability-driven like SKILL_TOOLS, but NOT part of
+// registerBuiltins at all: the runner adds these to an agent's whitelist per
+// JOB, only when the agent has an active channel binding (a Telegram bot
+// token, or an enabled channel_bindings row for Discord/Slack/WhatsApp — see
+// apps/runner/src/job/execute.ts). Because they never enter the registry
+// created above, builtinRegistry.list() can't see them; call each factory
+// directly so this section stays sourced from the same tool definitions the
+// runtime actually registers, not a hand-copied description.
+const channelTools: ToolInfo[] = [
+  createTelegramSendMessageTool(),
+  createSendImageTool(),
+  createSendFileTool(),
+  createSendVideoTool(),
+  createSendAudioTool(),
+  createSendVoiceTool(),
+  createListConversationsTool(),
+].sort((a, b) => a.name.localeCompare(b.name));
+
+const channelTable =
+  `| Tool | Risk | Description |\n| --- | --- | --- |\n` + channelTools.map(toolRow).join('\n');
+
 // Written as `.md` (NOT `.mdx`): several tool descriptions contain `{ }`
 // (a JSON example in dashboard_publish's `response.content = [{…}]`) and `<…>`
 // tokens (`<server-slug>__<tool>` in create_skill) that the MDX compiler would
@@ -511,6 +539,17 @@ when the agent holds the skill, ROOT grant, or per-agent authorization noted
 below — never by default.
 
 ${gatedSections}
+
+## Channel tools (require an active channel binding) (${channelTools.length})
+
+These tools are capability-driven, but unlike the "unlocked on demand" tools
+above they are not part of \`registerBuiltins\` at all: the runner adds them to
+an agent's whitelist per job only when the agent has an active channel binding
+(a Telegram bot token, or an enabled channel connection for Discord, Slack, or
+WhatsApp). No skill or ROOT grant is required — connecting the channel is what
+unlocks them.
+
+${channelTable}
 `,
 );
 
@@ -526,5 +565,6 @@ console.log(
       0,
     )} tools), ` +
     `${mcpPages.length} MCP entries, ${modelCount} models, ROOT grants table, ` +
-    `${builtinTools.length} built-in tools (${alwaysOnTools.length} always-on, ${gatedTools.length} gated)`,
+    `${builtinTools.length} built-in tools (${alwaysOnTools.length} always-on, ${gatedTools.length} gated), ` +
+    `${channelTools.length} channel tools`,
 );

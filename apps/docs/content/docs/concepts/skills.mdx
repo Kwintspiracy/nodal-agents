@@ -19,21 +19,27 @@ guidance, and you can't get the guidance without the assignment.
 
 | Kind          | Created by                        | Notes                                                                                                    |
 | ------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **System**    | Ships with the product            | 12 skills seeded at boot from the catalog (e.g. `office-editing`, `command-execution`, `task-planning`). |
+| **System**    | Ships with the product            | 19 skills seeded at boot from the catalog (e.g. `office-editing`, `command-execution`, `task-planning`). |
 | **Custom**    | You, in the dashboard             | Freeform Markdown; you control the content and `requiredBuiltins`.                                       |
 | **Community** | Installed at runtime              | Fetched from any open `SKILL.md` on GitHub, skills.sh, or ClawHub. Stored in `~/.nodalai/skills/`.       |
 | **Learned**   | An agent, after a substantial job | Created by the opt-in reflection loop; `created_by = 'agent'` in the DB.                                 |
 
 ## System skills
 
-The system skills ship in `@nodal-agents/catalog` and are upserted into
-every install at boot. See the full list in the
-[reference](/docs/reference/system-skills). They cover:
+The system skills ship in `@nodal-agents/catalog` and are upserted into every
+install at boot: 19 skills (`packages/catalog/src/index.ts`). Each carries a
+`kind` field that decides where it's injected and whether you manage it:
 
-`citation-discipline`, `claude-html-design`, `command-execution`,
-`language-mirror`, `markdown-output`, `obsidian`, `office-editing`,
-`research-scope-discipline`, `safe-tool-use`, `task-planning`,
-`telegram-responder`, `verify-before-done`
+| Kind               | Count | In your library? | Skills                                                                                                                          |
+| ------------------ | ----- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **capability**     | 8     | Yes, you assign it | `citation-discipline`, `claude-html-design`, `command-execution`, `obsidian`, `office-editing`, `research-scope-discipline`, `results-delivery`, `task-planning` |
+| **baseline**       | 3     | No, auto-injected  | `language-mirror`, `safe-tool-use`, `verify-before-done`. Part of every agent's base prompt by default.                        |
+| **channel**        | 2     | No, auto-injected  | `markdown-output`, `telegram-responder`. Injected only when the agent is bound to the matching channel.                        |
+| **agent-internal** | 6     | No, hidden         | `tool-attach-connector`, `tool-attach-mcp`, `tool-create-agent`, `tool-create-mcp`, `tool-schedules`, `tool-update-agent`. Usage guides for meta-tools, loaded on demand via `skill_view`. |
+
+Only **capability** skills show up in the dashboard's Skills library for you to
+assign. The other three kinds are managed by the runner: they're either always
+on, on when the channel matches, or loaded silently on demand.
 
 See the [Skills reference](/docs/reference/skills) for the full content of each
 system skill.
@@ -47,8 +53,13 @@ the repository, locates the `SKILL.md`, validates its frontmatter, and writes
 the skill into the database with `is_community = true` and the source URL
 recorded.
 
-If the skill bundle includes script files (`.py`, `.sh`, etc.) a warning is
-shown — the runner does **not** execute bundled scripts.
+If the skill bundle includes script files (`.py`, `.sh`, `.js`, `.mjs`, or
+`.cjs`), the install flow flags them, but a bundled script does not run on its
+own. The workspace owner must first turn on **Allow scripts** for that agent
+and skill pair in Skills settings. Once enabled, the agent can run the script
+with the `run_skill_script` tool
+(`packages/tools/src/builtin/run-skill-script.ts`), which still requires
+per-run approval unless an auto-approve rule exists for the agent.
 
 Community skills automatically receive `skill_file_read` and `skill_file_list`
 so the agent can inspect the skill's own bundled files.

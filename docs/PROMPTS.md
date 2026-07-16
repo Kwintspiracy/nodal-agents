@@ -1,6 +1,17 @@
 # Prompts envoyés au LLM — inventaire complet
 
-**Source de vérité.** Tout ce que le LLM "voit" lors d'un appel `generateText` provient de :
+> ⚠️ **DÉPRÉCIÉ (2026-07-15) — instantané historique, ne PAS s'y fier.**
+> Ce document a dérivé en silence : audit du 15/07 → `ALWAYS_ON_TOOLS` compte 16 outils (pas 3),
+> `return_result` et `save_memory` ont été réécrits (lot channel-return), le header
+> `## Your available adapters` n'existe plus (remplacé par `## Skills (load before acting)`
+> en disclosure progressive), et les numéros de ligne ont tous dérivé.
+> La source de vérité est le code : `packages/orchestration/src/system-prompt.ts`,
+> `packages/tools/src/builtin/index.ts` (`ALWAYS_ON_TOOLS`), et les descriptions des tools
+> eux-mêmes. La moitié générée des docs (`apps/docs/scripts/gen-reference.ts`) publie
+> l'inventaire des tools à jour à chaque build. Un inventaire de prompts maintenu à la main
+> re-dérivera toujours — ne pas ressusciter ce fichier sans le générer depuis le code.
+
+**Source de vérité.** ~~(voir l'avertissement ci-dessus)~~ Tout ce que le LLM "voit" lors d'un appel `generateText` provient de :
 1. La **personnalité** de l'agent (donnée DB, pas dans le code).
 2. Le **system prompt** assemblé par `buildSystemPrompt` (orchestration package).
 3. Les **descriptions de tools** + **descriptions de schémas Zod** des outils whitelistés pour cet agent.

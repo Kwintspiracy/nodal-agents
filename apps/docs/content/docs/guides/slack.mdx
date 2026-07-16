@@ -1,0 +1,136 @@
+---
+title: Slack
+description: Bind a Slack app to an agent so it receives and replies to messages.
+---
+
+Each agent can be wired to a dedicated Slack app. When bound, the agent
+receives DMs and channel mentions as jobs and replies in the same
+conversation.
+
+The binding is per-agent and per-app: one Slack app, one agent. You can have
+multiple agents each with their own app.
+
+## Prerequisites
+
+- A Slack workspace where you can install apps.
+
+## Create the app from a manifest
+
+Open [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** →
+**From a manifest** → paste the JSON below → **Create**.
+
+```json
+{
+  "display_information": {
+    "name": "Nodal Agent",
+    "description": "Nodal Agent"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Nodal Agent",
+      "always_online": true
+    },
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "im:history",
+        "im:read",
+        "im:write",
+        "app_mentions:read",
+        "channels:history",
+        "groups:history",
+        "files:write",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["message.im", "app_mention"]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
+```
+
+<Callout type="warn" title="Do not build the app by hand instead">
+  This manifest already turns on Socket Mode and the message events. An app
+  created field-by-field that misses one of those ends up with a socket that
+  connects but receives zero messages, with nothing on screen to say why.
+</Callout>
+
+## Install & copy the tokens
+
+1. **Settings → Install App** → **Install to Workspace**. Any later change to
+   scopes or events requires reinstalling for it to take effect.
+2. **Settings → Install App → Bot User OAuth Token**, starts with `xoxb-`.
+3. **Settings → Basic Information → App-Level Tokens** → **Generate** a
+   token with the `connections:write` scope, starts with `xapp-`.
+
+## Connect it in Nodal
+
+1. Open the agent's edit page → **Channels** tab → Slack card.
+2. Paste both tokens (bot token, then app token) → **Connect**. The status
+   flips to Connected with the bot's identity shown.
+
+## How incoming messages become jobs
+
+**In DMs** (`channel_type: im`), every plain message from an authorized
+conversation triggers a job. Edits, joins, and any message from a bot
+(including itself) are dropped before anything else runs.
+
+**In a channel**, Slack's own `app_mention` event is the mention gate. There
+is no separate keyword check. The bot only sees a channel message when it is
+directly @mentioned in it, or the message is `/ask <agent-slug> <text>`
+(after the mention is stripped). Slack only forwards a channel's messages to
+a bot that is a **member of that channel**. Run `/invite @your-bot` there
+first, or the mention never arrives at all.
+
+Image/file intake is not available yet on Slack. Inbound is text-only this
+phase.
+
+## Who can talk to your bot
+
+Same ownership model as every other channel:
+
+- **You claim it by DMing it first.** The first private conversation with
+  the app registers you as its **owner**.
+- **A new person is held for your approval.** An unknown DM or channel
+  mention gets no job. Instead the owner receives a message with Allow/Deny
+  buttons in their own DM, and the requester is told their request is
+  pending.
+
+**A channel can never bootstrap ownership.** Until someone has DMed the app,
+mentions in channels are silently ignored. That is a deliberate security
+gate, not a bug.
+
+## Verify it works
+
+1. Open a DM with the app and send anything. Expect a reply, and the job
+   listed on the Jobs page.
+2. `/invite @your-bot` into a channel, then @mention it. Expect an approval
+   request in the owner's DM, and a reply in the channel once approved.
+
+<Callout type="tip" title="Connected but no reply in a channel">
+  Usually means the bot wasn't invited to that channel, nobody has DMed it
+  yet, or the approval request is still waiting.
+</Callout>
+
+## Related
+
+- [Concepts: Agents](/docs/concepts/agents)
+- [Concepts: Connectors & MCP](/docs/concepts/connectors-and-mcp)
+- [Telegram](/docs/guides/telegram): the same ownership/approval model, on a
+  different channel

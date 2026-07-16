@@ -5,6 +5,10 @@
     "connect-a-model",
     "connect-a-tool",
     "telegram",
+    "discord",
+    "slack",
+    "whatsapp",
+    "event-triggers",
     "automations",
     "shell-commands",
     "root-agent"

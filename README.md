@@ -2,7 +2,7 @@
 
 > **Your AI agents. Your data. Your machine.**
 
-A self-hosted platform for building and orchestrating a **team of AI agents** on your own hardware — each with its own personality, tools, memory, and model. Talk to them in the dashboard or on Telegram; they research, write files, call your connectors, and delegate to each other to get the job done.
+A self-hosted platform for building and orchestrating a **team of AI agents** on your own hardware — each with its own personality, tools, memory, and model. Talk to them in the dashboard, or on Telegram, Discord, Slack, and WhatsApp; they research, write files, call your connectors, and delegate to each other to get the job done.
 
 **No SaaS lock-in. No per-token markup. No cloud roundtrip.** Two commands to install, runs on any machine with Node 22+ (Mac, Windows, Linux), and works with **any LLM** — frontier or local, paid or free.
 
@@ -70,18 +70,20 @@ Every agent runs on the model **you** choose, with the tools **you** grant, in a
 
 ## Available now
 
-**Models** — Anthropic · OpenAI · Google · Groq · Mistral · OpenRouter · **native DeepSeek** (`api.deepseek.com`) · **native MiniMax** (`api.minimax.io`) · any local model (LM Studio, Ollama). One key per provider; each agent picks its own model.
+**Models** — Anthropic · OpenAI · Google · Groq · Mistral · OpenRouter · **native DeepSeek** (`api.deepseek.com`) · **native MiniMax** (`api.minimax.io`) · **native Moonshot / Kimi** (`api.moonshot.ai`) · any local model (LM Studio, Ollama). One key per provider; each agent picks its own model.
 
 **Connectors** — multi-instance (Gmail perso *and* boulot on one install), managed from the dashboard:
 - *OAuth* — Airtable · Calendar · Docs · Gmail · Google Drive · Notion · Sheets
-- *API key* — Airtable · Apify · Firecrawl · Notion · Tavily
+- *API key* — Airtable · Apify · Firecrawl · Notion · Poyo · Tavily
 
 **MCP servers** — over Streamable HTTP *and* stdio, plus add/edit your own:
 Apify · Blender · Cogni Cortex · Composio · Fetch · Filesystem · Git · GitHub · KeyShot · Linear · n8n · Notion · Perplexity · Photoshop · Playwright · PostgreSQL · Sentry · Stripe · Supabase · Unity · Unreal Engine
 
 **Skills** — built-in: office editing (Excel/Word/PowerPoint), shell execution, Obsidian, Telegram etiquette, task planning, markdown output, citation discipline, research methodology, results delivery, language mirroring, HTML design. Plus **install any community `SKILL.md`** from GitHub / skills.sh / ClawHub — and agents can **write their own**.
 
-**Channels** — Telegram (long-poll, multi-agent routing via `/ask <slug>`, group-chat filters, conversation continuity) and the dashboard chat.
+**Channels** — Telegram (long-poll, multi-agent routing via `/ask <slug>`, group-chat filters, conversation continuity) · Discord (bot gateway) · Slack (Socket Mode) · WhatsApp (QR pairing) — and the dashboard chat. Approvals, images, and files flow over every channel, with graceful fallbacks where a channel lacks buttons.
+
+**Event triggers** — inbound **webhooks** (`POST /webhooks/<slug>/<secret>` starts a job from any external service) and **watchers** (recurring polls with a capped daily budget and overlap protection).
 
 **Other** — shell execution (`run_command`, approval-gated), per-agent sandboxed filesystem folders, cron automations, tool-call audit log, full job transcripts.
 
@@ -172,7 +174,6 @@ Used daily by the maintainer; stable enough for personal production. **Pre-1.0**
 - **MCP OAuth** → unlocks Linear, Notion remote, GitHub remote, Atlassian, Sentry, and the rest of the SaaS-as-MCP ecosystem.
 - **Dry-run + test-workflow meta-tool** → preview what the ROOT would do before it runs.
 - **Bundled pgvector** → semantic memory search out of the box (today: keyword fallback).
-- **More channels** → Discord, Slack, and beyond Telegram.
 
 ---
 

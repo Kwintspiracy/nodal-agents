@@ -22,10 +22,10 @@ status. It never blocks the job response.
 1. Global kill-switch not set to `false`.
 2. Job status is `completed` (failed/blocked jobs are skipped).
 3. Job channel is not `chat` or `reflection` (no interactive turns, no recursion).
-4. The job is substantial enough — it ran at least `REFLECTION_MIN_TURNS` turns
-   (default: 3). Short heartbeat or cron runs are not worth reflecting on. (An
-   optional `REFLECTION_MIN_TOOL_ITERS` tool-iteration gate can tighten this
-   further; it falls back to a constant when unset.)
+4. The job is substantial enough: it made at least `REFLECTION_MIN_TOOL_ITERS`
+   tool calls (default: 10), counted across the whole transcript rather than
+   LLM turns. A short heartbeat or cron run with only a couple of tool calls
+   is not worth reflecting on, even if it spanned several turns.
 5. The entity has `reflection_enabled = true`.
 6. A per-entity rolling-hour throttle slot is available (`REFLECTION_MAX_PER_HOUR`,
    default: 6).
@@ -89,19 +89,19 @@ These runner environment variables (defined in `apps/runner/src/env.ts`) gate an
 bound both passes. The defaults are sensible for most self-hosters; the whole
 feature still ships **off** until you enable `reflection_enabled` per entity.
 
-| Variable                  | Default   | Controls                                                                              |
-| ------------------------- | --------- | ------------------------------------------------------------------------------------- |
-| `REFLECTION_ENABLED`      | _(unset)_ | Global kill-switch — set to `false` to disable reflection + curator for every entity. |
-| `REFLECTION_MIN_TURNS`    | `3`       | Minimum job turns before a job is "substantial" enough to reflect on.                 |
-| `REFLECTION_MAX_TURNS`    | `3`       | Max LLM turns inside a single reflection pass.                                        |
-| `REFLECTION_MAX_PER_HOUR` | `6`       | Per-entity rolling-hour cap on reflection passes.                                     |
-| `REFLECTION_MODEL`        | _(unset)_ | Model id to run the reflection/curator passes on; falls back to the agent's model.    |
-| `CURATOR_STALE_DAYS`      | `30`      | Days before an agent skill transitions active → stale.                                |
-| `CURATOR_ARCHIVE_DAYS`    | `90`      | Days before a stale agent skill transitions stale → archived.                         |
-| `CURATOR_MIN_SKILLS`      | `5`       | Min agent-created active skills per entity to trigger LLM consolidation.              |
-| `CURATOR_INTERVAL_DAYS`   | `7`       | Min days between LLM consolidation passes per entity.                                 |
+| Variable                            | Default   | Controls                                                                              |
+| ------------------------------------ | --------- | ------------------------------------------------------------------------------------- |
+| `REFLECTION_ENABLED`                | _(unset)_ | Global kill-switch — set to `false` to disable reflection + curator for every entity. |
+| `REFLECTION_MIN_TOOL_ITERS`         | `10`      | Minimum tool-call iterations in the job's transcript before it's "substantial" enough to reflect on. No env default; falls back to this constant when unset. |
+| `REFLECTION_MAX_TURNS`               | `3`       | Max LLM turns inside a single reflection pass.                                        |
+| `REFLECTION_MAX_PER_HOUR`            | `6`       | Per-entity rolling-hour cap on reflection passes.                                     |
+| `REFLECTION_MAX_NEW_SKILLS_PER_PASS` | `2`       | Hard cap on new skills the reflection pass may create in one run. No env default; falls back to this constant when unset. |
+| `REFLECTION_MODEL`                   | _(unset)_ | Model id to run the reflection/curator passes on; falls back to the agent's model.    |
+| `CURATOR_STALE_DAYS`                 | `30`      | Days before an agent skill transitions active → stale.                                |
+| `CURATOR_ARCHIVE_DAYS`               | `90`      | Days before a stale agent skill transitions stale → archived.                         |
+| `CURATOR_MIN_SKILLS`                 | `5`       | Min agent-created active skills per entity to trigger LLM consolidation.              |
+| `CURATOR_INTERVAL_DAYS`              | `7`       | Min days between LLM consolidation passes per entity.                                 |
 
-(Two optional gates — `REFLECTION_MIN_TOOL_ITERS` and `REFLECTION_MAX_NEW_SKILLS_PER_PASS` — have no env default and fall back to internal constants when unset.)
 
 ## Related pages
 

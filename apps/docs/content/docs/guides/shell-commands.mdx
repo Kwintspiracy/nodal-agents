@@ -63,39 +63,62 @@ Only the workspace owner can change the workspace-level switch.
 
 ## The safety floor — commands that never auto-run
 
-A small, fixed set of commands is treated as **catastrophic** and can never be
-auto-approved — **not even in Yolo mode**. They always force a human decision,
-and a few are refused **even if you click Approve**, because a single tap should
-not be able to greenlight machine-wide destruction. When one is refused, the
-agent (and you) receive a plain-language explanation of _why_ it was blocked, so
-nothing fails silently.
+Shell commands split into two tiers of danger, and each tier is handled
+differently.
 
-Two kinds sit on this floor:
+### The hard floor: refused even if you click Approve
 
-- **Machine-wide destroyers** — wiping the disk root, formatting a drive,
-  repartitioning, powering off/rebooting the machine (`rm -rf /`, `mkfs`,
-  `format`, `diskpart`, `shutdown`, and the Windows equivalents). These are
-  refused even after approval.
-- **Inline interpreter code** — running arbitrary code passed _on the command
-  line_ to a general-purpose interpreter: `python -c "…"`, `node -e "…"`,
-  `perl -e`, `ruby -e`, `php -r`, `sh -c`, `bash -c`, `powershell -Command`, and
-  the like. The code inside the quotes is an opaque program that could do
-  anything — including hide a `rm -rf /` — so it cannot be safety-checked. These
-  are refused even after approval.
+A small, fixed set of commands is **machine-wide destructive**: wiping the disk
+root, formatting a drive, repartitioning, or powering off/rebooting the
+machine. These patterns can never run, in Yolo mode or not, approved or not:
 
-  **This does not block scripts.** To run a script, put it in a **file** and run
-  the file — `python my_script.py`, `node build.js`, `bash deploy.sh`. Only the
-  _inline-code_ form (`-c` / `-e` / `-Command` …) is on the floor.
+- `rm -rf` (or `Remove-Item -Recurse -Force`, `del /s /q`, `rd /s /q`) against
+  `/`, `~`, a Windows drive root, or a wildcard
+- a fork bomb
+- `mkfs` (any filesystem)
+- `dd ... of=/dev/...` or a shell redirection to a raw device (`> /dev/sda`)
+- a Windows `format <drive>:`
+- `diskpart`, or a destructive PowerShell disk cmdlet (`Format-Volume`,
+  `Clear-Disk`, `Initialize-Disk`)
+- `shutdown` / `reboot` / `halt` / `poweroff` (or the PowerShell equivalents,
+  `Stop-Computer` / `Restart-Computer`)
+- `init 0` / `init 6` (Unix runlevel shutdown/reboot)
 
-  The same applies to **piping code into an interpreter** — `curl … | bash`,
-  `echo '…' | python` — and to **`awk` programs that shell out** (`awk
-'BEGIN{system(…)}'`): the executed code is opaque, so these are on the floor
-  too. Piping _data_ into a script (`cat data | python analyze.py`) is fine.
+Hiding one behind a wrapper (`sudo`, `cmd /c`, `powershell -Command "…"`) does
+not help: the classifier unwraps those before checking.
 
-This floor is deliberately narrow: ordinary dangerous commands (deleting a
-project folder, killing a process, installing a package) are **not** on it —
-they stay governed by the normal approval gate and your autonomy settings. The
-floor is the last-resort circuit breaker, not a general safety net.
+They always force a human decision, and even if you click Approve, the command
+still does not execute. A single tap should never be able to greenlight
+machine-wide destruction. When one is refused, the agent (and you) get a
+plain-language explanation of why, so nothing fails silently.
+
+### Destructive or heavy: gated, but approvable
+
+Everything else dangerous is **not** on the hard floor. It stays governed by
+the normal approval gate and your Yolo setting: it requires approval by
+default, auto-runs under Yolo, and once you approve it, it actually runs. This
+class covers ordinary destructive actions (deleting files, killing a process,
+installing a package, a large download, recursive permission changes,
+force-pushing git) plus one opaque category worth calling out:
+
+**Inline interpreter code.** Running arbitrary code passed on the command line
+to a general-purpose interpreter, such as `python -c "…"`, `node -e "…"`,
+`perl -e`, `ruby -e`, `php -r`, `sh -c`, `bash -c`, or `powershell -Command`.
+The code inside the quotes is an opaque program that could do anything, so it
+cannot be safety-checked line by line. The same applies to **piping code into a
+bare interpreter** (`curl … | bash`, `echo '…' | python`) and to **`awk`
+programs that shell out** (`awk 'BEGIN{system(…)}'`). All of these require
+approval, but they are not refused: once you approve one, it runs, and under
+Yolo it auto-runs like any other command.
+
+**This does not block scripts.** To run a script, put it in a **file** and run
+the file: `python my_script.py`, `node build.js`, `bash deploy.sh`. Only the
+inline-code form (`-c` / `-e` / `-Command` …) falls into this gated class.
+Piping data into a script (`cat data | python analyze.py`) is unaffected.
+
+This floor is deliberately narrow: only the 8 machine-wide destroyers above are
+un-bypassable. The floor is the last-resort circuit breaker, not a general
+safety net.
 
 ## Command environment
 

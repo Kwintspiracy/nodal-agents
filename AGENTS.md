@@ -1,4 +1,4 @@
-# Nodal-Agents — instructions for Claude Code
+# Nodal-Agents — instructions for Codex
 
 This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual-stack).
 
@@ -31,14 +31,13 @@ This is the all-Node monorepo replacing the legacy KwintAgents (Python+Next dual
 - Opus 4.8 orchestrates and reviews; Sonnet 5 codes/tests; Haiku banned.
 - Max 5 concurrent agents.
 - Each brique merged only when its applicable test gates pass (unit + arch + regression always; integration/smoke when external service touched).
-- Plan file at `~/.claude/plans/nodalai-migration-plan.md` is the source of truth — update `[ ]` checkboxes as work progresses.
+- Plan file at `~/.Codex/plans/nodalai-migration-plan.md` is the source of truth — update `[ ]` checkboxes as work progresses.
 
 ## Commands
 
 ```bash
 pnpm install      # one-time setup
-pnpm --filter nodal-agents exec tsx src/index.ts --dev   # dev stack (embedded Postgres + runner + web HMR)
-pnpm dev          # turbo dev — raw per-package watchers only, does NOT boot the full stack
+pnpm dev          # dev mode (turbo)
 pnpm build        # production build
 pnpm test         # vitest across all packages
 pnpm typecheck    # tsc --noEmit

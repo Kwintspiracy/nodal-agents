@@ -26,6 +26,9 @@ The runner's auth depends on `AUTH_MODE`:
 | `POST /api/cron` | runner auth | Trigger a cron tick. |
 | `POST /api/skills/install` | `WORKER_SECRET` | Install a community skill. |
 | `POST /api/skills/uninstall` | `WORKER_SECRET` | Uninstall a community skill. |
+| `GET /api/whatsapp/pairing` | runner auth | WhatsApp QR pairing status for an agent. |
+| `POST /api/whatsapp/pairing` | runner auth | Start WhatsApp QR pairing for an agent. |
+| `POST /webhooks/:slug/:secret` | slug + secret (in the path) | Fire a configured webhook trigger's job. |
 
 "runner auth" = pass-through in `local-trust`, else `WORKER_SECRET` bearer (or a session in `bearer-token` mode).
 
@@ -50,6 +53,13 @@ The internal execution endpoint. Authenticated with the `WORKER_SECRET` bearer t
 
 It responds **`202 Accepted`** immediately and runs the LLM loop in the background; the result is written to the database and the dashboard observes it. Bad secret → `403 invalid_worker_secret`; bad body → `400`.
 
+### `GET /api/whatsapp/pairing` and `POST /api/whatsapp/pairing`
+
+Read and kick the runner's in-process WhatsApp manager for a single agent's pairing state. An untrusted `bearer-token` caller may only pair an agent inside its own entity.
+
+- **`GET ?agentId=<uuid>`** returns `{ status, qr }`. `qr` (the pairing QR payload) is present only while `status` is `qr_pending`; it is masked to `null` otherwise, even if the manager still holds a stale value internally, since a QR is a one-time linking secret. `404 no_whatsapp_binding` when the agent has no WhatsApp binding currently tracked; `503 whatsapp_manager_unavailable` if the manager never started (e.g. `WHATSAPP_BRIDGE_ENABLED=false`).
+- **`POST { agentId }`** idempotently ensures the pairing socket exists so a QR starts being generated, then responds `202`. Poll the `GET` route afterward to retrieve it.
+
 ## Dashboard endpoints (`:3000`)
 
 | Method & path | Purpose |
@@ -70,14 +80,12 @@ Connecting an OAuth provider (Google, Notion, Airtable, …) is a two-leg flow h
 
 ## Webhook ingress
 
-The Settings page surfaces a per-install **webhook ingress** base URL:
+`POST /webhooks/:slug/:secret` on the **runner** (`:3001`) is the live inbound entry point for the **webhook triggers** stored in the `webhook_triggers` table. A webhook trigger binds an agent + a `task_template` to a `slug` and a generated `secret`; each trigger gets its own full URL, e.g. `http://<runner-host>:3001/webhooks/daily-report/ab12cd34…` (composed by the dashboard's Automations page from the current hostname).
 
-```
-{appUrl}/wh/v1
-```
+There is no shared base URL and no header-based auth: the path segments themselves are the credential.
 
-This is the inbound entry point for the **webhook triggers** stored in the `webhook_triggers` table. A webhook trigger binds an agent + a `task_template` to a `slug`, with an optional `secret`; when its endpoint is hit, the trigger fires a job for that agent using the task template, increments `trigger_count`, and records `last_triggered_at`.
-
-<Callout type="info">
-The `webhook_triggers` schema and the ingress URL are in place, but the inbound `/wh/v1` route handler is not yet wired up in this build. Treat webhook ingress as a configured-but-not-yet-live surface — the URL is shown so the data model and Settings are ready, not as a documented public endpoint to integrate against today.
-</Callout>
+- **Auth is per-trigger, in the path**: unknown slug, an inactive trigger, a missing stored secret, or a mismatched secret all return the identical generic `404` (no signal about which check failed). Secret comparison is timing-safe.
+- **Rate limit**: 30 accepted fires per trigger per rolling hour. Over the limit returns `429 rate_limited`, checked before the body is even parsed.
+- **Body**: JSON only, hard-capped at 1 MB, read as a bounded stream so a wrong or absent `Content-Length` can't smuggle an oversized body past the cap. Too large → `413 payload_too_large`; not valid JSON → `400 invalid_request`.
+- On success the route interpolates `{dot.path}` placeholders in the trigger's `task_template` against the posted JSON body, wraps the result in an anti-injection envelope (the payload is framed as untrusted external data, never as owner instructions, and the agent's normal approval rules still apply), creates an `agent_jobs` row with `channel: 'webhook'`, increments `trigger_count` and `last_triggered_at` on the trigger, and returns `202 { ok: true, jobId }` immediately (the job itself runs in the background).
+- A trigger with no agent attached returns `400 trigger_has_no_agent`; a job-creation failure returns `500 job_creation_failed`.

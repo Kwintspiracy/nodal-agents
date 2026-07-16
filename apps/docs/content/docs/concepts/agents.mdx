@@ -16,8 +16,8 @@ An agent is a named, persistent AI persona you create in the dashboard. **The ca
 | **Connectors**           | OAuth / API-key integrations (Gmail, Notion, Airtable…)   |
 | **MCP servers**          | HTTP or stdio servers whose tools are namespaced per job  |
 | **Workspaces**           | filesystem paths the agent can read and write             |
-| **Telegram**             | optional bot token for inbound + outbound messages        |
-| **Role**                 | `agent` (worker) or `orchestrator`                        |
+| **Channels**             | optional connections for inbound + outbound messages (Telegram, Discord, Slack, WhatsApp) |
+| **Role**                 | `agent` (worker), `orchestrator`, or `system` (reserved)   |
 
 ## How a job runs
 
@@ -31,7 +31,7 @@ A **job** is one unit of work — a chat message, a cron tick, an API call, or a
 
 ### Always-on built-in tools
 
-Every agent gets these 15 tools on every job, regardless of skills (`ALWAYS_ON_TOOLS` in `packages/tools/src/builtin/index.ts`):
+Every agent gets these 16 tools on every job, regardless of skills (`ALWAYS_ON_TOOLS` in `packages/tools/src/builtin/index.ts`):
 
 - `return_result` — set the job's final answer.
 - `skill_view` — read the full content of an assigned skill on demand.
@@ -39,6 +39,7 @@ Every agent gets these 15 tools on every job, regardless of skills (`ALWAYS_ON_T
 - `list_schedules` — list the agent's cron automations.
 - `save_memory`, `query_memory`, `mark_memory_helpful`, `mark_memory_outdated` — the [memory](/docs/concepts/memory) tools (write, recall, and rate persistent facts).
 - `search_history` — full-text recall across all of this workspace's past jobs and conversations, including ones run by other agents.
+- `web_search` — search the web, using the agent's configured Tavily/Firecrawl provider if any, otherwise a free best-effort search.
 - `dashboard_publish` — publish the agent's substantive output to the dashboard (it becomes the job's `result`, shown on `/jobs`).
 - `file_read`, `file_write`, `file_edit`, `file_list`, `file_search` — read and edit files in the agent's workspaces.
 
@@ -46,14 +47,16 @@ Every agent gets these 15 tools on every job, regardless of skills (`ALWAYS_ON_T
 
 Every job is bounded. When a limit is hit the job fails loud with a clear code — never a silent fallback.
 
-| Guard                    | Limit     |
-| ------------------------ | --------- |
-| Max turns per job        | 50        |
-| Max tool calls per turn  | 50        |
-| Max self-chain resumes   | 15        |
-| Max delegation depth     | 3         |
-| Max total tokens per job | 1,500,000 |
-| Max cost per job         | $2.00     |
+| Guard                              | Limit     |
+| ---------------------------------- | --------- |
+| Max turns per job                  | 50        |
+| Max tool calls per turn            | 50        |
+| Max self-chain resumes             | 15        |
+| Max delegation depth               | 3         |
+| Max total tokens per job           | 1,500,000 |
+| Max cost per job                   | $2.00     |
+| Max consecutive delivery-only turns | 3        |
+| Max identical no-progress turns    | 12        |
 
 ## Autonomy
 

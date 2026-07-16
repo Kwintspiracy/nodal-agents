@@ -1,6 +1,6 @@
 ---
 title: Automations
-description: Schedule an agent to run a task on a recurring cron schedule, with optional Telegram notifications.
+description: Schedule an agent to run a task on a recurring cron schedule, with optional notifications on the channel of your choice.
 ---
 
 An automation is a named cron schedule that fires an agent on a recurring basis. The agent receives a fixed task prompt each time — useful for daily reports, monitoring jobs, regular data pulls, or anything you'd otherwise remember to trigger manually.
@@ -8,7 +8,7 @@ An automation is a named cron schedule that fires an agent on a recurring basis.
 ## Prerequisites
 
 - At least one agent configured. See [Create an agent](/docs/guides/create-an-agent).
-- If you want Telegram notifications: the agent must have a Telegram bot configured and you must have DM'd the bot at least once (so the runner has your chat ID).
+- If you want notifications: the agent must have at least one channel connected (Telegram, Discord, or Slack), and you must have messaged it there at least once (so the runner has your conversation id).
 
 ## Create an automation
 
@@ -19,7 +19,8 @@ An automation is a named cron schedule that fires an agent on a recurring basis.
    - **Name** — a human label for the schedule (e.g. "Daily standup").
    - **Cron expression** — standard 5-field cron (minute hour day-of-month month day-of-week). The default is `0 9 * * *` (every day at 09:00). A visual cron builder is provided.
    - **Task instructions** — the exact prompt the agent receives each time the schedule fires. Treat this like a detailed task description.
-   - **Notify me on Telegram when it succeeds** — when checked, the agent sends a short confirmation to your Telegram chat after each successful run. Requires the agent to have a Telegram bot token and a recorded chat ID.
+   - **Notify me when it succeeds** — when checked, the agent sends a short confirmation after each successful run. Requires the agent to have at least one connected channel.
+   - **Notify via** — appears once Notify is checked, listing every channel this agent is actually connected to. **Auto** (the default) picks the agent's first active channel; choosing a specific one always sends there instead.
 4. Click **Create schedule**. The automation starts active immediately.
 
 ## Common cron expressions
@@ -34,7 +35,7 @@ An automation is a named cron schedule that fires an agent on a recurring basis.
 
 ## Manage an automation
 
-Each schedule row shows the next scheduled run, last run time, and last status (success / failed / no_action). Available actions:
+Each schedule row shows the next scheduled run, last run time, and last status (success / failed / no_action / budget_exhausted / notify_unreachable). Available actions:
 
 - **Run now** — fires the automation immediately, outside the schedule. Useful for testing.
 - **Edit** — change the name, agent, cron expression, task, or notification setting.
@@ -60,9 +61,40 @@ A bad cron expression causes the schedule to be marked `failed` and its `next_ru
   unexpected hour, check the workspace timezone first.
 </Callout>
 
-## Telegram notifications
+## Watchers
 
-Notification delivery is per-agent: the agent uses its own Telegram bot token. A schedule with **Notify me** enabled but assigned to an agent with no bot token shows a warning in the form. The notification is sent only on a successful (`completed`) run, not on failure or when the agent takes no action.
+A schedule is not just for daily reports. Set the cron expression to a short
+interval (e.g. `*/5 * * * *`) and the task instructions to "check X, and only
+act if it changed" and the schedule becomes a **watcher**: a recurring poll
+that inspects some external state on your behalf instead of running on a fixed
+daily cadence.
+
+Two guards keep a watcher from running away:
+
+- **Daily budget.** Every schedule has a **Daily budget ($)** field, 5.00 by
+  default. Each fire's cost rolls up against this ceiling for the schedule's
+  own local day (in its cron timezone). Once the day's spend reaches the
+  ceiling, further fires are skipped and `lastStatus` shows
+  `budget_exhausted`. You get one notification per exhaustion (not one per
+  skipped tick), and the ceiling lifts automatically at the next local day.
+  Raise or lower it in **Edit**.
+- **No overlap.** If the previous run of a schedule is still `pending`,
+  `processing`, `awaiting_approval`, or `awaiting_delegation` when the next
+  tick comes due, that tick is skipped rather than starting a second, parallel
+  run of the same watcher. The schedule stays due and fires on the first tick
+  after the in-flight run finishes.
+
+A frequent watcher (say, every minute) can still burn its whole daily budget
+quickly if each check is expensive. Set the budget with that in mind, and
+prefer a coarser interval when a tighter one is not needed.
+
+## Notifications and channel choice
+
+Notification delivery is per-agent: the agent sends through its own channel bindings. A schedule with **Notify me** enabled but assigned to an agent with no connected channel shows a warning in the form. The notification is sent only on a successful (`completed`) run, not on failure or when the agent takes no action.
+
+**Notify via** links the channel to *where* the confirmation goes: picking a channel resolves your conversation with the agent on THAT channel specifically, instead of whichever connected channel happens to win by default priority (Telegram, then Discord, then Slack). If you pick a channel you've never messaged the agent on yet, the schedule still fires — the run itself is not blocked — but the confirmation has nowhere to go. `lastStatus` then reads **notify_unreachable** instead of `success`, so the miss is visible instead of silent. Message the agent once on that channel and the next fire delivers normally.
+
+WhatsApp is not offered in **Notify via** yet — the runner has no way to hand a mid-run confirmation to a WhatsApp-bound agent today.
 
 ## Notes
 

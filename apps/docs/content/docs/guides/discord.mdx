@@ -1,0 +1,102 @@
+---
+title: Discord
+description: Bind a Discord bot to an agent so it receives and replies to messages.
+---
+
+Each agent can be wired to a dedicated Discord bot application. When bound,
+the agent receives DMs and channel mentions as jobs and replies in the same
+channel.
+
+The binding is per-agent and per-bot: one Discord application, one agent. You
+can have multiple agents each with their own bot.
+
+## Prerequisites
+
+- A Discord server you own or can invite bots to. Bots can only be messaged
+  (even in DM) by people who share a server with them. If you don't have one,
+  create one for free in the Discord app first.
+
+## Create the bot
+
+1. Open [discord.com/developers/applications](https://discord.com/developers/applications)
+   → **New Application** (top right) → give it a name (this becomes the
+   bot's name) → accept the terms → **Create**.
+2. Left sidebar → **Bot**. Scroll to **Privileged Gateway Intents** and switch
+   ON **Server Members Intent** AND **Message Content Intent**, then click
+   **Save Changes** at the bottom. The toggles do not save themselves.
+   Without Message Content Intent the bot's messages arrive with empty
+   content.
+3. Still on the **Bot** page: click **Reset Token** (Discord may ask for your
+   password or 2FA code) and copy the token. It is shown only once. Lose it
+   and you must reset again.
+4. Left sidebar → **OAuth2** → **OAuth2 URL Generator**. Under **Scopes**,
+   tick `bot` and `applications.commands`. A **Bot Permissions** grid appears
+   below. Tick **View Channels**, **Send Messages**, **Read Message
+   History**, **Attach Files**, **Embed Links**.
+5. Copy the **Generated URL** at the bottom, open it in a new tab, pick your
+   server, and **Authorize**. The bot appears in your server's member list.
+   (Offline is normal. It wakes up once connected below.)
+
+## Connect it in Nodal
+
+1. Open the agent's edit page → **Channels** tab → Discord card.
+2. Paste the bot token into the **Bot token** field → **Connect**.
+3. The runner logs the bot in within a few seconds. No restart needed.
+
+## How incoming messages become jobs
+
+**In DMs**, every message from an authorized conversation triggers a job.
+See [Who can talk to your bot](#who-can-talk-to-your-bot) below: the first DM
+claims ownership.
+
+**In a server channel**, the bot only responds when clearly addressed:
+
+- `/ask <agent-slug> <text>`: routes to a different agent in the same
+  workspace
+- `/agents` or `/start`: reserved commands
+- A mention of the bot, either `@BotName` or its managed role. Discord's
+  autocomplete usually inserts a role mention instead of a user mention when
+  a human types `@BotName`; both are handled the same way.
+- A reply to a previous message from the bot
+
+Any other channel message is silently ignored. The bot always ignores
+messages from any bot author, including itself (a hard anti-loop rule).
+
+Image attachments up to 10 MB are downloaded and attached to the job so the
+agent can see them; larger ones are skipped.
+
+## Who can talk to your bot
+
+A Discord bot's invite link is easy to pass around, so each bot has an
+allowlist:
+
+- **You claim it by DMing it first.** The first private message to a freshly
+  connected bot registers that conversation as the bot's **owner**: you.
+  From then on your messages go straight through.
+- **A new person is held for your approval.** If someone the bot doesn't know
+  messages or mentions it, no job runs. Instead you (the owner) get a button
+  card in your own DM ("👤 Name wants to talk to this bot. Allow?") with
+  Allow/Deny buttons. The requester is told their request is pending.
+
+**A server channel can never bootstrap ownership.** If nobody has DMed the
+bot yet, a mention in a channel is silently ignored. Not even a pending
+request is created. You must DM the bot first.
+
+## Verify it works
+
+1. Right-click the bot in the member list → **Message**, and send anything.
+   Expect a reply within a few seconds, and the job listed on the Jobs page.
+2. Mention the bot in a server channel. Expect an approval card in the
+   owner's DM, and a reply in the channel once you click Allow.
+
+<Callout type="tip" title="Connected but silent in a channel">
+  That almost always means the owner hasn't DMed the bot yet, or the approval
+  request is still waiting in the owner's DM.
+</Callout>
+
+## Related
+
+- [Concepts: Agents](/docs/concepts/agents)
+- [Concepts: Connectors & MCP](/docs/concepts/connectors-and-mcp)
+- [Telegram](/docs/guides/telegram): the same ownership/approval model, on a
+  different channel

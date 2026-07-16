@@ -65,3 +65,18 @@ nodal-agents update
 
 Checks npm for the latest version, stops the stack, installs `nodal-agents@latest`,
 and restarts automatically. Your data is preserved.
+
+## Other commands
+
+```bash
+nodal-agents logs [web|runner|postgres]
+```
+
+Tails logs for the given service, or all three if you omit the argument.
+
+```bash
+nodal-agents reset --yes
+```
+
+Deletes all Nodal-Agents data and config. Omit `--yes` to get a confirmation
+prompt first.

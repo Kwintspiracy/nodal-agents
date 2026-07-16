@@ -12,6 +12,11 @@ are already waiting in the system prompt before the first LLM call.
 Each record holds a `fact` (plain text), a `category`, an `importance` score
 (1–5), optional `skill_tags`, and timestamps for creation and last access.
 
+Importance can be locked by the user (`importance_locked` in the DB). When
+locked, the curator's usage-driven re-scoring must leave the value untouched:
+a user-pinned importance always wins over the agent's guess or the curator's
+correction.
+
 The four categories are:
 
 | Category       | Intended use                                |
@@ -32,11 +37,19 @@ needed — the agent already has context.
 
 Selection works in two stages:
 
-1. **Candidate fetch** — the top 50 non-archived, non-expired memories for the
-   entity, ordered by `importance DESC`, `last_accessed_at DESC`.
+1. **Candidate fetch** — up to 200 non-archived, non-expired memories for the
+   entity (`MAX_CANDIDATES` in `packages/memory/src/inject.ts`). The ordering
+   depends on the current job:
+   - **Task-relevant ranking.** When the job's task is tokenizable, candidates
+     are ordered by `ts_rank` against the task text (full-text relevance),
+     with importance and recency only as a tie-break. A fact relevant to this
+     task can surface even if it sits outside the importance/recency top tier.
+   - **Fallback ranking.** When the task has no usable tokens, candidates are
+     ordered by `importance DESC`, then `last_accessed_at DESC`.
 2. **Budget pack** — a greedy selector fits as many as possible under a character
-   budget derived from `agents.memoryTokenBudget`. High-importance facts are
-   packed first; a single oversized fact is skipped rather than truncated.
+   budget derived from `agents.memoryTokenBudget`. In the relevance path, the
+   FTS order is authoritative and is not re-sorted by importance. A single
+   oversized fact is skipped rather than truncated.
 
 Memory is **entity-scoped**, not agent-scoped — every agent in the same entity
 sees the same pool. This matches the `query_memory` tool's behaviour: knowledge

@@ -1,0 +1,89 @@
+---
+title: WhatsApp
+description: Link a WhatsApp number to an agent by scanning a QR code, no bot token needed.
+---
+
+Each agent can be linked to a WhatsApp number. When linked, the agent
+receives DMs and group mentions as jobs and replies in the same
+conversation.
+
+The binding is per-agent and per-number: one linked WhatsApp account, one
+agent.
+
+<Callout type="warn" title="This is an unofficial bridge">
+  WhatsApp support goes through WhatsApp Web (via [Baileys](https://github.com/WhiskeySockets/Baileys)),
+  not Meta's own bot API. Prefer a dedicated number rather than your main
+  one. There is a small risk of account restriction.
+</Callout>
+
+## Prerequisites
+
+- A phone with WhatsApp installed, ideally on a number you don't mind
+  dedicating to the bot.
+
+## Connect it in Nodal
+
+1. Open the agent's edit page → **Channels** tab → WhatsApp card → **Connect
+   WhatsApp**. A QR code appears.
+2. On the phone whose number you are linking: **WhatsApp → Settings →
+   Linked devices → Link a device** and scan the code shown.
+3. Wait for the status to flip to **Connected**. It shows the linked
+   identity once paired.
+
+## How incoming messages become jobs
+
+**In DMs**, every message from an authorized conversation triggers a job.
+
+**In groups**, Baileys gives no platform-level mention gate the way Slack's
+`app_mention` event does. Every group message reaches the runner, so the
+handler is the only filter: only a genuine `@mention` of the bot, or a bare
+`/ask <agent-slug> <text>`, is processed. Anything else in a group is
+dropped.
+
+Media messages are not read yet. A captionless media message still creates a
+job with a placeholder text so the agent isn't silently blind to "someone
+sent something," but the media itself isn't attached.
+
+## Channel limits
+
+WhatsApp (via Baileys) has no buttons or message editing:
+
+- **No inline buttons.** Anything that would normally show Allow/Deny
+  buttons (see below) or an approval card instead arrives as plain text
+  pointing you at the dashboard.
+- **No message editing.** A reply is always a new message.
+- Outbound text is chunked at 4096 characters and markdown `**bold**` is
+  converted to WhatsApp's own `*bold*` marker. `html` formatting is not
+  supported on this channel.
+
+## Who can talk to your bot
+
+Same ownership model as every other channel, adapted for no-buttons:
+
+- **You claim it by messaging it first, from a different phone.** The first
+  private conversation with the linked number (not the phone you just
+  linked it with) registers that sender as the **owner**.
+- **A new person is held for your approval.** An unknown conversation gets
+  no job. Instead the owner gets a plain-text notice (WhatsApp has no
+  buttons here) pointing at **Channels → WhatsApp** in the dashboard to
+  approve or refuse, and the requester is told their request is pending.
+
+**A group can never bootstrap ownership.** Until someone has DMed the linked
+number, mentions in groups are silently ignored.
+
+## Verify it works
+
+Send a WhatsApp message to the linked number from a different phone number.
+Expect a reply, and the job listed on the Jobs page.
+
+<Callout type="tip" title="Connected but no reply">
+  Usually means nobody has messaged the linked number yet, so there is no
+  owner.
+</Callout>
+
+## Related
+
+- [Concepts: Agents](/docs/concepts/agents)
+- [Concepts: Connectors & MCP](/docs/concepts/connectors-and-mcp)
+- [Telegram](/docs/guides/telegram): the same ownership/approval model, on a
+  channel with buttons
