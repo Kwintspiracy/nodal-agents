@@ -34,4 +34,3 @@ export function coerceGrid(
   if (!grid) return [];
   return grid.map(coerceRow);
 }
-

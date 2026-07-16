@@ -156,8 +156,8 @@ export default function SecurityForm({ initial }: Props) {
 
         {restartHint && (
           <Banner variant="info" title="Saved. Restart required.">
-            Run <code className="text-mono-12">nodal-agents down && nodal-agents up</code>{' '}
-            to activate the new auth mode.
+            Run <code className="text-mono-12">nodal-agents down && nodal-agents up</code> to
+            activate the new auth mode.
           </Banner>
         )}
 

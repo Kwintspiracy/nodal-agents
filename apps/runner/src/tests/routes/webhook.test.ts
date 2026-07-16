@@ -12,7 +12,12 @@ import type { Mock } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { webhookTriggers, agentJobs, channelBindings, channelAllowedConversations } from '@nodal-agents/db';
+import {
+  webhookTriggers,
+  agentJobs,
+  channelBindings,
+  channelAllowedConversations,
+} from '@nodal-agents/db';
 import type { WebhookTriggerInsert } from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createLlmClient, createEmbeddingClient } from '@nodal-agents/llm';
@@ -275,7 +280,9 @@ describe('POST /webhooks/:slug/:secret — happy path', () => {
 
 describe('POST /webhooks/:slug/:secret — notify (B2)', () => {
   afterEach(async () => {
-    await db.delete(channelAllowedConversations).where(eq(channelAllowedConversations.agentId, seed.agentId));
+    await db
+      .delete(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.agentId, seed.agentId));
     await db.delete(channelBindings).where(eq(channelBindings.agentId, seed.agentId));
   });
 
@@ -319,7 +326,7 @@ describe('POST /webhooks/:slug/:secret — notify (B2)', () => {
     },
   );
 
-  it('notify_channel=null (auto) resolves to the agent\'s first active channel by priority', async () => {
+  it("notify_channel=null (auto) resolves to the agent's first active channel by priority", async () => {
     // Only discord is active (no telegram bot token seeded) — auto must land
     // on discord, not fall back to the telegram-only default.
     await db.insert(channelBindings).values({

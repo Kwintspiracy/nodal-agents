@@ -180,13 +180,9 @@ export default function WorkspacesSection({ initial }: Props) {
                         </div>
                       </form>
                     ) : (
-                      <span className="text-medium-14 text-ink leading-none!">
-                        {ws.name}
-                      </span>
+                      <span className="text-medium-14 text-ink leading-none!">{ws.name}</span>
                     )}
-                    <span className="text-mono-11 text-ink-4 leading-none! mt-0.5">
-                      {ws.role}
-                    </span>
+                    <span className="text-mono-11 text-ink-4 leading-none! mt-0.5">{ws.role}</span>
                   </span>
 
                   {/* Tags + actions */}

@@ -232,7 +232,9 @@ describe('resolveBotToken', () => {
     });
 
     it('is a no-op when absent — falls through to resolveTransportChannel (regression)', async () => {
-      const ctx = makeCtx({ db: makeFakeDb([{ telegramBotToken: 'agent-token' }]) as unknown as ToolContext['db'] });
+      const ctx = makeCtx({
+        db: makeFakeDb([{ telegramBotToken: 'agent-token' }]) as unknown as ToolContext['db'],
+      });
 
       await expect(resolveBotToken(ctx)).resolves.toBe('agent-token');
       expect(getBindingCredentialsMock).not.toHaveBeenCalled();

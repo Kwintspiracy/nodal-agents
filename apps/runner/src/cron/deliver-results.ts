@@ -280,7 +280,8 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
           triggerContext?.type === 'cron' || triggerContext?.type === 'webhook'
             ? (triggerContext.notifyChannel ?? undefined)
             : undefined;
-        const channel = notifyChannelOverride ?? resolveTransportChannel(rootJob.channel, activeChannels);
+        const channel =
+          notifyChannelOverride ?? resolveTransportChannel(rootJob.channel, activeChannels);
         const allowed =
           rootJob.entityId !== null &&
           (await isConversationAllowed(db, {

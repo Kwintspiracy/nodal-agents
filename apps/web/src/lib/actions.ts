@@ -691,7 +691,9 @@ export async function moveWorkerAssignmentAction(raw: unknown): Promise<ActionRe
 
     const db = getDb();
     const ids = Array.from(
-      new Set([workerId, fromOrchestratorId, toOrchestratorId].filter((id): id is string => id !== null)),
+      new Set(
+        [workerId, fromOrchestratorId, toOrchestratorId].filter((id): id is string => id !== null),
+      ),
     );
     const found = await db
       .select({ id: agents.id, role: agents.role })
@@ -725,7 +727,11 @@ export async function moveWorkerAssignmentAction(raw: unknown): Promise<ActionRe
       if (toOrchestratorId) {
         await tx
           .insert(agentAssignments)
-          .values({ orchestratorId: toOrchestratorId, subAgentId: workerId, entityId: session.entityId })
+          .values({
+            orchestratorId: toOrchestratorId,
+            subAgentId: workerId,
+            entityId: session.entityId,
+          })
           // Same team twice (double-drop race, or the worker was already a
           // multi-team member of this orchestrator) — dedup, don't throw.
           .onConflictDoNothing({
@@ -6831,7 +6837,6 @@ export async function getActiveJobsByAgentAction(): Promise<ActionResult<ActiveA
   }
 }
 
-
 // ─── Settings Action ──────────────────────────────────────────────────────────
 
 export type SettingsView = {
@@ -7075,7 +7080,11 @@ const CreateScheduleSchema = z.object({
   task: z.string().min(1),
   notifyOnSuccess: z.boolean().optional().default(false),
   // null = auto (first active channel by priority — unchanged behavior).
-  notifyChannel: z.enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]]).nullable().optional().default(null),
+  notifyChannel: z
+    .enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]])
+    .nullable()
+    .optional()
+    .default(null),
   dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
 });
 
@@ -7213,7 +7222,11 @@ const UpdateScheduleSchema = z.object({
   cronExpr: z.string().min(1).max(100),
   task: z.string().min(1),
   notifyOnSuccess: z.boolean().optional().default(false),
-  notifyChannel: z.enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]]).nullable().optional().default(null),
+  notifyChannel: z
+    .enum(NOTIFY_CHANNEL_OPTIONS as [ChannelKind, ...ChannelKind[]])
+    .nullable()
+    .optional()
+    .default(null),
   dailyBudgetUsd: z.number().min(0.5).max(100).optional().default(5),
 });
 

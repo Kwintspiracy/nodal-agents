@@ -50,9 +50,7 @@ export default function EdRow({
           )}
         </div>
         {meta && (
-          <div className="flex-shrink-0 text-mono-11 tracking-[0.04em] text-ink-4">
-            {meta}
-          </div>
+          <div className="flex-shrink-0 text-mono-11 tracking-[0.04em] text-ink-4">{meta}</div>
         )}
         {actions && <div className="flex flex-shrink-0 items-center gap-2">{actions}</div>}
       </div>

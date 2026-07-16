@@ -109,9 +109,7 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
           agents={agents}
           open={webhookFormOpen}
           onOpenChange={setWebhookFormOpen}
-          onCreated={(id, revealed) =>
-            setRevealedWebhooks((prev) => ({ ...prev, [id]: revealed }))
-          }
+          onCreated={(id, revealed) => setRevealedWebhooks((prev) => ({ ...prev, [id]: revealed }))}
         />
 
         {webhooks.length === 0 ? (

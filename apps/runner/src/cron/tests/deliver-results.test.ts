@@ -562,9 +562,7 @@ describe('deliverCompletedRoots', () => {
     expect(arg.chatId).toBe('discord-chat-1');
     expect(arg.botToken).toBe('discord-bot-token');
 
-    await db
-      .delete(channelBindings)
-      .where(eq(channelBindings.agentId, seed.agentId));
+    await db.delete(channelBindings).where(eq(channelBindings.agentId, seed.agentId));
     await db
       .delete(channelAllowedConversations)
       .where(eq(channelAllowedConversations.agentId, seed.agentId));

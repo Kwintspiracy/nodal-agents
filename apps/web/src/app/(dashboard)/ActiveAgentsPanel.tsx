@@ -52,9 +52,7 @@ export default function ActiveAgentsPanel({ initial }: Props) {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-mono-11 uppercase tracking-[0.16em] text-ink-4">
-          Agents at work
-        </h2>
+        <h2 className="text-mono-11 uppercase tracking-[0.16em] text-ink-4">Agents at work</h2>
         <span className="inline-flex items-center gap-1.5 text-mono-11 text-ink-4">
           {stale ? (
             'reconnect…'
@@ -92,9 +90,7 @@ function AgentCard({ row }: { row: ActiveAgentRow }) {
         <div className="flex min-w-0 items-center gap-2.5">
           <AgentAvatar name={row.agentName} imageUrl={row.avatarUrl} size="lg" shape="round" />
           <div className="min-w-0">
-            <p className="truncate text-title-15 leading-[1.2]! text-ink">
-              {row.agentName}
-            </p>
+            <p className="truncate text-title-15 leading-[1.2]! text-ink">{row.agentName}</p>
             <p className="truncate text-mono-12 text-ink-4">{row.agentSlug}</p>
           </div>
         </div>

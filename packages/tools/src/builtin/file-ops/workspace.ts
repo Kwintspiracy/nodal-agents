@@ -471,4 +471,3 @@ export async function computeSharedOverwriteApproval(
   );
   return exists ? 'require_approval' : undefined;
 }
-

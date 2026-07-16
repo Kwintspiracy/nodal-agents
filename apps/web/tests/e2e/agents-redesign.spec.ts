@@ -31,7 +31,10 @@ async function cardIdentityForWorker(page: Page, workerName: string): Promise<st
     );
     if (unassignedLabel) return 'Unassigned';
     const nameP = Array.from(card.querySelectorAll('p')).find(
-      (p) => p.className.includes('text-sm') && p.className.includes('text-ink') && !p.className.includes('text-ink-3'),
+      (p) =>
+        p.className.includes('text-sm') &&
+        p.className.includes('text-ink') &&
+        !p.className.includes('text-ink-3'),
     );
     return nameP?.textContent?.trim() ?? null;
   }, workerName);
@@ -85,7 +88,11 @@ function workerDragHandle(page: Page, workerName: string) {
  *  ref, and the outer card includes the label area that isn't part of the
  *  droppable ref, which made an earlier version of this drag land nowhere
  *  and get reported as "cancelled" by dnd-kit's live region. */
-async function pointerDragWorkerOnto(page: Page, workerName: string, target: ReturnType<Page['locator']>) {
+async function pointerDragWorkerOnto(
+  page: Page,
+  workerName: string,
+  target: ReturnType<Page['locator']>,
+) {
   const handle = workerDragHandle(page, workerName);
   const handleBox = await handle.boundingBox();
   const targetBox = await target.boundingBox();
@@ -192,7 +199,10 @@ test.describe('Agents page redesign', () => {
     // empty until a worker is dragged out to Unassigned. Do the "out" leg
     // first so scenario 4 (modal) has a real candidate to show.
     const pick = await firstOrchestratorWithWorker(page);
-    expect(pick, 'expected at least one orchestrator with a worker in the seeded DB').not.toBeNull();
+    expect(
+      pick,
+      'expected at least one orchestrator with a worker in the seeded DB',
+    ).not.toBeNull();
     const { orchestratorName, workerName } = pick!;
 
     const stepsOut = await dragWorkerByKeyboardUntil(
@@ -218,7 +228,11 @@ test.describe('Agents page redesign', () => {
       // gap (documented above), not by the move/persist logic itself. Drop
       // onto the empty-zone hint — Unassigned starts empty, so it's the one
       // concrete element inside its droppable ref.
-      await pointerDragWorkerOnto(page, workerName, page.getByText('Drag a worker here', { exact: true }));
+      await pointerDragWorkerOnto(
+        page,
+        workerName,
+        page.getByText('Drag a worker here', { exact: true }),
+      );
     }
 
     await expect
@@ -273,7 +287,11 @@ test.describe('Agents page redesign', () => {
         .getByText(orchestratorName, { exact: true })
         .first()
         .locator('xpath=ancestor::div[contains(@class,"rounded-2xl")][1]');
-      await pointerDragWorkerOnto(page, workerName, originCard.locator('[aria-label="Drag row"]').first());
+      await pointerDragWorkerOnto(
+        page,
+        workerName,
+        originCard.locator('[aria-label="Drag row"]').first(),
+      );
     }
 
     await expect
@@ -286,9 +304,12 @@ test.describe('Agents page redesign', () => {
       .toBe(orchestratorName);
 
     // ── 6. CONSOLE HYGIENE ───────────────────────────────────────────────
-    expect(pageErrors, `pageerror events during the walkthrough: ${pageErrors.join('\n')}`).toEqual([]);
-    expect(consoleErrors, `console.error during the walkthrough: ${consoleErrors.join('\n')}`).toEqual(
+    expect(pageErrors, `pageerror events during the walkthrough: ${pageErrors.join('\n')}`).toEqual(
       [],
     );
+    expect(
+      consoleErrors,
+      `console.error during the walkthrough: ${consoleErrors.join('\n')}`,
+    ).toEqual([]);
   });
 });

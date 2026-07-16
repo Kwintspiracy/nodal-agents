@@ -7,17 +7,17 @@ An agent is a named, persistent AI persona you create in the dashboard. **The ca
 
 ## Configuration
 
-| Field                    | What it does                                              |
-| ------------------------ | --------------------------------------------------------- |
-| **Name / slug / avatar** | UI identity, and the handle orchestrators use to delegate |
-| **System prompt**        | the Markdown injected at the top of every job             |
-| **Model**                | any configured provider key — each agent picks its own    |
-| **Skills**               | inject guidance and unlock gated built-in tools           |
-| **Connectors**           | OAuth / API-key integrations (Gmail, Notion, Airtable…)   |
-| **MCP servers**          | HTTP or stdio servers whose tools are namespaced per job  |
-| **Workspaces**           | filesystem paths the agent can read and write             |
+| Field                    | What it does                                                                              |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| **Name / slug / avatar** | UI identity, and the handle orchestrators use to delegate                                 |
+| **System prompt**        | the Markdown injected at the top of every job                                             |
+| **Model**                | any configured provider key — each agent picks its own                                    |
+| **Skills**               | inject guidance and unlock gated built-in tools                                           |
+| **Connectors**           | OAuth / API-key integrations (Gmail, Notion, Airtable…)                                   |
+| **MCP servers**          | HTTP or stdio servers whose tools are namespaced per job                                  |
+| **Workspaces**           | filesystem paths the agent can read and write                                             |
 | **Channels**             | optional connections for inbound + outbound messages (Telegram, Discord, Slack, WhatsApp) |
-| **Role**                 | `agent` (worker), `orchestrator`, or `system` (reserved)   |
+| **Role**                 | `agent` (worker), `orchestrator`, or `system` (reserved)                                  |
 
 ## How a job runs
 
@@ -47,16 +47,16 @@ Every agent gets these 16 tools on every job, regardless of skills (`ALWAYS_ON_T
 
 Every job is bounded. When a limit is hit the job fails loud with a clear code — never a silent fallback.
 
-| Guard                              | Limit     |
-| ---------------------------------- | --------- |
-| Max turns per job                  | 50        |
-| Max tool calls per turn            | 50        |
-| Max self-chain resumes             | 15        |
-| Max delegation depth               | 3         |
-| Max total tokens per job           | 1,500,000 |
-| Max cost per job                   | $2.00     |
-| Max consecutive delivery-only turns | 3        |
-| Max identical no-progress turns    | 12        |
+| Guard                               | Limit     |
+| ----------------------------------- | --------- |
+| Max turns per job                   | 50        |
+| Max tool calls per turn             | 50        |
+| Max self-chain resumes              | 15        |
+| Max delegation depth                | 3         |
+| Max total tokens per job            | 1,500,000 |
+| Max cost per job                    | $2.00     |
+| Max consecutive delivery-only turns | 3         |
+| Max identical no-progress turns     | 12        |
 
 ## Autonomy
 

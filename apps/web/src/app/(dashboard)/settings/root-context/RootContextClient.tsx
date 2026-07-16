@@ -27,9 +27,7 @@ type Memory = { id: string; fact: string; category: string };
 const TEXTAREA_CLASS = 'mt-2 text-mono-13 leading-[1.55]!';
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-mono-11 tracking-[0.18em] uppercase text-ink-4">{children}</div>
-  );
+  return <div className="text-mono-11 tracking-[0.18em] uppercase text-ink-4">{children}</div>;
 }
 
 export default function RootContextClient({
@@ -157,7 +155,9 @@ export default function RootContextClient({
                       open={open}
                       onClick={() => setOpenSkills((o) => ({ ...o, [s.id]: !o[s.id] }))}
                     >
-                      <span className="shrink-0 text-legacy-14 font-semibold text-ink">{s.name}</span>
+                      <span className="shrink-0 text-legacy-14 font-semibold text-ink">
+                        {s.name}
+                      </span>
                       {s.description && (
                         <span className="min-w-0 truncate text-body-13 text-ink-3">
                           — {s.description}

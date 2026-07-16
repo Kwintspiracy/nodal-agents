@@ -92,7 +92,7 @@ prefer a coarser interval when a tighter one is not needed.
 
 Notification delivery is per-agent: the agent sends through its own channel bindings. A schedule with **Notify me** enabled but assigned to an agent with no connected channel shows a warning in the form. The notification is sent only on a successful (`completed`) run, not on failure or when the agent takes no action.
 
-**Notify via** links the channel to *where* the confirmation goes: picking a channel resolves your conversation with the agent on THAT channel specifically, instead of whichever connected channel happens to win by default priority (Telegram, then Discord, then Slack). If you pick a channel you've never messaged the agent on yet, the schedule still fires — the run itself is not blocked — but the confirmation has nowhere to go. `lastStatus` then reads **notify_unreachable** instead of `success`, so the miss is visible instead of silent. Message the agent once on that channel and the next fire delivers normally.
+**Notify via** links the channel to _where_ the confirmation goes: picking a channel resolves your conversation with the agent on THAT channel specifically, instead of whichever connected channel happens to win by default priority (Telegram, then Discord, then Slack). If you pick a channel you've never messaged the agent on yet, the schedule still fires — the run itself is not blocked — but the confirmation has nowhere to go. `lastStatus` then reads **notify_unreachable** instead of `success`, so the miss is visible instead of silent. Message the agent once on that channel and the next fire delivers normally.
 
 WhatsApp is not offered in **Notify via** yet — the runner has no way to hand a mid-run confirmation to a WhatsApp-bound agent today.
 

@@ -26,9 +26,7 @@ export default function GlobalError({ error, reset }: ErrorProps) {
         <PrimaryButton variant="agent" onClick={reset}>
           Try again
         </PrimaryButton>
-        {error.digest && (
-          <p className="text-mono-12 text-ink-4">Reference: {error.digest}</p>
-        )}
+        {error.digest && <p className="text-mono-12 text-ink-4">Reference: {error.digest}</p>}
       </div>
     </div>
   );

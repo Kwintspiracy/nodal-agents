@@ -122,8 +122,7 @@ function abbrevTokens(n: number): string {
   return (n / 1_000_000 >= 100 ? String(Math.round(n / 1_000_000)) : trim(n / 1_000_000)) + 'M';
 }
 
-const TH =
-  'px-4 py-2.5 text-mono-11 uppercase tracking-[0.12em] text-ink-3 whitespace-nowrap';
+const TH = 'px-4 py-2.5 text-mono-11 uppercase tracking-[0.12em] text-ink-3 whitespace-nowrap';
 const TD = 'px-4 py-3 align-middle';
 
 export default function DelegationTable({

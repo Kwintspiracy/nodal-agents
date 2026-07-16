@@ -31,9 +31,7 @@ export default function PageHeader({ title, subtitle }: Props) {
     // in the navbar — page actions live in the body toolbar (PageTopBar).
     <header className="flex items-center justify-between gap-4 border-b border-rule-2 px-5 pt-5 pb-4 sm:px-8 lg:px-9">
       <div className="min-w-0 flex-1">
-        <h1 className="text-display-28 leading-[1.15]! tracking-[-0.015em] text-ink">
-          {title}
-        </h1>
+        <h1 className="text-display-28 leading-[1.15]! tracking-[-0.015em] text-ink">{title}</h1>
         {subtitle && <p className="mt-1.5 text-body-14 leading-[1.5]! text-ink-3">{subtitle}</p>}
       </div>
       <div className="hidden shrink-0 items-center gap-2 lg:flex">

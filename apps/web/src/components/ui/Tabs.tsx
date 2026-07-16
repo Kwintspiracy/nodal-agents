@@ -59,9 +59,7 @@ export default function Tabs<T extends string>({
           >
             {t.label}
             {t.count !== undefined && t.count > 0 && (
-              <span
-                className={`ml-1.5 text-mono-11 ${isActive ? 'text-ink-2' : 'text-ink-4'}`}
-              >
+              <span className={`ml-1.5 text-mono-11 ${isActive ? 'text-ink-2' : 'text-ink-4'}`}>
                 {t.count}
               </span>
             )}

@@ -162,13 +162,9 @@ function AssignPanel({
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-ink">{agent.name}</span>
-                <span className="block truncate text-mono-12 text-ink-3">
-                  {agent.slug}
-                </span>
+                <span className="block truncate text-mono-12 text-ink-3">{agent.slug}</span>
               </span>
-              <span
-                className={`shrink-0 text-medium-12 ${assigned ? 'text-ok' : 'text-ink-4'}`}
-              >
+              <span className={`shrink-0 text-medium-12 ${assigned ? 'text-ok' : 'text-ink-4'}`}>
                 {assigned ? 'Assigned' : 'Not assigned'}
               </span>
             </label>

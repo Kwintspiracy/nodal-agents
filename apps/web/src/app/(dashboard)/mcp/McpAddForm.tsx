@@ -419,7 +419,9 @@ export default function McpAddForm({ catalogItem, onDone, onCancel }: Props) {
             </div>
           )}
 
-          {catalogItem.docsHint && <p className="text-body-12 text-ink-4">{catalogItem.docsHint}</p>}
+          {catalogItem.docsHint && (
+            <p className="text-body-12 text-ink-4">{catalogItem.docsHint}</p>
+          )}
         </>
       )}
 

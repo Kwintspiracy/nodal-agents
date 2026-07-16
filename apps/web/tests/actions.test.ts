@@ -3500,9 +3500,7 @@ describe('createScheduleAction', () => {
   // ─── B1 (notify-channel-choice) ────────────────────────────────────────────
 
   it('rejects a notifyChannel the agent has no active binding for', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000139' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000139' }]) as typeof currentDb;
     deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce([]);
     const { createScheduleAction } = await import('../src/lib/actions.ts');
     const r = await createScheduleAction({
@@ -3520,9 +3518,7 @@ describe('createScheduleAction', () => {
   });
 
   it('rejects a notifyChannel outside the offered enum (e.g. whatsapp — not offered in B1)', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000140' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000140' }]) as typeof currentDb;
     const { createScheduleAction } = await import('../src/lib/actions.ts');
     const r = await createScheduleAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000140',
@@ -3536,9 +3532,7 @@ describe('createScheduleAction', () => {
   });
 
   it('accepts a notifyChannel that IS active for the agent and persists it', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000141' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000141' }]) as typeof currentDb;
     deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce(['discord']);
     const { createScheduleAction } = await import('../src/lib/actions.ts');
     const r = await createScheduleAction({
@@ -3556,9 +3550,7 @@ describe('createScheduleAction', () => {
   });
 
   it('notifyChannel omitted or null persists null (auto, unchanged behavior)', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000142' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000142' }]) as typeof currentDb;
     deliveryMocks.listActiveChannelsForAgent.mockClear();
     const { createScheduleAction } = await import('../src/lib/actions.ts');
     const r = await createScheduleAction({
@@ -3631,9 +3623,7 @@ describe('duplicateScheduleAction', () => {
 
 describe('updateScheduleAction', () => {
   it('rejects a notifyChannel the agent has no active binding for', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000210' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000210' }]) as typeof currentDb;
     deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce([]);
     const { updateScheduleAction } = await import('../src/lib/actions.ts');
     const r = await updateScheduleAction({
@@ -3652,9 +3642,7 @@ describe('updateScheduleAction', () => {
   });
 
   it('accepts a notifyChannel that IS active for the agent and persists it', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000212' },
-    ]) as typeof currentDb;
+    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000212' }]) as typeof currentDb;
     deliveryMocks.listActiveChannelsForAgent.mockResolvedValueOnce(['slack']);
     const { updateScheduleAction } = await import('../src/lib/actions.ts');
     const r = await updateScheduleAction({
@@ -3667,8 +3655,8 @@ describe('updateScheduleAction', () => {
     });
     expect(r.ok).toBe(true);
     const updateSpy = (currentDb as unknown as { update: ReturnType<typeof vi.fn> }).update;
-    const values = (updateSpy.mock.results.at(-1)?.value as { set?: ReturnType<typeof vi.fn> })
-      ?.set?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    const values = (updateSpy.mock.results.at(-1)?.value as { set?: ReturnType<typeof vi.fn> })?.set
+      ?.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(values?.['notifyChannel']).toBe('slack');
   });
 });

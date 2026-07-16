@@ -72,9 +72,7 @@ export default function MarketplaceCard({
         </div>
       )}
 
-      <div className="text-title-16 leading-[1.2]! tracking-[-0.005em] text-ink">
-        {name}
-      </div>
+      <div className="text-title-16 leading-[1.2]! tracking-[-0.005em] text-ink">{name}</div>
       {description && (
         <div
           className="line-clamp-3 text-body-14 leading-[1.4]! text-ink-3"

@@ -163,74 +163,74 @@ export default function ScheduleForm(props: Props) {
         </ModalFooter>
       }
     >
-    <form id="schedule-form" onSubmit={handleSubmit} className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <Select
-          id="schedule-agent"
-          label="Agent"
-          name="agentId"
+      <form id="schedule-form" onSubmit={handleSubmit} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Select
+            id="schedule-agent"
+            label="Agent"
+            name="agentId"
+            required
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
+          >
+            <option value="">Select…</option>
+            {props.agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+          <TextInput
+            id="schedule-name"
+            label="Name"
+            name="name"
+            required
+            defaultValue={nameDefault}
+            placeholder="Daily standup"
+          />
+        </div>
+
+        <CronBuilder name="cronExpr" initial={cronDefault} />
+
+        <TextArea
+          id="schedule-task"
+          label="Task instructions"
+          name="task"
           required
-          value={agentId}
-          onChange={(e) => setAgentId(e.target.value)}
-        >
-          <option value="">Select…</option>
-          {props.agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </Select>
-        <TextInput
-          id="schedule-name"
-          label="Name"
-          name="name"
-          required
-          defaultValue={nameDefault}
-          placeholder="Daily standup"
+          rows={4}
+          defaultValue={taskDefault}
+          placeholder="What should the agent do each time this fires?"
         />
-      </div>
 
-      <CronBuilder name="cronExpr" initial={cronDefault} />
-
-      <TextArea
-        id="schedule-task"
-        label="Task instructions"
-        name="task"
-        required
-        rows={4}
-        defaultValue={taskDefault}
-        placeholder="What should the agent do each time this fires?"
-      />
-
-      <NotifyChannelFields
-        idPrefix="schedule"
-        agentId={agentId}
-        agentName={selectedAgent?.name}
-        notifyOnSuccess={notifyOnSuccess}
-        onNotifyOnSuccessChange={setNotifyOnSuccess}
-        notifyChannel={notifyChannel}
-        onNotifyChannelChange={setNotifyChannel}
-      />
-
-      <div>
-        <TextInput
-          id="schedule-daily-budget"
-          label="Daily budget ($)"
-          name="dailyBudgetUsd"
-          type="number"
-          required
-          min={0.5}
-          max={100}
-          step={0.5}
-          defaultValue={dailyBudgetDefault}
-          className="w-32"
+        <NotifyChannelFields
+          idPrefix="schedule"
+          agentId={agentId}
+          agentName={selectedAgent?.name}
+          notifyOnSuccess={notifyOnSuccess}
+          onNotifyOnSuccessChange={setNotifyOnSuccess}
+          notifyChannel={notifyChannel}
+          onNotifyChannelChange={setNotifyChannel}
         />
-        <p className="mt-1 text-xs text-ink-3">
-          Runs pause automatically once this schedule spends this much in a day, resuming the next.
-        </p>
-      </div>
 
-    </form>
+        <div>
+          <TextInput
+            id="schedule-daily-budget"
+            label="Daily budget ($)"
+            name="dailyBudgetUsd"
+            type="number"
+            required
+            min={0.5}
+            max={100}
+            step={0.5}
+            defaultValue={dailyBudgetDefault}
+            className="w-32"
+          />
+          <p className="mt-1 text-xs text-ink-3">
+            Runs pause automatically once this schedule spends this much in a day, resuming the
+            next.
+          </p>
+        </div>
+      </form>
     </Modal>
   );
 }

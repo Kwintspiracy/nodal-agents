@@ -183,9 +183,7 @@ export default async function DashboardPage() {
       {/* 5 — Job status breakdown -------------------------------------- */}
       {Object.keys(s.statusCounts).length > 0 && (
         <div className="mt-7">
-          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">
-            Job status
-          </h2>
+          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">Job status</h2>
           <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
             <table className="w-full text-sm">
               <tbody>
@@ -213,9 +211,7 @@ export default async function DashboardPage() {
       {/* 6 — Per agent ------------------------------------------------- */}
       {s.perAgent.length > 0 && (
         <div className="mt-7">
-          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">
-            Per agent
-          </h2>
+          <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">Per agent</h2>
           <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
             <table className="w-full text-sm">
               <thead>

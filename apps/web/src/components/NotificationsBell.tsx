@@ -145,7 +145,9 @@ function ApprovalsDropdown({
                   <p className="mt-0.5 truncate text-body-12 text-ink-3">
                     {inputSnippet(item.toolInput as Record<string, unknown> | null)}
                   </p>
-                  <p className="mt-0.5 text-legacy-11 text-ink-4">{relativeTime(item.requestedAt)}</p>
+                  <p className="mt-0.5 text-legacy-11 text-ink-4">
+                    {relativeTime(item.requestedAt)}
+                  </p>
                 </div>
                 <ApproveButton item={item} onApproved={onApproved} />
               </Link>

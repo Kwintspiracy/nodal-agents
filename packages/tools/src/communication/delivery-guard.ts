@@ -230,7 +230,8 @@ export async function resolveRecipientChatId(
   }
 
   const channel = await resolveChannelForJob(ctx, explicitChannel);
-  const crossChannel = explicitChannel !== undefined && explicitChannel !== defaultChannelForJob(ctx);
+  const crossChannel =
+    explicitChannel !== undefined && explicitChannel !== defaultChannelForJob(ctx);
   let chatId = explicitChatId ?? (crossChannel ? null : ctx.jobChatId);
 
   // Owner fallback: an unsolicited run (cron watcher, notify_on_success=false,

@@ -97,7 +97,9 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
         <div className="flex items-center gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-legacy-13-5 font-medium leading-[1.2]! text-ink">{skill.name}</span>
+              <span className="text-legacy-13-5 font-medium leading-[1.2]! text-ink">
+                {skill.name}
+              </span>
               {skill.isCommunity && (
                 <span className="shrink-0 rounded bg-skill-vivid/15 px-1.5 py-0.5 font-mono text-legacy-9-5 font-medium uppercase tracking-[0.08em] text-skill-vivid">
                   community

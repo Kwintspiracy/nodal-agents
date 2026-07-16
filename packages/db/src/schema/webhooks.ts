@@ -1,6 +1,15 @@
 // webhook_triggers table
 
-import { pgTable, text, uuid, boolean, integer, timestamp, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  boolean,
+  integer,
+  timestamp,
+  index,
+  check,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';

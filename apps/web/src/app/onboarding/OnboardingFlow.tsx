@@ -944,9 +944,7 @@ export default function OnboardingFlow() {
               ◆
             </span>
           </div>
-          <div className="text-title-15 tracking-[-0.01em] text-ink">
-            Entering Nodal-Agents
-          </div>
+          <div className="text-title-15 tracking-[-0.01em] text-ink">Entering Nodal-Agents</div>
           <div className="mt-1 text-legacy-12-5 text-ink-3">
             Waking up {agentName || 'your agent'}…
           </div>

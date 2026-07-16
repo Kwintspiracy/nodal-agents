@@ -973,7 +973,10 @@ describe('runScheduleTick', () => {
   });
 
   it('accepts notify_unreachable as a valid last_status (migration 0066 CHECK constraint)', async () => {
-    const sched = await createSchedule({ nextRun: null, task: 'notify_unreachable constraint probe' });
+    const sched = await createSchedule({
+      nextRun: null,
+      task: 'notify_unreachable constraint probe',
+    });
     await db
       .update(agentSchedules)
       .set({ lastStatus: 'notify_unreachable' })

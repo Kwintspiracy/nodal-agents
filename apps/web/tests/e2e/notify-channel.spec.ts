@@ -48,7 +48,8 @@ function attachErrorCollectors(page: Page): { assertNoErrors: () => void } {
   });
   page.on('pageerror', (err) => errors.push(`pageerror: ${String(err)}`));
   return {
-    assertNoErrors: () => expect(errors, `console/page errors: ${JSON.stringify(errors)}`).toEqual([]),
+    assertNoErrors: () =>
+      expect(errors, `console/page errors: ${JSON.stringify(errors)}`).toEqual([]),
   };
 }
 
@@ -85,7 +86,7 @@ async function waitForNotifyResolution(page: Page): Promise<'warning' | 'select'
   return (await warning.isVisible()) ? 'warning' : 'select';
 }
 
-test.describe('Scenario 1 — Schedule form: Notify via lists only the agent\'s real active channels', () => {
+test.describe("Scenario 1 — Schedule form: Notify via lists only the agent's real active channels", () => {
   test('create with explicit Telegram channel, persists across reload + edit', async ({ page }) => {
     const { assertNoErrors } = attachErrorCollectors(page);
 
@@ -95,7 +96,9 @@ test.describe('Scenario 1 — Schedule form: Notify via lists only the agent\'s 
     await deleteScheduleIfPresent(page, SCHEDULE_NAME);
 
     await page.getByRole('button', { name: /new schedule/i }).click();
-    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({
+      timeout: 5_000,
+    });
 
     const agentSelect = page.locator('#schedule-agent');
     await expect(agentSelect).toBeVisible({ timeout: 5_000 });
@@ -103,7 +106,9 @@ test.describe('Scenario 1 — Schedule form: Notify via lists only the agent\'s 
     // Find the agent with a Telegram bot bound — same discovery the "Notify
     // via" select itself does, so this test tracks whichever agent actually
     // has channels live, instead of assuming a fixed name.
-    const agentNames = (await agentSelect.locator('option').allTextContents()).filter((t) => t.trim() !== '' && t !== 'Select…');
+    const agentNames = (await agentSelect.locator('option').allTextContents()).filter(
+      (t) => t.trim() !== '' && t !== 'Select…',
+    );
     expect(agentNames.length, 'expected at least one agent in the live entity').toBeGreaterThan(0);
 
     const notifyCheckbox = page.getByRole('checkbox', { name: /notify me when it succeeds/i });
@@ -124,7 +129,10 @@ test.describe('Scenario 1 — Schedule form: Notify via lists only the agent\'s 
     }
 
     if (!channelAgentName) {
-      test.skip(true, 'No agent in the live entity has an active notify channel — cannot test channel list');
+      test.skip(
+        true,
+        'No agent in the live entity has an active notify channel — cannot test channel list',
+      );
       return;
     }
 
@@ -150,24 +158,36 @@ test.describe('Scenario 1 — Schedule form: Notify via lists only the agent\'s 
 
     await page.getByRole('button', { name: /create schedule/i }).click();
     await expect(page.getByText(/schedule created/i)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('heading', { name: SCHEDULE_NAME })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: SCHEDULE_NAME })).toBeVisible({
+      timeout: 15_000,
+    });
 
     // ── Reload — the row must still be there (real DB persistence, not just
     //     client state) ───────────────────────────────────────────────────
     await page.reload();
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: SCHEDULE_NAME })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: SCHEDULE_NAME })).toBeVisible({
+      timeout: 10_000,
+    });
 
-    const card = page.locator('.rounded-xl').filter({ has: page.getByRole('heading', { name: SCHEDULE_NAME }) });
+    const card = page
+      .locator('.rounded-xl')
+      .filter({ has: page.getByRole('heading', { name: SCHEDULE_NAME }) });
     // "Notifies" badge should be present on the row itself.
     await expect(card.getByText(/notifies/i)).toBeVisible({ timeout: 5_000 });
 
     // ── Re-open edit — notify + channel must be exactly what was saved ────
     await card.getByRole('button', { name: /^edit$/i }).click();
-    await expect(page.getByRole('heading', { name: /edit schedule/i })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: /edit schedule/i })).toBeVisible({
+      timeout: 5_000,
+    });
 
-    await expect(page.getByRole('checkbox', { name: /notify me when it succeeds/i })).toBeChecked({ timeout: 5_000 });
-    await expect(page.locator('#schedule-notify-channel')).toHaveValue('telegram', { timeout: 5_000 });
+    await expect(page.getByRole('checkbox', { name: /notify me when it succeeds/i })).toBeChecked({
+      timeout: 5_000,
+    });
+    await expect(page.locator('#schedule-notify-channel')).toHaveValue('telegram', {
+      timeout: 5_000,
+    });
 
     await page.getByRole('button', { name: /cancel/i }).click();
 
@@ -179,7 +199,9 @@ test.describe('Scenario 1 — Schedule form: Notify via lists only the agent\'s 
 });
 
 test.describe('Scenario 2 — Webhook form: Notify via + Auto persists, badge on the row', () => {
-  test('create with notify ON, channel Auto, badge appears, then delete (never POST)', async ({ page }) => {
+  test('create with notify ON, channel Auto, badge appears, then delete (never POST)', async ({
+    page,
+  }) => {
     const { assertNoErrors } = attachErrorCollectors(page);
 
     await page.goto('/automations');
@@ -188,7 +210,9 @@ test.describe('Scenario 2 — Webhook form: Notify via + Auto persists, badge on
     await deleteWebhookIfPresent(page, WEBHOOK_NAME);
 
     await page.getByRole('button', { name: /new webhook/i }).click();
-    await expect(page.getByRole('heading', { name: /new webhook/i })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: /new webhook/i })).toBeVisible({
+      timeout: 5_000,
+    });
 
     const agentSelect = page.locator('#webhook-agent');
     await expect(agentSelect).toBeVisible({ timeout: 5_000 });
@@ -220,19 +244,27 @@ test.describe('Scenario 2 — Webhook form: Notify via + Auto persists, badge on
     // Scoped to the heading role — "Webhook created" also flashes as a toast
     // at the same time, and a bare text match hits both (strict-mode
     // violation).
-    await expect(page.getByRole('heading', { name: /webhook created/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: /webhook created/i })).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Success panel shows the URL once — close it (Done) without ever posting to it.
     await page.getByRole('button', { name: /^done$/i }).click();
 
-    await expect(page.getByRole('heading', { name: WEBHOOK_NAME })).toBeVisible({ timeout: 10_000 });
-    const card = page.locator('.rounded-xl').filter({ has: page.getByRole('heading', { name: WEBHOOK_NAME }) });
+    await expect(page.getByRole('heading', { name: WEBHOOK_NAME })).toBeVisible({
+      timeout: 10_000,
+    });
+    const card = page
+      .locator('.rounded-xl')
+      .filter({ has: page.getByRole('heading', { name: WEBHOOK_NAME }) });
     await expect(card.getByText(/notifies/i)).toBeVisible({ timeout: 5_000 });
 
     // ── Reload persistence check ───────────────────────────────────────
     await page.reload();
     await page.waitForLoadState('networkidle');
-    const cardAfterReload = page.locator('.rounded-xl').filter({ has: page.getByRole('heading', { name: WEBHOOK_NAME }) });
+    const cardAfterReload = page
+      .locator('.rounded-xl')
+      .filter({ has: page.getByRole('heading', { name: WEBHOOK_NAME }) });
     await expect(cardAfterReload.getByText(/notifies/i)).toBeVisible({ timeout: 10_000 });
 
     // ── Cleanup (delete — never fire it) ───────────────────────────────
@@ -243,18 +275,24 @@ test.describe('Scenario 2 — Webhook form: Notify via + Auto persists, badge on
 });
 
 test.describe('Scenario 3 — Agent switch: "no channel connected" warning for a channel-less agent', () => {
-  test('warns for a channel-less agent, clears when switching to a connected one', async ({ page }) => {
+  test('warns for a channel-less agent, clears when switching to a connected one', async ({
+    page,
+  }) => {
     const { assertNoErrors } = attachErrorCollectors(page);
 
     await page.goto('/automations');
     await page.waitForLoadState('networkidle');
 
     await page.getByRole('button', { name: /new schedule/i }).click();
-    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({
+      timeout: 5_000,
+    });
 
     const agentSelect = page.locator('#schedule-agent');
     await expect(agentSelect).toBeVisible({ timeout: 5_000 });
-    const agentNames = (await agentSelect.locator('option').allTextContents()).filter((t) => t.trim() !== '' && t !== 'Select…');
+    const agentNames = (await agentSelect.locator('option').allTextContents()).filter(
+      (t) => t.trim() !== '' && t !== 'Select…',
+    );
 
     const notifyCheckbox = page.getByRole('checkbox', { name: /notify me when it succeeds/i });
     await notifyCheckbox.check();
@@ -272,13 +310,18 @@ test.describe('Scenario 3 — Agent switch: "no channel connected" warning for a
     }
 
     if (!channelLessName) {
-      test.skip(true, 'No channel-less agent in the live entity — non-testable without seeding (not seeding per policy)');
+      test.skip(
+        true,
+        'No channel-less agent in the live entity — non-testable without seeding (not seeding per policy)',
+      );
       return;
     }
 
     await selectAgentByName(agentSelect, channelLessName);
     await waitForNotifyResolution(page);
-    await expect(page.getByText(new RegExp(`${escapeRegExp(channelLessName)}.*has no channel connected`, 'i'))).toBeVisible({
+    await expect(
+      page.getByText(new RegExp(`${escapeRegExp(channelLessName)}.*has no channel connected`, 'i')),
+    ).toBeVisible({
       timeout: 5_000,
     });
     // No select should render while the warning is up.
@@ -305,7 +348,9 @@ test.describe('Scenario 4 — Dark mode: notify controls stay theme-aware', () =
     await page.waitForLoadState('networkidle');
 
     await page.getByRole('button', { name: /new schedule/i }).click();
-    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({
+      timeout: 5_000,
+    });
 
     const agentSelect = page.locator('#schedule-agent');
     await expect(agentSelect).toBeVisible({ timeout: 5_000 });
@@ -334,7 +379,10 @@ test.describe('Scenario 4 — Dark mode: notify controls stay theme-aware', () =
 
     const lightBg = await notifyBlock.evaluate((el) => getComputedStyle(el).backgroundColor);
 
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'schedule-form-light.png'), fullPage: true });
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'schedule-form-light.png'),
+      fullPage: true,
+    });
 
     // The ThemeToggle button lives in the page topbar, outside the
     // non-dismissable Modal — its full-screen backdrop (fixed inset-0 z-40)
@@ -348,12 +396,17 @@ test.describe('Scenario 4 — Dark mode: notify controls stay theme-aware', () =
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
     await page.getByRole('button', { name: /new schedule/i }).click();
-    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name: /new schedule/i })).toBeVisible({
+      timeout: 5_000,
+    });
     await agentSelect.selectOption(firstAgentValue);
     await notifyCheckbox.check();
     await waitForNotifyResolution(page);
 
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'schedule-form-dark.png'), fullPage: true });
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'schedule-form-dark.png'),
+      fullPage: true,
+    });
 
     const darkBg = await notifyBlock.evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(darkBg).not.toBe(lightBg);

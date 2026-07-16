@@ -359,7 +359,9 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
             ) : (
               <div className="flex flex-col gap-7">
                 <div className="flex items-center justify-center">
-                  <span className="text-legacy-11 uppercase tracking-[0.14em] text-ink-3">Today</span>
+                  <span className="text-legacy-11 uppercase tracking-[0.14em] text-ink-3">
+                    Today
+                  </span>
                 </div>
                 {messages.map((m) => (
                   <MessageBubble key={m.id} message={m} rootName={rootName} />
@@ -368,9 +370,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                   <div className="flex gap-3">
                     <AgentAvatar rootName={rootName} />
                     <div className="min-w-0 flex-1 border-l-2 border-ink/10 pl-4">
-                      <span className="text-medium-13 text-ink">
-                        {rootName ?? 'Agent'}
-                      </span>
+                      <span className="text-medium-13 text-ink">{rootName ?? 'Agent'}</span>
                       <span className="mt-0.5 flex items-center gap-1.5 text-body-13 text-ink-4">
                         <span className="animate-pulse">●</span> thinking…
                       </span>

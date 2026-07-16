@@ -167,7 +167,9 @@ function CredentialRow({
             <span className="inline-flex shrink-0 rounded bg-indigo-500/15 px-2 py-0.5 font-mono text-micro-10 tracking-wider text-indigo-400 uppercase">
               {typeLabel}
             </span>
-            <span className="truncate text-legacy-13-5 font-medium text-ink">{credential.name}</span>
+            <span className="truncate text-legacy-13-5 font-medium text-ink">
+              {credential.name}
+            </span>
           </div>
         </td>
 

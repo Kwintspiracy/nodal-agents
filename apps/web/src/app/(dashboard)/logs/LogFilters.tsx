@@ -33,7 +33,9 @@ export default function LogFilters({ agents, toolNames }: Props) {
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-rule-2 bg-paper px-4 py-3">
       <div className="min-w-[180px] flex-1">
-        <label className="mb-1 block text-legacy-11 uppercase tracking-wider text-ink-3">Agent</label>
+        <label className="mb-1 block text-legacy-11 uppercase tracking-wider text-ink-3">
+          Agent
+        </label>
         <Select
           value={agentId}
           onChange={(e) => update({ agent: e.target.value || null })}

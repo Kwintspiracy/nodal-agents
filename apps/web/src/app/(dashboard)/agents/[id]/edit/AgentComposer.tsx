@@ -853,9 +853,7 @@ function AgentWeeklyChart({ jobs }: { jobs: JobRow[] }) {
   return (
     <div>
       <div className="mb-3 flex items-baseline gap-2">
-        <span className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
-          Runs · 7 days
-        </span>
+        <span className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">Runs · 7 days</span>
       </div>
       <div className="mb-4 flex items-baseline gap-3">
         <span className="text-legacy-34 font-semibold leading-none! tracking-[-0.015em] text-ink">
@@ -920,9 +918,7 @@ function SkillEdRow({ skill }: { skill: SkillRow }) {
     <EdRow
       glyph={
         <Disc variant="skill" size="lg" shape="square">
-          <span className="font-mono text-label-11 uppercase">
-            {skill.slug.slice(0, 2)}
-          </span>
+          <span className="font-mono text-label-11 uppercase">{skill.slug.slice(0, 2)}</span>
         </Disc>
       }
       name={skill.name}
@@ -947,9 +943,7 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
     <EdRow
       glyph={
         <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
-          <span className="font-mono text-label-11">
-            {connGlyph(row.slug, row.label)}
-          </span>
+          <span className="font-mono text-label-11">{connGlyph(row.slug, row.label)}</span>
         </Disc>
       }
       name={
@@ -1109,9 +1103,7 @@ function SkillToggleRow({
     <EdRow
       glyph={
         <Disc variant="skill" size="lg" shape="square">
-          <span className="font-mono text-label-11 uppercase">
-            {skill.slug.slice(0, 2)}
-          </span>
+          <span className="font-mono text-label-11 uppercase">{skill.slug.slice(0, 2)}</span>
         </Disc>
       }
       name={skill.name}

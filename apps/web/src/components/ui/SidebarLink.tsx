@@ -85,9 +85,7 @@ export default function SidebarLink({ href, label, icon, dot, count, pill, isAct
         </span>
       ) : (
         count !== undefined && (
-          <span className="text-mono-13 tracking-[0.02em] text-ink-4 lg:text-mono-11">
-            {count}
-          </span>
+          <span className="text-mono-13 tracking-[0.02em] text-ink-4 lg:text-mono-11">{count}</span>
         )
       )}
     </Link>

@@ -98,7 +98,8 @@ test.describe('Scenario A — Garde-fou: Telegram notify warning for bot-less ag
       await expect
         .poll(
           async () =>
-            (await warning.isVisible()) || ((await notifyVia.isVisible()) && (await notifyVia.isEnabled())),
+            (await warning.isVisible()) ||
+            ((await notifyVia.isVisible()) && (await notifyVia.isEnabled())),
           { timeout: 5_000 },
         )
         .toBe(true);

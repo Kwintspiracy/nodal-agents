@@ -79,9 +79,7 @@ export default async function SettingsPage() {
               {s.workerSecretConfigured ? (
                 <CheckOk>configured</CheckOk>
               ) : (
-                <span className="text-medium-14 text-warn">
-                  missing — runner calls will 403
-                </span>
+                <span className="text-medium-14 text-warn">missing — runner calls will 403</span>
               )}
             </SetRow>
           </SetPane>

@@ -95,7 +95,12 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
             <PrimaryButton variant="neutral" onClick={() => onOpenChange(false)}>
               Cancel
             </PrimaryButton>
-            <PrimaryButton variant="ink" type="submit" form="webhook-create-form" disabled={isPending}>
+            <PrimaryButton
+              variant="ink"
+              type="submit"
+              form="webhook-create-form"
+              disabled={isPending}
+            >
               {isPending ? 'Creating…' : 'Create webhook'}
             </PrimaryButton>
           </ModalFooter>
@@ -112,45 +117,45 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
         </div>
       ) : (
         <form id="webhook-create-form" onSubmit={handleSubmit} className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <Select
-          id="webhook-agent"
-          label="Agent"
-          name="agentId"
-          required
-          value={agentId}
-          onChange={(e) => setAgentId(e.target.value)}
-        >
-          <option value="">Select…</option>
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </Select>
-        <TextInput
-          id="webhook-name"
-          label="Name"
-          name="name"
-          required
-          placeholder="GitHub PR opened"
-        />
-      </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Select
+              id="webhook-agent"
+              label="Agent"
+              name="agentId"
+              required
+              value={agentId}
+              onChange={(e) => setAgentId(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </Select>
+            <TextInput
+              id="webhook-name"
+              label="Name"
+              name="name"
+              required
+              placeholder="GitHub PR opened"
+            />
+          </div>
 
-      <div>
-        <TextArea
-          id="webhook-task"
-          label="Task template"
-          name="taskTemplate"
-          required
-          rows={4}
-          placeholder="A new pull request was opened: {pull_request.title}"
-        />
-        <p className="mt-1 text-xs text-ink-3">
-          Use {'{field.subfield}'} to inject data from the incoming JSON payload (e.g.{' '}
-          {'{pull_request.title}'}).
-        </p>
-      </div>
+          <div>
+            <TextArea
+              id="webhook-task"
+              label="Task template"
+              name="taskTemplate"
+              required
+              rows={4}
+              placeholder="A new pull request was opened: {pull_request.title}"
+            />
+            <p className="mt-1 text-xs text-ink-3">
+              Use {'{field.subfield}'} to inject data from the incoming JSON payload (e.g.{' '}
+              {'{pull_request.title}'}).
+            </p>
+          </div>
 
           <NotifyChannelFields
             idPrefix="webhook"

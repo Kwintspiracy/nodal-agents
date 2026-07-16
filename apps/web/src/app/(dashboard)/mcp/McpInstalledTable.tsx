@@ -108,9 +108,7 @@ function McpRow({
               ) : emoji ? (
                 <span className="text-body-15 leading-none!">{emoji}</span>
               ) : (
-                <span className="font-mono text-micro-10 tracking-[0.04em]">
-                  {glyph}
-                </span>
+                <span className="font-mono text-micro-10 tracking-[0.04em]">{glyph}</span>
               )}
             </Disc>
             <div className="min-w-0">
@@ -127,9 +125,7 @@ function McpRow({
         {/* Tools */}
         <td className="px-[18px] py-[13px] align-middle">
           <span className="font-mono text-legacy-12-5 text-ink-2">{instance.toolCount}</span>
-          {instance.toolCount === 0 && (
-            <span className="ml-1 text-mono-11 text-ink-4">none</span>
-          )}
+          {instance.toolCount === 0 && <span className="ml-1 text-mono-11 text-ink-4">none</span>}
         </td>
 
         {/* Transport */}

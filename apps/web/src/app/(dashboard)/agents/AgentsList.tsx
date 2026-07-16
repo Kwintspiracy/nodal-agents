@@ -137,12 +137,7 @@ interface Props {
   llmKeys: LlmKeyUiRow[];
 }
 
-export default function AgentsList({
-  initialGroups,
-  initialActivity,
-  agents,
-  llmKeys,
-}: Props) {
+export default function AgentsList({ initialGroups, initialActivity, agents, llmKeys }: Props) {
   // Stable content signature of the server prop. Changes whenever the set of
   // agent IDs or team memberships changes (delete, add, move, or a reorder
   // server-round-trip completes).
@@ -173,7 +168,9 @@ export default function AgentsList({
   // The list every render uses: optimistic override while a drag/move is in
   // flight; server data the rest of the time (including right after a
   // delete). Unassigned is always present so it's always a valid drop target.
-  const groups = ensureStandalone((seenKey === serverGroupsKey ? displayed : null) ?? initialGroups);
+  const groups = ensureStandalone(
+    (seenKey === serverGroupsKey ? displayed : null) ?? initialGroups,
+  );
 
   const [activity, setActivity] = useState<ActiveAgentRow[]>(initialActivity);
   const [isPending, startTransition] = useTransition();
@@ -250,7 +247,11 @@ export default function AgentsList({
     previous: AgentGroup[],
   ) {
     startTransition(async () => {
-      const r = await moveWorkerAssignmentAction({ workerId, fromOrchestratorId, toOrchestratorId });
+      const r = await moveWorkerAssignmentAction({
+        workerId,
+        fromOrchestratorId,
+        toOrchestratorId,
+      });
       if (!r.ok) {
         toast.error(r.message);
         setGroupsState((s) => ({ ...s, displayed: previous }));
@@ -368,7 +369,13 @@ export default function AgentsList({
       const base = ensureStandalone(s.displayed ?? groups);
       const next = base.map((g) =>
         g.orchestrator?.id === orchestratorId
-          ? { ...g, workers: [...g.workers, ...added.filter((a) => !g.workers.some((w) => w.id === a.id))] }
+          ? {
+              ...g,
+              workers: [
+                ...g.workers,
+                ...added.filter((a) => !g.workers.some((w) => w.id === a.id)),
+              ],
+            }
           : g,
       );
       return { ...s, displayed: next };
@@ -501,7 +508,9 @@ function CardShell({ group, header, workersZone, onAddWorker }: CardBodyProps) {
       {orchestrator ? (
         header
       ) : (
-        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">Unassigned</p>
+        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">
+          Unassigned
+        </p>
       )}
       <div className={orchestrator ? 'pl-5 pt-4' : 'pt-4'}>
         <div
@@ -667,7 +676,10 @@ function StaticAgentCard({
             <div className="flex min-w-0 flex-1 items-end gap-3">
               <OrchestratorHeaderContent orchestrator={orchestrator} />
             </div>
-            <ActivityBadge agent={orchestrator} activity={activityByAgent.get(orchestrator.id) ?? null} />
+            <ActivityBadge
+              agent={orchestrator}
+              activity={activityByAgent.get(orchestrator.id) ?? null}
+            />
             <div className="flex shrink-0 items-center gap-2 pb-0.5">
               <RowActions agent={orchestrator} />
             </div>
@@ -709,9 +721,13 @@ function OrchestratorHeaderContent({ orchestrator }: { orchestrator: AgentRow })
     <>
       <DsAgentAvatar name={orchestrator.name} imageUrl={orchestrator.avatarUrl} size="lg" />
       <div className="min-w-0 flex-1">
-        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">Orchestrator</p>
+        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">
+          Orchestrator
+        </p>
         <p className="truncate text-sm text-ink">{orchestrator.name}</p>
-        <p className="truncate text-legacy-11-5 leading-[17px]! text-ink-3">{orchestrator.personality}</p>
+        <p className="truncate text-legacy-11-5 leading-[17px]! text-ink-3">
+          {orchestrator.personality}
+        </p>
       </div>
     </>
   );

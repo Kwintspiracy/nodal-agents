@@ -145,9 +145,7 @@ function ConnectorRow({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={iconSrc} alt="" className="h-4 w-4 object-contain" />
               ) : (
-                <span className="font-mono text-micro-10 tracking-[0.04em]">
-                  {glyph}
-                </span>
+                <span className="font-mono text-micro-10 tracking-[0.04em]">{glyph}</span>
               )}
             </Disc>
             <div className="min-w-0">

@@ -59,7 +59,8 @@ export const runScheduleTool: ToolDefinition<typeof RunScheduleInput, RunSchedul
     // instead — same rule run-schedules.ts's runScheduleTick applies.
     const resolvedChatId = sched.notifyOnSuccess
       ? sched.notifyChannel
-        ? (sched.chatId ?? (await resolveOwnerConversation(ctx.db, sched.agentId, sched.notifyChannel)))
+        ? (sched.chatId ??
+          (await resolveOwnerConversation(ctx.db, sched.agentId, sched.notifyChannel)))
         : (sched.chatId ?? (await resolveOwnerChatId(ctx.db, sched.agentId)) ?? null)
       : null;
 

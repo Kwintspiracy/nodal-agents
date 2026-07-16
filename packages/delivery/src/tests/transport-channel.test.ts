@@ -31,7 +31,7 @@ describe('resolveTransportChannel', () => {
     expect(resolveTransportChannel('whatsapp')).toBe('whatsapp');
   });
 
-  it('defaults a non-transport origin to the agent\'s only active channel (discord)', () => {
+  it("defaults a non-transport origin to the agent's only active channel (discord)", () => {
     expect(resolveTransportChannel('cron', ['discord'])).toBe('discord');
   });
 
@@ -39,7 +39,7 @@ describe('resolveTransportChannel', () => {
     expect(resolveTransportChannel('webhook', ['slack', 'whatsapp'])).toBe('slack');
   });
 
-  it('defaults a non-transport origin to the agent\'s only active channel (whatsapp)', () => {
+  it("defaults a non-transport origin to the agent's only active channel (whatsapp)", () => {
     expect(resolveTransportChannel('dashboard', ['whatsapp'])).toBe('whatsapp');
   });
 

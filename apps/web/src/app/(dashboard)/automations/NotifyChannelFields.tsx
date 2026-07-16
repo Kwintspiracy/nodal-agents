@@ -90,8 +90,8 @@ export default function NotifyChannelFields({
         <span>
           <span className="font-medium text-ink">Notify me when it succeeds</span>
           <span className="mt-0.5 block text-xs text-ink-3">
-            The agent sends you a short confirmation each time this automation finishes. Requires
-            a connected channel on the agent (message it once so it knows where to reach you).
+            The agent sends you a short confirmation each time this automation finishes. Requires a
+            connected channel on the agent (message it once so it knows where to reach you).
           </span>
         </span>
       </label>

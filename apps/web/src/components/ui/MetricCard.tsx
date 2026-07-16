@@ -34,9 +34,7 @@ export default function MetricCard({ label, value, unit, subtle, delta }: Props)
 
   return (
     <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-rule-2 bg-paper px-3.5 py-3">
-      <div className="truncate text-mono-11 uppercase tracking-[0.14em] text-ink-4">
-        {label}
-      </div>
+      <div className="truncate text-mono-11 uppercase tracking-[0.14em] text-ink-4">{label}</div>
       <div className="mt-1 truncate text-numeral-22 leading-[1.1]! tracking-[-0.02em] text-ink">
         {value}
         {unit && <span className="ml-0.5 text-medium-12 text-ink-4">{unit}</span>}

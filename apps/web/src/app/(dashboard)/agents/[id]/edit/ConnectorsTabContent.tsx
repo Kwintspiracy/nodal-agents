@@ -319,9 +319,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
           key={`conn:${c.connectorId}`}
           glyph={
             <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[c.slug]}>
-              <span className="font-mono text-label-11">
-                {connGlyph(c.slug, c.label)}
-              </span>
+              <span className="font-mono text-label-11">{connGlyph(c.slug, c.label)}</span>
             </Disc>
           }
           name={
@@ -382,9 +380,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                         containerClassName="rounded px-1 py-1 text-body-13 transition-colors hover:bg-hover"
                         label={
                           <>
-                            <code className="shrink-0 text-mono-12 text-ink-2">
-                              {op.slug}
-                            </code>
+                            <code className="shrink-0 text-mono-12 text-ink-2">{op.slug}</code>
                             <RiskBadge op={op} />
                             {op.description && (
                               <span className="truncate text-body-12 italic text-ink-4">
@@ -477,9 +473,7 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
                       containerClassName="rounded px-1 py-1 text-body-13 transition-colors hover:bg-hover"
                       label={
                         <>
-                          <code className="shrink-0 text-mono-12 text-ink-2">
-                            {tool.name}
-                          </code>
+                          <code className="shrink-0 text-mono-12 text-ink-2">{tool.name}</code>
                           {tool.description && (
                             <span className="truncate text-body-12 italic text-ink-4">
                               {tool.description}
@@ -522,11 +516,7 @@ function Section({
 }
 
 function KindTag({ kind }: { kind: 'API' | 'MCP' }) {
-  return (
-    <span className="ml-2 text-mono-11 uppercase tracking-[0.04em] text-ink-4">
-      {kind}
-    </span>
-  );
+  return <span className="ml-2 text-mono-11 uppercase tracking-[0.04em] text-ink-4">{kind}</span>;
 }
 
 function MiniBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {

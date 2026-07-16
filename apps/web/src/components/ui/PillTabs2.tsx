@@ -59,9 +59,7 @@ export default function PillTabs2<T extends string>({
             {t.label}
             {t.count !== undefined && (
               <span
-                className={`text-mono-12 leading-none! ${
-                  isActive ? 'opacity-65' : 'opacity-60'
-                }`}
+                className={`text-mono-12 leading-none! ${isActive ? 'opacity-65' : 'opacity-60'}`}
               >
                 · {t.count}
               </span>
