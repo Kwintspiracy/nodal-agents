@@ -456,6 +456,20 @@
       "when": 1784500000000,
       "tag": "0065_conversations_origin",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1784600000000,
+      "tag": "0066_schedule_notify_channel",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1784700000000,
+      "tag": "0067_webhook_notify_channel",
+      "breakpoints": true
     }
   ]
 }

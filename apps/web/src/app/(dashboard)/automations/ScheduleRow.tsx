@@ -12,7 +12,6 @@ import {
   type ScheduleRow as ScheduleRowData,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
-import Modal from '@/components/ui/Modal.tsx';
 import ScheduleForm from './ScheduleForm.tsx';
 import { humanLabel } from '@/lib/cron.ts';
 import StatusPill from '@/components/ui/StatusPill';
@@ -85,11 +84,15 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
             {s.notifyOnSuccess && (
               <>
                 <span className="text-rule">·</span>
-                <span title="Sends you a Telegram confirmation when it succeeds">🔔 Notifies</span>
+                <span
+                  title={`Sends you a confirmation on ${s.notifyChannel ?? 'your first active channel'} when it succeeds`}
+                >
+                  🔔 Notifies
+                </span>
               </>
             )}
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-ink-4">
+          <div className="flex items-center gap-3 text-legacy-11 text-ink-4">
             {s.nextRun && s.active && <span>Next run {new Date(s.nextRun).toLocaleString()}</span>}
             {s.lastRun && (
               <span>
@@ -101,12 +104,19 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
                         ? 'text-ok'
                         : s.lastStatus === 'failed'
                           ? 'text-err'
-                          : s.lastStatus === 'budget_exhausted'
+                          : s.lastStatus === 'budget_exhausted' ||
+                              s.lastStatus === 'notify_unreachable'
                             ? 'text-warn'
                             : 'text-ink-4'
                     }`}
                   >
-                    ({s.lastStatus === 'budget_exhausted' ? 'budget reached' : s.lastStatus})
+                    (
+                    {s.lastStatus === 'budget_exhausted'
+                      ? 'budget reached'
+                      : s.lastStatus === 'notify_unreachable'
+                        ? 'notify unreachable'
+                        : s.lastStatus}
+                    )
                   </span>
                 )}
               </span>
@@ -114,6 +124,13 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
             {s.lastStatus === 'budget_exhausted' && (
               <span title={`Paused until tomorrow — spent its $${s.dailyBudgetUsd} daily budget`}>
                 💰
+              </span>
+            )}
+            {s.lastStatus === 'notify_unreachable' && (
+              <span
+                title={`Ran, but couldn't reach you on ${s.notifyChannel ?? 'the notify channel'} — you never messaged this agent there yet.`}
+              >
+                🔕
               </span>
             )}
           </div>
@@ -179,17 +196,12 @@ export default function ScheduleRow({ schedule: s, agents }: Props) {
         onCancel={() => setConfirmOpen(false)}
       />
 
-      {/* Edit — non-dismissable Modal (UX-B6), replaces the old in-place row
-          swap (the whole card used to be replaced by ScheduleForm). No
-          `title` here: ScheduleForm renders its own "Edit schedule" heading. */}
-      <Modal
-        open={editing}
-        onClose={() => setEditing(false)}
-        dismissable={false}
-        className="max-w-xl"
-      >
+      {/* Edit — ScheduleForm owns its non-dismissable Modal (UX-B6), title and
+          footer composed via the Modal component's props. Rendered only while
+          editing so its state initializes fresh from `initial` each open. */}
+      {editing && (
         <ScheduleForm mode="edit" agents={agents} initial={s} onDone={() => setEditing(false)} />
-      </Modal>
+      )}
     </div>
   );
 }

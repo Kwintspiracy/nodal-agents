@@ -17,10 +17,15 @@ import {
   getBindingCredentials,
 } from '@nodal-agents/db';
 import { agentJobs, agentTasks } from '@nodal-agents/db';
-import type { AnyDrizzleDb } from '@nodal-agents/db';
+import type { AnyDrizzleDb, JobTriggerContext } from '@nodal-agents/db';
 import { checkRootJobComplete } from '@nodal-agents/orchestration';
 import type { JobId } from '@nodal-agents/orchestration';
-import { getAdapter, resolveTransportChannel } from '@nodal-agents/delivery';
+import {
+  getAdapter,
+  resolveTransportChannel,
+  listActiveChannelsForAgent,
+} from '@nodal-agents/delivery';
+import type { ChannelKind } from '@nodal-agents/delivery';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { maybeResumeParent } from '../job/execute.ts';
 import type { ExecuteJobResult } from '../job/execute.ts';
@@ -119,6 +124,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
         agentId: agentJobs.agentId,
         entityId: agentJobs.entityId,
         task: agentJobs.task,
+        triggerContext: agentJobs.triggerContext,
       })
       .from(agentJobs)
       .where(eq(agentJobs.id, rootJobId))
@@ -253,12 +259,28 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
     // entity) immediately before send.
     //
     // S3 (multichannel plan): dispatches via the ChannelAdapter for
-    // `rootJob.channel` when it's already a registered transport, else falls
-    // back to the agent's Telegram binding (resolveTransportChannel — the
-    // same default rule delivery-guard.ts's resolveChannelForJob uses).
+    // `rootJob.channel` when it's already a registered transport, else
+    // defaults to this agent's own active channel (resolveTransportChannel +
+    // listActiveChannelsForAgent — the same default rule delivery-guard.ts's
+    // resolveChannelForJob uses), falling back to 'telegram' only when the
+    // agent has no active channel at all.
     if (rootJob.chatId && rootJob.agentId && compiledResult.trim()) {
       try {
-        const channel = resolveTransportChannel(rootJob.channel);
+        const activeChannels = await listActiveChannelsForAgent(db, rootJob.agentId);
+        // B1/B2 (notify-channel-choice): a cron or webhook root whose trigger
+        // chose an EXPLICIT notify channel carries it in triggerContext
+        // (run-schedules.ts / routes/webhook.ts) — it wins over
+        // resolveTransportChannel's priority-order default so this send goes
+        // to the SAME channel rootJob.chatId was resolved against, agreeing
+        // with execute.ts's own ToolContext override for the same job.
+        // Undefined for every other root, and for a cron/webhook root left on
+        // auto.
+        const triggerContext = rootJob.triggerContext as JobTriggerContext | null;
+        const notifyChannelOverride: ChannelKind | undefined =
+          triggerContext?.type === 'cron' || triggerContext?.type === 'webhook'
+            ? (triggerContext.notifyChannel ?? undefined)
+            : undefined;
+        const channel = notifyChannelOverride ?? resolveTransportChannel(rootJob.channel, activeChannels);
         const allowed =
           rootJob.entityId !== null &&
           (await isConversationAllowed(db, {

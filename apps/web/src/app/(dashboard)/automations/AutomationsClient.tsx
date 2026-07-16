@@ -5,7 +5,6 @@ import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import EmptyState from '@/components/ui/EmptyState';
-import Modal from '@/components/ui/Modal';
 import type {
   AgentRow,
   ScheduleRow as ScheduleRowData,
@@ -74,18 +73,11 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
       }
     >
       <div className="space-y-6">
-        {/* New schedule — same non-dismissable Modal as Edit (ScheduleRow),
-            not an inline page panel (UX-DS Phase 4: create vs. edit must
-            share one pattern per entity). ScheduleForm renders its own "New
-            schedule" heading. */}
-        <Modal
-          open={formOpen}
-          onClose={() => setFormOpen(false)}
-          dismissable={false}
-          className="max-w-xl"
-        >
-          <ScheduleForm agents={agents} open={formOpen} onOpenChange={setFormOpen} />
-        </Modal>
+        {/* New schedule — ScheduleForm owns its own non-dismissable Modal
+            (title + footer composed via the Modal component's props), same
+            pattern as Edit (ScheduleRow). Rendered only while open so its
+            state initializes fresh each time. */}
+        {formOpen && <ScheduleForm agents={agents} open={formOpen} onOpenChange={setFormOpen} />}
 
         {schedules.length === 0 ? (
           <EmptyState
@@ -110,23 +102,17 @@ export default function AutomationsClient({ agents, schedules, webhooks }: Props
           </p>
         </div>
 
-        {/* New webhook — same non-dismissable Modal pattern as schedules
-            (UX-DS Phase 4). WebhookForm renders its own heading. */}
-        <Modal
+        {/* New webhook — WebhookForm owns its own non-dismissable Modal
+            (title swaps to "Webhook created" on success), same pattern as
+            schedules. */}
+        <WebhookForm
+          agents={agents}
           open={webhookFormOpen}
-          onClose={() => setWebhookFormOpen(false)}
-          dismissable={false}
-          className="max-w-xl"
-        >
-          <WebhookForm
-            agents={agents}
-            open={webhookFormOpen}
-            onOpenChange={setWebhookFormOpen}
-            onCreated={(id, revealed) =>
-              setRevealedWebhooks((prev) => ({ ...prev, [id]: revealed }))
-            }
-          />
-        </Modal>
+          onOpenChange={setWebhookFormOpen}
+          onCreated={(id, revealed) =>
+            setRevealedWebhooks((prev) => ({ ...prev, [id]: revealed }))
+          }
+        />
 
         {webhooks.length === 0 ? (
           <EmptyState

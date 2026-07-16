@@ -28,6 +28,7 @@ import { redactSecretsForAudit, computeApprovalImpactLine } from '@nodal-agents/
 import {
   getAdapter,
   resolveTransportChannel,
+  listActiveChannelsForAgent,
   type ApprovalCard,
   type ChannelKind,
   type ChannelCredentials,
@@ -242,6 +243,13 @@ async function walkJobChainToRoot(
  * gated action). No owner on record, or no usable credentials, → null
  * (fail loud — dashboard-only), matching Telegram's own fail-loud contract
  * rather than ever falling back to the triggering conversation.
+ *
+ * The root's `channel` column defaults via resolveTransportChannel + the
+ * ROOT agent's own active channels (listActiveChannelsForAgent) when it
+ * isn't itself a transport (cron, webhook, dashboard, api, …) — an agent
+ * bound only to Discord gets its approval card there instead of failing on
+ * an unconfigured Telegram binding, falling back to 'telegram' only when the
+ * root agent has no active channel at all.
  */
 export async function resolveChannelApprovalDeliveryTarget(
   db: RunnerDeps['db'],
@@ -250,7 +258,9 @@ export async function resolveChannelApprovalDeliveryTarget(
   const chain = await walkJobChainToRoot(db, jobId);
   if (!chain) return null;
 
-  const rootChannel = resolveTransportChannel(chain[chain.length - 1]!.channel);
+  const rootHop = chain[chain.length - 1]!;
+  const activeChannels = await listActiveChannelsForAgent(db, rootHop.agentId);
+  const rootChannel = resolveTransportChannel(rootHop.channel, activeChannels);
 
   if (rootChannel === 'telegram') {
     const target = await resolveApprovalDeliveryTarget(db, jobId);

@@ -66,4 +66,4 @@ export type {
 
 export { getAdapter } from './registry.ts';
 
-export { resolveTransportChannel } from './transport-channel.ts';
+export { resolveTransportChannel, listActiveChannelsForAgent } from './transport-channel.ts';

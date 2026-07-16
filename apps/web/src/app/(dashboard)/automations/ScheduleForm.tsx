@@ -13,8 +13,8 @@ import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
 import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
-import Checkbox from '@/components/ui/Checkbox';
-import { ModalFooter } from '@/components/ui/Modal';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
+import NotifyChannelFields from './NotifyChannelFields.tsx';
 
 interface CreateProps {
   mode?: 'create';
@@ -49,12 +49,21 @@ export default function ScheduleForm(props: Props) {
     if (controlled) props.onOpenChange?.(next);
     else setInternalOpen(next);
   };
+  // One close path for the Modal's Cancel/onClose regardless of mode.
+  const close = () => {
+    if (isEdit) props.onDone?.();
+    else setOpen(false);
+  };
   const [isPending, startTransition] = useTransition();
-  // Controlled so the "no Telegram bot" warning can react to the current agent
-  // + notify choices before submit.
+  // Controlled so the "no channel connected" warning can react to the current
+  // agent + notify choices before submit.
   const [agentId, setAgentId] = useState(isEdit ? props.initial.agentId : '');
   const [notifyOnSuccess, setNotifyOnSuccess] = useState(
     isEdit ? props.initial.notifyOnSuccess === true : false,
+  );
+  // '' = Auto (null on the wire) — native <select> values are always strings.
+  const [notifyChannel, setNotifyChannel] = useState(
+    isEdit ? (props.initial.notifyChannel ?? '') : '',
   );
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -72,6 +81,7 @@ export default function ScheduleForm(props: Props) {
           cronExpr: fd.get('cronExpr'),
           task: fd.get('task'),
           notifyOnSuccess,
+          notifyChannel: notifyChannel || null,
           dailyBudgetUsd,
         });
         if (!r.ok) toast.error(r.message);
@@ -86,6 +96,7 @@ export default function ScheduleForm(props: Props) {
           cronExpr: fd.get('cronExpr'),
           task: fd.get('task'),
           notifyOnSuccess,
+          notifyChannel: notifyChannel || null,
           dailyBudgetUsd,
         });
         if (!r.ok) toast.error(r.message);
@@ -94,6 +105,7 @@ export default function ScheduleForm(props: Props) {
           form.reset();
           setAgentId('');
           setNotifyOnSuccess(false);
+          setNotifyChannel('');
           setOpen(false);
           props.onDone?.();
         }
@@ -122,21 +134,36 @@ export default function ScheduleForm(props: Props) {
   const cronDefault = isEdit ? props.initial.cronExpr : '0 9 * * *';
   const dailyBudgetDefault = isEdit ? props.initial.dailyBudgetUsd : 5;
 
-  // Telegram delivery is per-agent (the runner sends via the executing agent's
-  // own bot token). A "notify" cron on a bot-less agent can never reach the user
-  // — warn instead of letting it silently no-op.
   const selectedAgent = props.agents.find((a) => a.id === agentId);
-  const lacksBot = notifyOnSuccess && selectedAgent != null && !selectedAgent.telegramBotToken;
 
+  // The Modal owns the panel chrome, header and footer (title/footer props);
+  // this component supplies the body form. The submit button lives in the
+  // Modal footer, outside the <form>, wired via the HTML `form` attribute.
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5"
+    <Modal
+      open
+      onClose={close}
+      dismissable={false}
+      className="max-w-xl"
+      title={isEdit ? 'Edit schedule' : 'New schedule'}
+      footer={
+        <ModalFooter>
+          <PrimaryButton variant="neutral" onClick={close}>
+            Cancel
+          </PrimaryButton>
+          <PrimaryButton variant="ink" type="submit" form="schedule-form" disabled={isPending}>
+            {isPending
+              ? isEdit
+                ? 'Saving…'
+                : 'Creating…'
+              : isEdit
+                ? 'Save changes'
+                : 'Create schedule'}
+          </PrimaryButton>
+        </ModalFooter>
+      }
     >
-      <h3 className="text-sm font-semibold text-ink">
-        {isEdit ? 'Edit schedule' : 'New schedule'}
-      </h3>
-
+    <form id="schedule-form" onSubmit={handleSubmit} className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Select
           id="schedule-agent"
@@ -175,30 +202,15 @@ export default function ScheduleForm(props: Props) {
         placeholder="What should the agent do each time this fires?"
       />
 
-      <div className="space-y-2">
-        <label className="flex items-start gap-2.5 rounded-md border border-rule bg-canvas px-3 py-2.5 text-sm">
-          <Checkbox
-            name="notifyOnSuccess"
-            checked={notifyOnSuccess}
-            onChange={(e) => setNotifyOnSuccess(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            <span className="font-medium text-ink">Notify me on Telegram when it succeeds</span>
-            <span className="mt-0.5 block text-xs text-ink-3">
-              The agent sends you a short confirmation each time this automation finishes. Requires
-              a Telegram bot on the agent (DM it once so it knows where to reach you).
-            </span>
-          </span>
-        </label>
-
-        {lacksBot && (
-          <p className="rounded-md border border-warn/30 bg-warn-bg px-3 py-2 text-xs text-warn">
-            ⚠️ <span className="font-medium">{selectedAgent?.name}</span>
-            {` has no Telegram bot, so it can't send you this confirmation. Schedule this automation on a Telegram-connected agent, or connect a bot to this one.`}
-          </p>
-        )}
-      </div>
+      <NotifyChannelFields
+        idPrefix="schedule"
+        agentId={agentId}
+        agentName={selectedAgent?.name}
+        notifyOnSuccess={notifyOnSuccess}
+        onNotifyOnSuccessChange={setNotifyOnSuccess}
+        notifyChannel={notifyChannel}
+        onNotifyChannelChange={setNotifyChannel}
+      />
 
       <div>
         <TextInput
@@ -218,26 +230,7 @@ export default function ScheduleForm(props: Props) {
         </p>
       </div>
 
-      <ModalFooter className="-mx-5 -mb-5 mt-1 rounded-b-xl">
-        <PrimaryButton
-          variant="neutral"
-          onClick={() => {
-            if (isEdit) props.onDone?.();
-            else setOpen(false);
-          }}
-        >
-          Cancel
-        </PrimaryButton>
-        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
-          {isPending
-            ? isEdit
-              ? 'Saving…'
-              : 'Creating…'
-            : isEdit
-              ? 'Save changes'
-              : 'Create schedule'}
-        </PrimaryButton>
-      </ModalFooter>
     </form>
+    </Modal>
   );
 }

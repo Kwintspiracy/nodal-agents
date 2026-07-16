@@ -14,8 +14,10 @@
 // warning so the agent's approval rules still gate anything it does in response.
 
 import type { Context } from 'hono';
-import { eq } from '@nodal-agents/db';
+import { eq, resolveOwnerConversation } from '@nodal-agents/db';
 import { webhookTriggers, agentJobs } from '@nodal-agents/db';
+import { resolveTransportChannel, listActiveChannelsForAgent } from '@nodal-agents/delivery';
+import type { ChannelKind } from '@nodal-agents/delivery';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
 import { isValidWorkerSecret } from '../lib/worker-secret.ts';
@@ -257,6 +259,51 @@ export async function webhookRoute(
   const interpolated = interpolateTemplate(trigger.taskTemplate, bodyResult.value);
   const task = buildWebhookEnvelope(trigger.name, triggeredAt, interpolated);
 
+  // B2 (notify-channel-choice plan): resolve the notify channel + owner
+  // conversation EXACTLY the way run-schedules.ts's notifyBudgetExhausted
+  // resolves a non-transport trigger's channel — 'webhook' isn't itself a
+  // transport, so resolveTransportChannel falls through to this agent's own
+  // active channels. Unlike a schedule, a webhook trigger has no legacy
+  // telegram-only notify path to preserve (it never had notify at all before
+  // this brique), so "auto" (notify_channel NULL) goes straight to
+  // resolveTransportChannel instead of a telegram-only wrapper.
+  //
+  // Fail loud (invariant #4): if the resolved channel has no owner
+  // conversation yet (never DMed the bot there), the job still fires WITHOUT
+  // a chatId — no silent fallback to another channel — and this is logged.
+  // webhook_triggers has no lastStatus column to surface it on (unlike
+  // agent_schedules' 'notify_unreachable'), so the log is the only signal
+  // until a caller asks for one.
+  let notifyChatId: string | null = null;
+  let notifyChannel: ChannelKind | null = null;
+  if (trigger.notifyOnSuccess) {
+    if (trigger.notifyChannel) {
+      notifyChannel = trigger.notifyChannel as ChannelKind;
+    } else {
+      // Auto: whatsapp excluded from the candidate set — no outbound send
+      // tool is registered for it yet (TOOL_ONLY_DELIVERY_CHANNELS,
+      // execute.ts), and this job's chatId being non-null forces
+      // requiresToolDelivery — auto-landing on whatsapp here (e.g. an agent
+      // whose only active channel happens to be whatsapp) would deadlock the
+      // run on a tool it doesn't have. An EXPLICIT trigger.notifyChannel is
+      // never 'whatsapp' either — the web UI's NOTIFY_CHANNEL_OPTIONS doesn't
+      // offer it — so this exclusion only ever narrows the auto fallback,
+      // never overrides a real choice.
+      const activeChannels = (await listActiveChannelsForAgent(deps.db, agentId)).filter(
+        (c) => c !== 'whatsapp',
+      );
+      notifyChannel = resolveTransportChannel('webhook', activeChannels);
+    }
+    notifyChatId = await resolveOwnerConversation(deps.db, agentId, notifyChannel);
+    if (!notifyChatId) {
+      console.error(
+        `[webhook] trigger "${trigger.name}" (${trigger.slug}) chose notify channel ` +
+          `'${notifyChannel}' but has no owner conversation there yet (never DMed on that ` +
+          `channel). Firing WITHOUT a delivery target — not falling back to another channel.`,
+      );
+    }
+  }
+
   const [job] = await deps.db
     .insert(agentJobs)
     .values({
@@ -265,12 +312,14 @@ export async function webhookRoute(
       channel: 'webhook',
       task,
       status: 'pending',
+      chatId: notifyChatId,
       messages: [{ role: 'user', content: task }],
       triggerContext: {
         type: 'webhook',
         webhookName: trigger.name,
         slug: trigger.slug,
         triggeredAt,
+        notifyChannel,
       },
     })
     .returning({ id: agentJobs.id });

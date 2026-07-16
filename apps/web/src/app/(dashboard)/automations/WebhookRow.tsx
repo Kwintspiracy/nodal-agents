@@ -14,6 +14,7 @@ import StatusPill from '@/components/ui/StatusPill';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
 import RowActionButton from '@/components/ui/RowActionButton';
+import { CHANNEL_LABELS } from './NotifyChannelFields.tsx';
 
 interface Revealed {
   secret: string;
@@ -93,6 +94,18 @@ export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) 
             </span>
             <span className="text-rule">·</span>
             <span>Last fired {relativeTime(w.lastTriggeredAt)}</span>
+            {w.notifyOnSuccess && (
+              <>
+                <span className="text-rule">·</span>
+                <span
+                  title={`Sends you a confirmation via ${
+                    w.notifyChannel ? (CHANNEL_LABELS[w.notifyChannel] ?? w.notifyChannel) : 'auto'
+                  } when it fires successfully`}
+                >
+                  🔔 Notifies
+                </span>
+              </>
+            )}
           </div>
         </div>
 

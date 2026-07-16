@@ -11,7 +11,14 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
-import { agentJobs, agentTasks, agents, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agentTasks,
+  agents,
+  telegramAllowedChats,
+  channelBindings,
+  channelAllowedConversations,
+} from '@nodal-agents/db';
 
 // Mock the channel send + the LLM resolver so we can assert WHAT gets sent to
 // the channel (the short synthesis) without network/LLM. Hoisted by vitest.
@@ -20,11 +27,25 @@ import { agentJobs, agentTasks, agents, telegramAllowedChats } from '@nodal-agen
 // existing assertions (on chatId/text) keep working unchanged.
 type SendOpts = { chatId: string; text: string; botToken: string };
 const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1 }));
-const TRANSPORT_CHANNELS = new Set(['telegram', 'discord', 'slack', 'whatsapp']);
+const CHANNEL_PRIORITY = ['telegram', 'discord', 'slack', 'whatsapp'] as const;
+const TRANSPORT_CHANNELS = new Set(CHANNEL_PRIORITY);
 vi.mock('@nodal-agents/delivery', () => ({
   sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
-  resolveTransportChannel: (channel: string | null | undefined) =>
-    channel && TRANSPORT_CHANNELS.has(channel) ? channel : 'telegram',
+  resolveTransportChannel: (channel: string | null | undefined, activeChannels?: string[]) => {
+    if (channel && TRANSPORT_CHANNELS.has(channel as (typeof CHANNEL_PRIORITY)[number])) {
+      return channel;
+    }
+    if (activeChannels && activeChannels.length > 0) {
+      const active = new Set(activeChannels);
+      const preferred = CHANNEL_PRIORITY.find((c) => active.has(c));
+      if (preferred) return preferred;
+    }
+    return 'telegram';
+  },
+  // No test here exercises a non-telegram-bound agent — the agent's own
+  // active channels are irrelevant to these assertions, so an empty list
+  // preserves the pre-existing 'telegram' default.
+  listActiveChannelsForAgent: async (..._args: unknown[]) => [] as string[],
   getAdapter: (channel: string) => ({
     channel,
     sendText: (creds: { botToken: string }, conversationId: string, text: string) =>
@@ -482,6 +503,71 @@ describe('deliverCompletedRoots', () => {
     const candidates = await findUndeliveredRootJobIds(db as RunnerDeps['db']);
 
     expect(candidates).not.toContain(cancelledRoot.id);
+  });
+
+  // ─── B1 (notify-channel-choice): triggerContext.notifyChannel override ─────
+
+  it('a cron root with an explicit triggerContext.notifyChannel delivers on THAT channel, not resolveTransportChannel’s priority default', async () => {
+    // The agent has NO telegram/discord binding registered as "active" via the
+    // fake listActiveChannelsForAgent (always []), so resolveTransportChannel's
+    // fallback would pick 'telegram' — but the job explicitly chose 'discord',
+    // and this must win.
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      credentials: JSON.stringify({ botToken: 'discord-bot-token' }),
+      enabled: true,
+    });
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: 'discord-chat-1',
+      role: 'owner',
+      status: 'active',
+    });
+    // Skip the synthesis LLM call — irrelevant to what this test asserts
+    // (channel/chatId/credential selection), same fallback path the
+    // "falls back to compiled text" test above exercises explicitly.
+    resolveAgentLlmClientMock.mockResolvedValueOnce({ ok: false, reason: 'test' });
+    sendTelegramMessageMock.mockClear();
+
+    const rootJob = await createRootJob();
+    await db
+      .update(agentJobs)
+      .set({
+        completedAt: null,
+        status: 'processing',
+        channel: 'cron',
+        chatId: 'discord-chat-1',
+        triggerContext: {
+          type: 'cron',
+          scheduleName: 'notify via discord',
+          prevRunAt: null,
+          notifyChannel: 'discord',
+        },
+      })
+      .where(eq(agentJobs.id, rootJob.id));
+    await createTaskForRoot(rootJob.id, 'done', 'discord delivery result', 'Task A');
+
+    await deliverCompletedRoots(db as RunnerDeps['db']);
+
+    expect(sendTelegramMessageMock).toHaveBeenCalledTimes(1);
+    const arg = sendTelegramMessageMock.mock.calls[0]![0] as {
+      chatId: string;
+      text: string;
+      botToken: string;
+    };
+    expect(arg.chatId).toBe('discord-chat-1');
+    expect(arg.botToken).toBe('discord-bot-token');
+
+    await db
+      .delete(channelBindings)
+      .where(eq(channelBindings.agentId, seed.agentId));
+    await db
+      .delete(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.agentId, seed.agentId));
   });
 
   it('idempotency: two concurrent ticks deliver each root exactly once', async () => {

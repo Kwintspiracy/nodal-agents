@@ -16,7 +16,13 @@ import { generateText } from 'ai';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { and, eq } from '@nodal-agents/db';
-import { agentJobs, agentSchedules, agents, telegramAllowedChats } from '@nodal-agents/db';
+import {
+  agentJobs,
+  agentSchedules,
+  agents,
+  telegramAllowedChats,
+  channelAllowedConversations,
+} from '@nodal-agents/db';
 import { createToolRegistry, registerBuiltins } from '@nodal-agents/tools';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import { LocalTrustProvider } from '@nodal-agents/auth';
@@ -32,6 +38,9 @@ const sendTelegramMessageMock = vi.fn(async (_opts: SendOpts) => ({ messageId: 1
 vi.mock('@nodal-agents/delivery', () => ({
   sendTelegramMessage: (opts: SendOpts) => sendTelegramMessageMock(opts),
   resolveTransportChannel: () => 'telegram',
+  // No test here binds an agent to a non-telegram channel — an empty active
+  // list preserves the pre-existing 'telegram' default.
+  listActiveChannelsForAgent: async (..._args: unknown[]) => [] as string[],
   getAdapter: (channel: string) => ({
     channel,
     sendText: (creds: { botToken: string }, conversationId: string, text: string) =>
@@ -179,6 +188,7 @@ async function createSchedule(overrides: {
   nextRun?: Date | null;
   task?: string;
   notifyOnSuccess?: boolean;
+  notifyChannel?: string | null;
   chatId?: string | null;
   dailyBudgetUsd?: number;
 }) {
@@ -194,6 +204,7 @@ async function createSchedule(overrides: {
       active: overrides.active ?? true,
       nextRun: overrides.nextRun === undefined ? null : overrides.nextRun,
       notifyOnSuccess: overrides.notifyOnSuccess ?? false,
+      notifyChannel: overrides.notifyChannel ?? null,
       chatId: overrides.chatId ?? null,
       dailyBudgetUsd: overrides.dailyBudgetUsd ?? 5,
     })
@@ -537,6 +548,7 @@ describe('runScheduleTick', () => {
       type: 'cron',
       scheduleName: 'Test schedule',
       prevRunAt: priorRun.toISOString(),
+      notifyChannel: null,
     });
   });
 
@@ -560,6 +572,7 @@ describe('runScheduleTick', () => {
       type: 'cron',
       scheduleName: 'Test schedule',
       prevRunAt: null,
+      notifyChannel: null,
     });
   });
 
@@ -829,5 +842,146 @@ describe('runScheduleTick', () => {
       .from(agentJobs)
       .where(eq(agentJobs.scheduleId, schedBusy.id));
     expect(busyJobs.length).toBe(1); // untouched — still just the live fixture job
+  });
+
+  // ─── B1 (notify-channel-choice): explicit notify_channel ────────────────────
+
+  it('an explicit notify_channel resolves the owner conversation ON THAT CHANNEL, and stamps it into trigger_context', async () => {
+    // A discord owner conversation exists, but NOT a telegram one — proves the
+    // resolution is channel-parametric (resolveOwnerConversation), not the
+    // telegram-only resolveOwnerChatId wrapper the null/auto path still uses.
+    await db.insert(channelAllowedConversations).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'discord',
+      conversationId: 'discord-owner-42',
+      role: 'owner',
+      status: 'active',
+    });
+
+    const past = new Date(Date.now() - 60_000);
+    await createSchedule({
+      nextRun: past,
+      task: 'notify via discord',
+      notifyOnSuccess: true,
+      notifyChannel: 'discord',
+    });
+
+    const deps = makeDeps(db, [{ text: 'cron ran' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const jobs = await db
+      .select({
+        chatId: agentJobs.chatId,
+        channel: agentJobs.channel,
+        triggerContext: agentJobs.triggerContext,
+      })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'notify via discord')));
+    expect(jobs.length).toBeGreaterThanOrEqual(1);
+    expect(jobs[0]!.chatId).toBe('discord-owner-42');
+    expect(jobs[0]!.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'Test schedule',
+      prevRunAt: null,
+      notifyChannel: 'discord',
+    });
+
+    await db
+      .delete(channelAllowedConversations)
+      .where(eq(channelAllowedConversations.agentId, seed.agentId));
+  });
+
+  it(
+    'fails loud with lastStatus notify_unreachable (no fallback to another channel) when the ' +
+      'chosen notify_channel has no owner conversation yet, and still fires the job WITHOUT a chatId',
+    async () => {
+      const past = new Date(Date.now() - 60_000);
+      await createSchedule({
+        nextRun: past,
+        task: 'notify via unreachable slack',
+        notifyOnSuccess: true,
+        notifyChannel: 'slack', // no owner row for slack anywhere in this test
+      });
+
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const deps = makeDeps(db, [{ text: 'cron ran anyway' }]);
+      await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('notify_unreachable'));
+      errorSpy.mockRestore();
+
+      const jobs = await db
+        .select({ chatId: agentJobs.chatId, id: agentJobs.id })
+        .from(agentJobs)
+        .where(
+          and(
+            eq(agentJobs.agentId, seed.agentId),
+            eq(agentJobs.task, 'notify via unreachable slack'),
+          ),
+        );
+      expect(jobs.length).toBeGreaterThanOrEqual(1);
+      // The run itself still happens — no chatId, not skipped entirely.
+      expect(jobs[0]!.chatId).toBeNull();
+
+      const sched = await db
+        .select({ lastStatus: agentSchedules.lastStatus })
+        .from(agentSchedules)
+        .innerJoin(agentJobs, eq(agentJobs.scheduleId, agentSchedules.id))
+        .where(eq(agentJobs.id, jobs[0]!.id));
+      expect(sched[0]?.lastStatus).toBe('notify_unreachable');
+    },
+  );
+
+  it('notifyChannel=null (auto) is byte-identical to the pre-B1 owner-chat regression path', async () => {
+    // Regression: an existing schedule with notify_channel left NULL keeps
+    // using resolveOwnerChatId (the telegram-only wrapper) exactly as before —
+    // this is the same scenario as the earlier "propagates the bot owner chat"
+    // test, just asserting the trigger_context shape too.
+    await db.insert(telegramAllowedChats).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      chatId: 'auto-owner-1',
+      role: 'owner',
+      status: 'active',
+    });
+
+    const past = new Date(Date.now() - 60_000);
+    await createSchedule({
+      nextRun: past,
+      task: 'notify via auto',
+      notifyOnSuccess: true,
+      notifyChannel: null,
+    });
+
+    const deps = makeDeps(db, [{ text: 'cron ran' }]);
+    await runScheduleTick(db as RunnerDeps['db'], deps, 5);
+
+    const jobs = await db
+      .select({ chatId: agentJobs.chatId, triggerContext: agentJobs.triggerContext })
+      .from(agentJobs)
+      .where(and(eq(agentJobs.agentId, seed.agentId), eq(agentJobs.task, 'notify via auto')));
+    expect(jobs.length).toBeGreaterThanOrEqual(1);
+    expect(jobs[0]!.chatId).toBe('auto-owner-1');
+    expect(jobs[0]!.triggerContext).toEqual({
+      type: 'cron',
+      scheduleName: 'Test schedule',
+      prevRunAt: null,
+      notifyChannel: null,
+    });
+
+    await db.delete(telegramAllowedChats).where(eq(telegramAllowedChats.agentId, seed.agentId));
+  });
+
+  it('accepts notify_unreachable as a valid last_status (migration 0066 CHECK constraint)', async () => {
+    const sched = await createSchedule({ nextRun: null, task: 'notify_unreachable constraint probe' });
+    await db
+      .update(agentSchedules)
+      .set({ lastStatus: 'notify_unreachable' })
+      .where(eq(agentSchedules.id, sched.id));
+    const after = await db
+      .select({ lastStatus: agentSchedules.lastStatus })
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, sched.id));
+    expect(after[0]?.lastStatus).toBe('notify_unreachable');
   });
 });

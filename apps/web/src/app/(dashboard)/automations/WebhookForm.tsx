@@ -6,10 +6,11 @@ import { createWebhookTriggerAction, type AgentRow } from '@/lib/actions.ts';
 import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
 import PrimaryButton from '@/components/ui/PrimaryButton';
-import { ModalFooter } from '@/components/ui/Modal';
+import Modal, { ModalFooter } from '@/components/ui/Modal';
 import TextInput from '@/components/ui/TextInput';
 import TextArea from '@/components/ui/TextArea';
 import Select from '@/components/ui/Select';
+import NotifyChannelFields from './NotifyChannelFields.tsx';
 
 interface Props {
   agents: AgentRow[];
@@ -21,15 +22,23 @@ interface Props {
 }
 
 /**
- * WebhookForm — create-only (no edit mode: task_template/agent changes are
- * simple enough to redo as delete+recreate, and editing would reopen the
+ * WebhookForm — create-only (no edit mode: task_template/agent/notify changes
+ * are simple enough to redo as delete+recreate, and editing would reopen the
  * "did the secret change" question for no reason). On success it swaps to a
  * success panel showing the full URL once, since the secret is never shown
  * again outside a rotate.
+ *
+ * Notify toggle + channel select (B2, notify-channel-choice plan) reuse
+ * NotifyChannelFields — same mechanic as ScheduleForm's, since the runner
+ * resolves a webhook trigger's owner conversation the exact same way a
+ * schedule does (routes/webhook.ts, mirroring run-schedules.ts).
  */
 export default function WebhookForm({ agents, open, onOpenChange, onCreated }: Props) {
   const [isPending, startTransition] = useTransition();
   const [agentId, setAgentId] = useState('');
+  const [notifyOnSuccess, setNotifyOnSuccess] = useState(false);
+  // '' = Auto (null on the wire) — native <select> values are always strings.
+  const [notifyChannel, setNotifyChannel] = useState('');
   const [successUrl, setSuccessUrl] = useState<string | null>(null);
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -42,6 +51,8 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
         agentId,
         name: fd.get('name'),
         taskTemplate: fd.get('taskTemplate'),
+        notifyOnSuccess,
+        notifyChannel: notifyChannel || null,
       });
       if (!r.ok) toast.error(r.message);
       else {
@@ -50,6 +61,8 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
         toast.success('Webhook created');
         form.reset();
         setAgentId('');
+        setNotifyOnSuccess(false);
+        setNotifyChannel('');
       }
     });
   }
@@ -59,33 +72,46 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
     onOpenChange(false);
   }
 
-  if (!open) return null;
-
-  if (successUrl) {
-    return (
-      <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
-        <h3 className="text-sm font-semibold text-ink">Webhook created</h3>
-        <SetUrl subtitle="Webhook URL" url={successUrl} />
-        <p className="text-xs text-ink-3">
-          Paste this URL into the service that should notify this agent. It contains the secret:
-          treat it like a password.
-        </p>
-        <ModalFooter className="-mx-5 -mb-5 mt-1 rounded-b-xl">
-          <PrimaryButton variant="ink" onClick={handleDone}>
-            Done
-          </PrimaryButton>
-        </ModalFooter>
-      </div>
-    );
-  }
-
+  // The Modal owns the panel chrome, header and footer (title/footer props) —
+  // this component only supplies the body content and the footer's buttons.
+  // The submit button lives in the Modal footer, OUTSIDE the <form> element,
+  // so it targets the form via the HTML `form` attribute.
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5"
+    <Modal
+      open={open}
+      onClose={() => onOpenChange(false)}
+      dismissable={false}
+      className="max-w-xl"
+      title={successUrl ? 'Webhook created' : 'New webhook'}
+      footer={
+        successUrl ? (
+          <ModalFooter>
+            <PrimaryButton variant="ink" onClick={handleDone}>
+              Done
+            </PrimaryButton>
+          </ModalFooter>
+        ) : (
+          <ModalFooter>
+            <PrimaryButton variant="neutral" onClick={() => onOpenChange(false)}>
+              Cancel
+            </PrimaryButton>
+            <PrimaryButton variant="ink" type="submit" form="webhook-create-form" disabled={isPending}>
+              {isPending ? 'Creating…' : 'Create webhook'}
+            </PrimaryButton>
+          </ModalFooter>
+        )
+      }
     >
-      <h3 className="text-sm font-semibold text-ink">New webhook</h3>
-
+      {successUrl ? (
+        <div className="space-y-3">
+          <SetUrl subtitle="Webhook URL" url={successUrl} />
+          <p className="text-xs text-ink-3">
+            Paste this URL into the service that should notify this agent. It contains the secret:
+            treat it like a password.
+          </p>
+        </div>
+      ) : (
+        <form id="webhook-create-form" onSubmit={handleSubmit} className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Select
           id="webhook-agent"
@@ -126,14 +152,17 @@ export default function WebhookForm({ agents, open, onOpenChange, onCreated }: P
         </p>
       </div>
 
-      <ModalFooter className="-mx-5 -mb-5 mt-1 rounded-b-xl">
-        <PrimaryButton variant="neutral" onClick={() => onOpenChange(false)}>
-          Cancel
-        </PrimaryButton>
-        <PrimaryButton variant="ink" type="submit" disabled={isPending}>
-          {isPending ? 'Creating…' : 'Create webhook'}
-        </PrimaryButton>
-      </ModalFooter>
-    </form>
+          <NotifyChannelFields
+            idPrefix="webhook"
+            agentId={agentId}
+            agentName={agents.find((a) => a.id === agentId)?.name}
+            notifyOnSuccess={notifyOnSuccess}
+            onNotifyOnSuccessChange={setNotifyOnSuccess}
+            notifyChannel={notifyChannel}
+            onNotifyChannelChange={setNotifyChannel}
+          />
+        </form>
+      )}
+    </Modal>
   );
 }

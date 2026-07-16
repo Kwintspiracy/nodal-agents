@@ -15,11 +15,17 @@ import {
   agentSchedules,
   agentJobs,
   resolveOwnerChatId,
+  resolveOwnerConversation,
   getBindingCredentials,
 } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { resolveTimezone } from '@nodal-agents/shared';
-import { getAdapter, resolveTransportChannel } from '@nodal-agents/delivery';
+import {
+  getAdapter,
+  resolveTransportChannel,
+  listActiveChannelsForAgent,
+} from '@nodal-agents/delivery';
+import type { ChannelKind } from '@nodal-agents/delivery';
 import { CronExpressionParser } from 'cron-parser';
 import { executeJob, type ExecuteJobResult } from '../job/execute.ts';
 import type { RunnerDeps } from '../deps.ts';
@@ -50,8 +56,10 @@ async function notifyBudgetExhausted(
     const ownerChatId = await resolveOwnerChatId(db, agentId);
     if (!ownerChatId) return;
     // S3: a cron trigger isn't itself a transport — resolveTransportChannel
-    // defaults it to the agent's Telegram binding (today's only transport).
-    const channel = resolveTransportChannel('cron');
+    // defaults it to this agent's own active channel, falling back to
+    // 'telegram' only when the agent has no active channel at all.
+    const activeChannels = await listActiveChannelsForAgent(db, agentId);
+    const channel = resolveTransportChannel('cron', activeChannels);
     const creds = await getBindingCredentials(db, agentId, channel);
     if (!creds) return;
     const adapter = getAdapter(channel);
@@ -101,6 +109,9 @@ export async function runScheduleTick(
       notifyOnSuccess: agentSchedules.notifyOnSuccess,
       // Explicit delivery target (e.g. "post to #team"), null for the common case.
       chatId: agentSchedules.chatId,
+      // Explicit notify channel choice (B1), null = auto (first active channel
+      // by priority, the historical behavior — see the chatId resolution below).
+      notifyChannel: agentSchedules.notifyChannel,
       // Read BEFORE this tick's writes — "was it already budget_exhausted" is
       // the transition check the notify-once-per-day dedup relies on below.
       lastStatus: agentSchedules.lastStatus,
@@ -123,6 +134,13 @@ export async function runScheduleTick(
   };
 
   const fires: ScheduledFire[] = [];
+
+  // Schedules whose EXPLICIT notify channel had no owner conversation at fire
+  // time (F1's fail-loud rule: never silently fall back to another channel).
+  // The run itself still proceeds — this only overrides the schedule's
+  // lastStatus at the end of the tick so a delivery problem isn't masked by
+  // an otherwise-successful run's 'success' status.
+  const notifyUnreachableScheduleIds = new Set<string>();
 
   for (const sched of candidates.slice(0, max)) {
     if (!sched.task || !sched.entityId) continue;
@@ -237,12 +255,38 @@ export async function runScheduleTick(
     // chat"). We set it ONLY when the schedule opted into a success confirmation
     // (notify_on_success); otherwise the cron runs silently. A non-null chat_id
     // on a cron job makes the runner force the agent to deliver before finishing
-    // (see `cronWantsConfirmation` in execute.ts). An explicit schedule.chatId
+    // (see `triggerWantsConfirmation` in execute.ts). An explicit schedule.chatId
     // (e.g. "post to #team") wins; otherwise fall back to the bot owner's 1:1 —
     // never the agent's last-seen chat, which a group message silently overwrites.
-    const notifyChatId = sched.notifyOnSuccess
-      ? (sched.chatId ?? (await resolveOwnerChatId(db, sched.agentId)) ?? null)
-      : null;
+    //
+    // B1 (notify-channel-choice): when the schedule chose an EXPLICIT channel,
+    // the owner conversation is resolved ON THAT CHANNEL (resolveOwnerConversation,
+    // channel-parametric) instead of the telegram-only resolveOwnerChatId wrapper
+    // — choosing a channel LINKS chatId resolution to it, closing the structural
+    // gap where the chatId and the delivery channel used to be resolved
+    // independently. notifyChannel=null (auto) keeps the exact historical path.
+    // Fail loud: if the chosen channel has no owner conversation yet, we do NOT
+    // fall back to another channel — the job still fires (chatId stays null,
+    // so it runs silently), and the schedule's lastStatus becomes
+    // 'notify_unreachable' below instead of masking the problem as 'success'.
+    let notifyChatId: string | null = null;
+    if (sched.notifyOnSuccess) {
+      if (sched.notifyChannel) {
+        const channel = sched.notifyChannel as ChannelKind;
+        notifyChatId = sched.chatId ?? (await resolveOwnerConversation(db, sched.agentId, channel));
+        if (!notifyChatId) {
+          notifyUnreachableScheduleIds.add(sched.id);
+          console.error(
+            `[runScheduleTick] schedule "${sched.name}" (${sched.id}) chose notify channel ` +
+              `'${channel}' but has no owner conversation there yet (never DMed on that ` +
+              `channel). Firing WITHOUT a delivery target — not falling back to another ` +
+              `channel. lastStatus will read 'notify_unreachable'.`,
+          );
+        }
+      } else {
+        notifyChatId = sched.chatId ?? (await resolveOwnerChatId(db, sched.agentId)) ?? null;
+      }
+    }
     const [job] = await db
       .insert(agentJobs)
       .values({
@@ -258,6 +302,7 @@ export async function runScheduleTick(
           type: 'cron',
           scheduleName: sched.name,
           prevRunAt: sched.lastRun ? sched.lastRun.toISOString() : null,
+          notifyChannel: (sched.notifyChannel as ChannelKind | null) ?? null,
         },
       })
       .returning({ id: agentJobs.id });
@@ -301,8 +346,13 @@ export async function runScheduleTick(
     // unexpected rejection of the map callback itself.
     if (settled.status === 'rejected') continue;
     const { fire, result } = settled.value;
-    let lastStatus: 'success' | 'failed' | 'no_action';
-    if (result.status === 'completed') lastStatus = 'success';
+    let lastStatus: 'success' | 'failed' | 'no_action' | 'notify_unreachable';
+    if (notifyUnreachableScheduleIds.has(fire.scheduleId)) {
+      // The run's own outcome is secondary here — the actionable signal for
+      // the user is that their chosen notify channel couldn't be reached, so
+      // this overrides an otherwise-'success' status rather than hiding it.
+      lastStatus = 'notify_unreachable';
+    } else if (result.status === 'completed') lastStatus = 'success';
     else if (result.status === 'failed') lastStatus = 'failed';
     else if (result.status === 'cancelled') lastStatus = 'failed';
     else lastStatus = 'no_action'; // awaiting_approval / awaiting_delegation
