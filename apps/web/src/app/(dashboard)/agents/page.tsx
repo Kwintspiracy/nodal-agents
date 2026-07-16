@@ -42,7 +42,12 @@ export default async function AgentsPage() {
       {!groupsResult.ok ? (
         <AgentsErrorRetry message={groupsResult.message} />
       ) : (
-        <AgentsList initialGroups={groupsResult.data} initialActivity={initialActivity} />
+        <AgentsList
+          initialGroups={groupsResult.data}
+          initialActivity={initialActivity}
+          agents={flatAgents}
+          llmKeys={llmKeys}
+        />
       )}
     </PageShell>
   );

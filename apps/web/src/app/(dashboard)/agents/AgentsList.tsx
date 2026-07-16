@@ -1,40 +1,55 @@
 'use client';
 
-// AgentsList — grouped + drag-and-droppable view of the entity's agents.
+// AgentsList — the card-based hierarchy view of the entity's agents.
 //
 // Rendering rules:
-//   - Each orchestrator gets a section header followed by its sub-agents.
+//   - Each orchestrator gets a card: header (avatar, name, personality
+//     preview, Channels/Edit — Delete moved to the agent edit page's
+//     Settings tab danger zone) + an indented, dashed-line-connected
+//     list of its worker rows + an "Add worker" footer.
 //   - A worker can appear under multiple orchestrators (that's an
 //     intentional schema property of agent_assignments) — the action layer
 //     surfaces it under each parent and we render it accordingly.
-//   - A final "Standalone" section lists workers that no orchestrator
-//     owns. Hidden when empty.
+//   - A final "Unassigned" card lists workers that no orchestrator owns.
+//     Always rendered (even with zero workers) — it's the drop target a
+//     worker lands on when dragged out of every team, so it can't disappear
+//     just because it's momentarily empty.
 //
-// Reordering uses a flattened-list model: every drag-end rebuilds the
-// complete cross-group order in memory, then submits the full list to
-// `reorderAgentsAction`. The action sets positions to 0, 10, 20, ... for
-// everything in the array. Single source of truth for the `position`
-// column, no per-group bucketing bugs.
+// Drag-and-drop scoping (dnd-kit), single DndContext for the whole board:
+//   - GROUP HEADERS reorder among themselves via one `<SortableContext>` over
+//     the orchestrator ids. Dragging a card header moves the whole team.
+//   - WORKER ROWS reorder within a team AND move ACROSS teams (or to/from
+//     Unassigned). Each team's worker list is its own `<SortableContext>` +
+//     `useDroppable` container (so an empty team is still a valid drop
+//     target); `onDragOver` relocates the dragged worker between the
+//     in-memory group arrays live (the standard dnd-kit multi-container
+//     pattern), `onDragEnd` commits: same-container drop → `reorderAgentsAction`
+//     (position only), cross-container drop → `moveWorkerAssignmentAction`
+//     (agent_assignments membership).
+//   - Header drags and worker drags share the DndContext (nesting two
+//     contexts would make dnd-kit register cross-card worker drops against
+//     the wrong context) — `active.data.current.type` tags which handler
+//     a given drag belongs to.
 //
-// Drag-and-drop scoping (dnd-kit):
-//   - WORKERS reorder INSIDE their group only — each group's `<SortableContext>`
-//     is scoped to its worker IDs. dnd-kit's `closestCenter` collision
-//     detection + the per-group context means a drop into another group is
-//     a no-op at the data layer. Cross-group reassignment is a separate
-//     UX (use the Edit page to change agent_assignments).
-//   - GROUPS reorder via a separate `<SortableContext>` over the orchestrator
-//     IDs themselves. Dragging a team header moves the whole team.
-//   - The Standalone bucket has no draggable header — its workers can
-//     reorder among themselves, but the bucket as a whole stays last.
+// Why one board instead of the old per-group nested contexts: cross-group
+// drag needs every team's worker list mounted under the SAME DndContext, or
+// dnd-kit has no way to detect a drop landing in a different team's list.
 //
 // Why drag-and-drop instead of ↑/↓ buttons (which we shipped first):
 //   Quentin called the ↑/↓ UX "la pire UX de tous les temps" after one
-//   live test. Reordering 10+ agents with arrow buttons is genuinely
-//   awful. dnd-kit gives us proper drag, accessible keyboard fallback
+//   live test. dnd-kit gives us proper drag, accessible keyboard fallback
 //   (Space to grab, arrows to move, Enter to drop), and touch support.
 
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -44,7 +59,10 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -54,36 +72,87 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ChatsCircle, PencilSimple } from '@phosphor-icons/react';
+import { ChatsCircle, PencilSimple, DotsSixVertical } from '@phosphor-icons/react';
 import RowActionButton from '@/components/ui/RowActionButton';
 import EmptyState from '@/components/ui/EmptyState';
+import DsAgentAvatar from '@/components/ui/AgentAvatar';
+import EdAddButton from '@/components/ui/EdAddButton';
+import AgentForm from '@/components/AgentForm.tsx';
 import {
   reorderAgentsAction,
-  deleteAgentAction,
+  moveWorkerAssignmentAction,
   getActiveJobsByAgentAction,
   type ActiveAgentRow,
   type AgentGroup,
   type AgentRow,
+  type LlmKeyUiRow,
 } from '@/lib/actions.ts';
-import DeleteAgentButton from './DeleteAgentButton.tsx';
+import AddWorkerModal from './AddWorkerModal.tsx';
 
 /** Refresh cadence for the live activity badges. Same as ActiveAgentsPanel
  *  on /stats — fast enough to feel live without hammering the DB. */
 const ACTIVITY_POLL_MS = 5000;
 
+/** Container key for the Unassigned bucket (orchestrator === null). Prefixed
+ *  container ids (below) never collide with a real agent uuid, so a worker
+ *  row's sortable id and its enclosing container's droppable id can safely
+ *  coexist in the same DndContext. */
+const STANDALONE_KEY = '__standalone__';
+
+function containerIdOf(group: AgentGroup): string {
+  return `container:${group.orchestrator?.id ?? STANDALONE_KEY}`;
+}
+
+function orchestratorIdFromContainerId(containerId: string): string | null {
+  const raw = containerId.replace(/^container:/, '');
+  return raw === STANDALONE_KEY ? null : raw;
+}
+
+/** Ensures an Unassigned bucket is always present in the client-rendered
+ *  list, even when the server omitted it (empty). Without this, a worker
+ *  dragged out of every team would have nowhere to visually land. */
+function ensureStandalone(groups: AgentGroup[]): AgentGroup[] {
+  if (groups.some((g) => g.orchestrator === null)) return groups;
+  return [...groups, { orchestrator: null, workers: [] }];
+}
+
+/** Resolves the container id (see `containerIdOf`) that currently owns a
+ *  given drag-event id — which is either a worker's raw agent id, or a
+ *  container id itself (dropped on the empty area of a team). */
+function findContainerId(groups: AgentGroup[], id: string): string | null {
+  if (id.startsWith('container:')) return id;
+  for (const g of groups) {
+    if (g.workers.some((w) => w.id === id)) return containerIdOf(g);
+  }
+  return null;
+}
+
 interface Props {
   initialGroups: AgentGroup[];
   /** Initial activity snapshot from the server render; refreshed client-side. */
   initialActivity: ActiveAgentRow[];
+  /** Full flat agent list — powers the "Add worker" picker and the
+   *  "New orchestrator" create modal's sub-agent picker. */
+  agents: AgentRow[];
+  llmKeys: LlmKeyUiRow[];
 }
 
-export default function AgentsList({ initialGroups, initialActivity }: Props) {
+export default function AgentsList({
+  initialGroups,
+  initialActivity,
+  agents,
+  llmKeys,
+}: Props) {
   // Stable content signature of the server prop. Changes whenever the set of
-  // agent IDs changes (delete, add, or a reorder server-round-trip completes).
+  // agent IDs or team memberships changes (delete, add, move, or a reorder
+  // server-round-trip completes).
   const serverGroupsKey = useMemo(
     () =>
       initialGroups
-        .flatMap((g) => [g.orchestrator?.id ?? '', ...g.workers.map((w) => w.id)])
+        .flatMap((g) => [
+          g.orchestrator ? `o:${g.orchestrator.id}` : 'standalone',
+          ...g.workers.map((w) => w.id),
+        ])
         .join('|'),
     [initialGroups],
   );
@@ -97,38 +166,32 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
     seenKey: string;
   }>({ displayed: null, seenKey: serverGroupsKey });
 
-  // If the server delivered new data since last render, derive updated state
-  // immediately (during render). React allows setState calls during render when
-  // they are guarded by a condition on a prop/derived value changing — this is
-  // the documented getDerivedStateFromProps equivalent for function components.
   if (seenKey !== serverGroupsKey) {
     setGroupsState({ displayed: null, seenKey: serverGroupsKey });
   }
 
-  // The list every render uses: optimistic override while a reorder is in
-  // flight; server data the rest of the time (including right after a delete).
-  const groups = (seenKey === serverGroupsKey ? displayed : null) ?? initialGroups;
+  // The list every render uses: optimistic override while a drag/move is in
+  // flight; server data the rest of the time (including right after a
+  // delete). Unassigned is always present so it's always a valid drop target.
+  const groups = ensureStandalone((seenKey === serverGroupsKey ? displayed : null) ?? initialGroups);
 
   const [activity, setActivity] = useState<ActiveAgentRow[]>(initialActivity);
   const [isPending, startTransition] = useTransition();
+  const [addWorkerForId, setAddWorkerForId] = useState<string | null>(null);
   const router = useRouter();
 
   // dnd-kit is not SSR-stable: its a11y announcement IDs (DndDescribedBy-N)
   // come from an internal counter that drifts between the server and client
   // renders, triggering a hydration mismatch. useSyncExternalStore is the
   // SSR-safe "are we on the client yet?" signal — false on the server + first
-  // paint, true after — so we render a static (non-draggable) list for SSR +
-  // hydration and mount the drag-and-drop tree client-only, where the dnd IDs
-  // are only ever generated on the client.
+  // paint, true after — so we render a static (non-draggable) board for SSR +
+  // hydration and mount the drag-and-drop tree client-only.
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
     () => false,
   );
 
-  // Index by agentId for O(1) lookup in each row. Recompute when the
-  // poller delivers a new snapshot — same agent IDs but possibly new
-  // counts.
   const activityByAgent = useMemo(() => {
     const m = new Map<string, ActiveAgentRow>();
     for (const a of activity) m.set(a.agentId, a);
@@ -144,8 +207,6 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
       const r = await getActiveJobsByAgentAction();
       if (cancelled) return;
       if (r.ok) setActivity(r.data);
-      // On error we silently keep the previous snapshot — a transient DB
-      // hiccup shouldn't blank out the badges.
     };
     const id = setInterval(() => void tick(), ACTIVITY_POLL_MS);
     return () => {
@@ -154,10 +215,6 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
     };
   }, []);
 
-  // Pointer for mouse/touch drag, Keyboard for a11y (Space → grab, arrows → move).
-  // `distance: 8` on PointerSensor — a click that moves less than 8px stays a
-  // click (so the Edit / Delete buttons on each row remain usable; they're
-  // inside the draggable but a quick click never starts a drag).
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -186,350 +243,499 @@ export default function AgentsList({ initialGroups, initialActivity }: Props) {
     });
   }
 
-  // Drag-end handler for the WORKERS inside a given group. The `over.id` is
-  // the worker we just dropped onto; we arrayMove within that group's
-  // workers and submit.
-  function handleWorkerDragEnd(groupIdx: number, e: DragEndEvent) {
-    const { active, over } = e;
-    if (!over || active.id === over.id) return;
-    const group = groups[groupIdx];
-    if (!group) return;
-    const oldIdx = group.workers.findIndex((w) => w.id === active.id);
-    const newIdx = group.workers.findIndex((w) => w.id === over.id);
-    if (oldIdx < 0 || newIdx < 0) return;
-    const newWorkers = arrayMove(group.workers, oldIdx, newIdx);
-    const next = groups.map((g, i) => (i === groupIdx ? { ...g, workers: newWorkers } : g));
-    submitReorder(next);
+  function commitWorkerMove(
+    workerId: string,
+    fromOrchestratorId: string | null,
+    toOrchestratorId: string | null,
+    previous: AgentGroup[],
+  ) {
+    startTransition(async () => {
+      const r = await moveWorkerAssignmentAction({ workerId, fromOrchestratorId, toOrchestratorId });
+      if (!r.ok) {
+        toast.error(r.message);
+        setGroupsState((s) => ({ ...s, displayed: previous }));
+        return;
+      }
+      router.refresh();
+    });
   }
 
-  // Drag-end for GROUPS (the orchestrator section headers). Reorders teams
-  // among themselves; Standalone (orchestrator === null) stays anchored at
-  // the end because it has no draggable header.
+  // Drag-end for GROUP HEADERS — reorders teams among themselves; Unassigned
+  // stays anchored last because it has no draggable header.
   function handleGroupDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    // Find positions of the two orchestrators in the groups array. Skip
-    // the Standalone bucket; its orchestrator is null and its id never
-    // appears in the SortableContext.
     const oldIdx = groups.findIndex((g) => g.orchestrator?.id === active.id);
     const newIdx = groups.findIndex((g) => g.orchestrator?.id === over.id);
     if (oldIdx < 0 || newIdx < 0) return;
-    const next = arrayMove(groups, oldIdx, newIdx);
-    submitReorder(next);
+    submitReorder(arrayMove(groups, oldIdx, newIdx));
   }
 
-  if (groups.length === 0) {
+  // originContainerId is captured at drag start (before onDragOver has a
+  // chance to relocate the item) so onDragEnd can tell "did this cross into
+  // a different team" apart from "reordered within the same one". The
+  // pre-drag groups snapshot lets a failed server call roll back cleanly.
+  const workerDragOriginRef = useRef<string | null>(null);
+  const workerDragSnapshotRef = useRef<AgentGroup[] | null>(null);
+
+  function handleDragStart(e: DragStartEvent) {
+    if (e.active.data.current?.['type'] !== 'worker') return;
+    workerDragOriginRef.current = findContainerId(groups, String(e.active.id));
+    workerDragSnapshotRef.current = groups;
+  }
+
+  // Live relocation while dragging over a DIFFERENT team's container — moves
+  // the worker between the in-memory group arrays so the drop target's
+  // placeholder shows where it will land. Same-container hover is left to
+  // dnd-kit's own SortableContext animation.
+  function handleDragOver(e: DragOverEvent) {
+    const { active, over } = e;
+    if (active.data.current?.['type'] !== 'worker' || !over) return;
+    const activeId = String(active.id);
+    const fromId = findContainerId(groups, activeId);
+    const toId = findContainerId(groups, String(over.id));
+    if (!fromId || !toId || fromId === toId) return;
+
+    setGroupsState((s) => {
+      const base = ensureStandalone(s.displayed ?? groups);
+      const fromIdx = base.findIndex((g) => containerIdOf(g) === fromId);
+      const toIdx = base.findIndex((g) => containerIdOf(g) === toId);
+      if (fromIdx < 0 || toIdx < 0) return s;
+      const worker = base[fromIdx]!.workers.find((w) => w.id === activeId);
+      if (!worker) return s;
+      const newFromWorkers = base[fromIdx]!.workers.filter((w) => w.id !== activeId);
+      const overIdx = base[toIdx]!.workers.findIndex((w) => w.id === String(over.id));
+      const insertAt = overIdx >= 0 ? overIdx : base[toIdx]!.workers.length;
+      const newToWorkers = [...base[toIdx]!.workers];
+      newToWorkers.splice(insertAt, 0, worker);
+      const next = base.map((g, i) =>
+        i === fromIdx
+          ? { ...g, workers: newFromWorkers }
+          : i === toIdx
+            ? { ...g, workers: newToWorkers }
+            : g,
+      );
+      return { ...s, displayed: next };
+    });
+  }
+
+  function handleDragEnd(e: DragEndEvent) {
+    const type = e.active.data.current?.['type'];
+    if (type === 'header') {
+      handleGroupDragEnd(e);
+      return;
+    }
+    if (type !== 'worker') return;
+
+    const originId = workerDragOriginRef.current;
+    const snapshot = workerDragSnapshotRef.current;
+    workerDragOriginRef.current = null;
+    workerDragSnapshotRef.current = null;
+
+    const { active, over } = e;
+    if (!over || !originId) return;
+    const activeId = String(active.id);
+    const finalId = findContainerId(groups, String(over.id)) ?? findContainerId(groups, activeId);
+    if (!finalId) return;
+
+    if (finalId === originId) {
+      // Same team at drop time: pure intra-group reorder (a round-trip
+      // through another team during the drag is already reconciled back to
+      // this state by handleDragOver).
+      const gi = groups.findIndex((g) => containerIdOf(g) === finalId);
+      if (gi < 0) return;
+      const workers = groups[gi]!.workers;
+      const oldIdx = workers.findIndex((w) => w.id === activeId);
+      const newIdx = workers.findIndex((w) => w.id === String(over.id));
+      if (oldIdx < 0 || newIdx < 0 || oldIdx === newIdx) return;
+      const newWorkers = arrayMove(workers, oldIdx, newIdx);
+      submitReorder(groups.map((g, i) => (i === gi ? { ...g, workers: newWorkers } : g)));
+      return;
+    }
+
+    // Cross-team: `groups` already reflects the moved worker (onDragOver
+    // relocated it live) — persist the new membership.
+    commitWorkerMove(
+      activeId,
+      orchestratorIdFromContainerId(originId),
+      orchestratorIdFromContainerId(finalId),
+      snapshot ?? groups,
+    );
+  }
+
+  function handleWorkersAssigned(orchestratorId: string, added: AgentRow[]) {
+    setGroupsState((s) => {
+      const base = ensureStandalone(s.displayed ?? groups);
+      const next = base.map((g) =>
+        g.orchestrator?.id === orchestratorId
+          ? { ...g, workers: [...g.workers, ...added.filter((a) => !g.workers.some((w) => w.id === a.id))] }
+          : g,
+      );
+      return { ...s, displayed: next };
+    });
+  }
+
+  if (agents.length === 0) {
     return <EmptyState title="No agents yet. Create one above." />;
   }
 
-  // IDs for the group-level SortableContext: just the orchestrators that
-  // can shuffle. The Standalone bucket is excluded so it can't be dragged.
   const orchestratorIds = groups
     .map((g) => g.orchestrator?.id)
     .filter((id): id is string => Boolean(id));
 
-  // Server + first client paint: static, non-draggable list (no dnd-kit) so
+  const addWorkerOrchestrator = addWorkerForId
+    ? (groups.find((g) => g.orchestrator?.id === addWorkerForId)?.orchestrator ?? null)
+    : null;
+  const addWorkerCurrentIds = addWorkerForId
+    ? (groups.find((g) => g.orchestrator?.id === addWorkerForId)?.workers.map((w) => w.id) ?? [])
+    : [];
+
+  const newOrchestratorButton = (
+    <AgentForm
+      llmKeys={llmKeys}
+      agents={agents}
+      initialRole="router"
+      renderTrigger={(open) => (
+        <EdAddButton size="lg" onClick={open} hint="group workers under a coordinator">
+          New orchestrator
+        </EdAddButton>
+      )}
+    />
+  );
+
+  const modals = addWorkerOrchestrator && (
+    <AddWorkerModal
+      open={Boolean(addWorkerForId)}
+      onClose={() => setAddWorkerForId(null)}
+      orchestrator={addWorkerOrchestrator}
+      allAgents={agents}
+      currentWorkerIds={addWorkerCurrentIds}
+      onAssigned={(added) => handleWorkersAssigned(addWorkerOrchestrator.id, added)}
+    />
+  );
+
+  // Server + first client paint: static, non-draggable board (no dnd-kit) so
   // SSR and hydration match exactly. The drag-and-drop tree mounts below.
+  // Render order: orchestrator cards → "New orchestrator" CTA → Unassigned.
+  // The CTA sits between the teams it creates and the bucket it feeds from,
+  // inside the same gap-5 column so spacing stays uniform.
+  const orchGroups = groups.filter((g) => g.orchestrator !== null);
+  const standaloneGroup = groups.find((g) => g.orchestrator === null) ?? null;
+
   if (!mounted) {
     return (
-      <div className="space-y-6">
-        {groups.map((g) => {
-          const isStandalone = g.orchestrator === null;
-          return (
-            <div key={isStandalone ? '__standalone__' : (g.orchestrator?.id ?? '')}>
-              {g.orchestrator ? (
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="leading-none text-ink-4" aria-hidden>
-                    ⋮⋮
-                  </span>
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-3">
-                    Team — {g.orchestrator.name}
-                  </h2>
-                </div>
-              ) : (
-                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-3">
-                  Standalone
-                </h2>
-              )}
-              <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-                <table className="w-full text-sm">
-                  <tbody>
-                    {g.orchestrator && (
-                      <NonSortableRow
-                        agent={g.orchestrator}
-                        indent={false}
-                        activity={activityByAgent.get(g.orchestrator.id) ?? null}
-                      />
-                    )}
-                    {g.workers.map((w) => (
-                      <NonSortableRow
-                        key={w.id}
-                        agent={w}
-                        indent={Boolean(g.orchestrator)}
-                        activity={activityByAgent.get(w.id) ?? null}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          );
-        })}
+      <div className="flex flex-col gap-5">
+        {orchGroups.map((g) => (
+          <StaticAgentCard
+            key={g.orchestrator?.id ?? STANDALONE_KEY}
+            group={g}
+            activityByAgent={activityByAgent}
+            onAddWorker={setAddWorkerForId}
+          />
+        ))}
+        {newOrchestratorButton}
+        {standaloneGroup && (
+          <StaticAgentCard
+            key={STANDALONE_KEY}
+            group={standaloneGroup}
+            activityByAgent={activityByAgent}
+            onAddWorker={setAddWorkerForId}
+          />
+        )}
+        {modals}
       </div>
     );
   }
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleGroupDragEnd}>
-      <SortableContext items={orchestratorIds} strategy={verticalListSortingStrategy}>
-        <div className="space-y-6">
-          {groups.map((g, gi) => {
-            const isStandalone = g.orchestrator === null;
-            return (
-              <div key={isStandalone ? '__standalone__' : (g.orchestrator?.id ?? '')}>
-                {/* Section header — sortable when it's an orchestrator (the team
-                    drag handle is the grip icon on the left of the title). */}
-                {g.orchestrator ? (
-                  <SortableTeamHeader orchestrator={g.orchestrator} disabled={isPending} />
-                ) : (
-                  <h2 className="mb-2 text-xs font-semibold text-ink-3 uppercase tracking-wider">
-                    Standalone
-                  </h2>
-                )}
-
-                {/* Worker rows — own DndContext nested for per-group scoping. */}
-                <WorkerList
-                  workers={g.workers}
-                  indent={Boolean(g.orchestrator)}
-                  orchestrator={g.orchestrator}
-                  disabled={isPending}
-                  onWorkerDragEnd={(e) => handleWorkerDragEnd(gi, e)}
-                  sensors={sensors}
-                  activityByAgent={activityByAgent}
-                />
-              </div>
-            );
-          })}
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="flex flex-col gap-5">
+          <SortableContext items={orchestratorIds} strategy={verticalListSortingStrategy}>
+            {orchGroups.map((g) => (
+              <SortableAgentCard
+                key={g.orchestrator?.id ?? STANDALONE_KEY}
+                group={g}
+                disabled={isPending}
+                activityByAgent={activityByAgent}
+                onAddWorker={setAddWorkerForId}
+              />
+            ))}
+          </SortableContext>
+          {newOrchestratorButton}
+          {standaloneGroup && (
+            <SortableAgentCard
+              key={STANDALONE_KEY}
+              group={standaloneGroup}
+              disabled={isPending}
+              activityByAgent={activityByAgent}
+              onAddWorker={setAddWorkerForId}
+            />
+          )}
         </div>
-      </SortableContext>
-    </DndContext>
+      </DndContext>
+      {modals}
+    </>
   );
 }
 
-// ─── Sortable team header (orchestrator row) ─────────────────────────────────
+// ─── Card shell (shared layout, parameterised by header/rows renderer) ───────
 
-function SortableTeamHeader({
-  orchestrator,
-  disabled,
-}: {
-  orchestrator: AgentRow;
-  disabled: boolean;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: orchestrator.id,
-    disabled,
-  });
+interface CardBodyProps {
+  group: AgentGroup;
+  onAddWorker: (orchestratorId: string) => void;
+  header: ReactNode;
+  workersZone: ReactNode;
+}
 
+function CardShell({ group, header, workersZone, onAddWorker }: CardBodyProps) {
+  const orchestrator = group.orchestrator;
   return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`mb-2 flex items-center gap-2 ${isDragging ? 'opacity-50' : ''}`}
-    >
-      {/* dnd-kit's own `attributes` already provide role="button" + tabIndex —
-          this is dnd-kit's documented pattern for a drag handle that isn't a
-          real <button> (a fixed-size boxed IconButton would misalign this
-          inline glyph against the non-sortable spacer column). */}
-      <span
-        {...attributes}
-        {...listeners}
-        aria-label="Drag team"
-        title="Drag to reorder team"
-        className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-2 transition-colors leading-none touch-none"
-      >
-        ⋮⋮
-      </span>
-      <h2 className="text-xs font-semibold text-ink-3 uppercase tracking-wider">
-        Team — {orchestrator.name}
-      </h2>
+    <div className="rounded-2xl border border-rule-2 bg-paper p-[17px]">
+      {orchestrator ? (
+        header
+      ) : (
+        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">Unassigned</p>
+      )}
+      <div className={orchestrator ? 'pl-5 pt-4' : 'pt-4'}>
+        <div
+          className={
+            orchestrator
+              ? 'flex flex-col gap-2 border-l border-dashed border-rule-2 pl-[17px]'
+              : 'flex flex-col gap-2'
+          }
+        >
+          {workersZone}
+          {orchestrator && (
+            <EdAddButton size="sm" onClick={() => onAddWorker(orchestrator.id)}>
+              Add worker
+            </EdAddButton>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ─── Worker list with nested DndContext (per-group scoping) ──────────────────
+// ─── Sortable (mounted, drag-and-drop-enabled) card ───────────────────────────
 
-function WorkerList({
-  workers,
-  indent,
-  orchestrator,
+function SortableAgentCard({
+  group,
   disabled,
-  onWorkerDragEnd,
-  sensors,
   activityByAgent,
+  onAddWorker,
 }: {
-  workers: AgentRow[];
-  indent: boolean;
-  orchestrator: AgentRow | null;
+  group: AgentGroup;
   disabled: boolean;
-  onWorkerDragEnd: (e: DragEndEvent) => void;
-  sensors: ReturnType<typeof useSensors>;
   activityByAgent: Map<string, ActiveAgentRow>;
+  onAddWorker: (orchestratorId: string) => void;
 }) {
-  const workerIds = workers.map((w) => w.id);
+  const orchestrator = group.orchestrator;
+  const containerId = containerIdOf(group);
+  const { setNodeRef: setDropRef } = useDroppable({ id: containerId, data: { type: 'container' } });
 
-  // DnDContext lives OUTSIDE the <table> — dnd-kit renders an accessibility
-  // <div> (screen-reader announcer + focus restorer) and the HTML spec
-  // refuses <div> as a direct child of <tbody>, which makes React hydration
-  // error out. SortableContext is a pure provider (no DOM) so it can live
-  // inside <tbody> next to the <tr> children.
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onWorkerDragEnd}>
-      <div className="bg-paper border border-rule-2 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <tbody>
-            <SortableContext items={workerIds} strategy={verticalListSortingStrategy}>
-              {/* Orchestrator's own row first — not draggable HERE (the team
-                  header drag handle moves the whole team). The drag-handle
-                  column stays as a spacer for visual alignment. */}
-              {orchestrator && (
-                <NonSortableRow
-                  agent={orchestrator}
-                  indent={false}
-                  activity={activityByAgent.get(orchestrator.id) ?? null}
-                />
-              )}
-              {workers.map((w) => (
-                <SortableWorkerRow
-                  key={w.id}
-                  agent={w}
-                  indent={indent}
-                  disabled={disabled}
-                  activity={activityByAgent.get(w.id) ?? null}
-                />
-              ))}
-            </SortableContext>
-          </tbody>
-        </table>
-      </div>
-    </DndContext>
+    <CardShell
+      group={group}
+      onAddWorker={onAddWorker}
+      header={
+        orchestrator && (
+          <SortableCardHeader
+            orchestrator={orchestrator}
+            disabled={disabled}
+            activity={activityByAgent.get(orchestrator.id) ?? null}
+          />
+        )
+      }
+      workersZone={
+        <SortableContext
+          items={group.workers.map((w) => w.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div ref={setDropRef} className="flex w-full flex-col gap-2">
+            {group.workers.map((w) => (
+              <SortableWorkerRow
+                key={w.id}
+                agent={w}
+                disabled={disabled}
+                activity={activityByAgent.get(w.id) ?? null}
+              />
+            ))}
+            {group.workers.length === 0 && <EmptyDropHint />}
+          </div>
+        </SortableContext>
+      }
+    />
   );
 }
 
-// ─── Sortable worker row ─────────────────────────────────────────────────────
+function SortableCardHeader({
+  orchestrator,
+  disabled,
+  activity,
+}: {
+  orchestrator: AgentRow;
+  disabled: boolean;
+  activity: ActiveAgentRow | null;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: orchestrator.id,
+    disabled,
+    data: { type: 'header' },
+  });
+
+  return (
+    <div className="flex items-end gap-3">
+      <div
+        ref={setNodeRef}
+        style={{ transform: CSS.Transform.toString(transform), transition }}
+        {...attributes}
+        {...listeners}
+        title="Drag to reorder team"
+        className={`flex min-w-0 flex-1 cursor-grab items-end gap-3 touch-none active:cursor-grabbing ${isDragging ? 'opacity-50' : ''}`}
+      >
+        <OrchestratorHeaderContent orchestrator={orchestrator} />
+      </div>
+      <ActivityBadge agent={orchestrator} activity={activity} />
+      <div className="flex shrink-0 items-center gap-2 pb-0.5">
+        <RowActions agent={orchestrator} />
+      </div>
+    </div>
+  );
+}
 
 function SortableWorkerRow({
   agent,
-  indent,
   disabled,
   activity,
 }: {
   agent: AgentRow;
-  indent: boolean;
   disabled: boolean;
   activity: ActiveAgentRow | null;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: agent.id,
     disabled,
+    data: { type: 'worker' },
   });
 
   return (
-    <tr
+    <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`border-b border-rule-2 last:border-0 ${isDragging ? 'opacity-50 bg-hover' : ''}`}
+      className={`group flex w-full items-center gap-[10px] rounded-[10px] border border-rule-2 bg-hover p-[10px] ${isDragging ? 'opacity-50' : ''}`}
     >
-      <td className={`px-5 py-3 ${indent ? 'pl-10' : ''}`}>
-        <div className="flex items-center gap-3">
-          <span
-            {...attributes}
-            {...listeners}
-            aria-label="Drag row"
-            title="Drag to reorder"
-            className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-3 transition-colors leading-none touch-none select-none"
-          >
-            ⋮⋮
-          </span>
-          <AgentAvatar agent={agent} />
-          <AgentLabel agent={agent} />
-          <ActivityBadge agent={agent} activity={activity} />
-        </div>
-      </td>
-      <RowActions agent={agent} />
-    </tr>
+      <span
+        {...attributes}
+        {...listeners}
+        aria-label="Drag row"
+        title="Drag to reorder or move to another team"
+        className="shrink-0 cursor-grab touch-none select-none text-ink-4 transition-colors hover:text-ink-3 active:cursor-grabbing"
+      >
+        <DotsSixVertical size={13} />
+      </span>
+      <WorkerRowContent agent={agent} activity={activity} />
+    </div>
   );
 }
 
-// ─── Non-sortable row (orchestrator's own row inside its team table) ─────────
+// ─── Static (SSR-safe, non-draggable) card ────────────────────────────────────
 
-function NonSortableRow({
+function StaticAgentCard({
+  group,
+  activityByAgent,
+  onAddWorker,
+}: {
+  group: AgentGroup;
+  activityByAgent: Map<string, ActiveAgentRow>;
+  onAddWorker: (orchestratorId: string) => void;
+}) {
+  const orchestrator = group.orchestrator;
+  return (
+    <CardShell
+      group={group}
+      onAddWorker={onAddWorker}
+      header={
+        orchestrator && (
+          <div className="flex items-end gap-3">
+            <div className="flex min-w-0 flex-1 items-end gap-3">
+              <OrchestratorHeaderContent orchestrator={orchestrator} />
+            </div>
+            <ActivityBadge agent={orchestrator} activity={activityByAgent.get(orchestrator.id) ?? null} />
+            <div className="flex shrink-0 items-center gap-2 pb-0.5">
+              <RowActions agent={orchestrator} />
+            </div>
+          </div>
+        )
+      }
+      workersZone={
+        <div className="flex w-full flex-col gap-2">
+          {group.workers.map((w) => (
+            <div
+              key={w.id}
+              className="group flex w-full items-center gap-[10px] rounded-[10px] border border-rule-2 bg-hover p-[10px]"
+            >
+              <span className="shrink-0 text-ink-4" aria-hidden>
+                <DotsSixVertical size={13} />
+              </span>
+              <WorkerRowContent agent={w} activity={activityByAgent.get(w.id) ?? null} />
+            </div>
+          ))}
+          {group.workers.length === 0 && <EmptyDropHint />}
+        </div>
+      }
+    />
+  );
+}
+
+function EmptyDropHint() {
+  return (
+    <div className="rounded-[10px] border border-dashed border-rule-2 px-3 py-4 text-center text-legacy-11 text-ink-4">
+      Drag a worker here
+    </div>
+  );
+}
+
+// ─── Shared, non-hook content pieces (used by both card variants) ────────────
+
+function OrchestratorHeaderContent({ orchestrator }: { orchestrator: AgentRow }) {
+  return (
+    <>
+      <DsAgentAvatar name={orchestrator.name} imageUrl={orchestrator.avatarUrl} size="lg" />
+      <div className="min-w-0 flex-1">
+        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">Orchestrator</p>
+        <p className="truncate text-sm text-ink">{orchestrator.name}</p>
+        <p className="truncate text-legacy-11-5 leading-[17px]! text-ink-3">{orchestrator.personality}</p>
+      </div>
+    </>
+  );
+}
+
+function WorkerRowContent({
   agent,
-  indent,
   activity,
 }: {
   agent: AgentRow;
-  indent: boolean;
   activity: ActiveAgentRow | null;
 }) {
   return (
-    <tr className="border-b border-rule-2 last:border-0">
-      <td className={`px-5 py-3 ${indent ? 'pl-10' : ''}`}>
-        <div className="flex items-center gap-3">
-          {/* Spacer aligning with the drag handle on worker rows below. */}
-          <span className="w-4 inline-block" aria-hidden />
-          <AgentAvatar agent={agent} />
-          <AgentLabel agent={agent} />
-          <ActivityBadge agent={agent} activity={activity} />
-        </div>
-      </td>
-      <RowActions agent={agent} />
-    </tr>
-  );
-}
-
-// ─── Shared row pieces ───────────────────────────────────────────────────────
-
-function AgentAvatar({ agent }: { agent: AgentRow }) {
-  if (agent.avatarUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={agent.avatarUrl}
-        alt=""
-        width={32}
-        height={32}
-        className="w-8 h-8 rounded-full object-cover border border-rule-2 shrink-0"
-      />
-    );
-  }
-  // Initials fallback — first letter of the agent name in a neutral chip.
-  // Keeps row height stable whether an avatar is set or not.
-  return (
-    <div className="w-8 h-8 rounded-full bg-hover text-ink-3 text-xs font-semibold flex items-center justify-center shrink-0">
-      {agent.name.charAt(0).toUpperCase()}
-    </div>
-  );
-}
-
-function AgentLabel({ agent }: { agent: AgentRow }) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-2">
-        <span className="text-ink font-medium truncate">{agent.name}</span>
-        {agent.isDefault && (
-          <span className="text-[10px] font-semibold text-run uppercase tracking-wider">
-            default
-          </span>
-        )}
-        {agent.role === 'orchestrator' && (
-          <span className="text-[10px] font-semibold text-indigo-400 uppercase tracking-wider">
-            orchestrator
-          </span>
-        )}
+    <>
+      <DsAgentAvatar name={agent.name} imageUrl={agent.avatarUrl} size="md" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-legacy-12-5 text-ink">{agent.name}</p>
+        {agent.model && <p className="truncate text-legacy-11 text-ink-3">{agent.model}</p>}
       </div>
-      <span className="font-mono text-ink-3 text-[11px]">{agent.slug}</span>
-      {agent.model && <span className="ml-2 text-ink-4 text-[11px]">· {agent.model}</span>}
-    </div>
+      <ActivityBadge agent={agent} activity={activity} />
+      <div className="flex shrink-0 items-center gap-2">
+        <RowActions agent={agent} />
+      </div>
+    </>
   );
 }
 
@@ -555,9 +761,6 @@ function AgentLabel({ agent }: { agent: AgentRow }) {
 function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveAgentRow | null }) {
   if (!activity || activity.total === 0) return null;
 
-  // Pick the most "alive" bucket for the dot color.
-  // processing > awaiting > pending. Tooltip below shows the full
-  // breakdown so the user can see every category at a glance.
   const dot =
     activity.processing > 0
       ? { color: 'bg-run', pulse: true, label: `${activity.processing} running` }
@@ -579,40 +782,37 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
       href={`/jobs?agentId=${agent.id}`}
       title={tooltipLines.join(' · ')}
       onPointerDown={(e) => e.stopPropagation()}
-      className="ml-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-hover hover:bg-hover border border-rule text-[11px] text-ink-2 transition-colors shrink-0"
+      className="ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-full border border-rule bg-hover px-2 py-0.5 text-legacy-11 text-ink-2 transition-colors hover:bg-hover"
     >
-      <span className="relative inline-flex w-2 h-2 shrink-0">
+      <span className="relative inline-flex h-2 w-2 shrink-0">
         {dot.pulse && (
           <span
             className={`absolute inset-0 inline-flex h-full w-full rounded-full opacity-60 animate-ping ${dot.color}`}
           />
         )}
-        <span className={`relative inline-flex w-2 h-2 rounded-full ${dot.color}`} />
+        <span className={`relative inline-flex h-2 w-2 rounded-full ${dot.color}`} />
       </span>
       <span className="font-mono tabular-nums">{activity.total}</span>
-      <span className="text-ink-3 text-[10px]">active</span>
+      <span className="text-legacy-10 text-ink-3">active</span>
     </Link>
   );
 }
 
 function RowActions({ agent }: { agent: AgentRow }) {
   return (
-    <td className="px-5 py-3 text-right">
-      <div className="flex items-center justify-end gap-2">
-        <RowActionButton
-          square
-          href={`/agents/${agent.id}/channels`}
-          icon={<ChatsCircle size={16} />}
-          title="Channels"
-        />
-        <RowActionButton
-          square
-          href={`/agents/${agent.id}/edit`}
-          icon={<PencilSimple size={16} />}
-          title="Edit"
-        />
-        <DeleteAgentButton id={agent.id} name={agent.name} deleteAction={deleteAgentAction} />
-      </div>
-    </td>
+    <>
+      <RowActionButton
+        square
+        href={`/agents/${agent.id}/edit?tab=channels`}
+        icon={<ChatsCircle size={16} />}
+        title="Channels"
+      />
+      <RowActionButton
+        square
+        href={`/agents/${agent.id}/edit`}
+        icon={<PencilSimple size={16} />}
+        title="Edit"
+      />
+    </>
   );
 }

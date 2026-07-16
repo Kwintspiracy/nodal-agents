@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Brain } from '@phosphor-icons/react';
 import PageShell from '@/components/ui/PageShell';
 import { toast } from 'sonner';
 import {
@@ -16,6 +17,7 @@ import {
 } from 'recharts';
 import {
   updateAgentAction,
+  deleteAgentAction,
   listAgentWorkspacesAction,
   listKeyModelsAction,
   addAgentWorkspaceAction,
@@ -40,6 +42,11 @@ import {
   type JobRow,
   type SkillRow,
   type ApprovalRuleUiRow,
+  type TelegramConfigRow,
+  type TelegramAllowedChatView,
+  type DiscordConfigRow,
+  type SlackConfigRow,
+  type ChannelAllowedConversationView,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import {
@@ -56,6 +63,8 @@ import Disc from '@/components/ui/Disc';
 import Tabs from '@/components/ui/Tabs';
 import AgentPill from '@/components/ui/AgentPill';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
+import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
+import StatusPill from '@/components/ui/StatusPill';
 import RowActionButton from '@/components/ui/RowActionButton';
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextInput from '@/components/ui/TextInput';
@@ -68,16 +77,28 @@ import ModelToolsBadge, { ModelToolsLegend } from '@/components/ui/ModelToolsBad
 import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 import ConnectorsTabContent from './ConnectorsTabContent.tsx';
+import ChannelsTabContent from './ChannelsTabContent.tsx';
+import AgentDangerZone from './AgentDangerZone.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
 
 /**
  * AgentComposer — detail page for /agents/[id]/edit.
  *
  * Matches the screenshot Quentin shared (2026-05-27): a hero card with
- * avatar + name + status + meta + Configure CTA, followed by a stat strip
+ * avatar + name + status + meta + a Memory CTA, followed by a stat strip
  * (only metrics we actually have are filled), then tabs:
  *
- *   Overview · Skills · Connectors · Runs · Settings
+ *   Overview · Channels · Skills · Connectors · Runs · Autonomy · Settings
+ *
+ * Channels is a real in-page tab (Quentin's correction: it used to be its
+ * own page, then briefly a tab-bar link — it's now the actual channel-cards
+ * content rendered right here; see ChannelsTabContent.tsx and its data
+ * loaded in page.tsx). Supports deep-linking via `?tab=channels` (read once
+ * on mount below) so the old standalone /agents/[id]/channels route and the
+ * /agents list's Channels row action can both land here directly. Memory
+ * stays a header CTA (entity-wide, not per-agent enough to earn a tab).
+ * Configure was removed — it only ever jumped to the Settings tab that
+ * already sits right here.
  *
  * Per-agent data flows in from page.tsx:
  *   - connectors / mcpServers   → wired to AgentConnectorGrid / AgentMcpServerGrid
@@ -91,10 +112,25 @@ import type { OperationDescriptor } from '@nodal-agents/shared';
  *   - StatusPill for status chips (same as /jobs, /agents list)
  *   - RunsTable from /jobs for the Runs tab — no second implementation
  *
- * Settings tab is where editing happens. Sticky save bar at the bottom.
+ * Settings tab is where editing happens, ending in a danger zone (delete —
+ * the sole surface for it now) and a sticky save bar at the bottom.
  */
 
-type Tab = 'overview' | 'skills' | 'connectors' | 'runs' | 'autonomy' | 'settings';
+type Tab = 'overview' | 'channels' | 'skills' | 'connectors' | 'runs' | 'autonomy' | 'settings';
+
+/** Tab ids that are valid deep-link targets for `?tab=`. */
+const TAB_IDS: readonly Tab[] = [
+  'overview',
+  'channels',
+  'skills',
+  'connectors',
+  'runs',
+  'autonomy',
+  'settings',
+];
+function isTab(value: string | null): value is Tab {
+  return value !== null && (TAB_IDS as readonly string[]).includes(value);
+}
 type AgentRole = 'worker' | 'router' | 'planner';
 
 function dbRoleToUiRole(
@@ -125,6 +161,17 @@ interface Props {
   lanCommandYolo?: boolean;
   /** Whether the current user is the workspace owner. */
   isOwner?: boolean;
+  /** Channels tab data (see ChannelsTabContent.tsx) — null cfg fields signal
+   *  `channelsError` happened; the tab renders a banner in that case. */
+  channelsError: string | null;
+  telegramCfg: TelegramConfigRow | null;
+  telegramAllowedChats: TelegramAllowedChatView[];
+  discordCfg: DiscordConfigRow | null;
+  discordAllowedConversations: ChannelAllowedConversationView[];
+  slackCfg: SlackConfigRow | null;
+  slackAllowedConversations: ChannelAllowedConversationView[];
+  whatsappStatus: 'connected' | 'disconnected';
+  whatsappAllowedConversations: ChannelAllowedConversationView[];
 }
 
 export default function AgentComposer({
@@ -139,10 +186,27 @@ export default function AgentComposer({
   allSkills,
   lanCommandYolo = false,
   isOwner = false,
+  channelsError,
+  telegramCfg,
+  telegramAllowedChats,
+  discordCfg,
+  discordAllowedConversations,
+  slackCfg,
+  slackAllowedConversations,
+  whatsappStatus,
+  whatsappAllowedConversations,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
-  const [tab, setTab] = useState<Tab>('overview');
+  // Deep-link: `?tab=channels` (old /channels page redirect, /agents list's
+  // Channels row action) opens straight on that tab. Read once on mount —
+  // switching tabs afterwards is purely client state, same as every other
+  // tab here.
+  const [tab, setTab] = useState<Tab>(() => {
+    const fromUrl = searchParams.get('tab');
+    return isTab(fromUrl) ? fromUrl : 'overview';
+  });
 
   // ── form state (only the Settings tab edits these) ────────────────────────
   const initialRole = dbRoleToUiRole(agent.role ?? null, agent.orchestratorMode ?? null);
@@ -305,7 +369,6 @@ export default function AgentComposer({
         <AgentPicker agents={allAgents} activeId={agent.id} />
 
         <HeroCard
-          agentId={agent.id}
           initial={initial}
           avatarUrl={avatarUrl}
           name={agent.name}
@@ -330,7 +393,6 @@ export default function AgentComposer({
             totalRuns,
             successfulRuns,
           }}
-          onConfigure={() => setTab('settings')}
         />
 
         <TabsBar
@@ -352,6 +414,21 @@ export default function AgentComposer({
             mcpsAssignedCount={assignedMcps}
             onOpenSkills={() => setTab('skills')}
             onOpenConnectors={() => setTab('connectors')}
+          />
+        )}
+        {tab === 'channels' && (
+          <ChannelsTabContent
+            agentId={agent.id}
+            agentSlug={agent.slug}
+            error={channelsError}
+            telegramCfg={telegramCfg}
+            telegramAllowedChats={telegramAllowedChats}
+            discordCfg={discordCfg}
+            discordAllowedConversations={discordAllowedConversations}
+            slackCfg={slackCfg}
+            slackAllowedConversations={slackAllowedConversations}
+            whatsappStatus={whatsappStatus}
+            whatsappAllowedConversations={whatsappAllowedConversations}
           />
         )}
         {tab === 'skills' && (
@@ -432,9 +509,9 @@ function BackLink() {
   return (
     <Link
       href="/agents"
-      className="inline-flex items-center gap-1.5 text-[13px] text-ink-3 transition-colors hover:text-ink-2"
+      className="inline-flex items-center gap-1.5 text-body-13 text-ink-3 transition-colors hover:text-ink-2"
     >
-      <span className="text-[15px] leading-none">‹</span>
+      <span className="text-body-15 leading-none!">‹</span>
       Back to agents
     </Link>
   );
@@ -461,7 +538,6 @@ function AgentPicker({ agents, activeId }: { agents: AgentRow[]; activeId: strin
 // ─── Hero card ────────────────────────────────────────────────────────────────
 
 function HeroCard({
-  agentId,
   initial,
   avatarUrl,
   name,
@@ -472,9 +548,7 @@ function HeroCard({
   provider,
   llmKeyLabel,
   stats,
-  onConfigure,
 }: {
-  agentId: string;
   initial: string;
   avatarUrl: string | null;
   name: string;
@@ -493,7 +567,6 @@ function HeroCard({
     totalRuns: number;
     successfulRuns: number;
   };
-  onConfigure: () => void;
 }) {
   const successRate =
     stats.totalRuns > 0 ? `${Math.round((stats.successfulRuns / stats.totalRuns) * 100)}%` : '—';
@@ -510,7 +583,7 @@ function HeroCard({
             className="h-[80px] w-[80px] flex-shrink-0 rounded-2xl object-cover"
           />
         ) : (
-          <div className="flex h-[80px] w-[80px] flex-shrink-0 items-center justify-center rounded-2xl bg-agent-vivid text-[28px] font-semibold text-canvas">
+          <div className="flex h-[80px] w-[80px] flex-shrink-0 items-center justify-center rounded-2xl bg-agent-vivid text-display-28 text-canvas">
             {initial}
           </div>
         )}
@@ -518,20 +591,17 @@ function HeroCard({
         {/* Title + meta */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="m-0 text-[22px] font-semibold leading-none tracking-[-0.01em] text-ink">
+            <h1 className="m-0 text-display-22 leading-none! tracking-[-0.01em] text-ink">
               {name}
             </h1>
-            <span className="inline-flex h-[24px] items-center gap-1.5 rounded-full border border-rule-2 bg-canvas px-2.5 text-[12px] font-medium text-ink-3">
-              <span className="h-[6px] w-[6px] rounded-full bg-ink-3" />
-              Idle
-            </span>
+            <StatusPill variant="idle" label="Idle" />
           </div>
-          <p className="mt-2 text-[14px] leading-[1.55] text-ink-3">{personaPreview}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-ink-3">
+          <p className="mt-2 text-body-14 leading-[1.55]! text-ink-3">{personaPreview}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-body-12 text-ink-3">
             {model && (
               <span className="inline-flex items-center gap-1.5">
                 <span className="text-ink-4">Model:</span>{' '}
-                <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 font-mono text-[12px] text-ink-2">
+                <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 text-mono-12 text-ink-2">
                   {model}
                 </code>
                 <ModelToolsBadge support={modelToolsSupport(provider ?? '', model)} />
@@ -556,33 +626,18 @@ function HeroCard({
           </div>
         </div>
 
-        {/* CTAs — this page is the hub for everything per-agent: Channels and
-            Memory link out to their own pages (channels has enough surface —
-            allowlists, per-channel setup — to warrant a full page rather than
-            a tab; Memory is entity-wide, filtered by agent client-side on
-            /memories). Configure jumps to the Settings tab, in-page. */}
+        {/* Memory is entity-wide (not per-agent enough to earn a tab), so it
+            stays a header CTA linking out to its own page — same icon as the
+            /memories sidebar item (Brain) for a consistent "one concept, one
+            icon" mapping across the app. */}
         <div className="flex flex-shrink-0 flex-wrap gap-2">
           <Link
-            href={`/agents/${agentId}/channels`}
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
-          >
-            <ChannelsIcon />
-            Channels
-          </Link>
-          <Link
             href="/memories"
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+            className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-medium-13 text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
           >
-            <MemoryIcon />
+            <Brain size={14} />
             Memory
           </Link>
-          <RowActionButton
-            onClick={onConfigure}
-            icon={<GearIcon />}
-            className="!h-[34px] !gap-1.5 !rounded-lg !border-rule !px-3.5 !text-[13px] hover:!bg-transparent hover:!border-rule-2"
-          >
-            Configure
-          </RowActionButton>
         </div>
       </div>
 
@@ -611,60 +666,13 @@ function Sep() {
 function StatCell({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
   return (
     <div className="rounded-lg border border-rule-2 bg-canvas/40 px-4 py-3">
-      <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-4">{label}</div>
+      <div className="text-mono-11 uppercase tracking-[0.14em] text-ink-4">{label}</div>
       <div
-        className={`mt-1.5 text-[20px] font-semibold leading-none tracking-[-0.01em] ${dim ? 'text-ink-4' : 'text-ink'}`}
+        className={`mt-1.5 text-heading-20 leading-none! tracking-[-0.01em] ${dim ? 'text-ink-4' : 'text-ink'}`}
       >
         {value}
       </div>
     </div>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-    >
-      <circle cx="8" cy="8" r="2" />
-      <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5" />
-    </svg>
-  );
-}
-
-function ChannelsIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-    >
-      <path d="M2 3.5h12M2 8h12M2 12.5h8" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function MemoryIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-    >
-      <path d="M8 1.5a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0v-7a3 3 0 0 0-3-3Z" />
-      <path d="M5 6.5h6M5 9.5h6" strokeLinecap="round" />
-    </svg>
   );
 }
 
@@ -679,8 +687,12 @@ function TabsBar({
   onChange: (t: Tab) => void;
   counts: { skills: number; connectors: number; runs: number };
 }) {
+  // Configure was removed entirely — it only ever jumped to the Settings tab
+  // already sitting right here. Memory stays a header CTA (see HeroCard),
+  // not a tab.
   const TABS: { id: Tab; label: string; count?: number }[] = [
     { id: 'overview', label: 'Overview' },
+    { id: 'channels', label: 'Channels' },
     { id: 'skills', label: 'Skills', count: counts.skills },
     { id: 'connectors', label: 'Connectors', count: counts.connectors },
     { id: 'runs', label: 'Runs', count: counts.runs },
@@ -708,8 +720,8 @@ function SectionHead({
   return (
     <div className="mb-4 flex items-start justify-between gap-4">
       <div>
-        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">{label}</div>
-        {hint && <p className="mt-1 text-[13px] leading-[1.5] text-ink-3">{hint}</p>}
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">{label}</div>
+        {hint && <p className="mt-1 text-body-13 leading-[1.5]! text-ink-3">{hint}</p>}
       </div>
       {right}
     </div>
@@ -762,13 +774,13 @@ function OverviewTab({
               ))}
             </div>
           ) : (
-            <p className="text-[13px] text-ink-3">
+            <p className="text-body-13 text-ink-3">
               No connectors assigned yet.{' '}
               <RowActionButton onClick={onOpenConnectors}>Wire one →</RowActionButton>
             </p>
           )}
           {mcpsAssignedCount > 0 && (
-            <p className="mt-3 border-t border-rule-2 pt-3 text-[12px] text-ink-4">
+            <p className="mt-3 border-t border-rule-2 pt-3 text-body-12 text-ink-4">
               + {mcpsAssignedCount} MCP server{mcpsAssignedCount > 1 ? 's' : ''} attached (Settings
               → Knowledge).
             </p>
@@ -791,7 +803,7 @@ function OverviewTab({
             ))}
           </div>
         ) : (
-          <p className="text-[13px] text-ink-3">
+          <p className="text-body-13 text-ink-3">
             No skills attached yet. Read-only view — manage on the{' '}
             <Link href="/skills" className="underline hover:text-ink-2">
               Skills page
@@ -841,15 +853,15 @@ function AgentWeeklyChart({ jobs }: { jobs: JobRow[] }) {
   return (
     <div>
       <div className="mb-3 flex items-baseline gap-2">
-        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-4">
+        <span className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
           Runs · 7 days
         </span>
       </div>
       <div className="mb-4 flex items-baseline gap-3">
-        <span className="text-[34px] font-semibold leading-none tracking-[-0.015em] text-ink">
+        <span className="text-legacy-34 font-semibold leading-none! tracking-[-0.015em] text-ink">
           {total.toLocaleString()}
         </span>
-        <span className="text-[14px] text-ink-3">successful run{total === 1 ? '' : 's'}</span>
+        <span className="text-body-14 text-ink-3">successful run{total === 1 ? '' : 's'}</span>
       </div>
       <div className="h-[200px]">
         <ResponsiveContainer width="100%" height="100%">
@@ -908,7 +920,7 @@ function SkillEdRow({ skill }: { skill: SkillRow }) {
     <EdRow
       glyph={
         <Disc variant="skill" size="lg" shape="square">
-          <span className="font-mono text-[11px] font-semibold uppercase">
+          <span className="font-mono text-label-11 uppercase">
             {skill.slug.slice(0, 2)}
           </span>
         </Disc>
@@ -919,7 +931,7 @@ function SkillEdRow({ skill }: { skill: SkillRow }) {
       actions={
         <Link
           href={`/skills/${skill.id}/edit`}
-          className="flex h-7 items-center gap-1 rounded-md border border-rule px-2 text-[12px] font-medium text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
+          className="flex h-7 items-center gap-1 rounded-md border border-rule px-2 text-medium-12 text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
         >
           Open ›
         </Link>
@@ -935,7 +947,7 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
     <EdRow
       glyph={
         <Disc variant="conn" size="lg" shape="square" background={CONN_BRAND_COLORS[row.slug]}>
-          <span className="font-mono text-[11px] font-semibold">
+          <span className="font-mono text-label-11">
             {connGlyph(row.slug, row.label)}
           </span>
         </Disc>
@@ -943,14 +955,14 @@ function ConnectorOverviewRow({ row }: { row: AgentConnectorRow }) {
       name={
         <>
           {row.label}
-          <span className="ml-2 font-mono text-[11px] uppercase tracking-[0.04em] text-ink-4">
+          <span className="ml-2 text-mono-11 uppercase tracking-[0.04em] text-ink-4">
             {row.slug.toUpperCase()}
           </span>
         </>
       }
       description={row.credentialName ?? undefined}
       actions={
-        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-3">
+        <span className="inline-flex items-center gap-1.5 text-mono-11 uppercase tracking-[0.08em] text-ink-3">
           <span className="h-[6px] w-[6px] rounded-full bg-agent-vivid" />
           on
         </span>
@@ -1026,7 +1038,7 @@ function SkillsTab({
         />
         <Link
           href="/skills"
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-rule bg-paper px-3.5 text-medium-13 text-ink-2 transition-colors hover:border-rule-2 hover:text-ink"
         >
           Go to Skills ›
         </Link>
@@ -1042,7 +1054,7 @@ function SkillsTab({
           hint="Loaded into this agent's system prompt. Detach to remove."
         />
         {attached.length === 0 ? (
-          <p className="text-[13px] text-ink-3">
+          <p className="text-body-13 text-ink-3">
             No skills attached to this agent yet. Attach one from the list below.
           </p>
         ) : (
@@ -1073,7 +1085,7 @@ function SkillsTab({
         </SectionCard>
       )}
 
-      <p className="text-[13px] text-ink-3">
+      <p className="text-body-13 text-ink-3">
         Need something new?{' '}
         <Link href="/skills" className="underline hover:text-ink-2">
           Browse the full library
@@ -1097,7 +1109,7 @@ function SkillToggleRow({
     <EdRow
       glyph={
         <Disc variant="skill" size="lg" shape="square">
-          <span className="font-mono text-[11px] font-semibold uppercase">
+          <span className="font-mono text-label-11 uppercase">
             {skill.slug.slice(0, 2)}
           </span>
         </Disc>
@@ -1251,7 +1263,7 @@ function AutonomyTab({
   if (!loaded) {
     return (
       <SectionCard>
-        <p className="text-[13px] text-ink-4">Loading…</p>
+        <p className="text-body-13 text-ink-4">Loading…</p>
       </SectionCard>
     );
   }
@@ -1264,7 +1276,7 @@ function AutonomyTab({
           hint="Control whether this agent acts freely, must ask you first, or is blocked — per outward tool. Read-only tools are always autonomous and not shown."
         />
         {gateableTools.length === 0 ? (
-          <p className="text-[13px] text-ink-3">
+          <p className="text-body-13 text-ink-3">
             No write or destructive tools are currently assigned to this agent. Assign a connector
             (e.g. Gmail) or configure a Telegram bot to see its gateable tools here.
           </p>
@@ -1284,7 +1296,7 @@ function AutonomyTab({
             ))}
           </div>
         )}
-        <p className="mt-4 text-[12px] text-ink-4">
+        <p className="mt-4 text-body-12 text-ink-4">
           Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>.
           Rules take effect on the next job — already-running jobs are not affected.
         </p>
@@ -1419,19 +1431,17 @@ function CommandExecutionSection({
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-[14px] font-medium text-ink">
+            <span className="text-medium-14 text-ink">
               Auto-run commands without approval (Yolo)
             </span>
-            <span className="inline-flex h-[18px] items-center rounded-full bg-err/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-err">
-              irreversible
-            </span>
+            <MonoMicroTag tone="err">irreversible</MonoMicroTag>
           </div>
-          <p className="mt-1 text-[13px] leading-[1.4] text-ink-3">
+          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
             When on, this agent runs any shell command immediately with no approval gate. Commands
             are still logged. Only enable for agents you fully trust.
           </p>
           {isDormant && canManage && (
-            <p className="mt-2 text-[12px] text-warn">
+            <p className="mt-2 text-body-12 text-warn">
               This agent&apos;s Yolo is <b className="font-semibold">dormant</b> — workspace Yolo is
               off, so its commands still require approval. Turn it off here to clear it, or
               re-enable Yolo in{' '}
@@ -1445,7 +1455,7 @@ function CommandExecutionSection({
             </p>
           )}
           {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
-            <p className="mt-2 text-[12px] text-ink-4">
+            <p className="mt-2 text-body-12 text-ink-4">
               Yolo is off for this workspace. The owner can enable it in{' '}
               <Link
                 href="/settings"
@@ -1457,7 +1467,7 @@ function CommandExecutionSection({
             </p>
           )}
           {!yoloAllowed && lanCommandYolo && !isOwner && (
-            <p className="mt-2 text-[12px] text-ink-4">
+            <p className="mt-2 text-body-12 text-ink-4">
               The workspace owner has enabled Yolo for this workspace, but only the owner can toggle
               it per agent.
             </p>
@@ -1539,7 +1549,7 @@ function ScriptAuthSection({
           <ScriptAuthRow key={skill.id} skill={skill} agentId={agentId} isOwner={isOwner} />
         ))}
       </div>
-      <p className="mt-4 text-[12px] text-ink-4">
+      <p className="mt-4 text-body-12 text-ink-4">
         Granting script access lets this agent run the skill&apos;s bundled scripts on your machine
         without per-command approval.
       </p>
@@ -1606,23 +1616,21 @@ function ScriptAuthRow({
       {/* Skill identity */}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[14px] font-medium text-ink">{skill.name}</span>
-          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-skill-vivid">
-            community
-          </span>
-          <span className="inline-flex h-[18px] items-center rounded-full bg-warn/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-warn">
+          <span className="text-medium-14 text-ink">{skill.name}</span>
+          <MonoMicroTag tone="skill">community</MonoMicroTag>
+          <MonoMicroTag tone="warn">
             {scripts.length} script{scripts.length > 1 ? 's' : ''}
-          </span>
+          </MonoMicroTag>
         </div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
           {scripts.map((s) => (
-            <code key={s.path} className="font-mono text-[11px] text-ink-4">
+            <code key={s.path} className="text-mono-11 text-ink-4">
               {s.path}
             </code>
           ))}
         </div>
         {!canToggle && (
-          <p className="mt-1.5 text-[12px] text-ink-4">
+          <p className="mt-1.5 text-body-12 text-ink-4">
             Only the workspace owner can authorize scripts.
           </p>
         )}
@@ -1693,7 +1701,7 @@ function FileWriteAuthSection({
           <FileWriteAuthRow key={skill.id} skill={skill} agentId={agentId} isOwner={isOwner} />
         ))}
       </div>
-      <p className="mt-4 text-[12px] text-ink-4">
+      <p className="mt-4 text-body-12 text-ink-4">
         Writes are bounded to the skill&apos;s own folder (no path escape) and require approval by
         default — far narrower than granting shell access.
       </p>
@@ -1756,13 +1764,11 @@ function FileWriteAuthRow({
     <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[14px] font-medium text-ink">{skill.name}</span>
-          <span className="inline-flex h-[18px] items-center rounded-full bg-skill-vivid/10 px-2 font-mono text-[11px] uppercase tracking-[0.1em] text-skill-vivid">
-            community
-          </span>
+          <span className="text-medium-14 text-ink">{skill.name}</span>
+          <MonoMicroTag tone="skill">community</MonoMicroTag>
         </div>
         {!canToggle && (
-          <p className="mt-1.5 text-[12px] text-ink-4">
+          <p className="mt-1.5 text-body-12 text-ink-4">
             Only the workspace owner can authorize file writes.
           </p>
         )}
@@ -1813,10 +1819,10 @@ function AutonomyToolRow({
       {/* Tool identity */}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[14px] font-medium text-ink">{op.name}</span>
+          <span className="text-medium-14 text-ink">{op.name}</span>
           <span
             className={[
-              'inline-flex h-[18px] items-center rounded-full px-2 font-mono text-[11px] uppercase tracking-[0.1em]',
+              'inline-flex h-[18px] items-center rounded-full px-2 text-mono-11 uppercase tracking-[0.1em]',
               op.risk === 'destructive' ? 'bg-err/10 text-err' : 'bg-warn/10 text-warn',
             ].join(' ')}
           >
@@ -1824,9 +1830,9 @@ function AutonomyToolRow({
           </span>
         </div>
         {op.description && (
-          <p className="mt-0.5 text-[13px] leading-[1.4] text-ink-3">{op.description}</p>
+          <p className="mt-0.5 text-body-13 leading-[1.4]! text-ink-3">{op.description}</p>
         )}
-        <code className="mt-1 block font-mono text-[11px] text-ink-4">{op.slug}</code>
+        <code className="mt-1 block text-mono-11 text-ink-4">{op.slug}</code>
       </div>
 
       {/* 3-way control */}
@@ -2070,11 +2076,11 @@ function SettingsTab(props: {
               value={name}
               onChange={(e) => onChangeName(e.target.value)}
               placeholder="Agent name"
-              className="!rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
+              className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
             />
           </Field>
           <Field label="Slug (read-only)">
-            <code className="block w-full rounded-lg border border-rule-2 bg-hover px-3 py-2 font-mono text-[12px] tracking-[0.02em] text-ink-3">
+            <code className="block w-full rounded-lg border border-rule-2 bg-hover px-3 py-2 text-mono-12 tracking-[0.02em] text-ink-3">
               {slug}
             </code>
           </Field>
@@ -2098,7 +2104,7 @@ function SettingsTab(props: {
             onChange={(e) => onChangePersonality(e.target.value)}
             rows={24}
             placeholder="You are a helpful assistant…"
-            className="min-h-[560px] !rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px] leading-[1.55]"
+            className="min-h-[560px] !rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13 leading-[1.55]!"
           />
         </Field>
         <div className="mt-4">
@@ -2106,7 +2112,7 @@ function SettingsTab(props: {
             <Select
               value={role}
               onChange={(e) => onChangeRole(e.target.value as AgentRole)}
-              className="!rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
+              className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
             >
               <option value="worker">Worker (runs its own tools)</option>
               <option value="router">Router (delegates one at a time)</option>
@@ -2118,7 +2124,7 @@ function SettingsTab(props: {
           <div className="mt-4">
             <Field label={`Sub-agents · ${subAgentIds.length} selected`}>
               {peers.length === 0 ? (
-                <p className="text-[13px] text-warn">
+                <p className="text-body-13 text-warn">
                   Create at least one worker agent first — orchestrators need someone to delegate
                   to.
                 </p>
@@ -2129,7 +2135,7 @@ function SettingsTab(props: {
                     return (
                       <label
                         key={a.id}
-                        className="flex cursor-pointer items-center gap-3 px-3 py-2 text-[14px] transition-colors hover:bg-hover"
+                        className="flex cursor-pointer items-center gap-3 px-3 py-2 text-body-14 transition-colors hover:bg-hover"
                       >
                         <Checkbox
                           tone="agent"
@@ -2137,7 +2143,7 @@ function SettingsTab(props: {
                           onChange={() => onToggleSubAgent(a.id)}
                         />
                         <span className="text-ink">{a.name}</span>
-                        <span className="ml-auto font-mono text-[12px] text-ink-3">{a.slug}</span>
+                        <span className="ml-auto text-mono-12 text-ink-3">{a.slug}</span>
                       </label>
                     );
                   })}
@@ -2154,7 +2160,7 @@ function SettingsTab(props: {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="LLM provider">
             {noLlmKeys ? (
-              <p className="text-[13px] text-warn">
+              <p className="text-body-13 text-warn">
                 No active LLM keys.{' '}
                 <Link href="/llm-providers" className="underline">
                   Add one
@@ -2165,7 +2171,7 @@ function SettingsTab(props: {
               <Select
                 value={llmKeyId}
                 onChange={(e) => onChangeLlmKey(e.target.value)}
-                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
+                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
               >
                 {activeKeys.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -2193,7 +2199,7 @@ function SettingsTab(props: {
                 onChange={(e) =>
                   onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
                 }
-                className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-[14px]"
+                className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
               >
                 {groupModelCatalog(modelCatalog).map(({ group, models }) =>
                   group ? (
@@ -2251,7 +2257,7 @@ function SettingsTab(props: {
                   MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
                   'e.g. claude-haiku-4-5-20251001'
                 }
-                className="!rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px]"
+                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
               />
             )}
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
@@ -2263,7 +2269,7 @@ function SettingsTab(props: {
           <div className="mt-3">
             <Field label="Fallback providers (failover order)">
               {otherKeys.length === 0 ? (
-                <p className="text-[13px] text-ink-4">
+                <p className="text-body-13 text-ink-4">
                   Add another LLM key in{' '}
                   <Link href="/llm-providers" className="underline">
                     LLM providers
@@ -2272,7 +2278,7 @@ function SettingsTab(props: {
                 </p>
               ) : (
                 <div className="space-y-2.5">
-                  <p className="text-[13px] text-ink-4">
+                  <p className="text-body-13 text-ink-4">
                     If the primary is down (5xx / timeout / quota) mid-job, the runner fails over to
                     these in order. Pick the model each fallback should run on.
                   </p>
@@ -2289,14 +2295,14 @@ function SettingsTab(props: {
                             checked={checked}
                             onChange={() => onToggleFallback(k.id)}
                           />
-                          <span className="text-[14px] text-ink-2">
+                          <span className="text-body-14 text-ink-2">
                             {(k.nickname ?? prettyProviderName(k.provider)) +
                               ' (' +
                               prettyProviderName(k.provider) +
                               ')'}
                           </span>
                           {checked && (
-                            <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-[11px] font-medium text-ink-4">
+                            <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 text-ink-4">
                               #{order + 1}
                             </span>
                           )}
@@ -2306,7 +2312,7 @@ function SettingsTab(props: {
                             <Select
                               value={fbModel}
                               onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-[13px]"
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
                             >
                               {groupModelCatalog(fbCatalog).map(({ group, models }) =>
                                 group ? (
@@ -2350,7 +2356,7 @@ function SettingsTab(props: {
                               value={fbModel}
                               onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
                               placeholder="model id (e.g. llama-3.3-70b)"
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 font-mono !text-[13px]"
+                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-mono-13"
                             />
                           ))}
                       </div>
@@ -2372,9 +2378,9 @@ function SettingsTab(props: {
 
         {/* Existing folders with per-folder file lists + upload */}
         {!workspacesLoaded ? (
-          <p className="text-[13px] text-ink-4">Loading…</p>
+          <p className="text-body-13 text-ink-4">Loading…</p>
         ) : workspaces.length === 0 ? (
-          <p className="text-[13px] text-ink-4">No folders configured.</p>
+          <p className="text-body-13 text-ink-4">No folders configured.</p>
         ) : (
           <div className="space-y-4 mb-4">
             {workspaces.map((ws) => (
@@ -2385,16 +2391,16 @@ function SettingsTab(props: {
                 {/* Folder header row */}
                 <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-rule">
                   <div className="min-w-0 flex-1">
-                    <span className="font-mono text-[12px] font-semibold text-ink-2 mr-2">
+                    <span className="font-mono text-legacy-12 font-semibold text-ink-2 mr-2">
                       {ws.label}
                     </span>
-                    <span className="font-mono text-[12px] text-ink-3 break-all">{ws.path}</span>
+                    <span className="text-mono-12 text-ink-3 break-all">{ws.path}</span>
                   </div>
                   <RowActionButton
                     tone="danger"
                     onClick={() => setWsRemoveId(ws.id)}
                     disabled={wsIsPending}
-                    className="!h-auto shrink-0 !rounded !border-rule !px-2 !py-0.5 !text-[12px] hover:!border-err/40 hover:!bg-err/5"
+                    className="!h-auto shrink-0 !rounded !border-rule !px-2 !py-0.5 !text-body-12 hover:!border-err/40 hover:!bg-err/5"
                   >
                     Remove
                   </RowActionButton>
@@ -2403,15 +2409,15 @@ function SettingsTab(props: {
                 {/* File list */}
                 <div className="px-3 pt-2 pb-1">
                   {!wsFilesLoaded[ws.label] ? (
-                    <p className="text-[12px] text-ink-4 py-1">Loading files…</p>
+                    <p className="text-body-12 text-ink-4 py-1">Loading files…</p>
                   ) : (wsFiles[ws.label] ?? []).length === 0 ? (
-                    <p className="text-[12px] text-ink-4 py-1">No files uploaded yet.</p>
+                    <p className="text-body-12 text-ink-4 py-1">No files uploaded yet.</p>
                   ) : (
                     <div className="space-y-1 mb-2">
                       {(wsFiles[ws.label] ?? []).map((f) => (
                         <div
                           key={f.name}
-                          className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-canvas border border-rule-2 text-[12px]"
+                          className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-canvas border border-rule-2 text-body-12"
                         >
                           <span className="font-mono text-ink-2 truncate min-w-0">{f.name}</span>
                           <span className="shrink-0 text-ink-4">
@@ -2425,7 +2431,7 @@ function SettingsTab(props: {
                             tone="danger"
                             onClick={() => handleDeleteFile(ws.label, f.name)}
                             disabled={wsFilesPending}
-                            className="!h-auto shrink-0 !rounded !border-rule !px-1.5 !py-0.5 !text-[11px] hover:!border-err/40 hover:!bg-err/5"
+                            className="!h-auto shrink-0 !rounded !border-rule !px-1.5 !py-0.5 !text-legacy-11 hover:!border-err/40 hover:!bg-err/5"
                           >
                             Delete
                           </RowActionButton>
@@ -2436,7 +2442,7 @@ function SettingsTab(props: {
 
                   {/* Upload button + drag-drop */}
                   <label
-                    className={`flex items-center gap-2 cursor-pointer rounded-lg border border-dashed px-3 py-2 text-[13px] transition-colors mb-2
+                    className={`flex items-center gap-2 cursor-pointer rounded-lg border border-dashed px-3 py-2 text-body-13 transition-colors mb-2
                       ${
                         wsUploading && wsUploadLabel === ws.label
                           ? 'border-ink-3 text-ink-3 bg-hover'
@@ -2493,26 +2499,26 @@ function SettingsTab(props: {
                 onChange={(e) => setWsLabel(e.target.value)}
                 placeholder="Label (e.g. notes)"
                 maxLength={80}
-                className="w-28 shrink-0 !rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px]"
+                className="w-28 shrink-0 !rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
               />
               <TextInput
                 type="text"
                 value={wsPath}
                 onChange={(e) => setWsPath(e.target.value)}
                 placeholder="/home/you/notes  or  C:\Users\you\docs"
-                className="min-w-0 flex-1 !rounded-lg !bg-canvas !px-3 !py-2 font-mono !text-[13px]"
+                className="min-w-0 flex-1 !rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
               />
               <PrimaryButton
                 variant="neutral"
                 onClick={handleAddWorkspace}
                 disabled={wsIsPending || wsAdding || !wsLabel.trim() || !wsPath.trim()}
-                className="!h-auto shrink-0 !rounded-lg !px-4 !py-2 !text-[14px]"
+                className="!h-auto shrink-0 !rounded-lg !px-4 !py-2 !text-body-14"
               >
                 {wsAdding ? 'Adding…' : 'Add'}
               </PrimaryButton>
             </div>
           </Field>
-          <p className="text-[12px] text-ink-4">
+          <p className="text-body-12 text-ink-4">
             Absolute path. Label is the prefix the agent uses (e.g.{' '}
             <code className="font-mono">notes/file.md</code>). Leave label blank if a single folder
             — label is then optional.
@@ -2546,9 +2552,13 @@ function SettingsTab(props: {
         />
       </SectionCard>
 
+      {/* Danger zone — the only place an agent can be deleted from now (moved
+          off the /agents list, which is browse/organize only). */}
+      <AgentDangerZone agentId={agentId} name={name} deleteAction={deleteAgentAction} />
+
       {/* Sticky save bar */}
       <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 rounded-2xl border border-rule-2 bg-paper px-4 py-3 shadow-lg">
-        <div className="text-[13px] text-ink-3">
+        <div className="text-body-13 text-ink-3">
           {dirty ? (
             <span>
               <span className="mr-1.5 inline-block h-[7px] w-[7px] rounded-full bg-skill-vivid" />
@@ -2563,7 +2573,7 @@ function SettingsTab(props: {
             variant="neutral"
             onClick={onReset}
             disabled={isPending || !dirty}
-            className="!h-auto !rounded-lg !border-rule !px-4 !py-2 !text-[14px] !text-ink-3 hover:!text-ink-2"
+            className="!h-auto !rounded-lg !border-rule !px-4 !py-2 !text-body-14 !text-ink-3 hover:!text-ink-2"
           >
             Reset
           </PrimaryButton>
@@ -2572,7 +2582,7 @@ function SettingsTab(props: {
             onClick={onSave}
             disabled={isPending || noLlmKeys || !dirty}
             title={!dirty ? 'No changes to save' : undefined}
-            className="!h-auto !rounded-lg !px-5 !py-2 !text-[14px]"
+            className="!h-auto !rounded-lg !px-5 !py-2 !text-body-14"
           >
             {isPending ? 'Saving…' : 'Save'}
           </PrimaryButton>
@@ -2585,7 +2595,7 @@ function SettingsTab(props: {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-4">{label}</label>
+      <label className="text-mono-11 uppercase tracking-[0.1em] text-ink-4">{label}</label>
       <div>{children}</div>
     </div>
   );

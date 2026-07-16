@@ -9,6 +9,12 @@ import {
   getAgentAttachedSkillsAction,
   listSkillsAction,
   getLanCommandYoloAction,
+  getAgentChannelsAction,
+  getAgentTelegramConfigAction,
+  getTelegramAllowedChatsAction,
+  getAgentDiscordConfigAction,
+  getAgentSlackConfigAction,
+  getChannelAllowedConversationsAction,
 } from '@/lib/actions.ts';
 import AgentComposer from './AgentComposer.tsx';
 
@@ -43,6 +49,14 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
     skillsResult,
     allSkillsResult,
     lanYoloResult,
+    channelsOverviewResult,
+    telegramCfgResult,
+    telegramAllowedChatsResult,
+    discordCfgResult,
+    discordAllowedConversationsResult,
+    slackCfgResult,
+    slackAllowedConversationsResult,
+    whatsappAllowedConversationsResult,
   ] = await Promise.all([
     listAgentConnectorsAction(agent.id),
     listAgentMcpServersAction(agent.id),
@@ -53,6 +67,17 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
     // installed on the workspace, not just what's assigned to this agent).
     listSkillsAction(),
     getLanCommandYoloAction(),
+    // Channels tab (in-page — see ChannelsTabContent.tsx). Same reads the old
+    // standalone /agents/[id]/channels page did; that route now just
+    // redirects here (?tab=channels) — one canonical surface.
+    getAgentChannelsAction(agent.id),
+    getAgentTelegramConfigAction(agent.id),
+    getTelegramAllowedChatsAction(agent.id),
+    getAgentDiscordConfigAction(agent.id),
+    getChannelAllowedConversationsAction(agent.id, 'discord'),
+    getAgentSlackConfigAction(agent.id),
+    getChannelAllowedConversationsAction(agent.id, 'slack'),
+    getChannelAllowedConversationsAction(agent.id, 'whatsapp'),
   ]);
   const connectors = connectorsResult.ok ? connectorsResult.data : [];
   const mcpServers = mcpServersResult.ok ? mcpServersResult.data : [];
@@ -65,6 +90,28 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
 
   const lanCommandYolo = lanYoloResult.ok ? lanYoloResult.data.lanCommandYolo : false;
   const isOwner = lanYoloResult.ok ? lanYoloResult.data.isOwner : false;
+
+  // Channels tab data — the agent existing is already confirmed above, so
+  // these only fail on a genuine db_error; surface the first one as a banner
+  // instead of the cards rather than blowing up the whole edit page.
+  const channelsError = !channelsOverviewResult.ok
+    ? channelsOverviewResult.message
+    : !telegramCfgResult.ok
+      ? telegramCfgResult.message
+      : !discordCfgResult.ok
+        ? discordCfgResult.message
+        : !slackCfgResult.ok
+          ? slackCfgResult.message
+          : null;
+  // WhatsApp has no legacy columns and no per-channel config action of its
+  // own — its coarse connected/disconnected status comes straight off the
+  // channels overview already fetched above.
+  const whatsappStatus: 'connected' | 'disconnected' =
+    channelsOverviewResult.ok &&
+    channelsOverviewResult.data.channels.find((c) => c.channel === 'whatsapp')?.status ===
+      'connected'
+      ? 'connected'
+      : 'disconnected';
 
   return (
     <AgentComposer
@@ -79,6 +126,21 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
       allSkills={allSkills}
       lanCommandYolo={lanCommandYolo}
       isOwner={isOwner}
+      channelsError={channelsError}
+      telegramCfg={telegramCfgResult.ok ? telegramCfgResult.data : null}
+      telegramAllowedChats={telegramAllowedChatsResult.ok ? telegramAllowedChatsResult.data : []}
+      discordCfg={discordCfgResult.ok ? discordCfgResult.data : null}
+      discordAllowedConversations={
+        discordAllowedConversationsResult.ok ? discordAllowedConversationsResult.data : []
+      }
+      slackCfg={slackCfgResult.ok ? slackCfgResult.data : null}
+      slackAllowedConversations={
+        slackAllowedConversationsResult.ok ? slackAllowedConversationsResult.data : []
+      }
+      whatsappStatus={whatsappStatus}
+      whatsappAllowedConversations={
+        whatsappAllowedConversationsResult.ok ? whatsappAllowedConversationsResult.data : []
+      }
     />
   );
 }
