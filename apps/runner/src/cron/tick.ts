@@ -298,7 +298,7 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
       retentionJobsDeleted = pruned.jobsDeleted;
       retentionToolCallsDeleted = pruned.toolCallsDeleted;
       if (pruned.jobsDeleted > 0) {
-        console.log(
+        console.warn(
           `[retention] pruned ${pruned.jobsDeleted} jobs / ${pruned.toolCallsDeleted} tool_calls (older than ${retentionDays}d)`,
         );
 
