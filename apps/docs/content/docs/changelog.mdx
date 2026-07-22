@@ -7,6 +7,18 @@ Notable releases, newest first. Pre-1.0: minor versions can carry breaking
 changes. Every release is published to npm as `nodal-agents` and tagged on
 GitHub — upgrade in place with `nodal-agents update` (your data is preserved).
 
+## v0.8.0 — The Office Release · Jul 22, 2026
+
+Your agents step into the workplace: Outlook mail, real Office documents, a per-agent thinking dial — plus a deep reliability pass on tool servers, connectors, and delegated workers.
+
+- **Microsoft 365, connected.** A native Microsoft OAuth connector plus an Outlook mail toolset, alongside the existing Google, Notion, and Airtable connectors.
+- **Agents that author documents.** A local office-authoring toolset builds real `.docx`, `.pptx`, and `.xlsx` files — multi-section documents, slides, spreadsheets with charts and pivots — failing loudly instead of producing silent half-files.
+- **Choose how hard your agent thinks.** A reasoning-effort setting per agent (Auto / Off / low to max), applied per link of the fallback chain; the dashboard only offers levels the model actually supports.
+- **Community skills, kept in sync — on your terms.** Installed skills track upstream updates with a badge and a bell. Updates are a true three-way merge with a "Keep your version" option when you've edited a skill locally, and script authorization is revoked before any new file is written.
+- **Rate limits handled gracefully.** LLM 429/529 responses retry with a capped `Retry-After` backoff and fast-failover to a configured fallback model.
+- **Reliability.** A hung remote tool server can no longer freeze an agent (per-server network dispatcher). Connector creation is idempotent, so a stuttering agent can't register duplicates. Delegated workers no longer speak on your channels or overwrite shared templates. Routines referencing a tool the agent doesn't have warn at creation time. A timed-out Telegram send is reported as ambiguous instead of retried into a duplicate.
+- **Leaner and faster.** Dead tables dropped, a missing index added, N+1 queries batched, fetch timeouts tightened; typography fully on the design-system token scale and a new Table primitive across the dashboard.
+
 ## v0.7.95 — The Living Design System Release · Jul 16, 2026
 
 The design system became a loop: Figma and the code are now mechanically tied together and checked by machine — and the last stock-browser UI joined the system.
