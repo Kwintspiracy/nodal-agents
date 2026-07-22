@@ -10,6 +10,30 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.8.0 — The Office Release · Jul 22, 2026
+
+Your agents step into the workplace: they can now read your Outlook mail and author
+real Office documents, choose how hard they think, and the platform got a deep
+reliability pass — a remote tool server that hangs can no longer freeze an agent, and
+a stuttering agent can no longer flood your workspace with duplicates.
+
+**Highlights**
+
+- **Microsoft 365, connected.** A native Microsoft OAuth connector plus an Outlook mail toolset — your agents authenticate to M365 and work your mailbox, alongside the existing Google/Notion/Airtable connectors.
+- **Agents that author documents.** A local office-authoring toolset builds real `.docx`, `.pptx`, and `.xlsx` files — multi-section documents, slides, spreadsheets with charts and pivots — with loud, honest failures when something can't be produced (no silent half-files).
+- **Choose how hard your agent thinks.** Each agent gets a reasoning-effort setting (Auto / Off / low → max). The dashboard only offers the levels a model actually supports, and the choice applies per link of the fallback chain.
+- **Community skills, kept in sync — on your terms.** Installed skills track upstream updates with a badge and a notification bell. Updates are a true three-way merge: if you've edited a skill's scripts locally and upstream also changed, you get a **"Keep your version"** option instead of a silent overwrite — and script authorization is revoked before any new file is written, so an update can never run un-vetted code. Skills also show where they came from (provenance) and a redesigned Tools view makes capabilities ON/OFF the primary control.
+- **Rate limits handled gracefully.** LLM 429/529 responses are retried with a capped `Retry-After` backoff, and fast-failover to a fallback model when one is configured — no more a single provider hiccup killing a job.
+
+**Reliability & fixes**
+
+- **A hung MCP server can't freeze your agent.** Each remote tool-server connection gets its own network dispatcher, so one server whose event stream hangs no longer starves every tool call behind it (previously froze the whole agent for a minute per call).
+- **No more duplicate connectors.** Creating a connector is now idempotent — an agent that stutters can't register the same connector eight times; a same-name duplicate fails loudly, while genuinely different instances (two accounts, same provider) still work.
+- **Delegated workers stay in their lane.** A sub-agent no longer speaks on your channels or self-publishes status cards — delivery is the orchestrator's job — and it can no longer overwrite shared workflow templates in place.
+- **Routines get a safety net.** Creating a scheduled routine that references a tool the agent doesn't have (or an ambiguous non-capability like "your state") now surfaces a warning at creation time.
+- **Honest delivery.** A Telegram send that times out is no longer blindly retried (the message was likely delivered) — it's reported as ambiguous instead of duplicated.
+- **Leaner and faster.** A pre-0.8 audit dropped dead tables and columns, added a missing index, batched N+1 queries, tightened fetch timeouts, and hardened process-level error handling. Typography moved fully onto the design-system token scale, and a new Table primitive standardizes data tables across the dashboard.
+
 ## v0.7.95 — The Living Design System Release · Jul 16, 2026
 
 The design system stopped being a snapshot and became a loop: the Figma library and
