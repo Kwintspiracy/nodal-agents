@@ -28,11 +28,23 @@ const OFFICE_EDITING_REQUIRED_BUILTINS = [
   'xlsx_add_sheet',
   'xlsx_create',
   'xlsx_delete_rows',
+  'xlsx_format_range',
+  'xlsx_insert_rows',
+  'xlsx_insert_columns',
+  'xlsx_delete_columns',
+  'xlsx_merge_cells',
+  'xlsx_unmerge_cells',
+  'xlsx_set_column_widths',
+  'xlsx_freeze_panes',
+  'xlsx_find_cells',
   'docx_read',
   'docx_create',
   'docx_append_paragraphs',
+  'docx_replace_text',
   'pptx_read',
   'pptx_create',
+  'pptx_append_slides',
+  'pptx_replace_text',
 ];
 
 const OFFICE_TOOL_NAMES = OFFICE_TOOLS.map((t) => t.name);
@@ -95,7 +107,7 @@ describe('office tool gating via requiredBuiltins', () => {
     }
   });
 
-  it('agent WITH office-editing skill gets all 12 office tools in whitelist', () => {
+  it('agent WITH office-editing skill gets all 24 office tools in whitelist', () => {
     const tools = computeForAgentWithOfficeSkill();
     const names = new Set(tools.map((t) => t.name));
     for (const name of OFFICE_TOOL_NAMES) {
@@ -111,7 +123,7 @@ describe('office tool gating via requiredBuiltins', () => {
     }
   });
 
-  it('OFFICE_EDITING_REQUIRED_BUILTINS contains exactly the 12 office tool names', () => {
+  it('OFFICE_EDITING_REQUIRED_BUILTINS contains exactly the 24 office tool names', () => {
     const expected = new Set(OFFICE_TOOL_NAMES);
     const actual = new Set(OFFICE_EDITING_REQUIRED_BUILTINS);
     expect(actual.size).toBe(expected.size);

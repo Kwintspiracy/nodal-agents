@@ -124,6 +124,7 @@ export async function runMemoryCuration(
       llmKeyId: agents.llmKeyId,
       fallbackChain: agents.fallbackChain,
       model: agents.model,
+      reasoningEffort: agents.reasoningEffort,
     })
     .from(agents)
     .where(and(eq(agents.entityId, entityId), eq(agents.active, true)));
@@ -133,12 +134,18 @@ export async function runMemoryCuration(
     const r = await resolveAgentLlmClient(
       db,
       reflectionModel !== undefined
-        ? { llmKeyId: ag.llmKeyId, fallbackChain: null, model: reflectionModel }
+        ? {
+            llmKeyId: ag.llmKeyId,
+            fallbackChain: null,
+            model: reflectionModel,
+            reasoningEffort: ag.reasoningEffort ?? null,
+          }
         : {
             llmKeyId: ag.llmKeyId,
             fallbackChain:
               (ag.fallbackChain as readonly { keyId: string; model: string }[] | null) ?? null,
             model: ag.model ?? '',
+            reasoningEffort: ag.reasoningEffort ?? null,
           },
     );
     if (r.ok) {

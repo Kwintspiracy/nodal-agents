@@ -62,3 +62,35 @@ describe('flattenTranscript', () => {
     expect(out.length).toBeLessThanOrEqual(60_000);
   });
 });
+
+describe('toDbSafeString / deepDbSafe (byte-level DB safety, 2026-07-17 incident)', () => {
+  it('strips raw NUL bytes and repairs lone surrogates', async () => {
+    const { toDbSafeString } = await import('../../job/transcript-text.ts');
+    const nul = String.fromCharCode(0);
+    const loneSurrogate = String.fromCharCode(0xd83d); // high surrogate without pair
+    expect(toDbSafeString(`a${nul}b`)).toBe('ab');
+    expect(toDbSafeString(`x${loneSurrogate}y`)).toBe('x�y');
+    expect(toDbSafeString('émoji 👍 café')).toBe('émoji 👍 café'); // well-formed untouched
+  });
+
+  it('deepDbSafe sanitizes every nested string without altering structure', async () => {
+    const { deepDbSafe } = await import('../../job/transcript-text.ts');
+    const nul = String.fromCharCode(0);
+    const input = [
+      { role: 'assistant', content: [{ type: 'text', text: `hello${nul}world` }], n: 42 },
+    ];
+    const out = deepDbSafe(input);
+    expect(out[0]!.content[0]!.text).toBe('helloworld');
+    expect(out[0]!.n).toBe(42);
+    expect(out[0]!.role).toBe('assistant');
+    // input non muté
+    expect(input[0]!.content[0]!.text).toContain(nul);
+  });
+
+  it('flattenTranscript output is always DB-safe', () => {
+    const nul = String.fromCharCode(0);
+    const out = flattenTranscript([{ role: 'user', content: `find${nul}this` }]);
+    expect(out).toBe('findthis');
+    expect(out.includes(nul)).toBe(false);
+  });
+});

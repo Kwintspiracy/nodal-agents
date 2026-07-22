@@ -43,13 +43,17 @@ export async function unblockReadyTasks(db: AnyDrizzleDb): Promise<number> {
 
   if (candidateTasks.length === 0) return 0;
 
-  let unblocked = 0;
-
-  for (const task of candidateTasks) {
-    const depIds = task.dependsOn as string[];
-
-    // Load all dep rows
-    const depRows = await db
+  // Batch-load every dependency referenced by any candidate task in ONE query
+  // (previously one `SELECT ... WHERE id IN (...)` per candidate — N+1, and
+  // unlike executeReadyTasks this loop is unbounded: every `todo` task with
+  // deps, not just the first `max`).
+  const allDepIds = [...new Set(candidateTasks.flatMap((t) => t.dependsOn as string[]))];
+  const depRowsById = new Map<
+    string,
+    { id: string; status: string; title: string; result: string | null }
+  >();
+  if (allDepIds.length > 0) {
+    const allDepRows = await db
       .select({
         id: agentTasks.id,
         status: agentTasks.status,
@@ -57,7 +61,24 @@ export async function unblockReadyTasks(db: AnyDrizzleDb): Promise<number> {
         result: agentTasks.result,
       })
       .from(agentTasks)
-      .where(inArray(agentTasks.id, depIds));
+      .where(inArray(agentTasks.id, allDepIds));
+    for (const row of allDepRows) {
+      depRowsById.set(row.id, row);
+    }
+  }
+
+  let unblocked = 0;
+
+  for (const task of candidateTasks) {
+    const depIds = task.dependsOn as string[];
+
+    // Load all dep rows (in-memory lookup against the batch load above)
+    const depRows = depIds
+      .map((id) => depRowsById.get(id))
+      .filter(
+        (d): d is { id: string; status: string; title: string; result: string | null } =>
+          d !== undefined,
+      );
 
     if (depRows.length !== depIds.length) {
       // A dependency ROW IS GONE. Deps are validated to exist at create_task

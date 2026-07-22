@@ -208,10 +208,13 @@ describe('readWorkspaceBinary — end-to-end wiring with PRODUCTION default caps
 
   // Skipped on CI: exceeding the REAL ~1 GiB inflated-bytes cap requires a
   // >1 GiB entry, whose in-memory construction (new Uint8Array of that size) is
-  // OOM-prone on a shared CI runner. Runs locally, where memory is ample; the
-  // injected-cap tests above cover the reject-on-cap logic deterministically on
-  // CI with tiny inputs.
-  it.skipIf(!!process.env['CI'])(
+  // OOM-prone on a shared CI runner. Also skipped under turbo full-monorepo
+  // runs (TURBO_HASH set): the >1 GiB allocation running concurrently with the
+  // other packages' suites starves them into 60s timeouts (observed on web's
+  // DB-backed tests). Runs on a standalone `vitest run` of this package, where
+  // a developer is actually exercising office-ops; the injected-cap tests
+  // above cover the reject-on-cap logic deterministically everywhere else.
+  it.skipIf(!!process.env['CI'] || !!process.env['TURBO_HASH'])(
     'rejects a real bomb exceeding MAX_OFFICE_INFLATED_BYTES with no override (real production constant)',
     async () => {
       const zipBuf = buildZipWithZeros(1100 * 1024 * 1024, 'prod-bomb.bin');
@@ -223,7 +226,11 @@ describe('readWorkspaceBinary — end-to-end wiring with PRODUCTION default caps
       expect(r.reason.toLowerCase()).toMatch(/inflat|decompress|bomb/);
       expect(r.reason).toContain(String(MAX_OFFICE_INFLATED_BYTES));
     },
-    30000,
+    // Inflating a >1 GiB bomb is inherently slow, and slower still when the
+    // whole monorepo test suite runs in parallel under turbo (measured 80s+
+    // under full load vs <30s standalone). The test asserts a security cap,
+    // not a speed target — give it headroom instead of flaking under load.
+    180000,
   );
 });
 

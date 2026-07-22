@@ -88,6 +88,7 @@ const SECRET_NAME_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE_URL|
  */
 export function buildChildEnv(
   sourceEnv: Record<string, string | undefined>,
+  extras?: Record<string, string>,
 ): Record<string, string | undefined> {
   const result: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(sourceEnv)) {
@@ -97,6 +98,15 @@ export function buildChildEnv(
       SAFE_ENV_ALLOWLIST.has(upper) || SAFE_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix));
     if (!allowed) continue;
     if (SECRET_NAME_PATTERN.test(key)) continue; // should never trigger — see comment above
+    result[key] = value;
+  }
+  // Runner-authored additions (e.g. NODAL_SHARED_WORKSPACE — the shared
+  // workspace path handed to scripts so generation artifacts land there, not
+  // in the skill bundle). These are paths/config the runner chooses to expose,
+  // never inherited secrets — so they bypass the allowlist but still go
+  // through the secret-shape guard as belt and braces.
+  for (const [key, value] of Object.entries(extras ?? {})) {
+    if (SECRET_NAME_PATTERN.test(key)) continue;
     result[key] = value;
   }
   return result;

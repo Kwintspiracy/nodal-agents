@@ -62,6 +62,8 @@ vi.mock('../guarded-tick.ts', async (importOriginal) => {
         curatorReactivated: 0,
         curatorConsolidationDeferred: 0,
         curatorConsolidationRan: 0,
+        skillUpdatesChecked: 0,
+        skillUpdatesFound: 0,
         retentionJobsDeleted: 0,
         retentionToolCallsDeleted: 0,
         skipped: false,

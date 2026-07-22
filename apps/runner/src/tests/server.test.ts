@@ -10,7 +10,7 @@ import { LocalTrustProvider } from '@nodal-agents/auth';
 import { createEmbeddingClient } from '@nodal-agents/llm';
 import type { EmbeddingClient } from '@nodal-agents/llm';
 import { createMemory } from '@nodal-agents/memory';
-import { createApp, startBackfillBackground } from '../server.ts';
+import { createApp, startBackfillBackground, installProcessErrorHandlers } from '../server.ts';
 import { _resetGuardedTickForTests } from '../cron/guarded-tick.ts';
 import type { RunnerDeps } from '../deps.ts';
 import type { RunnerEnv } from '../env.ts';
@@ -76,6 +76,8 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SKILL_UPDATE_CHECK_BATCH_SIZE: 10,
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
@@ -643,6 +645,50 @@ describe('startBackfillBackground', () => {
 // now delegates to the exact same `runCronTickGuarded` singleton the ticker
 // uses (cron/guarded-tick.ts), so this test proves the ROUTE itself enforces
 // the shared guard over real HTTP — not just that the ticker does.
+
+// ─── installProcessErrorHandlers — global safety nets ───────────────────────
+//
+// The runner had no unhandledRejection/uncaughtException handler at all: a
+// forgotten `.catch()` anywhere could silently poison the process or crash it
+// with zero diagnostic. These tests exercise the two handlers directly (they
+// are only wired into `process` by main(), which never runs under test) by
+// installing them onto the real `process` object and emitting the events,
+// then removing the listeners again so this test file doesn't leak global
+// handlers into the rest of the suite.
+
+describe('installProcessErrorHandlers', () => {
+  it('unhandledRejection: logs loudly with the stack and does NOT exit the process', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    installProcessErrorHandlers();
+    try {
+      const reason = new Error('unhandled rejection boom');
+      process.emit('unhandledRejection', reason, Promise.resolve());
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('unhandled rejection'), reason);
+      expect(exitSpy).not.toHaveBeenCalled();
+    } finally {
+      process.removeAllListeners('unhandledRejection');
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('uncaughtException: logs loudly with the stack and exits with code 1', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    installProcessErrorHandlers();
+    try {
+      const err = new Error('uncaught exception boom');
+      process.emit('uncaughtException', err);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('uncaught exception'), err);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      process.removeAllListeners('uncaughtException');
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+});
 
 describe('POST /api/cron — shared guard with the in-process ticker (finding R3)', () => {
   it('a second request while one is in flight is skipped (skipped:true, zero counts)', async () => {

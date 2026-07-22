@@ -107,18 +107,7 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
 // ─── resolveBotToken ────────────────────────────────────────────────────────
 
 describe('resolveBotToken', () => {
-  it('returns ctx.resolvedTelegramBotToken without querying the DB', async () => {
-    const db = makeFakeDb([{ telegramBotToken: 'from-db' }]);
-    const ctx = makeCtx({
-      resolvedTelegramBotToken: 'resolved-token',
-      db: db as unknown as ToolContext['db'],
-    });
-
-    await expect(resolveBotToken(ctx)).resolves.toBe('resolved-token');
-    expect(db.select).not.toHaveBeenCalled();
-  });
-
-  it("falls back to the agent's own DB row when ctx.resolvedTelegramBotToken is absent", async () => {
+  it("resolves the agent's OWN DB row token — no inheritance from any other agent", async () => {
     const ctx = makeCtx({
       db: makeFakeDb([{ telegramBotToken: 'agent-token' }]) as unknown as ToolContext['db'],
     });
@@ -126,26 +115,23 @@ describe('resolveBotToken', () => {
     await expect(resolveBotToken(ctx)).resolves.toBe('agent-token');
   });
 
-  it('returns undefined when neither is configured', async () => {
+  it('returns undefined when the agent has no token configured', async () => {
     const ctx = makeCtx({ db: makeFakeDb([]) as unknown as ToolContext['db'] });
 
     await expect(resolveBotToken(ctx)).resolves.toBeUndefined();
   });
 
   // D2 (Discord ingress): a non-telegram job resolves its credential from the
-  // channel_bindings row via getBindingCredentials, NOT the agents table —
-  // and ctx.resolvedTelegramBotToken (B3's telegram-only inheritance) is
-  // never consulted for it.
+  // channel_bindings row via getBindingCredentials, NOT the agents table.
   describe('discord (channel-parametric, D2)', () => {
     beforeEach(() => {
       getBindingCredentialsMock.mockReset();
     });
 
-    it("resolves the discord binding's botToken via getBindingCredentials, ignoring resolvedTelegramBotToken", async () => {
+    it("resolves the discord binding's botToken via getBindingCredentials", async () => {
       getBindingCredentialsMock.mockResolvedValueOnce({ botToken: 'discord-token' });
       const ctx = makeCtx({
         jobChannel: 'discord',
-        resolvedTelegramBotToken: 'should-be-ignored',
       });
 
       await expect(resolveBotToken(ctx)).resolves.toBe('discord-token');

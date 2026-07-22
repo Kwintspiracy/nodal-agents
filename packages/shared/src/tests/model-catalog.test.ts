@@ -159,6 +159,86 @@ describe('openrouter google reasoning flags', () => {
   });
 });
 
+// ─── Reasoning control (per-agent effort brick, 2026-07-20) ───────────────────
+
+describe('reasoningControl coherence', () => {
+  it('every reasoning:true entry declares a coherent reasoningControl', () => {
+    for (const [provider, entries] of Object.entries(MODEL_CATALOG)) {
+      for (const e of entries) {
+        if (e.capabilities.reasoning !== true) continue;
+        const key = `${provider}/${e.modelId}`;
+        const rc = e.capabilities.reasoningControl;
+        expect(rc, key).toBeDefined();
+        if (rc?.kind === 'effort' || rc?.kind === 'adaptive-effort') {
+          expect(rc.levels?.length, key).toBeGreaterThan(0);
+          for (const level of rc.levels ?? []) {
+            expect(['low', 'medium', 'high', 'max'], key).toContain(level);
+          }
+        }
+        if (rc?.kind === 'budget') {
+          expect(Object.keys(rc.budgets ?? {}).length, key).toBeGreaterThan(0);
+          for (const budget of Object.values(rc.budgets ?? {})) {
+            expect(budget, key).toBeGreaterThan(0);
+          }
+        }
+      }
+    }
+  });
+
+  it('native Anthropic and OpenAI entries are now reasoning-capable (the core gain)', () => {
+    for (const [provider, modelId, kind] of [
+      ['anthropic', 'claude-opus-4-8', 'adaptive-effort'],
+      ['anthropic', 'claude-sonnet-4-6', 'adaptive-effort'],
+      ['anthropic', 'claude-haiku-4-5-20251001', 'budget'],
+      ['openai', 'gpt-5', 'effort'],
+      ['openai', 'gpt-5-mini', 'effort'],
+    ] as const) {
+      const entry = findModelCatalogEntry(provider, modelId);
+      expect(entry?.capabilities.reasoning, modelId).toBe(true);
+      expect(entry?.capabilities.reasoningControl?.kind, modelId).toBe(kind);
+    }
+  });
+
+  it('OpenRouter Claude routes have control WITHOUT the always-on reasoning flag', () => {
+    const entry = findModelCatalogEntry('openrouter', 'anthropic/claude-opus-4.8');
+    expect(entry?.capabilities.reasoning).toBeUndefined();
+    expect(entry?.capabilities.reasoningControl?.kind).toBe('effort');
+  });
+
+  it('Grok 4.5 and Qwen 3.7 entries (2026-07-20) match their verified capabilities', () => {
+    // Grok 4.5: always reasons (rejects effort 'none' — Hermes verified live),
+    // levels low/medium/high only, multimodal.
+    const grok = findModelCatalogEntry('openrouter', 'x-ai/grok-4.5');
+    expect(grok?.capabilities.reasoning).toBe(true);
+    expect(grok?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['low', 'medium', 'high'],
+      mandatory: true,
+    });
+    expect(grok?.capabilities.vision).toBe(true);
+    expect(grok?.contextWindow).toBe(500_000);
+    // Qwen 3.7: hybrid thinkers — control WITHOUT the always-on flag (Auto
+    // keeps provider default), max is text-only, plus is multimodal.
+    const qmax = findModelCatalogEntry('openrouter', 'qwen/qwen3.7-max');
+    expect(qmax?.capabilities.reasoning).toBeUndefined();
+    expect(qmax?.capabilities.reasoningControl?.kind).toBe('effort');
+    expect(qmax?.capabilities.vision).toBe(false);
+    const qplus = findModelCatalogEntry('openrouter', 'qwen/qwen3.7-plus');
+    expect(qplus?.capabilities.vision).toBe(true);
+  });
+
+  it('known single-level and mandatory models are encoded (K3 max-only, K2-line onoff)', () => {
+    const k3 = findModelCatalogEntry('moonshot', 'kimi-k3');
+    expect(k3?.capabilities.reasoningControl).toEqual({
+      kind: 'effort',
+      levels: ['max'],
+      mandatory: true,
+    });
+    const k26 = findModelCatalogEntry('moonshot', 'kimi-k2.6');
+    expect(k26?.capabilities.reasoningControl).toEqual({ kind: 'onoff', mandatory: true });
+  });
+});
+
 describe('modelOptionLabel', () => {
   it('returns the plain label for a tools:true entry', () => {
     const entry = findModelCatalogEntry('moonshot', 'kimi-k2.6');

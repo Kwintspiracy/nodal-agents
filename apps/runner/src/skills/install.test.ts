@@ -31,6 +31,7 @@ import { eq, and, agentSkills } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import {
   _extractArchiveBuffer,
+  _readCapped,
   accumulateDeclaredBytes,
   downloadAndExtract,
   isFile,
@@ -817,6 +818,94 @@ describe('downloadAndExtract — download guards', () => {
     }) as typeof fetch;
 
     const source = parseSkillSource('https://clawhub.ai/pub/redirected-skill');
+    const { extractRoot, cleanup } = await downloadAndExtract(source);
+    try {
+      expect(await isFile(join(extractRoot, 'SKILL.md'))).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ── readCapped — inactivity timeout (FIX 2: a stalled host must not hang the
+// download forever) ────────────────────────────────────────────────────────
+describe('downloadAndExtract — readCapped inactivity timeout', () => {
+  const origFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = origFetch;
+    vi.useRealTimers();
+  });
+
+  it('cancels the reader and throws a SkillFetchError mentioning "stalled" when no chunk arrives within the inactivity window', async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        // Never resolves — simulates a connection that accepted the request
+        // but then stopped sending bytes.
+        return new Promise(() => {});
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+
+    // Exercise readCapped directly (via the _readCapped test shim), not
+    // through downloadAndExtract: that path's real mkdtemp/mkdir fs calls
+    // race unpredictably against a faked clock (fake timers only control
+    // JS-scheduled timers, not real I/O completion), which flaked the timer
+    // never getting armed before we advance past it. Going straight at
+    // readCapped removes that race entirely — the setTimeout is armed
+    // SYNCHRONOUSLY inside the Promise executor, before the function's first
+    // await, so it exists the instant _readCapped(res) is called.
+    const resultPromise = _readCapped(res);
+
+    // Attach a rejection handler immediately — BEFORE advancing the clock —
+    // so Node never sees an unhandled rejection during the fast-forward below.
+    const outcome = resultPromise.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+
+    // 30_000ms mirrors fetch.ts's private READ_INACTIVITY_TIMEOUT_MS.
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    const result = await outcome;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(SkillFetchError);
+      expect((result.error as Error).message).toMatch(/stalled/i);
+    }
+    expect(cancelled).toBe(true);
+  });
+
+  it('does NOT time out when chunks keep arriving within the inactivity window', async () => {
+    vi.useFakeTimers();
+    const buf = makeZip([['SKILL.md', '---\nname: test\ndescription: d\n---\nbody']]);
+    let offset = 0;
+    const CHUNK_SIZE = 4;
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (offset >= buf.length) {
+          controller.close();
+          return;
+        }
+        const end = Math.min(offset + CHUNK_SIZE, buf.length);
+        controller.enqueue(new Uint8Array(buf.subarray(offset, end)));
+        offset = end;
+        // Each chunk arrives well within the inactivity window, but the total
+        // extraction spans several "ticks" if we advanced time between them.
+        await Promise.resolve();
+      },
+    });
+    global.fetch = vi.fn(async () => new Response(stream, { status: 200 })) as typeof fetch;
+
+    const source = parseSkillSource('https://clawhub.ai/pub/slow-but-steady-skill');
+    // Each chunk resolves via a microtask (well within the 30s inactivity
+    // cap), so the per-read timer is armed and cleared every iteration
+    // without ever firing — proving the guard doesn't false-positive on a
+    // normal, merely-chunked download.
     const { extractRoot, cleanup } = await downloadAndExtract(source);
     try {
       expect(await isFile(join(extractRoot, 'SKILL.md'))).toBe(true);

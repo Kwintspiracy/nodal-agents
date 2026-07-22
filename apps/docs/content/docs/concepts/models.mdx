@@ -69,6 +69,27 @@ tool-call turns:
 The `reasoning` capability flag in the model catalog gates these behaviours.
 Non-reasoning models are unaffected.
 
+## Reasoning effort
+
+For models whose thinking intensity is controllable, each agent has a
+**Reasoning** setting in its edit page (Model section). The options come from
+the model catalog's `reasoningControl` declaration, so only levels the model
+really accepts are offered:
+
+- **Auto** (default) — the provider's own default behaviour, identical to
+  before this setting existed.
+- **Off** — disables thinking, only offered when the model can run without it.
+- **Low / Medium / High / Max** — the model's declared intensity scale. Each
+  provider translates the level to its native control: OpenRouter
+  `reasoning.effort` (Max maps to `xhigh`), OpenAI `reasoning_effort`,
+  Anthropic `output_config.effort` on Claude ≥ 4.6 or a
+  `thinking.budget_tokens` ladder on earlier models, MiniMax thinking budgets,
+  Gemini `thinking_level`, Kimi K3 `reasoning_effort`.
+
+Each fallback link in the failover chain can carry its own Reasoning value;
+a link without one inherits the agent's setting. The field is hidden entirely
+for models with no declared control (including custom/local models).
+
 ## Capabilities by provider
 
 | Provider   | Tool use | Prompt caching | Structured outputs |

@@ -23,7 +23,7 @@ export const credentials = pgTable(
     index('idx_credentials_type').on(table.type),
     check(
       'credentials_type_check',
-      sql`${table.type} IN ('google-oauth','notion-oauth','airtable-oauth')`,
+      sql`${table.type} IN ('google-oauth','notion-oauth','airtable-oauth','microsoft-oauth')`,
     ),
   ],
 );

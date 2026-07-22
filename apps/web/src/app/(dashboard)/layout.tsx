@@ -5,10 +5,12 @@ import Sidebar from '@/components/Sidebar';
 import UserMenu from '@/components/UserMenu.tsx';
 import ThemedToaster from '@/components/ui/ThemedToaster';
 import { ApprovalsProvider, type PendingApproval } from '@/components/ApprovalsProvider';
+import { SkillUpdatesProvider, type SkillUpdateNotice } from '@/components/SkillUpdatesProvider';
 import { requireUserWithEntity } from '@/lib/server.ts';
 import {
   listWorkspacesAction,
   listApprovalsAction,
+  listSkillUpdatesAction,
   getEntityStatsAction,
   type WorkspaceRow,
 } from '@/lib/actions.ts';
@@ -65,23 +67,31 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }));
   }
 
+  // Seed the skill-updates context the same way — instant first-paint,
+  // provider polls and fills in on next tick.
+  let initialUpdates: SkillUpdateNotice[] = [];
+  const updatesResult = await listSkillUpdatesAction();
+  if (updatesResult.ok) initialUpdates = updatesResult.data;
+
   return (
     <ApprovalsProvider initial={initialPending}>
-      <div className="flex min-h-screen bg-canvas text-ink">
-        <Sidebar workspaces={workspaces} userMenu={<UserMenu />} />
+      <SkillUpdatesProvider initial={initialUpdates}>
+        <div className="flex min-h-screen bg-canvas text-ink">
+          <Sidebar workspaces={workspaces} userMenu={<UserMenu />} />
 
-        {/*
-          Main pane sits next to the 220px sidebar on desktop and accounts for
-          the mobile top bar (h-[58px]) when narrower. There is no dashboard-wide
-          top bar: every page's first child is a <PageHeader/> that carries the
-          title AND the global controls. Canonical max-width is on the inner wrapper.
-        */}
-        <main className="flex min-w-0 flex-1 flex-col pt-16 lg:ml-[244px] lg:pt-0">
-          <div className="flex-1 overflow-x-hidden">{children}</div>
-        </main>
+          {/*
+            Main pane sits next to the 220px sidebar on desktop and accounts for
+            the mobile top bar (h-[58px]) when narrower. There is no dashboard-wide
+            top bar: every page's first child is a <PageHeader/> that carries the
+            title AND the global controls. Canonical max-width is on the inner wrapper.
+          */}
+          <main className="flex min-w-0 flex-1 flex-col pt-16 lg:ml-[244px] lg:pt-0">
+            <div className="flex-1 overflow-x-hidden">{children}</div>
+          </main>
 
-        <ThemedToaster />
-      </div>
+          <ThemedToaster />
+        </div>
+      </SkillUpdatesProvider>
     </ApprovalsProvider>
   );
 }

@@ -1151,54 +1151,6 @@ describe('WhatsApp channel actions (W3)', () => {
   });
 });
 
-describe('configureAgentTelegramAction / disconnectAgentTelegramAction — delegation (S4)', () => {
-  it('configureAgentTelegramAction still works unchanged (delegates to configureAgentChannelAction)', async () => {
-    currentDb = makeDb([
-      { id: 'aaaaaaaa-0000-0000-0000-000000000080', slug: 'agent-legacy', name: 'Agent Legacy' },
-    ]) as typeof currentDb;
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          ok: true,
-          result: { id: 1, is_bot: true, first_name: 'L', username: 'legacy_bot' },
-        }),
-        { status: 200 },
-      ),
-    );
-    fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 }),
-    );
-
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
-      agentId: 'aaaaaaaa-0000-0000-0000-000000000080',
-      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
-    });
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.status).toBe('connected');
-      expect(r.data.botUsername).toBe('legacy_bot');
-      expect(r.data.lastSeenChatIdTelegram).toBe(null);
-    }
-    // Still dual-writes even through the legacy name.
-    expect(
-      (currentDb as unknown as { insert: ReturnType<typeof vi.fn> }).insert,
-    ).toHaveBeenCalled();
-    fetchSpy.mockRestore();
-  });
-
-  it('disconnectAgentTelegramAction still works unchanged (delegates to disconnectAgentChannelAction)', async () => {
-    currentDb = makeDb([{ id: 'aaaaaaaa-0000-0000-0000-000000000081' }]) as typeof currentDb;
-    const { disconnectAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await disconnectAgentTelegramAction('aaaaaaaa-0000-0000-0000-000000000081');
-    expect(r.ok).toBe(true);
-    expect(
-      (currentDb as unknown as { delete: ReturnType<typeof vi.fn> }).delete,
-    ).toHaveBeenCalled();
-  });
-});
-
 // ─── DB path tests ────────────────────────────────────────────────────────────
 
 describe('createAgentAction — db path', () => {
@@ -2009,12 +1961,13 @@ describe('getAgentTelegramConfigAction', () => {
   });
 });
 
-describe('configureAgentTelegramAction', () => {
+describe('configureAgentChannelAction — telegram behavior', () => {
   it('rejects malformed token', async () => {
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000020',
-      botToken: 'not-a-real-token',
+      channel: 'telegram',
+      credentials: { botToken: 'not-a-real-token' },
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
@@ -2022,10 +1975,11 @@ describe('configureAgentTelegramAction', () => {
 
   it('returns not_found when agent does not exist', async () => {
     currentDb = makeDb([]) as typeof currentDb;
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000021',
-      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+      channel: 'telegram',
+      credentials: { botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G' },
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('not_found');
@@ -2040,10 +1994,11 @@ describe('configureAgentTelegramAction', () => {
       new Response(JSON.stringify({ ok: false, description: 'Unauthorized' }), { status: 401 }),
     );
 
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000022',
-      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+      channel: 'telegram',
+      credentials: { botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G' },
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('telegram_invalid_token');
@@ -2076,15 +2031,16 @@ describe('configureAgentTelegramAction', () => {
       new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 }),
     );
 
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000023',
-      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+      channel: 'telegram',
+      credentials: { botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G' },
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.data.status).toBe('connected');
-      expect(r.data.botUsername).toBe('my_bot');
+      expect(r.data.identityLabel).toBe('my_bot');
     }
 
     // Two fetches: getMe + drain (getUpdates).
@@ -2141,10 +2097,11 @@ describe('configureAgentTelegramAction', () => {
       ),
     );
 
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000040',
-      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+      channel: 'telegram',
+      credentials: { botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G' },
     });
     expect(r.ok).toBe(true);
 
@@ -2185,10 +2142,11 @@ describe('configureAgentTelegramAction', () => {
     // Drain throws — caught, configure proceeds.
     fetchSpy.mockRejectedValueOnce(new Error('network down'));
 
-    const { configureAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await configureAgentTelegramAction({
+    const { configureAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await configureAgentChannelAction({
       agentId: 'aaaaaaaa-0000-0000-0000-000000000041',
-      botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G',
+      channel: 'telegram',
+      credentials: { botToken: '123456789:ABCDEFGHIJKLMNOP_QRSTUVWXYZabcdef-G' },
     });
     expect(r.ok).toBe(true);
 
@@ -2203,18 +2161,21 @@ describe('configureAgentTelegramAction', () => {
   });
 });
 
-describe('disconnectAgentTelegramAction', () => {
+describe('disconnectAgentChannelAction — telegram behavior', () => {
   it('rejects non-uuid agentId', async () => {
-    const { disconnectAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await disconnectAgentTelegramAction('not-uuid');
+    const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentChannelAction({ agentId: 'not-uuid', channel: 'telegram' });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('validation_failed');
   });
 
   it('returns not_found when agent does not exist', async () => {
     currentDb = makeDb([]) as typeof currentDb;
-    const { disconnectAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await disconnectAgentTelegramAction('aaaaaaaa-0000-0000-0000-000000000030');
+    const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentChannelAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000030',
+      channel: 'telegram',
+    });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('not_found');
   });
@@ -2224,8 +2185,11 @@ describe('disconnectAgentTelegramAction', () => {
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    const { disconnectAgentTelegramAction } = await import('../src/lib/actions.ts');
-    const r = await disconnectAgentTelegramAction('aaaaaaaa-0000-0000-0000-000000000031');
+    const { disconnectAgentChannelAction } = await import('../src/lib/actions.ts');
+    const r = await disconnectAgentChannelAction({
+      agentId: 'aaaaaaaa-0000-0000-0000-000000000031',
+      channel: 'telegram',
+    });
     expect(r.ok).toBe(true);
 
     // No Telegram API call needed — disconnect is a pure DB clear.

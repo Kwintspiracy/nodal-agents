@@ -15,6 +15,7 @@
 // riskLevel 'write': additive. Approval is gated by the ROOT's autonomy level.
 
 import { z } from 'zod';
+import { eq, and } from '@nodal-agents/db';
 import { connectors } from '@nodal-agents/db';
 import { CONNECTOR_CATALOG } from '@nodal-agents/shared';
 import type { ToolDefinition } from '../../types';
@@ -25,7 +26,7 @@ const CreateConnectorInput = z.object({
     .string()
     .min(1)
     .describe(
-      'Connector catalog slug — must be a known api_key connector (e.g. "notion", "airtable", "apify", "firecrawl", "tavily").',
+      'Connector catalog slug — must be a known api_key connector (see the connector catalog).',
     ),
   name: z.string().min(1).describe('Display name for this connector instance.'),
   apiKey: z.string().min(1).describe('The provider API key / token (stored encrypted at rest).'),
@@ -47,11 +48,14 @@ export const createConnectorTool: ToolDefinition<
 > = {
   name: 'create_connector',
   description:
-    'Register an API-key connector in this entity from the known catalog ' +
-    '(e.g. notion, airtable, apify, firecrawl, tavily). Provide the catalog slug + a name + ' +
-    'the API key (stored encrypted). ONLY api_key connectors are supported here — OAuth ' +
-    'connectors (Gmail, Google Drive, …) must be set up via the dashboard OAuth flow. ' +
-    'Fails with a clear error for an unknown slug or a non-api_key slug.',
+    'Register an API-key connector in this entity from the known catalog. ' +
+    'Provide the catalog slug + a name + the API key (stored encrypted). ONLY api_key ' +
+    'connectors are supported here — OAuth connectors (Gmail, Google Drive, …) must be set up ' +
+    'via the dashboard OAuth flow. Fails with a clear error for an unknown slug, a non-api_key ' +
+    'slug, or if a connector with this exact slug AND name already exists in this entity — do ' +
+    'NOT retry this tool if a previous call may already have succeeded; check existing ' +
+    'connectors first. A different name with the same slug is fine (multi-instance, e.g. a ' +
+    'second account for the same provider).',
   inputSchema: CreateConnectorInput,
   riskLevel: 'write',
   defaultApproval: 'require_approval',
@@ -65,13 +69,39 @@ export const createConnectorTool: ToolDefinition<
     if (!catalog) {
       return {
         ok: false,
-        error: `Unknown connector slug "${input.slug}". Choose one from the catalog (e.g. notion, airtable, apify, firecrawl, tavily).`,
+        error: `Unknown connector slug "${input.slug}". Choose one from the connector catalog.`,
       };
     }
     if (catalog.authType !== 'api_key') {
       return {
         ok: false,
         error: `Connector "${input.slug}" uses ${catalog.authType}, not api_key — set it up via the dashboard OAuth flow instead.`,
+      };
+    }
+
+    // Idempotence guard (P0-S1, 2026-07-22 incident): a connector with this
+    // exact (entity, slug, name) triple already existing means a prior call
+    // already did the job — fail loud instead of inserting a duplicate row.
+    // Keyed on (slug, name) rather than slug alone so legitimate multi-instance
+    // connectors (e.g. two Gmail accounts, same slug, different names) are
+    // NOT blocked — only an exact-duplicate stutter is.
+    const [existing] = await ctx.db
+      .select({ id: connectors.id })
+      .from(connectors)
+      .where(
+        and(
+          eq(connectors.entityId, ctx.entityId),
+          eq(connectors.slug, input.slug),
+          eq(connectors.name, input.name),
+        ),
+      );
+    if (existing) {
+      return {
+        ok: false,
+        error:
+          `A connector named "${input.name}" for slug "${input.slug}" already exists in this ` +
+          'entity. Use attach_connector to make it usable by an agent — to change its key, edit ' +
+          'it in the dashboard. Do not call create_connector again with the same slug and name.',
       };
     }
 

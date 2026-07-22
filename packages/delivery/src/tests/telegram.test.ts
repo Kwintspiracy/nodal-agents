@@ -163,6 +163,31 @@ describe('sendTelegramMessage', () => {
     });
   });
 
+  it('flags mayHaveDelivered=true on a send timeout (AbortError), and NOT on plain network errors', async () => {
+    const abortErr = new Error('The operation was aborted');
+    abortErr.name = 'AbortError';
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(abortErr);
+
+    await expect(
+      sendTelegramMessage({ chatId: FAKE_CHAT_ID, text: 'x', botToken: FAKE_TOKEN }),
+    ).rejects.toSatisfy((err: unknown) => {
+      return (
+        err instanceof DeliveryError &&
+        err.mayHaveDelivered === true &&
+        err.message.includes('telegram_timeout')
+      );
+    });
+
+    // Control: a non-timeout network error must NOT carry the flag — retrying
+    // those is safe and the LLM should stay free to do it.
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new Error('ECONNRESET'));
+    await expect(
+      sendTelegramMessage({ chatId: FAKE_CHAT_ID, text: 'x', botToken: FAKE_TOKEN }),
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof DeliveryError && err.mayHaveDelivered === undefined;
+    });
+  });
+
   // ── Chunking: messages > 4096 must be split, not rejected as "too long" ──────
   it('sends a single request when the text fits under the limit', async () => {
     vi.mocked(globalThis.fetch).mockImplementation(() =>

@@ -52,6 +52,13 @@ export class DeliveryError extends Error {
   retryAfterMs?: number;
   /** Set when a chunked send fails partway through — see `DeliveryPartialProgress`. */
   partialProgress?: DeliveryPartialProgress;
+  /**
+   * Set on send timeouts: the request was transmitted but the platform never
+   * answered, so the message MAY have been delivered (Telegram often delivers
+   * while answering late). Callers must NOT blindly resend — that is exactly
+   * the case that duplicates messages. Surface the ambiguity instead.
+   */
+  mayHaveDelivered?: boolean;
 
   constructor(code: DeliveryErrorCode, message?: string) {
     super(message ?? code);

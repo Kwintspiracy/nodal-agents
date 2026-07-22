@@ -23,9 +23,10 @@
 //   1. The per-family native parser middlewares (deepseek/kimi/nodal)
 //      only fire if the LLM genuinely emits its own markup — which DeepSeek V4
 //      Pro doesn't, it emits standard OpenAI `tool_calls` with object args.
-//   2. The `recoverFromResponseBody` hack in `tool-call-middleware.ts` is
-//      now dead code for the common case (kept for legacy native-markup paths).
-//   3. The `extractOpenAIToolCalls` helper is no longer needed in recovery.
+//   2. The `recoverFromResponseBody` hack in `tool-call-middleware.ts` no
+//      longer fires for the common case (it remains in use for the legacy
+//      native-markup paths).
+//   3. The former `extractOpenAIToolCalls` recovery helper (since removed).
 //
 // Scope: applied only to chat-completions endpoints (`/chat/completions` in the
 // URL). Streaming, embeddings, other endpoints pass through unchanged.

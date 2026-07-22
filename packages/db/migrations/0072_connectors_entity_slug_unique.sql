@@ -1,0 +1,17 @@
+-- P0-S1 (2026-07-22 incident): create_connector inserted blindly with no
+-- existence check and no DB constraint. A stuttering agent call (8x
+-- create_connector) created 8 identical duplicate rows — same entity, same
+-- slug ("tavily"), same name ("Tavily Search") — all returning ok:true. The
+-- 8 junk rows were manually cleaned before this migration; no data is
+-- touched here.
+--
+-- This index keys on (entity_id, slug, name), NOT (entity_id, slug) alone.
+-- Migration 0016 dropped a plain (entity_id, slug) UNIQUE constraint to allow
+-- multiple connector instances of the same slug per entity (e.g. several
+-- Gmail accounts) — that intentional multi-instance design must keep
+-- working: a second connector with the same slug but a DIFFERENT name must
+-- still be creatable. Keying on (entity_id, slug, name) instead blocks only
+-- the exact-duplicate case (identical slug AND identical name — the actual
+-- shape of the incident) while leaving multi-instance (distinct names)
+-- fully intact. This migration does NOT re-introduce what 0016 dropped.
+CREATE UNIQUE INDEX IF NOT EXISTS "connectors_entity_slug_name_unique" ON "connectors" ("entity_id","slug","name");

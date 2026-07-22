@@ -2,13 +2,13 @@
 //
 // toResultOutput (execute.ts) forces `type: 'text'` instead of `type: 'json'`
 // once the serialized `{error: ...}` object exceeds MAX_TOOL_RESULT_CHARS
-// (50K) — truncateForContext takes over. Before the fix, the sibling-tool-error
+// (25K) — truncateForContext takes over. Before the fix, the sibling-tool-error
 // guard (isToolErrorBlock) only recognized `type: 'json'` errors, so an
 // oversized tool error in the same turn as return_result(status='success')
 // slipped past it and the job finalized 'completed' despite the failed side
 // effect — a direct violation of invariant #4 (no silent fallback / faux
 // completed). This mirrors the existing "Brique 18.6" sibling-error tests in
-// execute.test.ts, but forces the error through the >50K truncation path via
+// execute.test.ts, but forces the error through the >25K truncation path via
 // a fake MCP tool whose execute() throws an oversized error (the same harness
 // pattern as job-with-mcp-server.test.ts).
 
@@ -169,6 +169,8 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SKILL_UPDATE_CHECK_BATCH_SIZE: 10,
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
@@ -229,7 +231,7 @@ const BIG_ERROR_TOOL_NAME = 'error_bay__blow_up';
 
 /**
  * A tool whose execute() ALWAYS throws an error message well over
- * MAX_TOOL_RESULT_CHARS (50K) — the real-world shape a misbehaving connector
+ * MAX_TOOL_RESULT_CHARS (25K) — the real-world shape a misbehaving connector
  * can produce (e.g. an upstream API dumping a huge stack trace/HTML error page
  * back at the agent). Uses varied, space-separated text (not a repeated run of
  * one character) so the base64-elision regex in truncateForContext does NOT
@@ -251,7 +253,7 @@ function fakeBigErrorTool() {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('tool-error-truncation-guard: Fix #19', () => {
-  it('a >50K tool error in the same turn as return_result(success) still blocks finalization', async () => {
+  it('a >25K tool error in the same turn as return_result(success) still blocks finalization', async () => {
     mcpMock.createMcpTools.mockReset();
     mcpMock.createMcpTools.mockResolvedValue({
       tools: [fakeBigErrorTool()],
@@ -277,7 +279,7 @@ describe('tool-error-truncation-guard: Fix #19', () => {
       .returning();
     if (!job) throw new Error('Failed to create job');
 
-    // Turn 1: [error_bay__blow_up (>50K error), return_result(success)] — the
+    // Turn 1: [error_bay__blow_up (>25K error), return_result(success)] — the
     // guard must NOT let this finalize as completed. Turn 2: honest block.
     const client = makeMockLlmClient([
       {

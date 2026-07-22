@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Brain } from '@phosphor-icons/react';
+import { skillProvenanceIcon, skillProvenanceTag } from '@/components/SkillProvenance.tsx';
+import { segmentSkillsByProvenance } from '@/lib/skill-provenance.ts';
 import PageShell from '@/components/ui/PageShell';
 import { toast } from 'sonner';
 import {
@@ -78,8 +80,10 @@ import RunsTable from '@/app/(dashboard)/jobs/RunsTable';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 import ConnectorsTabContent from './ConnectorsTabContent.tsx';
 import ChannelsTabContent from './ChannelsTabContent.tsx';
+import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
+import { isToolGroupSkill } from '@/lib/skill-tool-groups.ts';
 
 /**
  * AgentComposer — detail page for /agents/[id]/edit.
@@ -88,7 +92,12 @@ import type { OperationDescriptor } from '@nodal-agents/shared';
  * avatar + name + status + meta + a Memory CTA, followed by a stat strip
  * (only metrics we actually have are filled), then tabs:
  *
- *   Overview · Channels · Skills · Connectors · Runs · Autonomy · Settings
+ *   Overview · Channels · Skills · Tools · Connectors · Runs · Autonomy · Settings
+ *
+ * Tools (added 17/07) surfaces system skills that only exist to gate a bundle
+ * of native builtins (office-editing, command-execution) as toggleable tool
+ * groups — see ToolsTabContent.tsx and isToolGroupSkill. They're hidden from
+ * the Skills tab entirely so a given capability shows up in exactly one place.
  *
  * Channels is a real in-page tab (Quentin's correction: it used to be its
  * own page, then briefly a tab-bar link — it's now the actual channel-cards
@@ -116,13 +125,22 @@ import type { OperationDescriptor } from '@nodal-agents/shared';
  * the sole surface for it now) and a sticky save bar at the bottom.
  */
 
-type Tab = 'overview' | 'channels' | 'skills' | 'connectors' | 'runs' | 'autonomy' | 'settings';
+type Tab =
+  | 'overview'
+  | 'channels'
+  | 'skills'
+  | 'tools'
+  | 'connectors'
+  | 'runs'
+  | 'autonomy'
+  | 'settings';
 
 /** Tab ids that are valid deep-link targets for `?tab=`. */
 const TAB_IDS: readonly Tab[] = [
   'overview',
   'channels',
   'skills',
+  'tools',
   'connectors',
   'runs',
   'autonomy',
@@ -141,6 +159,30 @@ function dbRoleToUiRole(
   if (role === 'orchestrator') return 'router';
   return 'worker';
 }
+
+// ── Reasoning effort options (per-agent effort brick) ─────────────────────────
+// The selectable values for a given provider+model, straight from the catalog's
+// reasoningControl: the model's declared levels, plus 'off' unless reasoning is
+// mandatory. Empty array = nothing controllable → the field is hidden.
+const REASONING_BUDGET_ORDER = ['low', 'medium', 'high', 'max'] as const;
+function reasoningOptionValues(provider: string, modelId: string): string[] {
+  const control = findModelCatalogEntry(provider, modelId)?.capabilities.reasoningControl;
+  if (!control) return [];
+  const levels =
+    control.kind === 'onoff'
+      ? []
+      : control.kind === 'budget'
+        ? REASONING_BUDGET_ORDER.filter((l) => control.budgets?.[l])
+        : (control.levels ?? []);
+  return control.mandatory ? [...levels] : [...levels, 'off'];
+}
+const REASONING_LABELS: Record<string, string> = {
+  off: 'Off',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  max: 'Max',
+};
 
 interface Props {
   agent: AgentEditRow;
@@ -217,13 +259,20 @@ export default function AgentComposer({
   const [personality, setPersonality] = useState(agent.personality ?? '');
   const [role, setRole] = useState<AgentRole>(initialRole);
   const [subAgentIds, setSubAgentIds] = useState<string[]>(agent.subAgentIds);
+  // Routing instructions per sub-agent (agent_assignments.instructions) —
+  // the line the orchestrator reads in its team block to route correctly.
+  const [subAgentInstructions, setSubAgentInstructions] = useState<Record<string, string>>(
+    agent.subAgentInstructions ?? {},
+  );
   const [llmKeyId, setLlmKeyId] = useState<string>(initialLlmKeyId);
   // Guard 2: ordered failover chain (in order) — each link is a (keyId, model)
   // pair so a fallback runs on a chosen model.
-  const [fallbackChain, setFallbackChain] = useState<Array<{ keyId: string; model: string }>>(
-    agent.fallbackChain ?? [],
-  );
+  const [fallbackChain, setFallbackChain] = useState<
+    Array<{ keyId: string; model: string; reasoningEffort?: string }>
+  >(agent.fallbackChain ?? []);
   const [model, setModel] = useState<string>(agent.model ?? '');
+  // '' = Auto (provider default). Levels offered come from the catalog.
+  const [reasoningEffort, setReasoningEffort] = useState<string>(agent.reasoningEffort ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
   // Live model ids fetched from the provider's /models endpoint — keyed by keyId
   // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
@@ -258,6 +307,17 @@ export default function AgentComposer({
     [llmKeys, llmKeyId],
   );
   const noLlmKeys = activeKeys.length === 0;
+  // Tool-group skills (office-editing, command-execution…) no longer count
+  // as "skills" anywhere in the UI — they're Tools now. Every surface that
+  // counts/lists attachedSkills for a human ("Skills" stat, tab badge,
+  // Overview, the Skills tab itself) uses this filtered view. The Autonomy
+  // tab keeps the RAW attachedSkills — it still needs to detect whether
+  // command-execution is assigned to show the Yolo section.
+  const attachedNonToolSkills = useMemo(
+    () => attachedSkills.filter((s) => !isToolGroupSkill(s)),
+    [attachedSkills],
+  );
+  const nonToolSkills = useMemo(() => allSkills.filter((s) => !isToolGroupSkill(s)), [allSkills]);
   const showSubAgents = role !== 'worker';
   const initial = (agent.name || agent.slug).slice(0, 1).toUpperCase();
 
@@ -278,9 +338,11 @@ export default function AgentComposer({
     personality !== (agent.personality ?? '') ||
     role !== initialRole ||
     JSON.stringify([...subAgentIds].sort()) !== JSON.stringify([...agent.subAgentIds].sort()) ||
+    JSON.stringify(subAgentInstructions) !== JSON.stringify(agent.subAgentInstructions ?? {}) ||
     llmKeyId !== initialLlmKeyId ||
     JSON.stringify(fallbackChain) !== JSON.stringify(agent.fallbackChain ?? []) ||
     model !== (agent.model ?? '') ||
+    reasoningEffort !== (agent.reasoningEffort ?? '') ||
     avatarUrl !== (agent.avatarUrl ?? null);
 
   // ── handlers ─────────────────────────────────────────────────────────────
@@ -292,6 +354,13 @@ export default function AgentComposer({
     // so we never keep a stale, mismatched model around.
     const firstCurated = newKey ? (MODEL_CATALOG[newKey.provider]?.[0]?.modelId ?? '') : '';
     setModel(firstCurated);
+    // An effort only makes sense if the new provider+model still offers it.
+    if (
+      reasoningEffort &&
+      !reasoningOptionValues(newKey?.provider ?? '', firstCurated).includes(reasoningEffort)
+    ) {
+      setReasoningEffort('');
+    }
     // Prefetch live models for this key if not yet cached.
     if (id && liveModelsCache[id] === undefined) {
       setLiveModelsLoading(true);
@@ -304,10 +373,26 @@ export default function AgentComposer({
 
   function handleModelChange(next: string) {
     setModel(next);
+    // An effort the new model's control doesn't offer is dropped back to Auto.
+    const provider = llmKeys.find((k) => k.id === llmKeyId)?.provider ?? '';
+    if (reasoningEffort && !reasoningOptionValues(provider, next).includes(reasoningEffort)) {
+      setReasoningEffort('');
+    }
   }
 
   function toggleSubAgent(id: string) {
     setSubAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function setSubAgentInstruction(id: string, text: string) {
+    setSubAgentInstructions((prev) => {
+      if (!text) {
+        const rest = { ...prev };
+        delete rest[id];
+        return rest;
+      }
+      return { ...prev, [id]: text };
+    });
   }
 
   // Append on select (failover priority = selection order), remove on deselect.
@@ -322,7 +407,29 @@ export default function AgentComposer({
   }
 
   function setFallbackModel(id: string, model: string) {
-    setFallbackChain((prev) => prev.map((l) => (l.keyId === id ? { ...l, model } : l)));
+    setFallbackChain((prev) =>
+      prev.map((l) => {
+        if (l.keyId !== id) return l;
+        // A model switch drops an effort its control doesn't offer (back to inherit).
+        const provider = llmKeys.find((k) => k.id === id)?.provider ?? '';
+        const keepEffort =
+          l.reasoningEffort && reasoningOptionValues(provider, model).includes(l.reasoningEffort);
+        return keepEffort ? { ...l, model } : { keyId: l.keyId, model };
+      }),
+    );
+  }
+
+  // '' = inherit the agent-level setting (the stored link then has no effort).
+  function setFallbackEffort(id: string, effort: string) {
+    setFallbackChain((prev) =>
+      prev.map((l) =>
+        l.keyId === id
+          ? effort
+            ? { ...l, reasoningEffort: effort }
+            : { keyId: l.keyId, model: l.model }
+          : l,
+      ),
+    );
   }
 
   function handleSave() {
@@ -336,7 +443,9 @@ export default function AgentComposer({
       fallbackChain: fallbackChain.filter((l) => l.keyId !== llmKeyId),
       role,
       subAgentIds: role === 'worker' ? [] : subAgentIds,
+      subAgentInstructions,
       avatarUrl,
+      reasoningEffort: reasoningEffort || null,
     };
     startTransition(async () => {
       const result = await updateAgentAction(payload);
@@ -354,9 +463,11 @@ export default function AgentComposer({
     setPersonality(agent.personality ?? '');
     setRole(initialRole);
     setSubAgentIds(agent.subAgentIds);
+    setSubAgentInstructions(agent.subAgentInstructions ?? {});
     setLlmKeyId(initialLlmKeyId);
     setFallbackChain(agent.fallbackChain ?? []);
     setModel(agent.model ?? '');
+    setReasoningEffort(agent.reasoningEffort ?? '');
     setAvatarUrl(agent.avatarUrl ?? null);
   }
 
@@ -389,7 +500,7 @@ export default function AgentComposer({
             connectors: assignedConnectors,
             mcps: assignedMcps,
             subAgents: subAgentCount,
-            skills: attachedSkills.length,
+            skills: attachedNonToolSkills.length,
             totalRuns,
             successfulRuns,
           }}
@@ -399,7 +510,10 @@ export default function AgentComposer({
           tab={tab}
           onChange={setTab}
           counts={{
-            skills: attachedSkills.length,
+            skills: attachedNonToolSkills.length,
+            // Only ENABLED tool groups count here — attachedSkills already
+            // excludes anything not assigned to this agent.
+            tools: attachedSkills.filter(isToolGroupSkill).length,
             // Connectors tab now lists API + MCP combined — count both.
             connectors: assignedConnectors + assignedMcps,
             runs: totalRuns,
@@ -409,7 +523,7 @@ export default function AgentComposer({
         {tab === 'overview' && (
           <OverviewTab
             jobs={jobs}
-            attachedSkills={attachedSkills}
+            attachedSkills={attachedNonToolSkills}
             connectorsAssigned={assignedConnectorRows}
             mcpsAssignedCount={assignedMcps}
             onOpenSkills={() => setTab('skills')}
@@ -432,7 +546,19 @@ export default function AgentComposer({
           />
         )}
         {tab === 'skills' && (
-          <SkillsTab agentId={agent.id} attachedSkills={attachedSkills} allSkills={allSkills} />
+          <SkillsTab
+            agentId={agent.id}
+            attachedSkills={attachedNonToolSkills}
+            allSkills={nonToolSkills}
+          />
+        )}
+        {tab === 'tools' && (
+          <ToolsTab
+            agentId={agent.id}
+            attachedSkills={attachedSkills}
+            allSkills={allSkills}
+            onChanged={() => router.refresh()}
+          />
         )}
         {tab === 'connectors' && (
           <SectionCard>
@@ -470,12 +596,14 @@ export default function AgentComposer({
             role={role}
             showSubAgents={showSubAgents}
             subAgentIds={subAgentIds}
+            subAgentInstructions={subAgentInstructions}
             peers={peers}
             llmKeyId={llmKeyId}
             fallbackChain={fallbackChain}
             activeKeys={activeKeys}
             selectedKey={selectedKey}
             model={model}
+            reasoningEffort={reasoningEffort}
             noLlmKeys={noLlmKeys}
             workspaces={workspaces}
             workspacesLoaded={workspacesLoaded}
@@ -488,10 +616,13 @@ export default function AgentComposer({
             onChangePersonality={setPersonality}
             onChangeRole={setRole}
             onToggleSubAgent={toggleSubAgent}
+            onChangeSubAgentInstruction={setSubAgentInstruction}
             onToggleFallback={toggleFallback}
             onChangeFallbackModel={setFallbackModel}
+            onChangeFallbackEffort={setFallbackEffort}
             onChangeLlmKey={handleLlmKeyChange}
             onChangeModel={handleModelChange}
+            onChangeReasoningEffort={setReasoningEffort}
             onSave={handleSave}
             onReset={handleReset}
             liveModelsCache={liveModelsCache}
@@ -685,7 +816,7 @@ function TabsBar({
 }: {
   tab: Tab;
   onChange: (t: Tab) => void;
-  counts: { skills: number; connectors: number; runs: number };
+  counts: { skills: number; tools: number; connectors: number; runs: number };
 }) {
   // Configure was removed entirely — it only ever jumped to the Settings tab
   // already sitting right here. Memory stays a header CTA (see HeroCard),
@@ -694,6 +825,7 @@ function TabsBar({
     { id: 'overview', label: 'Overview' },
     { id: 'channels', label: 'Channels' },
     { id: 'skills', label: 'Skills', count: counts.skills },
+    { id: 'tools', label: 'Tools', count: counts.tools },
     { id: 'connectors', label: 'Connectors', count: counts.connectors },
     { id: 'runs', label: 'Runs', count: counts.runs },
     { id: 'autonomy', label: 'Autonomy' },
@@ -918,7 +1050,7 @@ function SkillEdRow({ skill }: { skill: SkillRow }) {
     <EdRow
       glyph={
         <Disc variant="skill" size="lg" shape="square">
-          <span className="font-mono text-label-11 uppercase">{skill.slug.slice(0, 2)}</span>
+          {skillProvenanceIcon(skill)}
         </Disc>
       }
       name={skill.name}
@@ -1020,8 +1152,11 @@ function SkillsTab({
     });
   }
 
-  const attached = allSkills.filter((s) => assignedIds.has(s.id));
-  const available = allSkills.filter((s) => !assignedIds.has(s.id));
+  const byName = (a: SkillRow, b: SkillRow) => a.name.localeCompare(b.name);
+  const attached = allSkills.filter((s) => assignedIds.has(s.id)).sort(byName);
+  // Provenance segments (shared model, empty ones hidden). Within the attached
+  // card provenances mix, so rows there carry the MonoMicroTag instead.
+  const segments = segmentSkillsByProvenance(allSkills.filter((s) => !assignedIds.has(s.id)));
 
   if (allSkills.length === 0) {
     return (
@@ -1054,26 +1189,43 @@ function SkillsTab({
         ) : (
           <div className="space-y-2">
             {attached.map((s) => (
-              <SkillToggleRow key={s.id} skill={s} assigned onToggle={() => toggle(s, false)} />
+              <SkillToggleRow
+                key={s.id}
+                skill={s}
+                assigned
+                showProvenance
+                onToggle={() => toggle(s, false)}
+              />
             ))}
           </div>
         )}
       </SectionCard>
 
-      {available.length > 0 && (
+      {segments.length > 0 && (
         <SectionCard>
           <SectionHead
-            label={`Available on this workspace · ${available.length}`}
+            label={`Available on this workspace · ${segments.reduce((n, seg) => n + seg.skills.length, 0)}`}
             hint="Already installed at the workspace level; click + to attach to this agent."
           />
-          <div className="space-y-2">
-            {available.map((s) => (
-              <SkillToggleRow
-                key={s.id}
-                skill={s}
-                assigned={false}
-                onToggle={() => toggle(s, true)}
-              />
+          <div className="space-y-5">
+            {segments.map((seg) => (
+              <div key={seg.key}>
+                <div className="mb-2.5 flex items-center gap-2">
+                  <span className={`h-1.5 w-1.5 rounded-full ${seg.dot}`} aria-hidden />
+                  <span className="text-medium-13 text-ink">{seg.label}</span>
+                  <span className="text-mono-11 text-ink-4">{seg.skills.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {seg.skills.map((s) => (
+                    <SkillToggleRow
+                      key={s.id}
+                      skill={s}
+                      assigned={false}
+                      onToggle={() => toggle(s, true)}
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </SectionCard>
@@ -1082,7 +1234,7 @@ function SkillsTab({
       <p className="text-body-13 text-ink-3">
         Need something new?{' '}
         <Link href="/skills" className="underline hover:text-ink-2">
-          Browse the full library
+          Browse the Community catalog
         </Link>{' '}
         to create or install a skill, then attach it here.
       </p>
@@ -1093,32 +1245,55 @@ function SkillsTab({
 function SkillToggleRow({
   skill,
   assigned,
+  showProvenance = false,
   onToggle,
 }: {
   skill: SkillRow;
   assigned: boolean;
+  showProvenance?: boolean;
   onToggle: () => void;
 }) {
+  const provenance = showProvenance ? skillProvenanceTag(skill) : null;
   return (
     <EdRow
       glyph={
         <Disc variant="skill" size="lg" shape="square">
-          <span className="font-mono text-label-11 uppercase">{skill.slug.slice(0, 2)}</span>
+          {skillProvenanceIcon(skill)}
         </Disc>
       }
-      name={skill.name}
+      name={
+        provenance ? (
+          <span className="inline-flex items-center gap-1.5">
+            {skill.name}
+            {provenance}
+          </span>
+        ) : (
+          skill.name
+        )
+      }
       description={skill.description ?? undefined}
       meta={`@${skill.slug}`}
       actions={
-        assigned ? (
-          <IcBtn title="Detach from this agent" ariaLabel="Detach" onClick={onToggle}>
-            <SkillDetachIcon />
-          </IcBtn>
-        ) : (
-          <IcBtn title="Attach to this agent" ariaLabel="Attach" onClick={onToggle}>
-            <SkillAttachIcon />
-          </IcBtn>
-        )
+        <>
+          {/* Every skill — built-ins included — is viewable/editable: the
+              skill editor overrides content (contentOverridden) and can reset
+              to the catalog default, so no provenance is a dead end. */}
+          <Link
+            href={`/skills/${skill.id}/edit`}
+            className="flex h-7 items-center gap-1 rounded-md border border-rule px-2 text-medium-12 text-ink-3 transition-colors hover:border-rule-2 hover:text-ink"
+          >
+            Open ›
+          </Link>
+          {assigned ? (
+            <IcBtn title="Detach from this agent" ariaLabel="Detach" onClick={onToggle}>
+              <SkillDetachIcon />
+            </IcBtn>
+          ) : (
+            <IcBtn title="Attach to this agent" ariaLabel="Attach" onClick={onToggle}>
+              <SkillAttachIcon />
+            </IcBtn>
+          )}
+        </>
       }
     />
   );
@@ -1868,12 +2043,14 @@ function SettingsTab(props: {
   role: AgentRole;
   showSubAgents: boolean;
   subAgentIds: string[];
+  subAgentInstructions: Record<string, string>;
   peers: AgentRow[];
   llmKeyId: string;
-  fallbackChain: Array<{ keyId: string; model: string }>;
+  fallbackChain: Array<{ keyId: string; model: string; reasoningEffort?: string }>;
   activeKeys: LlmKeyUiRow[];
   selectedKey: LlmKeyUiRow | null;
   model: string;
+  reasoningEffort: string;
   noLlmKeys: boolean;
   workspaces: AgentWorkspaceRow[];
   workspacesLoaded: boolean;
@@ -1886,10 +2063,13 @@ function SettingsTab(props: {
   onChangePersonality: (v: string) => void;
   onChangeRole: (r: AgentRole) => void;
   onToggleSubAgent: (id: string) => void;
+  onChangeSubAgentInstruction: (id: string, text: string) => void;
   onToggleFallback: (id: string) => void;
   onChangeFallbackModel: (id: string, model: string) => void;
+  onChangeFallbackEffort: (id: string, effort: string) => void;
   onChangeLlmKey: (id: string) => void;
   onChangeModel: (v: string) => void;
+  onChangeReasoningEffort: (v: string) => void;
   onSave: () => void;
   onReset: () => void;
   liveModelsCache: Record<string, string[]>;
@@ -1903,12 +2083,14 @@ function SettingsTab(props: {
     role,
     showSubAgents,
     subAgentIds,
+    subAgentInstructions,
     peers,
     llmKeyId,
     fallbackChain,
     activeKeys,
     selectedKey,
     model,
+    reasoningEffort,
     noLlmKeys,
     workspaces,
     workspacesLoaded,
@@ -1921,10 +2103,13 @@ function SettingsTab(props: {
     onChangePersonality,
     onChangeRole,
     onToggleSubAgent,
+    onChangeSubAgentInstruction,
     onToggleFallback,
     onChangeFallbackModel,
+    onChangeFallbackEffort,
     onChangeLlmKey,
     onChangeModel,
+    onChangeReasoningEffort,
     onSave,
     onReset,
     liveModelsCache,
@@ -1933,6 +2118,9 @@ function SettingsTab(props: {
 
   // Candidate fallback keys = every active key except the current primary.
   const otherKeys = activeKeys.filter((k) => k.id !== llmKeyId);
+
+  // Reasoning levels the selected primary model really offers ([] = hide field).
+  const reasoningOptions = reasoningOptionValues(selectedKey?.provider ?? '', model);
 
   // Curated models for the selected key's provider (T2). The agent's model is a
   // free string; the dropdown just helps pick a known-good id (capability flags
@@ -2125,18 +2313,29 @@ function SettingsTab(props: {
                   {peers.map((a) => {
                     const checked = subAgentIds.includes(a.id);
                     return (
-                      <label
-                        key={a.id}
-                        className="flex cursor-pointer items-center gap-3 px-3 py-2 text-body-14 transition-colors hover:bg-hover"
-                      >
-                        <Checkbox
-                          tone="agent"
-                          checked={checked}
-                          onChange={() => onToggleSubAgent(a.id)}
-                        />
-                        <span className="text-ink">{a.name}</span>
-                        <span className="ml-auto text-mono-12 text-ink-3">{a.slug}</span>
-                      </label>
+                      <div key={a.id}>
+                        <label className="flex cursor-pointer items-center gap-3 px-3 py-2 text-body-14 transition-colors hover:bg-hover">
+                          <Checkbox
+                            tone="agent"
+                            checked={checked}
+                            onChange={() => onToggleSubAgent(a.id)}
+                          />
+                          <span className="text-ink">{a.name}</span>
+                          <span className="ml-auto text-mono-12 text-ink-3">{a.slug}</span>
+                        </label>
+                        {checked && (
+                          <div className="px-3 pb-2 pl-[2.6rem]">
+                            <TextInput
+                              type="text"
+                              value={subAgentInstructions[a.id] ?? ''}
+                              onChange={(e) => onChangeSubAgentInstruction(a.id, e.target.value)}
+                              placeholder="Routing rule for this teammate, e.g. NSFW requests go here first"
+                              maxLength={500}
+                              className="w-full !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                            />
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -2256,6 +2455,25 @@ function SettingsTab(props: {
               <ModelToolsLegend className="mt-1.5" />
             )}
           </Field>
+          {reasoningOptions.length > 0 && (
+            <Field label="Reasoning">
+              <Select
+                value={reasoningOptions.includes(reasoningEffort) ? reasoningEffort : ''}
+                onChange={(e) => onChangeReasoningEffort(e.target.value)}
+                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+              >
+                <option value="">Auto</option>
+                {reasoningOptions.map((v) => (
+                  <option key={v} value={v}>
+                    {REASONING_LABELS[v] ?? v}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1.5 text-body-13 text-ink-4">
+                How hard this model thinks before answering. Auto keeps the provider default.
+              </p>
+            </Field>
+          )}
         </div>
         {!noLlmKeys && (
           <div className="mt-3">
@@ -2279,6 +2497,10 @@ function SettingsTab(props: {
                     const checked = order !== -1;
                     const fbCatalog = MODEL_CATALOG[k.provider] ?? [];
                     const fbModel = checked ? (fallbackChain[order]?.model ?? '') : '';
+                    const fbEffort = checked ? (fallbackChain[order]?.reasoningEffort ?? '') : '';
+                    const fbReasoningOptions = checked
+                      ? reasoningOptionValues(k.provider, fbModel)
+                      : [];
                     return (
                       <div key={k.id} className="space-y-1.5">
                         <label className="flex cursor-pointer items-center gap-2.5 select-none">
@@ -2351,6 +2573,20 @@ function SettingsTab(props: {
                               className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-mono-13"
                             />
                           ))}
+                        {checked && fbReasoningOptions.length > 0 && (
+                          <Select
+                            value={fbReasoningOptions.includes(fbEffort) ? fbEffort : ''}
+                            onChange={(e) => onChangeFallbackEffort(k.id, e.target.value)}
+                            className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                          >
+                            <option value="">Reasoning: inherit agent setting</option>
+                            {fbReasoningOptions.map((v) => (
+                              <option key={v} value={v}>
+                                {'Reasoning: ' + (REASONING_LABELS[v] ?? v)}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
                       </div>
                     );
                   })}

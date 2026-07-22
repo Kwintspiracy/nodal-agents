@@ -1,22 +1,42 @@
-import { Children, cloneElement, forwardRef, isValidElement, useId } from 'react';
-import type { OptgroupHTMLAttributes, ReactElement, ReactNode, SelectHTMLAttributes } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef } from 'react';
+import type { SelectHTMLAttributes } from 'react';
 import { CaretDown } from '@phosphor-icons/react/dist/ssr';
 import FieldLabel from './FieldLabel';
 
 /**
- * Injects a `<legend>` (the customizable-select section header, styled in
+ * Syncs a `<legend>` (the customizable-select section header, styled in
  * `globals.css`) into every `<optgroup>`, derived from its `label` attribute.
  * The attribute stays for browsers without `base-select` (the OS picker reads
- * it and ignores the legend); where `base-select` applies, the legend replaces
- * the UA-rendered label, whose geometry CSS cannot control.
+ * it); where `base-select` applies, the legend replaces the UA-rendered label,
+ * whose geometry CSS cannot control.
+ *
+ * Done imperatively post-mount, NOT as JSX: `<legend>` in `<optgroup>` is
+ * valid per the customizable-select spec but React's DOM-nesting validator
+ * predates it (dev warnings), and the HTML parsers of browsers without select
+ * parser relaxation (Firefox/Safari) DROP the legend from SSR markup — a real
+ * hydration mismatch. DOM insertion bypasses the parser, and the
+ * `base-select` support gate keeps non-Chromium DOM spec-clean. Idempotent
+ * and cheap (a handful of nodes), so it runs after every render to follow
+ * dynamic option lists.
  */
-function withSectionLegends(children: ReactNode): ReactNode {
-  return Children.map(children, (child) => {
-    if (!isValidElement(child) || child.type !== 'optgroup') return child;
-    const group = child as ReactElement<OptgroupHTMLAttributes<HTMLOptGroupElement>>;
-    if (!group.props.label) return group;
-    return cloneElement(group, {}, <legend>{group.props.label}</legend>, group.props.children);
-  });
+function syncSectionLegends(select: HTMLSelectElement): void {
+  if (!CSS.supports('appearance', 'base-select')) return;
+  for (const group of select.querySelectorAll('optgroup')) {
+    const label = group.getAttribute('label') ?? '';
+    const legend = group.querySelector(':scope > legend');
+    if (!legend) {
+      if (label) {
+        const el = document.createElement('legend');
+        el.textContent = label;
+        group.prepend(el);
+      }
+      continue;
+    }
+    if (legend.textContent !== label) legend.textContent = label;
+    // React may insertBefore a new first option ahead of the (foreign) legend —
+    // re-pin it so the header stays on top of its section.
+    if (group.firstElementChild !== legend) group.prepend(legend);
+  }
 }
 
 type Props = Omit<SelectHTMLAttributes<HTMLSelectElement>, 'className'> & {
@@ -51,20 +71,25 @@ const Select = forwardRef<HTMLSelectElement, Props>(function Select(
 ) {
   const autoId = useId();
   const selectId = id ?? autoId;
+  const innerRef = useRef<HTMLSelectElement>(null);
+  useImperativeHandle(ref, () => innerRef.current!, []);
+  useEffect(() => {
+    if (innerRef.current) syncSectionLegends(innerRef.current);
+  });
   return (
     <div className={containerClassName}>
       {label && <FieldLabel htmlFor={selectId}>{label}</FieldLabel>}
       <div className="relative">
         <select
           id={selectId}
-          ref={ref}
+          ref={innerRef}
           aria-invalid={error ? true : undefined}
           className={`peer h-8.5 w-full rounded-md border bg-hover py-1.5 pr-8 pl-3 text-body-14 leading-5! text-ink transition-colors required:invalid:text-ink-4 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
             error ? 'border-err focus:border-err' : 'border-rule focus:border-ink-3'
           } ${className}`}
           {...rest}
         >
-          {withSectionLegends(children)}
+          {children}
         </select>
         {/* top-4.25 = 17px, le centre du champ h-8.5 — PAS top-1/2 : un
             margin passé via className (ex. mb-2) grandit le wrapper et

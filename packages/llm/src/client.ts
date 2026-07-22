@@ -270,7 +270,20 @@ function validateIfMessages(args: { messages?: unknown }): void {
  * streamText is intentionally left without stale-retry (streaming timeout
  * semantics differ — a per-chunk budget is needed, not a total call budget).
  */
-export function createLlmClient(config: ProviderConfig): NodalLlmClient {
+export interface CreateLlmClientOptions {
+  /**
+   * True when this client sits in a failover chain with at least one provider
+   * AFTER it — rate-limit retries are then cut short so the chain fails over
+   * instead of out-waiting the congestion (see RetryOptions.hasFallback).
+   * Set by createFailoverLlmClient; a standalone client never has a fallback.
+   */
+  hasFallback?: boolean;
+}
+
+export function createLlmClient(
+  config: ProviderConfig,
+  opts: CreateLlmClientOptions = {},
+): NodalLlmClient {
   if (!config.provider) {
     throw new ProviderConfigError('provider is required');
   }
@@ -281,7 +294,11 @@ export function createLlmClient(config: ProviderConfig): NodalLlmClient {
   const model = buildModel(config);
   const capabilities: ProviderCapabilities = CAPABILITY_MATRIX[config.provider];
 
-  const retryOpts = { provider: config.provider, model: config.model };
+  const retryOpts = {
+    provider: config.provider,
+    model: config.model,
+    hasFallback: opts.hasFallback ?? false,
+  };
   const providerModel = { provider: config.provider, model: config.model };
 
   // Anthropic does NOT auto-cache — opt it in by annotating cache_control

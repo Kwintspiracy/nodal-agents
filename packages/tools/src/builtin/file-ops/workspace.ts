@@ -442,6 +442,68 @@ export async function isPathInSharedWorkspace(
   return resolvedPath === realShared || resolvedPath.startsWith(rootWithSep);
 }
 
+// ─── Protected workflow templates (P4) ─────────────────────────────────────────
+
+/**
+ * Pure predicate: does this path (relative to the SHARED workspace root,
+ * forward-slash normalised) point at a shared canonical ComfyUI workflow
+ * template — a `.json` file under a `workflows/` directory? Case-insensitive
+ * on both the `workflows` segment and the `.json` extension so
+ * `Workflows/Foo.JSON` doesn't slip through on a case-insensitive filesystem
+ * quirk. No I/O — pure string logic, unit-tested in isolation.
+ */
+export function isProtectedWorkflowTemplatePath(relPath: string): boolean {
+  const normalised = relPath.replace(/\\/g, '/');
+  const segments = normalised.split('/').filter(Boolean);
+  if (segments.length < 2) return false; // needs ≥1 dir segment + the file itself
+  const file = segments[segments.length - 1] ?? '';
+  if (!/\.json$/i.test(file)) return false;
+  return segments.slice(0, -1).some((seg) => seg.toLowerCase() === 'workflows');
+}
+
+/**
+ * P4 (causality study, 2026-07-22): shared canonical workflow templates —
+ * e.g. `workflows/Krea2_Turbo.json` in the entity-wide SHARED workspace —
+ * are READ-ONLY to file_write/file_edit. The intended pattern for a per-run
+ * customization is runtime parameter injection (the ComfyUI skill's
+ * `run_workflow.py --args`), never mutating the template file in place.
+ * Live incident: a delegated worker (ComfyArtist) called `file_edit`
+ * directly on the shared template, overwriting its prompt/seed/aspect_ratio
+ * scene-to-scene and contaminating every later run that shared it.
+ *
+ * Applies to ALL callers, not just delegated workers: `ToolContext` carries
+ * no delegation status today (see execute.ts's worker-vs-orchestrator split,
+ * which lives one layer up in the runner and never reaches these builtins),
+ * and a canonical template arguably shouldn't be hand-edited by ANY agent
+ * through an ad hoc tool call anyway — deliberate template changes belong in
+ * a dedicated authoring flow, not a turn's file_edit. Scoped to the SHARED
+ * workspace only: a private/attached workspace's own `workflows/` folder (if
+ * one exists) is that agent's own business, not a cross-run-contamination
+ * risk shared with anyone else.
+ *
+ * `resolvedPath` must already be the canonical absolute path returned by
+ * `resolveAndCheckPath` — this only classifies it, it does not resolve it.
+ */
+export async function isProtectedWorkflowTemplate(
+  ctx: ToolContext,
+  resolvedPath: string,
+): Promise<boolean> {
+  if (!(await isPathInSharedWorkspace(ctx, resolvedPath))) return false;
+  const shared = ctx.workspaces?.find((ws) => ws.label === SHARED_WORKSPACE_LABEL);
+  if (!shared) return false;
+  const realShared = await realpath(shared.path).catch(() => undefined);
+  if (!realShared) return false;
+  const rel = resolvedPath.slice(realShared.length).replace(/^[\\/]/, '');
+  return isProtectedWorkflowTemplatePath(rel);
+}
+
+/** Steering error message for a file_write/file_edit call blocked by P4 above. */
+export const WORKFLOW_TEMPLATE_PROTECTED_MESSAGE =
+  'This path is a shared canonical ComfyUI workflow template (workflows/*.json in the shared ' +
+  "workspace) — templates are read-only. Pass parameters at run time via the ComfyUI skill's " +
+  '`run_workflow` script (`--args`) instead of editing the template file. Editing the template ' +
+  'directly mutates it for every other run that shares it.';
+
 /**
  * D1 gate: file_write/file_edit only need a human in the loop when the call
  * would OVERWRITE an EXISTING file inside the shared workspace — never for a

@@ -107,7 +107,6 @@ export const AgentSkillAssignmentSchema = z
     entity_id: z.string().guid(),
     agent_id: z.string().guid(),
     skill_id: z.string().guid(),
-    approval_overrides: z.record(z.string(), z.boolean()),
     use_custom_instructions: z.boolean(),
     // NULL = all operations enabled; [] = none enabled
     enabled_operations: z.array(z.string()).nullable(),
@@ -119,7 +118,6 @@ export const AgentSkillAssignmentInsertSchema = AgentSkillAssignmentSchema.omit(
   id: true,
   created_at: true,
 }).extend({
-  approval_overrides: z.record(z.string(), z.boolean()).default({}),
   use_custom_instructions: z.boolean().default(false),
   enabled_operations: z.array(z.string()).nullable().optional(),
 });

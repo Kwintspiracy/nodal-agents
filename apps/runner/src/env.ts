@@ -125,6 +125,16 @@ const envSchema = z.object({
   // (current behavior).
   REFLECTION_MODEL: z.string().optional(),
 
+  // ─── Community skill update tracking (Suivi de mises à jour) ─────────────────
+  // SKILL_UPDATE_CHECK_INTERVAL_HOURS: min hours between update checks for the
+  //   SAME community skill (per-skill throttle via agent_skills.last_update_check_at).
+  //   GitHub's anonymous Contents API is capped at 60 req/hr — this keeps
+  //   steady-state traffic well under that even with many installed skills.
+  // SKILL_UPDATE_CHECK_BATCH_SIZE: max skills checked per cron tick (every 2min)
+  //   — spreads the load instead of checking everything due at once.
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: z.coerce.number().default(24),
+  SKILL_UPDATE_CHECK_BATCH_SIZE: z.coerce.number().default(10),
+
   // ─── DB retention (OFF by default — opt-in, never surprise data loss) ─────────
   // RETENTION_DAYS controls how many days of terminal job history to keep.
   //   0 (default) = disabled — nothing is ever deleted automatically.

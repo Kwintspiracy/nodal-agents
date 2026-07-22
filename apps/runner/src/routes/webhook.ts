@@ -14,7 +14,7 @@
 // warning so the agent's approval rules still gate anything it does in response.
 
 import type { Context } from 'hono';
-import { eq, resolveOwnerConversation } from '@nodal-agents/db';
+import { eq, sql, resolveOwnerConversation } from '@nodal-agents/db';
 import { webhookTriggers, agentJobs } from '@nodal-agents/db';
 import { resolveTransportChannel, listActiveChannelsForAgent } from '@nodal-agents/delivery';
 import type { ChannelKind } from '@nodal-agents/delivery';
@@ -329,11 +329,15 @@ export async function webhookRoute(
   }
 
   // 6. Record the fire on the trigger row before responding — a cheap local
-  // write, unlike the cross-process triggerWorker call below.
+  // write, unlike the cross-process triggerWorker call below. Incremented
+  // atomically in SQL (not a read-modify-write on `trigger.triggerCount`
+  // read at step 1) — two concurrent fires racing the same read-then-write
+  // would otherwise silently lose an increment. coalesce(...,0) handles the
+  // column's nullable default (never populated for pre-existing rows).
   await deps.db
     .update(webhookTriggers)
     .set({
-      triggerCount: (trigger.triggerCount ?? 0) + 1,
+      triggerCount: sql`coalesce(${webhookTriggers.triggerCount}, 0) + 1`,
       lastTriggeredAt: new Date(),
       updatedAt: new Date(),
     })

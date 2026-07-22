@@ -17,11 +17,14 @@ export default defineConfig({
     // full module init of the (large, ~5k-line) actions.ts via dynamic import —
     // server-only mock, env parse, vi.mock chains — and times out under turbo
     // concurrent load on slower runners (CI Ubuntu, 2 vCPU). History: 15s →
-    // 30s (run #25803978814) → 60s here, after the parallel-agent UI merge grew
-    // actions.ts and it crept past 30s again on `rejects slug with uppercase
-    // letters`. It's a load cost on one test, not a hang — give real head-room.
-    testTimeout: 60_000,
-    hookTimeout: 60_000,
+    // 30s (run #25803978814) → 60s, after the parallel-agent UI merge grew
+    // actions.ts and it crept past 30s again → 120s here (2026-07-17), after
+    // the 0.8 office/outlook suites (real file I/O, zip work in tools + 127
+    // adapter tests) raised turbo-concurrent load enough that 10 DB-backed
+    // tests paying the actions.ts import crossed 60s while green standalone.
+    // It's a load cost, not a hang — give real head-room.
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
     typecheck: {
       tsconfig: './tsconfig.test.json',
     },

@@ -3,7 +3,12 @@
 
 import { z } from 'zod';
 
-export const CREDENTIAL_TYPES = ['google-oauth', 'notion-oauth', 'airtable-oauth'] as const;
+export const CREDENTIAL_TYPES = [
+  'google-oauth',
+  'notion-oauth',
+  'airtable-oauth',
+  'microsoft-oauth',
+] as const;
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 export const CredentialSchema = z.object({
@@ -31,9 +36,15 @@ export const GoogleOauthPayloadSchema = z.object({
   tokenUrl: z.string().url(),
 });
 
-export const NotionOauthPayloadSchema = GoogleOauthPayloadSchema; // same shape; refreshToken null for Notion
-export const AirtableOauthPayloadSchema = GoogleOauthPayloadSchema;
+// Notion / Airtable / Microsoft share Google's payload shape exactly (refreshToken
+// nullable, Graph delegated tokens, etc.) — no adapter-specific fields today, so
+// there is only one schema to validate against. Previously each had its own
+// `export const XOauthPayloadSchema = GoogleOauthPayloadSchema` alias, which knip
+// flagged as duplicate exports (four export names bound to the literal same
+// runtime object) and nothing outside this file ever imported them as schemas —
+// only the *type* aliases below are used elsewhere. Kept as type-only aliases.
 
 export type GoogleOauthPayload = z.infer<typeof GoogleOauthPayloadSchema>;
-export type NotionOauthPayload = z.infer<typeof NotionOauthPayloadSchema>;
-export type AirtableOauthPayload = z.infer<typeof AirtableOauthPayloadSchema>;
+export type NotionOauthPayload = GoogleOauthPayload;
+export type AirtableOauthPayload = GoogleOauthPayload;
+export type MicrosoftOauthPayload = GoogleOauthPayload;

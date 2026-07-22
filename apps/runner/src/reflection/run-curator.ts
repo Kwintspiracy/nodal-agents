@@ -155,6 +155,7 @@ export async function runCuratorConsolidation(
       llmKeyId: agents.llmKeyId,
       fallbackChain: agents.fallbackChain,
       model: agents.model,
+      reasoningEffort: agents.reasoningEffort,
     })
     .from(agents)
     .where(and(eq(agents.entityId, entityId), eq(agents.active, true)));
@@ -169,12 +170,18 @@ export async function runCuratorConsolidation(
     const r = await resolveAgentLlmClient(
       db,
       reflectionModel !== undefined
-        ? { llmKeyId: ag.llmKeyId, fallbackChain: null, model: reflectionModel }
+        ? {
+            llmKeyId: ag.llmKeyId,
+            fallbackChain: null,
+            model: reflectionModel,
+            reasoningEffort: ag.reasoningEffort ?? null,
+          }
         : {
             llmKeyId: ag.llmKeyId,
             fallbackChain:
               (ag.fallbackChain as readonly { keyId: string; model: string }[] | null) ?? null,
             model: ag.model ?? '',
+            reasoningEffort: ag.reasoningEffort ?? null,
           },
     );
     if (r.ok) {
@@ -264,8 +271,10 @@ export async function runCuratorConsolidation(
         if (!parsed.success) {
           outcomeText = `error: invalid_input: ${parsed.error.message}`;
         } else {
-          // TODO(follow-up): in 'auto' mode, inherit the archived skills' assignments
-          // so consolidation never strips capability.
+          // Known limitation (tracked in the feature backlog): in 'auto' mode
+          // the consolidated skill does not inherit the archived skills'
+          // assignments, so consolidation can strip capability until the
+          // owner re-assigns it.
           // P2b (F-6 follow-up): refuse a slug reserved by the system
           // catalog — the curator must not shadow a system skill.
           const res = await createSkillRepo(

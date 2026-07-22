@@ -14,7 +14,12 @@ import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
 import { webhookRoute } from './routes/webhook.ts';
-import { installSkillRoute, uninstallSkillRoute } from './routes/skills.ts';
+import {
+  installSkillRoute,
+  uninstallSkillRoute,
+  updateSkillRoute,
+  acknowledgeSkillUpdateRoute,
+} from './routes/skills.ts';
 import {
   whatsappPairingStatusRoute,
   whatsappPairingStartRoute,
@@ -165,6 +170,10 @@ export function createApp(
   // WORKER_SECRET check inside the handlers (web → runner cross-process call).
   app.post('/api/skills/install', (c) => installSkillRoute(c, deps, runnerEnv));
   app.post('/api/skills/uninstall', (c) => uninstallSkillRoute(c, deps, runnerEnv));
+  app.post('/api/skills/update', (c) => updateSkillRoute(c, deps, runnerEnv));
+  app.post('/api/skills/acknowledge-update', (c) =>
+    acknowledgeSkillUpdateRoute(c, deps, runnerEnv),
+  );
 
   // WhatsApp pairing status/start — reads/kicks the whatsapp manager's
   // in-memory qr/status map (null in tests/environments that never started
@@ -191,9 +200,37 @@ export function createApp(
   return app;
 }
 
+// ─── installProcessErrorHandlers ───────────────────────────────────────────────
+
+/**
+ * Global process-level safety nets — the runner previously had NO
+ * `unhandledRejection`/`uncaughtException` handler, so a single forgotten
+ * `.catch()` anywhere (a channel manager, the cron ticker, a route) could
+ * silently poison the process or crash it with no diagnostic.
+ *
+ * Semantics: an unhandled REJECTION is a log-and-continue backstop (the
+ * process's synchronous state is still well-defined, so channels + cron must
+ * keep serving everyone else); an uncaught synchronous EXCEPTION is
+ * log-and-die (the process may be in an undefined state after a sync throw
+ * escaped every handler, so we do not keep running on top of it).
+ *
+ * Exported so tests can install and exercise these handlers directly without
+ * booting the whole server (main() only runs as the entry point).
+ */
+export function installProcessErrorHandlers(): void {
+  process.on('unhandledRejection', (reason) => {
+    console.error('[runner] unhandled rejection (process continues):', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('[runner] uncaught exception (process exiting):', err);
+    process.exit(1);
+  });
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  installProcessErrorHandlers();
   const runnerEnv = parseEnv();
   const deps = await createRunnerDeps(runnerEnv);
 

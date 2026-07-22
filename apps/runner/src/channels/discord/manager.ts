@@ -112,20 +112,31 @@ export function startDiscordManager(
     for (const row of rows) {
       if (!row.entityId) continue;
       seen.add(row.agentId);
-      const hash = hashCredentials(row.credentials);
+      // One failing agent (bad credential, a spawnOne throw, …) must not
+      // reject the whole refresh — every other binding still needs its scan.
+      try {
+        const hash = hashCredentials(row.credentials);
 
-      const existing = active.get(row.agentId);
-      if (existing) {
-        // Credentials rotated (token changed inside the binding) → restart.
-        if (existing.credentialsHash !== hash) {
-          await existing.handle.stop();
-          active.delete(row.agentId);
-          await spawnOne(row.agentId, row.entityId, hash);
+        const existing = active.get(row.agentId);
+        if (existing) {
+          // Credentials rotated (token changed inside the binding) → restart.
+          if (existing.credentialsHash !== hash) {
+            await existing.handle.stop();
+            active.delete(row.agentId);
+            await spawnOne(row.agentId, row.entityId, hash);
+          }
+          continue;
         }
+
+        await spawnOne(row.agentId, row.entityId, hash);
+      } catch (err) {
+        console.error(
+          `[discord-manager agent=${row.agentId}] refresh failed for this binding: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
         continue;
       }
-
-      await spawnOne(row.agentId, row.entityId, hash);
     }
 
     // Despawn gateways whose binding disappeared, got disabled, or whose agent went inactive.

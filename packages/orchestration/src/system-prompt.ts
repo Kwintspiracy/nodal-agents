@@ -86,6 +86,13 @@ export interface JobContext {
    * instead of relying on its own memory. Undefined for non-triggered jobs.
    */
   triggerContext?: JobTriggerContext;
+  /**
+   * Pre-rendered shallow listing of the entity's SHARED workspace, computed by
+   * the runner at job start (apps/runner/src/lib/workspace-inventory.ts).
+   * Rendered in the VOLATILE half (it changes between jobs — must never bust
+   * the stable-half prompt cache). Empty/undefined ⇒ block omitted.
+   */
+  workspaceInventory?: string;
 }
 
 // ─── DeploymentContext ────────────────────────────────────────────────────────
@@ -368,53 +375,93 @@ export async function buildSystemPrompt(
     : '';
   let personality = identityLine + agent.personality;
 
-  // 2. Build team block (data-driven from DB — empty string for workers)
-  const teamBlock = await buildTeamBlock(agent.id, db);
-
-  // 3. Build skills block — full content of each assigned skill, injected into
-  //    the system prompt so the agent ACTS on the skill's instructions, not just
-  //    sees a metadata label. (Pre-Brique 32 only `name + slug` were selected,
-  //    leaving the actual instructions silently dropped — skills were decorative.)
-  const skillRows = await db
-    .select({
-      skillId: agentSkills.id,
-      skillSlug: agentSkills.slug,
-      skillName: agentSkills.name,
-      skillDescription: agentSkills.description,
-    })
-    .from(agentSkillAssignments)
-    .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
-    .where(eq(agentSkillAssignments.agentId, agent.id as string));
-
-  // Discoverability inputs (Layer 2bis). We need THREE facts to tell the agent
-  // the truth about a capability: is it attached to ME, is it configured in the
-  // WORKSPACE (so it just needs assigning, no new key), or is it nowhere yet.
-  const connectorRows = await db
-    .select({ slug: connectors.slug })
-    .from(agentConnectorAssignments)
-    .innerJoin(connectors, eq(connectors.id, agentConnectorAssignments.connectorId))
-    .where(eq(agentConnectorAssignments.agentId, agent.id as string));
-  const mcpRows = await db
-    .select({ slug: mcpServers.slug })
-    .from(agentMcpServers)
-    .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
-    .where(eq(agentMcpServers.agentId, agent.id as string));
-  // Workspace-level configured connectors/MCP servers (entity-scoped). These
-  // exist with a credential but may not be attached to THIS agent yet.
-  const workspaceConnectors =
+  // 2-6. Independent per-agent lookups, run concurrently. Each of these only
+  // depends on `agent` / `jobContext` values already available synchronously —
+  // NONE reads the result of another — so they were previously ~9 sequential
+  // DB round-trips for no reason (this also folds in the memory-rows and
+  // messaging-channels lookups that used to sit further down as their own
+  // separate `await`s — same independence, just batched with the rest).
+  // Destructuring order mirrors the original sequential order so every
+  // downstream consumer (personality assembly, discoverability, the
+  // stable/volatile split around SYSTEM_PROMPT_CACHE_BOUNDARY) is untouched:
+  // parallelizing changes WHEN these resolve, never the assembled prompt's
+  // content or section order.
+  const [
+    teamBlock,
+    skillRows,
+    connectorRows,
+    mcpRows,
+    workspaceConnectors,
+    workspaceMcps,
+    workspaceRows,
+    memoryRows,
+    messagingChannelsBlock,
+  ] = await Promise.all([
+    // Build team block (data-driven from DB — empty string for workers)
+    buildTeamBlock(agent.id, db),
+    // Build skills block — full content of each assigned skill, injected into
+    // the system prompt so the agent ACTS on the skill's instructions, not just
+    // sees a metadata label. (Pre-Brique 32 only `name + slug` were selected,
+    // leaving the actual instructions silently dropped — skills were decorative.)
+    db
+      .select({
+        skillId: agentSkills.id,
+        skillSlug: agentSkills.slug,
+        skillName: agentSkills.name,
+        skillDescription: agentSkills.description,
+      })
+      .from(agentSkillAssignments)
+      .innerJoin(agentSkills, eq(agentSkillAssignments.skillId, agentSkills.id))
+      .where(eq(agentSkillAssignments.agentId, agent.id as string)),
+    // Discoverability inputs (Layer 2bis). We need THREE facts to tell the agent
+    // the truth about a capability: is it attached to ME, is it configured in the
+    // WORKSPACE (so it just needs assigning, no new key), or is it nowhere yet.
+    db
+      .select({ slug: connectors.slug })
+      .from(agentConnectorAssignments)
+      .innerJoin(connectors, eq(connectors.id, agentConnectorAssignments.connectorId))
+      .where(eq(agentConnectorAssignments.agentId, agent.id as string)),
+    db
+      .select({ slug: mcpServers.slug })
+      .from(agentMcpServers)
+      .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
+      .where(eq(agentMcpServers.agentId, agent.id as string)),
+    // Workspace-level configured connectors/MCP servers (entity-scoped). These
+    // exist with a credential but may not be attached to THIS agent yet.
     agent.entityId !== null
-      ? await db
+      ? db
           .select({ slug: connectors.slug, name: connectors.name })
           .from(connectors)
           .where(eq(connectors.entityId, agent.entityId as string))
-      : [];
-  const workspaceMcps =
+      : Promise.resolve([]),
     agent.entityId !== null
-      ? await db
+      ? db
           .select({ slug: mcpServers.slug, name: mcpServers.name })
           .from(mcpServers)
           .where(eq(mcpServers.entityId, agent.entityId as string))
-      : [];
+      : Promise.resolve([]),
+    // Workspace list — loaded from agent_workspaces (Volet 5). Data-driven
+    // from DB so the LLM knows which workspaces exist + how to prefix paths.
+    // Ordered by position so the first workspace listed is the primary one.
+    db
+      .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
+      .from(agentWorkspaces)
+      .where(eq(agentWorkspaces.agentId, agent.id as string))
+      .orderBy(agentWorkspaces.position, agentWorkspaces.label),
+    // Persistent memory rows — Sprint 2 auto-injection. Top-N durable facts
+    // for the entity, sorted by importance × recency, fit under the agent's
+    // memoryTokenBudget. Skipped when entityId is null (system agents).
+    agent.entityId !== null
+      ? selectMemoriesForInjection(db, {
+          entityId: agent.entityId as string,
+          maxChars: agent.memoryTokenBudget,
+          query: jobContext?.task,
+        })
+      : Promise.resolve([]),
+    // Messaging channels — the agent's connected platforms + approved-
+    // conversation counts (see buildMessagingChannelsBlock's doc comment).
+    buildMessagingChannelsBlock(agent.id as string, db),
+  ]);
 
   // 3a. Learning-loop Phase A — bump last_used_at for all injected skills.
   //     Fire-and-forget: never awaited so skill injection adds zero latency.
@@ -425,15 +472,6 @@ export async function buildSystemPrompt(
       skillRows.map((r) => r.skillId),
     ).catch(console.error);
   }
-
-  // 3.5. Workspace list — loaded from agent_workspaces (Volet 5). Data-driven
-  //      from DB so the LLM knows which workspaces exist + how to prefix paths.
-  //      Ordered by position so the first workspace listed is the primary one.
-  const workspaceRows = await db
-    .select({ label: agentWorkspaces.label, path: agentWorkspaces.path })
-    .from(agentWorkspaces)
-    .where(eq(agentWorkspaces.agentId, agent.id as string))
-    .orderBy(agentWorkspaces.position, agentWorkspaces.label);
 
   // Only capability/custom skills go in the assigned-skills block. baseline +
   // channel skills are injected by their dedicated layers (agent-baseline.ts);
@@ -502,21 +540,14 @@ export async function buildSystemPrompt(
   //     files (label/relative syntax for multi-workspace agents).
   const workspacesBlock = buildWorkspacesBlock(workspaceRows);
 
-  // 6. Persistent memory block — Sprint 2 auto-injection. Top-N durable facts
-  //    for the entity, sorted by importance × recency, fit under the agent's
-  //    memoryTokenBudget. Skipped when entityId is null (system agents) or
+  // 6. Persistent memory block — Sprint 2 auto-injection (rows fetched above,
+  //    concurrently with the other lookups). Top-N durable facts for the
+  //    entity, sorted by importance × recency, fit under the agent's
+  //    memoryTokenBudget. Empty when entityId is null (system agents) or
   //    when the budget yields zero rows. Frozen snapshot — the block is built
   //    once per job assembly; mid-job writes via save_memory land on disk but
   //    do NOT mutate the in-flight system prompt (prefix-cache preservation,
   //    Hermes pattern). Next job picks them up.
-  const memoryRows =
-    agent.entityId !== null
-      ? await selectMemoriesForInjection(db, {
-          entityId: agent.entityId as string,
-          maxChars: agent.memoryTokenBudget,
-          query: jobContext?.task,
-        })
-      : [];
   const memoryBlock = buildPersistentMemoryBlock(memoryRows);
 
   // 7. Job context block — runtime data provided by the runner per-job.
@@ -541,9 +572,9 @@ export async function buildSystemPrompt(
     workspaceMcps,
   });
 
-  //    Messaging channels — the agent's connected platforms + approved-
-  //    conversation counts (see buildMessagingChannelsBlock's doc comment).
-  const messagingChannelsBlock = await buildMessagingChannelsBlock(agent.id as string, db);
+  //    Messaging channels block — content assembled from `messagingChannelsBlock`
+  //    fetched above (the agent's connected platforms + approved-conversation
+  //    counts; see buildMessagingChannelsBlock's doc comment).
 
   //    L3 delegated sub-task — when this job is a delegated child (it has a
   //    parent), the agent must NOT deliver to the end user itself: it returns its
@@ -585,7 +616,17 @@ export async function buildSystemPrompt(
     wrap(channelBlock) +
     wrap(subAgentBlock);
 
-  const volatile = runtimeBlock + memoryBlock + jobContextBlock;
+  // Live inventory of the shared workspace (JobContext.workspaceInventory —
+  // computed by the runner). Volatile by nature: it reflects the disk NOW.
+  // Factual listing only; behavioral conventions belong to agent-layer skills.
+  const inventoryBlock = jobContext?.workspaceInventory
+    ? '\n\n## Shared workspace contents\n\n' +
+      'Current listing of the `shared` workspace (depth 2, captured at job start). ' +
+      'Before creating a workflow, script, or document, check whether one listed here already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
+      jobContext.workspaceInventory
+    : '';
+
+  const volatile = runtimeBlock + memoryBlock + jobContextBlock + inventoryBlock;
 
   return volatile.trim().length > 0 ? stable + SYSTEM_PROMPT_CACHE_BOUNDARY + volatile : stable;
 }

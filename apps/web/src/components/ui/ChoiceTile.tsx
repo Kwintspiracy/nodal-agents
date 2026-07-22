@@ -22,7 +22,7 @@ export default function ChoiceTile({ icon, label, onClick, className = '' }: Pro
       className={`flex items-center gap-3 rounded-lg border border-rule-2 bg-canvas px-4 py-3 text-left transition-colors hover:border-ink ${className}`}
     >
       <span className="shrink-0">{icon}</span>
-      <span className="text-legacy-13-5 font-medium text-ink">{label}</span>
+      <span className="text-medium-13 text-ink">{label}</span>
     </button>
   );
 }

@@ -8,13 +8,18 @@
 
 import { cp, rm, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join, basename, sep, resolve } from 'node:path';
-import { eq, and, agentSkills, type AnyDrizzleDb } from '@nodal-agents/db';
+import { eq, and, agentSkills, agentSkillAssignments, type AnyDrizzleDb } from '@nodal-agents/db';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
 import { parseSkillSource } from './source';
 import { downloadAndExtract, findSkillManifests, isFile } from './fetch';
 import { parseSkillMarkdown, validateFrontmatter } from './frontmatter';
 import { detectScripts, type DetectedScript } from './detect-scripts';
-import { countFilesIn } from './fs-util';
+import {
+  countFilesIn,
+  buildNestedSkillExclusion,
+  computeScriptsChanged,
+  hashScripts,
+} from './fs-util';
 
 export class SkillInstallError extends Error {
   constructor(message: string) {
@@ -173,12 +178,9 @@ export async function installCommunitySkill(
     // A repo whose chosen SKILL.md sits at the root may bundle OTHER skills
     // (e.g. a plugins/ mirror shipping its own SKILL.md). Those subtrees belong
     // to a different skill — exclude them from the copy + script scan so we
-    // don't duplicate files or report the same script twice.
-    const nestedSkillDirs = (await findSkillManifests(skillDirAbs))
-      .filter((m) => m !== 'SKILL.md')
-      .map((m) => join(skillDirAbs, dirname(m)));
-    const isExcluded = (abs: string): boolean =>
-      nestedSkillDirs.some((d) => abs === d || abs.startsWith(d + sep));
+    // don't duplicate files or report the same script twice. Shared with
+    // applySkillUpdate/checkSkillUpdate (fs-util.ts) — same folder shape.
+    const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
 
     const scripts = await detectScripts(skillDirAbs, isExcluded);
     const fileCount = await countFilesIn(skillDirAbs, isExcluded);
@@ -225,7 +227,10 @@ export async function installCommunitySkill(
         `Skill content too large (${contentBytes} bytes, max ${MAX_SKILL_CONTENT_BYTES / 1024}KB) — trim SKILL.md.`,
       );
     }
-    const installedScripts = scripts.length ? scripts : null;
+    // ORIGIN hashes: what upstream's scripts looked like at install time —
+    // the baseline the three-way update check compares against.
+    const hashedScripts = await hashScripts(skillDirAbs, scripts);
+    const installedScripts = hashedScripts.length ? hashedScripts : null;
 
     if (existing) {
       await opts.db
@@ -312,4 +317,250 @@ export async function uninstallCommunitySkill(opts: UninstallSkillOptions): Prom
   }
   await opts.db.delete(agentSkills).where(eq(agentSkills.id, existing.id));
   await rm(join(opts.skillStoreDir, opts.slug), { recursive: true, force: true });
+}
+
+// ─── applySkillUpdate ───────────────────────────────────────────────────────
+
+export interface ApplySkillUpdateOptions {
+  db: AnyDrizzleDb;
+  slug: string;
+  skillStoreDir: string;
+  /** Entity that must own the skill being updated. */
+  entityId: string;
+}
+
+export interface ApplySkillUpdateResult {
+  contentChanged: boolean;
+  scriptsChanged: boolean;
+  /** Number of agent_skill_assignments rows whose scripts_authorized flipped true→false. */
+  scriptsAuthorizationRevoked: number;
+}
+
+/**
+ * Apply a pending upstream update to an already-installed community skill:
+ * re-download the current source, replace the store-dir files, and update the
+ * DB row. Unlike checkSkillUpdate (read-only), this WRITES files and is meant
+ * to be called from the explicit "apply update" action (POST /api/skills/update),
+ * never from the throttled background check.
+ *
+ * - `defaultContent` is always overwritten with the freshly wrapped content.
+ * - `content` is overwritten too, UNLESS the owner has edited it
+ *   (`contentOverridden=true`) — a local edit is never silently clobbered by
+ *   an upstream change; the owner sees the drift via `contentOverridden` and
+ *   can reconcile manually.
+ * - scripts changed (recomputed HERE, not read from the update_available
+ *   cache written by the last background check — the upstream may have moved
+ *   again since then) revokes scripts_authorized on every agent×skill
+ *   assignment for this skill: an upstream that changes its scripts loses the
+ *   owner's prior execution authorization and must be re-authorized per agent.
+ */
+export async function applySkillUpdate(
+  opts: ApplySkillUpdateOptions,
+): Promise<ApplySkillUpdateResult> {
+  // F-6-shaped scoping (mirrors uninstallCommunitySkill): slug is unique per
+  // (entity_id, slug), not globally.
+  const [existing] = await opts.db
+    .select({
+      id: agentSkills.id,
+      isCommunity: agentSkills.isCommunity,
+      source: agentSkills.source,
+      defaultContent: agentSkills.defaultContent,
+      contentOverridden: agentSkills.contentOverridden,
+      installedScripts: agentSkills.installedScripts,
+    })
+    .from(agentSkills)
+    .where(and(eq(agentSkills.slug, opts.slug), eq(agentSkills.entityId, opts.entityId)))
+    .limit(1);
+  if (!existing) {
+    throw new SkillInstallError(`No skill installed with slug "${opts.slug}".`);
+  }
+  if (!existing.isCommunity || !existing.source) {
+    throw new SkillInstallError(
+      `Skill "${opts.slug}" is not a community-installed skill and cannot be updated this way.`,
+    );
+  }
+
+  const source = parseSkillSource(existing.source);
+  const { extractRoot, cleanup } = await downloadAndExtract(source);
+  try {
+    const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
+    const skillDirAbs = join(extractRoot, dirname(manifestRel));
+    const manifestAbs = join(extractRoot, manifestRel);
+    const text = await readFile(manifestAbs, 'utf8');
+    const { body } = parseSkillMarkdown(text);
+
+    const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
+    const scripts = await detectScripts(skillDirAbs, isExcluded);
+    const content = buildContent(opts.slug, body, scripts);
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    if (contentBytes > MAX_SKILL_CONTENT_BYTES) {
+      throw new SkillInstallError(
+        `Skill content too large (${contentBytes} bytes, max ${MAX_SKILL_CONTENT_BYTES / 1024}KB) — trim SKILL.md.`,
+      );
+    }
+
+    const localDir = join(opts.skillStoreDir, opts.slug);
+    // Recomputed against what's ACTUALLY on disk right now — not the
+    // update_available/update_detail cache from the last background check,
+    // which may be stale (upstream could have changed again since then).
+    const scriptsChanged = await computeScriptsChanged(
+      localDir,
+      skillDirAbs,
+      scripts,
+      existing.installedScripts ?? [],
+    );
+    const contentChanged = content !== (existing.defaultContent ?? '');
+    // Fresh ORIGIN hashes: after an apply, upstream-now IS the new baseline.
+    const hashedScripts = await hashScripts(skillDirAbs, scripts);
+    const installedScripts = hashedScripts.length ? hashedScripts : null;
+    const now = new Date();
+
+    // C1 (Opus review): DB FIRST (one transaction: revoke + row update), THEN
+    // the store-dir files — the REVERSE of the old order (files → row →
+    // revoke). That old order had two failure modes:
+    //   1. A crash between the file copy and the revoke left CHANGED scripts
+    //      already on disk with the OLD authorization still active — an agent
+    //      could execute upstream's new script before it was ever vetted.
+    //   2. If only the revoke step failed, a retry would recompute
+    //      scriptsChanged against the disk (already synced to the new
+    //      upstream by step 1) and find nothing changed — permanently
+    //      skipping the revocation.
+    // With DB-first: a crash before commit leaves EVERYTHING untouched (files
+    // and DB both still reflect the pre-update state) — safe, and a plain
+    // retry redoes the whole thing from scratch. A crash AFTER commit but
+    // before the file copy is fail-safe the other way: scripts_authorized is
+    // already revoked (worst case the agent loses execution rights it should
+    // keep, until the file copy catches up), and the store-dir files are
+    // stale relative to the new default_content — the NEXT background check
+    // re-downloads upstream and re-diffs against the (still-stale) local
+    // files, so a missed file copy keeps getting re-flagged rather than
+    // silently forgotten.
+    let scriptsAuthorizationRevoked = 0;
+    await opts.db.transaction(async (tx) => {
+      if (scriptsChanged) {
+        const revoked = await tx
+          .update(agentSkillAssignments)
+          .set({ scriptsAuthorized: false })
+          .where(
+            and(
+              eq(agentSkillAssignments.skillId, existing.id),
+              eq(agentSkillAssignments.scriptsAuthorized, true),
+            ),
+          )
+          .returning({ id: agentSkillAssignments.id });
+        scriptsAuthorizationRevoked = revoked.length;
+      }
+      await tx
+        .update(agentSkills)
+        .set({
+          defaultContent: content,
+          ...(existing.contentOverridden ? {} : { content }),
+          installedScripts,
+          updateAvailable: false,
+          updateDetail: null,
+          lastUpdateCheckAt: now,
+          updatedAt: now,
+        })
+        .where(eq(agentSkills.id, existing.id));
+    });
+
+    // Files LAST, only after the DB transaction above has committed.
+    await mkdir(opts.skillStoreDir, { recursive: true });
+    await rm(localDir, { recursive: true, force: true });
+    await cp(skillDirAbs, localDir, {
+      recursive: true,
+      filter: (src) => !isExcluded(src),
+    });
+
+    return { contentChanged, scriptsChanged, scriptsAuthorizationRevoked };
+  } finally {
+    await cleanup();
+  }
+}
+
+// ─── acknowledgeSkillUpdate (« keep my version ») ───────────────────────────
+
+export interface AcknowledgeSkillUpdateOptions {
+  db: AnyDrizzleDb;
+  slug: string;
+  /** Entity that must own the skill being acknowledged. */
+  entityId: string;
+}
+
+export interface AcknowledgeSkillUpdateResult {
+  /** True when upstream's SKILL.md still differs — the badge stays for that. */
+  contentChanged: boolean;
+}
+
+/**
+ * Resolve a script 'conflict' (or a stale legacy badge) by KEEPING the local
+ * files: re-baseline the ORIGIN hashes to upstream-as-of-now WITHOUT touching
+ * a single local file. The next background check then compares upstream to
+ * this new baseline — the badge only returns if upstream moves again.
+ *
+ * Nothing on disk changes, so script authorizations are NOT revoked: the
+ * owner keeps running exactly the files they already vetted.
+ *
+ * `contentChanged` (SKILL.md drift) is deliberately NOT acknowledged here —
+ * scripts and content are separate concerns, and hiding a real content update
+ * behind a scripts acknowledgment would be a silent skip (invariant #4).
+ */
+export async function acknowledgeSkillUpdate(
+  opts: AcknowledgeSkillUpdateOptions,
+): Promise<AcknowledgeSkillUpdateResult> {
+  const [existing] = await opts.db
+    .select({
+      id: agentSkills.id,
+      isCommunity: agentSkills.isCommunity,
+      source: agentSkills.source,
+      defaultContent: agentSkills.defaultContent,
+    })
+    .from(agentSkills)
+    .where(and(eq(agentSkills.slug, opts.slug), eq(agentSkills.entityId, opts.entityId)))
+    .limit(1);
+  if (!existing) {
+    throw new SkillInstallError(`No skill installed with slug "${opts.slug}".`);
+  }
+  if (!existing.isCommunity || !existing.source) {
+    throw new SkillInstallError(
+      `Skill "${opts.slug}" is not a community-installed skill and cannot be acknowledged this way.`,
+    );
+  }
+
+  const source = parseSkillSource(existing.source);
+  const { extractRoot, cleanup } = await downloadAndExtract(source);
+  try {
+    const manifestRel = await pickManifest(extractRoot, source.subdir, source.skillName);
+    const skillDirAbs = join(extractRoot, dirname(manifestRel));
+    const manifestAbs = join(extractRoot, manifestRel);
+    const text = await readFile(manifestAbs, 'utf8');
+    const { body } = parseSkillMarkdown(text);
+
+    const isExcluded = await buildNestedSkillExclusion(skillDirAbs);
+    const scripts = await detectScripts(skillDirAbs, isExcluded);
+    const content = buildContent(opts.slug, body, scripts);
+    const contentChanged = content !== (existing.defaultContent ?? '');
+
+    const hashedScripts = await hashScripts(skillDirAbs, scripts);
+    const now = new Date();
+    await opts.db
+      .update(agentSkills)
+      .set({
+        installedScripts: hashedScripts.length ? hashedScripts : null,
+        updateAvailable: contentChanged,
+        updateDetail: {
+          contentChanged,
+          scriptsChanged: false,
+          scriptsState: 'local-only',
+          checkedAt: now.toISOString(),
+        },
+        lastUpdateCheckAt: now,
+        updatedAt: now,
+      })
+      .where(eq(agentSkills.id, existing.id));
+
+    return { contentChanged };
+  } finally {
+    await cleanup();
+  }
 }

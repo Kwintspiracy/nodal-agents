@@ -1,6 +1,7 @@
 // @nodal-agents/llm — core types
 
 import type { generateText, streamText, generateObject } from 'ai';
+import type { ReasoningEffort } from '@nodal-agents/shared';
 
 // ─── Provider names ────────────────────────────────────────────────────────────
 
@@ -76,6 +77,14 @@ export interface ProviderConfig {
    * window always wins. Undefined ⇒ fall back to DEFAULT_CONTEXT_WINDOW.
    */
   contextWindow?: number;
+  /**
+   * Requested reasoning intensity for this provider+model (per-agent setting,
+   * or the fallback link's own override — resolve-llm.ts decides which).
+   * Each provider builder translates it per the model's declared
+   * reasoningControl (model-catalog.ts). Undefined = Auto: the builder keeps
+   * its pre-feature default behavior, byte-identical requests.
+   */
+  reasoningEffort?: ReasoningEffort;
 }
 
 // ─── NodalLlmClient ────────────────────────────────────────────────────────────

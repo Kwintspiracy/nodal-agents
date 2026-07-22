@@ -257,6 +257,7 @@ export async function runChatTurn(opts: {
     llmKeyId: agentRow.llmKeyId,
     fallbackChain: agentRow.fallbackChain ?? null,
     model: agentRow.model ?? DEFAULT_MODEL,
+    reasoningEffort: agentRow.reasoningEffort ?? null,
   });
   if (!resolved.ok) {
     return {

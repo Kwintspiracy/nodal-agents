@@ -55,14 +55,17 @@ const MINIMAX_OUTPUT_HEADROOM = 4096;
  *
  * Pure function — exported for unit testing.
  */
-export function injectMiniMaxThinking(body: unknown): unknown {
+export function injectMiniMaxThinking(
+  body: unknown,
+  budgetTokens: number = MINIMAX_THINKING_BUDGET,
+): unknown {
   if (typeof body !== 'object' || body === null) return body;
   const b = body as Record<string, unknown>;
   if (b['thinking'] !== undefined) return body;
-  b['thinking'] = { type: 'enabled', budget_tokens: MINIMAX_THINKING_BUDGET };
-  const minMax = MINIMAX_THINKING_BUDGET + MINIMAX_OUTPUT_HEADROOM;
+  b['thinking'] = { type: 'enabled', budget_tokens: budgetTokens };
+  const minMax = budgetTokens + MINIMAX_OUTPUT_HEADROOM;
   const curMax = typeof b['max_tokens'] === 'number' ? (b['max_tokens'] as number) : 0;
-  if (curMax <= MINIMAX_THINKING_BUDGET) b['max_tokens'] = minMax;
+  if (curMax <= budgetTokens) b['max_tokens'] = minMax;
   // Extended thinking rejects sampling controls other than temperature=1.
   b['temperature'] = 1;
   delete b['top_p'];
@@ -85,7 +88,7 @@ export function injectMiniMaxThinking(body: unknown): unknown {
  */
 function createMiniMaxFetch(
   apiKey: string,
-  opts: { injectThinking: boolean } = { injectThinking: false },
+  opts: { injectThinking: boolean; budgetTokens?: number } = { injectThinking: false },
   baseFetch: typeof globalThis.fetch = globalThis.fetch,
 ): typeof globalThis.fetch {
   return async (
@@ -121,7 +124,7 @@ function createMiniMaxFetch(
       try {
         const rawBody =
           typeof init.body === 'string' ? init.body : await new Response(init.body).text();
-        patchedBody = JSON.stringify(injectMiniMaxThinking(JSON.parse(rawBody)));
+        patchedBody = JSON.stringify(injectMiniMaxThinking(JSON.parse(rawBody), opts.budgetTokens));
       } catch {
         // Malformed/streamed body — pass through unchanged rather than break the call.
       }
@@ -162,12 +165,22 @@ export function buildMiniMaxModel(config: ProviderConfig): LanguageModel {
   const entry = findModelCatalogEntry('minimax', config.model);
   const isReasoning = entry?.capabilities.reasoning === true;
 
+  // Per-agent effort → thinking budget from the catalog's declared ladder.
+  // Auto (undefined) keeps the historical 8000 default; 'off' disables the
+  // injection entirely (M3 then runs without extended thinking).
+  const effort = config.reasoningEffort;
+  const injectThinking = isReasoning && effort !== 'off';
+  const budgetTokens =
+    effort && effort !== 'off'
+      ? entry?.capabilities.reasoningControl?.budgets?.[effort]
+      : undefined;
+
   const provider = createAnthropic({
     // The SDK sends x-api-key using this value; the fetch wrapper swaps it to
     // Authorization: Bearer before the request reaches the wire.
     apiKey: config.apiKey,
     baseURL,
-    fetch: createMiniMaxFetch(config.apiKey, { injectThinking: isReasoning }),
+    fetch: createMiniMaxFetch(config.apiKey, { injectThinking, budgetTokens }),
   });
 
   return provider(config.model);

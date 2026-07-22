@@ -18,7 +18,11 @@
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { ToolDefinition } from '../types';
-import { assertWorkspacesConfigured, resolveAndCheckPath } from './file-ops/workspace';
+import {
+  assertWorkspacesConfigured,
+  resolveAndCheckPath,
+  SHARED_WORKSPACE_LABEL,
+} from './file-ops/workspace';
 import { buildChildEnv } from './child-env';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
@@ -117,13 +121,28 @@ export const runCommandTool: ToolDefinition<typeof runCommandSchema, RunCommandO
     const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
 
     const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
-    return runInShell(input.command, cwd, timeoutMs);
+    // Same contract as run_skill_script: scripts/commands get the shared
+    // workspace path via NODAL_SHARED_WORKSPACE so artifacts have one right home.
+    const sharedWorkspace = (ctx.workspaces ?? []).find(
+      (w) => w.label === SHARED_WORKSPACE_LABEL,
+    )?.path;
+    return runInShell(
+      input.command,
+      cwd,
+      timeoutMs,
+      sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
+    );
   },
 };
 
 // ─── Shell execution (cross-platform, timeout + tree-kill, capped output) ─────
 
-function runInShell(command: string, cwd: string, timeoutMs: number): Promise<RunCommandOutput> {
+function runInShell(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  envExtras?: Record<string, string>,
+): Promise<RunCommandOutput> {
   return new Promise<RunCommandOutput>((resolve) => {
     const isWindows = process.platform === 'win32';
 
@@ -143,7 +162,7 @@ function runInShell(command: string, cwd: string, timeoutMs: number): Promise<Ru
       // augmentations some workspace apps add to ProcessEnv (e.g. Next.js's
       // required NODE_ENV) — spawn's `env` option accepts this shape at
       // runtime, hence the cast.
-      env: buildChildEnv(process.env) as unknown as NodeJS.ProcessEnv,
+      env: buildChildEnv(process.env, envExtras) as unknown as NodeJS.ProcessEnv,
     });
 
     let stdout = '';

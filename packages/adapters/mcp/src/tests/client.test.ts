@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   listTools: vi.fn(),
   close: vi.fn(async () => {}),
   transportClose: vi.fn(async () => {}),
+  agentClose: vi.fn(async () => {}),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -15,9 +16,27 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   },
 }));
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: class {
-    close = h.transportClose;
-  },
+  // Capturing the constructor args (in particular the P0-H7 dedicated
+  // `fetch`) lets the http tests inspect what connectMcp passed to the SDK
+  // without opening a real network connection.
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (
+    this: { url: unknown; opts: unknown; close: unknown },
+    url: unknown,
+    opts: unknown,
+  ) {
+    this.url = url;
+    this.opts = opts;
+    this.close = h.transportClose;
+  }),
+}));
+// P0-H7: connectMcp gives the http transport its own undici Agent, closed
+// alongside client.close(). Mock undici so the unit test never opens a real
+// dispatcher, and so we can assert the agent gets closed.
+vi.mock('undici', () => ({
+  Agent: vi.fn().mockImplementation(function (this: { close: unknown }) {
+    this.close = h.agentClose;
+  }),
+  fetch: vi.fn(async () => new Response(null)),
 }));
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   // Capturing the constructor args lets the stdio test inspect what the
@@ -109,6 +128,7 @@ describe('connectMcp', () => {
     h.connect.mockClear();
     h.listTools.mockReset();
     h.close.mockClear();
+    h.agentClose.mockClear();
   });
 
   it('connects, lists tools, and maps the descriptors', async () => {
@@ -244,6 +264,78 @@ describe('connectMcp', () => {
 
     delete process.env['WORKER_SECRET'];
     delete process.env['DATABASE_URL'];
+  });
+});
+
+// P0-H7 (causality study): a hung SSE GET from a misbehaving remote MCP
+// server used to wedge Node's GLOBAL fetch dispatcher, so subsequent
+// tool-call POSTs to the same origin also blocked until the SDK's 60s
+// request timeout (-32001) — freezing the whole agent. Fix: the http
+// transport gets its own dedicated undici Agent, decoupled from the global
+// dispatcher, so a hung GET can no longer starve POSTs. These tests assert
+// the wiring — not a live hang (no network in unit tests).
+describe('connectMcp — dedicated undici dispatcher for http (P0-H7)', () => {
+  beforeEach(() => {
+    h.connect.mockClear();
+    h.listTools.mockReset();
+    h.close.mockClear();
+    h.agentClose.mockClear();
+  });
+
+  it('constructs the http transport with a custom fetch bound to a dedicated undici Agent', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+    const { StreamableHTTPClientTransport } =
+      await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    const { Agent } = await import('undici');
+    const transportCtorMock = StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+    const agentCtorMock = Agent as unknown as ReturnType<typeof vi.fn>;
+    transportCtorMock.mockClear();
+    agentCtorMock.mockClear();
+
+    await connectMcp({ transport: 'http', url: 'https://127.0.0.1/api/mcp' });
+
+    // A dedicated Agent was created (connections: 16 — headroom over the
+    // proven-sufficient connections: 1) and never the global dispatcher.
+    expect(agentCtorMock).toHaveBeenCalledOnce();
+    expect(agentCtorMock.mock.calls[0]?.[0]).toEqual({ connections: 16 });
+
+    // The transport received a custom `fetch`, not the SDK's default.
+    const transportOpts = transportCtorMock.mock.calls[0]?.[1] as { fetch?: unknown };
+    expect(typeof transportOpts.fetch).toBe('function');
+    expect(transportOpts.fetch).not.toBe(globalThis.fetch);
+  });
+
+  it('does not create an undici Agent for the stdio transport', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+    const { Agent } = await import('undici');
+    const agentCtorMock = Agent as unknown as ReturnType<typeof vi.fn>;
+    agentCtorMock.mockClear();
+
+    await connectMcp({ transport: 'stdio', command: 'node', args: [], env: {} });
+
+    expect(agentCtorMock).not.toHaveBeenCalled();
+  });
+
+  it('closes the dedicated undici Agent alongside the client on conn.close()', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+
+    const conn = await connectMcp({ transport: 'http', url: 'https://127.0.0.1/api/mcp' });
+    expect(h.agentClose).not.toHaveBeenCalled();
+
+    await conn.close();
+
+    expect(h.close).toHaveBeenCalledOnce();
+    expect(h.agentClose).toHaveBeenCalledOnce();
+  });
+
+  it('does not attempt to close an undici Agent for the stdio transport', async () => {
+    h.listTools.mockResolvedValue({ tools: [] });
+
+    const conn = await connectMcp({ transport: 'stdio', command: 'node', args: [], env: {} });
+    await conn.close();
+
+    expect(h.close).toHaveBeenCalledOnce();
+    expect(h.agentClose).not.toHaveBeenCalled();
   });
 });
 

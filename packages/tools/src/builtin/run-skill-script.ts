@@ -21,11 +21,14 @@
 //   4. NO SHELL: the interpreter is spawned with an ARG ARRAY (shell:false), so
 //      arguments can never be shell-injected — stricter than run_command.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../types';
 import { resolveSkillRoot, resolveWithinSkill } from './skill-ops/skill-files';
 import { buildChildEnv } from './child-env';
+import { SHARED_WORKSPACE_LABEL } from './file-ops/workspace';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 
@@ -35,13 +38,47 @@ const MAX_TIMEOUT_SECONDS = 1800;
 const MAX_OUTPUT_CHARS = 100_000;
 
 /**
- * Resolve the interpreter for a script by extension. Only these types may run.
- * Returns null for anything else (the agent gets `unsupported_script_type`).
+ * Find a Python that actually RUNS, probing candidates with `--version`.
+ * On Windows, `python` on PATH is often the Microsoft Store STUB, which exits
+ * 9009 with "Python was not found" — a bare name pick bricked every .py skill
+ * script (live incident 2026-07-20: two image jobs burned 25+ recovery tool
+ * calls each after exit 9009). The stub fails the probe, so it can never be
+ * selected. Result cached for the process lifetime; null = none available.
  */
-function interpreterFor(scriptPath: string): string | null {
+let cachedPython: string | null | undefined;
+export function resolvePythonInterpreter(): string | null {
+  if (cachedPython !== undefined) return cachedPython;
+  const candidates =
+    process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
+  for (const candidate of candidates) {
+    try {
+      const probe = spawnSync(candidate, ['--version'], { windowsHide: true, timeout: 5000 });
+      if (probe.status === 0) {
+        cachedPython = candidate;
+        return candidate;
+      }
+    } catch {
+      /* candidate unusable — try the next */
+    }
+  }
+  cachedPython = null;
+  return null;
+}
+
+/** Test-only: forget the probed interpreter so tests can re-probe. */
+export function _resetPythonInterpreterCacheForTests(): void {
+  cachedPython = undefined;
+}
+
+/**
+ * Resolve the interpreter for a script by extension. Only these types may run.
+ * Returns null for anything else (the agent gets `unsupported_script_type`);
+ * 'python-missing' when the script is Python but no working interpreter exists
+ * (fail loud with an actionable error instead of the stub's cryptic 9009).
+ */
+function interpreterFor(scriptPath: string): string | 'python-missing' | null {
   const lower = scriptPath.toLowerCase();
-  const isWin = process.platform === 'win32';
-  if (lower.endsWith('.py')) return isWin ? 'python' : 'python3';
+  if (lower.endsWith('.py')) return resolvePythonInterpreter() ?? 'python-missing';
   if (lower.endsWith('.sh')) return 'bash';
   if (lower.endsWith('.js') || lower.endsWith('.mjs') || lower.endsWith('.cjs')) return 'node';
   return null;
@@ -117,6 +154,14 @@ export interface RunSkillScriptOutput {
   interpreter: string;
   /** The script path that ran (echoed back). */
   script: string;
+  /**
+   * New files the script created INSIDE the skill bundle (relative paths).
+   * The bundle ships the skill's code — generation artifacts do not belong
+   * there. Present (with `warning`) only when such writes were detected.
+   */
+  bundleWrites?: string[];
+  /** Loud, actionable notice accompanying `bundleWrites`. */
+  warning?: string;
 }
 
 /** Thrown when the owner has not authorized this skill's scripts for this agent. */
@@ -143,7 +188,10 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
       'skill_file_list) and any arguments as an array. The script runs from the skill folder, so ' +
       'its bundled files (workflows/, references/) are reachable by relative path. Returns stdout, ' +
       'stderr and the exit code — read the stdout (often JSON) for the result, e.g. an output ' +
-      'filename to deliver with send_image. By DEFAULT every run requires human approval; the user ' +
+      'filename to deliver with send_image. When the script produces artifacts (images, exports), ' +
+      'point its output argument at the SHARED WORKSPACE — its absolute path is exposed to the ' +
+      'script as the NODAL_SHARED_WORKSPACE environment variable — never at the skill folder ' +
+      '(a `warning` comes back if bundle writes are detected). By DEFAULT every run requires human approval; the user ' +
       'can enable auto-run ("Yolo") per agent. A non-zero exit code is returned to you (not an error) ' +
       '— read stderr and adapt. Only runs scripts of a skill the owner has authorized for you; ' +
       'if it returns scripts_not_authorized, ask the user to enable it rather than retrying.',
@@ -173,18 +221,90 @@ export const runSkillScriptTool: ToolDefinition<typeof runSkillScriptSchema, Run
         err.name = 'unsupported_script_type';
         throw err;
       }
+      if (interpreter === 'python-missing') {
+        // Fail LOUD with the real problem — before this guard the Windows
+        // Store stub answered instead of Python (cryptic exit 9009) and agents
+        // burned dozens of tool calls probing for a working interpreter.
+        const err = new Error(
+          'python_not_found: no working Python interpreter on PATH (tried py, python, python3). ' +
+            'Install Python or fix the PATH of the Nodal process, then retry. ' +
+            'Do NOT try to locate an interpreter yourself with run_command.',
+        );
+        err.name = 'python_not_found';
+        throw err;
+      }
 
       const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+
+      // Shared workspace path — handed to the script via NODAL_SHARED_WORKSPACE
+      // so it can write its artifacts there (e.g. --output-dir) instead of
+      // polluting the bundle (cwd). Absent when the agent has no shared workspace.
+      const sharedWorkspace = (ctx.workspaces ?? []).find(
+        (w) => w.label === SHARED_WORKSPACE_LABEL,
+      )?.path;
+
+      // Bundle-pollution watch: snapshot the bundle's file set before/after.
+      // The bundle is the skill's shipped code — artifacts belong in the shared
+      // workspace. We do NOT move anything (the artifact may be the deliverable);
+      // we report loudly so the agent relocates it and fixes its next call.
+      const before = await listBundleFiles(realRoot);
+
       // GATE 4 — no shell: interpreter + [script, ...args] as an arg array.
-      return runScript(
+      const result = await runScript(
         interpreter,
         [scriptAbs, ...(input.args ?? [])],
         realRoot,
         timeoutMs,
         input.script,
+        sharedWorkspace ? { NODAL_SHARED_WORKSPACE: sharedWorkspace } : undefined,
       );
+
+      const after = await listBundleFiles(realRoot);
+      const bundleWrites = [...after].filter((f) => !before.has(f)).sort();
+      if (bundleWrites.length > 0) {
+        result.bundleWrites = bundleWrites.slice(0, 20);
+        result.warning =
+          `bundle_pollution: this run created ${bundleWrites.length} file(s) inside the "${input.skill}" ` +
+          `skill bundle (its shipped code). Artifacts belong in the shared workspace` +
+          (sharedWorkspace
+            ? ` (${sharedWorkspace} — also exposed to scripts as $NODAL_SHARED_WORKSPACE)`
+            : '') +
+          `. Move the file(s) there now, and on the next run point the script's output ` +
+          `argument at the shared workspace instead.`;
+      }
+      return result;
     },
   };
+
+/**
+ * Recursive relative-path file set of the skill bundle. Bounded (a bundle is
+ * dozens of files; the cap only guards a pathological runaway). Compiled-cache
+ * noise (__pycache__) is ignored — Python creates it on every import.
+ */
+async function listBundleFiles(root: string, cap = 5000): Promise<Set<string>> {
+  const files = new Set<string>();
+  const walk = async (dir: string, rel: string): Promise<void> => {
+    if (files.size >= cap) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (files.size >= cap) return;
+      if (e.name === '__pycache__' || e.name.endsWith('.pyc')) continue;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        await walk(join(dir, e.name), childRel);
+      } else {
+        files.add(childRel);
+      }
+    }
+  };
+  await walk(root, '');
+  return files;
+}
 
 // ─── Process execution (no shell, timeout + tree-kill, capped output) ─────────
 
@@ -194,6 +314,7 @@ function runScript(
   cwd: string,
   timeoutMs: number,
   scriptLabel: string,
+  envExtras?: Record<string, string>,
 ): Promise<RunSkillScriptOutput> {
   return new Promise<RunSkillScriptOutput>((resolve) => {
     const isWindows = process.platform === 'win32';
@@ -210,7 +331,7 @@ function runScript(
       // DATABASE_URL/WORKER_SECRET/LLM keys via os.environ / process.env. See
       // child-env.ts. Cast for the same ambient-augmentation reason as
       // run-command.ts (see its comment).
-      env: buildChildEnv(process.env) as unknown as NodeJS.ProcessEnv,
+      env: buildChildEnv(process.env, envExtras) as unknown as NodeJS.ProcessEnv,
     });
 
     let stdout = '';

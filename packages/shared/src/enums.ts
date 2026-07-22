@@ -113,22 +113,6 @@ export const OPERATION_RISK_LEVELS = ['read', 'write', 'destructive'] as const;
 export const OperationRiskLevelSchema = z.enum(OPERATION_RISK_LEVELS);
 export type OperationRiskLevel = z.infer<typeof OperationRiskLevelSchema>;
 
-// agent_plugins.plugin_type CHECK constraint
-export const PLUGIN_TYPES = ['webhook', 'transform', 'schedule'] as const;
-export const PluginTypeSchema = z.enum(PLUGIN_TYPES);
-export type PluginType = z.infer<typeof PluginTypeSchema>;
-
-// agent_plugins.hook CHECK constraint
-export const PLUGIN_HOOKS = [
-  'pre_task',
-  'post_task',
-  'pre_tool',
-  'post_tool',
-  'on_memory_save',
-] as const;
-export const PluginHookSchema = z.enum(PLUGIN_HOOKS);
-export type PluginHook = z.infer<typeof PluginHookSchema>;
-
 // mcp_servers.transport CHECK constraint
 export const MCP_TRANSPORTS = ['http', 'stdio'] as const;
 export const McpTransportSchema = z.enum(MCP_TRANSPORTS);

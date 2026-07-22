@@ -3,16 +3,30 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { DownloadSimple } from '@phosphor-icons/react';
+import { DownloadSimple, ArrowClockwise } from '@phosphor-icons/react';
 import { COMMUNITY_SKILL_CATALOG, type CommunitySkillCatalogEntry } from '@nodal-agents/shared';
-import { installCommunitySkillAction } from '@/lib/actions.ts';
+import { installCommunitySkillAction, type SkillUpdateDetail } from '@/lib/actions.ts';
 import MarketplaceCard from '@/components/ui/MarketplaceCard';
 import MarketplaceCardActions from '@/components/ui/MarketplaceCardActions';
+import StatusPill from '@/components/ui/StatusPill';
 import EmptyState from '@/components/ui/EmptyState';
+import SkillUpdateAction from './SkillUpdateAction.tsx';
+
+/** Per-installed-skill update state, keyed by slug — just enough to drive the
+ *  "Update available" badge/CTA without pulling in the full SkillRow. */
+export type InstalledSkillInfo = {
+  slug: string;
+  updateAvailable: boolean;
+  updateDetail: SkillUpdateDetail | null;
+  /** True when the skill bundles any scripts — drives the unconditional
+   *  revocation warning in the update confirm dialog. */
+  hasScripts: boolean;
+};
 
 type Props = {
-  /** Slugs already installed in this workspace — drives the "Installed" state. */
-  installedSlugs: string[];
+  /** Community skills already installed in this workspace — drives the
+   *  "Installed" / "Update available" states. */
+  installedSkills: InstalledSkillInfo[];
   /** Optional search query — filters by name/description/category. */
   query?: string;
   /** Content-category filter ("All" = no filter). */
@@ -36,11 +50,11 @@ function repoOf(source: string): string {
  * muted "Installed" instead.
  */
 export default function CommunitySkillsGrid({
-  installedSlugs,
+  installedSkills,
   query = '',
   category = 'All',
 }: Props) {
-  const installed = new Set(installedSlugs);
+  const installedMap = new Map(installedSkills.map((s) => [s.slug, s]));
   const q = query.trim().toLowerCase();
   let entries = COMMUNITY_SKILL_CATALOG;
   if (category !== 'All') entries = entries.filter((e) => e.category === category);
@@ -62,7 +76,7 @@ export default function CommunitySkillsGrid({
         <CommunitySkillCard
           key={entry.slug}
           entry={entry}
-          isInstalled={installed.has(entry.slug)}
+          installed={installedMap.get(entry.slug) ?? null}
         />
       ))}
     </div>
@@ -71,14 +85,17 @@ export default function CommunitySkillsGrid({
 
 function CommunitySkillCard({
   entry,
-  isInstalled,
+  installed,
 }: {
   entry: CommunitySkillCatalogEntry;
-  isInstalled: boolean;
+  installed: InstalledSkillInfo | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [installed, setInstalled] = useState(isInstalled);
+  // Optimistic flip right after Install — a fresh install never has a
+  // pending update, so it doesn't need the `installed` prop's detail.
+  const [justInstalled, setJustInstalled] = useState(false);
+  const isInstalled = installed !== null || justInstalled;
 
   function handleInstall() {
     startTransition(async () => {
@@ -87,7 +104,7 @@ function CommunitySkillCard({
         toast.error(result.message);
         return;
       }
-      setInstalled(true);
+      setJustInstalled(true);
       toast.success(`${entry.name} installed — assign it to an agent`);
       router.refresh();
     });
@@ -106,13 +123,41 @@ function CommunitySkillCard({
       description={entry.description}
       category={entry.category}
       foot={
-        installed ? (
-          <>
-            <span className="min-w-0 flex-1 truncate">{badge}</span>
-            <span className="inline-flex h-[30px] shrink-0 items-center rounded-[7px] border border-rule bg-paper px-3 text-medium-13 text-ink-4">
-              Installed
-            </span>
-          </>
+        isInstalled ? (
+          installed?.updateAvailable ? (
+            <SkillUpdateAction
+              slug={entry.slug}
+              name={entry.name}
+              updateDetail={installed.updateDetail}
+              hasScripts={installed.hasScripts}
+            >
+              {({ onClick, pending }) => (
+                <MarketplaceCardActions
+                  status={
+                    <StatusPill
+                      variant="warn"
+                      label={
+                        installed.updateDetail?.scriptsState === 'conflict'
+                          ? 'Update conflicts with your edits'
+                          : 'Update available'
+                      }
+                    />
+                  }
+                  ctaLabel={pending ? 'Updating…' : 'Update'}
+                  ctaVariant="coral"
+                  icon={<ArrowClockwise size={12} weight="bold" />}
+                  onCta={pending ? undefined : onClick}
+                />
+              )}
+            </SkillUpdateAction>
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 truncate">{badge}</span>
+              <span className="inline-flex h-[30px] shrink-0 items-center rounded-[7px] border border-rule bg-paper px-3 text-medium-13 text-ink-4">
+                Installed
+              </span>
+            </>
+          )
         ) : (
           <MarketplaceCardActions
             status={badge}

@@ -51,6 +51,7 @@ import {
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
+import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import {
   computeToolWhitelist,
   computeToolChoice,
@@ -125,7 +126,8 @@ import {
 } from './state.ts';
 import { loadThreadHistory } from './thread-history.ts';
 import { triggerWorker } from '../routes/agent.ts';
-import { homedir } from 'node:os';
+import { workspacesRoot } from '../lib/workspaces-root.ts';
+import { buildSharedWorkspaceInventory } from '../lib/workspace-inventory.ts';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -141,8 +143,11 @@ import { getDeploymentContext } from './deployment.ts';
 // 100K+ tokens into `messages`, which every subsequent turn re-sends to the
 // LLM — the cost multiplier behind runaway jobs. We truncate to a fixed budget
 // with an explicit marker so the model knows content was cut and can re-scrape
-// a narrower target. Tunable; 50K chars ≈ ~13K tokens.
-const MAX_TOOL_RESULT_CHARS = 50_000;
+// a narrower target. 25K chars ≈ ~6.5K tokens — lowered from 50K (perf/tokens
+// audit): several parallel tool calls in one turn (e.g. 6 tool-calls × 50K)
+// were injecting ~78K tokens into a single message. Not env-overridable —
+// hardcoded like the other truncation constants in this file.
+const MAX_TOOL_RESULT_CHARS = 25_000;
 
 // Capabilities injected into ROOT meta-tools (create_mcp) via ToolContext.
 // Verify-then-write: connectMcp throws on any connect/auth/spawn failure, so the
@@ -874,13 +879,15 @@ async function runJob(
   // keys off (packages/tools file-ops/workspace.ts); a drift here would
   // silently disable that gate. The agent's file_* tools see it like any
   // other workspace.
+  let sharedWorkspacePath: string | null = null;
   if (job.entityId) {
-    const sharedPath = join(homedir(), '.nodalai', 'workspaces', job.entityId, 'shared');
+    const sharedPath = join(workspacesRoot(), job.entityId, 'shared');
     try {
       mkdirSync(sharedPath, { recursive: true });
       if (!agentWorkspacesList.some((w) => w.label === SHARED_WORKSPACE_LABEL)) {
         agentWorkspacesList.push({ label: SHARED_WORKSPACE_LABEL, path: sharedPath });
       }
+      sharedWorkspacePath = sharedPath;
     } catch {
       // best-effort — a workspace we couldn't create is simply not offered
     }
@@ -890,11 +897,23 @@ async function runJob(
   // Slugs of skills assigned to this agent + the store root, so the
   // skill_file_* builtins can read an installed (community) skill's bundled
   // files — and only the bundles of skills this agent actually holds.
+  //
+  // This ONE query also serves the worker tool-whitelist branch below (was a
+  // separate `agent_skill_assignments ⨝ agent_skills` query on the exact same
+  // join/where, re-run per job — perf audit N+1 fix). Columns are the union
+  // needed by both call sites: slug/scriptsAuthorized/filesWritable feed the
+  // skill-file context here; skillId/requiredBuiltins feed the worker
+  // whitelist further down. name/description are included for the audit's
+  // specified column union but are not consumed in this file.
   const assignedSkillRows = await db
     .select({
+      skillId: agentSkillAssignments.skillId,
       slug: agentSkills.slug,
+      name: agentSkills.name,
+      description: agentSkills.description,
       scriptsAuthorized: agentSkillAssignments.scriptsAuthorized,
       filesWritable: agentSkillAssignments.filesWritable,
+      requiredBuiltins: agentSkills.requiredBuiltins,
     })
     .from(agentSkillAssignments)
     .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
@@ -939,6 +958,7 @@ async function runJob(
         llmKeyId: agentRow.llmKeyId,
         fallbackChain: agentRow.fallbackChain ?? null,
         model: agent.model,
+        reasoningEffort: agentRow.reasoningEffort ?? null,
       },
       (info) => trace('fallback_key_skipped', info),
     );
@@ -1006,6 +1026,11 @@ async function runJob(
       ? (jobTriggerContext.notifyChannel ?? undefined)
       : undefined;
   const deployment = await getDeploymentContext(db, job.entityId ?? undefined);
+  // Shared-workspace inventory — gives the agent sight of what already exists
+  // so it reuses artifacts instead of recreating them (see workspace-inventory.ts).
+  const workspaceInventory = sharedWorkspacePath
+    ? await buildSharedWorkspaceInventory(sharedWorkspacePath)
+    : '';
   const jobContext: JobContext = {
     origin: job.channel ?? 'unknown',
     ...(job.task ? { task: job.task } : {}),
@@ -1013,6 +1038,7 @@ async function runJob(
     ...(triggerWantsConfirmation ? { notifyOnSuccess: true } : {}),
     ...(job.parentJobId ? { isDelegated: true } : {}),
     ...(job.triggerContext ? { triggerContext: job.triggerContext } : {}),
+    ...(workspaceInventory ? { workspaceInventory } : {}),
     deployment,
   };
 
@@ -1078,30 +1104,13 @@ async function runJob(
   // exists; recipient resolution (and its own no-recipient failure mode) is
   // delivery-guard's job, not tool-whitelist's.
   //
-  // B3 — a delegated worker (job.parentJobId set) whose OWN agent has no
-  // Telegram bot token inherits its entity's ROOT agent's token, so it can
-  // reply directly on the same chat the orchestrator is running for, instead
-  // of only the root ever being able to deliver. Entity-scoped: the root
-  // looked up is always entities.root_agent_id for THIS job's entityId, never
-  // another entity's — no cross-entity fallback. No change when the agent
-  // already has its own token (inheritedRootBotToken stays null, so ctx below
-  // gets no override and the send tools fall back to their historical
-  // per-call DB lookup). Inheritance still requires job.chatId: a delegated
-  // worker with no chat of its own has no owner row on the child agent
-  // either (owner rows live on the root), so without a chatId to inherit it
-  // would register tools it can never successfully call — token inheritance
-  // stays scoped to the case it actually solves.
-  let inheritedRootBotToken: string | null = null;
-  if (!agentRow.telegramBotToken && job.parentJobId && job.chatId) {
-    const [rootAgentTokenRow] = await db
-      .select({ telegramBotToken: agents.telegramBotToken })
-      .from(entitiesTable)
-      .innerJoin(agents, eq(agents.id, entitiesTable.rootAgentId))
-      .where(eq(entitiesTable.id, job.entityId ?? ''))
-      .limit(1);
-    inheritedRootBotToken = rootAgentTokenRow?.telegramBotToken ?? null;
-  }
-  const deliveryBotToken = agentRow.telegramBotToken ?? inheritedRootBotToken;
+  // Delegated workers do NOT inherit the root agent's token (B3 inheritance,
+  // removed 2026-07-21): a worker's outputs travel through the shared
+  // workspace (file path via return_result), and the orchestrator that owns
+  // the channel binding delivers them. Two voices on one chat produced
+  // duplicate confirmations; the send tools are armed only for agents with
+  // their OWN credential on the job's transport.
+  const deliveryBotToken = agentRow.telegramBotToken;
   // D2 (Discord ingress): a discord-bound agent gets the SAME 6 tools —
   // registration only needs to know a CREDENTIAL exists for the job's own
   // transport, exactly like the telegram check above (recipient resolution
@@ -1467,27 +1476,21 @@ async function runJob(
       ];
     } else {
       // Worker: whitelist from skill assignments + always-on tools + capability tools
-      // Join to agent_skills to retrieve requiredBuiltins for each assigned skill.
-      // requiredBuiltins are unioned into the alwaysOn list so that office tools
-      // (and any future gated builtins) are unlocked only for agents holding the
-      // relevant skill — not globally. This is the gating mechanism for invariant #9.
-      const skillRows = await db
-        .select({
-          skillId: agentSkillAssignments.skillId,
-          requiredBuiltins: agentSkills.requiredBuiltins,
-        })
-        .from(agentSkillAssignments)
-        .innerJoin(agentSkills, eq(agentSkills.id, agentSkillAssignments.skillId))
-        .where(eq(agentSkillAssignments.agentId, agentRow.id));
+      // requiredBuiltins for each assigned skill are unioned into the alwaysOn
+      // list so that office tools (and any future gated builtins) are unlocked
+      // only for agents holding the relevant skill — not globally. This is the
+      // gating mechanism for invariant #9. Reuses `assignedSkillRows` fetched
+      // above (§3.6) instead of re-running the same
+      // `agent_skill_assignments ⨝ agent_skills` query (perf audit N+1 fix).
 
       // Collect all requiredBuiltins from assigned skills (deduplicated).
       const skillRequiredBuiltins: string[] = Array.from(
-        new Set(skillRows.flatMap((r) => r.requiredBuiltins ?? [])),
+        new Set(assignedSkillRows.flatMap((r) => r.requiredBuiltins ?? [])),
       );
 
       // For workers without adapter registrations, only always-on tools are available.
       // Adapters will be registered in the registry when adapter packages are loaded.
-      const configuredToolNames = skillRows
+      const configuredToolNames = assignedSkillRows
         .map((r) => r.skillId)
         .filter((name): name is string => name !== null);
 
@@ -1504,12 +1507,30 @@ async function runJob(
         (name) => registry.get(name) !== undefined,
       );
 
+      // P5 (causality study, 2026-07-22): a delegated worker (job.parentJobId
+      // set) delivers NOTHING to the user directly — the orchestrator that
+      // owns the channel binding is the sole delivery path. B3 removal
+      // (above, 2026-07-21) already keeps the channel-send tools off a
+      // worker's whitelist by not inheriting the root's token, but
+      // dashboard_publish is unconditionally ALWAYS_ON and slipped through
+      // that gate — ComfyArtist (a delegated worker) called it to self-
+      // publish a status card the orchestrator should have delivered.
+      // Stripped here, at the same branch that decides a worker's tool
+      // whitelist, so the rule reads coherently: channel sends AND
+      // dashboard_publish are both the orchestrator's job. A non-delegated
+      // agent (job.parentJobId null — always true for the root/orchestrator,
+      // which never reaches this branch, but also true for a standalone
+      // single-agent workspace) keeps the full always-on set.
+      const workerAlwaysOnTools = job.parentJobId
+        ? ALWAYS_ON_TOOLS.filter((n) => n !== 'dashboard_publish')
+        : ALWAYS_ON_TOOLS;
+
       toolDefs = computeToolWhitelist(
         {
           agentId: agentRow.id,
           configuredTools: registeredConfigured,
           alwaysOn: [
-            ...ALWAYS_ON_TOOLS,
+            ...workerAlwaysOnTools,
             ...registeredSkillBuiltins,
             ...metaToolNames,
             ...scriptToolNames,
@@ -1810,7 +1831,6 @@ async function runJob(
                 jobChannel: job.channel,
                 activeChannels,
                 notifyChannelOverride,
-                resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
                 skillStoreDir: skillStore,
@@ -1819,6 +1839,8 @@ async function runJob(
                 fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
+                resolveAgentToolNames: (targetAgentId: string) =>
+                  resolveAgentToolNames(db, targetAgentId),
               },
               {
                 approvalRules: resumeApprovalRules,
@@ -2910,7 +2932,6 @@ async function runJob(
         jobChannel: job.channel,
         activeChannels,
         notifyChannelOverride,
-        resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
         embeddingClient: deps.embeddingClient,
         workspaces: agentWorkspacesList,
         skillStoreDir: skillStore,
@@ -2919,6 +2940,7 @@ async function runJob(
         fileWritableSkillSlugs,
         provisioning: TOOL_PROVISIONING,
         searchBackend,
+        resolveAgentToolNames: (targetAgentId: string) => resolveAgentToolNames(db, targetAgentId),
       };
       const sharedToolOpts = {
         approvalRules: approvalRuleList,
@@ -3192,7 +3214,6 @@ async function runJob(
                 jobChannel: job.channel,
                 activeChannels,
                 notifyChannelOverride,
-                resolvedTelegramBotToken: inheritedRootBotToken ?? undefined,
                 embeddingClient: deps.embeddingClient,
                 workspaces: agentWorkspacesList,
                 skillStoreDir: skillStore,
@@ -3201,6 +3222,8 @@ async function runJob(
                 fileWritableSkillSlugs,
                 provisioning: TOOL_PROVISIONING,
                 searchBackend,
+                resolveAgentToolNames: (targetAgentId: string) =>
+                  resolveAgentToolNames(db, targetAgentId),
               },
               {
                 approvalRules: approvalRuleList,
@@ -3393,8 +3416,15 @@ async function runJob(
         }
 
         // Delivery guard: record a successful user-facing delivery so the
-        // completion paths know the user actually received something.
-        if (toolResult.outcome === 'success' && DELIVERY_TOOL_NAMES.has(call.name)) {
+        // completion paths know the user actually received something. A send
+        // timeout flagged mayHaveDelivered counts too: the message probably
+        // reached the user, and treating it as undelivered would make the
+        // guard nudge a re-send — the exact duplication this flag prevents.
+        if (
+          DELIVERY_TOOL_NAMES.has(call.name) &&
+          (toolResult.outcome === 'success' ||
+            (toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true))
+        ) {
           toolDelivered = true;
           deliveredViaToolName = call.name;
         }
@@ -3403,9 +3433,13 @@ async function runJob(
         // clears any prior failure of the same tool (the agent retried and it
         // worked); a fresh error marks it unresolved. (awaiting_approval was
         // handled above with `continue`, so outcome here is success|error.)
+        // A mayHaveDelivered send timeout is NOT an unresolved failure: the
+        // false-success guard below would otherwise demand "réessaie la
+        // livraison jusqu'à réussite" — a forced re-send of a message that
+        // probably already arrived.
         if (toolResult.outcome === 'success') {
           unresolvedToolFailures.delete(call.name);
-        } else {
+        } else if (!(toolResult.outcome === 'error' && toolResult.mayHaveDelivered === true)) {
           unresolvedToolFailures.add(call.name);
         }
 
@@ -3453,7 +3487,16 @@ async function runJob(
           toolCallId: call.id,
           toolName: call.name,
           output: toResultOutput(
-            toolResult.outcome === 'success' ? toolResult.output : { error: toolResult.error },
+            toolResult.outcome === 'success'
+              ? toolResult.output
+              : toolResult.mayHaveDelivered === true
+                ? // Keep the flag in the block so the sibling-error guard below
+                  // can recognize this as "probably delivered" and let a
+                  // same-turn return_result through instead of deferring it
+                  // (deferral invites the duplicate re-send this flag exists
+                  // to prevent).
+                  { error: toolResult.error, mayHaveDelivered: true }
+                : { error: toolResult.error },
           ),
         });
       }
@@ -3574,11 +3617,13 @@ async function runJob(
       const isToolErrorBlock = (block: (typeof toolResultBlocks)[number]): boolean => {
         if (block.toolName === 'return_result') return false;
         if (block.output.type === 'json') {
-          return (
-            block.output.value !== null &&
-            typeof block.output.value === 'object' &&
-            'error' in (block.output.value as Record<string, unknown>)
-          );
+          const v = block.output.value;
+          if (v === null || typeof v !== 'object') return false;
+          // A mayHaveDelivered send timeout is ambiguous, not a failure to fix:
+          // deferring return_result over it would push the LLM to resend the
+          // (probably delivered) message. Let the turn finalize.
+          if ((v as Record<string, unknown>)['mayHaveDelivered'] === true) return false;
+          return 'error' in (v as Record<string, unknown>);
         }
         return block.output.value.startsWith('{"error":');
       };

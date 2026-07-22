@@ -9,8 +9,9 @@ import { eq, and, agentSchedules, entities } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
 import { CronExpressionParser } from 'cron-parser';
 import { resolveTimezone } from '@nodal-agents/shared';
-import type { ToolDefinition } from '../../types';
+import type { ToolDefinition, ToolContext } from '../../types';
 import { resolveAgentId } from './link-helpers';
+import { lintRoutineTask } from './routine-lint';
 
 /** Compute the next fire time for a cron expression in a timezone, or null if invalid. */
 function computeNextRun(expr: string, tz: string): Date | null {
@@ -104,6 +105,34 @@ function buildIntervalCron(
   };
 }
 
+/**
+ * Non-blocking routine lint (H1b): resolve the TARGET agent's real tool
+ * whitelist and check the routine's task text against it, returning a
+ * ready-to-append "⚠️ Routine lint: …" suffix (or '' when clean or when the
+ * lint can't run). Never throws — a lint failure must never break schedule
+ * creation, which is why this swallows errors from resolveAgentToolNames
+ * (e.g. an unusual agent config) instead of propagating them.
+ */
+async function routineLintSuffix(
+  ctx: Pick<ToolContext, 'resolveAgentToolNames'>,
+  agentId: string,
+  task: string,
+): Promise<string> {
+  if (!ctx.resolveAgentToolNames) return '';
+  try {
+    const availableTools = await ctx.resolveAgentToolNames(agentId);
+    const { warnings } = lintRoutineTask(task, availableTools);
+    if (warnings.length === 0) return '';
+    return ` ⚠️ Routine lint: ${warnings.join(' | ')}`;
+  } catch (err) {
+    console.error(
+      `[schedule-ops] routine lint failed for agent ${agentId} (non-blocking): ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+    return '';
+  }
+}
+
 /** Resolve a schedule by name within an entity. */
 async function resolveSchedule(
   db: AnyDrizzleDb,
@@ -178,7 +207,9 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
     'atTimes (fixed clock times like ["09:00","21:00"]) OR everyMinutes (an interval). You give ' +
     "wall-clock hours in the user's own timezone — the system owns the timezone, so you never write " +
     'cron or convert to UTC (that was the #1 cause of wrong schedules). Use days ' +
-    '("daily"/"weekdays"/"weekends"/[0-6]) to limit which days. Fails if the agent is not found.',
+    '("daily"/"weekdays"/"weekends"/[0-6]) to limit which days. Fails if the agent is not found, ' +
+    'or if a schedule with this name already exists in this workspace — use update_schedule to ' +
+    'change an existing one instead of recreating it.',
   inputSchema: CreateScheduleInput,
   riskLevel: 'write',
   defaultApproval: 'require_approval',
@@ -186,6 +217,22 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
     const agentId = await resolveAgentId(ctx.db, ctx.entityId, input.agentSlug);
     if (!agentId)
       return { ok: false, error: `Agent "${input.agentSlug}" not found in this workspace.` };
+
+    // Idempotence guard (P0-S1, 2026-07-22 incident): schedule names are the
+    // natural unique key within an entity (resolveSchedule/update_schedule/
+    // toggle_schedule all address a schedule by entity + name). Fail loud on
+    // a repeat name instead of silently inserting a second, competing
+    // schedule for the same agent+task.
+    const existingSchedule = await resolveSchedule(ctx.db, ctx.entityId, input.name);
+    if (existingSchedule) {
+      return {
+        ok: false,
+        error:
+          `A schedule named "${input.name}" already exists in this workspace. ` +
+          'Use update_schedule to change it, or toggle_schedule to pause/resume it — do not ' +
+          'call create_schedule again with the same name.',
+      };
+    }
     // Timezone is a SYSTEM setting (workspace), never agent-provided.
     const tz = await workspaceTimezone(ctx.db, ctx.entityId);
 
@@ -225,9 +272,10 @@ export const createScheduleTool: ToolDefinition<typeof CreateScheduleInput, Sche
       nextRun,
     });
     const whenLabel = hasTimes ? input.atTimes!.join(', ') : `every ${input.everyMinutes} min`;
+    const lintSuffix = await routineLintSuffix(ctx, agentId, input.task);
     return {
       ok: true,
-      message: `Created schedule "${input.name}" for agent "${input.agentSlug}" — runs at ${whenLabel} (${tz}). Next run: ${nextRun.toISOString()}.`,
+      message: `Created schedule "${input.name}" for agent "${input.agentSlug}" — runs at ${whenLabel} (${tz}). Next run: ${nextRun.toISOString()}.${lintSuffix}`,
     };
   },
 };

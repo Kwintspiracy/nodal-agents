@@ -151,6 +151,38 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
     authExtraParams: { response_type: 'code' },
     credentialType: 'airtable-oauth',
   },
+  'outlook-mail': {
+    slug: 'outlook-mail',
+    label: 'Outlook Mail',
+    authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    scopes: [
+      'offline_access',
+      'openid',
+      'email',
+      'profile',
+      'https://graph.microsoft.com/Mail.ReadWrite',
+      'https://graph.microsoft.com/Mail.Send',
+      'https://graph.microsoft.com/MailboxSettings.Read',
+    ],
+    pkce: 'pkce-s256',
+    tokenAuth: 'body',
+    tokenBodyType: 'form',
+    // Graph's /v1.0/me requires the User.Read delegated permission, which our
+    // scopes don't request — that would 403 on every connection. The OIDC
+    // userinfo endpoint is covered by the openid/profile/email scopes we
+    // already ask for. `email` is null on some personal Microsoft accounts —
+    // nameField is set to `preferred_username` (always present, looks like an
+    // email) so the generic `accountName = email ?? name` resolver in
+    // callback/route.ts falls back to it automatically. No route.ts changes needed.
+    accountInfo: {
+      url: 'https://graph.microsoft.com/oidc/userinfo',
+      nameField: 'preferred_username',
+      emailField: 'email',
+    },
+    supportsRefresh: true,
+    credentialType: 'microsoft-oauth',
+  },
 };
 
 export function getOAuthProvider(slug: string): OAuthProvider | null {

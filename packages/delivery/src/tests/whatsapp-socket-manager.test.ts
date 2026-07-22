@@ -130,17 +130,91 @@ describe('ensureWhatsAppSocket', () => {
     });
   });
 
-  it('reconnects (creates a new socket) on close for a reason other than loggedOut', async () => {
+  it('reconnects (creates a new socket) on close for a reason other than loggedOut, after a backoff delay', async () => {
     const handle = ensureWhatsAppSocket(nextKey(), { sessionDir: '/sessions/e' });
     const sock = await waitForFirstSocket();
 
-    sock.ev.emit('connection.update', {
-      connection: 'close',
-      lastDisconnect: { error: { output: { statusCode: 428 } }, date: new Date() },
-    });
+    vi.useFakeTimers();
+    try {
+      sock.ev.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: { error: { output: { statusCode: 428 } }, date: new Date() },
+      });
+      expect(handle.getStatus()).toBe('closed');
 
-    expect(handle.getStatus()).toBe('closed');
-    await vi.waitFor(() => expect(mockMakeWASocket).toHaveBeenCalledTimes(2));
+      // Not an immediate hot-loop reconnect — must wait out the backoff.
+      await vi.advanceTimersByTimeAsync(999);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('doubles the reconnect backoff on consecutive closes, capped, and resets it once "open" is reached', async () => {
+    const handle = ensureWhatsAppSocket(nextKey(), { sessionDir: '/sessions/backoff' });
+    const sock1 = await waitForFirstSocket();
+
+    vi.useFakeTimers();
+    try {
+      // 1st close → 1000ms backoff.
+      sock1.ev.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: { error: { output: { statusCode: 428 } }, date: new Date() },
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(2);
+
+      // 2nd consecutive close → backoff doubles to 2000ms, not 1000ms again.
+      const sock2 = sockets[1]!;
+      sock2.ev.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: { error: { output: { statusCode: 428 } }, date: new Date() },
+      });
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(3);
+
+      // Reaching 'open' resets the counter — the NEXT close backs off at
+      // 1000ms again, not 4000ms.
+      const sock3 = sockets[2]!;
+      sock3.ev.emit('connection.update', { connection: 'open' });
+      expect(handle.getStatus()).toBe('open');
+
+      sock3.ev.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: { error: { output: { statusCode: 428 } }, date: new Date() },
+      });
+      await vi.advanceTimersByTimeAsync(999);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels the pending reconnect timer on close() — no reconnect fires after the handle is closed', async () => {
+    const key = nextKey();
+    ensureWhatsAppSocket(key, { sessionDir: '/sessions/cancel-backoff' });
+    const sock = await waitForFirstSocket();
+
+    vi.useFakeTimers();
+    try {
+      sock.ev.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: { error: { output: { statusCode: 428 } }, date: new Date() },
+      });
+      closeWhatsAppSocket(key);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(1); // still just the original socket
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does NOT reconnect and sets status logged_out on a loggedOut close', async () => {
@@ -156,6 +230,42 @@ describe('ensureWhatsAppSocket', () => {
     // Give any (incorrect) reconnect attempt a chance to fire, then assert it didn't.
     await new Promise((r) => setTimeout(r, 10));
     expect(mockMakeWASocket).toHaveBeenCalledTimes(1);
+  });
+
+  it('sets status "closed" without an unhandled rejection when the initial connect() fails (e.g. a corrupted sessionDir)', async () => {
+    mockUseMultiFileAuthState.mockReset().mockRejectedValueOnce(new Error('sessionDir corrupted'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const handle = ensureWhatsAppSocket(nextKey(), { sessionDir: '/sessions/corrupt' });
+
+    await vi.waitFor(() => expect(handle.getStatus()).toBe('closed'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[whatsapp] connect failed', expect.any(Error));
+    expect(mockMakeWASocket).not.toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('sets status "closed" without an unhandled rejection when a BACKED-OFF auto-reconnect attempt itself fails', async () => {
+    const handle = ensureWhatsAppSocket(nextKey(), { sessionDir: '/sessions/reconnect-fails' });
+    const sock = await waitForFirstSocket();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.useFakeTimers();
+    try {
+      mockUseMultiFileAuthState.mockRejectedValueOnce(new Error('sessionDir corrupted mid-flight'));
+      sock.ev.emit('connection.update', {
+        connection: 'close',
+        lastDisconnect: { error: { output: { statusCode: 428 } }, date: new Date() },
+      });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(handle.getStatus()).toBe('closed');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('[whatsapp] connect failed', expect.any(Error));
+      expect(mockMakeWASocket).toHaveBeenCalledTimes(1); // the failed reconnect never got to makeWASocket
+    } finally {
+      vi.useRealTimers();
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
 

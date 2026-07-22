@@ -10,7 +10,11 @@ import TextInput from '@/components/ui/TextInput';
 import FieldLabel from '@/components/ui/FieldLabel';
 import CopyButton from '@/components/ui/CopyButton';
 
-export type CredentialWizardType = 'google-oauth' | 'notion-oauth' | 'airtable-oauth';
+export type CredentialWizardType =
+  | 'google-oauth'
+  | 'notion-oauth'
+  | 'airtable-oauth'
+  | 'microsoft-oauth';
 
 interface ProviderConfig {
   label: string;
@@ -44,6 +48,13 @@ const PROVIDER_CONFIGS: Record<CredentialWizardType, ProviderConfig> = {
     clientIdLabel: 'Client ID',
     clientSecretLabel: 'Client secret',
   },
+  'microsoft-oauth': {
+    label: 'Microsoft 365',
+    callbackPath: '/api/oauth/microsoft-oauth/callback',
+    namePlaceholder: 'Mon compte Microsoft',
+    clientIdLabel: 'Application (client) ID',
+    clientSecretLabel: 'Client secret value',
+  },
 };
 
 const TYPE_OPTIONS: { type: CredentialWizardType; label: string; description: string }[] = [
@@ -61,6 +72,15 @@ const TYPE_OPTIONS: { type: CredentialWizardType; label: string; description: st
     type: 'airtable-oauth',
     label: 'Airtable',
     description: 'Public OAuth integration',
+  },
+  {
+    // Account-level credential, like google-oauth: one Microsoft credential
+    // backs every M365 connector. The description lists the connectors wired
+    // so far — grow it with each 0.8 office brick (Calendar, OneDrive, Excel),
+    // exactly like the Google Workspace line above.
+    type: 'microsoft-oauth',
+    label: 'Microsoft 365',
+    description: 'Outlook Mail',
   },
 ];
 

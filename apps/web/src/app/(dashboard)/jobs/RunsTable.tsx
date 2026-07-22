@@ -12,7 +12,9 @@ import PillTabs from '@/components/ui/PillTabs';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import TextInput from '@/components/ui/TextInput';
+import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import { MagnifyingGlass } from '@phosphor-icons/react';
+import { formatDate, truncate } from '@/lib/format-time';
 
 type Tab = 'All' | 'Running' | 'Failed';
 
@@ -42,20 +44,6 @@ function statusLabel(status: string | null): string {
     cancelled: 'Cancelled',
   };
   return MAP[status] ?? status;
-}
-
-function formatDate(d: Date | null): string {
-  if (!d) return '—';
-  const date = typeof d === 'string' ? new Date(d) : d;
-  return date.toLocaleString(undefined, {
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
 type Props = {
@@ -125,113 +113,80 @@ export default function RunsTable({ jobs, agents, agentId }: Props) {
       </div>
 
       {/* Table card */}
-      <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-        {filtered.length === 0 ? (
-          <div className="px-6 py-12 text-center text-body-14 text-ink-4">
-            {jobs.length === 0
-              ? 'No runs yet. Use the form above to send your first task to an agent.'
-              : 'No runs match the current filter.'}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  <Th>Agent</Th>
-                  <Th>Task</Th>
-                  <Th className="hidden md:table-cell">Channel</Th>
-                  <Th className="hidden lg:table-cell">Started</Th>
-                  <Th align="right">Status</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((job) => {
-                  const agent = job.agentId ? agentMap.get(job.agentId) : null;
-                  const variant = statusToVariant(job.status);
-                  return (
-                    <tr
-                      key={job.id}
-                      className="border-b border-dashed border-rule-2 last:border-0 hover:bg-hover transition-colors"
-                    >
-                      {/* Agent */}
-                      <td className="px-[18px] py-3 align-middle">
-                        {agent ? (
-                          <div className="flex items-center gap-2.5">
-                            <AgentAvatar
-                              name={agent.name}
-                              imageUrl={agent.avatarUrl}
-                              size="md"
-                              shape="round"
-                            />
-                            <div className="min-w-0">
-                              <div className="truncate text-medium-14 leading-[1.2]! text-ink">
-                                {agent.name}
-                              </div>
-                              <div className="truncate text-mono-11 leading-none! text-ink-4">
-                                {agent.slug}
-                              </div>
-                            </div>
+      {filtered.length === 0 ? (
+        <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper px-6 py-12 text-center text-body-14 text-ink-4">
+          {jobs.length === 0
+            ? 'No runs yet. Use the form above to send your first task to an agent.'
+            : 'No runs match the current filter.'}
+        </div>
+      ) : (
+        <Table>
+          <THead>
+            <Th>Agent</Th>
+            <Th>Task</Th>
+            <Th className="hidden md:table-cell">Channel</Th>
+            <Th className="hidden lg:table-cell">Started</Th>
+            <Th align="right">Status</Th>
+          </THead>
+          <tbody>
+            {filtered.map((job) => {
+              const agent = job.agentId ? agentMap.get(job.agentId) : null;
+              const variant = statusToVariant(job.status);
+              return (
+                <Tr key={job.id}>
+                  {/* Agent */}
+                  <Td>
+                    {agent ? (
+                      <div className="flex items-center gap-2.5">
+                        <AgentAvatar
+                          name={agent.name}
+                          imageUrl={agent.avatarUrl}
+                          size="md"
+                          shape="round"
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-medium-14 leading-[1.2]! text-ink">
+                            {agent.name}
                           </div>
-                        ) : (
-                          <span className="text-mono-12 text-ink-4">—</span>
-                        )}
-                      </td>
+                          <div className="truncate text-mono-11 leading-none! text-ink-4">
+                            {agent.slug}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-mono-12 text-ink-4">—</span>
+                    )}
+                  </Td>
 
-                      {/* Task */}
-                      <td className="max-w-[320px] px-[18px] py-3 align-middle">
-                        <Link
-                          href={`/jobs/${job.id}`}
-                          className="line-clamp-1 text-body-14 text-ink-2 hover:text-ink transition-colors"
-                          title={job.task}
-                        >
-                          {truncate(job.task, 72)}
-                        </Link>
-                      </td>
+                  {/* Task */}
+                  <Td className="max-w-[320px]">
+                    <Link
+                      href={`/jobs/${job.id}`}
+                      className="line-clamp-1 text-body-14 text-ink-2 hover:text-ink transition-colors"
+                      title={job.task}
+                    >
+                      {truncate(job.task, 72)}
+                    </Link>
+                  </Td>
 
-                      {/* Channel */}
-                      <td className="hidden px-[18px] py-3 align-middle text-mono-12 text-ink-4 md:table-cell">
-                        {job.channel}
-                      </td>
+                  {/* Channel */}
+                  <Td className="hidden text-mono-12 text-ink-4 md:table-cell">{job.channel}</Td>
 
-                      {/* Started */}
-                      <td className="hidden px-[18px] py-3 align-middle text-mono-12 text-ink-4 lg:table-cell">
-                        {formatDate(job.createdAt)}
-                      </td>
+                  {/* Started */}
+                  <Td className="hidden text-mono-12 text-ink-4 lg:table-cell">
+                    {formatDate(job.createdAt)}
+                  </Td>
 
-                      {/* Status */}
-                      <td className="px-[18px] py-3 align-middle text-right">
-                        <StatusPill variant={variant} label={statusLabel(job.status)} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                  {/* Status */}
+                  <Td align="right">
+                    <StatusPill variant={variant} label={statusLabel(job.status)} />
+                  </Td>
+                </Tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      )}
     </div>
-  );
-}
-
-// ─── Mini table header cell ─────────────────────────────────────────────────
-
-function Th({
-  children,
-  align = 'left',
-  className = '',
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-  className?: string;
-}) {
-  return (
-    <th
-      className={`border-b border-rule-2 px-[18px] pt-1.5 pb-2.5 text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
-        align === 'right' ? 'text-right' : 'text-left'
-      } ${className}`}
-    >
-      {children}
-    </th>
   );
 }

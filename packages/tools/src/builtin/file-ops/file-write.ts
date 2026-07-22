@@ -8,6 +8,8 @@ import type { ToolDefinition } from '../../types';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
+  isProtectedWorkflowTemplate,
+  WORKFLOW_TEMPLATE_PROTECTED_MESSAGE,
   MAX_WRITE_BYTES,
   WorkspaceError,
 } from './workspace';
@@ -51,7 +53,17 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
   // D1: gate ONLY the destructive case — overwriting a file that already
   // exists in the entity-wide SHARED workspace. A brand-new file, or a write
   // into an attached/private workspace, never gates (see computeSharedOverwriteApproval).
-  computeApproval: (input, ctx) => computeSharedOverwriteApproval(ctx, input.path),
+  // P4: a protected workflow template is refused outright at execute() —
+  // never surface an approval prompt for a call that can never succeed.
+  computeApproval: async (input, ctx) => {
+    try {
+      const path = await resolveAndCheckPath(ctx, input.path);
+      if (await isProtectedWorkflowTemplate(ctx, path)) return undefined;
+    } catch {
+      return undefined; // resolution failure — execute() will fail loud on it
+    }
+    return computeSharedOverwriteApproval(ctx, input.path);
+  },
   execute: async (input, ctx) => {
     try {
       const bytes = Buffer.byteLength(input.content, 'utf8');
@@ -62,6 +74,11 @@ export const fileWriteTool: ToolDefinition<typeof FileWriteInputSchema, FileWrit
         };
       }
       const path = await resolveAndCheckPath(ctx, input.path);
+      // P4 — shared canonical workflow templates are read-only to this tool.
+      // See isProtectedWorkflowTemplate (workspace.ts) for the rationale.
+      if (await isProtectedWorkflowTemplate(ctx, path)) {
+        return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
+      }
       const dir = dirname(path);
       if (input.create_dirs) {
         await mkdir(dir, { recursive: true });

@@ -23,6 +23,7 @@
     "@nodal-agents/adapter-google-drive": "workspace:*",
     "@nodal-agents/adapter-google-sheets": "workspace:*",
     "@nodal-agents/adapter-notion": "workspace:*",
+    "@nodal-agents/adapter-outlook-mail": "workspace:*",
     "@nodal-agents/adapter-poyo": "workspace:*",
     "@nodal-agents/adapter-tavily": "workspace:*",
     "@nodal-agents/shared": "workspace:*",

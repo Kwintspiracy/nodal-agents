@@ -208,4 +208,66 @@ describe('startDiscordManager', () => {
     expect(spy).not.toHaveBeenCalled();
     await manager.stop();
   });
+
+  it('one binding whose spawn throws does not abort the refresh for other bindings', async () => {
+    const [agent2] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Second Discord Agent',
+        slug: `discord-agent-2-${Date.now()}`,
+        personality: 'test',
+      })
+      .returning();
+
+    await db.insert(channelBindings).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'discord',
+        credentials: JSON.stringify({ botToken: 'bad-token' }),
+        enabled: true,
+      },
+      {
+        entityId: seed.entityId,
+        agentId: agent2!.id,
+        channel: 'discord',
+        credentials: JSON.stringify({ botToken: 'good-token' }),
+        enabled: true,
+      },
+    ]);
+
+    const stops: string[] = [];
+    const spy = vi.fn<(opts: DiscordGatewayOpts) => DiscordGatewayHandle>((opts) => {
+      if (opts.botToken === 'bad-token') throw new Error('boom: gateway init failed');
+      return {
+        async stop() {
+          stops.push(opts.agentId);
+        },
+      };
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const manager = startDiscordManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      startGateway: spy,
+    });
+    await manager.refreshNow();
+
+    // The failing binding never got an active gateway; the healthy one did.
+    expect(manager.activeCount()).toBe(1);
+    expect(spy.mock.calls.some(([opts]) => opts.botToken === 'good-token')).toBe(true);
+    expect(
+      consoleErrorSpy.mock.calls.some(
+        ([msg]) =>
+          typeof msg === 'string' &&
+          msg.includes('[discord-manager') &&
+          msg.includes('boom: gateway init failed'),
+      ),
+    ).toBe(true);
+
+    consoleErrorSpy.mockRestore();
+    await manager.stop();
+  });
 });

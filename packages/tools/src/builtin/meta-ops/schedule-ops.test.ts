@@ -100,6 +100,128 @@ describe('create_schedule — dailyBudgetUsd', () => {
   });
 });
 
+// P0-S1 (2026-07-22 incident): the sibling create_connector bug (repeat
+// calls inserting duplicate rows blindly) applies equally to create_schedule
+// — schedule name is the natural unique key within an entity. Repeat calls
+// must fail loud instead of creating competing duplicate schedules.
+describe('create_schedule — idempotence', () => {
+  it('a fresh name succeeds and inserts exactly one row', async () => {
+    const result = await createScheduleTool.execute(
+      { agentSlug: agentName, name: 'idempotence-fresh', atTimes: ['09:00'], task: 'do the thing' },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(true);
+
+    const rows = await db
+      .select()
+      .from(agentSchedules)
+      .where(eq(agentSchedules.name, 'idempotence-fresh'));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('a repeat call with the same name fails loud and writes no second row', async () => {
+    const first = await createScheduleTool.execute(
+      { agentSlug: agentName, name: 'idempotence-repeat', atTimes: ['09:00'], task: 'first task' },
+      makeCtx(),
+    );
+    expect(first.ok).toBe(true);
+
+    const second = await createScheduleTool.execute(
+      {
+        agentSlug: agentName,
+        name: 'idempotence-repeat',
+        atTimes: ['10:00'],
+        task: 'second task',
+      },
+      makeCtx(),
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error('expected failure');
+    expect(second.error).toContain('already exists');
+
+    const rows = await db
+      .select()
+      .from(agentSchedules)
+      .where(eq(agentSchedules.name, 'idempotence-repeat'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.task).toBe('first task');
+  });
+});
+
+// H1b: routine/schedule lint — non-blocking warning surfaced in the success
+// message when the routine references a tool the target agent doesn't have,
+// or an ambiguous "state" phrase. Asserts on the real message string.
+describe('create_schedule — routine lint (H1b)', () => {
+  function makeCtxWithTools(availableTools: Set<string>): ToolContext {
+    return {
+      ...makeCtx(),
+      resolveAgentToolNames: async () => availableTools,
+    };
+  }
+
+  it('appends a lint warning when the task references an unavailable tool', async () => {
+    const result = await createScheduleTool.execute(
+      {
+        agentSlug: agentName,
+        name: 'lint-unavailable-tool',
+        atTimes: ['09:00'],
+        task: 'Call `cogni_cortex__get_state` to fetch the last snapshot.',
+      },
+      makeCtxWithTools(new Set(['query_memory', 'save_memory', 'return_result'])),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.message).toContain('Routine lint');
+    expect(result.message).toContain('cogni_cortex__get_state');
+  });
+
+  it('appends a lint warning for the "your state" phrasing (root incident)', async () => {
+    const result = await createScheduleTool.execute(
+      {
+        agentSlug: agentName,
+        name: 'lint-state-phrase',
+        atTimes: ['09:00'],
+        task: 'Retrieve the previously stored version from your state.',
+      },
+      makeCtxWithTools(new Set(['query_memory', 'save_memory', 'return_result'])),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.message).toContain('Routine lint');
+    expect(result.message.toLowerCase()).toContain('state');
+  });
+
+  it('returns success with NO lint warning for a clean routine', async () => {
+    const result = await createScheduleTool.execute(
+      {
+        agentSlug: agentName,
+        name: 'lint-clean',
+        atTimes: ['09:00'],
+        task: 'Use `query_memory` for context, then `save_memory` and `return_result`.',
+      },
+      makeCtxWithTools(new Set(['query_memory', 'save_memory', 'return_result'])),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.message).not.toContain('Routine lint');
+  });
+
+  it('returns success with no warning when resolveAgentToolNames is absent (lightweight ctx)', async () => {
+    const result = await createScheduleTool.execute(
+      {
+        agentSlug: agentName,
+        name: 'lint-no-capability',
+        atTimes: ['09:00'],
+        task: 'Call `cogni_cortex__get_state` to fetch the last snapshot.',
+      },
+      makeCtx(), // no resolveAgentToolNames — lint must silently skip, never block
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.message).not.toContain('Routine lint');
+  });
+});
+
 describe('update_schedule — dailyBudgetUsd', () => {
   it('updates the ceiling on an existing schedule', async () => {
     await createScheduleTool.execute(

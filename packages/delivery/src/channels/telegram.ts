@@ -2,8 +2,30 @@
 
 import { DeliveryError } from '../errors.ts';
 
-/** Timeout for all outbound Telegram API calls (sendMessage, getMe, getUpdates). */
+/** Timeout for admin/read Telegram API calls (getMe, getUpdates, setMyCommands…). */
 const TELEGRAM_TIMEOUT_MS = 10_000;
+
+// Message sends get a higher ceiling than admin calls: observed production
+// sendMessage latency regularly exceeds 10s while Telegram still delivers,
+// and every timeout on a send is an AMBIGUOUS outcome (delivered-but-late vs
+// lost). Fewer timeouts = fewer ambiguities to surface.
+const SEND_TIMEOUT_MS = 30_000;
+
+/**
+ * Timeout on a send request: the bytes left, Telegram never answered — the
+ * message may well have been delivered. `mayHaveDelivered` tells callers
+ * (tool layer, delivery guard) to treat this as "probably delivered, do NOT
+ * resend" instead of a retryable failure.
+ */
+function sendTimeoutError(timeoutMs: number): DeliveryError {
+  const err = new DeliveryError(
+    'telegram_request_failed',
+    `telegram_timeout: Telegram API did not respond within ${timeoutMs / 1000}s — ` +
+      'the message may still have been delivered',
+  );
+  err.mayHaveDelivered = true;
+  return err;
+}
 
 /** One inline-keyboard button. `callback_data` is sent back in a callback_query when tapped (≤64 bytes). */
 export interface TelegramInlineButton {
@@ -221,7 +243,7 @@ async function sendOneTelegramMessage(opts: TelegramSendOpts): Promise<{ message
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
 
   let response: Response;
   try {
@@ -233,10 +255,7 @@ async function sendOneTelegramMessage(opts: TelegramSendOpts): Promise<{ message
     });
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new DeliveryError(
-        'telegram_request_failed',
-        `telegram_timeout: Telegram API did not respond within ${TELEGRAM_TIMEOUT_MS / 1000}s`,
-      );
+      throw sendTimeoutError(SEND_TIMEOUT_MS);
     }
     // Redact the bot token from any network error message (H-1)
     const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
@@ -313,10 +332,7 @@ export async function sendTelegramPhoto(opts: {
     });
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new DeliveryError(
-        'telegram_request_failed',
-        `telegram_timeout: Telegram API did not respond within ${PHOTO_TIMEOUT_MS / 1000}s`,
-      );
+      throw sendTimeoutError(PHOTO_TIMEOUT_MS);
     }
     const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
     throw new DeliveryError(
@@ -386,10 +402,7 @@ export async function sendTelegramDocument(opts: {
     });
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new DeliveryError(
-        'telegram_request_failed',
-        `telegram_timeout: Telegram API did not respond within ${DOCUMENT_TIMEOUT_MS / 1000}s`,
-      );
+      throw sendTimeoutError(DOCUMENT_TIMEOUT_MS);
     }
     const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
     throw new DeliveryError(
@@ -453,10 +466,7 @@ async function uploadTelegramMedia(
     response = await fetch(url, { method: 'POST', body: form, signal: controller.signal });
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new DeliveryError(
-        'telegram_request_failed',
-        `telegram_timeout: Telegram API did not respond within ${DOCUMENT_TIMEOUT_MS / 1000}s`,
-      );
+      throw sendTimeoutError(DOCUMENT_TIMEOUT_MS);
     }
     const safeMsg = String((err as Error).message ?? err).replaceAll(botToken, '[REDACTED]');
     throw new DeliveryError(

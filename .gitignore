@@ -37,6 +37,8 @@ test-results/
 apps/web/check-jobs*.ts
 apps/web/test-single.ts
 response.html
+# Throwaway scripts dropped at the root by tooling sessions
+*.tmp.mjs
 # Throwaway manual Playwright verifications (sub-agent scratch space; the
 # real e2e suite lives under apps/web/tests/e2e/)
 apps/web/tests/manual/
@@ -64,3 +66,9 @@ apps/web/pw-onboarding-verify.mjs
 /dogfood-root-context.md
 /dogfood-boot*.log
 /dogfood-pg.log
+
+# Junk exclu du commit causality-hardening 2026-07-22 (interpréteur Python bundlé, scratch, landing/homepage stray)
+/scratchpad/
+/NodalHomepage/
+/Nodal-Agents Landing.html
+packages/tools/Python/

@@ -9,6 +9,7 @@ import {
 } from '@/lib/actions.ts';
 import VividStatCard from '@/components/ui/VividStatCard';
 import MetricCard from '@/components/ui/MetricCard';
+import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
 import PageShell from '@/components/ui/PageShell';
@@ -184,27 +185,25 @@ export default async function DashboardPage() {
       {Object.keys(s.statusCounts).length > 0 && (
         <div className="mt-7">
           <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">Job status</h2>
-          <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-            <table className="w-full text-sm">
-              <tbody>
-                {Object.entries(s.statusCounts)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([status, count]) => (
-                    <tr key={status} className="border-b border-rule-2 last:border-0">
-                      <td className="px-5 py-3">
-                        <StatusPill
-                          variant={statusToVariant(status)}
-                          label={STATUS_LABEL[status] ?? status}
-                        />
-                      </td>
-                      <td className="px-5 py-3 text-right font-mono tabular-nums text-ink-2">
-                        {count}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <tbody>
+              {Object.entries(s.statusCounts)
+                .sort((a, b) => b[1] - a[1])
+                .map(([status, count]) => (
+                  <Tr key={status} hover={false}>
+                    <Td>
+                      <StatusPill
+                        variant={statusToVariant(status)}
+                        label={STATUS_LABEL[status] ?? status}
+                      />
+                    </Td>
+                    <Td align="right" className="font-mono tabular-nums text-ink-2">
+                      {count}
+                    </Td>
+                  </Tr>
+                ))}
+            </tbody>
+          </Table>
         </div>
       )}
 
@@ -212,50 +211,48 @@ export default async function DashboardPage() {
       {s.perAgent.length > 0 && (
         <div className="mt-7">
           <h2 className="mb-2 text-mono-11 uppercase tracking-[0.16em] text-ink-4">Per agent</h2>
-          <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-rule-2">
-                  <th className="px-5 py-3 text-left text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
-                    Agent
-                  </th>
-                  <th className="px-5 py-3 text-right text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4">
-                    Jobs
-                  </th>
-                  <th className="hidden px-5 py-3 text-right text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
-                    Input tk
-                  </th>
-                  <th className="hidden px-5 py-3 text-right text-mono-11 whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 md:table-cell">
-                    Output tk
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {s.perAgent.map((a) => (
-                  <tr key={a.agentId} className="border-b border-rule-2 last:border-0">
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <AgentAvatar name={a.agentName} size="md" shape="round" />
-                        <div className="min-w-0">
-                          <span className="text-ink">{a.agentName}</span>
-                          <span className="ml-2 font-mono text-xs text-ink-4">{a.agentSlug}</span>
-                        </div>
+          <Table>
+            <THead>
+              <Th>Agent</Th>
+              <Th align="right">Jobs</Th>
+              <Th align="right" className="hidden md:table-cell">
+                Input tk
+              </Th>
+              <Th align="right" className="hidden md:table-cell">
+                Output tk
+              </Th>
+            </THead>
+            <tbody>
+              {s.perAgent.map((a) => (
+                <Tr key={a.agentId} hover={false}>
+                  <Td>
+                    <div className="flex items-center gap-2.5">
+                      <AgentAvatar name={a.agentName} size="md" shape="round" />
+                      <div className="min-w-0">
+                        <span className="text-ink">{a.agentName}</span>
+                        <span className="ml-2 font-mono text-xs text-ink-4">{a.agentSlug}</span>
                       </div>
-                    </td>
-                    <td className="px-5 py-3 text-right font-mono tabular-nums text-ink-2">
-                      {a.jobCount}
-                    </td>
-                    <td className="hidden px-5 py-3 text-right font-mono tabular-nums text-ink-3 md:table-cell">
-                      {formatNumber(a.inputTokens)}
-                    </td>
-                    <td className="hidden px-5 py-3 text-right font-mono tabular-nums text-ink-3 md:table-cell">
-                      {formatNumber(a.outputTokens)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                  </Td>
+                  <Td align="right" className="font-mono tabular-nums text-ink-2">
+                    {a.jobCount}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums text-ink-3 md:table-cell"
+                  >
+                    {formatNumber(a.inputTokens)}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums text-ink-3 md:table-cell"
+                  >
+                    {formatNumber(a.outputTokens)}
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
         </div>
       )}
     </PageShell>

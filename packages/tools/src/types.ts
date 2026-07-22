@@ -72,17 +72,6 @@ export interface ToolContext {
    */
   notifyChannelOverride?: ChannelKind;
   /**
-   * Telegram bot token the runner resolved for THIS job's delivery tools, when
-   * it differs from the agent's own `agents.telegram_bot_token` — e.g. a
-   * delegated worker job (parent_job_id set) inheriting its entity's ROOT
-   * agent's token so it can reply on the same chat as the orchestrator (B3).
-   * Entity-scoped: the runner only ever populates this from the root agent of
-   * the SAME entity as the job — never cross-entity.
-   * Absent ⇒ the delivery tools fall back to their historical per-call lookup
-   * of `agents.telegram_bot_token` by `ctx.agentId` (the agent's own token).
-   */
-  resolvedTelegramBotToken?: string;
-  /**
    * Embedding client for tools that persist or search semantic memory
    * (save_memory generates an embedding at write time). Optional: the runner
    * always provides it, but lightweight test contexts may omit it — memory
@@ -153,6 +142,18 @@ export interface ToolContext {
   searchBackend?: (
     query: string,
   ) => Promise<{ results: Array<{ title: string; url: string; snippet: string }> }>;
+  /**
+   * Resolve the REAL tool-name whitelist of an arbitrary agent in this
+   * workspace (not necessarily the caller). Injected by the runner
+   * (apps/runner/src/job/resolve-agent-tools.ts's resolveAgentToolNames) so
+   * packages/tools can run the routine/schedule lint (H1b) without importing
+   * the runner's job-assembly internals. Read-only, no MCP connections.
+   * Absent in lightweight test contexts ⇒ a meta-tool that wants it (e.g.
+   * create_schedule) simply skips the lint rather than failing loud — the
+   * lint is advisory (warn, never block), so a missing capability here must
+   * never break schedule creation.
+   */
+  resolveAgentToolNames?: (agentId: string) => Promise<Set<string>>;
 }
 
 // ─── ToolProvisioning ──────────────────────────────────────────────────────────
@@ -337,7 +338,14 @@ export interface ApprovalRule {
 
 export type ToolExecutionResult =
   | { outcome: 'success'; output: unknown }
-  | { outcome: 'error'; error: string }
+  /**
+   * `mayHaveDelivered` — set when a DELIVERY tool timed out after the request
+   * was transmitted (DeliveryError.mayHaveDelivered): the message may well
+   * have reached the user. The runner's delivery guard treats this as a
+   * delivery (no re-send nudge) and the error text tells the LLM not to
+   * resend — a blind retry is exactly what duplicates messages.
+   */
+  | { outcome: 'error'; error: string; mayHaveDelivered?: boolean }
   | { outcome: 'awaiting_approval'; approvalRequestId: string };
 
 // ─── Constants ────────────────────────────────────────────────────────────────

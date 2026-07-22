@@ -1,7 +1,7 @@
 export type CredentialEntry = {
   id: string;
   name: string;
-  type: 'google-oauth' | 'notion-oauth' | 'airtable-oauth';
+  type: 'google-oauth' | 'notion-oauth' | 'airtable-oauth' | 'microsoft-oauth';
   accountName: string | null;
   expiresAt: Date | null;
   scopes: string | null;

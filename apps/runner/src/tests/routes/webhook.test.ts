@@ -74,6 +74,8 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SKILL_UPDATE_CHECK_BATCH_SIZE: 10,
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
@@ -265,6 +267,34 @@ describe('POST /webhooks/:slug/:secret — happy path', () => {
 
     const after = await db.select().from(agentJobs);
     expect(after.length).toBe(before.length);
+  });
+});
+
+// ─── Concurrent fires — atomic trigger_count increment (audit fix) ─────────
+//
+// triggerCount used to be a read-modify-write ((trigger.triggerCount ?? 0) +
+// 1) against a value read at the top of the handler — under concurrency two
+// fires racing the same starting count would silently lose an increment. Now
+// an atomic SQL `+ 1`. Fire N requests truly concurrently and assert the
+// final count is exactly N — a lost-increment bug would show up as < N.
+
+describe('POST /webhooks/:slug/:secret — concurrent fires increment trigger_count atomically', () => {
+  it('N concurrent fires against the same trigger land exactly N increments', async () => {
+    const trigger = await makeTrigger();
+    const N = 10;
+
+    const responses = await Promise.all(
+      Array.from({ length: N }, (_, i) => post(trigger.slug, SECRET, { i })),
+    );
+    for (const res of responses) {
+      expect(res.status).toBe(202);
+    }
+
+    const [updatedTrigger] = await db
+      .select()
+      .from(webhookTriggers)
+      .where(eq(webhookTriggers.id, trigger.id));
+    expect(updatedTrigger!.triggerCount).toBe(N);
   });
 });
 

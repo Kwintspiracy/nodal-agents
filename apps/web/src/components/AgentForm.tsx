@@ -153,6 +153,9 @@ export default function AgentForm(props: Props) {
         llmKeyId: llmKeyId || null,
         role,
         subAgentIds: role === 'worker' ? [] : subAgentIds,
+        // This form has no instructions editor — pass the loaded values
+        // through so the assignment rewrite in the action never wipes them.
+        subAgentInstructions: props.initial.subAgentInstructions ?? {},
         avatarUrl,
       };
       startTransition(async () => {

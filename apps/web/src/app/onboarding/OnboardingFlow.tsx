@@ -584,7 +584,7 @@ export default function OnboardingFlow() {
               <h1 className="text-display-22 tracking-[-0.01em] text-ink">
                 Welcome to Nodal-Agents
               </h1>
-              <p className="mx-auto mt-2 max-w-sm text-legacy-13-5 leading-[1.6]! text-ink-3">
+              <p className="mx-auto mt-2 max-w-sm text-body-14 leading-[1.6]! text-ink-3">
                 Let&apos;s set up your first AI agent. It takes about a minute: connect a model,
                 give your agent a personality, and say hello.
               </p>
@@ -606,7 +606,7 @@ export default function OnboardingFlow() {
               <Select
                 value={provider.value}
                 onChange={(e) => pickProvider(e.target.value)}
-                className="mt-1.5 bg-canvas text-legacy-13-5"
+                className="mt-1.5 bg-canvas text-body-14"
               >
                 {PROVIDERS.map((p) => (
                   <option key={p.value} value={p.value}>
@@ -618,7 +618,7 @@ export default function OnboardingFlow() {
               <label className="mt-4 block text-medium-12 text-ink-3">Model</label>
               <ModelField providerValue={provider.value} model={model} onModel={setModel} />
               {catalogModels.length > 0 && (
-                <p className="mt-1.5 text-legacy-11-5 text-ink-4">
+                <p className="mt-1.5 text-body-12 text-ink-4">
                   {catalogModels.length} supported models for {provider.label}.
                 </p>
               )}
@@ -628,7 +628,7 @@ export default function OnboardingFlow() {
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://…"
-                className="mt-1.5 bg-canvas text-legacy-13-5"
+                className="mt-1.5 bg-canvas text-body-14"
               />
 
               <label className="mt-4 block text-medium-12 text-ink-3">
@@ -639,7 +639,7 @@ export default function OnboardingFlow() {
                 onChange={(e) => setApiKey(e.target.value)}
                 type="password"
                 placeholder={provider.needsKey ? 'sk-…' : 'leave blank for local'}
-                className="mt-1.5 bg-canvas text-legacy-13-5"
+                className="mt-1.5 bg-canvas text-body-14"
               />
 
               <div className="mt-4 flex items-center gap-3">
@@ -652,14 +652,14 @@ export default function OnboardingFlow() {
                   {testState === 'testing' ? 'Connecting…' : 'Test connection'}
                 </PrimaryButton>
                 {testState === 'ok' && (
-                  <span className="text-legacy-12-5 font-medium text-lime-600">✓ {testMsg}</span>
+                  <span className="text-medium-13 text-lime-600">✓ {testMsg}</span>
                 )}
                 {testState === 'fail' && (
-                  <span className="text-legacy-12-5 font-medium text-warn">{testMsg}</span>
+                  <span className="text-medium-13 text-warn">{testMsg}</span>
                 )}
               </div>
 
-              {keyError && <p className="mt-3 text-legacy-12-5 text-warn">{keyError}</p>}
+              {keyError && <p className="mt-3 text-body-13 text-warn">{keyError}</p>}
 
               <div className="mt-6 flex items-center justify-between">
                 <TextButton
@@ -688,7 +688,7 @@ export default function OnboardingFlow() {
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder="e.g. Friday"
-                className="mt-1.5 bg-canvas text-legacy-13-5"
+                className="mt-1.5 bg-canvas text-body-14"
               />
 
               <label className="mt-4 block text-medium-12 text-ink-3">Personality</label>
@@ -702,7 +702,7 @@ export default function OnboardingFlow() {
               <label className="mt-4 block text-medium-12 text-ink-3">Model</label>
               <ModelField providerValue={provider.value} model={model} onModel={setModel} />
 
-              {agentError && <p className="mt-3 text-legacy-12-5 text-warn">{agentError}</p>}
+              {agentError && <p className="mt-3 text-body-13 text-warn">{agentError}</p>}
 
               <div className="mt-6 flex items-center justify-between">
                 <TextButton
@@ -747,7 +747,7 @@ export default function OnboardingFlow() {
               >
                 {agentName || 'Your agent'} is ready
               </h1>
-              <p className="mx-auto mt-2 max-w-sm text-legacy-13-5 leading-[1.6]! text-ink-3">
+              <p className="mx-auto mt-2 max-w-sm text-body-14 leading-[1.6]! text-ink-3">
                 Take a minute to meet {agentName || 'your agent'} — a few quick questions so it gets
                 to know you. Or head straight to the dashboard.
               </p>
@@ -764,7 +764,7 @@ export default function OnboardingFlow() {
 
           {step === 4 && (
             <div>
-              <div className="font-mono text-legacy-10-5 tracking-[0.18em] uppercase text-ink-4">
+              <div className="text-mono-11 uppercase tracking-[0.18em] text-ink-4">
                 Meet {agentName || 'your agent'}
               </div>
 
@@ -775,7 +775,7 @@ export default function OnboardingFlow() {
                 {msgs.length === 0 && !chatError && (
                   <div className="m-auto flex flex-col items-center gap-2.5 text-ink-4">
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-rule-2 border-t-ink" />
-                    <span className="text-legacy-12-5">Waking up your agent…</span>
+                    <span className="text-body-13">Waking up your agent…</span>
                   </div>
                 )}
                 {msgs.map((m, i) => (
@@ -805,7 +805,7 @@ export default function OnboardingFlow() {
                 )}
               </div>
 
-              {chatError && <p className="mt-3 text-legacy-12-5 text-warn">{chatError}</p>}
+              {chatError && <p className="mt-3 text-body-13 text-warn">{chatError}</p>}
 
               {/* The input stays available the whole time so the operator can
                   keep chatting even after Continue appears. */}
@@ -822,7 +822,7 @@ export default function OnboardingFlow() {
                   disabled={chatBusy || msgs.length === 0}
                   placeholder="Type your answer…"
                   containerClassName="flex-1"
-                  className="bg-canvas text-legacy-13-5"
+                  className="bg-canvas text-body-14"
                 />
                 <PrimaryButton
                   onClick={() => void sendAnswer()}
@@ -839,7 +839,7 @@ export default function OnboardingFlow() {
               <div className="mt-3 flex items-center justify-between">
                 <TextButton
                   onClick={() => setStep(5)}
-                  className="text-legacy-12-5 text-ink-3 underline hover:text-ink"
+                  className="text-body-13 text-ink-3 underline hover:text-ink"
                 >
                   Skip for now
                 </TextButton>
@@ -852,7 +852,7 @@ export default function OnboardingFlow() {
 
           {step === 5 && (
             <div>
-              <div className="font-mono text-legacy-10-5 tracking-[0.18em] uppercase text-ink-4">
+              <div className="text-mono-11 uppercase tracking-[0.18em] text-ink-4">
                 How {agentName || 'your agent'} should work
               </div>
               <h1 className="mt-1 text-heading-20 tracking-[-0.01em] text-ink">
@@ -876,11 +876,11 @@ export default function OnboardingFlow() {
                 ))}
               </div>
 
-              <p className="mt-3 text-legacy-11-5 text-ink-4">
+              <p className="mt-3 text-body-12 text-ink-4">
                 You can change this anytime in Settings → Autonomy.
               </p>
 
-              {autonomyError && <p className="mt-3 text-legacy-12-5 text-warn">{autonomyError}</p>}
+              {autonomyError && <p className="mt-3 text-body-13 text-warn">{autonomyError}</p>}
 
               <div className="mt-6 flex items-center justify-end">
                 <PrimaryButton
@@ -901,7 +901,7 @@ export default function OnboardingFlow() {
               <h1 className="text-display-22 tracking-[-0.01em] text-ink">
                 Connect a messaging channel
               </h1>
-              <p className="mx-auto mt-2 max-w-sm text-legacy-13-5 leading-[1.6]! text-ink-3">
+              <p className="mx-auto mt-2 max-w-sm text-body-14 leading-[1.6]! text-ink-3">
                 Talk to {agentName || 'your agent'} from your phone, and let it reach you with
                 updates and questions — right inside the app you already use. You can always set
                 this up later.
@@ -945,9 +945,7 @@ export default function OnboardingFlow() {
             </span>
           </div>
           <div className="text-title-15 tracking-[-0.01em] text-ink">Entering Nodal-Agents</div>
-          <div className="mt-1 text-legacy-12-5 text-ink-3">
-            Waking up {agentName || 'your agent'}…
-          </div>
+          <div className="mt-1 text-body-13 text-ink-3">Waking up {agentName || 'your agent'}…</div>
           <div className="mt-6 h-1 w-52 overflow-hidden rounded-full bg-rule-2">
             <div
               className={`h-full rounded-full bg-ink transition-[width] duration-[2000ms] ease-out ${
@@ -964,9 +962,7 @@ export default function OnboardingFlow() {
 function StepHeader({ n, title, sub }: { n: number; title: string; sub: string }) {
   return (
     <div>
-      <div className="font-mono text-legacy-10-5 tracking-[0.18em] uppercase text-ink-4">
-        Step {n} of 3
-      </div>
+      <div className="text-mono-11 uppercase tracking-[0.18em] text-ink-4">Step {n} of 3</div>
       <h1 className="mt-1 text-heading-20 tracking-[-0.01em] text-ink">{title}</h1>
       <p className="mt-1.5 text-body-13 leading-[1.5]! text-ink-3">{sub}</p>
     </div>
@@ -993,7 +989,7 @@ function ModelField({
         value={model}
         onChange={(e) => onModel(e.target.value)}
         placeholder="e.g. llama3.2 — type your local model name"
-        className="mt-1.5 bg-canvas text-legacy-13-5"
+        className="mt-1.5 bg-canvas text-body-14"
       />
     );
   }
@@ -1003,7 +999,7 @@ function ModelField({
       <Select
         value={model}
         onChange={(e) => onModel(e.target.value)}
-        className="mt-1.5 bg-canvas text-legacy-13-5"
+        className="mt-1.5 bg-canvas text-body-14"
       >
         {groups.map((g, gi) =>
           g.group ? (

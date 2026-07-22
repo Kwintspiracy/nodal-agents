@@ -20,7 +20,7 @@ describe('truncateForContext', () => {
   it('length-truncates a huge NON-binary text with the explicit marker', () => {
     const text = 'lorem ipsum dolor sit '.repeat(5_000); // ~110K, spaces ⇒ no base64 run
     const out = truncateForContext(text);
-    expect(out.length).toBeLessThanOrEqual(50_000 + 120);
+    expect(out.length).toBeLessThanOrEqual(25_000 + 120);
     expect(out).toContain('[... truncated:');
   });
 

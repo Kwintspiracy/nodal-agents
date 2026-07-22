@@ -25,7 +25,10 @@ import { executeReadyTasks } from './execute-ready.ts';
 import { runScheduleTick } from './run-schedules.ts';
 import { deliverCompletedRoots } from './deliver-results.ts';
 import { runCuratorTick } from './run-curator.ts';
+import { runSkillUpdateCheckTick, type SkillUpdateCheckTickEnv } from './run-skill-update-check.ts';
+import { pruneJobMediaFiles } from './prune-media.ts';
 import { pruneOldJobs } from '@nodal-agents/db';
+import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { env } from '../env.ts';
 import { executeJob } from '../job/execute.ts';
 import type { JobId } from '@nodal-agents/orchestration';
@@ -56,6 +59,8 @@ export interface CronTickResult {
   curatorReactivated: number;
   curatorConsolidationDeferred: number;
   curatorConsolidationRan: number;
+  skillUpdatesChecked: number;
+  skillUpdatesFound: number;
   retentionJobsDeleted: number;
   retentionToolCallsDeleted: number;
 }
@@ -81,6 +86,24 @@ async function guardPhase<T>(label: string, fn: () => Promise<T>, fallback: T): 
   } catch (err) {
     console.warn(`[cron] ${label} failed (tick continues):`, err);
     return fallback;
+  }
+}
+
+/**
+ * Resolve the skill-update-check env slice defensively, same pattern as
+ * resolveCuratorEnv (run-curator.ts) and the RETENTION_DAYS read below: the
+ * module-level `env` proxy throws on access when DATABASE_URL is absent
+ * (some test environments never set process.env), and this phase must still
+ * be safely callable (with sane defaults) in that case.
+ */
+function resolveSkillUpdateCheckEnv(): SkillUpdateCheckTickEnv {
+  try {
+    return {
+      SKILL_UPDATE_CHECK_INTERVAL_HOURS: env.SKILL_UPDATE_CHECK_INTERVAL_HOURS,
+      SKILL_UPDATE_CHECK_BATCH_SIZE: env.SKILL_UPDATE_CHECK_BATCH_SIZE,
+    };
+  } catch {
+    return { SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24, SKILL_UPDATE_CHECK_BATCH_SIZE: 10 };
   }
 }
 
@@ -244,6 +267,16 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     console.warn('[cron] runCuratorTick failed (tick continues):', err);
   }
 
+  // Community skill update-check — throttled per-skill (last_update_check_at),
+  // see run-skill-update-check.ts for the rate-limit/throttle rationale.
+  // Guarded like every other phase: a failure here must never take down
+  // retention (below) or anything already committed above.
+  const skillUpdateResult = await guardPhase(
+    'runSkillUpdateCheckTick',
+    () => runSkillUpdateCheckTick(deps.db, resolveSkillUpdateCheckEnv()),
+    { checked: 0, updatesFound: 0, notFound: 0, errored: 0, rateLimited: false },
+  );
+
   // ─── Retention phase (OFF by default, opt-in via RETENTION_DAYS > 0) ─────────
   // Prune terminal jobs older than RETENTION_DAYS days. Runs LAST so it never
   // interferes with in-flight jobs that completed earlier in this same tick.
@@ -268,6 +301,24 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
         console.log(
           `[retention] pruned ${pruned.jobsDeleted} jobs / ${pruned.toolCallsDeleted} tool_calls (older than ${retentionDays}d)`,
         );
+
+        // Sweep any inbound media (Telegram photos, Discord attachments) the
+        // just-pruned jobs left behind under the shared workspace — pruneOldJobs
+        // (packages/db) only deletes the DB row; it never touches the
+        // filesystem (only the runner owns workspace paths). Left unswept,
+        // disk usage grows unbounded even though retention is "on". Best-effort
+        // per file (a locked file must not fail this phase) but loud —
+        // failures are console.warn'd inside pruneJobMediaFiles.
+        try {
+          const media = await pruneJobMediaFiles(workspacesRoot(), pruned.deletedJobIds);
+          if (media.filesDeleted > 0) {
+            console.warn(
+              `[retention] deleted ${media.filesDeleted} orphaned media file(s) for pruned jobs`,
+            );
+          }
+        } catch (err) {
+          console.error('[retention] pruneJobMediaFiles failed (tick continues):', err);
+        }
       }
     } catch (err) {
       console.error('[retention] pruneOldJobs failed (tick continues):', err);
@@ -289,6 +340,8 @@ export async function runCronTick(deps: RunnerDeps, maxTasksPerTick = 5): Promis
     curatorReactivated: curatorResult.reactivated,
     curatorConsolidationDeferred: curatorResult.consolidationDeferred,
     curatorConsolidationRan: curatorResult.consolidationRan,
+    skillUpdatesChecked: skillUpdateResult.checked,
+    skillUpdatesFound: skillUpdateResult.updatesFound,
     retentionJobsDeleted,
     retentionToolCallsDeleted,
   };

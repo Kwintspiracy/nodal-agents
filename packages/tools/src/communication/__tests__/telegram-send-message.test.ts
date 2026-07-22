@@ -7,7 +7,7 @@
 //   - adapter.sendText throws DeliveryError → propagates to caller (fail loud)
 //   - F1: explicit chatId not on the allow-list → throws telegram_chat_not_allowed
 //   - F1: explicit chatId === ctx.jobChatId → sends WITHOUT an allow-list lookup
-//   - F1: delegated worker (resolvedTelegramBotToken + entity-approved chatId) → sends
+//   - F1: entity-approved explicit chatId → sends with the agent's OWN token
 //
 // S3: the tool now dispatches through getAdapter(...).sendText — mocked here as
 // the tool-layer boundary. The adapter's own Telegram wire-format translation
@@ -91,7 +91,6 @@ function makeCtx(
     db?: unknown;
     entityId?: string;
     agentId?: string;
-    resolvedTelegramBotToken?: string;
   } = {},
 ): ToolContext {
   return {
@@ -100,7 +99,6 @@ function makeCtx(
     entityId: overrides.entityId ?? 'entity-xyz',
     jobChatId: overrides.jobChatId ?? null,
     db: (overrides.db ?? makeDb('bot:TEST_TOKEN')) as unknown as ToolContext['db'],
-    resolvedTelegramBotToken: overrides.resolvedTelegramBotToken,
   };
 }
 
@@ -212,16 +210,15 @@ describe('createTelegramSendMessageTool', () => {
     expect(sendTextMock).toHaveBeenCalledWith(expect.anything(), '99887766', 'same chat');
   });
 
-  it('F1: delegated worker — resolvedTelegramBotToken + an entity-approved chatId sends with the resolved token', async () => {
+  it("F1: entity-approved explicit chatId sends with the agent's OWN token (no inheritance)", async () => {
     const tool = createTelegramSendMessageTool();
     const ctx = makeCtx({
       jobChatId: null,
       entityId: 'entity-root',
       agentId: 'agent-child',
-      resolvedTelegramBotToken: 'root-agent-token',
     });
 
-    await tool.execute({ chatId: '77778888', text: 'delegated reply' }, ctx);
+    await tool.execute({ chatId: '77778888', text: 'entity-approved reply' }, ctx);
 
     expect(isChatAllowedMock).toHaveBeenCalledWith(ctx.db, {
       entityId: 'entity-root',
@@ -230,9 +227,9 @@ describe('createTelegramSendMessageTool', () => {
       conversationId: '77778888',
     });
     expect(sendTextMock).toHaveBeenCalledWith(
-      { botToken: 'root-agent-token' },
+      { botToken: 'bot:TEST_TOKEN' },
       '77778888',
-      'delegated reply',
+      'entity-approved reply',
     );
   });
 

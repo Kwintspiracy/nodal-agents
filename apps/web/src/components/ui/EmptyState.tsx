@@ -36,7 +36,7 @@ export default function EmptyState({
       className={`rounded-2xl border border-rule-2 bg-paper px-6 text-center ${compact ? 'py-8' : 'py-12'} ${className}`}
     >
       <p className="text-body-14 leading-[1.5]! text-ink-3">{title}</p>
-      {description && <p className="mt-1 text-legacy-12-5 text-ink-4">{description}</p>}
+      {description && <p className="mt-1 text-body-13 text-ink-4">{description}</p>}
       {action && <div className="mt-4 inline-flex">{action}</div>}
     </div>
   );

@@ -33,7 +33,6 @@
     "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/secrets": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
-    "@nodal-agents/tools": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
     "cron-parser": "^5.5.0",
     "ipaddr.js": "^2.4.0",

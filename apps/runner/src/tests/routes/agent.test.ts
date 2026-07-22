@@ -1,7 +1,8 @@
 ﻿// agent.test.ts — POST /api/agent creates a row, returns jobId
 // Asserts on the real DB row, not just call counts (invariant 5).
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
 import { eq } from '@nodal-agents/db';
@@ -47,6 +48,8 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SKILL_UPDATE_CHECK_BATCH_SIZE: 10,
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
@@ -186,6 +189,44 @@ describe('POST /api/agent', () => {
 
     expect(rows[0]?.channel).toBe('telegram');
     expect(rows[0]?.chatId).toBe('12345');
+  });
+});
+
+// ─── triggerWorker — bounded fire-and-forget (audit fix) ───────────────────
+//
+// triggerWorker's POST to /api/worker used to have no timeout: a stalled
+// localhost socket would leave the fire-and-forget promise (and its
+// underlying request) pending indefinitely. It must always carry an
+// AbortSignal so it settles even if /api/worker never responds.
+
+describe('POST /api/agent — triggerWorker carries an AbortSignal', () => {
+  const origFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = origFetch;
+  });
+
+  it('the fire-and-forget POST to /api/worker is called with a 10s AbortSignal', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const res = await app.fetch(
+      new Request('http://localhost/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'triggerWorker signal check' }),
+      }),
+    );
+    expect(res.status).toBe(202);
+
+    // triggerWorker is fire-and-forget (not awaited by the route) — give its
+    // microtask a turn to actually invoke fetch before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = (fetchMock as unknown as Mock).mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 });
 

@@ -16,10 +16,10 @@ step-by-step.
 
 Every connector in the catalog is one of two auth types:
 
-| Auth type   | Connectors                                                                                         | What you provide                                                    |
-| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| **OAuth 2** | Google Drive, Gmail, Google Sheets, Google Docs, Google Calendar, Notion (OAuth), Airtable (OAuth) | Your own OAuth app (Client ID + secret), then a one-click authorize |
-| **API key** | Notion, Airtable, Apify, Firecrawl, Tavily, Poyo                                                   | A key or Personal Access Token you paste                            |
+| Auth type   | Connectors                                                                                                       | What you provide                                                    |
+| ----------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **OAuth 2** | Google Drive, Gmail, Google Sheets, Google Docs, Google Calendar, Notion (OAuth), Airtable (OAuth), Outlook Mail | Your own OAuth app (Client ID + secret), then a one-click authorize |
+| **API key** | Notion, Airtable, Apify, Firecrawl, Tavily, Poyo                                                                 | A key or Personal Access Token you paste                            |
 
 One Google credential backs Drive, Gmail, Sheets, Docs, and Calendar at once —
 they all share the `google-oauth` credential type, so you only set Google up
@@ -46,6 +46,7 @@ per-provider callback path:
 - Google → `<your-origin>/api/oauth/google-oauth/callback`
 - Notion → `<your-origin>/api/oauth/notion-oauth/callback`
 - Airtable → `<your-origin>/api/oauth/airtable-oauth/callback`
+- Microsoft → `<your-origin>/api/oauth/microsoft-oauth/callback`
 
 Copy it from the wizard's **Authorized redirect URI** box (there's a Copy
 button). Paste it verbatim — a single character off (trailing slash, `http` vs
@@ -114,6 +115,31 @@ Airtable OAuth has two gotchas: a redirect-host restriction and a scopes step.
 5. **Register integration** (or Save changes if editing).
 6. On the detail page copy the **Client ID** (a UUID) and **Client secret**.
 7. Paste both into the Credentials wizard.
+
+### Microsoft (Outlook Mail)
+
+Microsoft OAuth needs an app registration in Microsoft Entra ID (Azure Active
+Directory) — a free Azure tenant works, no paid subscription required.
+
+1. Go to [portal.azure.com](https://portal.azure.com/) → **Microsoft Entra ID**
+   → **App registrations** → **New registration**.
+2. Give it a name (e.g. `Nodal-Agents`). Under **Supported account types**,
+   choose **Accounts in any organizational directory and personal Microsoft
+   accounts** — a narrower choice blocks personal outlook.com/hotmail accounts.
+3. Under **Redirect URI**, set the platform to **Web** and paste the redirect
+   URI from the wizard. Mandatory.
+4. **Register**, then copy the **Application (client) ID** from the overview
+   page.
+5. **Certificates & secrets → Client secrets → New client secret.** Copy the
+   secret **Value** immediately — Azure hides it after you leave the page (the
+   adjacent Secret ID is not what you need).
+6. **API permissions → Add a permission → Microsoft Graph → Delegated
+   permissions**, and add: `Mail.ReadWrite`, `Mail.Send`,
+   `MailboxSettings.Read`, `offline_access`.
+7. Admin consent is not required for these delegated permissions on a personal
+   account — the consent screen appears during the connect flow instead.
+8. Paste the Application (client) ID and the client secret value into the
+   Credentials wizard.
 
 ### After the credential exists
 

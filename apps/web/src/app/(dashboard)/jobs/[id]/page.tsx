@@ -6,16 +6,12 @@ import JobMessages from '@/components/JobMessages.tsx';
 import JobStatusPoller from '@/components/JobStatusPoller.tsx';
 import PageShell from '@/components/ui/PageShell';
 import CancelJobButton from '../CancelJobButton.tsx';
+import { formatDate } from '@/lib/format-time';
 
 // Force dynamic — this page reads per-request DB state.
 export const dynamic = 'force-dynamic';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
-
-function formatDate(d: Date | null) {
-  if (!d) return '—';
-  return new Date(d).toLocaleString();
-}
 
 type Props = { params: Promise<{ id: string }> };
 

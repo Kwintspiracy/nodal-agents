@@ -54,6 +54,8 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SKILL_UPDATE_CHECK_BATCH_SIZE: 10,
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
@@ -189,21 +191,28 @@ describe('POST /api/chat — entity authorization', () => {
     expect(res.status).not.toBe(403);
   });
 
-  it('trusted WORKER_SECRET caller keeps unchanged behavior (body entityId trusted as-is)', async () => {
-    const res = await app.fetch(
-      new Request('http://localhost/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
-        body: JSON.stringify({
-          entityId: entityB,
-          agentId: agentB,
-          conversationId: conversationB,
-          message: 'trusted call for entity B',
+  // 30s: the trusted path exercises the real LLM attempt loop against a dead
+  // endpoint — the 2026-07-18 retry policy makes that 4 attempts with backoff,
+  // which overruns the 5s default when the host is loaded.
+  it(
+    'trusted WORKER_SECRET caller keeps unchanged behavior (body entityId trusted as-is)',
+    { timeout: 30_000 },
+    async () => {
+      const res = await app.fetch(
+        new Request('http://localhost/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-secret' },
+          body: JSON.stringify({
+            entityId: entityB,
+            agentId: agentB,
+            conversationId: conversationB,
+            message: 'trusted call for entity B',
+          }),
         }),
-      }),
-    );
+      );
 
-    // Not rejected by the authorization gate — the trusted path is unchanged.
-    expect(res.status).not.toBe(403);
-  });
+      // Not rejected by the authorization gate — the trusted path is unchanged.
+      expect(res.status).not.toBe(403);
+    },
+  );
 });

@@ -1,0 +1,54 @@
+// catalog/skills/workspace-hygiene.ts — system skill, shipped with the product.
+//
+// Source of truth for the 'content' field. The bootstrap seeder upserts this
+// row at boot; users can override per-install via the dashboard (preserved via
+// the 'content_overridden' flag).
+//
+// WHY (2026-07-20 audit): a month of jobs left the shared workspace with three
+// competing workflow folders, four output folders, ~40 one-shot scripts at the
+// root (values hardcoded → unusable next session → rewritten), and 70 MB of
+// generated images inside the comfyui skill bundle. The runner now injects a
+// live inventory of the shared workspace into each job's prompt (mechanism);
+// this skill is the matching behavior contract (discipline).
+
+import type { SystemSkill } from '../types';
+
+export const workspaceHygieneSkill: SystemSkill = {
+  slug: 'workspace-hygiene',
+  name: 'Workspace hygiene',
+  description:
+    'Reuse before recreating. One canonical folder per artifact kind. Parametrize scripts. Never write artifacts into a skill bundle.',
+  requiredBuiltins: [],
+  kind: 'baseline',
+  content: `## Workspace hygiene
+
+The shared workspace is a durable, common asset — not a scratch pad. Its live inventory is in your context under "Shared workspace contents".
+
+### Reuse before recreating
+
+Before building a workflow, script, or document, check the inventory: if a file already covers the need, load it and adapt it (\`file_read\`, then edit or pass different arguments). Recreating an existing artifact under a new name is a failure mode, not a fresh start.
+
+### One folder per kind
+
+Save into the existing canonical folders — never invent parallel ones (no \`outputs_v2/\`, \`my_workflows/\`, files dumped at the root):
+- \`workflows/\` — workflow definitions (JSON)
+- \`outputs/\` — generated artifacts (images, exports)
+- \`scripts/\` — reusable scripts
+- \`documents/\` — reports, notes, deliverables
+
+### One workflow = one graph
+
+A saved workflow file is a reusable GRAPH (models, samplers, node wiring) — not a snapshot of one run. FORBIDDEN: saving a workflow file whose only difference from an existing one is the prompt, seed, or other run values — that is clutter, never value. Pass those as execution arguments instead (e.g. \`run_workflow.py --args {"prompt": …, "seed": …}\`) against the EXISTING file. The only reason to save a new workflow file is a change to the graph itself (different model, different node chain) — and it is named after the graph, not the scene.
+
+### Scripts must be reusable
+
+A script you write takes its variable values (ids, paths, prompts) as ARGUMENTS — never hardcoded in the file. If you find yourself editing a script only to change a value, parametrize it instead. Before writing a helper, check whether an installed skill already ships one (\`skill_view\`, then \`run_skill_script\`).
+
+### Skill bundles are code, not storage
+
+Never write generated artifacts into an installed skill's folder. When a skill script produces files, point its output argument at the shared workspace — its absolute path is in the \`NODAL_SHARED_WORKSPACE\` environment variable of every script/command you run. If a \`warning\` reports bundle writes, move those files to the shared workspace before finishing.
+
+### Leave it clean
+
+Temporary diagnostic files (probe scripts, dumps, logs) are deleted before you finish the task — or not written to the workspace at all when \`stdout\` suffices.`,
+};

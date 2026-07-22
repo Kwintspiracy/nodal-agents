@@ -23,6 +23,7 @@ const EXPECTED_SLUGS = [
   'apify',
   'tavily',
   'poyo',
+  'outlook-mail',
 ] as const;
 
 const VALID_CREDENTIAL_SOURCES = [...CREDENTIAL_TYPES, 'api_key'] as const;
@@ -66,6 +67,7 @@ describe('ADAPTER_REGISTRY', () => {
     'google-sheets',
     'google-docs',
     'airtable-oauth',
+    'outlook-mail',
   ] as const;
 
   it.each(RESOLVER_SLUGS)(

@@ -4,8 +4,8 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  configureAgentTelegramAction,
-  disconnectAgentTelegramAction,
+  configureAgentChannelAction,
+  disconnectAgentChannelAction,
   type TelegramConfigRow,
 } from '@/lib/actions.ts';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
@@ -29,14 +29,25 @@ export default function TelegramConfigForm({
     e.preventDefault();
     if (!token) return;
     startTransition(async () => {
-      const result = await configureAgentTelegramAction({ agentId, botToken: token });
+      const result = await configureAgentChannelAction({
+        agentId,
+        channel: 'telegram',
+        credentials: { botToken: token },
+      });
       if (!result.ok) {
         toast.error(result.message);
         return;
       }
-      setConfig(result.data);
+      setConfig({
+        agentId: result.data.agentId,
+        agentSlug: result.data.agentSlug,
+        agentName: result.data.agentName,
+        status: 'connected',
+        botUsername: result.data.identityLabel,
+        lastSeenChatIdTelegram: config.lastSeenChatIdTelegram,
+      });
       setToken('');
-      toast.success(`Connected as @${result.data.botUsername}`);
+      toast.success(`Connected as @${result.data.identityLabel}`);
       router.refresh();
     });
   }
@@ -44,7 +55,7 @@ export default function TelegramConfigForm({
   function performDisconnect() {
     setConfirmOpen(false);
     startTransition(async () => {
-      const result = await disconnectAgentTelegramAction(agentId);
+      const result = await disconnectAgentChannelAction({ agentId, channel: 'telegram' });
       if (!result.ok) {
         toast.error(result.message);
         return;

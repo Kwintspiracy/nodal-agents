@@ -21,13 +21,14 @@ import Select from '@/components/ui/Select';
 import FieldLabel from '@/components/ui/FieldLabel';
 import { ModalFooter } from '@/components/ui/Modal.tsx';
 import CredentialWizard, { type CredentialWizardType } from '../credentials/CredentialWizard.tsx';
+import { formatExpiry, isExpired } from '@/lib/format-time';
 
 /** One labelled row in the connector's metadata block — replaces the old
  *  unlabelled "gmail · oauth2" stack (UX-B7: raw values with no context). */
 function MetaField({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="min-w-0">
-      <dt className="text-legacy-10-5 font-medium uppercase tracking-wider text-ink-4">{label}</dt>
+      <dt className="text-label-11 uppercase tracking-wider text-ink-4">{label}</dt>
       <dd className={`mt-0.5 truncate text-body-13 text-ink-2 ${mono ? 'font-mono' : ''}`}>
         {value}
       </dd>
@@ -37,34 +38,6 @@ function MetaField({ label, value, mono }: { label: string; value: ReactNode; mo
 
 /** Credential types that do not support access-token refresh (Notion). */
 const OAUTH_NO_REFRESH_SLUGS: ReadonlySet<string> = new Set(['notion-oauth']);
-
-/**
- * Renders a relative time string for an OAuth token expiry date.
- */
-function formatTokenExpiry(date: Date | null): string {
-  if (!date) return '';
-  const diffMs = date.getTime() - Date.now();
-  const diffSec = Math.round(diffMs / 1000);
-  const abs = Math.abs(diffSec);
-
-  let magnitude: string;
-  if (abs < 60) {
-    magnitude = `${abs}s`;
-  } else if (abs < 3600) {
-    magnitude = `${Math.round(abs / 60)} min`;
-  } else if (abs < 86400) {
-    magnitude = `${Math.round(abs / 3600)} h`;
-  } else {
-    magnitude = `${Math.round(abs / 86400)} d`;
-  }
-
-  return diffSec >= 0 ? `expires in ${magnitude}` : `expired ${magnitude} ago`;
-}
-
-function isExpiredDate(date: Date | null): boolean {
-  if (!date) return false;
-  return date.getTime() < Date.now();
-}
 
 export type CompatibleCredential = {
   id: string;
@@ -121,7 +94,7 @@ export default function ConnectorForm({
   const connectedAccountName = instance.credentialAccountName;
   const connectedExpiresAt = instance.credentialExpiresAt;
   const connectedScopes = instance.credentialScopes;
-  const isTokenExpired = isExpiredDate(connectedExpiresAt ?? null);
+  const isTokenExpired = isExpired(connectedExpiresAt ?? null);
 
   const status: 'connected' | 'inactive' = isConnected ? 'connected' : 'inactive';
 
@@ -391,7 +364,7 @@ export default function ConnectorForm({
           {supportsRefresh && <p className="text-xs text-ink-3">Auto-refreshes when used</p>}
           {!supportsRefresh && connectedExpiresAt && (
             <p className={`text-xs ${isTokenExpired ? 'text-warn' : 'text-ink-3'}`}>
-              {formatTokenExpiry(connectedExpiresAt)}
+              {formatExpiry(connectedExpiresAt)}
             </p>
           )}
         </div>

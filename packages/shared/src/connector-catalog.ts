@@ -11,6 +11,22 @@ import type { ConnectorAuthType } from './enums';
 import type { CredentialType } from './entities/credential';
 
 /**
+ * The dashboard's connector-marketplace category chips (apps/web's
+ * connectors/categories.ts CONNECTOR_CATEGORIES, minus the synthetic 'All'
+ * filter). A closed union — adding a new category means updating both this
+ * type and the chip list together, deliberately, rather than a new slug
+ * silently drifting into 'Other'.
+ */
+export type ConnectorCategory =
+  | 'CRM'
+  | 'Productivity'
+  | 'Data'
+  | 'DevTools'
+  | 'Comms'
+  | 'Creative'
+  | 'Other';
+
+/**
  * CatalogEntry.credentialType links an OAuth2 connector slot to the
  * `credentials` table type that backs it. Multiple connector slugs can share a
  * single credential (e.g. google-drive + gmail + google-sheets + google-docs
@@ -23,6 +39,14 @@ export type CatalogEntry = {
   docsHint: string;
   /** Only set for authType === 'oauth2'. */
   credentialType?: CredentialType;
+  /**
+   * The marketplace category this connector is grouped under. Required —
+   * previously derived by string-matching the slug in apps/web's
+   * categories.ts, which meant a new catalog entry silently fell into
+   * 'Other' if nobody remembered to update that matcher. Required here
+   * makes the omission a compile error instead.
+   */
+  category: ConnectorCategory;
 };
 
 /**
@@ -35,6 +59,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     slug: 'notion',
     label: 'Notion',
     authType: 'api_key',
+    category: 'Productivity',
     docsHint:
       'Create a Notion integration at notion.so/my-integrations and copy its internal secret.',
   },
@@ -43,6 +68,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     label: 'Notion (OAuth)',
     authType: 'oauth2',
     credentialType: 'notion-oauth',
+    category: 'Productivity',
     docsHint:
       'Public Integration via OAuth — create one at notion.so/my-integrations (Public type) and authorize from your dashboard.',
   },
@@ -51,6 +77,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     label: 'Google Drive',
     authType: 'oauth2',
     credentialType: 'google-oauth',
+    category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
   },
   {
@@ -58,6 +85,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     label: 'Gmail',
     authType: 'oauth2',
     credentialType: 'google-oauth',
+    category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
   },
   {
@@ -65,6 +93,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     label: 'Google Calendar',
     authType: 'oauth2',
     credentialType: 'google-oauth',
+    category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
   },
   {
@@ -72,6 +101,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     label: 'Google Sheets',
     authType: 'oauth2',
     credentialType: 'google-oauth',
+    category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
   },
   {
@@ -79,6 +109,7 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     label: 'Google Docs',
     authType: 'oauth2',
     credentialType: 'google-oauth',
+    category: 'Productivity',
     docsHint: 'OAuth flow — uses your Google credential (create one under Credentials).',
   },
   {
@@ -86,36 +117,50 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     label: 'Airtable (OAuth)',
     authType: 'oauth2',
     credentialType: 'airtable-oauth',
+    category: 'Productivity',
     docsHint: 'OAuth flow for Airtable Public Integrations (recommended).',
+  },
+  {
+    slug: 'outlook-mail',
+    label: 'Outlook Mail',
+    authType: 'oauth2',
+    credentialType: 'microsoft-oauth',
+    category: 'Productivity',
+    docsHint: 'OAuth flow — uses your Microsoft credential (create one under Credentials).',
   },
   {
     slug: 'airtable',
     label: 'Airtable',
     authType: 'api_key',
+    category: 'Productivity',
     docsHint: 'Personal Access Token — airtable.com/create/tokens.',
   },
   {
     slug: 'apify',
     label: 'Apify',
     authType: 'api_key',
+    category: 'Data',
     docsHint: 'Apify API token — console.apify.com/account/integrations.',
   },
   {
     slug: 'firecrawl',
     label: 'Firecrawl',
     authType: 'api_key',
+    category: 'Data',
     docsHint: 'Firecrawl API key — firecrawl.dev/account.',
   },
   {
     slug: 'tavily',
     label: 'Tavily',
     authType: 'api_key',
+    category: 'Data',
     docsHint: 'Tavily API key — app.tavily.com.',
   },
   {
     slug: 'poyo',
     label: 'Poyo',
     authType: 'api_key',
+    category: 'Creative',
     docsHint: 'Poyo API key — poyo.ai (API Console). Sent as a Bearer token.',
   },
 ];

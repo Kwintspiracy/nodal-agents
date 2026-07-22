@@ -198,6 +198,11 @@ export const agentJobs = pgTable(
     index('idx_agent_jobs_completed_at_null')
       .on(table.completedAt)
       .where(sql`${table.completedAt} IS NULL`),
+    // Migration 0070: run-schedules.ts filters by schedule_id every tick — the
+    // no-overlap guard (schedule_id + status) and the daily budget rollup
+    // (schedule_id + created_at range SUM) had no usable index and seq-scanned
+    // the whole table. The (schedule_id, created_at) prefix serves both.
+    index('idx_agent_jobs_schedule_created').on(table.scheduleId, table.createdAt),
     check(
       'agent_jobs_status_check',
       sql`${table.status} IN ('pending','processing','completed','failed','awaiting_approval','awaiting_delegation','cancelled')`,

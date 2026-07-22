@@ -18,7 +18,7 @@
 
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { workspacesRoot } from '../../lib/workspaces-root.ts';
 import { eq, and } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { RunnerDeps } from '../../deps.ts';
@@ -271,16 +271,8 @@ export async function attachInboundImage(args: {
     );
   }
 
-  // Mirrors telegram's shared workspace layout: ~/.nodalai/workspaces/<entityId>/shared/<channel>/<conversationId>/<jobId>.<ext>
-  const dir = join(
-    homedir(),
-    '.nodalai',
-    'workspaces',
-    entityId,
-    'shared',
-    'discord',
-    attachment.channelId,
-  );
+  // Mirrors telegram's shared workspace layout: <workspacesRoot>/<entityId>/shared/<channel>/<conversationId>/<jobId>.<ext>
+  const dir = join(workspacesRoot(), entityId, 'shared', 'discord', attachment.channelId);
   await mkdir(dir, { recursive: true });
   const ext = extFromContentType(attachment.contentType);
   const filePath = join(dir, `${jobId}.${ext}`);

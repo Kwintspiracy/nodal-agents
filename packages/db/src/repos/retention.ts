@@ -22,6 +22,14 @@ import { agentJobs, toolCalls } from '../schema/index.ts';
 export interface PruneResult {
   jobsDeleted: number;
   toolCallsDeleted: number;
+  /**
+   * IDs of every agent_jobs row actually deleted, across all batches. Callers
+   * (runner cron) use this to sweep any inbound-media files (Telegram photos,
+   * Discord attachments) left behind under the shared workspace — this repo
+   * only deletes DB rows and must never touch the filesystem (packages/db
+   * imports neither `fs` nor any runner path convention).
+   */
+  deletedJobIds: string[];
 }
 
 // ─── pruneOldJobs ─────────────────────────────────────────────────────────────
@@ -53,7 +61,7 @@ export async function pruneOldJobs(
   batchSize = 1000,
 ): Promise<PruneResult> {
   if (retentionDays <= 0) {
-    return { jobsDeleted: 0, toolCallsDeleted: 0 };
+    return { jobsDeleted: 0, toolCallsDeleted: 0, deletedJobIds: [] };
   }
 
   // Use make_interval so the interval is parameterised, not string-interpolated.
@@ -62,6 +70,7 @@ export async function pruneOldJobs(
 
   let jobsDeleted = 0;
   let toolCallsDeleted = 0;
+  const deletedJobIds: string[] = [];
 
   for (;;) {
     // Find the job IDs to prune first so we can count their tool_calls.
@@ -94,18 +103,19 @@ export async function pruneOldJobs(
       // Delete the jobs — cascades to tool_calls + approval_requests automatically.
       await tx.delete(agentJobs).where(inArray(agentJobs.id, jobIds));
 
-      return { jobsDeleted: jobIds.length, toolCallsDeleted: batchToolCallsDeleted };
+      return { jobsDeleted: jobIds.length, toolCallsDeleted: batchToolCallsDeleted, jobIds };
     });
 
     if (batch === null) break;
 
     jobsDeleted += batch.jobsDeleted;
     toolCallsDeleted += batch.toolCallsDeleted;
+    deletedJobIds.push(...batch.jobIds);
 
     // A partial batch (fewer rows than requested) means there's nothing left
     // to prune — stop instead of issuing one more (empty) round-trip.
     if (batch.jobsDeleted < batchSize) break;
   }
 
-  return { jobsDeleted, toolCallsDeleted };
+  return { jobsDeleted, toolCallsDeleted, deletedJobIds };
 }

@@ -167,10 +167,14 @@ export function buildDeepSeekModel(config: ProviderConfig): LanguageModel {
   const entry = findModelCatalogEntry('deepseek', config.model);
   const isReasoning = entry?.capabilities.reasoning === true;
 
+  // DeepSeek's control is on/off only (catalog kind 'onoff'): an explicit
+  // 'off' skips the thinking injection; any level or Auto keeps it enabled.
+  const injectThinking = isReasoning && config.reasoningEffort !== 'off';
+
   const provider = createDeepSeek({
     apiKey: config.apiKey,
     baseURL,
-    fetch: createDeepSeekFetch({ injectThinking: isReasoning }),
+    fetch: createDeepSeekFetch({ injectThinking }),
   });
 
   return provider(config.model);

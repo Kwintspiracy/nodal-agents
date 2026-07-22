@@ -302,6 +302,7 @@ export async function deliverCompletedRoots(db: AnyDrizzleDb): Promise<number> {
               llmKeyId: agents.llmKeyId,
               fallbackChain: agents.fallbackChain,
               model: agents.model,
+              reasoningEffort: agents.reasoningEffort,
             })
             .from(agents)
             .where(eq(agents.id, rootJob.agentId))
@@ -342,6 +343,7 @@ async function synthesizeForChannel(
     llmKeyId: string | null;
     fallbackChain: unknown;
     model: string | null;
+    reasoningEffort?: string | null;
   },
   originalRequest: string,
   compiledResult: string,
@@ -350,9 +352,10 @@ async function synthesizeForChannel(
     const resolved = await resolveAgentLlmClient(db, {
       llmKeyId: agent.llmKeyId,
       fallbackChain: (agent.fallbackChain ?? null) as
-        | readonly { keyId: string; model: string }[]
+        | readonly { keyId: string; model: string; reasoningEffort?: string }[]
         | null,
       model: agent.model ?? '',
+      reasoningEffort: agent.reasoningEffort ?? null,
     });
     if (!resolved.ok) return compiledResult;
     const result = await resolved.client.generateText({

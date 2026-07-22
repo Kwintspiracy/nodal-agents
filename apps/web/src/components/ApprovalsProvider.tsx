@@ -1,8 +1,9 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
 import type { ApprovalRow } from '@/lib/actions';
 import { listApprovalsAction } from '@/lib/actions';
+import { usePolling } from '@/lib/use-polling';
 
 // Only the fields the bell / pill need — avoids exporting the full ApprovalRow
 // to client bundles that don't need the rest.
@@ -45,27 +46,7 @@ export function ApprovalsProvider({
     );
   }, []);
 
-  useEffect(() => {
-    // Poll every 15 s, but skip while the tab is hidden.
-    const id = setInterval(() => {
-      if (!document.hidden) {
-        void fetchPending();
-      }
-    }, POLL_INTERVAL_MS);
-
-    // Re-poll immediately when the tab becomes visible again.
-    function onVisibilityChange() {
-      if (!document.hidden) {
-        void fetchPending();
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    return () => {
-      clearInterval(id);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [fetchPending]);
+  usePolling(fetchPending, POLL_INTERVAL_MS);
 
   const refresh = useCallback(() => {
     void fetchPending();

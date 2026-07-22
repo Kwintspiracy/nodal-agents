@@ -45,11 +45,22 @@ export interface ExtractedRepo {
 }
 
 /**
+ * A stalled (not dead — TCP keeps the socket open, just no bytes arrive)
+ * allowlisted host must not be able to hang readCapped forever: that freezes
+ * the cron tick (behind its 15min watchdog) or the /api/skills/install route.
+ * Reset on every chunk received; only fires on true inactivity.
+ */
+const READ_INACTIVITY_TIMEOUT_MS = 30_000;
+
+/**
  * Read a response body up to `MAX_ARCHIVE_BYTES`, aborting the stream the
  * moment the cumulative size crosses the cap instead of buffering the whole
  * body first — a compromised (or merely huge) allowlisted host must not be
  * able to OOM the runner by returning a multi-GB response before we ever get
- * to check its size.
+ * to check its size. Also bounds the DURATION of the read: if no chunk
+ * arrives within READ_INACTIVITY_TIMEOUT_MS, the reader is cancelled and a
+ * SkillFetchError is thrown — a size cap alone doesn't protect against a host
+ * that opens the connection and then never sends another byte.
  */
 async function readCapped(res: Response): Promise<Buffer> {
   const reader = res.body?.getReader();
@@ -60,7 +71,34 @@ async function readCapped(res: Response): Promise<Buffer> {
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(
+          new SkillFetchError(
+            `Download stalled: no data received for ${READ_INACTIVITY_TIMEOUT_MS}ms. Aborted mid-download.`,
+          ),
+        );
+      }, READ_INACTIVITY_TIMEOUT_MS);
+    });
+
+    let result: ReadableStreamReadResult<Uint8Array>;
+    try {
+      result = await Promise.race([reader.read(), timeoutPromise]);
+    } catch (err) {
+      await reader.cancel().catch(() => {
+        /* best-effort — we're already throwing */
+      });
+      throw err instanceof SkillFetchError
+        ? err
+        : new SkillFetchError(
+            `Error reading skill archive stream: ${err instanceof Error ? err.message : String(err)}`,
+          );
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+
+    const { done, value } = result;
     if (done) break;
     if (!value) continue;
     total += value.byteLength;
@@ -77,8 +115,27 @@ async function readCapped(res: Response): Promise<Buffer> {
   return Buffer.concat(chunks.map((c) => Buffer.from(c)));
 }
 
+/**
+ * Exported shim for unit-testing the inactivity-timeout guard directly
+ * against a constructed Response — without going through downloadAndExtract
+ * (real mkdtemp/fs calls race unpredictably against fake timers). Not part of
+ * the public API — prefixed with `_` to make that clear.
+ */
+export async function _readCapped(res: Response): Promise<Buffer> {
+  return readCapped(res);
+}
+
 /** Hard cap on HTTP redirect hops (anti-abuse; also bounds SSRF-check cost). */
 const MAX_REDIRECTS = 5;
+
+/**
+ * Per-request timeout for every network call in this module (each redirect
+ * hop gets its own fresh budget). Without this, an allowlisted host that
+ * accepts the connection and then never responds hangs the caller forever —
+ * freezing the cron tick (behind its 15min watchdog) or the
+ * /api/skills/install route.
+ */
+const FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * Fetch a URL, following redirects MANUALLY so every hop — not just the
@@ -100,7 +157,28 @@ async function fetchAllowlisted(url: string, headers: Record<string, string>): P
         `Redirected to a non-allowlisted host: "${parsed.hostname}". Refusing to follow.`,
       );
     }
-    const res = await fetch(current, { redirect: 'manual', headers });
+    // M1 (Opus review): a raw network failure (DNS, ECONNRESET, TLS handshake
+    // — Node/undici surface these as an unwrapped TypeError, never a
+    // SkillFetchError) must not escape this function as-is. Every network
+    // call in this module funnels through here, so wrapping it in ONE place
+    // is enough: uncaught, it would propagate straight past
+    // checkSkillUpdate's SkillFetchError-only catch (check-updates.ts) and
+    // crash the whole cron batch instead of being retried per-skill. The
+    // message deliberately doesn't match isRateLimitError/isNotFoundError
+    // (check-updates.ts) — it's a distinct, transient class of failure.
+    let res: Response;
+    try {
+      res = await fetch(current, {
+        redirect: 'manual',
+        headers,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new SkillFetchError(
+        `Network error reaching "${current}": ${msg}. This is usually transient — retry.`,
+      );
+    }
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get('location');
       if (!location)

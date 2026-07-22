@@ -102,7 +102,6 @@ describe('AgentSchema round-trip', () => {
       telegram_bot_token: null,
       telegram_bot_username: null,
       telegram_offset: null,
-      requires_approval: [],
       capabilities: [],
       task_context_template: null,
       avatar_url: null,

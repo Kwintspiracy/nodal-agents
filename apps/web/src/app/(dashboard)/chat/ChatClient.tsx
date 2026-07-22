@@ -18,6 +18,7 @@ import RowActionButton from '@/components/ui/RowActionButton';
 import IconButton from '@/components/ui/IconButton';
 import Drawer from '@/components/ui/Drawer';
 import TextArea from '@/components/ui/TextArea';
+import TextButton from '@/components/ui/TextButton';
 import TextInput from '@/components/ui/TextInput';
 
 // useLayoutEffect runs synchronously after DOM mutation, BEFORE paint — so the
@@ -36,25 +37,9 @@ import {
   type ChatJobStatus,
 } from '@/lib/actions.ts';
 
+import { relativeTime } from '@/lib/format-time';
+
 const TERMINAL_JOB = new Set(['completed', 'failed', 'cancelled']);
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function relativeTime(date: Date | null): string {
-  if (!date) return '';
-  const now = Date.now();
-  const diff = now - date.getTime();
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return 'just now';
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -86,6 +71,13 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
 
   // A reply is in flight whenever the latest persisted message is a user turn.
   const lastIsUser = messages.length > 0 && messages[messages.length - 1]!.role === 'user';
+
+  // The poll below gives up after ~60s. Without this flag the "thinking…" row
+  // (bound to lastIsUser) would spin FOREVER on a user message whose job was
+  // never created (seen live 2026-07-17: a send inside a code-vs-migration
+  // window persisted the user message but failed job creation). When the poll
+  // exhausts, we switch to an honest "no reply" row with a resend affordance.
+  const [replyTimedOut, setReplyTimedOut] = useState(false);
 
   const pinToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -149,7 +141,12 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const poll = async () => {
-      if (cancelled || tries >= 30) return;
+      if (cancelled) return;
+      if (tries >= 30) {
+        // Give the UI a terminal state instead of an eternal "thinking…".
+        setReplyTimedOut(true);
+        return;
+      }
       tries += 1;
       const r = await listChatAction(activeId);
       if (cancelled || !r.ok) return;
@@ -175,6 +172,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
     setShowHistory(false); // close the mobile drawer on pick
     if (id === activeId) return;
     setActiveId(id);
+    setReplyTimedOut(false);
     setMessages([]);
     await loadThread(id);
   }
@@ -214,13 +212,9 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
   }
 
   // ── Send a message ─────────────────────────────────────────────────────────
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const message = input.trim();
-    if (!message || sending) return;
-
-    setInput('');
+  async function sendMessage(message: string) {
     setSending(true);
+    setReplyTimedOut(false);
 
     // No active conversation (fresh /chat) → create one on the fly.
     let convId = activeId;
@@ -251,6 +245,24 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
     // Refresh sidebar for updated title/recency
     await refreshConversations();
     setSending(false);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const message = input.trim();
+    if (!message || sending) return;
+    setInput('');
+    await sendMessage(message);
+  }
+
+  // Resend the last user turn after a reply timeout (job never created, e.g.
+  // the send raced a restart). Duplicates the user bubble in the thread, which
+  // is honest: the message really is sent again.
+  async function handleResend() {
+    if (sending) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    if (!lastUser) return;
+    await sendMessage(lastUser.content);
   }
 
   // ── Filtered sidebar conversations (flat, by recency) ──────────────────────
@@ -366,7 +378,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                 {messages.map((m) => (
                   <MessageBubble key={m.id} message={m} rootName={rootName} />
                 ))}
-                {lastIsUser && (
+                {lastIsUser && !replyTimedOut && (
                   <div className="flex gap-3">
                     <AgentAvatar rootName={rootName} />
                     <div className="min-w-0 flex-1 border-l-2 border-ink/10 pl-4">
@@ -374,6 +386,20 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                       <span className="mt-0.5 flex items-center gap-1.5 text-body-13 text-ink-4">
                         <span className="animate-pulse">●</span> thinking…
                       </span>
+                    </div>
+                  </div>
+                )}
+                {lastIsUser && replyTimedOut && (
+                  <div className="flex gap-3">
+                    <AgentAvatar rootName={rootName} />
+                    <div className="min-w-0 flex-1 border-l-2 border-warn/30 pl-4">
+                      <span className="text-medium-13 text-ink">{rootName ?? 'Agent'}</span>
+                      <p className="mt-0.5 text-body-13 text-ink-3">
+                        No reply arrived. The message may not have reached the agent.
+                      </p>
+                      <TextButton className="mt-1" onClick={() => void handleResend()}>
+                        Send again
+                      </TextButton>
                     </div>
                   </div>
                 )}

@@ -87,21 +87,19 @@ export async function resolveChannelForJob(
 // ─── Bot token ──────────────────────────────────────────────────────────────
 
 /**
- * The runner's resolved token wins (B3: a delegated worker inheriting its
- * entity's root agent's token so it can reply on the same chat as the
- * orchestrator); otherwise fall back to this agent's own token from DB
- * (credential isolation per agent, historical path). Returns undefined when
- * neither is configured — callers throw their own tool-specific error name.
+ * The token is this agent's OWN credential, always: telegram from its agents
+ * row, other channels from its channel_bindings row. Delegated workers do NOT
+ * inherit the orchestrator's credential (B3 inheritance removed 2026-07-21 —
+ * outputs travel through the shared workspace and the binding owner delivers;
+ * two voices on one chat produced duplicate confirmations). Returns undefined
+ * when nothing is configured — callers throw their own tool-specific error name.
  *
  * Channel-parametric since D2 (Discord ingress): a non-telegram channel
  * (today: 'discord'/'slack', or an explicit cross-channel target — see
  * resolveChannelForJob) resolves its credential from that channel's
  * channel_bindings row instead, via the shared `getBindingCredentials`
  * (@nodal-agents/db) — the same helper approvals/notify.ts and the inbound
- * handlers use. NOTE: B3's delegation inheritance (`ctx.resolvedTelegramBotToken`)
- * is telegram-only — a delegated worker replying on a discord job does not yet
- * inherit its orchestrator's binding; generalizing that is cleanup-phase work
- * once a real delegated discord flow needs it.
+ * handlers use.
  *
  * `explicitChannel` (a send tool's optional `channel` argument) is threaded
  * straight into `resolveChannelForJob` — credential resolution always follows
@@ -118,7 +116,6 @@ export async function resolveBotToken(
     return creds?.['botToken'] ?? undefined;
   }
 
-  if (ctx.resolvedTelegramBotToken !== undefined) return ctx.resolvedTelegramBotToken;
   const agentRows = await ctx.db
     .select({ telegramBotToken: agents.telegramBotToken })
     .from(agents)

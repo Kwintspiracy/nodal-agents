@@ -331,6 +331,8 @@ const testEnv: RunnerEnv = {
   CURATOR_MEMORY_MIN: 8,
   MEMORY_CURATION_ENABLED: '',
   RETENTION_DAYS: 0,
+  SKILL_UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SKILL_UPDATE_CHECK_BATCH_SIZE: 10,
   NODALAI_APPROVAL_GRACE_MS: 0,
 };
 
@@ -1611,6 +1613,62 @@ describe('executeJob', () => {
     await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
   });
 
+  it('delivery guard: a mayHaveDelivered send timeout counts as delivered — no re-send nudge, single send attempt', async () => {
+    await db
+      .update(agents)
+      .set({ telegramBotToken: 'fake-token' })
+      .where(eq(agents.id, seed.agentId));
+
+    const [job] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'telegram',
+        chatId: '12345',
+        task: 'Reply on Telegram (API will time out)',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!job) throw new Error('Failed to create timeout test job');
+
+    // The Telegram API times out AFTER the request went through — the exact
+    // shape packages/delivery throws on a send timeout.
+    const timeoutErr = new Error(
+      'telegram_timeout: Telegram API did not respond within 30s — the message may still have been delivered',
+    );
+    (timeoutErr as { mayHaveDelivered?: boolean }).mayHaveDelivered = true;
+    sendTelegramMessageMock.mockClear();
+    sendTelegramMessageMock.mockRejectedValueOnce(timeoutErr);
+
+    const llmClient = makeMockLlmClient([
+      {
+        toolCalls: [
+          { toolCallId: 'tc-tg', toolName: 'telegram_send_message', args: { text: 'réponse' } },
+          { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+        ],
+      },
+    ]);
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+
+    // Completed WITHOUT a delivery nudge or forced retry: exactly ONE send
+    // attempt ever reached the API — the anti-duplication contract.
+    expect(result.status).toBe('completed');
+    expect(sendTelegramMessageMock).toHaveBeenCalledOnce();
+    const rows = await db
+      .select({ turn: agentJobs.turn, messages: agentJobs.messages })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, job.id));
+    expect(rows[0]?.turn).toBe(1);
+    // The ambiguity guidance reached the LLM transcript (real content, not a count).
+    expect(JSON.stringify(rows[0]?.messages ?? [])).toContain('Do NOT call this tool again');
+
+    await db.update(agents).set({ telegramBotToken: null }).where(eq(agents.id, seed.agentId));
+  });
+
   // ─── Delivery guard, extended to Discord/Slack (F-multichannel incident) ──
   // Live incident: job 4eefb5bf-2252-41be-962f-620c9d85e900 (2026-07-12) completed
   // on Discord with tools_used=[] — the delivery guard existed but only listed
@@ -2681,6 +2739,96 @@ describe('executeJob', () => {
     expect(firstTurnTools.has('list_conversations')).toBe(false);
   });
 
+  // ─── P5 (causality study, 2026-07-22): dashboard_publish is a delivery
+  // tool too — a delegated worker (job.parentJobId set) must not get it,
+  // consistent with the channel-send tools B3 already strips from workers.
+  // Live incident: ComfyArtist (a delegated worker) called dashboard_publish
+  // to self-deliver a status card instead of leaving delivery to the
+  // orchestrator that owns the channel binding. ──────────────────────────────
+
+  it('P5: a delegated worker (parentJobId set) does NOT get dashboard_publish in its whitelist', async () => {
+    // Parent (orchestrator) job — never actually run, just needs a row for
+    // the child's parentJobId FK to point at.
+    const [parentJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'api',
+        task: 'Delegate a sub-task',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!parentJob) throw new Error('failed to create parent test job');
+
+    const [childJob] = await db
+      .insert(agentJobs)
+      .values({
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        parentJobId: parentJob.id,
+        channel: 'api',
+        task: 'Do the delegated sub-task',
+        status: 'pending',
+        messages: [],
+        chainCount: 0,
+      })
+      .returning();
+    if (!childJob) throw new Error('failed to create delegated child test job');
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(childJob.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    expect(toolKeysPerCall.length).toBeGreaterThan(0);
+    const firstTurnTools = new Set(toolKeysPerCall[0]);
+    expect(firstTurnTools.has('dashboard_publish')).toBe(false);
+    // Sanity: the rest of the always-on set is still there — this is a
+    // targeted exclusion, not a broken whitelist.
+    expect(firstTurnTools.has('return_result')).toBe(true);
+    expect(firstTurnTools.has('save_memory')).toBe(true);
+  });
+
+  it('P5: a non-delegated agent (no parentJobId) still gets dashboard_publish', async () => {
+    const job = await createTestJob(db, seed); // createTestJob never sets parentJobId
+
+    const toolKeysPerCall: string[][] = [];
+    const llmClient = makeMockLlmClient(
+      [
+        {
+          toolCalls: [
+            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
+          ],
+        },
+      ],
+      undefined,
+      undefined,
+      toolKeysPerCall,
+    );
+
+    const result = await executeJob(job.id as JobId, makeDeps(llmClient), testEnv);
+    expect(result.status).toBe('completed');
+
+    expect(toolKeysPerCall.length).toBeGreaterThan(0);
+    const firstTurnTools = new Set(toolKeysPerCall[0]);
+    expect(firstTurnTools.has('dashboard_publish')).toBe(true);
+  });
+
   // ─── Brique 25: fail-loud on missing llmKeyId ──────────────────────────────
 
   it('Brique 25: agent without llmKeyId fails with agent_no_llm_configured', async () => {
@@ -2966,8 +3114,8 @@ describe('executeJob', () => {
 
     const val = memBlock?.output.value;
     expect(typeof val).toBe('string');
-    // Must be truncated: well under the original 200K, <= 50_000 + ~120 marker overhead
-    expect((val as string).length).toBeLessThanOrEqual(50_000 + 120);
+    // Must be truncated: well under the original 200K, <= 25_000 + ~120 marker overhead
+    expect((val as string).length).toBeLessThanOrEqual(25_000 + 120);
     expect((val as string).length).not.toBe(200_000);
     // Must carry the explicit truncation marker so the model knows content was cut
     expect(val as string).toContain('[... truncated:');
@@ -3058,12 +3206,12 @@ describe('executeJob', () => {
     const val = memBlock?.output.value;
     expect(typeof val).toBe('string');
     // The original serialized object is well over 200K chars; truncated result
-    // must be <= 50_000 + ~120 marker overhead and far under the original.
+    // must be <= 25_000 + ~120 marker overhead and far under the original.
     const originalSerializedLen = JSON.stringify({
       url: 'http://example.com',
       markdown: LARGE_MARKDOWN,
     }).length;
-    expect((val as string).length).toBeLessThanOrEqual(50_000 + 120);
+    expect((val as string).length).toBeLessThanOrEqual(25_000 + 120);
     expect((val as string).length).not.toBe(originalSerializedLen);
     // Must carry the explicit truncation marker so the model knows content was cut
     expect(val as string).toContain('[... truncated:');
@@ -5570,20 +5718,17 @@ describe('F-8: tool-call heartbeat keeps a long single tool call from being reap
   });
 });
 
-// ─── B3 / B3bis: delegated worker inherits root's Telegram token, tells its
-// parent when it delivers directly ─────────────────────────────────────────
+// ─── Channel voice belongs to the binding owner (B3 inheritance REMOVED) ────
 //
-// A worker delegated a job (parent_job_id set) has no Telegram bot token of
-// its own — only the ROOT agent of the entity is ever given one — so it could
-// never use telegram_send_message/send_image/etc. to reply on the same chat
-// the orchestrator is running for. B3 fixes this: when a delegated worker's
-// job carries a chatId and the agent has no token, the runner resolves the
-// entity's root agent's token and offers the delivery tools with THAT token.
-// B3bis: when such a worker delivers directly, the PARENT must be told (via a
-// deterministic notice appended to the tool_result it sees) so it doesn't
-// re-deliver or treat the task as undelivered.
+// B3 used to hand a delegated worker (parent_job_id set) the entity ROOT
+// agent's Telegram token so it could deliver directly on the orchestrator's
+// chat. Removed 2026-07-21: two voices on one chat produced duplicate
+// confirmations, and worker outputs already travel through the shared
+// workspace (file path via return_result) for the binding owner to deliver.
+// The regression contract is now the inverse: delivery tools are armed ONLY
+// for agents with their OWN credential, delegated or not, chatId or not.
 
-describe('B3: delegated worker inherits root agent Telegram token', () => {
+describe('delegated workers do NOT inherit the root agent Telegram token', () => {
   async function seedRootAndWorker() {
     const ts = Date.now() + Math.random();
     const [user] = await db
@@ -5625,7 +5770,7 @@ describe('B3: delegated worker inherits root agent Telegram token', () => {
     return { entityId: entity!.id, rootId: root!.id, workerId: worker!.id };
   }
 
-  it('a delegated worker with no token, given a chatId, gets send_image and it uses the ROOT token', async () => {
+  it('a delegated worker with no token does NOT get send_image, even with a chatId and a tokened root', async () => {
     const { entityId, rootId, workerId } = await seedRootAndWorker();
 
     // Any existing job row satisfies the parent_job_id FK — never executed.
@@ -5649,36 +5794,14 @@ describe('B3: delegated worker inherits root agent Telegram token', () => {
       })
       .returning();
 
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(new Uint8Array([1, 2, 3, 4]), {
-        status: 200,
-        headers: { 'content-type': 'image/png' },
-      }),
-    );
     sendTelegramPhotoMock.mockClear();
-    try {
-      const llmClient = makeMockLlmClient([
-        {
-          toolCalls: [
-            {
-              toolCallId: 'tc-img',
-              toolName: 'send_image',
-              args: { source: 'http://example.local/chart.png' },
-            },
-            { toolCallId: 'tc-rr', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-      ]);
-      const result = await executeJob(childJob!.id as JobId, makeDeps(llmClient), testEnv);
+    const llmClient = makeMockLlmClient(
+      repeatToolCall('send_image', { source: 'http://example.local/chart.png' }, 4),
+    );
+    const result = await executeJob(childJob!.id as JobId, makeDeps(llmClient), testEnv);
 
-      expect(result.status).toBe('completed');
-      expect(sendTelegramPhotoMock).toHaveBeenCalledOnce();
-      expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
-        expect.objectContaining({ botToken: 'root-secret-token', chatId: '555000111' }),
-      );
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    expect(result.status).toBe('failed');
+    expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
   });
 
   it('a delegated worker with no token and NO chatId does NOT get delivery tools even though the root has one', async () => {
@@ -5739,7 +5862,7 @@ describe('B3: delegated worker inherits root agent Telegram token', () => {
     expect(sendTelegramPhotoMock).not.toHaveBeenCalled();
   });
 
-  it('B3bis: a delegated child that delivers via send_image tells its parent in the assign_ tool_result', async () => {
+  it('canonical flow: the child returns the file path, the ORCHESTRATOR (own token) delivers', async () => {
     const ts = Date.now() + Math.random();
     const [user] = await db
       .insert((await import('@nodal-agents/db')).users)
@@ -5811,23 +5934,29 @@ describe('B3: delegated worker inherits root agent Telegram token', () => {
         // Parent turn 1: delegates to the child.
         {
           toolCalls: [
-            { toolCallId: 'tc-assign', toolName: assignTool, args: { task: 'send the chart' } },
+            { toolCallId: 'tc-assign', toolName: assignTool, args: { task: 'make the chart' } },
           ],
         },
-        // Child turn 1 (runs inline, synchronously, same test): delivers then returns.
+        // Child turn 1 (runs inline, synchronously, same test): returns the
+        // file path only — it has no delivery tools to call.
         {
           toolCalls: [
             {
-              toolCallId: 'tc-img',
+              toolCallId: 'tc-rr-child',
+              toolName: 'return_result',
+              args: { status: 'success', summary: 'chart at http://example.local/chart.png' },
+            },
+          ],
+        },
+        // Parent turn 2 (resumed): the ORCHESTRATOR delivers with its own
+        // token, then finishes.
+        {
+          toolCalls: [
+            {
+              toolCallId: 'tc-img-parent',
               toolName: 'send_image',
               args: { source: 'http://example.local/chart.png' },
             },
-            { toolCallId: 'tc-rr-child', toolName: 'return_result', args: { status: 'success' } },
-          ],
-        },
-        // Parent turn 2 (resumed): sees the child's result, finishes.
-        {
-          toolCalls: [
             { toolCallId: 'tc-rr-parent', toolName: 'return_result', args: { status: 'success' } },
           ],
         },
@@ -5836,21 +5965,12 @@ describe('B3: delegated worker inherits root agent Telegram token', () => {
       const result = await executeJob(parentJob!.id as JobId, makeDeps(llmClient), testEnv);
       expect(result.status).toBe('completed');
 
-      // The child used the inherited ROOT (orchestrator's own) token — proves
-      // B3 held for the assign_ delegation path too, not just a direct job.
+      // Exactly ONE delivery, from the parent job, with the orchestrator's
+      // OWN token — the child never spoke on the channel.
+      expect(sendTelegramPhotoMock).toHaveBeenCalledOnce();
       expect(sendTelegramPhotoMock).toHaveBeenCalledWith(
-        expect.objectContaining({ botToken: 'orch-root-token' }),
+        expect.objectContaining({ botToken: 'orch-root-token', chatId: '555000333' }),
       );
-
-      // B3bis: the parent's own transcript must carry the delivery notice —
-      // the orchestrator's LLM must not re-deliver or treat this as undelivered.
-      const [row] = await db
-        .select({ messages: agentJobs.messages })
-        .from(agentJobs)
-        .where(eq(agentJobs.id, parentJob!.id));
-      const transcript = JSON.stringify(row?.messages ?? []);
-      expect(transcript).toContain('livraison effectuée');
-      expect(transcript).toContain('send_image');
     } finally {
       fetchSpy.mockRestore();
     }

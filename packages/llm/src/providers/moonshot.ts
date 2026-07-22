@@ -52,7 +52,7 @@ function requestHost(input: Parameters<typeof globalThis.fetch>[0]): string | un
  */
 export function patchMoonshotRequestBody(
   body: unknown,
-  opts: { injectThinking: boolean },
+  opts: { injectThinking: boolean; reasoningEffort?: string },
 ): unknown {
   if (typeof body !== 'object' || body === null) return body;
   const b = body as Record<string, unknown>;
@@ -60,8 +60,13 @@ export function patchMoonshotRequestBody(
   delete b['temperature'];
 
   if (opts.injectThinking) {
+    // K2-line: `thinking` XOR `reasoning_effort` — sending both is a 400.
     b['thinking'] = { type: 'enabled' };
     delete b['reasoning_effort'];
+  } else if (opts.reasoningEffort) {
+    // K3-line: intensity via the top-level `reasoning_effort` field (the only
+    // accepted value today is 'max' — enforced by the catalog levels).
+    b['reasoning_effort'] = opts.reasoningEffort;
   }
 
   if (Array.isArray(b['tools'])) {
@@ -78,7 +83,7 @@ export function patchMoonshotRequestBody(
  * 3. Composes with createTolerantFetch for response normalisation
  */
 function createMoonshotFetch(
-  opts: { injectThinking: boolean },
+  opts: { injectThinking: boolean; reasoningEffort?: string },
   baseFetch: typeof globalThis.fetch = globalThis.fetch,
 ): typeof globalThis.fetch {
   const tolerant = createTolerantFetch(baseFetch);
@@ -115,17 +120,33 @@ export function buildMoonshotModel(config: ProviderConfig): LanguageModel {
 
   const baseURL = config.baseURL ?? PROVIDER_PRESETS.moonshot.defaultBaseURL;
 
-  // Gate thinking injection on the catalog reasoning flag — both curated
-  // moonshot models (kimi-k2.6, kimi-k2.7-code) are reasoning models, but a
-  // custom/uncatalogued model id defaults to false (no thinking injected).
+  // Gate thinking injection on the catalog reasoning flag AND the K2 line.
+  // `thinking: {type:'enabled'}` is a K2-line parameter (kimi-k2.6,
+  // kimi-k2.7-code). Kimi K3 always reasons server-side and is configured via
+  // the top-level `reasoning_effort` field instead (currently `max` only, the
+  // server default) — injecting `thinking` there risks the documented 400
+  // ("cannot specify both 'thinking' and 'reasoning_effort'"), so K3 gets a
+  // clean body. A custom/uncatalogued model id defaults to false either way.
   const entry = findModelCatalogEntry('moonshot', config.model);
-  const isReasoning = entry?.capabilities.reasoning === true;
+  const isReasoning = entry?.capabilities.reasoning === true && config.model.startsWith('kimi-k2');
+
+  // K3 intensity: explicit per-agent effort → top-level reasoning_effort
+  // (kind 'effort' in the catalog; K2-line and 'off' never reach here — the
+  // K2 gate above wins and 'off' is not offered on mandatory models).
+  const effort = config.reasoningEffort;
+  const k3Effort =
+    !isReasoning &&
+    entry?.capabilities.reasoningControl?.kind === 'effort' &&
+    effort &&
+    effort !== 'off'
+      ? effort
+      : undefined;
 
   const provider = createOpenAICompatible({
     name: 'moonshot',
     baseURL,
     apiKey: config.apiKey,
-    fetch: createMoonshotFetch({ injectThinking: isReasoning }),
+    fetch: createMoonshotFetch({ injectThinking: isReasoning, reasoningEffort: k3Effort }),
   });
 
   return provider(config.model);

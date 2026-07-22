@@ -234,7 +234,7 @@ export default function Sidebar({
                     href={it.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-medium-15 text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-legacy-12-5 lg:leading-none!"
+                    className="group mx-3 flex h-12 items-center gap-3 rounded-xl bg-[#5865F2] px-3 text-medium-15 text-white transition-[filter] hover:brightness-110 lg:h-[30px] lg:gap-2.5 lg:rounded-lg lg:px-3 lg:text-medium-13 lg:leading-none!"
                   >
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center lg:h-3.5 lg:w-3.5">
                       <ArrowSquareOut

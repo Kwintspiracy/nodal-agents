@@ -762,6 +762,92 @@ describe('create_connector', () => {
       .where(and(eq(connectors.entityId, seed.entityId), eq(connectors.slug, 'gmail')));
     expect(rows).toHaveLength(0);
   });
+
+  // P0-S1 (2026-07-22 incident): create_connector was called 8x with the same
+  // slug AND the same name (agent stutter — slug='tavily', name='Tavily
+  // Search' every time) and inserted 8 identical duplicate rows, always
+  // ok:true. It must now be idempotent on the exact (entity, slug, name)
+  // triple, while still allowing legitimate multi-instance (same slug,
+  // different name).
+  it('a fresh (entity, slug, name) call succeeds and inserts exactly one row', async () => {
+    const result = await createConnectorTool.execute(
+      { slug: 'firecrawl', name: 'My Firecrawl', apiKey: 'fc-key-1' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(result.ok).toBe(true);
+
+    const rows = await db
+      .select()
+      .from(connectors)
+      .where(and(eq(connectors.entityId, seed.entityId), eq(connectors.slug, 'firecrawl')));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('a repeat call with the same slug AND name fails loud and writes no second row', async () => {
+    const first = await createConnectorTool.execute(
+      { slug: 'tavily', name: 'Tavily Search', apiKey: 'tvly-key-1' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(first.ok).toBe(true);
+
+    // Simulate the stutter: same slug, same name, same entity, called again
+    // (and again) — this is the exact shape of the 8x incident.
+    const second = await createConnectorTool.execute(
+      { slug: 'tavily', name: 'Tavily Search', apiKey: 'tvly-key-2' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    const third = await createConnectorTool.execute(
+      { slug: 'tavily', name: 'Tavily Search', apiKey: 'tvly-key-3' },
+      makeCtxWith(fakeProvisioning()),
+    );
+
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error('expected failure');
+    expect(second.error).toContain('already exists');
+    expect(third.ok).toBe(false);
+
+    const rows = await db
+      .select()
+      .from(connectors)
+      .where(
+        and(
+          eq(connectors.entityId, seed.entityId),
+          eq(connectors.slug, 'tavily'),
+          eq(connectors.name, 'Tavily Search'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.apiKey).toBe('enc:tvly-key-1');
+  });
+
+  // Regression guard: migration 0016 intentionally allows multiple connector
+  // instances of the same slug per entity (e.g. two Gmail accounts). The
+  // P0-S1 idempotence fix must NOT break this — a second connector with the
+  // same slug but a DIFFERENT name must still succeed.
+  it('multi-instance is preserved: same slug + different name both succeed', async () => {
+    // Use a slug untouched by other tests in this file so the row count
+    // assertion below isn't polluted by unrelated fixtures.
+    const first = await createConnectorTool.execute(
+      { slug: 'notion', name: 'Notion Account A', apiKey: 'notion-key-a' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(first.ok).toBe(true);
+
+    const second = await createConnectorTool.execute(
+      { slug: 'notion', name: 'Notion Account B', apiKey: 'notion-key-b' },
+      makeCtxWith(fakeProvisioning()),
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error(`expected ok: ${second.error}`);
+
+    const rows = await db
+      .select()
+      .from(connectors)
+      .where(and(eq(connectors.entityId, seed.entityId), eq(connectors.slug, 'notion')));
+    expect(rows).toHaveLength(2);
+    const names = rows.map((r) => r.name).sort();
+    expect(names).toEqual(['Notion Account A', 'Notion Account B']);
+  });
 });
 
 // ─── attach_agent ─────────────────────────────────────────────────────────────

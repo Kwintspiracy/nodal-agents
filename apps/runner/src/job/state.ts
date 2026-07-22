@@ -4,7 +4,7 @@
 import { and, eq, notInArray, or, isNull } from '@nodal-agents/db';
 import { agentJobs, agents } from '@nodal-agents/db';
 import type { AnyDrizzleDb } from '@nodal-agents/db';
-import { flattenTranscript } from './transcript-text.ts';
+import { flattenTranscript, deepDbSafe, toDbSafeString } from './transcript-text.ts';
 
 // ─── JobState ─────────────────────────────────────────────────────────────────
 
@@ -274,11 +274,16 @@ async function fillResultFromFinalTextIfEmpty(
 export async function completeJob(
   db: AnyDrizzleDb,
   jobId: string,
-  result: string,
+  rawResult: string,
   toolsUsed: string[] = [],
   stats?: RunStats,
-  messages?: unknown[],
+  rawMessages?: unknown[],
 ): Promise<boolean> {
+  // Byte-level DB safety: model/tool output can carry raw NULs or lone
+  // surrogates that Postgres rejects at write time, failing the whole UPDATE
+  // and losing the job (seen live 2026-07-17). See toDbSafeString.
+  const result = toDbSafeString(rawResult);
+  const messages = rawMessages === undefined ? undefined : deepDbSafe(rawMessages);
   const rows = await db
     .update(agentJobs)
     .set({
@@ -360,15 +365,18 @@ export async function failJob(
   jobId: string,
   errorCode: string,
   stats?: RunStats,
-  messages?: unknown[],
+  rawMessages?: unknown[],
   userMessage?: string,
 ): Promise<boolean> {
   const now = new Date();
+  // Byte-level DB safety (see completeJob) — the fail path is the LAST writer;
+  // if this update rejects on a poisoned byte the job's outcome is lost.
+  const messages = rawMessages === undefined ? undefined : deepDbSafe(rawMessages);
   const rows = await db
     .update(agentJobs)
     .set({
       status: 'failed',
-      error: errorCode,
+      error: toDbSafeString(errorCode),
       completedAt: now,
       updatedAt: now,
       // Persist the transcript on failure (mirrors completeJob) so a failed job
@@ -399,7 +407,7 @@ export async function failJob(
   // Precedence: the caller's explicit reason → the delegated children's output
   // (a failed parent that delegated) → a generic error-code notice.
   if (landed) {
-    let explanation = userMessage?.trim() ?? '';
+    let explanation = toDbSafeString(userMessage?.trim() ?? '');
     if (!explanation) explanation = await compileChildResults(db, jobId);
     if (!explanation) explanation = genericFailExplanation(errorCode);
     await db
@@ -437,7 +445,7 @@ export async function cancelJob(
     .set({
       completedAt: now,
       updatedAt: now,
-      ...(messages !== undefined && { messages }),
+      ...(messages !== undefined && { messages: deepDbSafe(messages) }),
       ...(stats && {
         inputTokens: stats.inputTokens,
         outputTokens: stats.outputTokens,
@@ -476,7 +484,10 @@ export async function saveCheckpoint(
   await db
     .update(agentJobs)
     .set({
-      messages: checkpoint.messages,
+      // Byte-level DB safety — this mid-run save was one of the two live
+      // failures on 2026-07-17 (poisoned bytes in upstream content rejected
+      // the whole UPDATE). See toDbSafeString.
+      messages: deepDbSafe(checkpoint.messages),
       turn: checkpoint.turn,
       chainCount: checkpoint.chainCount,
       toolsUsed: checkpoint.toolsUsed,

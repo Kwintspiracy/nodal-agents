@@ -13,7 +13,7 @@
 
 import { writeFile, mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { workspacesRoot } from '../lib/workspaces-root.ts';
 import { eq, and, inArray } from '@nodal-agents/db';
 import {
   agentJobs,
@@ -316,16 +316,8 @@ export async function attachInboundPhoto(args: {
 
   const download = await getTelegramFile(botToken, photo.fileId);
   // Mirror execute.ts: the shared workspace lives at
-  // ~/.nodalai/workspaces/<entityId>/shared
-  const dir = join(
-    homedir(),
-    '.nodalai',
-    'workspaces',
-    entityId,
-    'shared',
-    'telegram',
-    photo.chatId,
-  );
+  // <workspacesRoot>/<entityId>/shared
+  const dir = join(workspacesRoot(), entityId, 'shared', 'telegram', photo.chatId);
   await mkdir(dir, { recursive: true });
   const ext = download.ext === 'bin' ? 'jpg' : download.ext;
   const filePath = join(dir, `${jobId}.${ext}`);

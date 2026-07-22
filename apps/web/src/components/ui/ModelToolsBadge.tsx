@@ -53,7 +53,7 @@ export default function ModelToolsBadge({
  */
 export function ModelToolsLegend({ className = '' }: { className?: string }) {
   return (
-    <p className={`text-legacy-11-5 leading-[1.5]! text-ink-4 ${className}`}>
+    <p className={`text-body-12 leading-[1.5]! text-ink-4 ${className}`}>
       Models marked <span className="font-medium text-warn">(no tools)</span> can&apos;t power an
       agent.
     </p>

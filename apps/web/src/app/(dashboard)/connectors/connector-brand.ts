@@ -29,6 +29,7 @@ export const CONN_BRAND_COLORS: Record<string, string> = {
   tavily: '#6366f1',
   composio: '#000000',
   poyo: '#7c3aed',
+  'outlook-mail': '#0f6cbd',
 };
 
 /**
@@ -62,6 +63,7 @@ const CONN_GLYPHS: Record<string, string> = {
   keyshot: 'KS',
   photoshop: 'Ps',
   poyo: 'Po',
+  'outlook-mail': 'Ol',
 };
 
 export function connGlyph(slug: string, label: string): string {
@@ -84,6 +86,7 @@ const CONN_ICONS: Record<string, string> = {
   'google-calendar': '/connector-icons/google-calendar.svg',
   airtable: '/connector-icons/airtable.svg',
   'airtable-oauth': '/connector-icons/airtable.svg',
+  'outlook-mail': '/connector-icons/outlook-mail.svg',
   // MCP connectors (slugs from the MCP catalog)
   stripe: '/connector-icons/stripe.svg',
   sentry: '/connector-icons/sentry.svg',

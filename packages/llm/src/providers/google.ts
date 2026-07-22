@@ -50,7 +50,7 @@ function requestHost(input: Parameters<typeof globalThis.fetch>[0]): string | un
  *
  * Pure function — exported for unit testing.
  */
-export function injectGoogleThinking(body: unknown): unknown {
+export function injectGoogleThinking(body: unknown, thinkingLevel?: string): unknown {
   if (typeof body !== 'object' || body === null) return body;
   const b = body as Record<string, unknown>;
   const generationConfig =
@@ -58,7 +58,12 @@ export function injectGoogleThinking(body: unknown): unknown {
       ? (b['generationConfig'] as Record<string, unknown>)
       : {};
   if (generationConfig['thinkingConfig'] === undefined) {
-    generationConfig['thinkingConfig'] = { includeThoughts: true };
+    generationConfig['thinkingConfig'] = {
+      includeThoughts: true,
+      // Gemini 3.x intensity knob. Absent (Auto) ⇒ model default, pre-feature
+      // behavior. Levels come from the catalog's reasoningControl.
+      ...(thinkingLevel ? { thinkingLevel } : {}),
+    };
   }
   b['generationConfig'] = generationConfig;
   return body;
@@ -70,7 +75,7 @@ export function injectGoogleThinking(body: unknown): unknown {
  * 2. Injects `generationConfig.thinkingConfig` for reasoning-catalogued models
  */
 function createGoogleFetch(
-  opts: { injectThinking: boolean },
+  opts: { injectThinking: boolean; thinkingLevel?: string },
   baseFetch: typeof globalThis.fetch = globalThis.fetch,
 ): typeof globalThis.fetch {
   return async (
@@ -86,7 +91,7 @@ function createGoogleFetch(
     try {
       const rawBody =
         typeof init.body === 'string' ? init.body : await new Response(init.body).text();
-      const patched = injectGoogleThinking(JSON.parse(rawBody));
+      const patched = injectGoogleThinking(JSON.parse(rawBody), opts.thinkingLevel);
       patchedInit = { ...init, body: JSON.stringify(patched) };
     } catch {
       // Malformed/streamed body — pass through unchanged rather than break the call.
@@ -102,10 +107,17 @@ export function buildGoogleModel(config: ProviderConfig): LanguageModel {
   const entry = findModelCatalogEntry('google', config.model);
   const isReasoning = entry?.capabilities.reasoning === true;
 
+  // Gemini 3.x cannot disable thinking (catalog mandatory:true) — 'off' is
+  // never offered by the UI; a level maps to thinkingConfig.thinkingLevel,
+  // 'max' defensively clamps to 'high' (not a Gemini level). Auto ⇒ no level.
+  const effort = config.reasoningEffort;
+  const thinkingLevel =
+    effort && effort !== 'off' ? (effort === 'max' ? 'high' : effort) : undefined;
+
   const provider = createGoogleGenerativeAI({
     apiKey: config.apiKey,
     ...(config.baseURL ? { baseURL: config.baseURL } : {}),
-    fetch: createGoogleFetch({ injectThinking: isReasoning }),
+    fetch: createGoogleFetch({ injectThinking: isReasoning, thinkingLevel }),
   });
 
   return provider(config.model);

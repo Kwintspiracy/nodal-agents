@@ -12,6 +12,8 @@ import { isValidWorkerSecret } from '../lib/worker-secret.ts';
 import {
   installCommunitySkill,
   uninstallCommunitySkill,
+  applySkillUpdate,
+  acknowledgeSkillUpdate,
   skillStoreDir,
   SkillInstallError,
   SkillSourceError,
@@ -25,6 +27,11 @@ const InstallRequestSchema = z.object({
 });
 
 const UninstallRequestSchema = z.object({
+  slug: z.string().min(1).max(128),
+  entityId: z.string().guid(),
+});
+
+const UpdateRequestSchema = z.object({
   slug: z.string().min(1).max(128),
   entityId: z.string().guid(),
 });
@@ -109,6 +116,82 @@ export async function uninstallSkillRoute(
   } catch (err) {
     if (isUserFacingInstallError(err)) {
       return c.json({ ok: false, error: 'uninstall_failed', message: err.message }, 400);
+    }
+    throw err;
+  }
+}
+
+// ─── POST /api/skills/update ────────────────────────────────────────────────
+//
+// Applies a pending upstream update to an already-installed community skill:
+// re-downloads the source, replaces the store-dir files, and updates the DB
+// row (defaultContent always; content only when not owner-overridden). If the
+// skill's bundled scripts changed, revokes scripts_authorized on every
+// agent×skill assignment for it — see applySkillUpdate (skills/install.ts)
+// for the full security rationale.
+
+export async function updateSkillRoute(
+  c: Context,
+  deps: RunnerDeps,
+  runnerEnv: RunnerEnv,
+): Promise<Response> {
+  const authFail = checkWorkerSecret(c, runnerEnv);
+  if (authFail) return authFail;
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = UpdateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  try {
+    const result = await applySkillUpdate({
+      db: deps.db,
+      slug: parsed.data.slug,
+      skillStoreDir: skillStoreDir(parsed.data.entityId),
+      entityId: parsed.data.entityId,
+    });
+    return c.json({ ok: true, ...result }, 200);
+  } catch (err) {
+    if (isUserFacingInstallError(err)) {
+      return c.json({ ok: false, error: 'update_failed', message: err.message }, 400);
+    }
+    throw err;
+  }
+}
+
+// ─── POST /api/skills/acknowledge-update ────────────────────────────────────
+//
+// « Keep my version » for a script conflict: re-baselines the ORIGIN hashes to
+// upstream-as-of-now WITHOUT touching local files (no revocation — the owner
+// keeps the exact files they vetted). The update badge clears for scripts and
+// only returns if upstream moves again. See acknowledgeSkillUpdate
+// (skills/install.ts).
+
+export async function acknowledgeSkillUpdateRoute(
+  c: Context,
+  deps: RunnerDeps,
+  runnerEnv: RunnerEnv,
+): Promise<Response> {
+  const authFail = checkWorkerSecret(c, runnerEnv);
+  if (authFail) return authFail;
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = UpdateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  try {
+    const result = await acknowledgeSkillUpdate({
+      db: deps.db,
+      slug: parsed.data.slug,
+      entityId: parsed.data.entityId,
+    });
+    return c.json({ ok: true, ...result }, 200);
+  } catch (err) {
+    if (isUserFacingInstallError(err)) {
+      return c.json({ ok: false, error: 'acknowledge_failed', message: err.message }, 400);
     }
     throw err;
   }

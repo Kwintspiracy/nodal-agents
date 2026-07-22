@@ -18,7 +18,7 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { wrapLanguageModel } from 'ai';
 import type { LanguageModel, LanguageModelMiddleware } from 'ai';
-import { findModelCatalogEntry } from '@nodal-agents/shared';
+import { findModelCatalogEntry, type ReasoningEffort } from '@nodal-agents/shared';
 import type { ProviderConfig } from '../types';
 import { PROVIDER_PRESETS } from './registry';
 import { ProviderConfigError } from '../errors';
@@ -79,19 +79,39 @@ function middlewareForFamily(family: ModelFamily): LanguageModelMiddleware | nul
  *
  * @internal
  */
-export function buildOpenRouterExtraBody(modelId: string): Record<string, unknown> {
+export function buildOpenRouterExtraBody(
+  modelId: string,
+  reasoningEffort?: ReasoningEffort,
+): Record<string, unknown> {
   const entry = findModelCatalogEntry('openrouter', modelId);
   const isReasoning = entry?.capabilities.reasoning;
+  const control = entry?.capabilities.reasoningControl;
   const providerOrder = entry?.providerOrder;
+
+  // Reasoning block precedence:
+  //   1. Explicit per-agent effort, when the catalog declares the model
+  //      controllable ('max' → OpenRouter's 'xhigh'; 'off' → enabled:false,
+  //      not offered by the UI when the control is `mandatory`). OpenRouter
+  //      normalizes a requested effort to the nearest level the upstream
+  //      really supports — the catalog levels are the UI contract.
+  //   2. Auto (no effort): pre-feature behavior — reasoning:true models get
+  //      the bounded 'medium' default. Without a cap OpenRouter lets a
+  //      reasoning model think unboundedly, which on slower routes overruns
+  //      the 300s LLM-call timeout (live incident: minimax/minimax-m3).
+  //      The runner still round-trips the reasoning_details returned.
+  let reasoning: Record<string, unknown> | undefined;
+  if (reasoningEffort && control) {
+    reasoning =
+      reasoningEffort === 'off'
+        ? { enabled: false }
+        : { enabled: true, effort: reasoningEffort === 'max' ? 'xhigh' : reasoningEffort };
+  } else if (isReasoning) {
+    reasoning = { enabled: true, effort: 'medium' };
+  }
+
   return {
     usage: { include: true },
-    // Bound the reasoning effort. Without an effort cap OpenRouter lets a
-    // reasoning model think unboundedly, which on slower routes overruns the
-    // 300s LLM-call timeout (live incident: minimax/minimax-m3 timed out after
-    // 300000ms). 'medium' caps the thinking budget — matches how Hermes drives
-    // reasoning models via OpenRouter. The runner still round-trips the
-    // reasoning_details OpenRouter returns.
-    ...(isReasoning ? { reasoning: { enabled: true, effort: 'medium' } } : {}),
+    ...(reasoning ? { reasoning } : {}),
     ...(providerOrder ? { provider: { order: providerOrder, allow_fallbacks: true } } : {}),
   };
 }
@@ -195,7 +215,7 @@ export function buildOpenRouterModel(config: ProviderConfig): LanguageModel {
   // hard-fail on a routing preference. Generic: reads only catalog data, no
   // model-name branch.
   const base = provider.chat(config.model, {
-    extraBody: buildOpenRouterExtraBody(config.model),
+    extraBody: buildOpenRouterExtraBody(config.model, config.reasoningEffort),
   });
 
   const middleware = middlewareForFamily(detectAgenticFamily(config.model));

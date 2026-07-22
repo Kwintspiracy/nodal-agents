@@ -470,6 +470,41 @@
       "when": 1784700000000,
       "tag": "0067_webhook_notify_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1784800000000,
+      "tag": "0068_credentials_microsoft_oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1784900000000,
+      "tag": "0069_skill_update_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1785000000000,
+      "tag": "0070_dead_schema_cleanup_and_schedule_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1785100000000,
+      "tag": "0071_agent_reasoning_effort",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1785200000000,
+      "tag": "0072_connectors_entity_slug_unique",
+      "breakpoints": true
     }
   ]
 }

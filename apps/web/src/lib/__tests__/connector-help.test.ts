@@ -43,10 +43,10 @@ function assertGuide(guide: Guide, context: string) {
 // ─── OAUTH_GUIDES ─────────────────────────────────────────────────────────────
 
 describe('OAUTH_GUIDES', () => {
-  it('has exactly 3 entries', () => {
-    expect(Object.keys(OAUTH_GUIDES)).toHaveLength(3);
+  it('has exactly 4 entries', () => {
+    expect(Object.keys(OAUTH_GUIDES)).toHaveLength(4);
     expect(Object.keys(OAUTH_GUIDES)).toEqual(
-      expect.arrayContaining(['google-oauth', 'notion-oauth', 'airtable-oauth']),
+      expect.arrayContaining(['google-oauth', 'notion-oauth', 'airtable-oauth', 'microsoft-oauth']),
     );
   });
 
@@ -89,6 +89,18 @@ describe('OAUTH_GUIDES', () => {
     expect(guide.warningWhen, 'airtable-oauth: warning must be gated lan-ip-only').toBe(
       'lan-ip-only',
     );
+  });
+
+  it('microsoft-oauth: sequential steps, valid URLs, format hint present', () => {
+    const guide = OAUTH_GUIDES['microsoft-oauth'];
+    assertGuide(guide, 'microsoft-oauth');
+    expect(guide.format, 'microsoft-oauth: format hint required').toBeTruthy();
+  });
+
+  it('microsoft-oauth: mentions the redirect URI step and Azure app registration', () => {
+    const guide = OAUTH_GUIDES['microsoft-oauth'];
+    expect(guide.steps.some((s) => /redirect uri/i.test(s.text))).toBe(true);
+    expect(guide.steps.some((s) => /client secret/i.test(s.text))).toBe(true);
   });
 });
 

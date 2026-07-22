@@ -11,6 +11,10 @@
 //     (firecrawl, apify, tavily, airtable PAT, notion internal integration).
 
 import { createNotionTools, NOTION_OPERATIONS } from '@nodal-agents/adapter-notion';
+import {
+  createOutlookMailTools,
+  OUTLOOK_MAIL_OPERATIONS,
+} from '@nodal-agents/adapter-outlook-mail';
 import { createAirtableTools, AIRTABLE_OPERATIONS } from '@nodal-agents/adapter-airtable';
 import { createDriveTools, DRIVE_OPERATIONS } from '@nodal-agents/adapter-google-drive';
 import { createGmailTools, GMAIL_OPERATIONS } from '@nodal-agents/adapter-gmail';
@@ -108,6 +112,19 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
     toolFactory: (t) =>
       createNotionTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: NOTION_OPERATIONS,
+  },
+  // outlook-mail: Microsoft Graph delegated OAuth access token via
+  // credentials.payload.accessToken. Microsoft access tokens live ~60-90min
+  // (same class as the Google adapters / airtable-oauth — audit#2 M-12) —
+  // toolFactoryWithResolver re-reads/refreshes the credential before every
+  // Graph request instead of a one-shot token.
+  'outlook-mail': {
+    credentialType: 'microsoft-oauth',
+    toolFactory: (t) =>
+      createOutlookMailTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    toolFactoryWithResolver: (getAccessToken) =>
+      createOutlookMailTools({ getAccessToken }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: OUTLOOK_MAIL_OPERATIONS,
   },
   // airtable-oauth: OAuth access token via credentials.payload.accessToken.
   // Airtable OAuth2 tokens live ~60min, same class of bug as the 5 Google

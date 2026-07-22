@@ -184,6 +184,40 @@ describe('Moonshot fetch wrapper behaviour (end-to-end via generateText)', () =>
     vi.unstubAllGlobals();
   });
 
+  it('kimi-k3: reasoning-capable but NO thinking injected (K2-line gate)', async () => {
+    // K3 always reasons server-side and is driven by top-level
+    // `reasoning_effort` — injecting the K2-line `thinking` field risks the
+    // documented "cannot specify both" 400. The gate in createMoonshotModel
+    // must leave the K3 body clean while temperature stripping still applies.
+    let capturedBody: Record<string, unknown> | undefined;
+    const fakeFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          id: 'x',
+          choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fakeFetch);
+
+    const client = createLlmClient({
+      provider: 'moonshot',
+      model: 'kimi-k3',
+      apiKey: 'sk-test',
+    });
+
+    await client.generateText({ prompt: 'hi', temperature: 0.7 });
+
+    expect(capturedBody).toBeDefined();
+    expect(capturedBody).not.toHaveProperty('temperature');
+    expect(capturedBody).not.toHaveProperty('thinking');
+
+    vi.unstubAllGlobals();
+  });
+
   it('does NOT rewrite requests to a non-Moonshot host', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     const fakeFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

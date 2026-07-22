@@ -13,8 +13,30 @@
 import { inArray, entityLlmKeys, type AnyDrizzleDb } from '@nodal-agents/db';
 import { createLlmClient, createFailoverLlmClient } from '@nodal-agents/llm';
 import type { ProviderConfig, NodalLlmClient } from '@nodal-agents/llm';
-import { MODEL_CATALOG, findModelCatalogEntry } from '@nodal-agents/shared';
+import {
+  MODEL_CATALOG,
+  findModelCatalogEntry,
+  REASONING_EFFORT_LEVELS,
+  type ReasoningEffort,
+} from '@nodal-agents/shared';
 import { decrypt } from '@nodal-agents/secrets';
+
+/**
+ * Coerce a stored effort string to the scale, or undefined (= Auto). A value
+ * outside the scale (hand-edited DB, downgrade) is dropped LOUDLY — a wrong
+ * effort must never brick the whole chain at request time.
+ */
+function coerceEffort(
+  value: string | null | undefined,
+  origin: string,
+): ReasoningEffort | undefined {
+  if (value == null || value === '') return undefined;
+  if ((REASONING_EFFORT_LEVELS as readonly string[]).includes(value)) {
+    return value as ReasoningEffort;
+  }
+  console.warn(`[resolve-llm] ignoring invalid reasoning_effort "${value}" (${origin})`);
+  return undefined;
+}
 
 export type ResolveLlmResult =
   | {
@@ -47,8 +69,13 @@ export async function resolveAgentLlmClient(
      * pair so a fallback runs on a CHOSEN model. An empty `model` ⇒ that
      * provider's catalog default.
      */
-    fallbackChain: readonly { keyId: string; model: string }[] | null;
+    fallbackChain: readonly { keyId: string; model: string; reasoningEffort?: string }[] | null;
     model: string;
+    /**
+     * Agent-level reasoning effort — applies to the primary; inherited by any
+     * fallback link that doesn't set its own. NULL/undefined = Auto.
+     */
+    reasoningEffort?: string | null;
   },
   onSkip?: (info: { keyId: string; reason: string }) => void,
 ): Promise<ResolveLlmResult> {
@@ -56,15 +83,22 @@ export async function resolveAgentLlmClient(
 
   // Unified, deduped, ordered chain: the primary first (on the agent's own
   // model), then each fallback (on its chosen model). Order = failover priority.
+  const agentEffort = coerceEffort(agent.reasoningEffort, 'agents.reasoning_effort');
   const seen = new Set<string>();
-  const requested: Array<{ keyId: string; model: string }> = [];
+  const requested: Array<{ keyId: string; model: string; effort: ReasoningEffort | undefined }> =
+    [];
   for (const link of [
-    { keyId: agent.llmKeyId, model: agent.model },
+    { keyId: agent.llmKeyId, model: agent.model, reasoningEffort: agent.reasoningEffort },
     ...(agent.fallbackChain ?? []),
   ]) {
     if (typeof link.keyId === 'string' && link.keyId.length > 0 && !seen.has(link.keyId)) {
       seen.add(link.keyId);
-      requested.push({ keyId: link.keyId, model: link.model ?? '' });
+      requested.push({
+        keyId: link.keyId,
+        model: link.model ?? '',
+        // A fallback link's own effort wins; absent ⇒ inherit the agent's.
+        effort: coerceEffort(link.reasoningEffort, `fallback ${link.keyId}`) ?? agentEffort,
+      });
     }
   }
 
@@ -74,7 +108,7 @@ export async function resolveAgentLlmClient(
 
   try {
     const configs: ProviderConfig[] = [];
-    for (const { keyId, model: requestedModel } of requested) {
+    for (const { keyId, model: requestedModel, effort } of requested) {
       const row = byId.get(keyId);
       if (!row || !row.isActive) {
         // A skipped key (missing or toggled inactive) never aborts resolution —
@@ -106,6 +140,10 @@ export async function resolveAgentLlmClient(
         // É-3: per-model context window for a custom/local endpoint the catalog
         // can't know — used as a fallback in modelContextWindow (catalog wins).
         contextWindow: row.contextWindow ?? undefined,
+        // Per-link reasoning effort (link's own or inherited from the agent).
+        // The provider builder translates it per the model's reasoningControl;
+        // undefined = Auto = pre-feature request bodies.
+        reasoningEffort: effort,
       });
     }
 

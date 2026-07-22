@@ -7,9 +7,8 @@
 // told about by an untrusted source (prompt injection). isChatAllowed gates
 // that: the target must be an ACTIVE row already approved via the inbound
 // H-1 flow (telegram_allowed_chats), scoped to either this agent OR its
-// entity — entity-scoped so a DELEGATED worker job, which inherits its
-// entity ROOT agent's bot token (B3, ctx.resolvedTelegramBotToken), can
-// still target chats that were approved on the root agent.
+// entity — entity-scoped so an agent with its own bot token can target chats
+// that were approved on another agent of the same entity (e.g. the root).
 //
 // S2 (migration 0064): thin delegation to the channel-neutral
 // isConversationAllowed, pinned to channel='telegram'. That function reads

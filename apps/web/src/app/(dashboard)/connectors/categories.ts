@@ -1,4 +1,6 @@
 import type { ChipItem } from '@/components/ui/ChipRow';
+import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
+import type { ConnectorCategory } from '@nodal-agents/shared';
 
 /** The category filter chips shown in the connectors / MCP toolbar (row 2). */
 export const CONNECTOR_CATEGORIES: ChipItem<string>[] = [
@@ -13,30 +15,23 @@ export const CONNECTOR_CATEGORIES: ChipItem<string>[] = [
 ];
 
 /**
- * Maps a catalog slug to one of the ChipRow category labels.
- * Derived from the slug + authType — no extra column needed.
+ * Looks up a catalog slug's marketplace category, from CatalogEntry.category
+ * (packages/shared/src/connector-catalog.ts) — the field is required, so a
+ * catalog entry can never silently omit its category. Previously this
+ * derived the category by string-matching the slug (startsWith('google-'),
+ * hardcoded slug lists) — a new connector that nobody remembered to add to
+ * that matcher fell silently into 'Other'. A slug with no catalog entry at
+ * all is a real bug (the catalog is the single source of truth for what
+ * connectors exist), so this fails loud instead of guessing.
  *
  * Extracted from ConnectorsClient.tsx so that ConnectorsMarketplaceGrid
  * can import it without creating a circular dep (Client ⇄ Grid via this
  * function).
  */
-export function catalogCategory(slug: string): string {
-  if (slug.startsWith('google-') || slug === 'gmail') return 'Productivity';
-  if (
-    slug === 'notion' ||
-    slug === 'notion-oauth' ||
-    slug === 'airtable' ||
-    slug === 'airtable-oauth'
-  )
-    return 'Productivity';
-  if (slug === 'github') return 'DevTools';
-  if (slug === 'linear') return 'DevTools';
-  if (slug === 'hubspot') return 'CRM';
-  if (slug === 'slack') return 'Comms';
-  if (slug === 'intercom') return 'Comms';
-  if (slug === 'apify' || slug === 'firecrawl' || slug === 'tavily') return 'Data';
-  if (slug === 'stripe') return 'Data';
-  if (slug === 'postgres') return 'Data';
-  if (slug === 'poyo') return 'Creative';
-  return 'Other';
+export function catalogCategory(slug: string): ConnectorCategory {
+  const entry = CONNECTOR_CATALOG.find((e) => e.slug === slug);
+  if (!entry) {
+    throw new Error(`catalogCategory: no catalog entry for slug "${slug}".`);
+  }
+  return entry.category;
 }

@@ -486,24 +486,3 @@ describe('CRUD: mcp_servers + mcp_connections', () => {
     expect(first?.id).not.toBe(second?.id);
   });
 });
-
-describe('CRUD: configurator_sessions', () => {
-  it('insert + select + update', async () => {
-    const [cs] = await db
-      .insert(schema.configuratorSessions)
-      .values({
-        entityId: seed.entityId,
-        agentId: seed.agentId,
-        messages: [{ role: 'user', content: 'Hello' }],
-        status: 'active',
-        turnCount: 0,
-      })
-      .returning();
-    expect(cs?.id).toBeTruthy();
-
-    await db
-      .update(schema.configuratorSessions)
-      .set({ turnCount: 1 })
-      .where(eq(schema.configuratorSessions.id, cs!.id));
-  });
-});

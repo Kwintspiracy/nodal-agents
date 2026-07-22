@@ -86,7 +86,6 @@ function makeCtx(
   overrides: {
     jobChatId?: string | null;
     db?: unknown;
-    resolvedTelegramBotToken?: string;
     workspaces?: ToolContext['workspaces'];
   } = {},
 ): ToolContext {
@@ -96,7 +95,6 @@ function makeCtx(
     entityId: 'entity-xyz',
     jobChatId: overrides.jobChatId ?? null,
     db: (overrides.db ?? makeDb('bot:TEST_TOKEN')) as unknown as ToolContext['db'],
-    resolvedTelegramBotToken: overrides.resolvedTelegramBotToken,
     workspaces: overrides.workspaces,
   };
 }
@@ -242,14 +240,14 @@ describe('createSendImageTool', () => {
     expect(sendMediaMock).toHaveBeenCalledWith(expect.anything(), '99887766', expect.anything());
   });
 
-  it('(g) delegated worker: resolvedTelegramBotToken + an entity-approved chatId still sends', async () => {
+  it("(g) sends with the agent's OWN token even when jobChatId is absent (entity-approved chatId)", async () => {
     const tool = createSendImageTool();
-    const ctx = makeCtx({ jobChatId: null, resolvedTelegramBotToken: 'root-token' });
+    const ctx = makeCtx({ jobChatId: null });
 
     await tool.execute({ source: SRC_OUT, chatId: '55555555' }, ctx);
 
     expect(sendMediaMock).toHaveBeenCalledWith(
-      { botToken: 'root-token' },
+      { botToken: 'bot:TEST_TOKEN' },
       '55555555',
       expect.anything(),
     );

@@ -24,6 +24,7 @@ import { taskPlanningSkill } from './skills/task-planning';
 import { verifyBeforeDoneSkill } from './skills/verify-before-done';
 import { citationDisciplineSkill } from './skills/citation-discipline';
 import { safeToolUseSkill } from './skills/safe-tool-use';
+import { workspaceHygieneSkill } from './skills/workspace-hygiene';
 import { officeEditingSkill } from './skills/office-editing';
 import { commandExecutionSkill } from './skills/command-execution';
 import { toolCreateMcpSkill } from './skills/tool-create-mcp';
@@ -48,6 +49,7 @@ export const systemSkills: SystemSkill[] = [
   verifyBeforeDoneSkill,
   citationDisciplineSkill,
   safeToolUseSkill,
+  workspaceHygieneSkill,
   officeEditingSkill,
   commandExecutionSkill,
   // Tool usage guides — loaded on demand via skill_view, not auto-injected.

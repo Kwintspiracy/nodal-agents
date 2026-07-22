@@ -57,8 +57,8 @@ export default function EdAddButton({
         <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-hover text-ink-3">
           {icon}
         </span>
-        <span className="text-legacy-12-5 font-medium text-ink">{children}</span>
-        {hint && <span className="text-legacy-11 text-ink-3">{hint}</span>}
+        <span className="text-medium-13 text-ink">{children}</span>
+        {hint && <span className="text-body-12 text-ink-3">{hint}</span>}
       </>
     );
     if (href) {
@@ -77,9 +77,9 @@ export default function EdAddButton({
 
   const sizeClasses =
     size === 'sm'
-      ? 'gap-[6px] rounded-[10px] py-[8.5px] text-legacy-11-5'
+      ? 'gap-[6px] rounded-[10px] py-[8.5px] text-medium-12'
       : 'h-[42px] gap-2 rounded-[10px] text-medium-14';
-  const classes = `flex w-full items-center justify-center border border-dashed border-rule bg-paper/40 font-medium text-ink-3 transition-colors hover:bg-paper/60 hover:text-ink-2 ${sizeClasses} ${className}`;
+  const classes = `flex w-full items-center justify-center border border-dashed border-rule bg-paper/40 text-ink-3 transition-colors hover:bg-paper/60 hover:text-ink-2 ${sizeClasses} ${className}`;
 
   if (href) {
     return (

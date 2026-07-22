@@ -516,3 +516,63 @@ describe('DB state helpers', () => {
     expect(rows[0]?.toolsUsed).toContain('save_memory');
   });
 });
+
+describe('byte-level DB safety on persistence (2026-07-17 incident regression)', () => {
+  // Two live jobs died because upstream content carried bytes Postgres rejects
+  // (raw NUL in search_text, invalid UTF-8 from a lone surrogate). The write
+  // helpers must sanitize so the UPDATE lands instead of losing the job.
+  it('failJob lands with NUL and lone-surrogate bytes in messages and error', async () => {
+    const nul = String.fromCharCode(0);
+    const lone = String.fromCharCode(0xd83d);
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, seed.jobId));
+
+    const landed = await failJob(
+      db as Parameters<typeof failJob>[0],
+      seed.jobId,
+      `poison${nul}_code`,
+      undefined,
+      [{ role: 'assistant', content: [{ type: 'text', text: `bad${nul}bytes ${lone} here` }] }],
+      `user says${nul} ${lone}`,
+    );
+    expect(landed).toBe(true);
+
+    const rows = await db
+      .select({
+        status: agentJobs.status,
+        error: agentJobs.error,
+        searchText: agentJobs.searchText,
+        messages: agentJobs.messages,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+
+    expect(rows[0]?.status).toBe('failed');
+    expect(rows[0]?.error).toBe('poison_code');
+    expect(rows[0]?.searchText ?? '').toContain('badbytes');
+    expect((rows[0]?.searchText ?? '').includes(nul)).toBe(false);
+    const stored = JSON.stringify(rows[0]?.messages ?? []);
+    expect(stored.includes(nul)).toBe(false);
+  });
+
+  it('completeJob lands with poisoned bytes in result and messages', async () => {
+    const nul = String.fromCharCode(0);
+    await db.update(agentJobs).set({ status: 'processing' }).where(eq(agentJobs.id, seed.jobId));
+
+    const landed = await completeJob(
+      db as Parameters<typeof completeJob>[0],
+      seed.jobId,
+      `all done${nul}!`,
+      ['return_result'],
+      undefined,
+      [{ role: 'assistant', content: `ok${nul}ok` }],
+    );
+    expect(landed).toBe(true);
+
+    const rows = await db
+      .select({ status: agentJobs.status, result: agentJobs.result })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, seed.jobId));
+    expect(rows[0]?.status).toBe('completed');
+    expect(rows[0]?.result).toBe('all done!');
+  });
+});

@@ -72,6 +72,7 @@ describe('pruneOldJobs', () => {
 
     expect(result.jobsDeleted).toBe(0);
     expect(result.toolCallsDeleted).toBe(0);
+    expect(result.deletedJobIds).toEqual([]);
 
     // Rows must still be present
     const jobs = await db.select().from(schema.agentJobs).where(eq(schema.agentJobs.id, jobId));
@@ -85,6 +86,7 @@ describe('pruneOldJobs', () => {
     const result = await pruneOldJobs(db, -5);
     expect(result.jobsDeleted).toBe(0);
     expect(result.toolCallsDeleted).toBe(0);
+    expect(result.deletedJobIds).toEqual([]);
   });
 
   it('prunes old terminal job and its tool_calls but leaves recent + non-terminal', async () => {
@@ -141,6 +143,7 @@ describe('pruneOldJobs', () => {
     // (the seed job has no completed_at, so it does not qualify).
     expect(result.jobsDeleted).toBe(1);
     expect(result.toolCallsDeleted).toBe(2);
+    expect(result.deletedJobIds).toEqual([oldJobId]);
 
     // (a) Old terminal job is gone
     const goneJobs = await freshDb
@@ -216,6 +219,7 @@ describe('pruneOldJobs', () => {
     // Exactly 3 terminal jobs, 0 tool_calls → the seed job has no completed_at.
     expect(result.jobsDeleted).toBe(3);
     expect(result.toolCallsDeleted).toBe(0);
+    expect(result.deletedJobIds.sort()).toEqual([completedId, failedId, cancelledId].sort());
 
     const remaining = await freshDb
       .select()
@@ -232,6 +236,7 @@ describe('pruneOldJobs', () => {
     const result = await pruneOldJobs(freshDb, 30);
     expect(result.jobsDeleted).toBe(0);
     expect(result.toolCallsDeleted).toBe(0);
+    expect(result.deletedJobIds).toEqual([]);
   });
 
   // Finding F-7: a single inArray(...) DELETE over a large, unbatched id list
@@ -273,6 +278,8 @@ describe('pruneOldJobs', () => {
 
     expect(result.jobsDeleted).toBe(10);
     expect(result.toolCallsDeleted).toBe(10);
+    // Aggregated correctly across all 4 batch rounds — not just the last one.
+    expect(result.deletedJobIds.sort()).toEqual([...jobIds].sort());
 
     const remaining = await freshDb
       .select()
@@ -302,5 +309,6 @@ describe('pruneOldJobs', () => {
     const result = await pruneOldJobs(freshDb, 30);
     expect(result.jobsDeleted).toBe(1);
     expect(result.toolCallsDeleted).toBe(0);
+    expect(result.deletedJobIds).toEqual([job!.id]);
   });
 });

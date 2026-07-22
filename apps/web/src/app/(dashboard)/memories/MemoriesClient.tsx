@@ -50,6 +50,7 @@ import LiveDot from '@/components/ui/LiveDot';
 import RowActionButton from '@/components/ui/RowActionButton';
 import EmptyState from '@/components/ui/EmptyState';
 import StarRating from '@/components/ui/StarRating';
+import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react';
 import NewMemoryModal from './NewMemoryModal';
@@ -62,6 +63,7 @@ import {
   searchMemoriesAction,
   type MemoryListRow,
 } from '@/lib/actions';
+import { relativeTime } from '@/lib/format-time';
 import type { AgentRow } from '@/lib/actions';
 
 // ─── Category metadata ────────────────────────────────────────────────────────
@@ -126,7 +128,7 @@ function CategoryChip({ category }: { category: string | null | undefined }) {
   return (
     <span
       style={{ background: m.color + '22', color: m.color }}
-      className="inline-flex h-[24px] items-center gap-1.5 rounded-[6px] px-2.5 text-legacy-11-5 font-medium leading-none! capitalize [&_svg]:h-[12px] [&_svg]:w-[12px]"
+      className="inline-flex h-[24px] items-center gap-1.5 rounded-[6px] px-2.5 text-medium-12 leading-none! capitalize [&_svg]:h-[12px] [&_svg]:w-[12px]"
     >
       {m.icon}
       {m.label}
@@ -169,16 +171,6 @@ function isRecent(ts: string | Date | null | undefined): boolean {
   if (!ts) return false;
   const d = ts instanceof Date ? ts : new Date(ts);
   return Date.now() - d.getTime() < 2 * 60 * 1000;
-}
-
-function formatAccessed(ts: string | Date | null | undefined): string {
-  if (!ts) return '—';
-  const d = ts instanceof Date ? ts : new Date(ts);
-  const delta = Date.now() - d.getTime();
-  if (delta < 60_000) return 'just now';
-  if (delta < 3600_000) return `${Math.floor(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.floor(delta / 3600_000)}h ago`;
-  return d.toLocaleDateString();
 }
 
 // ─── Row actions ──────────────────────────────────────────────────────────────
@@ -459,130 +451,113 @@ export default function MemoriesClient({ initialItems, agents, totalCount }: Pro
       {isSearching && <div className="mt-2 text-legacy-11 text-ink-4">Searching…</div>}
 
       {/* Memory table ───────────────────────────────────────────────────── */}
-      <div className="mt-4 overflow-hidden rounded-xl border border-rule-2 bg-paper">
+      <div className="mt-4">
         {filtered.length === 0 ? (
-          <EmptyState
-            compact
-            className="rounded-none border-0"
-            title="No memories match these filters."
-            description={
-              tab === 'all' && !q && agentFilter === 'all'
-                ? 'Agents save memories automatically when they call save_memory.'
-                : 'Try a different filter.'
-            }
-          />
+          <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
+            <EmptyState
+              compact
+              className="rounded-none border-0"
+              title="No memories match these filters."
+              description={
+                tab === 'all' && !q && agentFilter === 'all'
+                  ? 'Agents save memories automatically when they call save_memory.'
+                  : 'Try a different filter.'
+              }
+            />
+          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-rule-2">
-                  <th className="px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
-                    Memory
-                  </th>
-                  <th className="hidden px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 md:table-cell">
-                    Agent
-                  </th>
-                  <th className="hidden px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 lg:table-cell">
-                    Category
-                  </th>
-                  <th className="px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
-                    Importance
-                  </th>
-                  <th className="hidden px-5 py-3 text-left text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4 xl:table-cell">
-                    Last accessed
-                  </th>
-                  <th className="px-5 py-3 text-right text-legacy-10-5 font-semibold uppercase tracking-wider whitespace-nowrap text-ink-4">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((m) => {
-                  const meta = getCategoryMeta(m.category);
-                  const recent = isRecent(m.last_accessed_at);
-                  return (
-                    <tr
-                      key={m.id}
-                      className="border-b border-rule-2/60 transition-colors last:border-0 hover:bg-hover/50"
-                    >
-                      {/* Memory: Disc + fact text. align-top on every cell in this row —
+          <Table>
+            <THead>
+              <Th>Memory</Th>
+              <Th className="hidden md:table-cell">Agent</Th>
+              <Th className="hidden lg:table-cell">Category</Th>
+              <Th>Importance</Th>
+              <Th className="hidden xl:table-cell">Last accessed</Th>
+              <Th align="right">Actions</Th>
+            </THead>
+            <tbody>
+              {filtered.map((m) => {
+                const meta = getCategoryMeta(m.category);
+                const recent = isRecent(m.last_accessed_at);
+                return (
+                  <Tr key={m.id}>
+                    {/* Memory: Disc + fact text. align-top on every cell in this row —
                           expanding a long fact grows this cell vertically (MemoryFact
                           below), and the other cells should stay pinned to the top of
                           the row instead of re-centering when that happens. */}
-                      <td className="px-5 py-3.5 align-top">
-                        <div className="flex items-start gap-3">
-                          <Disc
-                            variant="neutral"
-                            size="md"
-                            shape="square"
-                            background={meta.color}
-                            className="mt-0.5 shrink-0 [&_svg]:h-[14px] [&_svg]:w-[14px]"
-                          >
-                            {meta.icon}
-                          </Disc>
-                          {/* max-w caps the column so a long, space-free fact (a pasted URL
+                    <Td top>
+                      <div className="flex items-start gap-3">
+                        <Disc
+                          variant="neutral"
+                          size="md"
+                          shape="square"
+                          background={meta.color}
+                          className="mt-0.5 shrink-0 [&_svg]:h-[14px] [&_svg]:w-[14px]"
+                        >
+                          {meta.icon}
+                        </Disc>
+                        {/* max-w caps the column so a long, space-free fact (a pasted URL
                               or token) breaks and wraps instead of stretching the whole
                               table wider than its container (the "catastrophique" overflow
                               at 1280px) — `break-words` on MemoryFact does the actual
                               wrapping once this box stops growing. */}
-                          <div className="min-w-0 max-w-[170px]">
-                            <MemoryFact fact={m.fact} />
-                            <div className="mt-0.5 break-words text-mono-11 text-ink-4">
-                              {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
-                              {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
-                            </div>
+                        <div className="min-w-0 max-w-[170px]">
+                          <MemoryFact fact={m.fact} />
+                          <div className="mt-0.5 break-words text-mono-11 text-ink-4">
+                            {m.created_at ? new Date(m.created_at).toLocaleString() : '—'}
+                            {(m.access_count ?? 0) > 0 ? ` · accessed ${m.access_count}×` : ''}
                           </div>
                         </div>
-                      </td>
+                      </div>
+                    </Td>
 
-                      {/* Agent */}
-                      <td className="hidden px-5 py-3.5 align-top md:table-cell">
-                        {m.agentName ? (
-                          <Link
-                            href={`/agents`}
-                            className="inline-flex items-center gap-2 text-body-12 text-ink-2 transition-colors hover:text-ink"
-                          >
-                            <AgentAvatar name={m.agentName} size="sm" />
-                            {m.agentName}
-                          </Link>
-                        ) : (
-                          <span className="text-ink-4">—</span>
-                        )}
-                      </td>
+                    {/* Agent */}
+                    <Td top className="hidden md:table-cell">
+                      {m.agentName ? (
+                        <Link
+                          href={`/agents`}
+                          className="inline-flex items-center gap-2 text-body-12 text-ink-2 transition-colors hover:text-ink"
+                        >
+                          <AgentAvatar name={m.agentName} size="sm" />
+                          {m.agentName}
+                        </Link>
+                      ) : (
+                        <span className="text-ink-4">—</span>
+                      )}
+                    </Td>
 
-                      {/* Category chip */}
-                      <td className="hidden px-5 py-3.5 align-top lg:table-cell">
-                        <CategoryChip category={m.category} />
-                      </td>
+                    {/* Category chip */}
+                    <Td top className="hidden lg:table-cell">
+                      <CategoryChip category={m.category} />
+                    </Td>
 
-                      {/* Importance stars — click a star to pin (locks against the curator).
+                    {/* Importance stars — click a star to pin (locks against the curator).
                           Always visible: this is the actionable control, not metadata. */}
-                      <td className="px-5 py-3.5 align-top">
-                        <ImportanceStars
-                          id={m.id}
-                          importance={m.importance}
-                          locked={m.importance_locked}
-                        />
-                      </td>
+                    <Td top>
+                      <ImportanceStars
+                        id={m.id}
+                        importance={m.importance}
+                        locked={m.importance_locked}
+                      />
+                    </Td>
 
-                      {/* Last accessed */}
-                      <td className="hidden px-5 py-3.5 align-top xl:table-cell">
-                        <span className="inline-flex items-center gap-1.5 text-mono-12 text-ink-3">
-                          {formatAccessed(m.last_accessed_at)}
-                          {recent && <LiveDot variant="ok" size="sm" />}
-                        </span>
-                      </td>
+                    {/* Last accessed */}
+                    <Td top className="hidden xl:table-cell">
+                      <span className="inline-flex items-center gap-1.5 text-mono-12 text-ink-3">
+                        {relativeTime(m.last_accessed_at)}
+                        {recent && <LiveDot variant="ok" size="sm" />}
+                      </span>
+                    </Td>
 
-                      {/* Actions */}
-                      <td className="px-5 py-3.5 text-right align-top">
-                        <RowActions id={m.id} archived={m.archived ?? false} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                    {/* Actions */}
+                    <Td top align="right">
+                      <RowActions id={m.id} archived={m.archived ?? false} />
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </tbody>
+          </Table>
         )}
       </div>
 

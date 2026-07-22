@@ -138,6 +138,18 @@ const registry = new Map<string, RegistryEntry>();
 
 const STATUS_BROADCAST_JID = 'status@broadcast';
 
+// Auto-reconnect backoff (connection === 'close', non-loggedOut) — same
+// 1s-doubling-to-30s-max pattern as the Telegram poller
+// (apps/runner/src/telegram/poller.ts, BACKOFF_INITIAL_MS/BACKOFF_MAX_MS).
+// Without this, a corrupted/unreachable session reconnects in a hot loop:
+// CPU/disk churn plus hammering WhatsApp's servers (ban risk).
+const RECONNECT_INITIAL_MS = 1000;
+const RECONNECT_MAX_MS = 30_000;
+
+function reconnectBackoffMs(attempts: number): number {
+  return Math.min(RECONNECT_INITIAL_MS * 2 ** (attempts - 1), RECONNECT_MAX_MS);
+}
+
 /** Extract renderable content from a proto message, or null for anything
  *  this phase doesn't surface (protocol messages, reactions, receipts, …).
  *  TEXT ONLY: a media message is flagged via `mediaPlaceholder` rather than
@@ -239,10 +251,28 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
     sock: undefined,
   };
   let closed = false;
+  // Consecutive non-loggedOut close count, driving reconnectBackoffMs — reset
+  // to 0 the moment the socket reaches 'open' (a successful connection means
+  // whatever was failing before no longer applies).
+  let reconnectAttempts = 0;
+  // The pending auto-reconnect timer, if any. MUST be cancelled on close() —
+  // a timer left running past a deliberate close() would call connect() on a
+  // handle nothing references anymore.
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   function setStatus(next: WhatsAppStatus): void {
     state.status = next;
     events.emit('status', next);
+  }
+
+  /** Wraps a `connect()` call so a rejection (e.g. a corrupted sessionDir
+   *  failing `useMultiFileAuthState`) can never become an unhandled promise
+   *  rejection — which would otherwise take down the whole Node process. */
+  function connectSafely(): void {
+    void connect().catch((err) => {
+      setStatus('closed');
+      console.error('[whatsapp] connect failed', err);
+    });
   }
 
   async function connect(): Promise<void> {
@@ -266,13 +296,24 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
       }
       if (connection === 'open') {
         state.identity = toIdentity(sock.user);
+        reconnectAttempts = 0;
         setStatus('open');
       }
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
         const loggedOut = statusCode === DisconnectReason.loggedOut;
         setStatus(loggedOut ? 'logged_out' : 'closed');
-        if (!loggedOut && !closed) void connect(); // auto-reconnect, reusing the same on-disk auth state
+        if (!loggedOut && !closed) {
+          // Auto-reconnect, reusing the same on-disk auth state — delayed by
+          // an exponential backoff so a persistently-failing connection
+          // doesn't hot-loop (see RECONNECT_INITIAL_MS/RECONNECT_MAX_MS above).
+          reconnectAttempts += 1;
+          const delayMs = reconnectBackoffMs(reconnectAttempts);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connectSafely();
+          }, delayMs);
+        }
       }
     });
 
@@ -290,7 +331,7 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
     );
   }
 
-  void connect();
+  connectSafely();
 
   const handle: WhatsAppHandle = {
     bindingKey,
@@ -317,6 +358,10 @@ export function ensureWhatsAppSocket(bindingKey: string, opts: WhatsAppSocketOpt
     handle,
     close: () => {
       closed = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       state.sock?.end(undefined);
     },
   });

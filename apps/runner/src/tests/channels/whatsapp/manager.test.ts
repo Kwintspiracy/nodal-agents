@@ -254,6 +254,63 @@ describe('startWhatsAppManager — spawn/despawn/rotation', () => {
     expect(ensureSocket).not.toHaveBeenCalled();
     await manager.stop();
   });
+
+  it('one binding whose spawn throws does not abort the refresh for other bindings', async () => {
+    const [agent2] = await db
+      .insert(agents)
+      .values({
+        entityId: seed.entityId,
+        name: 'Second WA Agent',
+        slug: `wa-agent-2-${Date.now()}`,
+        personality: 'test',
+      })
+      .returning();
+
+    await db.insert(channelBindings).values([
+      {
+        entityId: seed.entityId,
+        agentId: seed.agentId,
+        channel: 'whatsapp',
+        credentials: JSON.stringify({ sessionDir: '/sessions/throws' }),
+        enabled: true,
+      },
+      {
+        entityId: seed.entityId,
+        agentId: agent2!.id,
+        channel: 'whatsapp',
+        credentials: JSON.stringify({ sessionDir: '/sessions/ok' }),
+        enabled: true,
+      },
+    ]);
+
+    const ensureSocket = vi.fn((sessionDir: string) => {
+      if (sessionDir === '/sessions/throws') throw new Error('boom: corrupted binding');
+      return makeFakeHandle(sessionDir).handle;
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const manager = startWhatsAppManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999,
+      ensureSocket,
+    });
+    await manager.refreshNow();
+
+    // The failing binding never got an active socket; the healthy one did.
+    expect(manager.activeCount()).toBe(1);
+    expect(ensureSocket).toHaveBeenCalledWith('/sessions/ok', { sessionDir: '/sessions/ok' });
+    expect(
+      consoleErrorSpy.mock.calls.some(
+        ([msg]) =>
+          typeof msg === 'string' &&
+          msg.includes('[whatsapp-manager') &&
+          msg.includes('boom: corrupted binding'),
+      ),
+    ).toBe(true);
+
+    consoleErrorSpy.mockRestore();
+    await manager.stop();
+  });
 });
 
 describe('startWhatsAppManager — pairing state lifecycle', () => {
@@ -410,6 +467,40 @@ describe('startWhatsAppManager — ensurePairingStarted', () => {
 
     const result = await manager.ensurePairingStarted(seed.agentId);
     expect(result).toBe('no_binding');
+
+    await manager.stop();
+  });
+
+  it('does not double-spawn (single ensureSocket call, single listener set) when a refresh() tick races ensurePairingStarted for the same agent', async () => {
+    await db.insert(channelBindings).values({
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+      channel: 'whatsapp',
+      credentials: JSON.stringify({ sessionDir: '/sessions/race-1' }),
+      enabled: true,
+    });
+
+    const { ensureSocket, bySessionDir } = makeFakeFactory();
+    const manager = startWhatsAppManager(makeDeps(db), {
+      env: testEnv,
+      refreshIntervalMs: 999_999, // no timer-driven tick — only the two racing calls below
+      ensureSocket,
+    });
+
+    // ensurePairingStarted awaits getChannelBinding, then an agents SELECT,
+    // re-checking `active.has` after each — a concurrent refreshNow() tick
+    // can spawn the same agent's socket while those awaits are in flight.
+    // Without the re-checks this races into TWO spawnOne calls for one
+    // binding: two listener sets on the SAME shared Baileys handle, so every
+    // inbound message would fire two jobs.
+    await Promise.all([manager.ensurePairingStarted(seed.agentId), manager.refreshNow()]);
+
+    expect(manager.activeCount()).toBe(1);
+    expect(ensureSocket).toHaveBeenCalledTimes(1);
+    const fake = bySessionDir.get('/sessions/race-1')!;
+    expect(fake.handle.events.listenerCount('message')).toBe(1);
+    expect(fake.handle.events.listenerCount('qr')).toBe(1);
+    expect(fake.handle.events.listenerCount('status')).toBe(1);
 
     await manager.stop();
   });

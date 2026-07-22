@@ -678,6 +678,57 @@ describe('UNIQUE constraints', () => {
     expect(rows.map((r) => r.id).sort()).toEqual([connA!.id, connB!.id].sort());
   });
 
+  it('connectors: rejects an exact duplicate (entity_id, slug, name) — migration 0072, 2026-07-22 incident', async () => {
+    // A stuttering agent call (create_connector fired 8x with no existence
+    // check) created 8 identical rows: same entity, same slug ("tavily"), same
+    // name ("Tavily Search"). Migration 0072 closes exactly that shape.
+    const slug = `dup-exact-slug-${Date.now()}`;
+    const name = 'Tavily Search';
+    await db.insert(schema.connectors).values({
+      entityId: seed.entityId,
+      name,
+      slug,
+      authType: 'api_key',
+    });
+    await expect(
+      db.insert(schema.connectors).values({
+        entityId: seed.entityId,
+        name, // identical name
+        slug, // identical slug
+        authType: 'api_key',
+      }),
+    ).rejects.toThrow();
+
+    // Confirm only the original row exists — the duplicate insert was actually
+    // rejected, not silently coerced/ignored.
+    const rows = await db.select().from(schema.connectors).where(eq(schema.connectors.slug, slug));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe(name);
+  });
+
+  it('connectors: allows the SAME slug with a DIFFERENT name in the same entity — migration 0072 preserves 0016 multi-instance', async () => {
+    // 0072 keys on (entity_id, slug, name), not (entity_id, slug) alone — a
+    // second Gmail-type connector with a different display name must still be
+    // insertable, exactly the multi-instance design 0016 protects.
+    const slug = `dup-slug-diff-name-${Date.now()}`;
+    const [connA] = await db
+      .insert(schema.connectors)
+      .values({ entityId: seed.entityId, name: 'Gmail — Work', slug, authType: 'oauth2' })
+      .returning();
+    const [connB] = await db
+      .insert(schema.connectors)
+      .values({ entityId: seed.entityId, name: 'Gmail — Personal', slug, authType: 'oauth2' })
+      .returning();
+
+    expect(connA).toBeDefined();
+    expect(connB).toBeDefined();
+    expect(connA?.id).not.toBe(connB?.id);
+
+    const rows = await db.select().from(schema.connectors).where(eq(schema.connectors.slug, slug));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.name).sort()).toEqual(['Gmail — Personal', 'Gmail — Work']);
+  });
+
   it('mcp_servers: allows multiple instances with the same slug in the same entity — migration 0017', async () => {
     // Multi-instance brique (migration 0017) dropped the old (entity_id, slug)
     // UNIQUE index so an entity can register several MCP servers of the same
@@ -832,46 +883,6 @@ describe('UNIQUE constraints', () => {
         agentId: null,
         toolName,
         action: 'require_approval',
-      }),
-    ).rejects.toThrow();
-  });
-
-  it('agent_plugins: rejects duplicate (entity_id, slug) — R5, audit #2 follow-up', async () => {
-    const slug = `unique-plugin-${Date.now()}`;
-    await db.insert(schema.agentPlugins).values({
-      entityId: seed.entityId,
-      name: 'Plugin A',
-      slug,
-      pluginType: 'webhook',
-      hook: 'pre_task',
-    });
-    await expect(
-      db.insert(schema.agentPlugins).values({
-        entityId: seed.entityId,
-        name: 'Plugin B',
-        slug,
-        pluginType: 'webhook',
-        hook: 'pre_task',
-      }),
-    ).rejects.toThrow();
-  });
-
-  it('agent_plugins: rejects duplicate (NULL entity_id, slug) — NULLS NOT DISTINCT, R5', async () => {
-    const slug = `unique-plugin-wide-${Date.now()}`;
-    await db.insert(schema.agentPlugins).values({
-      entityId: null,
-      name: 'Plugin A',
-      slug,
-      pluginType: 'webhook',
-      hook: 'pre_task',
-    });
-    await expect(
-      db.insert(schema.agentPlugins).values({
-        entityId: null,
-        name: 'Plugin B',
-        slug,
-        pluginType: 'webhook',
-        hook: 'pre_task',
       }),
     ).rejects.toThrow();
   });

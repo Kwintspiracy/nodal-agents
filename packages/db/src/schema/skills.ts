@@ -44,7 +44,36 @@ export const agentSkills = pgTable(
     // user as a warning, since the runtime does NOT execute skill scripts.
     isCommunity: boolean('is_community').notNull().default(false),
     source: text('source'),
-    installedScripts: jsonb('installed_scripts').$type<Array<{ path: string; language: string }>>(),
+    // `sha256` is the ORIGIN hash of each script at install/update time — the
+    // baseline for the three-way update check (computeScriptsState). Optional:
+    // rows installed before the three-way check have no hashes and fall back
+    // to the historical local-vs-upstream compare until their next apply.
+    installedScripts:
+      jsonb('installed_scripts').$type<
+        Array<{ path: string; language: string; sha256?: string }>
+      >(),
+    // ─── Community skill update tracking (migration 0069) ───────────────────
+    // updateAvailable: set by checkSkillUpdate (skills/check-updates.ts) when
+    //   the upstream source diverges from what's installed (content and/or
+    //   scripts). Surfaced in the dashboard so the owner can review + apply.
+    // updateDetail: what the last check found — null before the first check.
+    // lastUpdateCheckAt: throttle timestamp for the cron phase
+    //   (run-skill-update-check.ts) — NULL means never checked.
+    updateAvailable: boolean('update_available').notNull().default(false),
+    updateDetail: jsonb('update_detail').$type<{
+      contentChanged: boolean;
+      scriptsChanged: boolean;
+      /**
+       * Three-way script state from computeScriptsState — 'conflict' means
+       * upstream moved AND the local files were patched (applying overwrites
+       * the patches); 'local-only' means only the local files were patched
+       * (no badge — nothing new upstream). Absent on rows checked before the
+       * three-way checker shipped.
+       */
+      scriptsState?: 'clean' | 'update' | 'conflict' | 'local-only';
+      checkedAt: string;
+    }>(),
+    lastUpdateCheckAt: timestamp('last_update_check_at', { withTimezone: true }),
     // ─── Learning-loop columns (Phase A) ─────────────────────────────────────
     // createdBy: provenance — 'user' (default) | 'system' | 'agent'
     // state: lifecycle — 'active' (default) | 'stale' | 'archived'
@@ -146,7 +175,6 @@ export const agentSkillAssignments = pgTable(
     skillId: uuid('skill_id')
       .notNull()
       .references(() => agentSkills.id, { onDelete: 'cascade' }),
-    approvalOverrides: jsonb('approval_overrides').default(sql`'{}'::jsonb`),
     useCustomInstructions: boolean('use_custom_instructions').notNull().default(false),
     enabledOperations: text('enabled_operations').array(),
     // Per-skill × per-agent authorization to EXECUTE the skill's bundled scripts

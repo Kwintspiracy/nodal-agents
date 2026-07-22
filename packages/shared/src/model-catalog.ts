@@ -10,6 +10,45 @@
 // runner sends 'auto' instead. The runtime tool_choice floor also relaxes any
 // model that rejects the forced value at call time, as a generic backstop.
 
+/**
+ * Reasoning-effort levels an agent can request. 'off' disables thinking where
+ * the model allows it; a null/absent agent setting means Auto (the provider's
+ * current default behavior, unchanged from before this feature).
+ */
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'max';
+
+/** UI/validation order of the full scale (Auto is the absence of a value). */
+export const REASONING_EFFORT_LEVELS: readonly ReasoningEffort[] = [
+  'off',
+  'low',
+  'medium',
+  'high',
+  'max',
+];
+
+/** A level that carries an intensity (everything except 'off'). */
+export type ReasoningLevel = Exclude<ReasoningEffort, 'off'>;
+
+/**
+ * HOW a model's reasoning intensity is controlled — declared per catalog entry
+ * so the UI only offers levels the model really has and each provider builder
+ * translates deterministically (no silent clamping at runtime):
+ * - 'effort':          named level sent as-is (OpenRouter `reasoning.effort`,
+ *                      OpenAI `reasoning_effort`, Kimi K3 top-level field).
+ * - 'adaptive-effort': Anthropic ≥4.6 `output_config.effort`.
+ * - 'budget':          level mapped to a thinking token budget (`budgets`).
+ * - 'onoff':           thinking can only be enabled/disabled — no intensity.
+ */
+export interface ReasoningControl {
+  kind: 'effort' | 'adaptive-effort' | 'budget' | 'onoff';
+  /** For 'effort'/'adaptive-effort': levels the model actually accepts (ordered low→high). */
+  levels?: ReasoningLevel[];
+  /** For 'budget': thinking-token budget per level. */
+  budgets?: Partial<Record<ReasoningLevel, number>>;
+  /** Reasoning cannot be disabled for this model — 'off' is not offered. */
+  mandatory?: boolean;
+}
+
 export interface ModelCapabilities {
   tools: boolean;
   forcedToolChoice: boolean;
@@ -32,6 +71,14 @@ export interface ModelCapabilities {
    * message it replays. Omit/false for non-reasoning models.
    */
   reasoning?: boolean;
+  /**
+   * How the model's reasoning INTENSITY is controlled (see ReasoningControl).
+   * Present ⇒ the agent's reasoning-effort setting applies to this model and
+   * the UI shows the declared levels. Can be present with `reasoning` unset
+   * (OpenRouter Claude routes: effort is controllable on demand, but we do NOT
+   * flip the always-on reasoning default the `reasoning` flag implies).
+   */
+  reasoningControl?: ReasoningControl;
 }
 
 /**
@@ -104,7 +151,13 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // in the request (the deepseek.ts provider sets this automatically when
       // reasoning:true). Also requires reasoning_content to be echoed back on
       // assistant messages with tool_calls (the deepseek fetch shim handles this).
-      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        // DeepSeek's native API has no intensity knob — thinking is on or off.
+        reasoningControl: { kind: 'onoff' },
+      },
       contextWindow: 128_000,
       pricing: { inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19 },
     },
@@ -130,7 +183,17 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       modelId: 'MiniMax-M3',
       label: 'MiniMax M3',
       // Newest flagship — a reasoning model (adaptive `thinking`), 1M context.
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        // minimax.ts injects thinking.budget_tokens (today fixed at 8000 =
+        // this scale's 'medium'); ladder mirrors Hermes' Anthropic budgets.
+        reasoningControl: {
+          kind: 'budget',
+          budgets: { low: 4000, medium: 8000, high: 16_000, max: 32_000 },
+        },
+      },
       contextWindow: 1_048_576,
     },
     {
@@ -164,47 +227,112 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'kimi-k2.6',
       label: 'Kimi K2.6',
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      // K2-line: mandatory thinking mode (`thinking:{type:'enabled'}`), no
+      // intensity knob, cannot be disabled.
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: { kind: 'onoff', mandatory: true },
+      },
       contextWindow: 262_144,
     },
     {
       modelId: 'kimi-k2.7-code',
       label: 'Kimi K2.7 Code',
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: { kind: 'onoff', mandatory: true },
+      },
       contextWindow: 262_144,
     },
+    {
+      modelId: 'kimi-k3',
+      label: 'Kimi K3',
+      // Released 2026-07-16. Verified against platform.kimi.ai/docs/pricing/
+      // chat-k3: 1M context, multimodal, always reasons server-side with a
+      // top-level `reasoning_effort` control (currently `max` only) — NOT the
+      // K2-line `thinking` field, so moonshot.ts deliberately does not inject
+      // `thinking` for it (K2-line gate). reasoning:true is still required so
+      // the runtime round-trips reasoning content.
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        // K3 always reasons server-side; its only accepted level today is 'max'.
+        reasoningControl: { kind: 'effort', levels: ['max'], mandatory: true },
+      },
+      contextWindow: 1_048_576,
+    },
   ],
+  // Anthropic — every current Claude supports extended thinking. Auto (no
+  // agent setting) keeps today's behavior: NO thinking injected. Models ≥4.6
+  // take the adaptive `output_config.effort`; Haiku 4.5 (<4.6) takes a
+  // `thinking.budget_tokens` ladder (mirrors Hermes' anthropic_adapter table).
   anthropic: [
     {
       modelId: 'claude-opus-4-8',
       label: 'Claude Opus 4.8',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 200_000,
     },
     {
       modelId: 'claude-sonnet-4-6',
       label: 'Claude Sonnet 4.6',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 200_000,
     },
     {
       modelId: 'claude-haiku-4-5-20251001',
       label: 'Claude Haiku 4.5',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'budget',
+          budgets: { low: 4000, medium: 8000, high: 16_000, max: 32_000 },
+        },
+      },
       contextWindow: 200_000,
     },
   ],
+  // OpenAI — GPT-5 line takes `reasoning_effort`. Auto = today's behavior
+  // (nothing sent, provider default). 'off' is not offered: the line always
+  // reasons (minimal ≠ none), hence mandatory.
   openai: [
     {
       modelId: 'gpt-5',
       label: 'GPT-5',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
+      },
       contextWindow: 400_000,
     },
     {
       modelId: 'gpt-5-mini',
       label: 'GPT-5 mini',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
+      },
       contextWindow: 400_000,
     },
   ],
@@ -221,17 +349,30 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // fetch shim injects generationConfig.thinkingConfig for these two entries
   // (reasoning:true gates it) so the API returns the chain-of-thought the
   // execute.ts round-trip needs across tool-call turns.
+  // Reasoning control: Gemini 3.x takes `thinkingConfig.thinking_level`
+  // (low/medium/high per ai.google.dev — MEDIUM available on 3.1 Pro and
+  // 3 Flash+); thinking cannot be fully disabled on this line → mandatory.
   google: [
     {
       modelId: 'gemini-3.5-flash',
       label: 'Gemini 3.5 Flash',
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
+      },
       contextWindow: 1_048_576,
     },
     {
       modelId: 'gemini-3.1-pro-preview',
       label: 'Gemini 3.1 Pro (preview)',
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high'], mandatory: true },
+      },
       contextWindow: 1_048_576,
     },
   ],
@@ -257,41 +398,68 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // MiniMax M3 does not (some of its OpenRouter endpoints reject the forced
   // value), so it runs on 'auto' + the runtime floor.
   openrouter: [
-    // Anthropic
+    // Anthropic — reasoningControl WITHOUT the `reasoning` flag, on purpose:
+    // the flag would flip openrouter.ts's always-on default injection; here
+    // thinking is engaged only when the agent explicitly sets an effort.
+    // OpenRouter's unified `reasoning.effort` reaches Claude (max → xhigh).
     {
       modelId: 'anthropic/claude-haiku-4.5',
       label: 'Claude Haiku 4.5',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 200_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.7',
       label: 'Claude Opus 4.7',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.7-fast',
       label: 'Claude Opus 4.7 (fast)',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.8',
       label: 'Claude Opus 4.8',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-opus-4.8-fast',
       label: 'Claude Opus 4.8 (fast)',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_000_000,
     },
     {
       modelId: 'anthropic/claude-sonnet-4.6',
       label: 'Claude Sonnet 4.6',
-      capabilities: { tools: true, forcedToolChoice: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_000_000,
     },
     // DeepSeek
@@ -308,14 +476,28 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // Flagging reasoning makes the OpenRouter provider enable reasoning + round-trip
       // its reasoning_details across tool calls — without it the model misbehaves
       // (gathers then emits no answer). Matches how Hermes drives DeepSeek.
-      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
+        // a requested effort to the nearest level the upstream really supports.
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
     },
     {
       modelId: 'deepseek/deepseek-v4-pro',
       label: 'DeepSeek V4 Pro',
-      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
+        // a requested effort to the nearest level the upstream really supports.
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_048_576,
       providerOrder: ['deepseek'],
     },
@@ -330,19 +512,40 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     {
       modelId: 'google/gemini-3.1-flash-lite-preview',
       label: 'Gemini 3.1 Flash Lite (preview)',
-      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
+        // a requested effort to the nearest level the upstream really supports.
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_048_576,
     },
     {
       modelId: 'google/gemini-3.1-pro-preview',
       label: 'Gemini 3.1 Pro (preview)',
-      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
+        // a requested effort to the nearest level the upstream really supports.
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_048_576,
     },
     {
       modelId: 'google/gemini-3.5-flash',
       label: 'Gemini 3.5 Flash',
-      capabilities: { tools: true, forcedToolChoice: true, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        // OpenRouter unified `reasoning.effort` (max → xhigh); OpenRouter maps
+        // a requested effort to the nearest level the upstream really supports.
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_048_576,
     },
     {
@@ -359,7 +562,12 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // tool_choice ('required') → we send 'auto' (forcedToolChoice:false).
       // reasoning:true makes the provider return reasoning_details so the runner
       // can round-trip them across tool-call turns.
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
       contextWindow: 1_048_576,
     },
     // Z.ai (GLM)
@@ -370,7 +578,18 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // use. reasoning:true → provider returns reasoning_details for round-trip.
       // forcedToolChoice:false: send 'auto' (don't risk a rejected 'required' on
       // a reasoning model; workers are 'auto' after turn 1 anyway).
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        // GLM 5.2 always reasons; upstream accepts high/xhigh — OpenRouter
+        // normalizes lower requests up to its floor.
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
       contextWindow: 1_048_576,
     },
     // Moonshot (Kimi)
@@ -384,7 +603,16 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // this file's other OpenRouter entries carry one (OpenRouter self-reports
       // real cost via providerMetadata.openrouter.usage.cost — see
       // estimateModelCostUsd's doc comment).
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
       contextWindow: 262_144,
     },
     {
@@ -394,8 +622,86 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       // turns (like DeepSeek) → reasoning:true is required so the provider
       // round-trips reasoning_details. forcedToolChoice:false for the same reason
       // as the other reasoning models.
-      capabilities: { tools: true, forcedToolChoice: false, reasoning: true },
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
       contextWindow: 262_144,
+    },
+    // xAI — grok-4.5 verified via OpenRouter /api/v1/models (2026-07-20):
+    // 500K context, text+image, tools + tool_choice + reasoning params.
+    // Reasoning control cross-checked against Hermes (model_metadata.py,
+    // verified live by them 2026-07-08): accepts effort low/medium/high,
+    // REJECTS 'none' → mandatory (no Off), no xhigh → no 'max' level.
+    {
+      modelId: 'x-ai/grok-4.5',
+      label: 'Grok 4.5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 500_000,
+    },
+    // Qwen — both verified via OpenRouter /api/v1/models (2026-07-20): 1M
+    // context, tools + tool_choice + reasoning params (no native
+    // reasoning_effort — OpenRouter's unified param drives the hybrid
+    // thinking mode). Same pattern as the Claude routes above:
+    // reasoningControl WITHOUT the always-on `reasoning` flag — Auto keeps
+    // the provider's default behavior, thinking engages only on explicit
+    // effort. Hermes catalogs both as plain OpenRouter models (no adapter).
+    // qwen3.7-max is TEXT-ONLY (no image input); qwen3.7-plus is multimodal.
+    {
+      modelId: 'qwen/qwen3.7-max',
+      label: 'Qwen 3.7 Max',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+    },
+    {
+      modelId: 'qwen/qwen3.7-plus',
+      label: 'Qwen 3.7 Plus',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+    },
+    {
+      modelId: 'moonshotai/kimi-k3',
+      label: 'Kimi K3',
+      // Released 2026-07-16, verified via OpenRouter /api/v1/models: 1,048,576
+      // context, text+image input, supports tools/tool_choice/reasoning params.
+      // Above the K2.7 native-tool_calls cutoff — detectAgenticFamily
+      // (openrouter.ts) only matches `moonshotai/kimi-k2*`, so K3 correctly
+      // falls through to native tool_calls with no textual-markup middleware
+      // (the kimi-* tool-schema sanitizer still applies).
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 1_048_576,
     },
   ],
 };
@@ -423,6 +729,11 @@ export const VISION_MODEL_IDS = new Set<string>([
   'minimax/minimax-m3',
   'moonshotai/kimi-k2.6',
   'moonshotai/kimi-k2.7-code',
+  'moonshotai/kimi-k3',
+  // Verified via OpenRouter /api/v1/models input_modalities (2026-07-20).
+  // qwen/qwen3.7-max is deliberately absent — text-only per the same source.
+  'x-ai/grok-4.5',
+  'qwen/qwen3.7-plus',
   // Native-provider forms
   'claude-opus-4-8',
   'claude-sonnet-4-6',
@@ -435,6 +746,7 @@ export const VISION_MODEL_IDS = new Set<string>([
   'MiniMax-M3',
   'kimi-k2.6',
   'kimi-k2.7-code',
+  'kimi-k3',
 ]);
 
 // Stamp the fetched vision capability onto every catalogued entry so the picker

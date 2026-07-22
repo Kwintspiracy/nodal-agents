@@ -2,26 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { Bell } from '@phosphor-icons/react';
+import { Bell, ArrowClockwise } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { resolveApprovalAction } from '@/lib/actions';
 import IconButton from '@/components/ui/IconButton';
 import RowActionButton from '@/components/ui/RowActionButton';
 import { useApprovals, type PendingApproval } from './ApprovalsProvider';
+import { useSkillUpdates, type SkillUpdateNotice } from './SkillUpdatesProvider';
+import { relativeTime } from '@/lib/format-time';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function relativeTime(date: Date | string | null): string {
-  if (!date) return '—';
-  const ms = Date.now() - new Date(date).getTime();
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
 
 /** Produce a short readable snippet from toolInput. */
 function inputSnippet(toolInput: Record<string, unknown> | null | undefined): string {
@@ -80,10 +70,12 @@ function ApproveButton({ item, onApproved }: { item: PendingApproval; onApproved
 
 function ApprovalsDropdown({
   items,
+  updates,
   onClose,
   onApproved,
 }: {
   items: PendingApproval[];
+  updates: SkillUpdateNotice[];
   onClose: () => void;
   onApproved: () => void;
 }) {
@@ -156,6 +148,31 @@ function ApprovalsDropdown({
         </ul>
       )}
 
+      {/* Updates section — only rendered when there's at least one. */}
+      {updates.length > 0 && (
+        <>
+          <div className="border-t border-b border-rule-2 px-4 py-3">
+            <p className="text-legacy-14 font-semibold text-ink">Updates ({updates.length})</p>
+          </div>
+          <ul className="max-h-[220px] divide-y divide-rule-2 overflow-y-auto">
+            {updates.map((u) => (
+              <li key={u.slug}>
+                <Link
+                  href="/skills"
+                  onClick={onClose}
+                  className="flex items-center gap-2.5 px-4 py-3 transition-colors hover:bg-hover"
+                >
+                  <ArrowClockwise size={14} className="shrink-0 text-warn" />
+                  <span className="min-w-0 flex-1 truncate text-medium-13 text-ink">
+                    {u.name} has an update
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
       {/* Footer */}
       <div className="border-t border-rule-2 px-4 py-2.5">
         <Link
@@ -174,10 +191,11 @@ function ApprovalsDropdown({
 
 export default function NotificationsBell() {
   const { pending, refresh } = useApprovals();
+  const { updates } = useSkillUpdates();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const count = pending.length;
+  const count = pending.length + updates.length;
 
   const close = useCallback(() => setOpen(false), []);
   const toggle = useCallback(() => setOpen((v) => !v), []);
@@ -203,7 +221,14 @@ export default function NotificationsBell() {
         <Bell size={15} />
       </IconButton>
 
-      {open && <ApprovalsDropdown items={pending} onClose={close} onApproved={handleApproved} />}
+      {open && (
+        <ApprovalsDropdown
+          items={pending}
+          updates={updates}
+          onClose={close}
+          onApproved={handleApproved}
+        />
+      )}
     </div>
   );
 }

@@ -30,7 +30,7 @@ export default function CopyablePath({
   const chip = (
     <span
       title={value}
-      className="block truncate rounded-md bg-hover px-2 py-1 font-mono text-legacy-12-5 text-ink-2"
+      className="block truncate rounded-md bg-hover px-2 py-1 text-mono-13 text-ink-2"
     >
       {display}
     </span>

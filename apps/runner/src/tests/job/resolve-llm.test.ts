@@ -4,7 +4,7 @@
 // capability is read from the model CATALOG (provider, agent.model), not a
 // stored column. Failover BEHAVIOUR is unit-tested in failover.test.ts.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { _setMasterKeyForTests, encrypt } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
@@ -171,5 +171,122 @@ describe('resolveAgentLlmClient', () => {
     });
     expect(minimax.ok).toBe(true);
     if (minimax.ok) expect(minimax.primarySupportsForcedToolChoice).toBe(false);
+  });
+});
+
+// reasoning-effort resolution — 0.8's Auto/Off/low→max scale. `client.config`
+// is what the provider builder actually reads (packages/llm), so asserting on
+// it here proves the REAL value resolve-llm hands downstream, not just that
+// resolution "succeeded".
+describe('resolveAgentLlmClient — reasoning effort', () => {
+  it('resolves a valid agent-level reasoning_effort onto the primary config', async () => {
+    const res = await resolveAgentLlmClient(db, {
+      llmKeyId: seed.llmKeyId,
+      fallbackChain: [],
+      model: 'mock',
+      reasoningEffort: 'high',
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.client.config.reasoningEffort).toBe('high');
+  });
+
+  it.each([null, undefined, ''])(
+    'reasoning_effort %j resolves to Auto (undefined on the config)',
+    async (value) => {
+      const res = await resolveAgentLlmClient(db, {
+        llmKeyId: seed.llmKeyId,
+        fallbackChain: [],
+        model: 'mock',
+        reasoningEffort: value,
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.client.config.reasoningEffort).toBeUndefined();
+    },
+  );
+
+  it('an invalid agent-level reasoning_effort is dropped to Auto and warns loudly', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await resolveAgentLlmClient(db, {
+        llmKeyId: seed.llmKeyId,
+        fallbackChain: [],
+        model: 'mock',
+        reasoningEffort: 'ultra', // not on REASONING_EFFORT_LEVELS
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.client.config.reasoningEffort).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'ignoring invalid reasoning_effort "ultra" (agents.reasoning_effort)',
+        ),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("a fallback link's own reasoning_effort wins over the agent's inherited effort", async () => {
+    const deadPrimary = await insertKey({ provider: 'openrouter', isActive: false });
+    const liveFallback = await insertKey({ provider: 'openrouter', isActive: true });
+    const res = await resolveAgentLlmClient(db, {
+      llmKeyId: deadPrimary,
+      fallbackChain: [
+        { keyId: liveFallback, model: 'deepseek/deepseek-v4-pro', reasoningEffort: 'low' },
+      ],
+      model: 'anthropic/claude-opus-4.8',
+      reasoningEffort: 'max', // must NOT win: the link sets its own
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // Dead primary dropped ⇒ configs.length === 1 ⇒ plain client, so
+      // `client.config` IS the fallback's own resolved config (no failover
+      // wrapper masking it).
+      expect(res.chainLength).toBe(1);
+      expect(res.client.config.reasoningEffort).toBe('low');
+    }
+  });
+
+  it("a fallback link without its own reasoning_effort inherits the agent's effort", async () => {
+    const deadPrimary = await insertKey({ provider: 'openrouter', isActive: false });
+    const liveFallback = await insertKey({ provider: 'openrouter', isActive: true });
+    const res = await resolveAgentLlmClient(db, {
+      llmKeyId: deadPrimary,
+      fallbackChain: [{ keyId: liveFallback, model: 'deepseek/deepseek-v4-pro' }],
+      model: 'anthropic/claude-opus-4.8',
+      reasoningEffort: 'max',
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.chainLength).toBe(1);
+      expect(res.client.config.reasoningEffort).toBe('max');
+    }
+  });
+
+  it("a fallback link's own INVALID reasoning_effort is dropped, falling back to the agent's inherited effort", async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const deadPrimary = await insertKey({ provider: 'openrouter', isActive: false });
+      const liveFallback = await insertKey({ provider: 'openrouter', isActive: true });
+      const res = await resolveAgentLlmClient(db, {
+        llmKeyId: deadPrimary,
+        fallbackChain: [
+          { keyId: liveFallback, model: 'deepseek/deepseek-v4-pro', reasoningEffort: 'bogus' },
+        ],
+        model: 'anthropic/claude-opus-4.8',
+        reasoningEffort: 'medium',
+      });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.chainLength).toBe(1);
+        expect(res.client.config.reasoningEffort).toBe('medium');
+      }
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `ignoring invalid reasoning_effort "bogus" (fallback ${liveFallback})`,
+        ),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

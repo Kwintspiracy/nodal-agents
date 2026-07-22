@@ -247,7 +247,23 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     }
 
     const errorMsg = err instanceof Error ? err.message : String(err);
-    const result: ToolExecutionResult = { outcome: 'error', error: errorMsg };
+    // Send-timeout ambiguity (DeliveryError.mayHaveDelivered): the message may
+    // have reached the user even though the API answered late. Keep outcome
+    // 'error' (nothing is confirmed) but flag it and spell out the one rule
+    // that matters to the LLM: do NOT resend.
+    const mayHaveDelivered =
+      err instanceof Error && (err as { mayHaveDelivered?: boolean }).mayHaveDelivered === true;
+    const result: ToolExecutionResult = mayHaveDelivered
+      ? {
+          outcome: 'error',
+          error:
+            `${errorMsg} — AMBIGUOUS OUTCOME: the send request WAS transmitted and the ` +
+            'message may have been delivered. Do NOT call this tool again with the same ' +
+            'content (resending duplicates messages). Continue as if delivered and mention ' +
+            'the uncertainty in your final result.',
+          mayHaveDelivered: true,
+        }
+      : { outcome: 'error', error: errorMsg };
     await _writeToolCall(
       ctx,
       tool.name,

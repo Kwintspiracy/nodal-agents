@@ -143,6 +143,41 @@ describe('executeTool', () => {
     }
   });
 
+  it('propagates mayHaveDelivered on ambiguous send timeouts, with the no-resend guidance', async () => {
+    const timeoutTool = makeSimpleTool({
+      name: 'telegram_send_message',
+      execute: async () => {
+        const err = new Error('telegram_timeout: Telegram API did not respond within 30s');
+        (err as { mayHaveDelivered?: boolean }).mayHaveDelivered = true;
+        throw err;
+      },
+    });
+
+    const result = await executeTool(timeoutTool, { value: 'x' }, makeCtx(), makeOpts());
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      expect(result.mayHaveDelivered).toBe(true);
+      // The LLM-facing text must carry the one rule that prevents duplicates.
+      expect(result.error).toContain('Do NOT call this tool again');
+      expect(result.error).toContain('telegram_timeout');
+    }
+  });
+
+  it('does NOT set mayHaveDelivered for ordinary errors', async () => {
+    const plainFailTool = makeSimpleTool({
+      execute: async () => {
+        throw new Error('ECONNRESET');
+      },
+    });
+
+    const result = await executeTool(plainFailTool, { value: 'x' }, makeCtx(), makeOpts());
+    expect(result.outcome).toBe('error');
+    if (result.outcome === 'error') {
+      expect(result.mayHaveDelivered).toBeUndefined();
+      expect(result.error).toBe('ECONNRESET');
+    }
+  });
+
   // ── MessageStructureError re-throw (critical invariant) ─────────────────────
 
   it('re-throws MessageStructureError — never wraps it', async () => {

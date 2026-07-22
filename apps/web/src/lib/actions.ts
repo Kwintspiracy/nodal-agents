@@ -473,8 +473,11 @@ export type AgentRow = {
   llmKeyId: string | null;
   // Ordered LLM-key failover chain (Guard 2): (keyId, model) pairs tried after
   // the primary. Optional so list queries that don't select it stay valid; the
-  // edit loader (full row) populates it.
-  fallbackChain?: Array<{ keyId: string; model: string }> | null;
+  // edit loader (full row) populates it. reasoningEffort (per link, optional):
+  // that link's own effort; absent ⇒ inherits the agent's.
+  fallbackChain?: Array<{ keyId: string; model: string; reasoningEffort?: string }> | null;
+  // Reasoning effort for the primary model — null/absent = Auto.
+  reasoningEffort?: string | null;
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
@@ -872,10 +875,26 @@ const UpdateAgentSchema = z.object({
   // primary. Primary is stripped out in the action body to keep it disjoint.
   // An empty model ⇒ the runtime uses that provider's catalog default.
   fallbackChain: z
-    .array(z.object({ keyId: z.string().guid(), model: z.string().max(200) }))
+    .array(
+      z.object({
+        keyId: z.string().guid(),
+        model: z.string().max(200),
+        // Per-link reasoning effort — absent ⇒ inherit the agent's setting.
+        reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).optional(),
+      }),
+    )
     .default([]),
+  // Reasoning effort for the primary model. null = Auto (provider default).
+  // Level-vs-model coherence is enforced by the UI (options come from the
+  // catalog's reasoningControl); the runtime drops an invalid value loudly.
+  reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable().optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
+  // Per-sub-agent routing instructions (agent_assignments.instructions), keyed
+  // by sub-agent id. Rendered in the orchestrator's team block — this is where
+  // routing rules like "NSFW goes through PromptMaster first" live. Sent with
+  // every save so the delete+insert assignment rewrite below preserves them.
+  subAgentInstructions: z.record(z.string().guid(), z.string().max(500)).default({}),
   // Avatar — symmetric with create. Catalog validation in the action body.
   avatarUrl: z
     .string()
@@ -907,8 +926,19 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (!isValidAvatarUrl(parsed.data.avatarUrl)) {
       return fail('validation_failed', 'Unknown avatar — pick one from the gallery');
     }
-    const { id, name, personality, model, llmKeyId, fallbackChain, role, subAgentIds, avatarUrl } =
-      parsed.data;
+    const {
+      id,
+      name,
+      personality,
+      model,
+      llmKeyId,
+      fallbackChain,
+      role,
+      subAgentIds,
+      subAgentInstructions,
+      avatarUrl,
+      reasoningEffort,
+    } = parsed.data;
     const db = getDb();
 
     // Verify agent exists and belongs to this entity
@@ -970,6 +1000,10 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     // Failover chain — always rewritten from the form's full list. Strip the
     // primary so it can't appear twice, and drop any link that equals it.
     patch['fallbackChain'] = fallbackChain.filter((link) => link.keyId !== llmKeyId);
+    // Reasoning effort: undefined = don't touch (legacy clients); null = Auto.
+    if (reasoningEffort !== undefined) {
+      patch['reasoningEffort'] = reasoningEffort;
+    }
 
     // Whole mutation is one transaction (F-19, audit #2 + R4 follow-up): the
     // agent patch, the sub-agent rewrite, and the system_prompt invalidation
@@ -992,6 +1026,9 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
               orchestratorId: id,
               subAgentId: subId,
               entityId: session.entityId,
+              // Routing instructions survive the rewrite — an empty field
+              // stores NULL (no Instructions line in the team block).
+              instructions: (subAgentInstructions[subId] ?? '').trim() || null,
             })),
           )
           // F-18 (audit #2): the same sub-agent could be submitted twice in one
@@ -1027,6 +1064,8 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
 export type AgentEditRow = AgentRow & {
   orchestratorMode: string | null;
   subAgentIds: string[];
+  /** Routing instructions per sub-agent id (agent_assignments.instructions). */
+  subAgentInstructions: Record<string, string>;
 };
 
 // ─── Agent workspace actions ──────────────────────────────────────────────────
@@ -1423,7 +1462,10 @@ export async function getAgentForEditAction(id: string): Promise<ActionResult<Ag
     if (!row) return fail('not_found', 'Agent not found');
 
     const assignments = await db
-      .select({ subAgentId: agentAssignments.subAgentId })
+      .select({
+        subAgentId: agentAssignments.subAgentId,
+        instructions: agentAssignments.instructions,
+      })
       .from(agentAssignments)
       .where(eq(agentAssignments.orchestratorId, id));
 
@@ -1432,6 +1474,9 @@ export async function getAgentForEditAction(id: string): Promise<ActionResult<Ag
       ...fullRow,
       orchestratorMode: fullRow.orchestratorMode ?? null,
       subAgentIds: assignments.map((a) => a.subAgentId),
+      subAgentInstructions: Object.fromEntries(
+        assignments.filter((a) => a.instructions).map((a) => [a.subAgentId, a.instructions!]),
+      ),
     });
   } catch (err) {
     console.error('[getAgentForEditAction]', err);
@@ -2106,7 +2151,7 @@ export interface ConfigureChannelResult {
  * Channel-neutral connect action. Telegram is the only implemented channel
  * today — everything else fails loud with 'channel_not_supported_yet' rather
  * than silently no-opping (invariant #4). Telegram's path does EXACTLY what
- * `configureAgentTelegramAction` always did (validate via getMe, drain
+ * the original per-channel action always did (validate via getMe, drain
  * backlog, persist agents.telegram_*) and additionally mirrors the result
  * into `channel_bindings` (S2 transitional — see migration 0064's header):
  * credentials stored as plaintext JSON, matching agents.telegram_bot_token's
@@ -2174,9 +2219,8 @@ export async function configureAgentChannelAction(
       throw err;
     }
 
-    // Drain any backlog Telegram has buffered for this bot — see
-    // configureAgentTelegramAction's original note (preserved verbatim below,
-    // now delegating here): replaying it would surprise the user.
+    // Drain any backlog Telegram has buffered for this bot — replaying it
+    // on reconnect would surprise the user.
     let initialOffset = 0;
     try {
       const recent = await getTelegramUpdates({
@@ -2688,9 +2732,10 @@ export async function getWhatsAppPairingStatusAction(
 // long-polling Telegram for that bot — no public URL required, since this is
 // a local-first product.
 //
-// configureAgentTelegramAction/disconnectAgentTelegramAction below are now
-// thin delegations to the channel-neutral actions above (S4) — kept under
-// their original names/signatures so existing callers don't break.
+// Connect/disconnect go through the channel-neutral actions above
+// (configureAgentChannelAction / disconnectAgentChannelAction, channel
+// 'telegram') — the legacy per-channel facades were removed in the pre-0.8
+// audit once TelegramConfigForm migrated to the canonical actions.
 
 export type TelegramConfigStatus = 'connected' | 'disconnected';
 
@@ -2702,15 +2747,6 @@ export type TelegramConfigRow = {
   botUsername: string | null;
   lastSeenChatIdTelegram: string | null;
 };
-
-const ConfigureTelegramSchema = z.object({
-  agentId: z.string().guid(),
-  botToken: z
-    .string()
-    .min(20, 'Token looks too short')
-    .max(200, 'Token looks too long')
-    .regex(/^\d+:[A-Za-z0-9_-]+$/, 'Token must look like 123456789:AAAAA...'),
-});
 
 export async function getAgentTelegramConfigAction(
   agentId: string,
@@ -2748,46 +2784,6 @@ export async function getAgentTelegramConfigAction(
     console.error('[getAgentTelegramConfigAction]', err);
     return fail('db_error', 'Failed to load Telegram config');
   }
-}
-
-/**
- * @deprecated Thin delegation to `configureAgentChannelAction` (channel='telegram').
- * Kept under its original name/signature so existing callers keep working —
- * new code should call `configureAgentChannelAction` directly.
- */
-export async function configureAgentTelegramAction(
-  raw: unknown,
-): Promise<ActionResult<TelegramConfigRow>> {
-  const parsed = ConfigureTelegramSchema.safeParse(raw);
-  if (!parsed.success) {
-    return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
-  }
-  const result = await configureAgentChannelAction({
-    agentId: parsed.data.agentId,
-    channel: 'telegram',
-    credentials: { botToken: parsed.data.botToken },
-  });
-  if (!result.ok) return result;
-  return ok({
-    agentId: result.data.agentId,
-    agentSlug: result.data.agentSlug,
-    agentName: result.data.agentName,
-    status: 'connected',
-    botUsername: result.data.identityLabel,
-    lastSeenChatIdTelegram: null,
-  });
-}
-
-/**
- * @deprecated Thin delegation to `disconnectAgentChannelAction` (channel='telegram').
- * Kept under its original name/signature so existing callers keep working —
- * new code should call `disconnectAgentChannelAction` directly.
- */
-export async function disconnectAgentTelegramAction(agentId: string): Promise<ActionResult<void>> {
-  if (!z.string().guid().safeParse(agentId).success) {
-    return fail('validation_failed', 'Invalid agent id');
-  }
-  return disconnectAgentChannelAction({ agentId, channel: 'telegram' });
 }
 
 // ─── Telegram inbound allowlist (H-1) ─────────────────────────────────────────
@@ -5167,12 +5163,9 @@ export async function resolveApprovalAction(
 // approval_rules is the runtime gate used by executeTool (_matchApprovalRule).
 // Each row: (entityId, agentId, toolName, action ∈ 'auto_approve'|'require_approval'|'block').
 // No rule → default is auto_approve (execute without gating).
-//
-// agents.requiresApproval (text[]) is a legacy column that is NOT read by the
-// runner gate — the runner exclusively uses approval_rules rows. It can be
-// treated as dead / not surfaced in UI.
-// agentSkillAssignments.approvalOverrides (jsonb) is similarly unused by the
-// current gate — the gate only reads approval_rules rows.
+// (The legacy agents.requires_approval and agent_skill_assignments.
+// approval_overrides columns were never read by this gate — dropped in
+// migration 0070.)
 
 export type ApprovalRuleUiRow = {
   id: string;
@@ -5474,18 +5467,37 @@ export async function setLanCommandYoloAction(raw: unknown): Promise<ActionResul
 
 export type InstalledScript = { path: string; language: string };
 
+/**
+ * Result of the runner's periodic diff between an installed community skill
+ * and its source (content hash + bundled-script listing). Only meaningful
+ * when `isCommunity` — system/custom skills never carry a detail.
+ */
+export type SkillUpdateDetail = {
+  contentChanged: boolean;
+  scriptsChanged: boolean;
+  /**
+   * Three-way script state from the runner's checker: 'conflict' = upstream
+   * moved AND the local files were patched (applying overwrites the patches);
+   * 'local-only' = only local patched, nothing new upstream (no badge).
+   * Absent on checks run before the three-way checker shipped.
+   */
+  scriptsState?: 'clean' | 'update' | 'conflict' | 'local-only';
+  checkedAt: string;
+};
+
 export type SkillRow = {
   id: string;
   name: string;
   slug: string;
   /** True when this is a built-in/system skill (slug ∈ systemSkillSlugs) — the
-   *  fixed catalog shown in the Library tab. False for user-authored skills,
-   *  which live in the "My skills" tab. */
+   *  seeded default catalog, shown under Built-in in /skills' Workspace tab.
+   *  False for user-authored, agent-learned and community skills. */
   isSystem: boolean;
   /** Behavior layer of a system skill: 'baseline' | 'channel' | 'capability' |
-   *  'agent-internal' (null for custom/community skills). Only 'capability'
-   *  skills are shown in the dashboard library; baseline/channel/agent-internal
-   *  are part of every agent or loaded on demand, not user-managed. */
+   *  'agent-internal' (null for custom/community skills). Every kind shows in
+   *  /skills' Workspace tab and is editable there (override + reset); the kind
+   *  still drives runtime loading, and tool-group skills (isToolGroupSkill)
+   *  surface on the agent's Tools tab instead. */
   systemKind: 'baseline' | 'channel' | 'capability' | 'agent-internal' | null;
   content: string;
   defaultContent: string | null;
@@ -5493,11 +5505,23 @@ export type SkillRow = {
   description: string | null;
   active: boolean;
   requiredBuiltins: string[];
+  /** Provenance ground truth: 'system' = seeded default catalog, 'agent' =
+   *  authored by an agent (learning loop), 'user' = hand-created custom skill.
+   *  Community installs keep the createdBy of their installer ('user') —
+   *  isCommunity is the discriminant for those. */
+  createdBy: 'user' | 'system' | 'agent';
   /** Community-install metadata (open Agent Skills / SKILL.md format).
    *  isCommunity=false and null source/scripts for system + custom skills. */
   isCommunity: boolean;
   source: string | null;
   installedScripts: InstalledScript[] | null;
+  /**
+   * True when the runner's last update check found a newer version of this
+   * community skill at its source. Always false for system/custom skills.
+   */
+  updateAvailable: boolean;
+  /** Detail behind `updateAvailable` — null until the first check has run. */
+  updateDetail: SkillUpdateDetail | null;
   /**
    * Whether the workspace owner has authorized this skill's bundled scripts to
    * run for a specific agent. Only populated by getAgentAttachedSkillsAction —
@@ -5540,6 +5564,8 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         isCommunity: agentSkills.isCommunity,
         source: agentSkills.source,
         installedScripts: agentSkills.installedScripts,
+        updateAvailable: agentSkills.updateAvailable,
+        updateDetail: agentSkills.updateDetail,
         createdBy: agentSkills.createdBy,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
@@ -5633,6 +5659,7 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         // must never display as "system" in its own owner's Library.
         isSystem: r.createdBy === 'system',
         systemKind: skillKindOfSlug(r.slug),
+        createdBy: r.createdBy as 'user' | 'system' | 'agent',
         content: r.content,
         defaultContent: r.defaultContent,
         contentOverridden: r.contentOverridden ?? false,
@@ -5642,6 +5669,8 @@ export async function listSkillsAction(): Promise<ActionResult<SkillRow[]>> {
         isCommunity: r.isCommunity ?? false,
         source: r.source,
         installedScripts: (r.installedScripts as InstalledScript[] | null) ?? null,
+        updateAvailable: r.updateAvailable ?? false,
+        updateDetail: (r.updateDetail as SkillUpdateDetail | null) ?? null,
         scriptsAuthorized: null,
         filesWritable: null,
         assignmentCount: tallyMap.get(r.id) ?? 0,
@@ -5827,6 +5856,147 @@ export async function uninstallCommunitySkillAction(slug: string): Promise<Actio
   } catch (err) {
     console.error('[uninstallCommunitySkillAction]', err);
     return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
+export type CommunitySkillUpdateResult = {
+  contentChanged: boolean;
+  scriptsChanged: boolean;
+  /** Number of agent×skill assignments whose scripts_authorized was reset to
+   *  false as a side effect of this update (0 when scripts didn't change). */
+  scriptsAuthorizationRevoked: number;
+};
+
+/**
+ * Re-fetch a community skill from its recorded source and apply the diff
+ * (content + bundled scripts) via the runner's POST /api/skills/update. When
+ * the bundled scripts changed, the runner also revokes every agent's
+ * scripts_authorized grant for this skill — the caller surfaces that count so
+ * the UI can warn the user to re-approve.
+ */
+export async function updateCommunitySkillAction(
+  slug: string,
+): Promise<ActionResult<CommunitySkillUpdateResult>> {
+  try {
+    const session = await getSession();
+    if (!z.string().min(1).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid skill slug');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[updateCommunitySkillAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ slug, entityId: session.entityId }),
+      });
+    } catch (fetchErr) {
+      console.error('[updateCommunitySkillAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as
+      | {
+          ok: true;
+          contentChanged: boolean;
+          scriptsChanged: boolean;
+          scriptsAuthorizationRevoked: number;
+        }
+      | { ok: false; error: string; message: string };
+    if (!body.ok) {
+      return fail(body.error, body.message);
+    }
+    revalidatePath('/skills');
+    return ok({
+      contentChanged: body.contentChanged,
+      scriptsChanged: body.scriptsChanged,
+      scriptsAuthorizationRevoked: body.scriptsAuthorizationRevoked,
+    });
+  } catch (err) {
+    console.error('[updateCommunitySkillAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
+/**
+ * « Keep my version » for a script conflict: the runner re-baselines the
+ * origin hashes to upstream-as-of-now WITHOUT touching local files or script
+ * authorizations. Returns contentChanged so the UI can tell the user when a
+ * SKILL.md update remains pending (scripts and content are acknowledged
+ * separately — never hide a real content update behind a scripts choice).
+ */
+export async function acknowledgeSkillUpdateAction(
+  slug: string,
+): Promise<ActionResult<{ contentChanged: boolean }>> {
+  try {
+    const session = await getSession();
+    if (!z.string().min(1).safeParse(slug).success) {
+      return fail('validation_failed', 'Invalid skill slug');
+    }
+    if (!env.WORKER_SECRET) {
+      console.error('[acknowledgeSkillUpdateAction] WORKER_SECRET missing');
+      return fail('config_error', 'Runner secret not configured');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/skills/acknowledge-update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify({ slug, entityId: session.entityId }),
+      });
+    } catch (fetchErr) {
+      console.error('[acknowledgeSkillUpdateAction] fetch failed:', fetchErr);
+      return fail('network_error', 'Could not reach the runner — is it running?');
+    }
+    const body = (await res.json()) as
+      | { ok: true; contentChanged: boolean }
+      | { ok: false; error: string; message: string };
+    if (!body.ok) {
+      return fail(body.error, body.message);
+    }
+    revalidatePath('/skills');
+    return ok({ contentChanged: body.contentChanged });
+  } catch (err) {
+    console.error('[acknowledgeSkillUpdateAction]', err);
+    return fail('unexpected_error', 'An unexpected error occurred');
+  }
+}
+
+export type SkillUpdateNotice = { slug: string; name: string };
+
+/**
+ * Light read for the notifications bell: just the slug + name of every
+ * community skill in the active workspace with a pending update. Kept
+ * separate from listSkillsAction (which pays joins the bell doesn't need)
+ * so polling it every 15s stays cheap.
+ */
+export async function listSkillUpdatesAction(): Promise<ActionResult<SkillUpdateNotice[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const rows = await db
+      .select({ slug: agentSkills.slug, name: agentSkills.name })
+      .from(agentSkills)
+      .where(
+        and(
+          eq(agentSkills.entityId, session.entityId),
+          eq(agentSkills.isCommunity, true),
+          eq(agentSkills.updateAvailable, true),
+        ),
+      )
+      .orderBy(agentSkills.name);
+    return ok(rows);
+  } catch (err) {
+    console.error('[listSkillUpdatesAction]', err);
+    return fail('db_error', 'Failed to load skill updates');
   }
 }
 
@@ -6021,6 +6191,8 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
         isCommunity: agentSkills.isCommunity,
         source: agentSkills.source,
         installedScripts: agentSkills.installedScripts,
+        updateAvailable: agentSkills.updateAvailable,
+        updateDetail: agentSkills.updateDetail,
         createdBy: agentSkills.createdBy,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
@@ -6051,6 +6223,7 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       // Ground truth is createdBy, not slug string membership.
       isSystem: row.createdBy === 'system',
       systemKind: skillKindOfSlug(row.slug),
+      createdBy: row.createdBy as 'user' | 'system' | 'agent',
       content: row.content,
       defaultContent: row.defaultContent,
       contentOverridden: row.contentOverridden ?? false,
@@ -6060,6 +6233,8 @@ export async function getSkillByIdAction(id: string): Promise<ActionResult<Skill
       isCommunity: row.isCommunity ?? false,
       source: row.source,
       installedScripts: (row.installedScripts as InstalledScript[] | null) ?? null,
+      updateAvailable: row.updateAvailable ?? false,
+      updateDetail: (row.updateDetail as SkillUpdateDetail | null) ?? null,
       scriptsAuthorized: null,
       filesWritable: null,
       assignmentCount: 0,
@@ -6140,6 +6315,8 @@ export async function getAgentAttachedSkillsAction(
         isCommunity: agentSkills.isCommunity,
         source: agentSkills.source,
         installedScripts: agentSkills.installedScripts,
+        updateAvailable: agentSkills.updateAvailable,
+        updateDetail: agentSkills.updateDetail,
         createdBy: agentSkills.createdBy,
         createdAt: agentSkills.createdAt,
         updatedAt: agentSkills.updatedAt,
@@ -6165,6 +6342,7 @@ export async function getAgentAttachedSkillsAction(
         // membership (see listSkillsAction above for the full rationale).
         isSystem: r.createdBy === 'system',
         systemKind: skillKindOfSlug(r.slug),
+        createdBy: r.createdBy as 'user' | 'system' | 'agent',
         content: r.content,
         defaultContent: r.defaultContent,
         contentOverridden: r.contentOverridden ?? false,
@@ -6174,6 +6352,8 @@ export async function getAgentAttachedSkillsAction(
         isCommunity: r.isCommunity ?? false,
         source: r.source,
         installedScripts: (r.installedScripts as InstalledScript[] | null) ?? null,
+        updateAvailable: r.updateAvailable ?? false,
+        updateDetail: (r.updateDetail as SkillUpdateDetail | null) ?? null,
         scriptsAuthorized: r.scriptsAuthorized ?? false,
         filesWritable: r.filesWritable ?? false,
         assignmentCount: 1,
@@ -6865,12 +7045,11 @@ export type SettingsView = {
 export async function getSettingsAction(): Promise<ActionResult<SettingsView>> {
   try {
     const session = await getSession();
-    // Shared workspace folder for this entity — must mirror execute.ts:
-    //   ~/.nodalai/workspaces/<entityId>/shared
+    // Shared workspace folder for this entity — must mirror the runner's
+    // workspacesRoot() resolver (apps/runner/src/lib/workspaces-root.ts):
+    //   <NODALAI_WORKSPACES_ROOT | ~/.nodalai/workspaces>/<entityId>/shared
     const sharedWorkspacePath = pathJoin(
-      homedir(),
-      '.nodalai',
-      'workspaces',
+      process.env['NODALAI_WORKSPACES_ROOT'] ?? pathJoin(homedir(), '.nodalai', 'workspaces'),
       session.entityId,
       'shared',
     );

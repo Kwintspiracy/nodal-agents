@@ -1,68 +1,74 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { Fragment, useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import { PencilSimple, UserPlus, Trash, CloudX } from '@phosphor-icons/react';
+import {
+  PencilSimple,
+  UserPlus,
+  Trash,
+  CloudX,
+  ArrowClockwise,
+  ShieldCheck,
+} from '@phosphor-icons/react';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
+import type { SkillProvenanceSegment } from '@/lib/skill-provenance.ts';
+import Table, { THead, Th, Tr, Td, TableSegmentRow } from '@/components/ui/Table';
 import { deleteSkillAction, uninstallCommunitySkillAction } from '@/lib/actions.ts';
 import AvatarStack from '@/components/ui/AvatarStack';
 import CountPill from '@/components/ui/CountPill';
+import StatusPill from '@/components/ui/StatusPill';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
 import Modal from '@/components/ui/Modal.tsx';
 import AssignSkillModal from './AssignSkillModal.tsx';
 import SkillForm from './SkillForm.tsx';
+import SkillUpdateAction, { SkillKeepLocalAction } from './SkillUpdateAction.tsx';
 
 type Props = {
-  skills: SkillRow[];
+  /** Ordered provenance segments (lib/skill-provenance.ts) — the Workspace
+   *  view always renders the full segmented list. */
+  segments: SkillProvenanceSegment<SkillRow>[];
   agents: AgentRow[];
 };
 
 /**
- * SkillsTable — the design's `.sk-tbl` pattern, used by the "My skills" tab:
- * one row per skill the user authored (assigned or not), with name + from-hint,
- * the agents it's assigned to (avatar stack), required built-ins, status, and
- * per-row actions (Assign / Customise / Delete).
+ * SkillsTable — the design's `.sk-tbl` pattern, used by the Workspace tab:
+ * one row per installed skill (assigned or not, built-ins included), grouped
+ * under provenance segment header rows (same dot+label grammar as the agent
+ * composer's Skills tab), with name + from-hint, the agents it's assigned to
+ * (avatar stack), required built-ins, status, and per-row actions
+ * (Assign / Customise / Delete).
  *
  * Per-skill "Last used" + per-assignment customisation values from the design
  * mock aren't tracked in our DB — those columns are dropped per the
  * no-fake-data rule. `requiredBuiltins` IS a real array on the skill row, so it
  * gets surfaced as the customisation column.
  */
-export default function SkillsAssignedTable({ skills, agents }: Props) {
+export default function SkillsAssignedTable({ segments, agents }: Props) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              <Th label="Skill" />
-              <Th label="Assigned to" />
-              <Th label="Required built-ins" />
-              <Th label="Actions" align="right" />
-            </tr>
-          </thead>
-          <tbody>
-            {skills.map((s) => (
+    <Table>
+      <THead>
+        <Th>Skill</Th>
+        <Th>Assigned to</Th>
+        <Th>Required built-ins</Th>
+        <Th align="right">Actions</Th>
+      </THead>
+      <tbody>
+        {segments.map((seg) => (
+          <Fragment key={seg.key}>
+            <TableSegmentRow
+              label={seg.label}
+              count={seg.skills.length}
+              dot={seg.dot}
+              colSpan={4}
+            />
+            {seg.skills.map((s) => (
               <SkillTableRow key={s.id} skill={s} agents={agents} />
             ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
-  return (
-    <th
-      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-legacy-9-5 font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
-        align === 'right' ? 'text-right' : 'text-left'
-      }`}
-      scope="col"
-    >
-      {label}
-    </th>
+          </Fragment>
+        ))}
+      </tbody>
+    </Table>
   );
 }
 
@@ -92,18 +98,16 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
   };
 
   return (
-    <tr className="border-b border-rule-2 last:border-0 hover:bg-hover">
-      <td className="px-[18px] py-4 align-middle">
+    <Tr>
+      <Td>
         <div className="flex items-center gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-legacy-13-5 font-medium leading-[1.2]! text-ink">
-                {skill.name}
-              </span>
-              {skill.isCommunity && (
-                <span className="shrink-0 rounded bg-skill-vivid/15 px-1.5 py-0.5 font-mono text-legacy-9-5 font-medium uppercase tracking-[0.08em] text-skill-vivid">
-                  community
-                </span>
+              <span className="text-medium-13 leading-[1.2]! text-ink">{skill.name}</span>
+              {/* Provenance is carried by the segment header row — no
+                  per-row tag needed here. */}
+              {skill.isCommunity && skill.updateAvailable && (
+                <StatusPill variant="warn" label="Update available" />
               )}
             </div>
             <div
@@ -114,26 +118,63 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
             </div>
           </div>
         </div>
-      </td>
+      </Td>
 
-      <td className="px-[18px] py-4 align-middle">
+      <Td>
         {skill.assignmentCount > 0 ? (
           <AvatarStack avatars={skill.assignedAgents} max={4} label={`+${skill.assignmentCount}`} />
         ) : (
           <span className="text-mono-11 text-ink-4">Unassigned</span>
         )}
-      </td>
+      </Td>
 
-      <td className="px-[18px] py-4 align-middle">
+      <Td>
         {skill.requiredBuiltins.length > 0 ? (
           <CountPill items={skill.requiredBuiltins} noun="built-in" />
         ) : (
           <span className="text-mono-11 text-ink-4">none</span>
         )}
-      </td>
+      </Td>
 
-      <td className="px-[18px] py-4 align-middle">
+      <Td>
         <div className="flex items-center justify-end gap-2">
+          {skill.isCommunity && skill.updateAvailable && (
+            <SkillUpdateAction
+              slug={skill.slug}
+              name={skill.name}
+              updateDetail={skill.updateDetail}
+              hasScripts={Boolean(skill.installedScripts && skill.installedScripts.length > 0)}
+            >
+              {({ onClick, pending }) => (
+                <RowActionButton
+                  square
+                  icon={<ArrowClockwise size={16} />}
+                  title={
+                    skill.updateDetail?.scriptsState === 'conflict'
+                      ? 'Update available (replaces your edited scripts)'
+                      : 'Update available'
+                  }
+                  disabled={pending}
+                  onClick={onClick}
+                />
+              )}
+            </SkillUpdateAction>
+          )}
+          {skill.isCommunity &&
+            skill.updateAvailable &&
+            skill.updateDetail?.scriptsState === 'conflict' && (
+              <SkillKeepLocalAction slug={skill.slug} name={skill.name}>
+                {({ onClick, pending }) => (
+                  <RowActionButton
+                    square
+                    icon={<ShieldCheck size={16} />}
+                    title="Keep your version"
+                    disabled={pending}
+                    onClick={onClick}
+                  />
+                )}
+              </SkillKeepLocalAction>
+            )}
           <RowActionButton
             square
             icon={<UserPlus size={16} />}
@@ -202,7 +243,7 @@ function SkillTableRow({ skill, agents }: { skill: SkillRow; agents: AgentRow[] 
         >
           <SkillForm mode="edit" initial={skill} onClose={() => setEditOpen(false)} />
         </Modal>
-      </td>
-    </tr>
+      </Td>
+    </Tr>
   );
 }

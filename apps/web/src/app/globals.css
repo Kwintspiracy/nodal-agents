@@ -290,9 +290,8 @@
   letter-spacing: 0.08em;
 }
 
-/* --- Legacy fractional / one-off / off-ramp sizes ---------------------
-   Two kinds of leftovers from the pre-migration `text-[Npx]` sweep:
-   fractional px (12.5, 13.5, 11.5, 10.5, 9.5) and one-off whole sizes
+/* --- Legacy one-off / off-ramp sizes -----------------------------------
+   Leftovers from the pre-migration `text-[Npx]` sweep: one-off whole sizes
    (34, 30, 26, 24) that simply aren't in the ramp; PLUS a few whole
    sizes that ARE in the ramp (11, 12, 14, 16, 20, 22) but only for a
    font-weight/mono pairing the ramp doesn't define at that size (e.g.
@@ -305,29 +304,11 @@
    utility was removed, since that utility never carried a line-height of
    its own). Weight is deliberately NOT bundled here — it stays on
    whatever font-weight/font-mono class the call site already had.
-   To be rabattu sur l'échelle un jour (décision Quentin), pas aujourd'hui. */
-@utility text-legacy-9-5 {
-  font-size: 9.5px;
-  line-height: 1.45;
-}
+   The fractional sizes (12.5, 13.5, 11.5, 10.5, 9.5) were rabattues onto
+   the canonical token scale on 2026-07-19 and no longer exist here — only
+   integer legacy sizes remain. */
 @utility text-legacy-10 {
   font-size: 10px;
-  line-height: 1.45;
-}
-@utility text-legacy-10-5 {
-  font-size: 10.5px;
-  line-height: 1.45;
-}
-@utility text-legacy-11-5 {
-  font-size: 11.5px;
-  line-height: 1.45;
-}
-@utility text-legacy-12-5 {
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-@utility text-legacy-13-5 {
-  font-size: 13.5px;
   line-height: 1.45;
 }
 @utility text-legacy-11 {
@@ -475,9 +456,11 @@ select option {
 }
 select optgroup legend {
   /* Section header (toggle "Sections" du Select Figma) — le composant Select
-     injecte ce <legend> depuis l'attribut label de l'optgroup ; contrairement
-     au label rendu par l'UA, sa géométrie est contrôlable : padding-left 8px
-     aligne le titre sur le texte des options, paddings verticaux symétriques.
+     injecte ce <legend> en DOM après montage (jamais en SSR : les parseurs
+     sans select relaxation le dropperaient → mismatch d'hydratation) depuis
+     l'attribut label de l'optgroup ; contrairement au label rendu par l'UA,
+     sa géométrie est contrôlable : padding-left 8px aligne le titre sur le
+     texte des options, paddings verticaux symétriques.
      Typo = SidebarSection (Mono/11 caps ink-4). */
   padding: 6px 8px;
   font-family: var(--font-mono);

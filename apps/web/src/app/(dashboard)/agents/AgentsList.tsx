@@ -508,9 +508,7 @@ function CardShell({ group, header, workersZone, onAddWorker }: CardBodyProps) {
       {orchestrator ? (
         header
       ) : (
-        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">
-          Unassigned
-        </p>
+        <p className="text-micro-10 uppercase tracking-[0.08em] text-ink-3">Unassigned</p>
       )}
       <div className={orchestrator ? 'pl-5 pt-4' : 'pt-4'}>
         <div
@@ -708,7 +706,7 @@ function StaticAgentCard({
 
 function EmptyDropHint() {
   return (
-    <div className="rounded-[10px] border border-dashed border-rule-2 px-3 py-4 text-center text-legacy-11 text-ink-4">
+    <div className="rounded-[10px] border border-dashed border-rule-2 px-3 py-4 text-center text-body-12 text-ink-4">
       Drag a worker here
     </div>
   );
@@ -721,13 +719,9 @@ function OrchestratorHeaderContent({ orchestrator }: { orchestrator: AgentRow })
     <>
       <DsAgentAvatar name={orchestrator.name} imageUrl={orchestrator.avatarUrl} size="lg" />
       <div className="min-w-0 flex-1">
-        <p className="text-legacy-10 font-normal uppercase tracking-[0.12em] text-ink-3">
-          Orchestrator
-        </p>
+        <p className="text-micro-10 uppercase tracking-[0.08em] text-ink-3">Orchestrator</p>
         <p className="truncate text-sm text-ink">{orchestrator.name}</p>
-        <p className="truncate text-legacy-11-5 leading-[17px]! text-ink-3">
-          {orchestrator.personality}
-        </p>
+        <p className="truncate text-body-12 text-ink-3">{orchestrator.personality}</p>
       </div>
     </>
   );
@@ -744,8 +738,8 @@ function WorkerRowContent({
     <>
       <DsAgentAvatar name={agent.name} imageUrl={agent.avatarUrl} size="md" />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-legacy-12-5 text-ink">{agent.name}</p>
-        {agent.model && <p className="truncate text-legacy-11 text-ink-3">{agent.model}</p>}
+        <p className="truncate text-body-13 text-ink">{agent.name}</p>
+        {agent.model && <p className="truncate text-body-12 text-ink-3">{agent.model}</p>}
       </div>
       <ActivityBadge agent={agent} activity={activity} />
       <div className="flex shrink-0 items-center gap-2">
@@ -798,7 +792,7 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
       href={`/jobs?agentId=${agent.id}`}
       title={tooltipLines.join(' · ')}
       onPointerDown={(e) => e.stopPropagation()}
-      className="ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-full border border-rule bg-hover px-2 py-0.5 text-legacy-11 text-ink-2 transition-colors hover:bg-hover"
+      className="ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-full border border-rule bg-hover px-2 py-0.5 text-ink-2 transition-colors hover:bg-hover"
     >
       <span className="relative inline-flex h-2 w-2 shrink-0">
         {dot.pulse && (
@@ -808,8 +802,8 @@ function ActivityBadge({ agent, activity }: { agent: AgentRow; activity: ActiveA
         )}
         <span className={`relative inline-flex h-2 w-2 rounded-full ${dot.color}`} />
       </span>
-      <span className="font-mono tabular-nums">{activity.total}</span>
-      <span className="text-legacy-10 text-ink-3">active</span>
+      <span className="text-mono-11 tabular-nums">{activity.total}</span>
+      <span className="text-micro-11 text-ink-3">active</span>
     </Link>
   );
 }

@@ -25,7 +25,10 @@ export type Guide = {
 
 // ─── OAuth guides ─────────────────────────────────────────────────────────────
 
-export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oauth', Guide> = {
+export const OAUTH_GUIDES: Record<
+  'google-oauth' | 'notion-oauth' | 'airtable-oauth' | 'microsoft-oauth',
+  Guide
+> = {
   'google-oauth': {
     title: 'Get your Google OAuth credentials',
     intro: 'You need a Google Cloud project with the relevant APIs enabled.',
@@ -171,6 +174,54 @@ export const OAUTH_GUIDES: Record<'google-oauth' | 'notion-oauth' | 'airtable-oa
       },
     ],
     format: 'Client ID is a UUID. Secret is longer.',
+  },
+
+  'microsoft-oauth': {
+    title: 'Get your Microsoft (Azure) OAuth credentials',
+    intro: 'You need an app registration in Microsoft Entra ID (Azure Active Directory).',
+    steps: [
+      {
+        number: 1,
+        text: 'Go to the Azure Portal, open Microsoft Entra ID, then App registrations → New registration.',
+        link: { href: 'https://portal.azure.com/', label: 'portal.azure.com' },
+      },
+      {
+        number: 2,
+        text: 'Give it a name (e.g. Nodal-Agents). Under Supported account types, choose "Accounts in any organizational directory and personal Microsoft accounts" — this covers both work/school and outlook.com/hotmail accounts.',
+        hint: 'Picking a narrower option here blocks personal Microsoft accounts from connecting.',
+      },
+      {
+        number: 3,
+        text: 'Under Redirect URI, set the platform to Web and paste the redirect URI shown below the form. This step is mandatory — Microsoft rejects the connection if it is missing or differs by even one character.',
+        hint: 'Most common cause of failure when trying to connect.',
+      },
+      {
+        number: 4,
+        text: 'Click Register. On the app overview page, copy the Application (client) ID.',
+      },
+      {
+        number: 5,
+        text: 'Go to Certificates & secrets → Client secrets → New client secret. Give it a description and expiry, then click Add.',
+      },
+      {
+        number: 6,
+        text: 'Copy the secret Value immediately — Azure hides it after you leave the page (the Secret ID next to it is NOT the value you need).',
+        hint: 'If you navigate away before copying, you have to create a new secret.',
+      },
+      {
+        number: 7,
+        text: 'Go to API permissions → Add a permission → Microsoft Graph → Delegated permissions, then add: Mail.ReadWrite, Mail.Send, MailboxSettings.Read, offline_access.',
+      },
+      {
+        number: 8,
+        text: 'Admin consent is not required for these delegated permissions on a personal Microsoft account — the consent screen appears during the connect flow instead.',
+      },
+      {
+        number: 9,
+        text: 'Paste the Application (client) ID and the client secret Value into the fields below.',
+      },
+    ],
+    format: 'Application (client) ID is a UUID. Secret value is a short random string, not a UUID.',
   },
 };
 

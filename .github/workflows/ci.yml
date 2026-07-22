@@ -61,3 +61,11 @@ jobs:
         # timeout keeps it reliable. (--concurrency is a TURBO flag — pass it to
         # turbo directly, NOT via `pnpm test -- …` which forwards it to vitest.)
         run: pnpm exec turbo run test --concurrency=3
+
+      # Audit finding: CI never actually built the apps (typecheck/lint catch
+      # type/style errors but not a broken `next build` — e.g. a bad server
+      # action boundary, an invalid import only webpack's build graph catches).
+      # Full production build via turbo so a broken build fails CI instead of
+      # only surfacing on deploy.
+      - name: Build
+        run: pnpm build

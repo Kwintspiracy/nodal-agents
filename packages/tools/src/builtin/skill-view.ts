@@ -57,9 +57,14 @@ async function buildBundleManifest(ctx: ToolContext, slug: string): Promise<stri
   return (
     `\n\n[Bundled files — ready to use, do NOT rebuild or re-convert them]\n` +
     files.map((f) => `- ${f}`).join('\n') +
-    `\n\nRun a bundled script with run_skill_script({ skill: '${slug}', script: '<path>', args: [...] }). ` +
-    `Pass a ready-made workflow/template to the skill's run script as-is (e.g. its run_workflow.py with ` +
-    `--workflow workflows/<file>); never hand-convert or re-implement what the bundle already provides.`
+    `\n\nRun a bundled script with run_skill_script({ skill: '${slug}', script: '<path>', args: [...] }) — ` +
+    `this is the ONLY way to run them. The store's on-disk location is internal: NEVER try to reach a ` +
+    `bundled script through run_command with a guessed or relative path (a live incident burned a whole ` +
+    `turn on a hand-built "..\\..\\.nodalai\\skills\\..." path that does not exist). ` +
+    `Pass a ready-made workflow/template to the skill's run script AS-IS (e.g. its run_workflow.py with ` +
+    `--workflow workflows/<file>), with per-run values (prompt, seed) as --args. NEVER save a new ` +
+    `workflow/template file just to change a prompt or seed — run the existing file with different args. ` +
+    `Never hand-convert or re-implement what the bundle already provides.`
   );
 }
 

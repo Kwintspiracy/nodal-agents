@@ -1,7 +1,16 @@
 // connectors table — holds API keys per entity per provider.
 // OAuth tokens are now stored in the credentials table (credential_id FK).
 
-import { pgTable, text, uuid, boolean, timestamp, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  boolean,
+  timestamp,
+  index,
+  uniqueIndex,
+  check,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { credentials } from './credentials.ts';
@@ -38,6 +47,15 @@ export const connectors = pgTable(
     // Multi-instance brique (migration 0016): the (entity_id, slug) UNIQUE
     // constraint was dropped to allow multiple instances of the same connector
     // type per entity (e.g. several Gmail accounts).
+    //
+    // P0-S1 (2026-07-22 incident): create_connector inserted blindly with no
+    // existence check and no DB constraint, so a stuttering agent call
+    // created 8 identical duplicate "Tavily" rows (same entity, same slug,
+    // same name). This index keys on (entity_id, slug, name) — it blocks an
+    // exact-duplicate stutter while fully preserving legitimate multi-instance
+    // (a second connector with the same slug but a DIFFERENT name still
+    // succeeds). It does NOT re-introduce what 0016 dropped.
+    uniqueIndex('connectors_entity_slug_name_unique').on(table.entityId, table.slug, table.name),
   ],
 );
 

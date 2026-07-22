@@ -46,7 +46,9 @@ describe('withRetry — 529 (Overloaded, Anthropic/MiniMax native)', () => {
     await vi.runAllTimersAsync();
     await assertion;
 
-    expect(fn).toHaveBeenCalledTimes(3); // 1 attempt + 2 retries
+    // 529 is capacity-class: it gets the rate-limit budget (5 retries), not
+    // the generic maxRetries — congestion resolves on the minute scale.
+    expect(fn).toHaveBeenCalledTimes(6); // 1 attempt + 5 rate-limit retries
   });
 });
 

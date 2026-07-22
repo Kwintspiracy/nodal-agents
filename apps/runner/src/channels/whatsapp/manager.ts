@@ -168,21 +168,32 @@ export function startWhatsAppManager(
     for (const row of rows) {
       if (!row.entityId) continue;
       seen.add(row.agentId);
-      const hash = hashCredentials(row.credentials);
+      // One failing agent (bad credential, a spawnOne throw, …) must not
+      // reject the whole refresh — every other binding still needs its scan.
+      try {
+        const hash = hashCredentials(row.credentials);
 
-      const existing = active.get(row.agentId);
-      if (existing) {
-        // Credentials rotated (e.g. re-linked to a fresh sessionDir) → restart.
-        if (existing.credentialsHash !== hash) {
-          closeSocket(existing.sessionDir);
-          active.delete(row.agentId);
-          pairing.delete(row.agentId);
-          await spawnOne(row.agentId, row.entityId, row.credentials, hash);
+        const existing = active.get(row.agentId);
+        if (existing) {
+          // Credentials rotated (e.g. re-linked to a fresh sessionDir) → restart.
+          if (existing.credentialsHash !== hash) {
+            closeSocket(existing.sessionDir);
+            active.delete(row.agentId);
+            pairing.delete(row.agentId);
+            await spawnOne(row.agentId, row.entityId, row.credentials, hash);
+          }
+          continue;
         }
+
+        await spawnOne(row.agentId, row.entityId, row.credentials, hash);
+      } catch (err) {
+        console.error(
+          `[whatsapp-manager agent=${row.agentId}] refresh failed for this binding: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
         continue;
       }
-
-      await spawnOne(row.agentId, row.entityId, row.credentials, hash);
     }
 
     // Despawn sockets whose binding disappeared, got disabled, or whose agent went inactive.
@@ -350,6 +361,12 @@ export function startWhatsAppManager(
       if (active.has(agentId)) return 'started';
 
       const binding = await getChannelBinding(deps.db, agentId, 'whatsapp');
+      // A concurrent refresh() tick can have spawned this agent's socket
+      // while the await above was in flight — re-check before doing more
+      // async work, and again just before spawnOne below (M-2: two listener
+      // sets on one shared Baileys handle means every inbound message fires
+      // TWO jobs).
+      if (active.has(agentId)) return 'started';
       if (!binding || !binding.enabled) return 'no_binding';
 
       const [agentRow] = await deps.db
@@ -358,6 +375,10 @@ export function startWhatsAppManager(
         .where(eq(agents.id, agentId))
         .limit(1);
       if (!agentRow?.entityId || !agentRow.active) return 'no_binding';
+
+      // Final re-check immediately before spawnOne — this is the ONLY await
+      // gap that still matters at this point.
+      if (active.has(agentId)) return 'started';
 
       const hash = hashCredentials(binding.credentials);
       await spawnOne(agentId, agentRow.entityId, binding.credentials, hash);

@@ -13,6 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { buildChildEnv } from '@nodal-agents/tools';
+import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 
 const dnsLookup = promisify(dnsLookupCb);
 
@@ -226,18 +227,52 @@ export function buildMcpRequest(
 export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection> {
   const client = new Client({ name: 'nodal-agents', version: '0.1.0' }, { capabilities: {} });
   const connectTimeoutMs = resolveConnectTimeoutMs();
+  // P0-H7 (causality study): the http branch gets its own dedicated undici
+  // Agent, closed alongside the client in McpConnection.close. Set only when
+  // transport === 'http' — stdio has no HTTP dispatcher to isolate.
+  let httpAgent: UndiciAgent | undefined;
 
   if (opts.transport === 'http') {
     const target = buildMcpRequest(opts);
     await assertMcpHttpUrlSafe(target.url); // F7: reject link-local / cloud-metadata targets
+    // P0-H7: the MCP SDK's StreamableHTTPClientTransport opens a long-lived
+    // GET (SSE) after connect. On Node's global fetch dispatcher, that GET
+    // holding a connection open (or hanging mid-handshake on a misbehaving
+    // remote server) starves the pool and wedges the subsequent tool-call
+    // POSTs to the same origin — every call to that server then blocks until
+    // the SDK's own 60s request timeout (-32001), freezing the agent. Giving
+    // the transport its own undici Agent (connections: 16) decouples it from
+    // the global dispatcher entirely, so a hung GET can no longer starve
+    // POSTs. Prototype-proven (causality study P0-H7): 5/5 listTools <2s
+    // against a hung server; a healthy long-lived SSE stream is unaffected
+    // because fetch() resolves on response headers, not body completion.
+    httpAgent = new UndiciAgent({ connections: 16 });
+    // StreamableHTTPClientTransport's `fetch` option is typed against the
+    // global lib.dom `fetch`; undici's `fetch`/`Response` are structurally
+    // close but not nominally identical (e.g. Headers iterator typing), so
+    // this needs an `unknown` round-trip cast, same as the H7 prototype.
+    const dedicatedFetch = ((input: unknown, init: unknown) =>
+      undiciFetch(
+        input as Parameters<typeof undiciFetch>[0],
+        { ...(init as Record<string, unknown>), dispatcher: httpAgent } as Parameters<
+          typeof undiciFetch
+        >[1],
+      )) as unknown as typeof fetch;
     const transport = new StreamableHTTPClientTransport(target.url, {
       requestInit: { headers: target.headers },
+      fetch: dedicatedFetch,
     });
     await withTimeout(
       client.connect(transport),
       connectTimeoutMs,
       `MCP connect (${target.url.hostname})`,
-      () => safeCloseTransport(transport),
+      () => {
+        safeCloseTransport(transport);
+        httpAgent?.close().catch(() => {
+          // best-effort — the connect attempt is already reported as failed
+          // via the timeout error, so an agent-close failure isn't fatal.
+        });
+      },
     );
   } else {
     // audit#2 C-1: un serveur MCP tiers lancé via npx/uvx est un binaire
@@ -285,6 +320,8 @@ export async function connectMcp(opts: McpConnectOptions): Promise<McpConnection
       // shell:true is NOT used so taskkill /T is unnecessary (the child
       // is spawned directly, no shell intermediary to leak).
       await client.close();
+      // P0-H7: release the dedicated undici Agent's connection pool.
+      await httpAgent?.close();
     },
   };
 }

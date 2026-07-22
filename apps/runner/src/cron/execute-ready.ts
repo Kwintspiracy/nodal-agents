@@ -65,6 +65,20 @@ export async function executeReadyTasks(
     .orderBy(desc(agentTasks.priority), asc(agentTasks.createdAt))
     .limit(max * 3); // Fetch more than needed since some may have unresolved deps
 
+  // Batch-load every dependency referenced by any candidate in ONE query
+  // (previously one `SELECT ... WHERE id IN (...)` per candidate — N+1).
+  const allDepIds = [...new Set(candidates.flatMap((c) => (c.dependsOn ?? []) as string[]))];
+  const depRowsById = new Map<string, { id: string; status: string }>();
+  if (allDepIds.length > 0) {
+    const depRows = await db
+      .select({ id: agentTasks.id, status: agentTasks.status })
+      .from(agentTasks)
+      .where(inArray(agentTasks.id, allDepIds));
+    for (const row of depRows) {
+      depRowsById.set(row.id, row);
+    }
+  }
+
   // Filter to only those with all deps resolved (or no deps)
   const readyCandidates: typeof candidates = [];
   for (const task of candidates) {
@@ -72,11 +86,10 @@ export async function executeReadyTasks(
     if (deps_.length === 0) {
       readyCandidates.push(task);
     } else {
-      // Check if all deps are done
-      const depRows = await db
-        .select({ id: agentTasks.id, status: agentTasks.status })
-        .from(agentTasks)
-        .where(inArray(agentTasks.id, deps_));
+      // Check if all deps are done (in-memory lookup against the batch load above)
+      const depRows = deps_
+        .map((id) => depRowsById.get(id))
+        .filter((d): d is { id: string; status: string } => d !== undefined);
 
       if (depRows.length === deps_.length && depRows.every((d) => d.status === 'done')) {
         readyCandidates.push(task);

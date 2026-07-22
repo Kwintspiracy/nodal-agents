@@ -19,8 +19,6 @@ import {
   ENTITY_MEMBER_ROLES,
   ENTITY_INDUSTRIES,
   OPERATION_RISK_LEVELS,
-  PLUGIN_TYPES,
-  PLUGIN_HOOKS,
   MCP_TRANSPORTS,
   JobChannelSchema,
   JobStatusSchema,
@@ -39,8 +37,6 @@ import {
   EntityMemberRoleSchema,
   EntityIndustrySchema,
   OperationRiskLevelSchema,
-  PluginTypeSchema,
-  PluginHookSchema,
   McpTransportSchema,
 } from '../index';
 
@@ -80,8 +76,6 @@ testEnum('ScheduleLastStatus', SCHEDULE_LAST_STATUSES, ScheduleLastStatusSchema)
 testEnum('EntityMemberRole', ENTITY_MEMBER_ROLES, EntityMemberRoleSchema);
 testEnum('EntityIndustry', ENTITY_INDUSTRIES, EntityIndustrySchema);
 testEnum('OperationRiskLevel', OPERATION_RISK_LEVELS, OperationRiskLevelSchema);
-testEnum('PluginType', PLUGIN_TYPES, PluginTypeSchema);
-testEnum('PluginHook', PLUGIN_HOOKS, PluginHookSchema);
 testEnum('McpTransport', MCP_TRANSPORTS, McpTransportSchema);
 
 // Specific DB constraint cross-checks — these encode the exact values from the CHECK clauses
@@ -200,20 +194,6 @@ describe('DB constraint: agent_schedules last_status_check', () => {
   it('matches exactly the 3 DB last_status values', () => {
     const dbStatuses = ['success', 'failed', 'no_action'];
     expect([...SCHEDULE_LAST_STATUSES].sort()).toEqual(dbStatuses.sort());
-  });
-});
-
-describe('DB constraint: agent_plugins plugin_type_check', () => {
-  it('matches exactly the 3 DB plugin types', () => {
-    const dbTypes = ['webhook', 'transform', 'schedule'];
-    expect([...PLUGIN_TYPES].sort()).toEqual(dbTypes.sort());
-  });
-});
-
-describe('DB constraint: agent_plugins hook_check', () => {
-  it('matches exactly the 5 DB hook values', () => {
-    const dbHooks = ['pre_task', 'post_task', 'pre_tool', 'post_tool', 'on_memory_save'];
-    expect([...PLUGIN_HOOKS].sort()).toEqual(dbHooks.sort());
   });
 });
 

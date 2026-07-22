@@ -168,5 +168,11 @@ export function createFailoverLlmClient(configs: ProviderConfig[]): NodalLlmClie
   if (configs.length === 0) {
     throw new ProviderConfigError('failover: at least one provider config is required');
   }
-  return createFailoverFromClients(configs.map((c) => createLlmClient(c)));
+  // Every provider except the LAST has a fallback behind it → its rate-limit
+  // retries are cut short so the chain hands over instead of out-waiting the
+  // congestion. The last provider keeps the patient policy: waiting is its
+  // only remaining card (see RetryOptions.hasFallback).
+  return createFailoverFromClients(
+    configs.map((c, i) => createLlmClient(c, { hasFallback: i < configs.length - 1 })),
+  );
 }

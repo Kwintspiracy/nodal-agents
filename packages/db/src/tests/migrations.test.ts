@@ -35,11 +35,8 @@ const expectedTables = [
   'mcp_servers',
   'agent_mcp_servers',
   'mcp_connections',
-  'configurator_sessions',
-  'agent_plugins',
   'agent_assignments',
   'agent_budgets',
-  'rate_limits',
   // auth tables (better-auth)
   'sessions',
   'accounts',
@@ -53,6 +50,20 @@ describe('migrations: all tables exist', () => {
         sql`SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ${table}`,
       );
       expect(result.rows.length).toBe(1);
+    });
+  }
+});
+
+// Dead scaffolding dropped by migration 0070 — must NOT come back.
+const droppedTables = ['configurator_sessions', 'agent_plugins', 'rate_limits'];
+
+describe('migrations: dropped tables stay dropped (0070)', () => {
+  for (const table of droppedTables) {
+    it(`table ${table} does not exist`, async () => {
+      const result = await db.execute(
+        sql`SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ${table}`,
+      );
+      expect(result.rows.length).toBe(0);
     });
   }
 });

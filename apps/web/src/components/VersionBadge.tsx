@@ -49,7 +49,7 @@ export default function VersionBadge() {
       ) : (
         <div className="flex items-center gap-1.5 px-2.5 py-1 text-ink-4">
           <CheckCircle size={12} className="shrink-0" />
-          <span className="font-mono text-legacy-10-5">Nodal v{current}</span>
+          <span className="text-mono-11">Nodal v{current}</span>
         </div>
       )}
 

@@ -13,6 +13,7 @@ import { CONNECTOR_CATALOG } from '@/lib/connector-catalog.ts';
 import Disc from '@/components/ui/Disc';
 import StatusPill from '@/components/ui/StatusPill';
 import CountPill from '@/components/ui/CountPill';
+import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import RowActionButton from '@/components/ui/RowActionButton';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import Modal from '@/components/ui/Modal';
@@ -42,60 +43,41 @@ type Props = {
  */
 export default function ConnectorsInstalledTable({ instances, credsByType }: Props) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              <Th label="Provider" />
-              <Th label="Account" />
-              <Th label="Scopes" />
-              <Th label="Status" />
-              <Th label="Actions" align="right" />
-            </tr>
-          </thead>
-          <tbody>
-            {instances.map((inst) => {
-              const raw = CONNECTOR_CATALOG.find((c) => c.slug === inst.slug);
-              // Normalise CatalogEntry (credentialType?: …) → ConnectorCatalogItem (credentialType: … | null)
-              const catalogEntry: ConnectorCatalogItem = raw
-                ? { ...raw, credentialType: raw.credentialType ?? null }
-                : {
-                    slug: inst.slug,
-                    label: inst.name,
-                    authType: inst.authType as ConnectorCatalogItem['authType'],
-                    docsHint: '',
-                    credentialType: inst.credentialType ?? null,
-                  };
-              const compatibleCredentials = catalogEntry.credentialType
-                ? (credsByType[catalogEntry.credentialType] ?? [])
-                : [];
-              return (
-                <ConnectorRow
-                  key={inst.id}
-                  instance={inst}
-                  catalogEntry={catalogEntry}
-                  compatibleCredentials={compatibleCredentials}
-                />
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function Th({ label, align = 'left' }: { label: string; align?: 'left' | 'right' }) {
-  return (
-    <th
-      className={`border-b border-rule-2 px-[18px] pt-3.5 pb-2.5 font-mono text-legacy-9-5 font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4 ${
-        align === 'right' ? 'text-right' : 'text-left'
-      }`}
-      scope="col"
-    >
-      {label}
-    </th>
+    <Table>
+      <THead>
+        <Th>Provider</Th>
+        <Th>Account</Th>
+        <Th>Scopes</Th>
+        <Th>Status</Th>
+        <Th align="right">Actions</Th>
+      </THead>
+      <tbody>
+        {instances.map((inst) => {
+          const raw = CONNECTOR_CATALOG.find((c) => c.slug === inst.slug);
+          // Normalise CatalogEntry (credentialType?: …) → ConnectorCatalogItem (credentialType: … | null)
+          const catalogEntry: ConnectorCatalogItem = raw
+            ? { ...raw, credentialType: raw.credentialType ?? null }
+            : {
+                slug: inst.slug,
+                label: inst.name,
+                authType: inst.authType as ConnectorCatalogItem['authType'],
+                docsHint: '',
+                credentialType: inst.credentialType ?? null,
+              };
+          const compatibleCredentials = catalogEntry.credentialType
+            ? (credsByType[catalogEntry.credentialType] ?? [])
+            : [];
+          return (
+            <ConnectorRow
+              key={inst.id}
+              instance={inst}
+              catalogEntry={catalogEntry}
+              compatibleCredentials={compatibleCredentials}
+            />
+          );
+        })}
+      </tbody>
+    </Table>
   );
 }
 
@@ -131,9 +113,9 @@ function ConnectorRow({
 
   return (
     <>
-      <tr className="border-b border-rule-2 last:border-0 hover:bg-hover">
+      <Tr>
         {/* Provider */}
-        <td className="px-[18px] py-[13px] align-middle">
+        <Td>
           <div className="flex items-center gap-3">
             <Disc
               variant="conn"
@@ -149,25 +131,23 @@ function ConnectorRow({
               )}
             </Disc>
             <div className="min-w-0">
-              <div className="text-legacy-13-5 font-medium leading-[1.2]! text-ink">
-                {catalogEntry.label}
-              </div>
-              <div className="mt-0.5 font-mono text-legacy-10-5 uppercase tracking-[0.12em] text-ink-4">
+              <div className="text-medium-13 leading-[1.2]! text-ink">{catalogEntry.label}</div>
+              <div className="mt-0.5 text-mono-11 uppercase tracking-[0.12em] text-ink-4">
                 {catalogEntry.authType}
               </div>
             </div>
           </div>
-        </td>
+        </Td>
 
         {/* Account */}
-        <td className="px-[18px] py-[13px] align-middle">
+        <Td>
           <span className="font-sans text-body-13 leading-[1.3]! text-ink-2">
             {instance.credentialAccountName ?? instance.name}
           </span>
-        </td>
+        </Td>
 
         {/* Scopes */}
-        <td className="px-[18px] py-[13px] align-middle">
+        <Td>
           {scopeList.length > 0 ? (
             <CountPill items={scopeList} noun="scope" />
           ) : (
@@ -175,18 +155,18 @@ function ConnectorRow({
               {instance.authType === 'api_key' ? 'api_key' : '—'}
             </span>
           )}
-        </td>
+        </Td>
 
         {/* Status */}
-        <td className="px-[18px] py-[13px] align-middle">
+        <Td>
           <StatusPill
             variant={isConnected ? 'done' : 'warn'}
             label={isConnected ? 'Connected' : 'Needs auth'}
           />
-        </td>
+        </Td>
 
         {/* Actions */}
-        <td className="px-[18px] py-[13px] align-middle">
+        <Td>
           <div className="flex items-center justify-end gap-2">
             <RowActionButton
               square
@@ -203,8 +183,8 @@ function ConnectorRow({
               onClick={() => setConfirmOpen(true)}
             />
           </div>
-        </td>
-      </tr>
+        </Td>
+      </Tr>
 
       <Modal
         open={editOpen}

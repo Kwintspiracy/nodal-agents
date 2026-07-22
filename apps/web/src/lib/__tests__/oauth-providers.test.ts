@@ -16,11 +16,11 @@ const GOOGLE_SLUGS = [
   'google-sheets',
   'google-docs',
 ] as const;
-const ALL_SLUGS = [...GOOGLE_SLUGS, 'notion-oauth', 'airtable-oauth'] as const;
+const ALL_SLUGS = [...GOOGLE_SLUGS, 'notion-oauth', 'airtable-oauth', 'outlook-mail'] as const;
 
 describe('OAUTH_PROVIDERS — registry completeness', () => {
-  it('contains exactly 7 providers', () => {
-    expect(Object.keys(OAUTH_PROVIDERS)).toHaveLength(7);
+  it('contains exactly 8 providers', () => {
+    expect(Object.keys(OAUTH_PROVIDERS)).toHaveLength(8);
   });
 
   it.each(ALL_SLUGS)('has an entry for %s', (slug) => {
@@ -162,6 +162,59 @@ describe('Airtable OAuth provider — attributes', () => {
   });
 });
 
+describe('Microsoft OAuth provider (outlook-mail) — attributes', () => {
+  it('has pkce: pkce-s256', () => {
+    expect(getOAuthProvider('outlook-mail')?.pkce).toBe('pkce-s256');
+  });
+
+  it('has tokenAuth: body', () => {
+    expect(getOAuthProvider('outlook-mail')?.tokenAuth).toBe('body');
+  });
+
+  it('has tokenBodyType: form', () => {
+    expect(getOAuthProvider('outlook-mail')?.tokenBodyType).toBe('form');
+  });
+
+  it('has supportsRefresh: true', () => {
+    expect(getOAuthProvider('outlook-mail')?.supportsRefresh).toBe(true);
+  });
+
+  it('credentialType is microsoft-oauth', () => {
+    expect(getOAuthProvider('outlook-mail')?.credentialType).toBe('microsoft-oauth');
+  });
+
+  it('authUrl and tokenUrl point to login.microsoftonline.com', () => {
+    const p = getOAuthProvider('outlook-mail');
+    expect(p?.authUrl).toContain('login.microsoftonline.com');
+    expect(p?.tokenUrl).toContain('login.microsoftonline.com');
+  });
+
+  it('scopes include offline_access', () => {
+    const scopes = getOAuthProvider('outlook-mail')?.scopes ?? [];
+    expect(scopes).toContain('offline_access');
+  });
+
+  it('scopes include the Microsoft Graph mail scopes', () => {
+    const scopes = getOAuthProvider('outlook-mail')?.scopes ?? [];
+    expect(scopes).toContain('https://graph.microsoft.com/Mail.ReadWrite');
+    expect(scopes).toContain('https://graph.microsoft.com/Mail.Send');
+    expect(scopes).toContain('https://graph.microsoft.com/MailboxSettings.Read');
+  });
+
+  it('has accountInfo pointing at the OIDC userinfo endpoint with email/preferred_username fallback', () => {
+    const p = getOAuthProvider('outlook-mail');
+    expect(p?.accountInfo).not.toBeNull();
+    expect(p?.accountInfo?.url).toBe('https://graph.microsoft.com/oidc/userinfo');
+    expect(p?.accountInfo?.emailField).toBe('email');
+    expect(p?.accountInfo?.nameField).toBe('preferred_username');
+  });
+
+  it('accountInfo does NOT point at /v1.0/me (requires User.Read, which our scopes do not request)', () => {
+    const p = getOAuthProvider('outlook-mail');
+    expect(p?.accountInfo?.url).not.toContain('/v1.0/me');
+  });
+});
+
 describe('URL validity', () => {
   it.each(ALL_SLUGS)('%s authUrl is a valid URL', (slug) => {
     const p = getOAuthProvider(slug);
@@ -212,5 +265,12 @@ describe('getProviderByCredentialType', () => {
     expect(p).not.toBeNull();
     expect(p?.credentialType).toBe('airtable-oauth');
     expect(p?.slug).toBe('airtable-oauth');
+  });
+
+  it('returns a provider for microsoft-oauth credential type', () => {
+    const p = getProviderByCredentialType('microsoft-oauth');
+    expect(p).not.toBeNull();
+    expect(p?.credentialType).toBe('microsoft-oauth');
+    expect(p?.slug).toBe('outlook-mail');
   });
 });

@@ -27,7 +27,8 @@
     "docx": "^9.7.1",
     "pptxgenjs": "^4.0.1",
     "officeparser": "^7.1.0",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "pptx-automizer": "^0.8.2"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",

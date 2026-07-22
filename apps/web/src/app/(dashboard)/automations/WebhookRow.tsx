@@ -15,6 +15,7 @@ import { SetUrl } from '@/components/ui/SetUrl.tsx';
 import { composeWebhookUrl } from './webhook-url.ts';
 import RowActionButton from '@/components/ui/RowActionButton';
 import { CHANNEL_LABELS } from './NotifyChannelFields.tsx';
+import { relativeTime } from '@/lib/format-time';
 
 interface Revealed {
   secret: string;
@@ -27,18 +28,6 @@ interface Props {
    *  is never re-fetchable, so a page reload drops back to the hidden state. */
   revealed?: Revealed;
   onRevealed: (id: string, revealed: Revealed) => void;
-}
-
-function relativeTime(date: Date | string | null): string {
-  if (!date) return 'Never';
-  const ms = Date.now() - new Date(date).getTime();
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
 }
 
 export default function WebhookRow({ webhook: w, revealed, onRevealed }: Props) {

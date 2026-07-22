@@ -89,6 +89,25 @@ describe('CONNECTOR_CATALOG — new entries (Brique 34 v3)', () => {
   });
 });
 
+describe('CONNECTOR_CATALOG — outlook-mail entry', () => {
+  it('has an outlook-mail entry with authType: oauth2', () => {
+    const entry = CONNECTOR_CATALOG.find((c) => c.slug === 'outlook-mail');
+    expect(entry).toBeDefined();
+    expect(entry?.authType).toBe('oauth2' satisfies ConnectorAuthType);
+  });
+
+  it('outlook-mail entry has credentialType: microsoft-oauth', () => {
+    const entry = CONNECTOR_CATALOG.find((c) => c.slug === 'outlook-mail');
+    expect(entry?.credentialType).toBe('microsoft-oauth');
+  });
+
+  it('outlook-mail entry has a non-empty label', () => {
+    const entry = CONNECTOR_CATALOG.find((c) => c.slug === 'outlook-mail');
+    expect(typeof entry?.label).toBe('string');
+    expect(entry!.label.length).toBeGreaterThan(0);
+  });
+});
+
 describe('CONNECTOR_CATALOG — structural invariants', () => {
   it('all entries have non-empty slug, label, and authType', () => {
     for (const entry of CONNECTOR_CATALOG) {

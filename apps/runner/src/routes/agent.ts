@@ -193,6 +193,12 @@ export async function triggerWorker(jobId: string, runnerEnv: RunnerEnv): Promis
     method: 'POST',
     headers,
     body: JSON.stringify({ jobId }),
+    // A stalled localhost socket must not leave this fire-and-forget promise
+    // pending forever — bounded so it always settles (and its .catch below
+    // always runs) even if /api/worker never responds. Semantics unchanged:
+    // still fire-and-forget; a timed-out trigger is recovered the same way a
+    // failed one already is (cron orphan detection).
+    signal: AbortSignal.timeout(10_000),
   }).catch(() => {
     // Ignored — orphan detection in cron will recover stuck jobs
   });

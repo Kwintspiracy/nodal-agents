@@ -67,12 +67,12 @@ export default function FleetPicker({
         }`}
       >
         <span
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-legacy-12 font-semibold leading-none! tracking-[0.04em] text-[#0a0a0a] lg:h-[22px] lg:w-[22px] lg:rounded-[5px] lg:text-legacy-10-5"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-legacy-12 font-semibold leading-none! tracking-[0.04em] text-[#0a0a0a] lg:h-[22px] lg:w-[22px] lg:rounded-[5px] lg:text-micro-10"
           style={{ background: active.color }}
         >
           {active.icon ?? active.tag.slice(0, 2)}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left text-medium-15 text-ink lg:text-legacy-12-5">
+        <span className="min-w-0 flex-1 truncate text-left text-medium-15 text-ink lg:text-medium-13">
           {active.name}
         </span>
         {!disabled && <CaretDown size={12} className="h-4 w-4 shrink-0 text-ink-3 lg:h-3 lg:w-3" />}
@@ -94,7 +94,7 @@ export default function FleetPicker({
                   onChange?.(f.id);
                   setOpen(false);
                 }}
-                className={`flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-body-15 leading-[1.2]! text-ink-2 hover:bg-hover lg:gap-2.5 lg:rounded-md lg:px-2 lg:py-1.5 lg:text-legacy-12-5 ${
+                className={`flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-body-15 leading-[1.2]! text-ink-2 hover:bg-hover lg:gap-2.5 lg:rounded-md lg:px-2 lg:py-1.5 lg:text-body-13 ${
                   isActive ? 'bg-hover-2' : ''
                 }`}
               >

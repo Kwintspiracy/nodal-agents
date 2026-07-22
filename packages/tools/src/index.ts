@@ -88,6 +88,12 @@ export { createListConversationsTool } from './builtin/index';
 // references real tools (not its training-prior conventions) BEFORE authoring.
 export { listWorkspaceMcpToolNames } from './builtin/meta-ops/lint-skill-content';
 
+// Routine/schedule lint (H1b): pure warn-only check that a cron routine's
+// task text doesn't reference tools the target agent doesn't have, or
+// non-existent Nodal concepts (e.g. "state").
+export { lintRoutineTask } from './builtin/meta-ops/routine-lint';
+export type { RoutineLintResult } from './builtin/meta-ops/routine-lint';
+
 // Canonical label of the entity's built-in shared workspace. The runner builds
 // its workspace list with this label and the D1 overwrite gate keys off it —
 // exported so the two sides can never drift apart.

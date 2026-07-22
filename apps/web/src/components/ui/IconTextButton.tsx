@@ -27,7 +27,7 @@ export default function IconTextButton({
   icon,
   title,
   subtitle,
-  titleClassName = 'text-legacy-11-5 font-medium leading-tight! text-ink',
+  titleClassName = 'text-medium-12 leading-tight! text-ink',
   subtitleClassName = 'font-mono text-legacy-10 leading-tight! text-ink-3',
   className = '',
   type = 'button',

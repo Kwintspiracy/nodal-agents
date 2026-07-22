@@ -208,12 +208,20 @@ export async function runReflection(
   // When unset, args are byte-for-byte the pre-override behavior.
   const resolved = await resolveAgentLlmClient(
     db,
+    // reasoningEffort follows the agent on BOTH branches (décision 2026-07-20):
+    // on REFLECTION_MODEL it is translated per that model's own control.
     reflectionModel !== undefined
-      ? { llmKeyId: agentRow.llmKeyId, fallbackChain: null, model: reflectionModel }
+      ? {
+          llmKeyId: agentRow.llmKeyId,
+          fallbackChain: null,
+          model: reflectionModel,
+          reasoningEffort: agentRow.reasoningEffort ?? null,
+        }
       : {
           llmKeyId: agentRow.llmKeyId,
           fallbackChain: agentRow.fallbackChain ?? null,
           model: agentRow.model ?? '',
+          reasoningEffort: agentRow.reasoningEffort ?? null,
         },
   );
   if (!resolved.ok) {

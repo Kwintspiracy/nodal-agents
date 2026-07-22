@@ -6,45 +6,30 @@ import { PencilSimple, ArrowClockwise, Trash } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import CountPill from '@/components/ui/CountPill';
 import StatusPill from '@/components/ui/StatusPill';
+import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import RowActionButton from '@/components/ui/RowActionButton';
 import PrimaryButton from '@/components/ui/PrimaryButton.tsx';
 import TextInput from '@/components/ui/TextInput';
 import Modal, { ModalFooter } from '@/components/ui/Modal.tsx';
 import type { CredentialEntry } from './CredentialCard.tsx';
 import type { ActionResult } from '@/lib/actions.ts';
+import { formatExpiry, isExpired } from '@/lib/format-time';
 
 type DeleteFn = (id: string) => Promise<ActionResult<{ disconnected: number }>>;
 type RenameFn = (id: string, name: string) => Promise<ActionResult<void>>;
 type RefreshFn = (id: string) => Promise<ActionResult<{ expiresAt: Date | null }>>;
 
-const REFRESH_SUPPORTED: ReadonlySet<string> = new Set(['google-oauth', 'airtable-oauth']);
+const REFRESH_SUPPORTED: ReadonlySet<string> = new Set([
+  'google-oauth',
+  'airtable-oauth',
+  'microsoft-oauth',
+]);
 const TYPE_LABELS: Record<string, string> = {
   'google-oauth': 'Google',
   'notion-oauth': 'Notion',
   'airtable-oauth': 'Airtable',
+  'microsoft-oauth': 'Microsoft',
 };
-
-function isExpired(date: Date | null): boolean {
-  return !!date && date.getTime() < Date.now();
-}
-function expiryText(date: Date | null): string {
-  if (!date) return '';
-  const sec = Math.round((date.getTime() - Date.now()) / 1000);
-  const abs = Math.abs(sec);
-  const mag =
-    abs < 60
-      ? `${abs}s`
-      : abs < 3600
-        ? `${Math.round(abs / 60)} min`
-        : abs < 86400
-          ? `${Math.round(abs / 3600)} h`
-          : `${Math.round(abs / 86400)} d`;
-  return sec >= 0 ? `expires in ${mag}` : `expired ${mag} ago`;
-}
-
-const TH =
-  'px-[18px] pt-3.5 pb-2.5 text-left font-mono text-legacy-9-5 font-normal whitespace-nowrap uppercase tracking-[0.16em] text-ink-4';
-const TD = 'px-[18px] py-[13px] align-middle';
 
 /**
  * CredentialsTable — saved OAuth credentials as a table (Provider · Account ·
@@ -64,33 +49,27 @@ export default function CredentialsTable({
   onRefresh: RefreshFn;
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-rule-2 bg-paper">
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-rule-2">
-              <th className={TH}>Provider</th>
-              <th className={TH}>Account</th>
-              <th className={TH}>Scopes</th>
-              <th className={TH}>Status</th>
-              <th className={TH}>Used by</th>
-              <th className={`${TH} text-right`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {credentials.map((c) => (
-              <CredentialRow
-                key={c.id}
-                credential={c}
-                onDelete={onDelete}
-                onRename={onRename}
-                onRefresh={onRefresh}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <Table>
+      <THead>
+        <Th>Provider</Th>
+        <Th>Account</Th>
+        <Th>Scopes</Th>
+        <Th>Status</Th>
+        <Th>Used by</Th>
+        <Th align="right">Actions</Th>
+      </THead>
+      <tbody>
+        {credentials.map((c) => (
+          <CredentialRow
+            key={c.id}
+            credential={c}
+            onDelete={onDelete}
+            onRename={onRename}
+            onRefresh={onRefresh}
+          />
+        ))}
+      </tbody>
+    </Table>
   );
 }
 
@@ -160,52 +139,50 @@ function CredentialRow({
 
   return (
     <>
-      <tr className="border-b border-rule-2 last:border-0 hover:bg-hover">
+      <Tr>
         {/* Provider */}
-        <td className={TD}>
+        <Td>
           <div className="flex items-center gap-2.5">
             <span className="inline-flex shrink-0 rounded bg-indigo-500/15 px-2 py-0.5 font-mono text-micro-10 tracking-wider text-indigo-400 uppercase">
               {typeLabel}
             </span>
-            <span className="truncate text-legacy-13-5 font-medium text-ink">
-              {credential.name}
-            </span>
+            <span className="truncate text-medium-13 text-ink">{credential.name}</span>
           </div>
-        </td>
+        </Td>
 
         {/* Account */}
-        <td className={`${TD} text-body-13 text-ink-2`}>{credential.accountName ?? '—'}</td>
+        <Td className="text-body-13 text-ink-2">{credential.accountName ?? '—'}</Td>
 
         {/* Scopes */}
-        <td className={TD}>
+        <Td>
           {scopeList.length > 0 ? (
             <CountPill items={scopeList} noun="scope" />
           ) : (
             <span className="text-mono-11 text-ink-4">—</span>
           )}
-        </td>
+        </Td>
 
         {/* Status */}
-        <td className={TD}>
+        <Td>
           <StatusPill variant={status.variant} label={status.label} />
           {!supportsRefresh && !credential.decryptError && credential.expiresAt && (
-            <div className="mt-0.5 text-legacy-10-5 text-ink-4">
-              {expiryText(credential.expiresAt)}
+            <div className="mt-0.5 text-micro-11 text-ink-4">
+              {formatExpiry(credential.expiresAt)}
             </div>
           )}
-        </td>
+        </Td>
 
         {/* Used by */}
-        <td className={TD}>
+        <Td>
           {usedBy.length > 0 ? (
             <CountPill items={usedBy} noun="connector" />
           ) : (
             <span className="text-mono-11 text-ink-4">—</span>
           )}
-        </td>
+        </Td>
 
         {/* Actions */}
-        <td className={TD}>
+        <Td>
           <div className="flex items-center justify-end gap-2">
             <RowActionButton
               square
@@ -232,20 +209,20 @@ function CredentialRow({
               disabled={isPending || isRefreshing}
             />
           </div>
-        </td>
-      </tr>
+        </Td>
+      </Tr>
 
       {/* Decrypt-error sub-row */}
       {credential.decryptError && (
-        <tr className="border-b border-rule-2 last:border-0">
-          <td colSpan={6} className="px-[18px] pb-3">
+        <Tr hover={false}>
+          <td colSpan={6} className="px-5 pb-3">
             <div className="rounded border border-err/30 bg-warn-bg px-3 py-2 text-xs text-err">
               <span className="font-semibold">Cannot decrypt this credential.</span> The encrypted
               payload could not be read (master key changed or row corrupted). Delete and recreate
               it.
             </div>
           </td>
-        </tr>
+        </Tr>
       )}
 
       {/* Rename — non-dismissable Modal (UX-B6), replaces the old inline

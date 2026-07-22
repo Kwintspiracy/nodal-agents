@@ -11,12 +11,17 @@ import type {
   GoogleOauthPayload,
   NotionOauthPayload,
   AirtableOauthPayload,
+  MicrosoftOauthPayload,
 } from '@nodal-agents/shared';
 import type { AnyDrizzleDb } from '../client.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type OauthPayload = GoogleOauthPayload | NotionOauthPayload | AirtableOauthPayload;
+export type OauthPayload =
+  | GoogleOauthPayload
+  | NotionOauthPayload
+  | AirtableOauthPayload
+  | MicrosoftOauthPayload;
 
 export type DecryptedCredential = {
   id: string;

@@ -100,6 +100,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       slug text NOT NULL,
       personality text NOT NULL,
       model text DEFAULT 'claude-sonnet-4-6-20260217',
+      reasoning_effort text,
       llm_key_id uuid REFERENCES entity_llm_keys(id) ON DELETE SET NULL,
       fallback_chain jsonb DEFAULT '[]'::jsonb,
       active boolean DEFAULT true,
@@ -110,7 +111,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       telegram_bot_username text,
       telegram_offset bigint,
       last_seen_chat_id_telegram text,
-      requires_approval text[] DEFAULT '{}',
       capabilities text[] DEFAULT '{}',
       task_context_template text,
       avatar_url text,
@@ -209,7 +209,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name text NOT NULL,
-      type text NOT NULL CHECK (type IN ('google-oauth','notion-oauth','airtable-oauth')),
+      type text NOT NULL CHECK (type IN ('google-oauth','notion-oauth','airtable-oauth','microsoft-oauth')),
       payload text NOT NULL,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
@@ -232,6 +232,15 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       -- connector type per entity (e.g. several Gmail accounts). Not declared
       -- here either, so the test DB matches prod.
     );
+
+    -- Migration 0072 (2026-07-22 incident): a stuttering agent call created 8
+    -- identical duplicate connector rows (same entity_id, slug, name). Mirrored
+    -- here so the constraint is actually exercised by the test DB, not just
+    -- verified live — keyed on (entity_id, slug, name), NOT (entity_id, slug)
+    -- alone, so the 0016 multi-instance design (same slug, different name)
+    -- keeps working.
+    CREATE UNIQUE INDEX IF NOT EXISTS connectors_entity_slug_name_unique
+      ON connectors (entity_id, slug, name);
 
     CREATE TABLE IF NOT EXISTS agent_connector_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -340,6 +349,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       is_community boolean NOT NULL DEFAULT false,
       source text,
       installed_scripts jsonb,
+      update_available boolean NOT NULL DEFAULT false,
+      update_detail jsonb,
+      last_update_check_at timestamptz,
       created_by text NOT NULL DEFAULT 'user',
       created_by_agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
       state text NOT NULL DEFAULT 'active',
@@ -377,7 +389,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
       agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       skill_id uuid NOT NULL REFERENCES agent_skills(id) ON DELETE CASCADE,
-      approval_overrides jsonb DEFAULT '{}',
       use_custom_instructions boolean NOT NULL DEFAULT false,
       enabled_operations text[],
       scripts_authorized boolean NOT NULL DEFAULT false,
@@ -458,33 +469,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       UNIQUE (entity_id, slug)
     );
 
-    CREATE TABLE IF NOT EXISTS configurator_sessions (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      entity_id uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-      agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
-      messages jsonb NOT NULL DEFAULT '[]',
-      status text NOT NULL DEFAULT 'active',
-      turn_count integer NOT NULL DEFAULT 0,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_plugins (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
-      name text NOT NULL,
-      slug text NOT NULL,
-      description text,
-      plugin_type text NOT NULL CHECK (plugin_type IN ('webhook','transform','schedule')),
-      config jsonb DEFAULT '{}',
-      active boolean DEFAULT true,
-      hook text NOT NULL CHECK (hook IN ('pre_task','post_task','pre_tool','post_tool','on_memory_save')),
-      webhook_url text,
-      created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now(),
-      UNIQUE NULLS NOT DISTINCT (entity_id, slug)
-    );
-
     CREATE TABLE IF NOT EXISTS agent_assignments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       orchestrator_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -541,12 +525,6 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       max_job_tokens integer DEFAULT 150000,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS rate_limits (
-      key text PRIMARY KEY,
-      count integer DEFAULT 1,
-      window_start timestamptz DEFAULT now()
     );
 
     -- ── app_settings (migration 0045) ────────────────────────────────────────

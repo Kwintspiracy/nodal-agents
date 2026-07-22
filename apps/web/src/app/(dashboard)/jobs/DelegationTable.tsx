@@ -23,6 +23,7 @@ import type { DelegationRunRow } from '@/lib/actions.ts';
 import type { JobsPageRow, ConversationGroupRow } from '@/lib/jobs-grouping.ts';
 import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import AgentAvatar from '@/components/ui/AgentAvatar';
+import Table, { THead, Th, Tr, Td } from '@/components/ui/Table';
 import {
   ArrowElbowDownRight,
   Clock,
@@ -122,9 +123,6 @@ function abbrevTokens(n: number): string {
   return (n / 1_000_000 >= 100 ? String(Math.round(n / 1_000_000)) : trim(n / 1_000_000)) + 'M';
 }
 
-const TH = 'px-4 py-2.5 text-mono-11 uppercase tracking-[0.12em] text-ink-3 whitespace-nowrap';
-const TD = 'px-4 py-3 align-middle';
-
 export default function DelegationTable({
   rows,
   query = '',
@@ -192,18 +190,20 @@ export default function DelegationTable({
             {rows.length === 0 ? 'No runs yet.' : 'No runs match the search.'}
           </div>
         ) : (
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-rule-2">
-                <th className={`${TH} text-left`}>Agent</th>
-                <th className={`${TH} text-left`}>Trigger</th>
-                <th className={`${TH} hidden text-left md:table-cell`}>Started</th>
-                <th className={`${TH} hidden text-right lg:table-cell`}>Duration</th>
-                <th className={`${TH} text-right`}>Tokens</th>
-                <th className={`${TH} hidden text-right sm:table-cell`}>Cost</th>
-                <th className={`${TH} text-right`}>Status</th>
-              </tr>
-            </thead>
+          <Table frame={false}>
+            <THead>
+              <Th>Agent</Th>
+              <Th>Trigger</Th>
+              <Th className="hidden md:table-cell">Started</Th>
+              <Th align="right" className="hidden lg:table-cell">
+                Duration
+              </Th>
+              <Th align="right">Tokens</Th>
+              <Th align="right" className="hidden sm:table-cell">
+                Cost
+              </Th>
+              <Th align="right">Status</Th>
+            </THead>
             <tbody>
               {filtered.map((row) =>
                 row.kind === 'conversation' ? (
@@ -223,7 +223,7 @@ export default function DelegationTable({
                 ),
               )}
             </tbody>
-          </table>
+          </Table>
         )}
       </div>
     </div>
@@ -248,14 +248,14 @@ function JobRowTr({
   const tokens = (r.effectiveInputTokens || r.inputTokens) + r.outputTokens;
   const trig = triggerForChannel(r.role, r.channel);
   return (
-    <tr
+    <Tr
       title={r.task}
       onClick={onOpen}
-      className={`cursor-pointer border-b border-rule-2 transition-colors last:border-0 hover:bg-hover-2 ${
-        delegated || indented ? 'bg-hover' : ''
-      }`}
+      interactive
+      hover={false}
+      className={`hover:bg-hover-2 ${delegated || indented ? 'bg-hover' : ''}`}
     >
-      <td className={TD} style={{ boxShadow: `inset 3px 0 0 ${ACCENT[r.role]}` }}>
+      <Td style={{ boxShadow: `inset 3px 0 0 ${ACCENT[r.role]}` }}>
         <div className={`flex items-center gap-2.5 ${delegated || indented ? 'pl-2' : ''}`}>
           {(delegated || indented) && (
             <ArrowElbowDownRight size={14} className="shrink-0 text-ink-4" />
@@ -284,8 +284,8 @@ function JobRowTr({
             )}
           </div>
         </div>
-      </td>
-      <td className={TD}>
+      </Td>
+      <Td>
         {trig ? (
           <div className="flex items-center gap-2">
             <span
@@ -306,31 +306,25 @@ function JobRowTr({
             )}
           </div>
         ) : (
-          <span className="text-legacy-12-5 text-ink-4">—</span>
+          <span className="text-body-13 text-ink-4">—</span>
         )}
-      </td>
-      <td
-        className={`${TD} hidden text-left text-legacy-12-5 whitespace-nowrap text-ink-2 md:table-cell`}
-      >
+      </Td>
+      <Td className="hidden text-body-13 whitespace-nowrap text-ink-2 md:table-cell">
         {startedLabel(r.createdAt, r.status)}
-      </td>
-      <td
-        className={`${TD} hidden text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2 lg:table-cell`}
-      >
+      </Td>
+      <Td align="right" className="hidden text-mono-13 whitespace-nowrap text-ink-2 lg:table-cell">
         {durationLabel(r.createdAt, r.completedAt, r.status)}
-      </td>
-      <td className={`${TD} text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2`}>
+      </Td>
+      <Td align="right" className="text-mono-13 whitespace-nowrap text-ink-2">
         {abbrevTokens(tokens)}
-      </td>
-      <td
-        className={`${TD} hidden text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2 sm:table-cell`}
-      >
+      </Td>
+      <Td align="right" className="hidden text-mono-13 whitespace-nowrap text-ink-2 sm:table-cell">
         {r.costUsd > 0 ? `$${r.costUsd.toFixed(2)}` : '—'}
-      </td>
-      <td className={`${TD} text-right`}>
+      </Td>
+      <Td align="right">
         <StatusPill variant={statusVariant(r.status)} label={statusLabel(r.status)} />
-      </td>
-    </tr>
+      </Td>
+    </Tr>
   );
 }
 
@@ -350,12 +344,14 @@ function ConversationRows({
   const trig = triggerForChannel('standalone', row.channel);
   return (
     <>
-      <tr
+      <Tr
         onClick={onToggle}
         title={`${row.exchangeCount} exchange${row.exchangeCount === 1 ? '' : 's'}`}
-        className="cursor-pointer border-b border-rule-2 transition-colors last:border-0 hover:bg-hover-2"
+        interactive
+        hover={false}
+        className="hover:bg-hover-2"
       >
-        <td className={TD}>
+        <Td>
           <div className="flex items-center gap-2.5">
             {isExpanded ? (
               <CaretDown size={12} className="shrink-0 text-ink-4" />
@@ -373,8 +369,8 @@ function ConversationRows({
               </div>
             </div>
           </div>
-        </td>
-        <td className={TD}>
+        </Td>
+        <Td>
           {trig ? (
             <span
               title={trig.label}
@@ -383,30 +379,31 @@ function ConversationRows({
               <trig.Icon size={13} weight="fill" />
             </span>
           ) : (
-            <span className="text-legacy-12-5 text-ink-4">—</span>
+            <span className="text-body-13 text-ink-4">—</span>
           )}
-        </td>
-        <td
-          className={`${TD} hidden text-left text-legacy-12-5 whitespace-nowrap text-ink-2 md:table-cell`}
-        >
+        </Td>
+        <Td className="hidden text-body-13 whitespace-nowrap text-ink-2 md:table-cell">
           {rangeLabel(row.firstCreatedAt, row.lastActivityAt)}
-        </td>
-        <td className={`${TD} hidden text-right text-legacy-12-5 text-ink-4 lg:table-cell`}>—</td>
-        <td className={`${TD} text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2`}>
+        </Td>
+        <Td align="right" className="hidden text-body-13 text-ink-4 lg:table-cell">
+          —
+        </Td>
+        <Td align="right" className="text-mono-13 whitespace-nowrap text-ink-2">
           {abbrevTokens(row.totalTokens)}
-        </td>
-        <td
-          className={`${TD} hidden text-right font-mono text-legacy-12-5 whitespace-nowrap text-ink-2 sm:table-cell`}
+        </Td>
+        <Td
+          align="right"
+          className="hidden text-mono-13 whitespace-nowrap text-ink-2 sm:table-cell"
         >
           {row.totalCostUsd > 0 ? `$${row.totalCostUsd.toFixed(2)}` : '—'}
-        </td>
-        <td className={`${TD} text-right`}>
+        </Td>
+        <Td align="right">
           <StatusPill
             variant={conversationStatusVariant(row.status)}
             label={conversationStatusLabel(row.status)}
           />
-        </td>
-      </tr>
+        </Td>
+      </Tr>
       {isExpanded &&
         row.jobs.map((j) => <JobRowTr key={j.id} r={j} onOpen={() => onOpenJob(j.id)} indented />)}
     </>

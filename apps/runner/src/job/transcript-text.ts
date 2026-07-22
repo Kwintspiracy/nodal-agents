@@ -48,13 +48,57 @@ function collectStrings(node: unknown, out: string[], depth = 0): void {
 }
 
 /**
+ * Make a string safe for Postgres storage. Model/tool output occasionally
+ * carries bytes Postgres rejects at write time — a raw NUL (0x00 → `invalid
+ * byte sequence for encoding "UTF8"`) or a lone UTF-16 surrogate from a
+ * truncated streamed emoji/CJK char (serialized as invalid UTF-8 on the wire,
+ * same error class). Both killed real jobs (2026-07-17: two concurrent jobs
+ * failed their agent_jobs UPDATE on upstream content — reproduced against the
+ * live DB). This is byte-level normalization for storability, not a silent
+ * data fallback: lone surrogates become U+FFFD, NULs are dropped.
+ */
+// A high surrogate not followed by a low one, or a low surrogate not preceded
+// by a high one: the two shapes of a lone surrogate. Equivalent to
+// String.prototype.toWellFormed() (ES2024, above this repo TS lib target),
+// replacing each with U+FFFD.
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+export function toDbSafeString(s: string): string {
+  return s.replace(LONE_SURROGATE_RE, '\uFFFD').replaceAll('\u0000', '');
+}
+
+/**
+ * Deep-clone `value` with every string passed through {@link toDbSafeString}.
+ * Used on the `messages` transcript before it is written to the jsonb column —
+ * the same poisoned bytes reject the whole UPDATE there too. Depth-guarded like
+ * collectStrings; non-plain values (functions, symbols) pass through untouched
+ * (JSON serialization drops them later anyway).
+ */
+export function deepDbSafe<T>(value: T, depth = 0): T {
+  if (depth > 16) return value;
+  if (typeof value === 'string') return toDbSafeString(value) as unknown as T;
+  if (Array.isArray(value)) {
+    return value.map((x) => deepDbSafe(x, depth + 1)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = deepDbSafe(v, depth + 1);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
+/**
  * Flatten a job's `messages` (+ optional final `result`) into one searchable
  * string. Returns '' when there's nothing textual. Result is capped at
- * MAX_SEARCH_TEXT chars and whitespace-collapsed.
+ * MAX_SEARCH_TEXT chars and whitespace-collapsed. Always DB-safe (see
+ * toDbSafeString).
  */
 export function flattenTranscript(messages: unknown, result?: string | null): string {
   const out: string[] = [];
   collectStrings(messages, out);
   if (typeof result === 'string' && result.trim()) out.push(result.trim());
-  return out.join(' \n ').replace(/\s+/g, ' ').trim().slice(0, MAX_SEARCH_TEXT);
+  return toDbSafeString(out.join(' \n ').replace(/\s+/g, ' ').trim().slice(0, MAX_SEARCH_TEXT));
 }

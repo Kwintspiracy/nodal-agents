@@ -51,7 +51,7 @@ Provider keys are shared across the workspace. Each agent picks:
 
 1. **LLM provider key** — which configured provider to use.
 2. **Model** — fetched live from that provider's endpoint, with a curated list as fallback.
-3. **Fallback chain** (optional) — ordered list of `(provider key, model)` pairs tried in sequence if the primary provider returns a non-retryable error.
+3. **Fallback chain** (optional) — ordered list of `(provider key, model)` pairs tried in sequence when the primary provider can't serve (retries exhausted, timeout, or quota). When a provider is rate-limited and a fallback exists, the chain hands over after one quick retry instead of waiting out the congestion.
 
 Change these in **Agents → `<agent>` → Settings**.
 

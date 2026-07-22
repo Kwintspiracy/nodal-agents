@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react';
 import { Plus, CloudArrowDown } from '@phosphor-icons/react';
 import { COMMUNITY_SKILL_CATALOG } from '@nodal-agents/shared';
 import type { SkillRow, AgentRow } from '@/lib/actions.ts';
+import { isToolGroupSkill } from '@/lib/skill-tool-groups.ts';
+import { segmentSkillsByProvenance } from '@/lib/skill-provenance.ts';
 import PageShell from '@/components/ui/PageShell';
 import PageTopBar from '@/components/ui/PageTopBar';
 import PillTabs2 from '@/components/ui/PillTabs2';
@@ -17,7 +19,7 @@ import CommunitySkillsGrid from './CommunitySkillsGrid.tsx';
 import InstallCommunitySkillModal from './InstallCommunitySkillModal.tsx';
 import SkillForm from './SkillForm.tsx';
 
-type Tab = 'assigned' | 'library';
+type Tab = 'workspace' | 'community';
 
 // Content-category chips, derived from the catalog (no hardcoded list) — these
 // replace the old Built-in / Community / Custom source split.
@@ -32,32 +34,47 @@ type Props = {
 };
 
 /**
- * SkillsClient — /skills. Two views via the [Assigned | Library] toggle:
- *   - Assigned: skills wired to ≥1 agent (management table).
- *   - Library:  the whole catalog as uniform tiles, filtered by content-category
- *               chips (Development, Finance, Office, Media, …). One rendering for
- *               every skill — no more three-different-looking sub-tabs.
+ * SkillsClient — /skills. Two views via the [Workspace | Community] toggle:
+ *   - Workspace: EVERY skill installed on the workspace — assigned or not,
+ *                built-ins included — grouped by provenance segments, so each
+ *                skill has a home with an edit path (built-ins were previously
+ *                reachable only from an agent's Skills tab, with no way to
+ *                edit their content). Tool-group skills stay out: they are
+ *                capability toggles on the agent's Tools tab, not skills.
+ *   - Community: the community catalog as uniform tiles, filtered by
+ *                content-category chips (Development, Finance, Office, …).
  */
 export default function SkillsClient({ skills, agents }: Props) {
-  const assignedSkills = useMemo(
-    () => skills.filter((s) => s.assignmentCount > 0 && s.systemKind !== 'agent-internal'),
+  const workspaceSkills = useMemo(() => skills.filter((s) => !isToolGroupSkill(s)), [skills]);
+  const installedCommunitySkills = useMemo(
+    () =>
+      skills
+        .filter((s) => s.isCommunity)
+        .map((s) => ({
+          slug: s.slug,
+          updateAvailable: s.updateAvailable,
+          updateDetail: s.updateDetail,
+          hasScripts: Boolean(s.installedScripts && s.installedScripts.length > 0),
+        })),
     [skills],
   );
-  const installedSlugs = useMemo(() => skills.map((s) => s.slug), [skills]);
 
-  const [tab, setTab] = useState<Tab>(assignedSkills.length > 0 ? 'assigned' : 'library');
+  const [tab, setTab] = useState<Tab>('workspace');
   const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
   const [installModalOpen, setInstallModalOpen] = useState(false);
   const [newSkillOpen, setNewSkillOpen] = useState(false);
 
-  const filteredAssigned = useMemo(() => {
+  const workspaceSegments = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return assignedSkills;
-    return assignedSkills.filter(
-      (s) => s.name.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q),
-    );
-  }, [assignedSkills, query]);
+    const filtered = q
+      ? workspaceSkills.filter(
+          (s) =>
+            s.name.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q),
+        )
+      : workspaceSkills;
+    return segmentSkillsByProvenance(filtered);
+  }, [workspaceSkills, query]);
 
   return (
     <PageShell
@@ -74,8 +91,8 @@ export default function SkillsClient({ skills, agents }: Props) {
                   setQuery('');
                 }}
                 tabs={[
-                  { value: 'assigned', label: 'Assigned', count: assignedSkills.length },
-                  { value: 'library', label: 'Library', count: COMMUNITY_SKILL_CATALOG.length },
+                  { value: 'workspace', label: 'Workspace', count: workspaceSkills.length },
+                  { value: 'community', label: 'Community', count: COMMUNITY_SKILL_CATALOG.length },
                 ]}
               />
             }
@@ -99,7 +116,7 @@ export default function SkillsClient({ skills, agents }: Props) {
               </div>
             }
           />
-          {tab === 'library' && (
+          {tab === 'community' && (
             <ChipRow
               className="mt-3"
               value={category}
@@ -129,14 +146,24 @@ export default function SkillsClient({ skills, agents }: Props) {
         <SkillForm mode="create" defaultOpen onClose={() => setNewSkillOpen(false)} />
       </Modal>
 
-      {tab === 'assigned' ? (
-        assignedSkills.length === 0 ? (
-          <EmptyState title="No skills assigned to any agent yet. Browse the Library to add one." />
+      {tab === 'workspace' ? (
+        workspaceSegments.length === 0 ? (
+          <EmptyState
+            title={
+              query.trim()
+                ? 'No skill matches your search.'
+                : 'No skills on this workspace yet. Browse the Community tab to install one.'
+            }
+          />
         ) : (
-          <SkillsAssignedTable skills={filteredAssigned} agents={agents} />
+          <SkillsAssignedTable segments={workspaceSegments} agents={agents} />
         )
       ) : (
-        <CommunitySkillsGrid installedSlugs={installedSlugs} query={query} category={category} />
+        <CommunitySkillsGrid
+          installedSkills={installedCommunitySkills}
+          query={query}
+          category={category}
+        />
       )}
     </PageShell>
   );

@@ -15,6 +15,8 @@ import type { ToolDefinition } from '../../types';
 import {
   resolveAndCheckPath,
   computeSharedOverwriteApproval,
+  isProtectedWorkflowTemplate,
+  WORKFLOW_TEMPLATE_PROTECTED_MESSAGE,
   MAX_WRITE_BYTES,
   WorkspaceError,
 } from './workspace';
@@ -62,10 +64,25 @@ export const fileEditTool: ToolDefinition<typeof FileEditInputSchema, FileEditOu
   // D1: an edit always targets an EXISTING file (file_edit fails loud on a
   // missing one — see execute() below), so the only thing left to check is
   // whether that file lives in the shared workspace. Same gate as file_write.
-  computeApproval: (input, ctx) => computeSharedOverwriteApproval(ctx, input.path),
+  // P4: a protected workflow template is refused outright at execute() —
+  // never surface an approval prompt for a call that can never succeed.
+  computeApproval: async (input, ctx) => {
+    try {
+      const path = await resolveAndCheckPath(ctx, input.path);
+      if (await isProtectedWorkflowTemplate(ctx, path)) return undefined;
+    } catch {
+      return undefined; // resolution failure — execute() will fail loud on it
+    }
+    return computeSharedOverwriteApproval(ctx, input.path);
+  },
   execute: async (input, ctx) => {
     try {
       const path = await resolveAndCheckPath(ctx, input.path);
+      // P4 — shared canonical workflow templates are read-only to this tool.
+      // See isProtectedWorkflowTemplate (workspace.ts) for the rationale.
+      if (await isProtectedWorkflowTemplate(ctx, path)) {
+        return { ok: false, reason: WORKFLOW_TEMPLATE_PROTECTED_MESSAGE };
+      }
       const original = await readFile(path, 'utf8');
       if (!original.includes(input.old_string)) {
         return {
