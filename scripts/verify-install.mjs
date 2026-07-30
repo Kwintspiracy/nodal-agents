@@ -17,6 +17,7 @@ import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join, isAbsolute, resolve as pathResolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrity.mjs';
 
 // ── Locate the install ─────────────────────────────────────────────────────────
 let pkgDir = process.argv[2];
@@ -86,6 +87,34 @@ for (const r of results) {
   );
 }
 
+// ── Web build integrity ────────────────────────────────────────────────────────
+// Dependencies resolving is not enough: 0.8.0 shipped with every npm dep intact
+// but 7 server chunks missing from the Next build itself, so every dashboard
+// page 500ed while /api/health stayed 200. Check what the build asks of itself.
+let chunksBroken = false;
+const serverDir = join(pkgDir, 'web', '.next', 'server');
+if (existsSync(serverDir)) {
+  const scan = scanServerChunks(serverDir);
+  const report = formatMissingChunks(scan);
+  if (report) {
+    chunksBroken = true;
+    console.log(`\n  ❌ Web build incomplete — the dashboard cannot render.`);
+    console.log(
+      report
+        .split('\n')
+        .map((l) => `  ${l}`)
+        .join('\n'),
+    );
+  } else {
+    console.log(
+      `\n  ✅ Web build: ${scan.chunksPresent} server chunks, ` +
+        `${scan.entriesScanned} entries, none missing`,
+    );
+  }
+} else {
+  console.log(`\n  ⚠️  No web build found at ${serverDir} — skipping chunk integrity check.`);
+}
+
 const missing = results.filter((r) => r.status === 'MISSING');
 const broken = results.filter((r) => r.status === 'LOAD-ERROR');
 console.log(`\n  ${results.length - missing.length - broken.length}/${results.length} healthy`);
@@ -94,5 +123,6 @@ if (missing.length)
 if (broken.length)
   console.log(`  ⚠️  ${broken.length} load-error: ${broken.map((r) => r.dep).join(', ')}`);
 if (!missing.length && !broken.length) console.log(`  ✅ Every module is installed and loads.\n`);
+if (chunksBroken) console.log(`  ❌ Web build is missing server chunks — dashboard will 500.\n`);
 
-process.exit(missing.length || broken.length ? 1 : 0);
+process.exit(missing.length || broken.length || chunksBroken ? 1 : 0);

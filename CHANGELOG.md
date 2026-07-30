@@ -10,6 +10,23 @@ nodal-agents update   # upgrade in place — your data is preserved
 
 ---
 
+## v0.8.1 — Jul 31, 2026
+
+Fixes a broken 0.8.0 package: on a fresh machine the dashboard could not render at
+all. **If you installed 0.8.0, upgrade.**
+
+- **Every dashboard page returned HTTP 500 on a fresh install.** The published
+  0.8.0 tarball was missing 7 of the 40 server chunks its own pages require — the
+  Next.js standalone output dropped them while copying the build, and nothing in
+  the release pipeline compared what the build asks for against what ships. The
+  home, agents, jobs, memories, settings, logs, MCP, automations, approvals,
+  connectors, skills and onboarding pages were all affected. `/api/health` kept
+  answering 200 throughout, so the CLI reported the runner as healthy.
+- **The pack now ships the real build, and proves it.** `build-pack` copies the
+  build's own `.next/server` over the standalone copy, then fails loudly if any
+  page still requires a chunk that isn't there. `verify-install` runs the same
+  check against an installed copy, and both are covered by tests that now run in CI.
+
 ## v0.8.0 — The Office Release · Jul 22, 2026
 
 Your agents step into the workplace: they can now read your Outlook mail and author

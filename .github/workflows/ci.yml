@@ -62,6 +62,11 @@ jobs:
         # turbo directly, NOT via `pnpm test -- …` which forwards it to vitest.)
         run: pnpm exec turbo run test --concurrency=3
 
+      # scripts/ lives outside the workspace, so `turbo run test` never sees it.
+      # Its suites were effectively dead code until 0.8.0 shipped a broken pack.
+      - name: Script tests
+        run: pnpm test:scripts
+
       # Audit finding: CI never actually built the apps (typecheck/lint catch
       # type/style errors but not a broken `next build` — e.g. a bad server
       # action boundary, an invalid import only webpack's build graph catches).

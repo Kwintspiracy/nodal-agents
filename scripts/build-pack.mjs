@@ -24,6 +24,7 @@ import {
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
+import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrity.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -78,6 +79,16 @@ mkdirSync(webOut, { recursive: true });
 
 cpSync(resolve(standaloneRoot, 'apps/web/server.js'), resolve(webOut, 'server.js'));
 cpSync(resolve(standaloneRoot, 'apps/web/.next'), resolve(webOut, '.next'), { recursive: true });
+// The standalone copy of .next/server is INCOMPLETE — next@16.2.6 dropped 7 of
+// 40 files from .next/server/chunks/ when producing it, and shipped 0.8.0 to
+// npm with every dashboard page 500ing (MODULE_NOT_FOUND on chunks/5773.js).
+// The real build is the source of truth: verified byte-identical on all 159
+// shared files, with the standalone copy a strict subset. So we overlay the
+// real .next/server on top — same bytes where they overlap, plus whatever the
+// copy lost. Step 5b below then FAILS THE BUILD if anything is still missing.
+cpSync(resolve(repoRoot, 'apps/web/.next/server'), resolve(webOut, '.next/server'), {
+  recursive: true,
+});
 // Intentionally skip standalone's node_modules. pnpm produces a strict
 // non-hoisted layout (top-level packages are symlinks into .pnpm/) that
 // Next 16's runtime cannot resolve consistently — `@swc/helpers` and
@@ -94,6 +105,24 @@ const publicSrc = resolve(repoRoot, 'apps/web/public');
 if (existsSync(publicSrc)) {
   cpSync(publicSrc, resolve(webOut, 'public'), { recursive: true });
 }
+
+// ─── 5b. Chunk integrity gate ───────────────────────────────────────────────
+// Fail LOUD if any entry requires a server chunk the pack doesn't ship. This is
+// the check that was missing when 0.8.0 shipped a build whose dashboard could
+// never render: `next build` didn't complain, cpSync copied what it was given,
+// verify-install only looked at npm dependencies, and CI never booted the pack.
+// The only guard that caught it — assertWebRenders — runs on the USER's machine
+// at first boot, i.e. after publish. This one runs here, before the tarball.
+const chunkScan = scanServerChunks(resolve(webOut, '.next/server'));
+const chunkReport = formatMissingChunks(chunkScan);
+if (chunkReport) {
+  console.error(`\n❌ Incomplete web build — refusing to assemble the pack.\n${chunkReport}`);
+  process.exit(1);
+}
+console.log(
+  `✔ Web chunk integrity: ${chunkScan.chunksPresent} chunks, ` +
+    `${chunkScan.entriesScanned} entries, none missing`,
+);
 
 // ─── 6. Stage Drizzle migrations ────────────────────────────────────────────
 // The runner calls `runMigrations(databaseUrl)` on boot via the CLI; that
