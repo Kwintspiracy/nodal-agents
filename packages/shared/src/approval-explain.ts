@@ -66,7 +66,24 @@ export interface ApprovalExplanation {
     /** Description the third party supplies. UNTRUSTED — it is their text. */
     supplied?: string;
   };
-  /** The real arguments, flattened for display. Never truncated silently. */
+  /**
+   * The agent's own stated reason, verbatim, or null when it gave none.
+   *
+   * Extracted here rather than at each surface because both the Telegram card
+   * and the dashboard were reading `toolInput.purpose` themselves — two copies
+   * of the same rule, free to drift. Invariant #2 governs what callers do with
+   * it: show it verbatim as the agent's voice, or say it is missing. Never
+   * synthesise one.
+   */
+  purpose: string | null;
+  /**
+   * The real arguments, flattened for display. Never truncated silently.
+   *
+   * `purpose` is NOT among them: it is a field the approval UI asks the agent
+   * to fill for this card, not an argument to the underlying action, and it is
+   * rendered as the headline. Leaving it in printed it twice on every
+   * `run_command` card.
+   */
   args: Array<{ key: string; value: string; truncated: boolean }>;
   /**
    * The deterministic impact sentence, kept for tools the product ships. Null
@@ -101,14 +118,28 @@ function humanise(name: string): string {
     .toLowerCase();
 }
 
+/** Fields the approval UI asks the agent to fill, rendered outside the arg list. */
+const UI_META_KEYS = new Set(['purpose']);
+
+/** The agent's stated reason, trimmed, or null when absent or blank. */
+function readPurpose(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const raw = (input as Record<string, unknown>)['purpose'];
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function flattenArgs(input: unknown): ApprovalExplanation['args'] {
   if (!input || typeof input !== 'object') return [];
-  return Object.entries(input as Record<string, unknown>).map(([key, raw]) => {
-    const full = typeof raw === 'string' ? raw : JSON.stringify(raw);
-    const value = full ?? String(raw);
-    const truncated = value.length > ARG_MAX;
-    return { key, value: truncated ? `${value.slice(0, ARG_MAX)}…` : value, truncated };
-  });
+  return Object.entries(input as Record<string, unknown>)
+    .filter(([key]) => !UI_META_KEYS.has(key))
+    .map(([key, raw]) => {
+      const full = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      const value = full ?? String(raw);
+      const truncated = value.length > ARG_MAX;
+      return { key, value: truncated ? `${value.slice(0, ARG_MAX)}…` : value, truncated };
+    });
 }
 
 /** First URL-looking argument, so the card can name the destination. */
@@ -154,6 +185,7 @@ export interface ExplainOptions {
  */
 export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
   const args = flattenArgs(opts.toolInput);
+  const purpose = readPurpose(opts.toolInput);
   const mcpName = parseMcpToolName(opts.toolName);
 
   if (mcpName && opts.mcp) {
@@ -175,6 +207,7 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
         endpoint: opts.mcp.endpoint,
         ...(opts.mcp.toolDescription ? { supplied: opts.mcp.toolDescription } : {}),
       },
+      purpose,
       args,
       // No impact sentence: the product did not write this tool and has no
       // basis to characterise it. The server's own description is carried in
@@ -192,6 +225,7 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
       effectLabel: EFFECT_LABEL.unknown,
       target: firstUrl(args),
       provenance: { kind: 'mcp', slug: mcpName.prefix },
+      purpose,
       args,
       impact: null,
     };
@@ -226,6 +260,7 @@ export function explainApproval(opts: ExplainOptions): ApprovalExplanation {
     effectLabel: EFFECT_LABEL[effect],
     target,
     provenance: { kind: 'builtin' },
+    purpose,
     args,
     impact,
   };

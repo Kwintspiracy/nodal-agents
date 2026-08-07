@@ -357,9 +357,6 @@ export async function notifyApprovalCreated(
     // this is platform UI describing what the action DOES, never the
     // agent's voice); (3) the raw technical detail (command/path), secondary
     // and truncated — the reviewer decides on 1+2, not on a wall of shell.
-    const input = (req.toolInput ?? {}) as Record<string, unknown>;
-    const purpose = typeof input['purpose'] === 'string' ? input['purpose'].trim() : '';
-
     // The card used to be: the agent's purpose, ONE impact sentence, then a raw
     // dump. For a THIRD-PARTY tool that sentence fell into
     // computeApprovalImpactLine's `default:` branch and read "irreversible or
@@ -385,7 +382,12 @@ export async function notifyApprovalCreated(
       // An ABSENT purpose is stated, never left blank: "the agent did not say
       // why" is information the reviewer needs, and a silent gap reads as if
       // nothing were missing. Asserted by notify.test.ts.
-      (purpose ? `« ${purpose} »\n\n` : 'Purpose not specified by the agent.\n\n') +
+      //
+      // Read off the explanation rather than re-derived from toolInput here:
+      // this surface and the dashboard each had their own copy of the rule.
+      (explanation.purpose
+        ? `« ${explanation.purpose} »\n\n`
+        : "L'agent n'a pas expliqué pourquoi.\n\n") +
       renderExplanationText(explanation);
 
     // Channel-neutral (W2): sent through the ChannelAdapter rather than the

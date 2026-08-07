@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpToolToToolDefinition, slugToPrefix } from '../tools.ts';
 import type { McpToolDescriptor } from '../client.ts';
@@ -233,5 +234,86 @@ describe('mcpToolToToolDefinition', () => {
     const out = (await def.execute({}, {} as never)) as { truncated: boolean };
 
     expect(out.truncated).toBe(true);
+  });
+});
+
+// ─── Stated purpose ──────────────────────────────────────────────────────────
+//
+// Before this, `toolInput.purpose` was undefined for EVERY MCP tool — no
+// discovered tool declares that field — so the approval card printed "Purpose
+// not specified by the agent." on 100% of MCP approvals. Reported live, with
+// the only reasonable conclusion: "je ne les approuverai pas".
+
+describe('purpose injection', () => {
+  const shapeOf = (def: { inputSchema: unknown }) =>
+    (def.inputSchema as { shape: Record<string, unknown> }).shape;
+
+  it('adds a REQUIRED purpose to a discovered tool', () => {
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      descriptor,
+      'cogni-cortex',
+    );
+
+    // Present in the schema the LLM sees...
+    expect(Object.keys(shapeOf(def))).toContain('purpose');
+    // ...and genuinely required: an omitted purpose must not validate, or a
+    // model under pressure simply drops it and we are back to the bug.
+    const parsed = (def.inputSchema as z.ZodTypeAny).safeParse({ detail: true });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("does not forward purpose to the server — it is the product's field", async () => {
+    let sent: unknown;
+    const callTool = vi.fn(async (req: unknown) => {
+      sent = req;
+      return { content: [{ type: 'text', text: 'ok' }] };
+    });
+    const def = mcpToolToToolDefinition({ callTool } as unknown as Client, descriptor, 'c');
+
+    await def.execute({ detail: true, purpose: 'Vérifier le CHANGELOG' }, {} as never);
+
+    // The server never declared `purpose`; a strict server would reject it.
+    expect(sent).toEqual({ name: 'get_home', arguments: { detail: true } });
+  });
+
+  it('KEEPS a purpose the server itself declares, and does not re-describe it', async () => {
+    // The dangerous case: stripping unconditionally would delete a real
+    // argument the tool needs, and the call would silently do the wrong thing.
+    const ownPurpose: McpToolDescriptor = {
+      name: 'file_note',
+      description: 'Note something',
+      inputSchema: {
+        type: 'object',
+        properties: { purpose: { type: 'string', description: "the note's subject" } },
+        required: ['purpose'],
+      },
+    };
+    let sent: unknown;
+    const callTool = vi.fn(async (req: unknown) => {
+      sent = req;
+      return { content: [{ type: 'text', text: 'ok' }] };
+    });
+    const def = mcpToolToToolDefinition({ callTool } as unknown as Client, ownPurpose, 'c');
+
+    await def.execute({ purpose: 'quarterly report' }, {} as never);
+
+    expect(sent).toEqual({ name: 'file_note', arguments: { purpose: 'quarterly report' } });
+  });
+
+  it('leaves a non-object input schema alone rather than forcing one', () => {
+    const scalar: McpToolDescriptor = {
+      name: 'ping',
+      description: 'Ping',
+      inputSchema: { type: 'string' },
+    };
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      scalar,
+      'c',
+    );
+    // No shape to extend. The card keeps its honest "did not say why" line
+    // instead of the tool call failing validation forever.
+    expect((def.inputSchema as { shape?: unknown }).shape).toBeUndefined();
   });
 });

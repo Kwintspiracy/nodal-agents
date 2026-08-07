@@ -96,13 +96,11 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                     // applies — its voice), clearly quoted so they read as a claim
                     // rather than a platform verdict. An ABSENT purpose is stated:
                     // "the agent did not say why" is information.
-                    const ti = (a.toolInput ?? {}) as Record<string, unknown>;
-                    const purpose = typeof ti.purpose === 'string' ? ti.purpose.trim() : '';
                     const x = a.explanation;
                     return (
                       <div className="space-y-1.5 rounded-md border border-rule-2 bg-canvas px-3 py-2">
                         <p className="text-body-13 text-ink-2 italic">
-                          {purpose ? `« ${purpose} »` : "L'agent n'a pas expliqué pourquoi."}
+                          {x.purpose ? `« ${x.purpose} »` : "L'agent n'a pas expliqué pourquoi."}
                         </p>
 
                         <p className="text-body-12 text-warn">

@@ -160,3 +160,59 @@ describe('renderExplanationText — the channel card', () => {
     expect(text).toContain('https://example.test/a.md');
   });
 });
+
+// ─── Stated purpose ──────────────────────────────────────────────────────────
+//
+// Both the Telegram card and the dashboard used to pull `toolInput.purpose`
+// themselves — the same rule written twice, free to drift. It now lives here.
+
+describe('purpose', () => {
+  it('carries the agent’s reason verbatim', () => {
+    const x = explainApproval({
+      toolName: 'run_command',
+      toolInput: { command: 'ls', purpose: 'Lister le dossier avant la copie' },
+    });
+    expect(x.purpose).toBe('Lister le dossier avant la copie');
+  });
+
+  it('is null when absent, blank, or not a string — never a synthesised sentence', () => {
+    // Invariant #2: the platform does not speak for the agent. A caller that
+    // gets null says so; it must not receive something plausible-looking.
+    for (const toolInput of [
+      { command: 'ls' },
+      { command: 'ls', purpose: '   ' },
+      { command: 'ls', purpose: 42 },
+    ]) {
+      expect(explainApproval({ toolName: 'run_command', toolInput }).purpose).toBeNull();
+    }
+  });
+
+  it('is NOT repeated in args — it was printed twice on every run_command card', () => {
+    const x = explainApproval({
+      toolName: 'run_command',
+      toolInput: { command: 'ls', purpose: 'Lister le dossier' },
+    });
+    expect(x.args.map((a) => a.key)).toEqual(['command']);
+  });
+
+  it('reaches the MCP branch too — that is the one that had none', () => {
+    const x = explainApproval({
+      toolName: 'mcp_fetch__fetch_markdown',
+      toolInput: { url: 'https://example.com/a.md', purpose: 'Lire le CHANGELOG' },
+      mcp: { slug: 'mcp-fetch', name: 'Fetch', endpoint: 'npx' },
+    });
+    expect(x.purpose).toBe('Lire le CHANGELOG');
+    expect(x.args.map((a) => a.key)).toEqual(['url']);
+  });
+
+  it('renders the reason on text surfaces without leaking it into the arg list', () => {
+    const x = explainApproval({
+      toolName: 'mcp_fetch__fetch_markdown',
+      toolInput: { url: 'https://example.com/a.md', purpose: 'Lire le CHANGELOG' },
+      mcp: { slug: 'mcp-fetch', name: 'Fetch', endpoint: 'npx' },
+    });
+    const text = renderExplanationText(x);
+    expect(text).not.toContain('purpose =');
+    expect(text).not.toContain('purpose:');
+  });
+});
