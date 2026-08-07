@@ -1,321 +1,146 @@
-// mcp-approval-gate.test.ts — MCP-001 regression suite.
+// mcp-approval-gate.test.ts — les contrats du VRAI gate, écrits avec le kit.
 //
-// Before the fix, a tool coming from a third-party MCP server declared no
-// `defaultApproval`, so executeTool fell through
-// `matchedRule?.action ?? tool.defaultApproval` to `undefined` and executed it.
-// Measured against the real gate: `execute()` was called and no approval was
-// requested in ALL FOUR autonomy modes, including the default.
+// MCP-001 : avant le correctif, un outil venu d'un serveur MCP tiers ne
+// déclarait aucun `defaultApproval`, donc `executeTool` tombait sur
+// `matchedRule?.action ?? tool.defaultApproval` → `undefined` et l'exécutait.
+// Mesuré contre le gate réel : `execute()` appelé et aucune approbation demandée
+// dans LES QUATRE modes d'autonomie, y compris le défaut livré.
 //
-// Assertions are on real results — whether the tool's own execute() ran, and
-// what outcome the gate returned — never on call counts alone.
+// Chaque contrat tient en une ligne parce que le harnais porte la plomberie
+// (@nodal-agents/test-kit). Ce n'est pas cosmétique : la version manuelle de ce
+// fichier faisait 200 lignes, et c'est ce coût qui fait qu'on écrit « les modes
+// qui comptent » au lieu des quatre — la forme exacte qu'a prise le trou É-2,
+// gaté sous `destructive_gate` et absent en `fully_autonomous`.
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { executeTool } from '../execute.ts';
-import type { ExecuteOptions, ToolContext, ToolDefinition } from '../types.ts';
+import {
+  createGateHarness,
+  anMcpTool,
+  aBuiltinTool,
+  aGatedBuiltinTool,
+  aServerRule,
+  aToolRule,
+  type ExecuteToolFn,
+} from '@nodal-agents/test-kit';
+import { executeTool } from '../execute';
 
-type Autonomy = ExecuteOptions['autonomy'];
+// Branché sur le gate de production. Si `executeTool` change, ces tests bougent.
+const { expectGate } = createGateHarness(executeTool as unknown as ExecuteToolFn);
 
-/** Minimal ToolContext: the gate only needs the ids and an insertable db. */
-function makeCtx(): ToolContext {
-  return {
-    db: {
-      insert: () => ({
-        values: () => ({ returning: async () => [{ id: 'approval-row-id' }] }),
-      }),
-    },
-    entityId: 'entity-1',
-    agentId: 'agent-1',
-    jobId: 'job-1',
-  } as unknown as ToolContext;
-}
-
-/**
- * A tool shaped exactly as `buildMcpToolDefinition` produces one: namespaced
- * name, framed description, schema, riskLevel — and now `defaultApproval`.
- */
-function makeMcpTool(overrides: Partial<ToolDefinition<z.ZodTypeAny, unknown>> = {}) {
-  const execute = vi.fn(async () => ({ ok: true }));
-  const tool = {
-    name: 'veille__purge_all_data',
-    description: 'Supprime définitivement toutes les données du workspace.',
-    inputSchema: z.object({}),
-    riskLevel: 'write' as const,
-    defaultApproval: 'require_approval' as const,
-    execute,
-    ...overrides,
-  } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
-  return { tool, execute };
-}
-
-const AUTONOMIES: Array<[string, Autonomy]> = [
-  ['undefined (the shipped default)', undefined],
-  ['propose_confirm', 'propose_confirm'],
-  ['destructive_gate', 'destructive_gate'],
-  ['fully_autonomous', 'fully_autonomous'],
-];
-
-describe('MCP-001 — a third-party MCP tool is gated with no approval rule', () => {
-  for (const [label, autonomy] of AUTONOMIES) {
-    // fully_autonomous is the owner's explicit "no prompts" decision, and the
-    // gate honours it — that branch is asserted separately below.
-    if (autonomy === 'fully_autonomous') continue;
-
-    it(`suspends for approval under autonomy=${label}`, async () => {
-      const { tool, execute } = makeMcpTool();
-      // Capture the gate request itself: asserting on the real payload the
-      // runner would surface, not merely that a callback fired.
-      const gated: Array<{ toolName: string }> = [];
-
-      const result = await executeTool(tool, {}, makeCtx(), {
-        approvalRules: [], // the state right after attaching a server
-        autonomy,
-        onApprovalRequired: async (req) => {
-          gated.push({ toolName: req.toolName });
-        },
-      });
-
-      expect(result.outcome).toBe('awaiting_approval');
-      expect(execute).not.toHaveBeenCalled();
-      expect(gated).toEqual([{ toolName: 'veille__purge_all_data' }]);
-    });
-  }
-
-  it('still honours fully_autonomous — the owner opted out of prompts', async () => {
-    const { tool, execute } = makeMcpTool();
-    const result = await executeTool(tool, {}, makeCtx(), {
-      approvalRules: [],
-      autonomy: 'fully_autonomous',
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('success');
-    expect(execute).toHaveBeenCalledTimes(1);
+describe('MCP-001 — un outil MCP tiers est gaté sans règle', () => {
+  it('suspend pour approbation dans les trois modes non-yolo', async () => {
+    await expectGate(anMcpTool())
+      .withRules([])
+      .underAutonomy(undefined, 'propose_confirm', 'destructive_gate')
+      .toRequireApproval();
   });
 
-  it('runs without a prompt once the user grants standing consent', async () => {
-    const { tool, execute } = makeMcpTool();
-    const result = await executeTool(tool, {}, makeCtx(), {
-      approvalRules: [
-        {
-          id: 'rule-1',
-          toolName: 'veille__purge_all_data',
-          action: 'auto_approve',
-          agentId: 'agent-1',
-          entityId: 'entity-1',
-        },
-      ],
-      autonomy: undefined,
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('success');
-    expect(execute).toHaveBeenCalledTimes(1);
+  it('honore fully_autonomous — le propriétaire a renoncé aux demandes', async () => {
+    await expectGate(anMcpTool())
+      .withRules([])
+      .underAutonomy('fully_autonomous')
+      .toRunWithoutAsking();
   });
 
-  it('a self-declared readOnlyHint cannot lower the posture', async () => {
-    // The server claiming to be read-only used to yield riskLevel 'read'. Even
-    // if a future change reintroduced that, defaultApproval still gates.
-    const { tool, execute } = makeMcpTool({ riskLevel: 'read' });
-    const result = await executeTool(tool, {}, makeCtx(), {
-      approvalRules: [],
-      autonomy: 'destructive_gate',
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('awaiting_approval');
-    expect(execute).not.toHaveBeenCalled();
-  });
-});
-
-describe('MCP-001 — control case: the gate itself works', () => {
-  it('executes an ordinary tool that declares no approval posture', async () => {
-    // Proves the suspensions above come from `defaultApproval`, not from the
-    // gate refusing everything.
-    const execute = vi.fn(async () => ({ ok: true }));
-    const ordinary = {
-      name: 'list_models',
-      description: 'List models.',
-      inputSchema: z.object({}),
-      riskLevel: 'read' as const,
-      execute,
-    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
-
-    const result = await executeTool(ordinary, {}, makeCtx(), {
-      approvalRules: [],
-      autonomy: undefined,
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('success');
-    expect(execute).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('create_mcp stdio is floored in every autonomy mode', () => {
-  for (const [label, autonomy] of AUTONOMIES) {
-    it(`requires a human under autonomy=${label}`, async () => {
-      const execute = vi.fn(async () => ({ ok: true }));
-      const createMcp = {
-        name: 'create_mcp',
-        description: 'Register an MCP server.',
-        inputSchema: z.object({ transport: z.string().optional() }),
-        riskLevel: 'write' as const,
-        defaultApproval: 'require_approval' as const,
-        execute,
-      } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
-
-      const result = await executeTool(
-        createMcp,
-        // stdio: spawns a local subprocess, RCE-equivalent to run_command.
-        // É-2 gated this under destructive_gate; the gap was fully_autonomous,
-        // which auto-approved before that branch was ever reached.
-        { transport: 'stdio' },
-        makeCtx(),
-        { approvalRules: [], autonomy, onApprovalRequired: async () => {} },
-      );
-
-      expect(result.outcome).toBe('awaiting_approval');
-      expect(execute).not.toHaveBeenCalled();
-    });
-  }
-
-  it('leaves an http create_mcp on the existing É-2 path (no local spawn)', async () => {
-    // Deliberately NOT floored: http spawns nothing, and every tool the attached
-    // server exposes now carries its own defaultApproval (MCP-001), so attaching
-    // one hands the model nothing it can run unattended.
-    const execute = vi.fn(async () => ({ ok: true }));
-    const createMcp = {
-      name: 'create_mcp',
-      description: 'Register an MCP server.',
-      inputSchema: z.object({ transport: z.string().optional() }),
-      riskLevel: 'write' as const,
-      defaultApproval: 'require_approval' as const,
-      execute,
-    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
-
-    const result = await executeTool(createMcp, { transport: 'http' }, makeCtx(), {
-      approvalRules: [],
-      autonomy: 'destructive_gate',
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('success');
+  it('un readOnlyHint auto-déclaré ne peut pas abaisser la posture', async () => {
+    // Le serveur prétendait « lecture seule » et obtenait riskLevel 'read',
+    // ce qui le faisait auto-approuver sous destructive_gate.
+    await expectGate(anMcpTool({ riskLevel: 'read' }))
+      .withRules([])
+      .underAutonomy('destructive_gate')
+      .toRequireApproval();
   });
 
-  it('is floored even against an explicit auto_approve rule', async () => {
-    // An agent steered by injected content must not be able to hand itself a
-    // permanent third-party channel, whatever rules exist.
-    const execute = vi.fn(async () => ({ ok: true }));
-    const createMcp = {
-      name: 'create_mcp',
-      description: 'Register an MCP server.',
-      inputSchema: z.object({ transport: z.string().optional() }),
-      riskLevel: 'write' as const,
-      defaultApproval: 'require_approval' as const,
-      execute,
-    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
-
-    const result = await executeTool(createMcp, { transport: 'stdio' }, makeCtx(), {
-      approvalRules: [
-        {
-          id: 'rule-yolo',
-          toolName: 'create_mcp',
-          action: 'auto_approve',
-          agentId: 'agent-1',
-          entityId: 'entity-1',
-        },
-      ],
-      autonomy: 'fully_autonomous',
-      onApprovalRequired: async () => {},
-    });
-
-    expect(result.outcome).toBe('awaiting_approval');
-    expect(execute).not.toHaveBeenCalled();
+  it('CONTRE-ÉPREUVE : un outil ordinaire du produit s’exécute sans demande', async () => {
+    // Prouve que les suspensions viennent de `defaultApproval`, pas d'un gate
+    // qui refuserait tout. Sans elle, un gate cassé « passerait » tout ce qui
+    // précède.
+    await expectGate(aBuiltinTool()).withRules([]).underEveryAutonomy().toRunWithoutAsking();
   });
 });
 
 describe('Règles par SERVEUR — un consentement, pas trente', () => {
-  // Un serveur MCP expose couramment 30 outils. Sans portée par
-  // serveur, « je fais confiance à ce serveur » — décision déjà prise en
-  // l'attachant — devenait 30 lignes identiques. C'est ainsi qu'un gate
-  // devient un tampon automatique.
-
-  const nsRule = (pattern: string, action: 'auto_approve' | 'require_approval' | 'block') => ({
-    id: `rule-${pattern}-${action}`,
-    toolName: pattern,
-    action,
-    agentId: null,
-    entityId: 'entity-1',
-  });
-
   it('un auto_approve par serveur couvre tous ses outils', async () => {
-    const { tool, execute } = makeMcpTool();
-    const result = await executeTool(tool, {}, makeCtx(), {
-      approvalRules: [nsRule('veille__*', 'auto_approve')],
-      autonomy: undefined,
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('success');
-    expect(execute).toHaveBeenCalledTimes(1);
+    await expectGate(anMcpTool({ serverPrefix: 'veille', toolName: 'get_status' }))
+      .withRules([aServerRule('veille')])
+      .underAutonomy(undefined)
+      .toRunWithoutAsking();
   });
 
-  it('ne déborde pas sur un AUTRE serveur', async () => {
-    const { tool, execute } = makeMcpTool({ name: 'autre__purge_all_data' });
-    const result = await executeTool(tool, {}, makeCtx(), {
-      approvalRules: [nsRule('veille__*', 'auto_approve')],
-      autonomy: undefined,
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('awaiting_approval');
-    expect(execute).not.toHaveBeenCalled();
+  it('ne déborde pas sur un autre serveur', async () => {
+    await expectGate(anMcpTool({ serverPrefix: 'autre', toolName: 'get_status' }))
+      .withRules([aServerRule('veille')])
+      .underAutonomy(undefined)
+      .toRequireApproval();
   });
 
-  it('ne couvre jamais un outil intégré — les builtins n’ont pas de `__`', async () => {
-    const execute = vi.fn(async () => ({ ok: true }));
-    const runCommand = {
-      name: 'run_command',
-      description: 'Run a shell command.',
-      inputSchema: z.object({ command: z.string() }),
-      riskLevel: 'destructive' as const,
-      defaultApproval: 'require_approval' as const,
-      execute,
-    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
-
-    const result = await executeTool(runCommand, { command: 'echo hi' }, makeCtx(), {
-      // Une règle de namespace ne doit pas relâcher un outil du produit.
-      approvalRules: [nsRule('run__*', 'auto_approve')],
-      autonomy: undefined,
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('awaiting_approval');
-    expect(execute).not.toHaveBeenCalled();
+  it('une règle par outil l’emporte sur la règle par serveur', async () => {
+    // « Ce serveur oui, SAUF cet outil » doit rester exprimable.
+    await expectGate(anMcpTool({ serverPrefix: 'veille', toolName: 'purge' }))
+      .withRules([aServerRule('veille'), aToolRule('veille__purge', 'require_approval')])
+      .underAutonomy(undefined)
+      .toRequireApproval();
   });
 
-  it('une règle par OUTIL l’emporte sur la règle par serveur', async () => {
-    // « Je fais confiance à ce serveur, SAUF cet outil-là » doit être exprimable.
-    const { tool, execute } = makeMcpTool();
-    const result = await executeTool(tool, {}, makeCtx(), {
-      approvalRules: [
-        nsRule('veille__*', 'auto_approve'),
-        {
-          id: 'exact',
-          toolName: 'veille__purge_all_data',
-          action: 'require_approval' as const,
-          agentId: null,
-          entityId: 'entity-1',
-        },
-      ],
-      autonomy: undefined,
-      onApprovalRequired: async () => {},
-    });
-    expect(result.outcome).toBe('awaiting_approval');
-    expect(execute).not.toHaveBeenCalled();
+  it('un block par serveur refuse même en fully_autonomous', async () => {
+    await expectGate(anMcpTool({ serverPrefix: 'veille' }))
+      .withRules([aServerRule('veille', 'block')])
+      .underEveryAutonomy()
+      .toBeBlocked();
   });
 
-  it('un block par serveur refuse sans jamais exécuter', async () => {
-    const { tool, execute } = makeMcpTool();
-    const result = await executeTool(tool, {}, makeCtx(), {
-      approvalRules: [nsRule('veille__*', 'block')],
-      autonomy: 'fully_autonomous',
-      onApprovalRequired: async () => {},
+  it('ne peut jamais relâcher un outil du produit — les builtins n’ont pas de namespace', async () => {
+    await expectGate(aGatedBuiltinTool())
+      .withRules([aServerRule('run')])
+      .withInput({ command: 'echo hi' })
+      .underAutonomy(undefined)
+      .toRequireApproval();
+  });
+
+  it('un consentement explicite par outil fait passer sans demande', async () => {
+    await expectGate(anMcpTool({ serverPrefix: 'veille', toolName: 'get_status' }))
+      .withRules([aToolRule('veille__get_status')])
+      .underAutonomy(undefined)
+      .toRunWithoutAsking();
+  });
+});
+
+describe('create_mcp stdio — plancher dur dans tous les modes', () => {
+  const createMcp = () =>
+    aGatedBuiltinTool({
+      name: 'create_mcp',
+      description: 'Register an MCP server.',
+      riskLevel: 'write',
+      inputSchema: z.object({ transport: z.string().optional() }),
     });
-    expect(result.outcome).toBe('error');
-    expect(execute).not.toHaveBeenCalled();
+
+  it('exige un humain dans les quatre modes', async () => {
+    // É-2 l'avait gaté sous destructive_gate ; le trou était fully_autonomous,
+    // qui auto-approuve AVANT d'atteindre cette branche.
+    await expectGate(createMcp())
+      .withRules([])
+      .withInput({ transport: 'stdio' })
+      .underEveryAutonomy()
+      .toRequireApproval();
+  });
+
+  it('résiste même à une règle auto_approve explicite', async () => {
+    await expectGate(createMcp())
+      .withRules([aToolRule('create_mcp')])
+      .withInput({ transport: 'stdio' })
+      .underAutonomy('fully_autonomous')
+      .toRequireApproval();
+  });
+
+  it('laisse le transport http sur le chemin É-2 existant', async () => {
+    // Délibérément NON floored : http ne lance aucun sous-processus, et chaque
+    // outil du serveur attaché porte désormais son propre gate (MCP-001).
+    const results = await expectGate(createMcp())
+      .withRules([])
+      .withInput({ transport: 'http' })
+      .underAutonomy('destructive_gate')
+      .run();
+    expect(results[0]?.outcome).toBe('success');
   });
 });

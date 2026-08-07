@@ -84,7 +84,7 @@ export type ChatTurnResult =
  * job's REAL outcome at read time. This replaces a static "Task dispatched."
  * that left the orchestrator permanently blind to completion: it could never
  * tell a finished delegation from a still-running one, so it re-launched tasks
- * and looped on sequential work (live: the Conciergus Cortex sequence). Now it
+ * and looped on sequential work (observed live on a sequential MCP chain). Now it
  * sees the signal (done / running / failed) AND the content. Pure: the job's
  * `result` is the single source of truth — `completeJob`/`failJob` already fill
  * it from the delegated children when the parent didn't re-publish, so there is
@@ -416,7 +416,7 @@ export async function runChatTurn(opts: {
       message;
     // SAFETY NET against intent drift: the worker must always see the USER's
     // actual words, not only the orchestrator's framing. If the instruction did
-    // not already carry them (Alfred reworded/compressed despite the steer), append
+    // not already carry them (an orchestrator reworded/compressed despite the steer), append
     // the user's exact message as the source of truth. Dedup when it's already in.
     const probe = message.trim().slice(0, 160);
     const workerContent =

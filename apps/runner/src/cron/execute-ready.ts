@@ -245,8 +245,8 @@ export async function executeReadyTasks(
   // `in_progress` until the slowest sibling finished `Promise.allSettled`, and
   // the orphan reaper (resetOrphanedTasks Case B) re-ran any task whose job was
   // already terminal — re-executing completed work (live: Java posted to the
-  // Cortex 3x because its task lingered in_progress ~12 min behind a slow
-  // Sputnik). Marking per-job closes that window entirely.
+  // the same MCP endpoint 3x because its task lingered in_progress ~12 min behind a slow
+  // sibling). Marking per-job closes that window entirely.
   await Promise.allSettled(
     executions.map(async (exec) => {
       try {

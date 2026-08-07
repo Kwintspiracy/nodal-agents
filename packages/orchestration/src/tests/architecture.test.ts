@@ -1,105 +1,33 @@
-// architecture.test.ts — Invariant 1: no hardcoded agent metadata in this package
-// Greps src/ for known agent slugs — must be zero matches.
+// architecture.test.ts — invariants du produit, appliqués mécaniquement.
+//
+// La mécanique vit dans @nodal-agents/test-kit : ces scanners étaient recopiés
+// dans 15 fichiers, chacun avec sa liste de slugs et son marcheur. Quinze copies
+// = quinze endroits à mettre à jour, et quinze chances qu'une devienne plus
+// laxiste sans que personne ne relise celles qui passent. C'est arrivé : la
+// version locale comparait sans normaliser la casse, donc « Cortex » passait là
+// où « cortex » échouait.
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  scanForAgentSlugs,
+  scanForUserFacingStrings,
+  formatViolations,
+} from '@nodal-agents/test-kit';
 
-// Agent slugs from the KwintAgents platform — must NEVER appear in src/ files
-// Tests may use synthesized fixture slugs like `test_router_a`, `test_worker_b`
-const FORBIDDEN_AGENT_SLUGS = [
-  'ender',
-  'pavel',
-  'boris',
-  'jennie',
-  'stanley',
-  'sherlock',
-  'cortex',
-  'amelia',
-  'olivia',
-];
+const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Resolve the src/ directory (two levels up: tests/architecture.test.ts → src/)
-const SRC_DIR = resolve(__dirname, '..');
-
-/**
- * Recursively collect all .ts files under a directory,
- * excluding node_modules and the tests directory itself.
- * Tests use synthesized fixture slugs — the invariant only applies to src/*.
- */
-function collectTsFiles(dir: string, files: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    const stat = statSync(full);
-    if (stat.isDirectory()) {
-      if (entry === 'node_modules' || entry === 'tests') continue;
-      collectTsFiles(full, files);
-    } else if (entry.endsWith('.ts')) {
-      files.push(full);
-    }
-  }
-  return files;
-}
-
-describe('architecture invariant 1 — no hardcoded agent metadata', () => {
-  it('src/ contains zero references to known agent slugs', () => {
-    const srcFiles = collectTsFiles(SRC_DIR);
-    expect(srcFiles.length).toBeGreaterThan(0); // sanity: files exist
-
-    const violations: { file: string; slug: string; line: number; text: string }[] = [];
-
-    for (const filePath of srcFiles) {
-      const content = readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n');
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i] ?? '';
-        for (const slug of FORBIDDEN_AGENT_SLUGS) {
-          const regex = new RegExp(`\\b${slug}\\b`, 'i');
-          if (regex.test(line)) {
-            violations.push({
-              file: filePath.replace(SRC_DIR, '').replace(/\\/g, '/'),
-              slug,
-              line: i + 1,
-              text: line.trim(),
-            });
-          }
-        }
-      }
-    }
-
-    if (violations.length > 0) {
-      const report = violations
-        .map((v) => `  ${v.file}:${v.line} — found "${v.slug}": ${v.text}`)
-        .join('\n');
-      expect.fail(`Invariant 1 violated: hardcoded agent slugs found in src/:\n${report}`);
-    }
-
-    expect(violations).toHaveLength(0);
+describe('invariant 1 — aucune métadonnée d’agent en dur', () => {
+  it('src/ ne contient aucun slug d’agent connu', () => {
+    const v = scanForAgentSlugs({ srcDir: SRC_DIR });
+    if (v.length > 0) expect.fail(formatViolations('Invariant 1 violé', v));
   });
+});
 
-  it('no hardcoded user-facing strings (no "Sorry" or "Désolé" patterns)', () => {
-    const srcFiles = collectTsFiles(SRC_DIR);
-    const FORBIDDEN_PATTERNS = [/\bSorry\b/, /\bDésolé\b/, /\bVoici votre résultat\b/];
-
-    const violations: string[] = [];
-    for (const filePath of srcFiles) {
-      const content = readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i] ?? '';
-        for (const pattern of FORBIDDEN_PATTERNS) {
-          if (pattern.test(line)) {
-            violations.push(`${filePath}:${i + 1}: ${line.trim()}`);
-          }
-        }
-      }
-    }
-
-    expect(violations).toHaveLength(0);
+describe('invariant 2 — aucun texte utilisateur en dur', () => {
+  it('src/ ne met aucune phrase dans la bouche de l’agent', () => {
+    const v = scanForUserFacingStrings({ srcDir: SRC_DIR });
+    if (v.length > 0) expect.fail(formatViolations('Invariant 2 violé', v));
   });
 });

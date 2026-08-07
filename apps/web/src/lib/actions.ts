@@ -70,6 +70,7 @@ import {
   channelAllowedConversations,
   listChannelBindings,
   getChannelBinding,
+  getMcpApprovalContext,
 } from '@nodal-agents/db';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import {
@@ -102,6 +103,8 @@ import {
   enabledMetaTools,
   parseRootGrants,
   redactSecretsForAudit,
+  explainApproval,
+  type ApprovalExplanation,
   findModelCatalogEntry,
 } from '@nodal-agents/shared';
 import { getDb, getAuthProvider, applyActiveEntity, ACTIVE_ENTITY_COOKIE } from './server.ts';
@@ -5019,6 +5022,18 @@ export type ApprovalRow = {
   expiresAt: Date | null;
   notes: string | null;
   jobTask: string | null;
+  /**
+   * Structured, readable explanation of what is being approved. Computed
+   * server-side so the client renders it without another round trip, and so the
+   * dashboard and the channel cards say the SAME thing.
+   */
+  explanation: ApprovalExplanation;
+  /**
+   * `<serveur>__*` — the rule pattern covering every tool of the MCP server this
+   * call comes from. Null for a built-in. Drives the "always allow this server"
+   * button: one decision instead of one per tool.
+   */
+  mcpRulePattern: string | null;
 };
 
 export async function listApprovalsAction(
@@ -5057,17 +5072,56 @@ export async function listApprovalsAction(
       .orderBy(desc(approvalRequests.requestedAt))
       .limit(100);
 
+    // Resolve the MCP server behind each namespaced tool, so the card can say
+    // WHOSE tool this is. Without it the reviewer sees `mcp_fetch__fetch_markdown`
+    // and an "irreversible or destructive action" line that came from
+    // computeApprovalImpactLine's catch-all branch — reported live as
+    // "je ne comprends pas ce que j'approuve".
+    //
+    // Deduplicated by tool name: a page of 100 approvals from one server would
+    // otherwise issue 100 identical queries.
+    const mcpByTool = new Map<string, Awaited<ReturnType<typeof getMcpApprovalContext>>>();
+    for (const name of new Set(rows.map((r) => r.toolName))) {
+      if (!name.includes('__')) continue;
+      mcpByTool.set(
+        name,
+        await getMcpApprovalContext(db, session.entityId, name).catch(() => null),
+      );
+    }
+
     return ok(
-      rows.map((r) => ({
-        ...r,
+      rows.map((r) => {
         // NOUVEAU-1: the stored approval row keeps the REAL toolInput (the
         // runner re-reads it to re-run the approved call), but no display path
         // may leak a secret — create_connector/create_mcp API keys and stdio
         // env values are masked here, the single loader feeding both the
         // approvals page and the sidebar/NotificationsBell provider.
-        toolInput: redactSecretsForAudit(r.toolInput) as typeof r.toolInput,
-        status: r.status ?? 'pending',
-      })) as ApprovalRow[],
+        const safeInput = redactSecretsForAudit(r.toolInput) as typeof r.toolInput;
+        const ctx = mcpByTool.get(r.toolName) ?? null;
+        return {
+          ...r,
+          toolInput: safeInput,
+          status: r.status ?? 'pending',
+          explanation: explainApproval({
+            toolName: r.toolName,
+            toolInput: safeInput,
+            mcp: ctx
+              ? {
+                  slug: ctx.slug,
+                  name: ctx.ambiguous
+                    ? `${ctx.name} (attention : plusieurs serveurs partagent ce préfixe)`
+                    : ctx.name,
+                  endpoint: ctx.endpoint,
+                  ...(ctx.toolDescription ? { toolDescription: ctx.toolDescription } : {}),
+                  ...(ctx.readOnlyHint !== undefined ? { readOnlyHint: ctx.readOnlyHint } : {}),
+                }
+              : null,
+          }),
+          // The rule pattern that would cover this whole server — what the
+          // "always allow this server" button posts. Null for a built-in.
+          mcpRulePattern: ctx?.rulePattern ?? null,
+        };
+      }) as ApprovalRow[],
     );
   } catch (err) {
     console.error('[listApprovalsAction]', err);

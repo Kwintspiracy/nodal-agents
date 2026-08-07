@@ -54,7 +54,7 @@ export interface TelegramDeliveryTarget {
 /**
  * Resolve which bot can deliver a Telegram message for a job. A gate often fires
  * inside a DELEGATED sub-job whose agent has no bot (e.g. director) — the bot
- * that reaches the user belongs to the ORCHESTRATOR (e.g. alfred). Walk
+ * that reaches the user belongs to the ORCHESTRATOR, not the worker. Walk
  * parent_job_id from the gated job upward and return the first job whose agent
  * has a bot token, carrying the chat_id down the chain. Returns null when no
  * agent in the chain has a bot or no chat_id is set (→ dashboard-only job).

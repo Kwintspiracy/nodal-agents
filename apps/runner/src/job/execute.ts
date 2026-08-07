@@ -3765,7 +3765,7 @@ async function runJob(
           // OWN content) while the agent HAS delivered are NOT a false success:
           // the deliverable is honest and the failures stay visible in the
           // persisted transcript. Hard-failing those turned complete, productive
-          // jobs into false FAILURES (live: Java/Cortex sessions did all the work,
+          // jobs into false FAILURES (observed live: the sessions did all the work,
           // then died on unresolved_tool_failure over a self-vote/dedup rejection
           // the agent literally cannot retry to success). The telegram-delivery
           // guard below independently catches "nothing delivered on a tool-only

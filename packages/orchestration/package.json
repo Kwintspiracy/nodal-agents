@@ -23,6 +23,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@nodal-agents/test-kit": "workspace:*",
     "@types/node": "^25.7.0"
   }
 }
