@@ -3,6 +3,7 @@
 import { randomBytes } from 'crypto';
 import type { Config } from './config.ts';
 import { getInstalledVersion } from './version.ts';
+import { LEGACY_PG_PASSWORD, buildPgUrl } from './postgres.ts';
 
 /**
  * Build env vars for the runner process.
@@ -183,8 +184,13 @@ export function buildEnvForWeb(config: Config, databaseUrl: string): Record<stri
 }
 
 /**
- * Build the postgres connection URL given the data directory and port.
+ * Build the postgres connection URL given the port and the install's password.
+ *
+ * SECRET-003 (audit 2026-08-07): the password used to be the literal `nodalai`,
+ * identical on every installation. It is now minted per install and lives in
+ * config.json; `LEGACY_PG_PASSWORD` is the fallback for clusters created before
+ * that, until `up` rotates them.
  */
-export function buildDatabaseUrl(port: number): string {
-  return `postgresql://nodalai:nodalai@localhost:${port}/nodalai`;
+export function buildDatabaseUrl(port: number, password: string = LEGACY_PG_PASSWORD): string {
+  return buildPgUrl(port, password);
 }

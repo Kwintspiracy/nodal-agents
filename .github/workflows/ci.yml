@@ -67,6 +67,14 @@ jobs:
       - name: Script tests
         run: pnpm test:scripts
 
+      # SUPPLY-002 (audit 2026-08-07): nothing in CI ever looked at whether a
+      # dependency had a known vulnerability. Non-blocking on purpose — on a
+      # 5600-dependency tree a blocking gate produces noise a single maintainer
+      # will end up disabling, and a disabled gate is worse than none because it
+      # reads as coverage. `high` and above only, so the signal stays readable.
+      - name: Dependency audit (advisory)
+        run: pnpm audit --audit-level=high || true
+
       # Audit finding: CI never actually built the apps (typecheck/lint catch
       # type/style errors but not a broken `next build` — e.g. a bad server
       # action boundary, an invalid import only webpack's build graph catches).
@@ -74,3 +82,36 @@ jobs:
       # only surfacing on deploy.
       - name: Build
         run: pnpm build
+
+  # ── Pack smoke test ─────────────────────────────────────────────────────────
+  # SUPPLY-001 (audit 2026-08-07). `pnpm build` builds the WORKSPACE; it says
+  # nothing about the TARBALL. Two releases shipped a dead dashboard because
+  # nothing ever started the packed product before publish:
+  #   0.8.0 — 7 server chunks lost by Next's standalone copy;
+  #   0.8.1 — `next: "^16.2.6"` re-resolved to 16.3.0 at install time, so the
+  #           tarball broke with no commit, no release and no signal.
+  # This packs, installs clean into an isolated HOME, and BOOTS it. The CLI's own
+  # assertWebRenders makes `up` exit non-zero when the dashboard does not render,
+  # so a broken tarball fails here instead of on a user's machine.
+  #
+  # Its own job, in parallel with `ci`: it runs a full `next build` plus a real
+  # Postgres boot (~15 min), and folding that into `ci` would double the feedback
+  # loop for every typo-level failure.
+  pack-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Pack, install clean, boot
+        run: node scripts/smoke-pack.mjs

@@ -44,6 +44,12 @@ export interface PostgresHandle {
   url: string;
   /** True when pgvector extension was successfully loaded; false when we fell back to keyword-only memory. */
   vectorAvailable: boolean;
+  /**
+   * Move the role to a new password on this running cluster (SECRET-003).
+   * Returns true on success. See the implementation for the required ordering:
+   * the caller persists the new value BEFORE calling, and reverts on false.
+   */
+  rotatePassword: (newPassword: string) => Promise<boolean>;
   stop: () => Promise<void>;
 }
 
@@ -59,6 +65,42 @@ export interface PostgresHandle {
  * was nothing to stop or the stop failed. The caller can then fall back to
  * a hard taskkill, accepting the SHM-leak risk over leaving the port held.
  */
+/**
+ * The password every install used before SECRET-003 (audit 2026-08-07): the role
+ * and the password were both the literal `nodalai`, identical everywhere, on a
+ * predictable port. Kept as the fallback for clusters initialised before the
+ * per-install password existed — `rotatePostgresPassword` replaces it on boot.
+ */
+export const LEGACY_PG_PASSWORD = 'nodalai';
+
+/** Postgres role name. Unchanged: rotating the role would orphan existing data. */
+export const PG_USER = 'nodalai';
+
+/** Database name. Same value as the role, historically. */
+export const PG_DATABASE = 'nodalai';
+
+/**
+ * Connection URL for the embedded cluster.
+ *
+ * The password is percent-encoded: a minted one is base64url and safe today, but
+ * a hand-edited config.json could contain `@` or `:` and silently produce a URL
+ * pointing at the wrong host.
+ */
+export function buildPgUrl(port: number, password: string): string {
+  return `postgresql://${PG_USER}:${encodeURIComponent(password)}@localhost:${port}/${PG_DATABASE}`;
+}
+
+/**
+ * Escape a password for use as a Postgres string literal.
+ *
+ * ALTER USER does not accept a bind parameter for the password, so the value has
+ * to be inlined. Doubling single quotes is the standard escape; the minted value
+ * is base64url and contains none, but a hand-edited config.json might.
+ */
+function quotePgLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise<boolean> {
   const pidFile = join(dataDir, 'postmaster.pid');
   if (!existsSync(pidFile)) return false;
@@ -70,8 +112,10 @@ export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise
     // before the postmaster exits.
     const pg = new EmbeddedPostgres({
       databaseDir: dataDir,
-      user: 'nodalai',
-      password: 'nodalai',
+      user: PG_USER,
+      // stop() only reads postmaster.pid and signals pg_ctl — it never
+      // authenticates, so the value here is irrelevant.
+      password: LEGACY_PG_PASSWORD,
       port: 25432, // unused for stop()
       persistent: true,
       onError: () => {},
@@ -102,6 +146,7 @@ export async function stopOrphanPostgres(dataDir: string = PG_DATA_DIR): Promise
 export async function startEmbeddedPostgres(
   dataDir: string = PG_DATA_DIR,
   port: number = 25432,
+  password: string = LEGACY_PG_PASSWORD,
 ): Promise<PostgresHandle> {
   // Dynamic import — embedded-postgres is a runtime-only dep
   const EmbeddedPostgres = (await import('embedded-postgres')).default;
@@ -125,8 +170,11 @@ export async function startEmbeddedPostgres(
 
   const pg = new EmbeddedPostgres({
     databaseDir: dataDir,
-    user: 'nodalai',
-    password: 'nodalai',
+    user: PG_USER,
+    // On FIRST boot this is what initdb sets the role's password to. On later
+    // boots the cluster already exists and this value is only used to build
+    // connection strings — which is why rotation has to go through ALTER USER.
+    password,
     port,
     persistent: true,
     createPostgresUser: isRoot,
@@ -189,17 +237,17 @@ export async function startEmbeddedPostgres(
 
   // Create the database if it doesn't exist
   try {
-    await pg.createDatabase('nodalai');
+    await pg.createDatabase(PG_DATABASE);
   } catch {
     // Database already exists — ignore
   }
 
-  const url = `postgresql://nodalai:nodalai@localhost:${port}/nodalai`;
+  const url = buildPgUrl(port, password);
 
   // Try to enable pgvector; if unavailable, warn and continue
   let vectorAvailable = false;
   try {
-    const client = pg.getPgClient('nodalai');
+    const client = pg.getPgClient(PG_DATABASE);
     await client.connect();
     await client.query('CREATE EXTENSION IF NOT EXISTS vector');
     await client.end();
@@ -215,6 +263,35 @@ export async function startEmbeddedPostgres(
   return {
     url,
     vectorAvailable,
+    /**
+     * Move the role to `newPassword` on this running cluster (SECRET-003).
+     *
+     * A cluster initialised before the per-install password exists still carries
+     * the shipped default: initdb sets the password once, so the only way
+     * forward is ALTER USER against the live server.
+     *
+     * ORDER MATTERS, and it is the CALLER's job: persist `newPassword` to
+     * config.json BEFORE calling this, and revert if it returns false. The
+     * reverse order leaves a window where the role has changed and nothing on
+     * disk knows the new value — an install that cannot open its own database.
+     * This way the worst case is a config naming a password the role does not
+     * have yet, which the next boot simply retries.
+     *
+     * Uses embedded-postgres' own client rather than importing `pg` directly:
+     * only packages/db may depend on a driver (dep-cruiser `only-db-imports-pg`).
+     */
+    rotatePassword: async (newPassword: string): Promise<boolean> => {
+      const client = pg.getPgClient(PG_DATABASE);
+      try {
+        await client.connect();
+        await client.query(`ALTER USER ${PG_USER} WITH PASSWORD ${quotePgLiteral(newPassword)}`);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        await client.end().catch(() => {});
+      }
+    },
     stop: async () => {
       await pg.stop();
     },

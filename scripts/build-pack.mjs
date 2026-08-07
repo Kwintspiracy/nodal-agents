@@ -25,6 +25,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { scanServerChunks, formatMissingChunks } from './lib/next-chunk-integrity.mjs';
+import { pinToInstalledVersions, formatUnresolved } from './lib/pin-runtime-deps.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -134,8 +135,10 @@ if (existsSync(migrationsSrc)) {
 }
 
 // ─── 7. Pack package.json ───────────────────────────────────────────────────
-// Runtime deps only. Versions mirror what the workspace currently uses.
-// When a workspace dep is added, mirror it here AND in apps/runner/build.mjs
+// Runtime deps only. The versions written below are RANGES for readability, but
+// every one of them is rewritten to the EXACT installed version by
+// `pinToInstalledVersions()` before the file is written (see §7a). When a
+// workspace dep is added, mirror it here AND in apps/runner/build.mjs
 // EXTERNALS array.
 // Single source of truth for the published version: apps/cli/package.json.
 // (Previously hardcoded here → drifted from the bumped version at publish time.)
@@ -248,6 +251,25 @@ const packPkg = {
   // installs. The one benign leftover (node-domexception) is not worth that risk.
   bundledDependencies: ['exceljs'],
 };
+
+// ─── 7a. Pin every runtime dep to its EXACT installed version ────────────────
+// SUPPLY-001 (audit 2026-08-07). The list above is the source of truth for WHAT
+// ships; this pass decides WHICH VERSION, from what is actually installed right
+// now. Rationale and the 0.8.1 incident: scripts/lib/pin-runtime-deps.mjs.
+//
+// Fails loud (invariant #4) when a declared dep cannot be resolved: a silent
+// fallback to the declared range would reintroduce exactly the defect this closes.
+const { pinned, unresolved } = pinToInstalledVersions(packPkg.dependencies, repoRoot);
+if (unresolved.length > 0) {
+  console.error(`\n❌ ${formatUnresolved(unresolved)}\n`);
+  process.exit(1);
+}
+packPkg.dependencies = pinned;
+
+console.log(
+  `✔ Pinned ${Object.keys(pinned).length} runtime deps to their exact installed ` +
+    `versions (next@${pinned.next})`,
+);
 
 writeFileSync(resolve(packDir, 'package.json'), JSON.stringify(packPkg, null, 2) + '\n', 'utf-8');
 

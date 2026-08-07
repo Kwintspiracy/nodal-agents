@@ -22,6 +22,21 @@ function lanIPv4(): string[] {
   return out;
 }
 
+/**
+ * Origins this install accepts a server action from (NETWORK-001).
+ *
+ * Next matches `allowedOrigins` against the Origin header's host, port included,
+ * so every name is emitted both bare and with the port the web is listening on.
+ * next.config is re-evaluated when the standalone server boots (visible in
+ * web.log: "Running next.config took Nms"), so `process.env.PORT` is the real
+ * runtime port here, not a build-time guess.
+ */
+function allowedHosts(): string[] {
+  const port = process.env['PORT'] ?? '3000';
+  const names = ['localhost', '127.0.0.1', '[::1]', ...lanIPv4()];
+  return names.flatMap((h) => [h, `${h}:${port}`]);
+}
+
 const nextConfig: NextConfig = {
   output: 'standalone',
   // Next.js loads this config from apps/web/. The monorepo root is two
@@ -83,6 +98,25 @@ const nextConfig: NextConfig = {
       static: 180,
     },
     optimizePackageImports: ['@phosphor-icons/react'],
+    // NETWORK-001 (audit 2026-08-07). Next's server-action guard compares
+    // `Origin` against `Host`, and only consults this allowlist when the two
+    // DIFFER. Measured on a real packed install:
+    //
+    //   Origin: http://evil.test + Host: 127.0.0.1:3210 → 500 (allowlist wins)
+    //   Origin: http://evil.test + Host: evil.test      → 200 (short-circuit)
+    //
+    // So this list is worth having — it pins the mismatched case to origins this
+    // install actually knows, instead of trusting a Host that could be anything
+    // — but it CANNOT close DNS rebinding on its own, because there Origin and
+    // Host agree and the equality check short-circuits before the list is read.
+    // What closes rebinding is the `Host` validation in src/proxy.ts.
+    //
+    // `allowedDevOrigins` above does not cover production at all. Same list,
+    // computed the same way, so a phone on the LAN keeps working — a DHCP IP
+    // change still needs a restart, exactly like `bind`.
+    serverActions: {
+      allowedOrigins: allowedHosts(),
+    },
   },
   // Headers de sécurité HTTP posés sur toutes les routes. Pas de CSP complète :
   // le bootstrap de thème inline (apps/web/src/app/layout.tsx, THEME_BOOTSTRAP)

@@ -110,6 +110,16 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // riskLevel is 'write' (correct for the http case), which would otherwise
       // let this stdio spawn auto-approve. The http case keeps the 'write' path.
       else if (tool.name === 'create_mcp' && mcpTransport === 'stdio') isHeavy = true;
+      // MCP-001 (audit 2026-08-07): a tool from a third-party MCP server is
+      // foreign code, not "ordinary work", so `destructive_gate` must keep its
+      // gate on it. Judging it by riskLevel does not work — that value is
+      // derived from annotations the SERVER supplies, i.e. the attacker's own
+      // claim about itself (a `purge_all_data` tool declaring
+      // `readOnlyHint: true` was measured resolving to riskLevel 'read').
+      // `__` is the MCP namespace marker: builtin and connector tools are bare
+      // snake_case, only `<slug>__<tool>` carries it — the same invariant
+      // lint-skill-content.ts relies on.
+      else if (tool.name.includes('__')) isHeavy = true;
       else isHeavy = tool.riskLevel === 'destructive';
       if (!isHeavy) effectiveAction = 'auto_approve';
     }
@@ -149,6 +159,28 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
     effectiveAction !== 'block' &&
     effectiveAction !== 'require_approval' &&
     isCatastrophicCommand(String((validatedInput as { command?: unknown })?.command ?? ''))
+  ) {
+    effectiveAction = 'require_approval';
+  }
+
+  // Second hardline floor: `create_mcp` with a STDIO transport (audit
+  // 2026-08-07). É-2 already judged this RCE-equivalent to run_command and gated
+  // it under `destructive_gate` (line ~112 above) — but that branch is only
+  // reached when `effectiveAction` is still 'require_approval', and
+  // `fully_autonomous` flips it to 'auto_approve' first. So the stdio gate
+  // existed in the middle tier and vanished in the top one, which is the
+  // opposite of what a hardline floor means.
+  //
+  // Scope is deliberately stdio-only: an `http` server spawns nothing locally,
+  // and É-2's decision to let it auto-approve under `destructive_gate` still
+  // holds — more so now that every tool such a server exposes carries
+  // `defaultApproval: 'require_approval'` of its own (MCP-001), so attaching one
+  // no longer hands the model anything it can run unattended.
+  if (
+    tool.name === 'create_mcp' &&
+    effectiveAction !== 'block' &&
+    effectiveAction !== 'require_approval' &&
+    String((validatedInput as { transport?: unknown })?.transport ?? '') === 'stdio'
   ) {
     effectiveAction = 'require_approval';
   }

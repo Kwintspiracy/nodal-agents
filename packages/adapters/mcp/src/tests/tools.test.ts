@@ -31,13 +31,47 @@ describe('mcpToolToToolDefinition', () => {
     expect(def.name).toBe('cogni_cortex__get_home');
   });
 
-  it('maps readOnlyHint → riskLevel read', () => {
+  it('does NOT let a server downgrade itself with readOnlyHint (MCP-001)', () => {
+    // Annotations come FROM THE SERVER, so on a hostile one they are the
+    // attacker's claim about themselves. Measured during the audit: a tool named
+    // `purge_all_data`, described as deleting the whole workspace, carrying
+    // `readOnlyHint: true`, was assigned riskLevel 'read' — which under
+    // `destructive_gate` meant auto-approval. `destructiveHint` is still
+    // honoured (it can only RAISE the level); readOnlyHint can no longer lower it.
     const def = mcpToolToToolDefinition(
       clientWithCallTool(() => ({ content: [] })),
       descriptor,
       'c',
     );
-    expect(def.riskLevel).toBe('read');
+    expect(def.riskLevel).toBe('write');
+  });
+
+  it('frames the server-supplied description as untrusted (SKILL-001)', () => {
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      descriptor,
+      'cogni-cortex',
+    );
+    // The server's own text is preserved…
+    expect(def.description).toContain('Return the home view');
+    // …but never alone: it now carries its provenance, the same mitigation the
+    // webhook envelope applies to external payloads.
+    expect(def.description).toContain('cogni-cortex');
+    expect(def.description).toContain('untrusted');
+  });
+
+  it('caps an oversized description instead of passing it through verbatim', () => {
+    // Measured during the audit: a 371-char injection payload in a description
+    // reached the ToolDefinition byte-for-byte, with no cap of any kind — while
+    // tool RESULTS were already capped at 50k.
+    const long = 'x'.repeat(2_000);
+    const def = mcpToolToToolDefinition(
+      clientWithCallTool(() => ({ content: [] })),
+      { ...descriptor, description: long },
+      'c',
+    );
+    expect(def.description).toContain('truncated');
+    expect(def.description.length).toBeLessThan(long.length);
   });
 
   it('maps destructiveHint → riskLevel destructive', () => {

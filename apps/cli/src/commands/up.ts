@@ -5,7 +5,12 @@ import ora from 'ora';
 import open from 'open';
 import { randomBytes } from 'crypto';
 import { readConfig, writeConfig, type Config } from '../lib/config.ts';
-import { startEmbeddedPostgres, runMigrations, stopOrphanPostgres } from '../lib/postgres.ts';
+import {
+  startEmbeddedPostgres,
+  runMigrations,
+  stopOrphanPostgres,
+  LEGACY_PG_PASSWORD,
+} from '../lib/postgres.ts';
 import { seedDefaultUserEntityAgent } from '../lib/seed.ts';
 import {
   buildEnvForRunner,
@@ -259,17 +264,54 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   // ── 2. Start embedded Postgres ────────────────────────────────────────────
 
+  // SECRET-003 (audit 2026-08-07). The embedded cluster used to be reachable on
+  // a predictable port with `nodalai`/`nodalai` — the same on every install — so
+  // any local process could read the whole database (transcripts, memory,
+  // connector tokens) without touching the file ACLs that protect secrets.key.
+  //
+  // A cluster created before this field exists still carries the old password:
+  // initdb sets it once, so the fix has to go through ALTER USER on a running
+  // server. `pgPassword` is what we start WITH; `pendingRotation` is what we
+  // move to once it is up.
+  const pgPassword = config.postgresPassword ?? LEGACY_PG_PASSWORD;
+  const pendingRotation = config.postgresPassword ? null : randomBytes(24).toString('base64url');
+
   const pgSpinner = ora('Starting embedded Postgres…').start();
   let pg: Awaited<ReturnType<typeof startEmbeddedPostgres>>;
   try {
-    pg = await startEmbeddedPostgres(undefined, config.ports.postgres);
+    pg = await startEmbeddedPostgres(undefined, config.ports.postgres, pgPassword);
     pgSpinner.succeed(chalk.green(`Postgres ready on port ${config.ports.postgres}`));
   } catch (err) {
     pgSpinner.fail('Failed to start Postgres');
     throw err;
   }
 
-  const databaseUrl = buildDatabaseUrl(config.ports.postgres);
+  let effectivePgPassword = pgPassword;
+  if (pendingRotation) {
+    // ORDER MATTERS: persist first, then ALTER, then revert on failure. The
+    // reverse order leaves a window where the role has changed and nothing on
+    // disk knows the new value — an install that cannot open its own database.
+    // This way the worst case is a config naming a password the role does not
+    // have yet, which the next boot simply retries.
+    writeConfig({ ...config, postgresPassword: pendingRotation });
+    const rotated = await pg.rotatePassword(pendingRotation);
+    if (rotated) {
+      effectivePgPassword = pendingRotation;
+    } else {
+      writeConfig({ ...config, postgresPassword: undefined });
+      // Not fatal: the install keeps working on the legacy password and retries
+      // next boot. Loud rather than silent (invariant #4) — a database still
+      // reachable with a well-known password is something the owner should know.
+      console.warn(
+        chalk.yellow(
+          '  Could not rotate the local Postgres password — still using the shipped default.\n' +
+            '  Any other process on this machine can read the database. Retried on next start.',
+        ),
+      );
+    }
+  }
+
+  const databaseUrl = buildDatabaseUrl(config.ports.postgres, effectivePgPassword);
 
   // ── 3. Apply Drizzle migrations ───────────────────────────────────────────
 
