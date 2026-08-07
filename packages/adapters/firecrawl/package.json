@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mendable/firecrawl-js": "^4.22.0",
+    "@mendable/firecrawl-js": "^4.25.2",
     "@nodal-agents/shared": "workspace:*",
     "@nodal-agents/tools": "workspace:*",
     "zod": "^4.4.3"
