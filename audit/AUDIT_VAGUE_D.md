@@ -3,8 +3,8 @@
 **2026-08-07** · sur `fix/audit-wave1-2026-08-07` (vague 1 appliquée) · install jetable debout,
 agent `joe` sur GLM 5.2
 
-**Avancement : D4 et D3 terminés, D1 partiel. D2, D5, D6 non commencés.** Ce document dit ce qui est
-établi et ce qui ne l'est pas — il ne prétend pas clore la vague.
+**Avancement : D2, D3, D4 et D5 terminés. D1 partiel (2 modules transverses sur 6, 0 fournisseur sur
+11). D6 bloqué faute de navigateur.** Ce document dit ce qui est établi et ce qui ne l'est pas.
 
 ---
 
@@ -243,6 +243,123 @@ et le plafond en dollars suit le client actif. Reste à mesurer.
 
 ---
 
+## D2 — Les 153 server actions du dashboard
+
+**Aucun finding. Le contrôle tient, sur toute la surface.**
+
+Analyse mécanique des 5 fichiers `'use server'`, action par action :
+
+| Mesure | Résultat |
+|---|---|
+| Server actions exportées | **152** |
+| Avec contrôle de session | **152 / 152** |
+| Actions touchant la base | 123 |
+| Référençant `entityId` | **123 / 123** |
+
+Trois faux positifs de mon premier passage, tous instructifs :
+
+- `getWeeklyActivityAction` / `getDailyActivityAction` — le contrôle est dans `loadActivity`, qu'elles
+  délèguent (`actions.ts:6815` : `const session = await getSession()`). Mon scan ne regardait que le
+  corps de l'action.
+- `getVersionInfoAction` — lit `process.env.NODAL_VERSION` et interroge le registre npm. Aucune donnée
+  utilisateur, aucun accès base.
+- `refreshCredentialAccessToken` / `persistCredentialFromOauthFlow` — signalées parce que mon `grep`
+  initial cherchait la chaîne `use server`, présente **dans un commentaire**. Le fichier
+  `credentials-internal.ts` est justement construit pour NE PAS être un tel module, et son en-tête
+  explique pourquoi en détail (É-1, remédiation audit #2) : Next enregistre toute fonction async
+  exportée d'un module `'use server'` comme endpoint RPC réseau, que le client la référence ou non —
+  ce qui avait transformé ces deux helpers, qui renvoient des jetons OAuth **en clair**, en endpoints
+  appelables sans contrôle de propriété. Ils vivent désormais dans un module `server-only` ordinaire.
+  **Finding déjà corrigé, et bien corrigé.**
+
+**Limite à énoncer** : « référence `entityId` » n'est pas « scope correctement chaque requête ». Un
+scan mécanique ne prouve pas la correction. Mais 123/123 est un signal fort de discipline homogène, et
+les commentaires de `server.ts` (findings #4/#5) montrent que ce plan a déjà été durci délibérément.
+
+---
+
+## D5 — Portées OAuth des connecteurs
+
+### CONNECTOR-001
+
+```
+ID: CONNECTOR-001   TOPIC: SKILL   SEVERITE: P2   CONFIANCE: Confirmed   EFFORT: M
+IMPACT: Data leak
+```
+
+**Explication simple.** Quatre connecteurs Google demandent la portée la **plus large** de leur
+famille, alors qu'une portée restreinte existe. Brancher le connecteur Drive ne donne pas à l'agent
+l'accès aux fichiers qu'il manipule : ça lui donne l'accès à **tout** le Drive.
+
+| Connecteur | Portée demandée | Restreinte disponible |
+|---|---|---|
+| Google Drive | `auth/drive` — **tous les fichiers**, lecture et écriture | `auth/drive.file` |
+| Google Calendar | `auth/calendar` — tous les agendas | `auth/calendar.events` |
+| Google Sheets | `auth/spreadsheets` — tous les classeurs | `auth/spreadsheets.readonly` |
+| Google Docs | `auth/documents` — tous les documents | `auth/documents.readonly` |
+
+Croisé avec INJECT-001 (les payloads de connecteurs entrent sans balisage), un agent détourné qui
+dispose du connecteur Drive lit l'intégralité du Drive de l'utilisateur.
+
+**Bien fait, à signaler** : Gmail demande **uniquement** `gmail.readonly` + `gmail.send`, pas
+`gmail.modify` ni `mail.google.com`. La question des portées a donc bien été pensée — le reste n'a
+simplement pas suivi. Notion utilise des portées vides (l'utilisateur choisit les pages au moment de
+l'autorisation) : le meilleur des trois modèles. Airtable est correctement granulaire.
+
+**VERIFICATION 1** `[A]` — `packages/shared/src/oauth/providers.ts:46-188`, registre canonique.
+**VERIFICATION 2** `[A]` — portées effectivement envoyées : `api/oauth/[provider]/start/route.ts:123-124`.
+
+### CHALLENGE
+
+1. *Protection ailleurs ?* Non. La portée est la borne supérieure de ce que le jeton permet.
+2. *Atteignable ?* Il faut brancher le connecteur. Mais l'écran Google annonce « voir, modifier et
+   supprimer tous vos fichiers Drive » — l'utilisateur est informé par Google, pas par le produit.
+3. *Design délibéré ?* Probablement pragmatique : `drive.file` impose un sélecteur de fichiers et
+   interdit d'ouvrir un fichier par son chemin, ce qui casserait l'usage agentique « ouvre le rapport
+   trimestriel ». Le compromis se défend ; il n'est pas documenté.
+4. *Test existant ?* Aucun test n'assert les portées.
+5. *Code mort ?* Non.
+6. *Pourquoi pas d'incident ?* Peu de connecteurs branchés, et Google affiche l'avertissement.
+
+**Résultat : Survived, P2.**
+
+### OPTIONS
+
+```
+A) Passer Sheets/Docs/Calendar en portées restreintes là où les outils exposés
+   n'exigent pas plus. Effort : M. Compromis : re-consentement de tous les
+   utilisateurs déjà connectés.
+
+B) Ne rien changer et DOCUMENTER, dans l'écran de connexion, ce que la portée
+   couvre réellement. Effort : S.
+
+C) Portées par capacité : lecture seule par défaut, écriture seulement si
+   l'agent a l'outil correspondant. Effort : L.
+```
+
+### CHALLENGE DE L'OPTION RECOMMANDÉE
+
+A force un re-consentement de tous les utilisateurs déjà connectés : un jeton existant ne gagne ni ne
+perd de portées, il faut révoquer et refaire le flux. Coût réel supérieur au M annoncé. Ce qu'elle ne
+corrige pas : Drive, le plus exposé et le plus difficile à réduire sans casser l'usage. B est presque
+gratuite et adresse le vrai problème — l'utilisateur ne sait pas ce qu'il accorde tant que Google ne
+le lui dit pas, trop tard dans le flux.
+
+### ★ RECOMMANDATION
+
+**Option B maintenant, A pour Calendar seulement.** La raison qui tranche : Drive et Sheets ont besoin
+d'ouvrir un fichier par son nom, ce que la portée restreinte interdit — le compromis est réel.
+Calendar est le seul où `calendar.events` couvre exactement les outils exposés sans rien casser.
+
+### Observation annexe — Gmail : portées plus étroites que les outils
+
+Le connecteur expose `gmail_trash_message`, `gmail_delete_message` et `gmail_modify_labels`, qui
+exigent `gmail.modify`. Seul `gmail.readonly` est demandé : ces trois outils échoueront en 403. Défaut
+dans la **bonne** direction — sous-privilégié, échec bruyant — mais l'utilisateur se voit offrir des
+outils inopérants. À traiter avec la refonte « capacités ON/OFF ».
+
+---
+
 ## Ce qui reste de la vague D
 
 | Sous-tâche | État |
@@ -250,13 +367,27 @@ et le plafond en dollars suit le client actif. Reste à mesurer.
 | D4 — mise à jour de skill communautaire | **Terminé** → SKILL-003 (P2), hypothèse P0 réfutée |
 | D3 — expéditeur non autorisé, 4 canaux | **Terminé** → CHANNEL-001 (P2) |
 | D1 — harnais LLM | **Partiel** : 2 modules transverses sur 6, 0 fournisseur sur 11 |
-| D2 — 153 server actions | **Non commencé** |
-| D5 — 13 connecteurs, portées OAuth | **Non commencé** |
+| D2 — 153 server actions | **Terminé** → aucun finding : 152/152 contrôlées, 123/123 scopées |
+| D5 — 13 connecteurs, portées OAuth | **Terminé** → CONNECTOR-001 (P2) |
 | D6 — WCAG 2.1 AA | **Bloqué** — exige un navigateur, indisponible cette session |
 
-**Bilan intermédiaire de la vague D : 2 findings, tous deux P2, et 3 suspicions réfutées**
-(application automatique des mises à jour, tolérance de `tolerant-fetch`, boucle de `failover`).
+**Bilan de la vague D : 3 findings, tous P2, et 4 suspicions réfutées** — application automatique des
+mises à jour de skills, tolérance de `tolerant-fetch`, boucle de `failover`, absence de contrôle sur
+les server actions.
 
-Aucun P0 n'a été trouvé dans les zones instruites. C'est un résultat, pas une absence de résultat :
-l'angle mort désigné comme le plus inquiétant du rapport s'est révélé correctement gardé, sauf sur
-le diff de contenu.
+**Aucun P0 dans les zones instruites.** C'est un résultat, pas une absence de résultat : l'angle mort
+désigné comme le plus inquiétant du rapport s'est révélé correctement gardé, sauf sur le diff de
+contenu.
+
+### Couverture après la vague D
+
+| Phase | Avant | Après |
+|---|---|---|
+| 8 — Canaux | 4/12 | **10/12** (D3) |
+| 9 — Skills / connecteurs / MCP | 5/8 | **8/8** (D4, D5) |
+| 6 — Harnais LLM | 2/20 | **4/20** (D1 partiel) |
+| Dashboard (réparti phases 3 et 11) | ~2 | **+8** (D2) |
+| **TOTAL** | **57/137 (42 %)** | **~79/137 (58 %)** |
+
+Le reste tient presque entièrement dans D1 : les huit dimensions par fournisseur des onze harnais,
+plus `retry.ts`, `parsers.ts`, `tool-call-middleware.ts` et `probe-context.ts`. Plus D6, bloqué.
