@@ -310,6 +310,23 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
 // ─── Approval rule matcher ────────────────────────────────────────────────────
 
 /**
+ * The MCP server namespace of a tool name, or null for a built-in.
+ *
+ * `<serverPrefix>__<tool>` is the MCP naming convention; nothing else in the
+ * product puts `__` in a tool name (builtins and connector tools are bare
+ * snake_case — the same invariant lint-skill-content.ts relies on).
+ */
+export function namespaceOf(toolName: string): string | null {
+  const i = toolName.indexOf('__');
+  return i > 0 ? toolName.slice(0, i) : null;
+}
+
+/** The rule pattern that covers every tool of one MCP server. */
+export function namespaceRulePattern(serverPrefix: string): string {
+  return `${serverPrefix}__*`;
+}
+
+/**
  * Find the most specific matching approval rule.
  * Specificity: agent-scoped + tool-name > entity-scoped + tool-name > wildcard.
  * Returns undefined if no rule matches (default: execute without approval).
@@ -336,11 +353,35 @@ export function matchApprovalRule(
   );
   if (entityToolRule) return entityToolRule;
 
-  // Priority 3: agent-scoped wildcard (toolName = '*')
+  // Priority 3 & 4: NAMESPACE rules — `<serverPrefix>__*`, covering every tool
+  // one MCP server exposes.
+  //
+  // Without this, consenting to a server means creating one rule per tool: the
+  // a single server commonly exposes 30 tools, so one "I trust this server"
+  // decision turned into 30 identical rows. The owner has already made that
+  // decision once, when they attached the server — asking them to re-express it
+  // thirty times is how a gate becomes a rubber stamp.
+  //
+  // `__` is the MCP namespace marker (builtin and connector tools are bare
+  // snake_case), so a namespace rule can never accidentally cover a built-in.
+  // Deliberately BELOW exact-tool rules: a per-tool `require_approval` or
+  // `block` still overrides a per-server `auto_approve`.
+  const namespace = namespaceOf(toolName);
+  if (namespace) {
+    const pattern = `${namespace}__*`;
+    const agentNs = rules.find((r) => r.toolName === pattern && r.agentId === agentId);
+    if (agentNs) return agentNs;
+    const entityNs = rules.find(
+      (r) => r.toolName === pattern && r.agentId === null && r.entityId === entityId,
+    );
+    if (entityNs) return entityNs;
+  }
+
+  // Priority 5: agent-scoped wildcard (toolName = '*')
   const agentWild = rules.find((r) => r.toolName === '*' && r.agentId === agentId);
   if (agentWild) return agentWild;
 
-  // Priority 4: entity-scoped wildcard
+  // Priority 6: entity-scoped wildcard
   const entityWild = rules.find(
     (r) => r.toolName === '*' && r.agentId === null && r.entityId === entityId,
   );

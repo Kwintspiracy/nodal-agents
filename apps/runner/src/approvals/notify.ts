@@ -24,7 +24,8 @@ import {
   getBindingCredentials,
   resolveOwnerConversation,
 } from '@nodal-agents/db';
-import { redactSecretsForAudit, computeApprovalImpactLine } from '@nodal-agents/shared';
+import { redactSecretsForAudit, renderExplanationText } from '@nodal-agents/shared';
+import { explainApprovalRequest } from './explain-request.ts';
 import {
   getAdapter,
   resolveTransportChannel,
@@ -358,16 +359,34 @@ export async function notifyApprovalCreated(
     // and truncated — the reviewer decides on 1+2, not on a wall of shell.
     const input = (req.toolInput ?? {}) as Record<string, unknown>;
     const purpose = typeof input['purpose'] === 'string' ? input['purpose'].trim() : '';
-    const impact = computeApprovalImpactLine(req.toolName, req.toolInput);
-    const detail = describeGatedAction(req.toolName, req.toolInput);
-    const detailShort =
-      detail.length > 500 ? detail.slice(0, 500) + '\n… (full detail on the dashboard)' : detail;
+
+    // The card used to be: the agent's purpose, ONE impact sentence, then a raw
+    // dump. For a THIRD-PARTY tool that sentence fell into
+    // computeApprovalImpactLine's `default:` branch and read "irreversible or
+    // destructive action" — about a call that merely fetched a CHANGELOG off
+    // GitHub. Reported live: "je ne comprends pas ce que j'approuve".
+    //
+    // explainApprovalRequest resolves where the tool actually comes from (which
+    // MCP server, at which endpoint, with which description THAT server
+    // supplies) and words it accordingly, instead of guessing. Arguments are
+    // redacted inside it — an approval card gets forwarded and screenshotted.
+    const explanation = await explainApprovalRequest(
+      deps.db,
+      req.entityId,
+      req.toolName,
+      req.toolInput,
+    );
 
     const body =
-      `⏳ Approval needed — ${who}\n\n` +
-      `➤ ${purpose || 'Purpose not specified by the agent.'}\n` +
-      `⚠️ ${impact}\n` +
-      `\nDetails:\n${detailShort}`;
+      `⏳ Approbation requise — ${who}\n\n` +
+      // The agent's own words stay first and verbatim (invariant #2), but they
+      // are now clearly ITS voice, quoted — not the platform's verdict.
+      //
+      // An ABSENT purpose is stated, never left blank: "the agent did not say
+      // why" is information the reviewer needs, and a silent gap reads as if
+      // nothing were missing. Asserted by notify.test.ts.
+      (purpose ? `« ${purpose} »\n\n` : 'Purpose not specified by the agent.\n\n') +
+      renderExplanationText(explanation);
 
     // Channel-neutral (W2): sent through the ChannelAdapter rather than the
     // Telegram helper directly. `callbackId` carries the `apr:<id>` prefix so

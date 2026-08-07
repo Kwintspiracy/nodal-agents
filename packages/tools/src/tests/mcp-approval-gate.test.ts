@@ -229,3 +229,93 @@ describe('create_mcp stdio is floored in every autonomy mode', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+describe('Règles par SERVEUR — un consentement, pas trente', () => {
+  // Un serveur MCP expose couramment 30 outils. Sans portée par
+  // serveur, « je fais confiance à ce serveur » — décision déjà prise en
+  // l'attachant — devenait 30 lignes identiques. C'est ainsi qu'un gate
+  // devient un tampon automatique.
+
+  const nsRule = (pattern: string, action: 'auto_approve' | 'require_approval' | 'block') => ({
+    id: `rule-${pattern}-${action}`,
+    toolName: pattern,
+    action,
+    agentId: null,
+    entityId: 'entity-1',
+  });
+
+  it('un auto_approve par serveur couvre tous ses outils', async () => {
+    const { tool, execute } = makeMcpTool();
+    const result = await executeTool(tool, {}, makeCtx(), {
+      approvalRules: [nsRule('veille__*', 'auto_approve')],
+      autonomy: undefined,
+      onApprovalRequired: async () => {},
+    });
+    expect(result.outcome).toBe('success');
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('ne déborde pas sur un AUTRE serveur', async () => {
+    const { tool, execute } = makeMcpTool({ name: 'autre__purge_all_data' });
+    const result = await executeTool(tool, {}, makeCtx(), {
+      approvalRules: [nsRule('veille__*', 'auto_approve')],
+      autonomy: undefined,
+      onApprovalRequired: async () => {},
+    });
+    expect(result.outcome).toBe('awaiting_approval');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('ne couvre jamais un outil intégré — les builtins n’ont pas de `__`', async () => {
+    const execute = vi.fn(async () => ({ ok: true }));
+    const runCommand = {
+      name: 'run_command',
+      description: 'Run a shell command.',
+      inputSchema: z.object({ command: z.string() }),
+      riskLevel: 'destructive' as const,
+      defaultApproval: 'require_approval' as const,
+      execute,
+    } as unknown as ToolDefinition<z.ZodTypeAny, unknown>;
+
+    const result = await executeTool(runCommand, { command: 'echo hi' }, makeCtx(), {
+      // Une règle de namespace ne doit pas relâcher un outil du produit.
+      approvalRules: [nsRule('run__*', 'auto_approve')],
+      autonomy: undefined,
+      onApprovalRequired: async () => {},
+    });
+    expect(result.outcome).toBe('awaiting_approval');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('une règle par OUTIL l’emporte sur la règle par serveur', async () => {
+    // « Je fais confiance à ce serveur, SAUF cet outil-là » doit être exprimable.
+    const { tool, execute } = makeMcpTool();
+    const result = await executeTool(tool, {}, makeCtx(), {
+      approvalRules: [
+        nsRule('veille__*', 'auto_approve'),
+        {
+          id: 'exact',
+          toolName: 'veille__purge_all_data',
+          action: 'require_approval' as const,
+          agentId: null,
+          entityId: 'entity-1',
+        },
+      ],
+      autonomy: undefined,
+      onApprovalRequired: async () => {},
+    });
+    expect(result.outcome).toBe('awaiting_approval');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('un block par serveur refuse sans jamais exécuter', async () => {
+    const { tool, execute } = makeMcpTool();
+    const result = await executeTool(tool, {}, makeCtx(), {
+      approvalRules: [nsRule('veille__*', 'block')],
+      autonomy: 'fully_autonomous',
+      onApprovalRequired: async () => {},
+    });
+    expect(result.outcome).toBe('error');
+    expect(execute).not.toHaveBeenCalled();
+  });
+});

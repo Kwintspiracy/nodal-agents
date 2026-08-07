@@ -1376,96 +1376,63 @@ l'effort est contraint : ne rien faire, le cache Anthropic couvre déjà le cas 
 
 ---
 
-## CODE-001 — Les invariants #1 et #2, présentés comme appliqués par la CI, ne le sont par rien
+## CODE-001 — RETIRÉ : les invariants #1 et #2 SONT appliqués mécaniquement
 
 ```
-TOPIC: CODE   SEVERITE: P2   CONFIANCE: Confirmed   EFFORT: M
-IMPACT: Quality
+TOPIC: CODE   SEVERITE: ~~P2~~ → P3   CONFIANCE: Confirmed   EFFORT: XS
+STATUT: RETIRÉ le 2026-08-07 — l'affirmation de départ était fausse
 ```
 
-### Explication simple
+### Ce que le finding disait
 
-Le fichier de règles du projet affirme que deux de ses invariants les plus structurants — « aucune
-métadonnée d'agent codée en dur » et « aucun texte utilisateur codé en dur dans le runner » — sont
-appliqués automatiquement par des règles ESLint sur mesure. Ces règles n'existent pas.
+Que `CLAUDE.md` annonçait « ESLint custom rules (invariants 1-2 enforced) » alors qu'aucune règle
+ESLint personnalisée n'existe, et que ces deux invariants ne reposaient donc que sur la discipline.
 
-### Détail technique
+### Pourquoi c'était faux
 
-`CLAUDE.md` : *« Architecture — dep-cruiser + ESLint custom rules (invariants 1-2 enforced) »*.
-
-Configurations ESLint réellement présentes dans le dépôt, au nombre de deux :
-
-- `eslint.config.js` (racine, 37 lignes) : `no-explicit-any`, `no-unused-vars`,
-  `consistent-type-imports`, `no-console`. Rien d'autre.
-- `apps/web/eslint.config.mjs` : `no-restricted-globals`, `no-restricted-properties`,
-  `no-restricted-syntax` — qui appliquent, eux, bien l'**invariant #10** (interdiction des dialogues
-  natifs du navigateur).
-
-Aucun plugin local, aucun `rulesdir`, aucune règle personnalisée.
-
-Ce qui est réellement appliqué, en revanche, l'est correctement : `pnpm deps:check` exécuté donne
-**0 erreur, 26 avertissements** sur 1 637 modules et 5 623 dépendances, avec six règles de niveau
-`error` qui bloqueraient : `no-circular`, `apps-cant-import-other-apps`, `packages-cant-import-apps`,
-`only-db-imports-pg`, `adapters-only-import-tools-shared`, `no-runner-delivery-direct`. Les 26
-avertissements sont des `no-orphans`, dont la quasi-totalité porte sur des fichiers générés de
-`apps/docs/out/` — du bruit de configuration, pas de la dette.
-
-**VERIFICATION 1** `[A]` — `find -name 'eslint.config.*'` : deux fichiers, lus intégralement.
-**VERIFICATION 2** `[B]` — `pnpm deps:check` exécuté ; sortie et niveaux de sévérité relevés dans
-`.dependency-cruiser.cjs`.
-
-### CHALLENGE
-
-1. *Protection ailleurs ?* Oui, humaine : ce sont des invariants énoncés dans les instructions du
-   projet, relus à chaque contribution. Sur un projet à un mainteneur, ce n'est pas rien.
-2. *Est-ce grave ?* Aucun impact de sécurité direct. L'impact est de dérive : ces deux invariants
-   sont exactement ceux qui se violent par petites touches.
-3. *Design délibéré ?* Non — c'est une affirmation de documentation devenue fausse, probablement
-   vraie d'intention.
-4. *Un autre garde-fou l'attrape-t-il ?* `packages/catalog/src/skills/no-hardcoded-user.test.ts`
-   existe et couvre un cas précis (pas de valeur par utilisateur dans les skills). C'est une
-   couverture partielle de l'invariant #6, pas des #1 et #2.
-5. *Code mort ?* Sans objet.
-6. *Pourquoi pas de problème visible ?* Discipline du mainteneur.
-
-**Résultat : Survived, P2.** Pas de risque immédiat ; c'est l'écart entre la garantie affichée et la
-garantie réelle qui compte, puisque c'est sur cette garantie que les décisions de revue s'appuient.
-
-**REPO VS SHIPPED** : sans objet (outillage de développement).
-
-### OPTIONS
+**Ils sont appliqués — par des tests d'architecture, pas par ESLint.** Il en existe **15 fichiers**,
+exécutés en CI par `turbo run test` :
 
 ```
-A) Écrire les deux règles ESLint manquantes (interdire les littéraux de chaîne
-   destinés à l'utilisateur dans apps/runner ; interdire les listes d'agents /
-   compétences en dur). Effort : M. Compromis : ces règles sont difficiles à
-   écrire sans faux positifs — « texte destiné à l'utilisateur » n'est pas
-   décidable syntaxiquement. Risque résiduel : règles trop laxistes (inutiles)
-   ou trop strictes (contournées par des annotations).
-
-B) Corriger CLAUDE.md pour dire la vérité : invariants 1-2 = discipline de revue,
-   invariant 10 = appliqué par ESLint, invariants d'architecture = appliqués par
-   dep-cruiser. Effort : XS.
+apps/runner/src/tests/architecture.test.ts
+packages/tools/src/tests/architecture.test.ts
+packages/orchestration/src/tests/architecture.test.ts
+packages/adapters/*/src/tests/architecture.test.ts   (12 adaptateurs)
 ```
 
-### CHALLENGE DE L'OPTION RECOMMANDÉE
+`apps/runner/src/tests/architecture.test.ts` couvre à lui seul :
 
-B ne renforce rien — elle acte une faiblesse. On peut y voir un renoncement. Coût : nul. Ce qu'elle
-ne corrige pas : la dérive possible sur ces deux invariants reste entièrement à la charge de la
-relecture. Mal faite (on retire la phrase sans la remplacer), on perd même le rappel que ces
-invariants existent. A est séduisante mais son vrai coût est caché : une règle qui produit des faux
-positifs sur un projet à un mainteneur finit désactivée en trois semaines, et on se retrouve avec B
-plus de la dette.
+- **invariant 1** — aucun slug d'agent en dur dans `src/`
+- **invariant 2** — aucune chaîne destinée à l'utilisateur (motifs `Sorry`, `Désolé`, …)
+- **invariant 3** — aucun rattrapage spécifique à un agent
+- plus la règle « le runner n'importe pas `postgres` directement »
 
-### ★ RECOMMANDATION
+**Vérifié en exécution** : ce garde m'a bloqué pendant la remédiation. Un simple **commentaire** que
+j'avais écrit citant un nom de serveur réel a fait échouer la suite :
 
-**Option B, avec une règle A partielle et volontairement étroite pour l'invariant #2 seulement** —
-par exemple interdire les littéraux de chaîne passés directement aux fonctions d'envoi de message
-dans `apps/runner/src/channels/` et `telegram/`, périmètre où « texte utilisateur » est décidable.
-La raison qui tranche : une garantie fausse est pire qu'une garantie absente, et une règle étroite
-qui tient vaut mieux qu'une règle large qu'on finira par désactiver.
+```
+Invariant 1 violated: hardcoded agent slugs found in src/:
+  /execute.ts:360 — found "cortex": // Cogni-… servers expose 30 each, so a single …
+```
 
-**DEPENDANCES** : aucune.
+Il attrape donc jusqu'aux commentaires. C'est plus strict que ce que j'affirmais absent.
+
+### Ce qui reste vrai, et sa vraie sévérité
+
+`CLAUDE.md` nomme le **mauvais mécanisme** : « ESLint custom rules » là où ce sont des tests
+d'architecture. Un lecteur qui va chercher les règles ESLint — ce que j'ai fait — ne trouve rien et
+en conclut qu'il n'y a pas de garde. C'est une correction de documentation, **P3, effort XS** :
+remplacer « ESLint custom rules » par « tests d'architecture (`src/tests/architecture.test.ts`) ».
+
+### Ma propre erreur, et sa leçon
+
+J'ai cherché **un** mécanisme (ESLint), ne l'ai pas trouvé, et j'ai conclu sur la **propriété**
+(« rien n'applique ces invariants »). C'est exactement ce que le §3.5 du protocole interdit : ne pas
+avoir trouvé n'est pas une preuve d'absence. Deux vérifications de classe `[A]` sur le même
+mécanisme ne valent pas deux vérifications — c'était le même angle, deux fois.
+
+Ce qui l'a rattrapé n'est pas une relecture : c'est d'avoir **écrit du code** et de m'être fait
+bloquer par le garde dont je niais l'existence. Un audit purement statique ne l'aurait jamais vu.
 
 ---
 

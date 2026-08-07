@@ -89,13 +89,15 @@ cette session. À ne pas lire comme « conforme ».
 
 | ID | Sév. | Confiance | Effort | Problème en une phrase | ★ Recommandation | Challengé ? |
 |---|---|---|---|---|---|---|
-| CODE-001 | P2 | Confirmed | M | `CLAUDE.md` affirme que les invariants #1 et #2 sont appliqués par des règles ESLint sur mesure ; ces règles n'existent pas. | Corriger la documentation, et n'écrire qu'une règle étroite là où « texte utilisateur » est décidable. | Survived |
+| CODE-001 | **P3** | Confirmed | XS | `CLAUDE.md` nomme le mauvais mécanisme : les invariants #1 et #2 sont bien appliqués, par **15 fichiers de tests d'architecture** en CI, pas par ESLint. | Corriger la phrase de `CLAUDE.md`. | **RETIRÉ puis requalifié P2→P3** — l'affirmation initiale était fausse |
 
 ---
 
 ## Décomptes
 
-**Par sévérité** — P0 : **2** · P1 : **5** · P2 : **8** · P3 : **1** · **Total : 16 findings**
+**Par sévérité** — P0 : **2** · P1 : **5** · P2 : **11** · P3 : **2** · **Total : 20 findings**
+
+*(après vagues 1 et D : +SKILL-003, +CHANNEL-001, +CONNECTOR-001, +UX-001 ; CODE-001 requalifié P2→P3)*
 
 **Par topic** — Injection & privilège : 3 · Secrets : 3 · Réseau : 1 · Supply chain : 2 ·
 Token & coût : 2 · Mémoire : 1 · Skills/MCP : 2 · Performance : 1 · Code : 1 ·
