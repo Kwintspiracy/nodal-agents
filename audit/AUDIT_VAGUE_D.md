@@ -369,9 +369,9 @@ outils inopérants. À traiter avec la refonte « capacités ON/OFF ».
 | D1 — harnais LLM | **Partiel** : 2 modules transverses sur 6, 0 fournisseur sur 11 |
 | D2 — 153 server actions | **Terminé** → aucun finding : 152/152 contrôlées, 123/123 scopées |
 | D5 — 13 connecteurs, portées OAuth | **Terminé** → CONNECTOR-001 (P2) |
-| D6 — WCAG 2.1 AA | **Bloqué** — exige un navigateur, indisponible cette session |
+| D6 — WCAG 2.1 AA | **Terminé** → UX-001 (P2) + 2 échecs niveau A. Voir `AUDIT_D6_ACCESSIBILITE.md` |
 
-**Bilan de la vague D : 3 findings, tous P2, et 4 suspicions réfutées** — application automatique des
+**Bilan de la vague D : 4 findings, tous P2, et 4 suspicions réfutées** — application automatique des
 mises à jour de skills, tolérance de `tolerant-fetch`, boucle de `failover`, absence de contrôle sur
 les server actions.
 
