@@ -4,6 +4,48 @@ import { describe, it, expect } from 'vitest';
 import { findFreePort, isPortBindable, DEFAULT_PORTS } from '../lib/ports.ts';
 import { createServer } from 'net';
 
+/** Bind one port, resolving to false instead of throwing when the OS refuses. */
+function tryListen(server: ReturnType<typeof createServer>, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    // `listen` reports refusal through the 'error' EVENT, never a throw. The
+    // previous version of this helper passed only a success callback, so an
+    // EACCES left the promise pending forever and the test died on a 5s
+    // timeout with no indication of which port was refused.
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => resolve(true));
+  });
+}
+
+/**
+ * Occupy `count` CONSECUTIVE ports and return the base, scanning for a run the
+ * OS will actually grant.
+ *
+ * The ports cannot be hardcoded. Windows reserves dynamic ranges for Hyper-V,
+ * WSL and Docker, so binding a fixed base is a coin flip that depends on the
+ * machine: 58000-58002 worked in CI and on most laptops, and failed on the
+ * development machine because 58001 was reserved — a red test that said
+ * nothing about the code under test.
+ */
+async function blockConsecutivePorts(
+  count: number,
+): Promise<{ base: number; servers: ReturnType<typeof createServer>[] }> {
+  for (let base = 58000; base < 62000; base += count) {
+    const servers: ReturnType<typeof createServer>[] = [];
+    let ok = true;
+    for (let i = 0; i < count; i++) {
+      const s = createServer();
+      if (await tryListen(s, base + i)) servers.push(s);
+      else {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return { base, servers };
+    await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
+  }
+  throw new Error(`No run of ${count} consecutive bindable ports found`);
+}
+
 describe('findFreePort', () => {
   it('returns a number in the valid port range', async () => {
     const port = await findFreePort(40000);
@@ -59,16 +101,8 @@ describe('findFreePort', () => {
   });
 
   it('rejects after maxAttempts', async () => {
-    // Block maxAttempts consecutive ports
-    const servers: ReturnType<typeof createServer>[] = [];
-    const base = 58000;
     const maxAttempts = 3;
-
-    for (let i = 0; i < maxAttempts; i++) {
-      const s = createServer();
-      await new Promise<void>((resolve) => s.listen(base + i, '127.0.0.1', resolve));
-      servers.push(s);
-    }
+    const { base, servers } = await blockConsecutivePorts(maxAttempts);
 
     try {
       await expect(findFreePort(base, maxAttempts)).rejects.toThrow('Could not find a free port');
