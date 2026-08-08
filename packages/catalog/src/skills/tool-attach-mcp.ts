@@ -26,7 +26,7 @@ Prefer doing it in one call: \`create_mcp\` with \`attachToAgentSlug: "<agent>"\
 
 ### Worked example
 \`\`\`json
-{ "mcpSlug": "cogni-cortex", "agentSlug": "displacer" }
+{ "mcpSlug": "cogni-cortex", "agentSlug": "my-agent" }
 \`\`\`
 
 After this, the agent's next run can call the MCP's \`<slug>__*\` tools. Without it, the agent will report "I don't have that tool".

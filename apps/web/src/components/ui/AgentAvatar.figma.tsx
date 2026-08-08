@@ -6,5 +6,5 @@ figma.connect(AgentAvatar, 'https://www.figma.com/design/GWXBALe90DMFR3XYGccofJ?
     size: figma.enum('Size', { sm: 'sm', md: 'md', lg: 'lg' }),
     shape: figma.enum('Shape', { round: 'round', square: 'square' }),
   },
-  example: ({ size, shape }) => <AgentAvatar name="Displacer" size={size} shape={shape} />,
+  example: ({ size, shape }) => <AgentAvatar name="Ada" size={size} shape={shape} />,
 });

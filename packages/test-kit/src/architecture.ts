@@ -69,11 +69,20 @@ export const FORBIDDEN_AGENT_SLUGS: readonly string[] = [
   'jennie',
   'stanley',
   'sherlock',
-  'cortex',
+  // `cortex` is deliberately ABSENT. The product ships a public catalog
+  // connector called `cogni-cortex` (packages/shared/src/mcp-catalog.ts), so
+  // the bare word cannot tell product data from a personal agent name — it
+  // fired on the catalog entry, its label and its description. A rule that
+  // flags the product's own connector gets disabled, not fixed. The personal
+  // agent names below still cover the risk the invariant is about.
   'tatooine',
   'sputnik',
   'displacer',
   'alfred',
+  // The owner's own handle. Present in all 12 adapter copies and absent from
+  // this list until the adapters were folded in — propagating without it would
+  // have made the shared guard weaker than the copies it replaced.
+  'kwint',
 ] as const;
 
 /**
@@ -142,6 +151,106 @@ export function scanForDbDriverImports(opts: ScanOptions): Violation[] {
     });
   }
   return out;
+}
+
+/**
+ * Invariant #6 — no per-user values in shipped source.
+ *
+ * A UUID literal is an id from ONE install's database. Shipped, it makes the
+ * code behave correctly for its author and silently wrong for everyone else.
+ */
+export function scanForHardcodedUuids(opts: ScanOptions): Violation[] {
+  return scanForPattern(opts, {
+    // Quoted, so a UUID inside a comment or a doc example does not fire.
+    pattern: /['"`][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['"`]/i,
+    rule: 'hardcoded-uuid',
+    allowMatch: isSeedUuid,
+  });
+}
+
+/**
+ * A zero-prefixed UUID is a SEEDED default, identical in every install
+ * (`00000000-0000-0000-0000-000000000002` is the default entity everywhere).
+ *
+ * The invariant forbids per-USER values; a constant the installer writes on
+ * first boot is the opposite of that, and flagging it would push people to
+ * disable the check rather than fix anything.
+ */
+export function isSeedUuid(match: string): boolean {
+  return /^['"`]0{8}-0{4}-0{4}-0{4}-[0-9a-f]{12}['"`]$/i.test(match);
+}
+
+/**
+ * Layering — an adapter must not reach into db / llm / auth / memory.
+ *
+ * dependency-cruiser enforces this at the graph level; this catches it at the
+ * package's own suite, where the failure names the line rather than an edge.
+ */
+export function scanForForbiddenPackageImports(
+  opts: ScanOptions,
+  packages: readonly string[],
+): Violation[] {
+  const escaped = packages.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return scanForPattern(opts, {
+    pattern: new RegExp(`from\\s+['"](${escaped})(/[^'"]*)?['"]`),
+    rule: 'forbidden-import',
+  });
+}
+
+/**
+ * Generic line scanner, so a package-specific rule reuses the shared walker
+ * instead of shipping its twelfth copy of a recursive readdir.
+ */
+export function scanForPattern(
+  opts: ScanOptions,
+  spec: {
+    pattern: RegExp;
+    rule: string;
+    /**
+     * Called with each MATCH, not each line. Match-level on purpose: a
+     * line-level filter would let a real value hide on the same line as an
+     * allowed placeholder (`'me@example.com', 'quentin@gmail.com'`).
+     */
+    allowMatch?: (match: string) => boolean;
+  },
+): Violation[] {
+  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP);
+  const flags = spec.pattern.flags.includes('g') ? spec.pattern.flags : `${spec.pattern.flags}g`;
+  const out: Violation[] = [];
+  for (const file of files) {
+    readFileSync(file, 'utf-8')
+      .split('\n')
+      .forEach((line, i) => {
+        for (const m of line.matchAll(new RegExp(spec.pattern.source, flags))) {
+          if (spec.allowMatch?.(m[0])) continue;
+          out.push({ file, line: i + 1, text: line.trim().slice(0, 120), rule: spec.rule });
+          break;
+        }
+      });
+  }
+  return out;
+}
+
+/**
+ * Every source file of the package, concatenated.
+ *
+ * For the rare assertion that is POSITIVE — "this adapter must import the
+ * official SDK" — which a violation scanner cannot express.
+ */
+export function readSource(opts: ScanOptions): string {
+  return collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP)
+    .map((f) => readFileSync(f, 'utf-8'))
+    .join('\n');
+}
+
+/**
+ * Throw with the offending lines when a scan found anything.
+ *
+ * Throws rather than calling `expect` so this package stays free of a test
+ * runner — the same reason `executeTool` is injected into the gate harness.
+ */
+export function assertNoViolations(label: string, violations: readonly Violation[]): void {
+  if (violations.length > 0) throw new Error(formatViolations(label, violations));
 }
 
 /** Readable failure text for a non-empty violation list. */

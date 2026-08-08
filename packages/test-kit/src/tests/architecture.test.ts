@@ -23,7 +23,7 @@ beforeAll(() => {
   writeFileSync(join(dir, 'clean.ts'), 'export const x = 1;\n');
   writeFileSync(
     join(dir, 'nested', 'slug.ts'),
-    '// route vers cortex quand dispo\nexport const y = 2;\n',
+    '// route vers tatooine quand dispo\nexport const y = 2;\n',
   );
   writeFileSync(join(dir, 'nested', 'prose.ts'), 'const m = "Sorry, I cannot do that";\n');
   writeFileSync(join(dir, 'driver.ts'), "import pg from 'pg';\n");
@@ -36,7 +36,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 describe('scanForAgentSlugs', () => {
   it('détecte un slug, y compris dans un commentaire', () => {
     const v = scanForAgentSlugs({ srcDir: dir });
-    expect(v.some((x) => x.rule === 'slug:cortex')).toBe(true);
+    expect(v.some((x) => x.rule === 'slug:tatooine')).toBe(true);
   });
 
   it('ignore le répertoire tests — un fixture nomme légitimement un agent', () => {
@@ -70,6 +70,6 @@ describe('formatViolations', () => {
     const text = formatViolations('Invariant 1', scanForAgentSlugs({ srcDir: dir }));
     expect(text).toContain('Invariant 1');
     expect(text).toMatch(/slug\.ts:\d+/);
-    expect(text).toContain('slug:cortex');
+    expect(text).toContain('slug:tatooine');
   });
 });

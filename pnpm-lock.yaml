@@ -75,6 +75,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../packages/test-kit
       '@types/prompts':
         specifier: ^2.4.9
         version: 2.4.9
@@ -315,6 +318,9 @@ importers:
       '@figma/code-connect':
         specifier: 1.4.9
         version: 1.4.9
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../packages/test-kit
       '@playwright/test':
         specifier: ^1.60.0
         version: 1.60.0
@@ -361,6 +367,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -380,6 +389,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -399,6 +411,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -418,6 +433,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -437,6 +455,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -456,6 +477,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -484,6 +508,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -503,6 +530,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -525,6 +555,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -544,6 +577,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -566,6 +602,9 @@ importers:
       '@microsoft/microsoft-graph-types':
         specifier: ^2.43.1
         version: 2.43.1
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -582,6 +621,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -601,6 +643,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -617,11 +662,18 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.0)(gel@2.2.0)(kysely@0.28.16)(pg@8.20.0)(postgres@3.4.9)
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
 
-  packages/catalog: {}
+  packages/catalog:
+    devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
 
   packages/db:
     dependencies:
@@ -641,6 +693,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.2.17
         version: 0.2.17
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -672,6 +727,9 @@ importers:
         specifier: ^9.6.0
         version: 9.14.0
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -718,6 +776,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -737,6 +798,9 @@ importers:
         specifier: workspace:*
         version: link:../shared
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -820,12 +884,18 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
 
   packages/secrets:
     devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@types/node':
         specifier: ^25.7.0
         version: 25.7.0
@@ -835,6 +905,10 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+    devDependencies:
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
 
   packages/test-kit:
     dependencies:

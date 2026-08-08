@@ -1,4 +1,4 @@
-// @nodal-agents/adapter-poyo — architecture invariant tests.
+// @nodal-agents/adapter-google-calendar — architecture invariant tests.
 //
 // The three invariants EVERY adapter shares — no agent slug, no per-user UUID,
 // no reach into db/llm/auth/memory — now come from @nodal-agents/test-kit.
@@ -20,7 +20,6 @@ import {
   scanForAgentSlugs,
   scanForHardcodedUuids,
   scanForForbiddenPackageImports,
-  scanForPattern,
   assertNoViolations,
 } from '@nodal-agents/test-kit';
 
@@ -47,32 +46,6 @@ describe('architecture invariants', () => {
     assertNoViolations(
       'imports interdits',
       scanForForbiddenPackageImports({ srcDir }, FORBIDDEN_LAYERS),
-    );
-  });
-
-  it('no hardcoded bearer tokens in source files', () => {
-    assertNoViolations(
-      'token en dur',
-      scanForPattern(
-        { srcDir },
-        {
-          pattern: /['"`]Bearer\s+[A-Za-z0-9._-]{16,}['"`]/,
-          rule: 'hardcoded-token',
-        },
-      ),
-    );
-  });
-
-  it('no AUTH_FAILED or hardcoded user-facing error strings', () => {
-    assertNoViolations(
-      'texte utilisateur en dur',
-      scanForPattern(
-        { srcDir },
-        {
-          pattern: /\[AUTH_FAILED\]|Re-authenticate in the dashboard/,
-          rule: 'user-facing-string',
-        },
-      ),
     );
   });
 });

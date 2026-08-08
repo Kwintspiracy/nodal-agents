@@ -59,7 +59,7 @@ function capMcpResult(value: unknown): unknown {
   };
 }
 
-/** Sanitise a server slug into a tool-name-safe prefix (`cogni-cortex` → `cogni_cortex`). */
+/** Sanitise a server slug into a tool-name-safe prefix (`my-server` → `my_server`). */
 export function slugToPrefix(slug: string): string {
   return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
 }

@@ -5,8 +5,8 @@ figma.connect(AvatarStack, 'https://www.figma.com/design/GWXBALe90DMFR3XYGccofJ?
   example: () => (
     <AvatarStack
       avatars={[
-        { id: 'a', name: 'Alfred' },
-        { id: 'b', name: 'Java' },
+        { id: 'a', name: 'Ada' },
+        { id: 'b', name: 'Turing' },
       ]}
     />
   ),

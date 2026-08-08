@@ -62,7 +62,14 @@ module.exports = {
       severity: 'error',
       comment:
         'packages/adapters/* may only import from packages/tools, packages/shared, and other adapters via shared.',
-      from: { path: '^packages/adapters/' },
+      from: {
+        path: '^packages/adapters/',
+        // Test files are exempt, as in `no-runner-delivery-direct` below: the
+        // rule is about what an adapter SHIPS, and a suite importing a test
+        // harness (@nodal-agents/test-kit) is not a production dependency.
+        // The harness itself imports no product package, so it adds no edge.
+        pathNot: '\\.(test|spec)\\.(ts|tsx|js|mjs)$',
+      },
       to: {
         path: '^packages/(?!tools|shared|adapters)',
       },

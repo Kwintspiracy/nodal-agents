@@ -8,8 +8,8 @@
  * The original KwintAgents memory.py skill-filter applied a skill_tags overlap
  * check to ALL memories including agent-scoped ones. If an agent had NO declared
  * skills (empty skill_tags), every memory was filtered out — the agent saw
- * nothing. This was especially bad for router agents (Ender) who intentionally
- * have zero skill assignments.
+ * nothing. This was especially bad for router agents, which intentionally have
+ * zero skill assignments.
  *
  * ## Correct semantics
  *

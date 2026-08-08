@@ -58,7 +58,7 @@ The tool re-attaches the key correctly. Passing the key inside \`url\` (with \`a
 \`\`\`
 
 ### Making it usable: attach it to an agent
-Creating the server does NOT make any agent able to use it. To give its tools to an agent, pass **\`attachToAgentSlug\`** in the same call — e.g. add \`"attachToAgentSlug": "displacer"\`. (Or attach later with \`attach_mcp\`.) If you skip this, no agent can call the MCP's tools.
+Creating the server does NOT make any agent able to use it. To give its tools to an agent, pass **\`attachToAgentSlug\`** in the same call — e.g. add \`"attachToAgentSlug": "my-agent"\`. (Or attach later with \`attach_mcp\`.) If you skip this, no agent can call the MCP's tools.
 
 ### Common mistakes
 - ❌ creating the MCP then delegating, without attaching → the agent reports "I don't have that tool". Pass \`attachToAgentSlug\` or call \`attach_mcp\`.

@@ -11,7 +11,7 @@ import { and, eq } from 'drizzle-orm';
 import { mcpServers } from '../schema/mcp';
 import type { AnyDrizzleDb } from '../client';
 
-/** `cogni-cortex-tatooine` → `cogni_cortex_tatooine`. Mirrors slugToPrefix in adapter-mcp. */
+/** `my-server-name` → `my_server_name`. Mirrors slugToPrefix in adapter-mcp. */
 function slugToPrefix(slug: string): string {
   return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
 }
