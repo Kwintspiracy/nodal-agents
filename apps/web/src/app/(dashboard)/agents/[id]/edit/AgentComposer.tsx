@@ -581,6 +581,7 @@ export default function AgentComposer({
           <AutonomyTab
             agentId={agent.id}
             connectors={connectors}
+            mcpServers={mcpServers}
             hasTelegramBot={!!agent.telegramBotToken}
             attachedSkills={attachedSkills}
             lanCommandYolo={lanCommandYolo}
@@ -1352,9 +1353,15 @@ const TELEGRAM_SEND_OPERATION: OperationDescriptor = {
 
 type ApprovalAction = 'auto_approve' | 'require_approval' | 'block';
 
+/** `cogni-cortex` → `cogni_cortex`. Mirrors slugToPrefix in adapter-mcp. */
+function mcpSlugToPrefix(slug: string): string {
+  return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+}
+
 function AutonomyTab({
   agentId,
   connectors,
+  mcpServers,
   hasTelegramBot,
   attachedSkills,
   lanCommandYolo,
@@ -1362,6 +1369,7 @@ function AutonomyTab({
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
+  mcpServers: AgentMcpServerRow[];
   hasTelegramBot: boolean;
   attachedSkills: SkillRow[];
   lanCommandYolo: boolean;
@@ -1398,17 +1406,22 @@ function AutonomyTab({
     return ops;
   }, [connectors, hasTelegramBot]);
 
+  const attachedMcpServers = useMemo(() => mcpServers.filter((s) => s.assigned), [mcpServers]);
+
   function ruleFor(toolName: string): ApprovalAction {
     return rules.find((r) => r.toolName === toolName)?.action ?? 'auto_approve';
   }
 
   function handleChange(toolName: string, action: ApprovalAction) {
-    // Optimistic update
-    setRules((prev) => {
-      const without = prev.filter((r) => r.toolName !== toolName);
-      if (action === 'auto_approve') return without;
-      return [...without, { id: '', toolName, action }];
-    });
+    // Optimistic update. The row is KEPT for auto_approve — it used to be
+    // dropped, mirroring the server action's old "no rule needed, the default
+    // is already auto_approve" branch. That stopped being true for MCP tools,
+    // which default to require_approval, so dropping it made the UI show "ask"
+    // on the next load for a server the owner had just trusted.
+    setRules((prev) => [
+      ...prev.filter((r) => r.toolName !== toolName),
+      { id: '', toolName, action },
+    ]);
 
     setSaving((prev) => new Set([...prev, toolName]));
     void setAgentApprovalRuleAction({ agentId, toolName, action }).then((result) => {
@@ -1464,10 +1477,55 @@ function AutonomyTab({
           </div>
         )}
         <p className="mt-4 text-body-12 text-ink-4">
-          Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>.
-          Rules take effect on the next job — already-running jobs are not affected.
+          Default when no rule is set: <span className="font-medium text-ink-3">Autonomous</span>{' '}
+          for the tools above. Rules take effect on the next job — already-running jobs are not
+          affected.
         </p>
       </SectionCard>
+
+      {/*
+        MCP servers were absent from this screen entirely, which left no way to
+        say "stop asking" for a server already attached — the only surface was
+        the button on an approval card, i.e. you had to be interrupted first in
+        order to stop being interrupted. Reported live: repeated prompts just to
+        read a CHANGELOG.
+
+        One row per SERVER, not per tool: a server commonly exposes thirty, and
+        the decision the owner actually makes is about the server.
+      */}
+      {attachedMcpServers.length > 0 && (
+        <SectionCard>
+          <SectionHead
+            label="MCP servers"
+            hint="Tools from a third-party MCP server ask before running by default — the product cannot vouch for code it did not write. Trust a server here to stop being asked."
+          />
+          <div
+            className="divide-y divide-rule-2 overflow-hidden rounded-xl border border-rule-2"
+            data-testid="autonomy-mcp-list"
+          >
+            {attachedMcpServers.map((s) => {
+              const pattern = `${mcpSlugToPrefix(s.slug)}__*`;
+              return (
+                <AutonomyToolRow
+                  key={s.mcpServerId}
+                  op={{
+                    slug: pattern,
+                    name: s.label,
+                    risk: 'write',
+                    requiresApproval: true,
+                    description: `All ${s.availableTools.length} tools exposed by this server, including any it adds later.`,
+                  }}
+                  // Unlike the connector rows above, "no rule" here means ASK:
+                  // every MCP tool ships defaultApproval: 'require_approval'.
+                  value={rules.find((r) => r.toolName === pattern)?.action ?? 'require_approval'}
+                  saving={saving.has(pattern)}
+                  onChange={(action) => handleChange(pattern, action)}
+                />
+              );
+            })}
+          </div>
+        </SectionCard>
+      )}
 
       <CommandExecutionSection
         agentId={agentId}
