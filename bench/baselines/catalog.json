@@ -98,10 +98,7 @@
       "value": 2,
       "unit": "modèles",
       "direction": "lower-is-better",
-      "detail": [
-        "deepseek/deepseek-chat",
-        "deepseek/deepseek-reasoner"
-      ]
+      "detail": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"]
     }
   ]
 }
