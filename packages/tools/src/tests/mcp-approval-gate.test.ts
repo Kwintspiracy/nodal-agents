@@ -30,10 +30,12 @@ import { executeTool } from '../execute';
 const { expectGate } = createGateHarness(executeTool as unknown as ExecuteToolFn);
 
 describe('MCP-001 — un outil MCP tiers est gaté sans règle', () => {
-  it('suspend pour approbation dans les trois modes non-yolo', async () => {
+  it('suspend dans la posture livrée et en propose_confirm', async () => {
+    // C'est ICI que MCP-001 est fermé : une installation neuve, réglages par
+    // défaut, garde son point de contrôle sur du code étranger.
     await expectGate(anMcpTool())
       .withRules([])
-      .underAutonomy(undefined, 'propose_confirm', 'destructive_gate')
+      .underAutonomy(undefined, 'propose_confirm')
       .toRequireApproval();
   });
 
@@ -44,10 +46,23 @@ describe('MCP-001 — un outil MCP tiers est gaté sans règle', () => {
       .toRunWithoutAsking();
   });
 
-  it('un readOnlyHint auto-déclaré ne peut pas abaisser la posture', async () => {
-    // Le serveur prétendait « lecture seule » et obtenait riskLevel 'read',
-    // ce qui le faisait auto-approuver sous destructive_gate.
-    await expectGate(anMcpTool({ riskLevel: 'read' }))
+  it('honore destructive_gate : un outil MCP ordinaire passe sans demander', async () => {
+    // Le correctif MCP-001 avait rangé TOUT outil MCP dans « lourd », donc
+    // `destructive_gate` gatait une lecture de CHANGELOG. Un niveau d'autonomie
+    // qui ne veut pas dire ce qu'il annonce est pire que pas de niveau du tout :
+    // la réaction suivante est de poser une règle `*`, ce qui rend la main à
+    // tout le monde. Le propriétaire a explicitement choisi ce mode.
+    await expectGate(anMcpTool())
+      .withRules([])
+      .underAutonomy('destructive_gate')
+      .toRunWithoutAsking();
+  });
+
+  it('mais garde le gate sur un outil MCP qui se déclare destructeur', async () => {
+    // `destructiveHint` ne peut que MONTER le niveau — riskFromAnnotations
+    // n'honore jamais `readOnlyHint` comme un abaissement (testé côté
+    // adapter-mcp). Donc ce chemin reste sincère.
+    await expectGate(anMcpTool({ riskLevel: 'destructive' }))
       .withRules([])
       .underAutonomy('destructive_gate')
       .toRequireApproval();

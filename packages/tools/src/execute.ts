@@ -110,16 +110,29 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
       // riskLevel is 'write' (correct for the http case), which would otherwise
       // let this stdio spawn auto-approve. The http case keeps the 'write' path.
       else if (tool.name === 'create_mcp' && mcpTransport === 'stdio') isHeavy = true;
-      // MCP-001 (audit 2026-08-07): a tool from a third-party MCP server is
-      // foreign code, not "ordinary work", so `destructive_gate` must keep its
-      // gate on it. Judging it by riskLevel does not work — that value is
-      // derived from annotations the SERVER supplies, i.e. the attacker's own
-      // claim about itself (a `purge_all_data` tool declaring
-      // `readOnlyHint: true` was measured resolving to riskLevel 'read').
-      // `__` is the MCP namespace marker: builtin and connector tools are bare
-      // snake_case, only `<slug>__<tool>` carries it — the same invariant
-      // lint-skill-content.ts relies on.
-      else if (tool.name.includes('__')) isHeavy = true;
+      // MCP tools are judged like any other tool here — by their riskLevel.
+      //
+      // MCP-001's fix (2026-08-07, commit 5aba6b0) briefly added
+      // `else if (tool.name.includes('__')) isHeavy = true`, which put EVERY
+      // third-party tool in the heavy bucket. That silently redefined a setting
+      // the owner had chosen: `destructive_gate` says "gate the destructive",
+      // and it started gating `get_post` and a CHANGELOG fetch. Removed after
+      // the owner reported it — an autonomy level that does not mean what it
+      // says is worse than no autonomy level, because the next thing people do
+      // is grant a blanket `*` rule.
+      //
+      // The MCP-001 finding is still closed, at the layer where it belongs:
+      // every MCP tool ships `defaultApproval: 'require_approval'`, so a fresh
+      // install — shipped default autonomy, or `propose_confirm` — still gates
+      // foreign code on first use. What changes here is that an owner who
+      // EXPLICITLY chose "autonomous, gate destructive" gets that.
+      //
+      // The residual risk is real and belongs to that choice: `riskLevel` for
+      // an MCP tool comes from annotations the server supplies, so a hostile
+      // server can declare itself non-destructive. `destructiveHint` can only
+      // RAISE the level (riskFromAnnotations never honours `readOnlyHint` as a
+      // downgrade), and the catastrophic-command and stdio floors below still
+      // apply unconditionally.
       else isHeavy = tool.riskLevel === 'destructive';
       if (!isHeavy) effectiveAction = 'auto_approve';
     }
