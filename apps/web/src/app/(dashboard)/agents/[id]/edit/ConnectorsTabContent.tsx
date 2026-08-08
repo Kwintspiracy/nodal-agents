@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   setAgentConnectorAssignmentAction,
   setAgentMcpServerAssignmentAction,
+  setAgentApprovalRuleAction,
   type AgentConnectorRow,
   type AgentMcpServerRow,
 } from '@/lib/actions.ts';
@@ -14,6 +15,7 @@ import EdAddButton from '@/components/ui/EdAddButton';
 import Disc from '@/components/ui/Disc';
 import RowActionButton from '@/components/ui/RowActionButton';
 import Checkbox from '@/components/ui/Checkbox';
+import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import { CONN_BRAND_COLORS, connGlyph } from '@/app/(dashboard)/connectors/connector-brand.ts';
 
 /**
@@ -63,6 +65,9 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
     return m;
   });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Server awaiting the trust question, and how wide the grant should reach.
+  const [trustAsk, setTrustAsk] = useState<string | null>(null);
+  const [trustAllAgents, setTrustAllAgents] = useState(false);
   const debounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // ── persist (debounced) ──────────────────────────────────────────────────
@@ -179,14 +184,79 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
   }
 
   // ── MCP server toggles ───────────────────────────────────────────────────
-  function mcpToggleAssigned(mcpServerId: string, nextAssigned: boolean) {
+  function attachMcp(mcpServerId: string) {
     setMcpStates((prev) => {
       const m = new Map(prev);
-      m.set(mcpServerId, { assigned: nextAssigned, enabledTools: null });
-      persistMcp(mcpServerId, nextAssigned, null, true);
+      m.set(mcpServerId, { assigned: true, enabledTools: null });
+      persistMcp(mcpServerId, true, null, true);
       return m;
     });
-    if (!nextAssigned) collapse(mcpServerId);
+  }
+
+  /**
+   * Attaching is the consent moment.
+   *
+   * Every MCP tool ships `defaultApproval: 'require_approval'` (MCP-001) — the
+   * one place foreign code entered with no human checkpoint. But asking again on
+   * every CALL adds no security: the owner already decided, here, when they
+   * attached the server. It only adds fatigue, and fatigue is what makes people
+   * approve without reading — which costs exactly the calls that mattered.
+   * Reported live after twelve consecutive prompts for read-only calls, on an
+   * install set to "autonomous, gate destructive".
+   *
+   * So the question is asked ONCE, at the moment a human is deliberately adding
+   * the server, with per-call approval still available for a server they want to
+   * watch.
+   */
+  function mcpToggleAssigned(mcpServerId: string, nextAssigned: boolean) {
+    if (nextAssigned) {
+      setTrustAsk(mcpServerId);
+      return;
+    }
+    setMcpStates((prev) => {
+      const m = new Map(prev);
+      m.set(mcpServerId, { assigned: false, enabledTools: null });
+      persistMcp(mcpServerId, false, null, true);
+      return m;
+    });
+    collapse(mcpServerId);
+  }
+
+  /** `cogni-cortex` → `cogni_cortex`. Mirrors slugToPrefix in adapter-mcp. */
+  function slugToPrefix(slug: string): string {
+    return slug.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+  }
+
+  function confirmTrust(trust: boolean) {
+    const serverId = trustAsk;
+    if (!serverId) return;
+    const server = mcpServers.find((s) => s.mcpServerId === serverId);
+    setTrustAsk(null);
+    attachMcp(serverId);
+    if (!trust || !server) {
+      setTrustAllAgents(false);
+      return;
+    }
+    const scope = trustAllAgents ? ('entity' as const) : ('agent' as const);
+    setTrustAllAgents(false);
+    void setAgentApprovalRuleAction({
+      agentId,
+      toolName: `${slugToPrefix(server.slug)}__*`,
+      action: 'auto_approve',
+      scope,
+    }).then((r) => {
+      if (!r.ok) {
+        // Loud: the server IS attached, so silence here would leave the owner
+        // believing its calls run freely when every one of them will prompt.
+        toast.error(`${server.label} attaché, mais la règle de confiance a échoué : ${r.message}`);
+        return;
+      }
+      toast.success(
+        scope === 'entity'
+          ? `${server.label} : ses outils s'exécuteront sans demande pour tous vos agents.`
+          : `${server.label} : ses outils s'exécuteront sans demande pour cet agent.`,
+      );
+    });
   }
 
   function mcpToggleTool(mcpServerId: string, toolName: string, allTools: string[]) {
@@ -300,6 +370,31 @@ export default function ConnectorsTabContent({ agentId, connectors, mcpServers }
         <EdAddButton href="/connectors">Browse connectors marketplace</EdAddButton>
         <EdAddButton href="/mcp">Browse MCP servers</EdAddButton>
       </div>
+
+      <ConfirmDialog
+        open={trustAsk !== null}
+        title={`Faire confiance à ${mcpServers.find((s) => s.mcpServerId === trustAsk)?.label ?? 'ce serveur'} ?`}
+        message="Ses outils s'exécuteront sans vous demander à chaque appel. Choisissez plutôt de demander à chaque fois pour un serveur que vous voulez surveiller. Révocable à tout moment dans les règles d'approbation."
+        confirmLabel="Faire confiance"
+        cancelLabel="Demander à chaque appel"
+        destructive={false}
+        extra={
+          <Checkbox
+            checked={trustAllAgents}
+            onChange={(e) => setTrustAllAgents(e.target.checked)}
+            label={
+              <span className="text-body-13 text-ink-2">
+                Pour tous mes agents, pas seulement celui-ci
+              </span>
+            }
+          />
+        }
+        onConfirm={() => confirmTrust(true)}
+        // "Cancel" here is a real choice, not an escape: the server still gets
+        // attached, it simply keeps asking. Closing with ESC lands here too,
+        // which is the safe side.
+        onCancel={() => confirmTrust(false)}
+      />
     </div>
   );
 

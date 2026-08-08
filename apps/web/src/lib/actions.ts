@@ -29,6 +29,7 @@ import ipaddr from 'ipaddr.js';
 import {
   eq,
   and,
+  isNull,
   or,
   desc,
   inArray,
@@ -5273,15 +5274,32 @@ export async function listAgentApprovalRulesAction(
 const SetApprovalRuleSchema = z.object({
   agentId: z.string().guid(),
   toolName: z.string().min(1).max(200),
-  // null = delete the rule (revert to default auto_approve)
+  // null = delete the rule (revert to each tool's own default)
   action: z.enum(['auto_approve', 'require_approval', 'block']).nullable(),
+  /**
+   * 'agent'  → the rule binds this agent only (agent_id = <agentId>).
+   * 'entity' → it binds every agent in the workspace (agent_id IS NULL).
+   *
+   * matchApprovalRule already ranks agent-scoped above entity-scoped at each
+   * specificity level, so a workspace-wide "trust this server" never overrides
+   * a per-agent `require_approval` or `block`.
+   */
+  scope: z.enum(['agent', 'entity']).default('agent'),
 });
 
 /**
- * Upsert or delete one approval_rules row for (entity, agent, toolName).
- * action=null → DELETE the row (reverts to runtime default: auto_approve).
- * action='auto_approve' → also deletes (no rule needed; default is already auto_approve).
- * action='require_approval'|'block' → upsert.
+ * Upsert or delete one approval_rules row for (entity, agent-or-null, toolName).
+ *
+ * action=null → DELETE the row (reverts to the tool's own default).
+ * action='auto_approve'|'require_approval'|'block' → upsert.
+ *
+ * `auto_approve` USED TO DELETE, on the reasoning that "no rule" already meant
+ * auto-approve. MCP-001 made that false: every tool from a third-party MCP
+ * server now ships `defaultApproval: 'require_approval'`, so for those tools
+ * "no rule" means GATED. The old branch turned the approvals card's "always
+ * allow this server" button into a no-op that reported success — the owner was
+ * told a standing rule existed, and kept being asked on every call. Reported
+ * live after twelve consecutive prompts for read-only calls.
  *
  * Ownership checked: agent must belong to the active entity.
  */
@@ -5292,24 +5310,32 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     if (!parsed.success) {
       return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
     }
-    const { agentId, toolName, action } = parsed.data;
+    const { agentId, toolName, action, scope } = parsed.data;
     const db = getDb();
 
-    // Verify agent ownership
+    // Verify agent ownership. Checked even for an entity-scoped rule: the
+    // caller reached this from an agent's screen, and an agent id that is not
+    // ours means the request is not ours either.
     const [agent] = await db
       .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
     if (!agent) return fail('not_found', 'Agent not found');
 
-    if (action === null || action === 'auto_approve') {
-      // DELETE: no rule needed for the default behaviour
+    // agent_id IS NULL is the workspace-wide scope (see the schema note on the
+    // NULLS NOT DISTINCT unique index — a plain UNIQUE would let duplicates in).
+    const ruleAgentId = scope === 'entity' ? null : agentId;
+    const scopeMatch =
+      ruleAgentId === null ? isNull(approvalRules.agentId) : eq(approvalRules.agentId, agentId);
+
+    if (action === null) {
+      // DELETE: revert to the tool's own default.
       await db
         .delete(approvalRules)
         .where(
           and(
             eq(approvalRules.entityId, session.entityId),
-            eq(approvalRules.agentId, agentId),
+            scopeMatch,
             eq(approvalRules.toolName, toolName),
           ),
         );
@@ -5324,7 +5350,7 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
         .insert(approvalRules)
         .values({
           entityId: session.entityId,
-          agentId,
+          agentId: ruleAgentId,
           toolName,
           action,
         })
@@ -5335,6 +5361,7 @@ export async function setAgentApprovalRuleAction(raw: unknown): Promise<ActionRe
     }
 
     revalidatePath(`/agents/${agentId}/edit`);
+    revalidatePath('/approvals');
     return ok(undefined);
   } catch (err) {
     console.error('[setAgentApprovalRuleAction]', err);

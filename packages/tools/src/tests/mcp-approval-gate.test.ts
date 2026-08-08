@@ -21,6 +21,7 @@ import {
   aGatedBuiltinTool,
   aServerRule,
   aToolRule,
+  TEST_AGENT_ID,
   type ExecuteToolFn,
 } from '@nodal-agents/test-kit';
 import { executeTool } from '../execute';
@@ -142,5 +143,30 @@ describe('create_mcp stdio — plancher dur dans tous les modes', () => {
       .underAutonomy('destructive_gate')
       .run();
     expect(results[0]?.outcome).toBe('success');
+  });
+});
+
+describe('Portée des règles — cet agent, ou tout l’espace de travail', () => {
+  it('une règle par serveur à portée espace de travail couvre chaque agent', async () => {
+    // Le choix « pour tous mes agents » : agent_id IS NULL. Avec sept serveurs,
+    // la portée par agent transforme une décision en dizaines de clics
+    // identiques — et c'est ainsi qu'on finit par poser une règle `*`.
+    await expectGate(anMcpTool({ serverPrefix: 'veille' }))
+      .withRules([aServerRule('veille', 'auto_approve', { agentId: null })])
+      .underAutonomy(undefined)
+      .toRunWithoutAsking();
+  });
+
+  it('une règle d’agent l’emporte sur la règle d’espace de travail', async () => {
+    // Un `require_approval` posé sur CET agent doit survivre à une confiance
+    // accordée à l'échelle de l'espace — sinon le réglage fin devient un
+    // mensonge dès qu'on élargit une fois.
+    await expectGate(anMcpTool({ serverPrefix: 'veille' }))
+      .withRules([
+        aServerRule('veille', 'auto_approve', { agentId: null }),
+        aServerRule('veille', 'require_approval', { agentId: TEST_AGENT_ID }),
+      ])
+      .underAutonomy(undefined)
+      .toRequireApproval();
   });
 });

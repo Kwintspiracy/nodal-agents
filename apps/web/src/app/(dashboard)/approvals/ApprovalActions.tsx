@@ -6,12 +6,13 @@ import { resolveApprovalAction, setAgentApprovalRuleAction } from '@/lib/actions
 import PrimaryButton from '@/components/ui/PrimaryButton';
 import TextArea from '@/components/ui/TextArea';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import Checkbox from '@/components/ui/Checkbox';
 
 interface Props {
   approvalId: string;
   /** Tool being approved — needed to write a per-tool standing rule. */
   toolName: string;
-  /** Agent that asked. Rules are scoped to it, never entity-wide. */
+  /** Agent that asked. Rules bind it by default, or the whole workspace on request. */
   agentId: string | null;
   /**
    * `<serveur>__*` when this call comes from an MCP server. One decision covers
@@ -32,9 +33,12 @@ interface Props {
  * oversight. The ladder here is the same one agent clients converge on: once,
  * always-for-this-tool, always-for-this-server, reject, always-reject.
  *
- * "Always" writes an `approval_rules` row scoped to THIS agent, never the whole
- * workspace, and always behind a ConfirmDialog — a standing grant deserves a
- * deliberate second gesture, not the same click as a one-off.
+ * "Always" writes an `approval_rules` row behind a ConfirmDialog — a standing
+ * grant deserves a deliberate second gesture, not the same click as a one-off.
+ * It is scoped to THIS agent by default; the dialog offers widening it to every
+ * agent, because with seven MCP servers the per-agent scope turns one decision
+ * into dozens of identical clicks, and that is how people reach for a blanket
+ * `*` rule instead.
  */
 export default function ApprovalActions({
   approvalId,
@@ -47,6 +51,8 @@ export default function ApprovalActions({
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [notes, setNotes] = useState('');
   const [confirm, setConfirm] = useState<null | 'tool' | 'server' | 'block'>(null);
+  // Reset on every open: a grant widened once must not silently pre-widen the next.
+  const [allAgents, setAllAgents] = useState(false);
 
   function resolve(decision: 'approve' | 'reject', reason?: string) {
     return resolveApprovalAction({
@@ -75,24 +81,27 @@ export default function ApprovalActions({
   function handleAlways(scope: 'tool' | 'server') {
     const pattern = scope === 'server' ? mcpRulePattern : toolName;
     if (!agentId || !pattern) return;
+    const ruleScope = allAgents ? ('entity' as const) : ('agent' as const);
     setConfirm(null);
     startTransition(async () => {
       const rule = await setAgentApprovalRuleAction({
         agentId,
         toolName: pattern,
         action: 'auto_approve',
+        scope: ruleScope,
       });
       if (!rule.ok) {
         toast.error(`Règle non enregistrée : ${rule.message}. L'approbation reste en attente.`);
         return;
       }
+      const scopeLabel = ruleScope === 'entity' ? 'pour tous vos agents' : 'pour cet agent';
       const r = await resolve('approve');
       if (!r.ok) toast.error(r.message);
       else {
         toast.success(
           scope === 'server'
-            ? `Approuvé. Tous les outils de ${mcpServerName ?? 'ce serveur'} passeront désormais sans demande, pour cet agent.`
-            : `Approuvé. ${toolName} passera désormais sans demande, pour cet agent.`,
+            ? `Approuvé. Tous les outils de ${mcpServerName ?? 'ce serveur'} passeront désormais sans demande, ${scopeLabel}.`
+            : `Approuvé. ${toolName} passera désormais sans demande, ${scopeLabel}.`,
         );
       }
     });
@@ -152,7 +161,10 @@ export default function ApprovalActions({
           <PrimaryButton
             variant="neutral"
             size="sm"
-            onClick={() => setConfirm('server')}
+            onClick={() => {
+              setAllAgents(false);
+              setConfirm('server');
+            }}
             disabled={isPending}
             className="!text-xs"
           >
@@ -164,7 +176,10 @@ export default function ApprovalActions({
           <PrimaryButton
             variant="neutral"
             size="sm"
-            onClick={() => setConfirm('tool')}
+            onClick={() => {
+              setAllAgents(false);
+              setConfirm('tool');
+            }}
             disabled={isPending}
             className="!text-xs"
           >
@@ -226,6 +241,17 @@ export default function ApprovalActions({
         message={`Tous les outils exposés par ce serveur s'exécuteront sans demande pour cet agent, y compris ceux qu'il ajoutera plus tard. Une règle par outil peut toujours faire exception. Révocable dans les réglages de l'agent.`}
         confirmLabel="Toujours autoriser"
         destructive={false}
+        extra={
+          <Checkbox
+            checked={allAgents}
+            onChange={(e) => setAllAgents(e.target.checked)}
+            label={
+              <span className="text-body-13 text-ink-2">
+                Pour tous mes agents, pas seulement celui-ci
+              </span>
+            }
+          />
+        }
         onConfirm={() => handleAlways('server')}
         onCancel={() => setConfirm(null)}
       />
@@ -236,6 +262,17 @@ export default function ApprovalActions({
         message={`Cet outil s'exécutera sans demande pour cet agent, quels que soient ses arguments. Révocable dans les réglages de l'agent.`}
         confirmLabel="Toujours autoriser"
         destructive={false}
+        extra={
+          <Checkbox
+            checked={allAgents}
+            onChange={(e) => setAllAgents(e.target.checked)}
+            label={
+              <span className="text-body-13 text-ink-2">
+                Pour tous mes agents, pas seulement celui-ci
+              </span>
+            }
+          />
+        }
         onConfirm={() => handleAlways('tool')}
         onCancel={() => setConfirm(null)}
       />
