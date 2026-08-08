@@ -669,6 +669,31 @@ importers:
         specifier: ^25.7.0
         version: 25.7.0
 
+  packages/bench:
+    dependencies:
+      '@nodal-agents/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@nodal-agents/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+      '@nodal-agents/tools':
+        specifier: workspace:*
+        version: link:../tools
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^25.7.0
+        version: 25.7.0
+      tsx:
+        specifier: ^4.21.0
+        version: 4.23.10
+      vitest:
+        specifier: ^4.1.6
+        version: 4.1.6(@opentelemetry/api@1.9.0)(@types/node@25.7.0)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.0.12(@types/node@25.7.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.10)(yaml@2.9.0))
+
   packages/catalog:
     devDependencies:
       '@nodal-agents/test-kit':
@@ -11763,7 +11788,7 @@ snapshots:
       '@drizzle-team/brocli': 0.10.2
       '@esbuild-kit/esm-loader': 2.6.5
       esbuild: 0.25.12
-      tsx: 4.21.0
+      tsx: 4.23.10
 
   drizzle-orm@0.45.2(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.0)(gel@2.2.0)(kysely@0.28.16)(pg@8.20.0)(postgres@3.4.9):
     optionalDependencies:

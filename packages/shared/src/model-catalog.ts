@@ -272,6 +272,46 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // take the adaptive `output_config.effort`; Haiku 4.5 (<4.6) takes a
   // `thinking.budget_tokens` ladder (mirrors Hermes' anthropic_adapter table).
   anthropic: [
+    // ─── Claude 5 ─────────────────────────────────────────────────────────────
+    // Native ids, added 2026-08-09. Context window and price come from the same
+    // models the `anthropic/…` OpenRouter entries describe (1M context, and
+    // Opus 5 at $5/$25) — the routing differs, the model does not.
+    {
+      modelId: 'claude-opus-5',
+      label: 'Claude Opus 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+    },
+    {
+      modelId: 'claude-sonnet-5',
+      label: 'Claude Sonnet 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 10 },
+    },
+    {
+      modelId: 'claude-fable-5',
+      label: 'Claude Fable 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'adaptive-effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+    },
     {
       modelId: 'claude-opus-4-8',
       label: 'Claude Opus 4.8',
@@ -398,6 +438,92 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
   // MiniMax M3 does not (some of its OpenRouter endpoints reject the forced
   // value), so it runs on 'auto' + the runtime floor.
   openrouter: [
+    // ─── Claude 5 ─────────────────────────────────────────────────────────────
+    // Added 2026-08-09 from a live `GET /api/v1/models` — context windows,
+    // prices and `supported_parameters` copied from that response rather than
+    // from documentation, which lags. `pnpm bench --section catalog-drift
+    // --online` is what surfaced their absence.
+    {
+      modelId: 'anthropic/claude-opus-5',
+      label: 'Claude Opus 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+    },
+    {
+      modelId: 'anthropic/claude-opus-5-fast',
+      label: 'Claude Opus 5 (fast)',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+    },
+    {
+      modelId: 'anthropic/claude-sonnet-5',
+      label: 'Claude Sonnet 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 10 },
+    },
+    {
+      modelId: 'anthropic/claude-fable-5',
+      label: 'Claude Fable 5',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 10, outputPerMillionUsd: 50 },
+    },
+    // ─── OpenAI ───────────────────────────────────────────────────────────────
+    // OpenAI was absent from the OpenRouter list entirely — not a curation
+    // choice, a gap: the native `openai` provider carried gpt-5 while anyone
+    // routing through OpenRouter had none.
+    {
+      modelId: 'openai/gpt-5.6-luna',
+      label: 'GPT-5.6 Luna',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.6 },
+    },
+    {
+      modelId: 'openai/gpt-5.6-luna-pro',
+      label: 'GPT-5.6 Luna Pro',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.6 },
+    },
+    {
+      modelId: 'openai/gpt-5.6-terra-pro',
+      label: 'GPT-5.6 Terra Pro',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_050_000,
+      pricing: { inputPerMillionUsd: 1, outputPerMillionUsd: 6 },
+    },
     // Anthropic — reasoningControl WITHOUT the `reasoning` flag, on purpose:
     // the flag would flip openrouter.ts's always-on default injection; here
     // thinking is engaged only when the agent explicitly sets an effort.
@@ -488,6 +614,22 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       providerOrder: ['deepseek'],
     },
     {
+      // Dated snapshot of V4 Flash, and currently the cheapest tool-capable
+      // million-token model upstream ($0.09 / $0.18). Same reasoning caveat as
+      // the undated alias above.
+      modelId: 'deepseek/deepseek-v4-flash-0731',
+      label: 'DeepSeek V4 Flash (0731)',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 0.09, outputPerMillionUsd: 0.18 },
+      providerOrder: ['deepseek'],
+    },
+    {
       modelId: 'deepseek/deepseek-v4-pro',
       label: 'DeepSeek V4 Pro',
       capabilities: {
@@ -547,6 +689,18 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
         reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
       },
       contextWindow: 1_048_576,
+    },
+    {
+      modelId: 'google/gemini-3.6-flash',
+      label: 'Gemini 3.6 Flash',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoning: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 1.5, outputPerMillionUsd: 7.5 },
     },
     {
       modelId: 'google/gemma-4-31b-it',
@@ -662,6 +816,17 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
     // the provider's default behavior, thinking engages only on explicit
     // effort. Hermes catalogs both as plain OpenRouter models (no adapter).
     // qwen3.7-max is TEXT-ONLY (no image input); qwen3.7-plus is multimodal.
+    {
+      modelId: 'qwen/qwen3.8-max',
+      label: 'Qwen 3.8 Max',
+      capabilities: {
+        tools: true,
+        forcedToolChoice: true,
+        reasoningControl: { kind: 'effort', levels: ['low', 'medium', 'high', 'max'] },
+      },
+      contextWindow: 1_000_000,
+      pricing: { inputPerMillionUsd: 2, outputPerMillionUsd: 6 },
+    },
     {
       modelId: 'qwen/qwen3.7-max',
       label: 'Qwen 3.7 Max',

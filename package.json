@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages",
     "secrets:check": "node scripts/check-no-secrets.mjs",
-    "pack:build": "node scripts/build-pack.mjs"
+    "pack:build": "node scripts/build-pack.mjs",
+    "bench": "pnpm --filter @nodal-agents/bench bench"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

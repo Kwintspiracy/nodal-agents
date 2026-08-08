@@ -36,6 +36,21 @@ export interface ScanOptions {
    * alternative (annotating every fixture) makes the guard hated and disabled.
    */
   skipDirs?: readonly string[];
+  /**
+   * Absolute paths to exclude, matched by suffix.
+   *
+   * For the file that DEFINES a denylist: this module lists every forbidden
+   * slug as a string literal, so scanning it reports eleven violations that are
+   * the rule itself. Left in, that constant floor hides the twelfth — a real
+   * one — behind noise nobody reads twice.
+   */
+  skipFiles?: readonly string[];
+}
+
+/** Normalised suffix match, so a caller can pass a posix or win32 path. */
+function isSkipped(file: string, skipFiles: readonly string[]): boolean {
+  const norm = file.split('\\').join('/');
+  return skipFiles.some((s) => norm.endsWith(s.split('\\').join('/')));
 }
 
 function collectTsFiles(dir: string, skip: readonly string[], acc: string[] = []): string[] {
@@ -102,7 +117,9 @@ export const FORBIDDEN_USER_FACING: readonly RegExp[] = [
 
 /** Invariant #1 — no hardcoded agent slug in shipped source. */
 export function scanForAgentSlugs(opts: ScanOptions): Violation[] {
-  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP);
+  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP).filter(
+    (f) => !isSkipped(f, opts.skipFiles ?? []),
+  );
   const out: Violation[] = [];
   for (const file of files) {
     const lines = readFileSync(file, 'utf-8').split('\n');
@@ -122,7 +139,9 @@ export function scanForAgentSlugs(opts: ScanOptions): Violation[] {
 
 /** Invariant #2 — no hardcoded user-facing prose in shipped source. */
 export function scanForUserFacingStrings(opts: ScanOptions): Violation[] {
-  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP);
+  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP).filter(
+    (f) => !isSkipped(f, opts.skipFiles ?? []),
+  );
   const out: Violation[] = [];
   for (const file of files) {
     const lines = readFileSync(file, 'utf-8').split('\n');
@@ -139,7 +158,9 @@ export function scanForUserFacingStrings(opts: ScanOptions): Violation[] {
 
 /** Invariant: only packages/db may import a database driver. */
 export function scanForDbDriverImports(opts: ScanOptions): Violation[] {
-  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP);
+  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP).filter(
+    (f) => !isSkipped(f, opts.skipFiles ?? []),
+  );
   const out: Violation[] = [];
   const re = /from\s+['"](pg|postgres|drizzle-orm(\/.*)?)['"]/;
   for (const file of files) {
@@ -214,7 +235,9 @@ export function scanForPattern(
     allowMatch?: (match: string) => boolean;
   },
 ): Violation[] {
-  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP);
+  const files = collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP).filter(
+    (f) => !isSkipped(f, opts.skipFiles ?? []),
+  );
   const flags = spec.pattern.flags.includes('g') ? spec.pattern.flags : `${spec.pattern.flags}g`;
   const out: Violation[] = [];
   for (const file of files) {
@@ -239,6 +262,7 @@ export function scanForPattern(
  */
 export function readSource(opts: ScanOptions): string {
   return collectTsFiles(opts.srcDir, opts.skipDirs ?? DEFAULT_SKIP)
+    .filter((f) => !isSkipped(f, opts.skipFiles ?? []))
     .map((f) => readFileSync(f, 'utf-8'))
     .join('\n');
 }

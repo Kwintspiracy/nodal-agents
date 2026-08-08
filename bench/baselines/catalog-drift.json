@@ -1,0 +1,37 @@
+{
+  "sectionId": "catalog-drift",
+  "gitSha": "b2d0577",
+  "acceptedAt": "2026-08-08T16:26:11.558Z",
+  "metrics": [
+    {
+      "id": "openrouter_models_listed",
+      "label": "Modèles OpenRouter au catalogue",
+      "value": 31,
+      "unit": "modèles",
+      "direction": "higher-is-better"
+    },
+    {
+      "id": "dead_ids",
+      "label": "Identifiants absents en amont",
+      "value": 0,
+      "unit": "modèles",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "families_with_newer_upstream",
+      "label": "Familles ayant plus récent en amont",
+      "value": 0,
+      "unit": "familles",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "upstream_catalogue_size",
+      "label": "Taille du catalogue amont",
+      "value": 400,
+      "unit": "modèles",
+      "direction": "higher-is-better"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "sectionId": "trust-boundary",
+  "gitSha": "b2d0577",
+  "acceptedAt": "2026-08-08T16:26:11.558Z",
+  "metrics": [
+    {
+      "id": "third_party_families_covered",
+      "label": "Familles tierces cadrées",
+      "value": 20,
+      "unit": "/20",
+      "direction": "higher-is-better",
+      "detail": []
+    },
+    {
+      "id": "own_tools_wrongly_framed",
+      "label": "Outils du produit cadrés à tort",
+      "value": 0,
+      "unit": "outils",
+      "direction": "lower-is-better",
+      "detail": []
+    },
+    {
+      "id": "payloads_lost",
+      "label": "Charges utiles perdues par l’enveloppe",
+      "value": 0,
+      "unit": "payloads",
+      "direction": "lower-is-better"
+    },
+    {
+      "id": "payloads_unframed",
+      "label": "Charges utiles sorties sans cadre",
+      "value": 0,
+      "unit": "payloads",
+      "direction": "lower-is-better"
+    },
+    {
+      "id": "delimiter_escapes",
+      "label": "Délimiteurs contrefaits non neutralisés",
+      "value": 0,
+      "unit": "évasions",
+      "direction": "lower-is-better"
+    }
+  ]
+}
