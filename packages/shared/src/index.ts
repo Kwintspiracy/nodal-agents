@@ -31,4 +31,5 @@ export * from './timezone';
 export * from './redact-secrets';
 export * from './approval-impact';
 export * from './approval-explain';
+export * from './untrusted';
 export * from './catastrophic-command';

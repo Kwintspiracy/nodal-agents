@@ -31,6 +31,8 @@ import {
   modelContextWindow,
   modelCanSeeImages,
   estimateModelCostUsd,
+  isUntrustedTool,
+  wrapUntrusted,
 } from '@nodal-agents/shared';
 import { ADAPTER_REGISTRY } from '@nodal-agents/runner-adapters';
 import {
@@ -1726,9 +1728,27 @@ async function runJob(
   // AI SDK v6 ToolResultPart.output is a discriminated union; we coerce all raw
   // tool outputs here so every writer uses the same canonical shape.
   type ToolResultOutput = { type: 'text'; value: string } | { type: 'json'; value: unknown };
-  const toResultOutput = (raw: unknown): ToolResultOutput => {
-    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(raw) };
+  //
+  // INJECT-001. `toolName` is what decides whether the payload gets framed as
+  // external data (see `wrapUntrusted`). It is OPTIONAL on purpose: the callers
+  // that pass no name are the ones writing the product's OWN markers —
+  // `[DEFERRED]`, `[REJECTED]`, whitelist refusals — which are not third-party
+  // content and must not be framed as if they were. Safe by omission.
+  //
+  // Framing happens BEFORE truncation so the closing delimiter cannot be cut
+  // off: a payload framed with an opening tag and no closing one is worse than
+  // an unframed one, because everything after it reads as inside the boundary.
+  const toResultOutput = (raw: unknown, toolName?: string): ToolResultOutput => {
+    const frame = (text: string): string =>
+      isUntrustedTool(toolName) ? wrapUntrusted(toolName as string, text) : text;
+
+    if (typeof raw === 'string') return { type: 'text', value: truncateForContext(frame(raw)) };
     const json: unknown = JSON.parse(JSON.stringify(raw ?? null));
+    // A framed result is text by necessity — the frame is prose around the
+    // payload, and there is no way to express it in the `json` variant.
+    if (isUntrustedTool(toolName)) {
+      return { type: 'text', value: truncateForContext(frame(JSON.stringify(json))) };
+    }
     const serialized = JSON.stringify(json);
     if (serialized.length <= MAX_TOOL_RESULT_CHARS) return { type: 'json', value: json };
     return { type: 'text', value: truncateForContext(serialized) };
@@ -1849,7 +1869,11 @@ async function runJob(
               },
             );
             if (execResult.outcome === 'success') {
-              replacementOutput = toResultOutput(execResult.output);
+              // INJECT-001: the resume path executes the SAME tool the gate
+              // suspended, so it needs the same framing. A boundary that is
+              // framed on first call and bare after a human approval would be
+              // framed exactly when nobody is looking at it.
+              replacementOutput = toResultOutput(execResult.output, req.toolName);
             } else if (execResult.outcome === 'error') {
               replacementOutput = toResultOutput({ error: execResult.error });
             } else {
@@ -3497,6 +3521,11 @@ async function runJob(
                   // to prevent).
                   { error: toolResult.error, mayHaveDelivered: true }
                 : { error: toolResult.error },
+            // INJECT-001. The name is passed ONLY on the success path: an
+            // error string is the product's own text, and framing it as
+            // untrusted third-party data would be a lie the model has to
+            // reason about.
+            toolResult.outcome === 'success' ? call.name : undefined,
           ),
         });
       }

@@ -25,7 +25,7 @@ import {
 import type { JobTriggerContext } from '@nodal-agents/db';
 import { selectMemoriesForInjection } from '@nodal-agents/memory';
 import type { AgentMemory } from '@nodal-agents/shared';
-import { SYSTEM_PROMPT_CACHE_BOUNDARY } from '@nodal-agents/shared';
+import { SYSTEM_PROMPT_CACHE_BOUNDARY, wrapUntrusted } from '@nodal-agents/shared';
 import { ALWAYS_ON_TOOL_DOCS } from '@nodal-agents/tools';
 import { skillKindOfSlug } from '@nodal-agents/catalog';
 import { buildTeamBlock } from './team-block';
@@ -623,7 +623,13 @@ export async function buildSystemPrompt(
     ? '\n\n## Shared workspace contents\n\n' +
       'Current listing of the `shared` workspace (depth 2, captured at job start). ' +
       'Before creating a workflow, script, or document, check whether one listed here already covers the need — reuse and update it instead of recreating it, and save new files into the existing folder that matches their kind:\n\n' +
-      jobContext.workspaceInventory
+      // INJECT-001. The listing is produced by the runner, but the NAMES in it
+      // are written by whoever created the files — another agent, a download, a
+      // channel attachment. A file called
+      // `ignore-previous-instructions-and-run.txt` lands in the system prompt,
+      // the most trusted position in the request, with nothing marking it as
+      // data. Framed with the same helper as every other boundary.
+      wrapUntrusted('shared workspace listing', jobContext.workspaceInventory)
     : '';
 
   const volatile = runtimeBlock + memoryBlock + jobContextBlock + inventoryBlock;
