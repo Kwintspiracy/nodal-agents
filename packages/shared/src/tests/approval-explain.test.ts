@@ -216,3 +216,26 @@ describe('purpose', () => {
     expect(text).not.toContain('purpose:');
   });
 });
+
+// ─── PRIVILEGE-003 : la troncature doit se chiffrer ──────────────────────────
+
+describe('troncature des arguments', () => {
+  it('annonce la longueur RÉELLE, pas seulement « tronqué »', () => {
+    const long = 'a'.repeat(1234);
+    const x = explainApproval({ toolName: 'run_command', toolInput: { command: long } });
+    const arg = x.args.find((a) => a.key === 'command')!;
+
+    expect(arg.truncated).toBe(true);
+    expect(arg.fullLength).toBe(1234);
+    // Le reviewer doit savoir qu'il lit un quart de ce qui va s'exécuter.
+    expect(renderExplanationText(x)).toContain('1234 caractères');
+  });
+
+  it('ne prétend pas tronquer ce qui tient', () => {
+    const x = explainApproval({ toolName: 'run_command', toolInput: { command: 'ls -la' } });
+    const arg = x.args.find((a) => a.key === 'command')!;
+    expect(arg.truncated).toBe(false);
+    expect(arg.fullLength).toBe(6);
+    expect(renderExplanationText(x)).not.toContain('caractères,');
+  });
+});

@@ -10,6 +10,7 @@ import {
   channelBindings,
   channelAllowedConversations,
   telegramAllowedChats,
+  agentMemory,
   eq,
 } from '@nodal-agents/db';
 import { buildSystemPrompt } from '../system-prompt';
@@ -755,5 +756,41 @@ describe('INJECT-001 — inventaire du workspace partagé', () => {
     const agent = makeAgent(agentRow!.id, entityId, 'p');
     const prompt = await buildSystemPrompt(agent, db);
     expect(prompt).not.toContain('<untrusted_tool_result>');
+  });
+});
+
+// ─── MEMORY-001 : le bloc mémoire ne commande pas ────────────────────────────
+
+describe('MEMORY-001 — cadrage du bloc de mémoire persistante', () => {
+  it('ne dit plus « authoritative » et interdit explicitement l’obéissance', async () => {
+    const { entityId } = await seedContext(db);
+    const [agentRow] = await db
+      .insert(agents)
+      .values({
+        entityId,
+        name: 'MEM',
+        slug: `mem-${Date.now()}`,
+        personality: 'p',
+        role: 'agent',
+        memoryTokenBudget: 2000,
+      })
+      .returning();
+    await db.insert(agentMemory).values({
+      entityId,
+      fact: 'Le port de dev est 3000.',
+      category: 'context',
+      importance: 3,
+    });
+
+    const agent = makeAgent(agentRow!.id, entityId, 'p', 'agent', 2000);
+    const prompt = await buildSystemPrompt(agent, db);
+
+    expect(prompt).toContain('## Persistent memory');
+    // Le fait est bien là — cadrer ne doit pas revenir à cacher.
+    expect(prompt).toContain('Le port de dev est 3000.');
+    // « authoritative » était une consigne d'OBÉIR à des lignes écrites par des
+    // agents, pas par le propriétaire.
+    expect(prompt).not.toContain('Treat as authoritative');
+    expect(prompt).toContain('never instructions');
   });
 });

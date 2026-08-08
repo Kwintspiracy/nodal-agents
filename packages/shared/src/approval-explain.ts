@@ -84,7 +84,7 @@ export interface ApprovalExplanation {
    * rendered as the headline. Leaving it in printed it twice on every
    * `run_command` card.
    */
-  args: Array<{ key: string; value: string; truncated: boolean }>;
+  args: Array<{ key: string; value: string; truncated: boolean; fullLength: number }>;
   /**
    * The deterministic impact sentence, kept for tools the product ships. Null
    * for third-party tools, where the product has no basis to claim anything.
@@ -138,7 +138,15 @@ function flattenArgs(input: unknown): ApprovalExplanation['args'] {
       const full = typeof raw === 'string' ? raw : JSON.stringify(raw);
       const value = full ?? String(raw);
       const truncated = value.length > ARG_MAX;
-      return { key, value: truncated ? `${value.slice(0, ARG_MAX)}…` : value, truncated };
+      return {
+        key,
+        value: truncated ? `${value.slice(0, ARG_MAX)}…` : value,
+        truncated,
+        // PRIVILEGE-003. "(tronqué)" alone does not say whether 20 characters
+        // are hidden or 20 000 — and a reviewer approving a shell command needs
+        // to know that what they read is a tenth of what will run.
+        fullLength: value.length,
+      };
     });
 }
 
@@ -288,7 +296,8 @@ export function renderExplanationText(x: ApprovalExplanation): string {
   if (x.args.length > 0) {
     lines.push('', 'Arguments :');
     for (const a of x.args) {
-      lines.push(`  ${a.key} = ${a.value}${a.truncated ? ' (tronqué)' : ''}`);
+      const cut = a.truncated ? ` (${a.fullLength} caractères, ${ARG_MAX} affichés)` : '';
+      lines.push(`  ${a.key} = ${a.value}${cut}`);
     }
   }
   return lines.join('\n');

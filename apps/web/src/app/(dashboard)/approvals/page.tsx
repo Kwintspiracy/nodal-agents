@@ -145,7 +145,15 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                                 <dt className="shrink-0 text-ink-3">{arg.key}</dt>
                                 <dd className="min-w-0 break-all text-ink-2">
                                   {arg.value}
-                                  {arg.truncated && <span className="text-ink-3"> (tronqué)</span>}
+                                  {/* PRIVILEGE-003 : la longueur réelle, sinon
+                                      « tronqué » ne dit pas si 20 caractères
+                                      manquent ou 20 000. */}
+                                  {arg.truncated && (
+                                    <span className="text-ink-3">
+                                      {' '}
+                                      ({arg.fullLength} caractères, 300 affichés)
+                                    </span>
+                                  )}
                                 </dd>
                               </div>
                             ))}

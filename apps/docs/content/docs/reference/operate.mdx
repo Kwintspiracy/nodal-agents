@@ -29,7 +29,7 @@ The runner enforces two hard per-job backstops against runaway loops. Both have 
 | Token budget | `MAX_TOTAL_TOKENS_PER_JOB` | `1500000` (1.5M) | When a job's cumulative input + output tokens exceed this, the job fails with `token_budget_exceeded`. |
 | Dollar cost | `MAX_COST_PER_JOB_USD` | `2.0` | When the provider-reported cumulative cost exceeds this, the job fails with `cost_budget_exceeded`. |
 
-The cost cap only fires for providers that report per-call cost. For providers that don't, the cost stays `$0` and the **token budget is the fallback backstop**. Both caps are deliberately set far above where legitimate jobs sit (typical jobs use tens of thousands of tokens) while staying below the multi-million-token burns that motivated the guards.
+The cost cap only fires for providers that report per-call cost — today that means **OpenRouter** (with `usage:{include:true}`), and no other provider we support. For providers that don't, the cost stays `$0` and the **token budget is the fallback backstop**. Both caps are deliberately set far above where legitimate jobs sit (typical jobs use tens of thousands of tokens) while staying below the multi-million-token burns that motivated the guards.
 
 These are last-resort backstops. The anti-loop guards baked into the runtime — max delegation depth, max tool calls per turn, max chain length, and a no-progress detector — stop most runaways long before a budget cap is reached.
 

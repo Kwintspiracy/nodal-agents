@@ -1,12 +1,30 @@
 // @nodal-agents/memory — content sanitation for memory facts
 //
-// Memory facts are shared entity-wide AND (after Sprint 2) injected verbatim
-// into the system prompt. A hostile fact saved by one agent would be re-served
-// to every other agent in the entity, every turn — a persistent prompt-injection
-// vector. Every write path MUST pass through sanitizeMemoryContent().
+// Memory facts are shared entity-wide AND injected verbatim into the system
+// prompt. A hostile fact saved by one agent is re-served to every other agent in
+// the entity, every turn — a persistent prompt-injection vector. Every write
+// path MUST pass through sanitizeMemoryContent().
 //
 // Patterns ported from Hermes Agent `tools/memory_tool.py:_scan_memory_content`
 // (12 threat patterns + invisible-unicode block), adapted for Nodal-Agents paths.
+//
+// WHAT THIS DOES NOT DO (MEMORY-001, audit 2026-08-07)
+// ----------------------------------------------------
+// Measured against a 16-payload corpus, this denylist caught 2. It is a
+// keyword matcher over ENGLISH imperatives, so it stops the canonical
+// "ignore previous instructions" and misses everything that means the same
+// thing in other words or another language — "Ignore les instructions
+// précédentes", "From this point forward, your role is different", a fake
+// service note. That is not a bug to fix by adding patterns: a denylist over
+// natural language cannot be completed, and lengthening it mostly buys the
+// appearance of coverage.
+//
+// The load-bearing mitigation is therefore NOT here — it is the framing of the
+// `## Persistent memory` block in packages/orchestration/src/system-prompt.ts,
+// which tells the model these lines are notes and can never authorise an
+// action. This function remains as a cheap first filter and as the enforcement
+// point for the length cap and invisible unicode, where a denylist DOES work
+// because the set is finite.
 
 import { MemorySanitationError } from './errors';
 
