@@ -16,7 +16,8 @@
     "deps:check": "depcruise --config .dependency-cruiser.cjs apps packages",
     "secrets:check": "node scripts/check-no-secrets.mjs",
     "pack:build": "node scripts/build-pack.mjs",
-    "bench": "pnpm --filter @nodal-agents/bench bench"
+    "bench": "pnpm --filter @nodal-agents/bench bench",
+    "inventory": "node scripts/inventory/collect.mjs audit/inventory.json && node scripts/inventory/render.mjs audit/inventory.json audit/inventaire.html"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

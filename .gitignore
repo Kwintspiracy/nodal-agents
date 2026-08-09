@@ -72,3 +72,7 @@ apps/web/pw-onboarding-verify.mjs
 /NodalHomepage/
 /Nodal-Agents Landing.html
 packages/tools/Python/
+
+# Généré par `pnpm inventory` — la source est scripts/inventory/
+audit/inventaire.html
+audit/inventory.json
