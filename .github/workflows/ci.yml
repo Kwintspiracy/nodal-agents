@@ -148,8 +148,12 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter @nodal-agents/web exec playwright install --with-deps chromium
 
+      # NOT `pnpm --filter @nodal-agents/web e2e:up`: that wrapper shells out to
+      # a globally-installed `nodal-agents` binary, which does not exist on a
+      # runner checking out source. First attempt died on `spawn ENOENT`.
+      # The dev stack from source brings up embedded Postgres + runner + web.
       - name: Boot the stack
-        run: pnpm --filter @nodal-agents/web e2e:up &
+        run: pnpm --filter nodal-agents exec tsx src/index.ts --dev &
 
       - name: Wait for the dashboard
         run: |
