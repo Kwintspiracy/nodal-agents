@@ -163,3 +163,41 @@ observée en usage.
 `pnpm inventory` régénère le recensement et la page. Les nombres « sans test » de chaque
 section sont la métrique du plan — pas le pourcentage global, qui mesure la citation d'un
 nom et non la force d'une assertion.
+
+---
+
+## Avancement
+
+### 2026-08-10 — lot 1 entamé
+
+`apps/web/src/lib/__tests__/workspace-actions.test.ts` — **6 actions couvertes**,
+9 tests, tous sur des lignes réelles :
+
+| Action | Ce qui est prouvé |
+|---|---|
+| `createWorkspaceAction` | l'entité ET la ligne d'appartenance propriétaire ; un nom vide n'écrit rien |
+| `renameWorkspaceAction` | renomme ; un espace dont on n'est pas membre est refusé **et reste intact** |
+| `deleteWorkspaceAction` | refuse l'espace courant, refuse un id non-GUID, et supprime réellement la ligne sinon |
+| `switchWorkspaceAction` | refuse un espace hors appartenance |
+
+Reste **33 actions** sur les 39.
+
+### Point bloquant à reprendre
+
+`setLanCommandYoloAction` / `getLanCommandYoloAction` résistent. Ce qui est établi :
+
+- l'action renvoie `ok`, donc elle a bien trouvé l'entité par `session.entityId`
+  (sa garde `if (!entityRow) return fail('not_found')` n'a pas tiré) ;
+- une relecture immédiate de `entities` par `eq(entities.id, seed.entityId)` rend
+  une ligne **indéfinie**, alors que le même motif fonctionne pour
+  `renameWorkspaceAction` dans le même fichier ;
+- ce n'est pas un effet d'ordre : isolé dans son propre fichier, le
+  comportement est identique.
+
+L'hypothèse restante est que `session.entityId` ne vaut pas `seed.entityId` dans
+ce contexte de mock — l'action écrirait alors sur une autre entité, existante,
+et la relecture porterait sur la bonne. À vérifier en imprimant la valeur
+retournée par `getSession()` sous ce mock, ce qui n'a pas été fait.
+
+Note pour la reprise : `@/lib/server.ts` doit exporter `ACTIVE_ENTITY_COOKIE`
+dans le mock, sinon `switchWorkspaceAction` lève à l'import.
