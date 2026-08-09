@@ -29,6 +29,11 @@ import {
 import type { ModelMessage } from 'ai';
 import { z } from 'zod';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
+// SKILL-002: the SAME linter the create_skill / update_skill tools run. This
+// loop wrote through createSkillRepo / updateSkillRepo directly and skipped it —
+// and reflection is the one writer whose content is authored by a model with no
+// human in the loop, so it is the path that needed the check most.
+import { lintSkillContent } from '@nodal-agents/tools';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { buildReflectionSystemPrompt } from './prompt.ts';
 
@@ -337,6 +342,14 @@ export async function runReflection(
           // umbrellas, steer remaining lessons into patches of existing skills.
           outcomeText = `error: new-skill cap (${maxNewSkills}) reached for this pass — PATCH an existing skill with update_skill instead of creating another.`;
         } else {
+          // SKILL-002: lint BEFORE writing, exactly as the create_skill tool
+          // does. Fail loud into the model's own outcome text so it can fix the
+          // content on the next turn, rather than dropping the lesson.
+          const lint = await lintSkillContent(db, entityId, parsed.data.content);
+          if (!lint.ok) {
+            outcomeText = `error: ${lint.error}`;
+            continue;
+          }
           // P2b (F-6 follow-up): refuse a slug reserved by the system
           // catalog — the reflection model must not be able to shadow a
           // system skill with an agent-authored one sharing its slug.
@@ -422,6 +435,18 @@ export async function runReflection(
             // steer the model to author a new agent skill instead.
             outcomeText = `error: skill "${parsed.data.skillSlug}" is user/system-owned and cannot be modified by reflection — use create_skill to author a new agent skill instead.`;
           } else {
+            // SKILL-002: a PATCH replaces the content wholesale, so it can
+            // introduce exactly what the linter exists to refuse. Same check as
+            // the update_skill tool, on the same code path.
+            // Guarded: a patch may change only the name or the active flag, in
+            // which case there is no new content to lint.
+            if (parsed.data.content !== undefined) {
+              const patchLint = await lintSkillContent(db, entityId, parsed.data.content);
+              if (!patchLint.ok) {
+                outcomeText = `error: ${patchLint.error}`;
+                continue;
+              }
+            }
             // Agent-owned skill: bump patch_count atomically. created_by is
             // already 'agent' and a patch NEVER changes a skill's provenance.
             const res = await updateSkillRepo(db, entityId, skillRow.id, {

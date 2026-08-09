@@ -86,7 +86,13 @@ export { createListConversationsTool } from './builtin/index';
 // Skill-authoring grounding: the real MCP tool names of a workspace, injected
 // into create_skill / update_skill descriptions by the runner so the ROOT agent
 // references real tools (not its training-prior conventions) BEFORE authoring.
-export { listWorkspaceMcpToolNames } from './builtin/meta-ops/lint-skill-content';
+export {
+  listWorkspaceMcpToolNames,
+  // SKILL-002: exported so the reflection loop lints on the SAME code path as
+  // the create_skill / update_skill tools. It used to be module-private, which
+  // is precisely what made bypassing it the path of least resistance.
+  lintSkillContent,
+} from './builtin/meta-ops/lint-skill-content';
 
 // Routine/schedule lint (H1b): pure warn-only check that a cron routine's
 // task text doesn't reference tools the target agent doesn't have, or

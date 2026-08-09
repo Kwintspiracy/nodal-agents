@@ -28,6 +28,9 @@ import {
 import type { ModelMessage } from 'ai';
 import { z } from 'zod';
 import { systemSkillSlugs } from '@nodal-agents/catalog';
+// SKILL-002: same linter as the create_skill tool — the curator writes
+// consolidated content authored by a model, with no human in the loop.
+import { lintSkillContent } from '@nodal-agents/tools';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 
 const CURATOR_TRACE = '[curator]';
@@ -275,6 +278,12 @@ export async function runCuratorConsolidation(
           // the consolidated skill does not inherit the archived skills'
           // assignments, so consolidation can strip capability until the
           // owner re-assigns it.
+          // SKILL-002: lint before writing, as create_skill does.
+          const lint = await lintSkillContent(db, entityId, parsed.data.content);
+          if (!lint.ok) {
+            outcomeText = `error: ${lint.error}`;
+            continue;
+          }
           // P2b (F-6 follow-up): refuse a slug reserved by the system
           // catalog — the curator must not shadow a system skill.
           const res = await createSkillRepo(
