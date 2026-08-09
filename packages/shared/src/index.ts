@@ -32,4 +32,5 @@ export * from './redact-secrets';
 export * from './approval-impact';
 export * from './approval-explain';
 export * from './untrusted';
+export * from './redact-transcript';
 export * from './catastrophic-command';
