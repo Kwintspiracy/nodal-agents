@@ -349,13 +349,11 @@ describe('uninstallCommunitySkillAction', () => {
     // Le motif du bug `setAgentApprovalRuleAction` : un `ok` renvoyé alors que
     // rien n'a été fait. Ici le runner refuse — l'action doit refuser aussi.
     const { uninstallCommunitySkillAction } = await actions();
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ok: false, error: 'not_found', message: 'Skill absente' }), {
-          status: 200,
-        }),
-      );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, error: 'not_found', message: 'Skill absente' }), {
+        status: 200,
+      }),
+    );
 
     try {
       const r = await uninstallCommunitySkillAction('inexistante');

@@ -130,10 +130,7 @@ beforeAll(async () => {
 
 /** Rend la session non-propriétaire le temps d'un test, puis restaure. */
 async function asNonOwner(run: () => Promise<void>) {
-  await testDb
-    .update(entities)
-    .set({ userId: otherUserId })
-    .where(eq(entities.id, seed.entityId));
+  await testDb.update(entities).set({ userId: otherUserId }).where(eq(entities.id, seed.entityId));
   try {
     await run();
   } finally {
@@ -268,7 +265,11 @@ describe('setSkillFilesWritableAction', () => {
   it('ouvre puis referme l’écriture des fichiers de la skill', async () => {
     const { setSkillFilesWritableAction } = await actions();
 
-    const on = await setSkillFilesWritableAction({ agentId: seed.agentId, skillId, writable: true });
+    const on = await setSkillFilesWritableAction({
+      agentId: seed.agentId,
+      skillId,
+      writable: true,
+    });
     expect(on.ok, on.ok ? '' : on.message).toBe(true);
     expect((await assignment(seed.agentId)).filesWritable).toBe(true);
 
@@ -370,7 +371,9 @@ describe('setLanCommandYoloAction', () => {
       expect(r.ok ? '' : r.code).toBe('forbidden');
     });
 
-    expect(await lanFlag(), 'un non-propriétaire a ouvert l’exécution de commandes LAN').toBe(false);
+    expect(await lanFlag(), 'un non-propriétaire a ouvert l’exécution de commandes LAN').toBe(
+      false,
+    );
   });
 
   it('refuse une entrée mal formée sans rien basculer', async () => {

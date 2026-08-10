@@ -294,8 +294,10 @@ describe('updateMcpServerApiKeyAction', () => {
     const r = await updateMcpServerApiKeyAction(serveur.id, 'clé-sans-préfixe');
     expect(r.ok).toBe(false);
 
-    expect(connectMcpMock, 'une clé mal formée a quand même déclenché un appel réseau').not
-      .toHaveBeenCalled();
+    expect(
+      connectMcpMock,
+      'une clé mal formée a quand même déclenché un appel réseau',
+    ).not.toHaveBeenCalled();
     expect(decrypt((await mcpRow(serveur.id)).apiKey!)).toBe('rk_test_intacte5678');
   });
 
