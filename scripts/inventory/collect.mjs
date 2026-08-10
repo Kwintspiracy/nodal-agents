@@ -35,11 +35,43 @@ const testBlobs = testFiles.map((f) => ({ f, txt: readFileSync(f, 'utf-8') }));
 const e2eFiles = walk(join(ROOT, 'apps/web/tests/e2e'), (f) => /\.spec\.ts$/.test(f));
 const e2eBlobs = e2eFiles.map((f) => ({ f, txt: readFileSync(f, 'utf-8') }));
 
-/** Où un identifiant est-il testé ? unit / e2e / aucun. */
-function testStatus(needle) {
+/**
+ * Où un identifiant est-il testé ? unit / e2e / aucun.
+ *
+ * Deux régimes, parce qu'un nom de fonction et un chemin de route ne se citent
+ * pas de la même façon dans un test.
+ *
+ * Un identifiant ordinaire (`deleteWorkspaceAction`) est cherché comme mot
+ * entier ou entre quotes — assez strict pour ne pas confondre `attach_mcp` avec
+ * `attach_mcp_server`.
+ *
+ * Un CHEMIN (tout ce qui contient un `/`) est cherché en sous-chaîne littérale.
+ * Le régime strict produisait des faux négatifs francs : `/webhooks/:slug/:secret`
+ * était compté « sans test » alors que `apps/runner/src/tests/routes/webhook.test.ts`
+ * le couvre en douze tests contre le vrai serveur — la chaîne y apparaît dans
+ * `describe('POST /webhooks/:slug/:secret — …')`, donc ni entre quotes
+ * immédiates, ni précédée d'une frontière de mot (`\b` ne s'arme pas devant `/`).
+ * Un chemin de route est assez spécifique pour que la sous-chaîne suffise.
+ *
+ * `scope` restreint le corpus aux fichiers dont le chemin le contient. Sans lui,
+ * la sous-chaîne compte n'importe quelle citation : un test du dashboard qui
+ * vérifie l'URL appelée par `fetch` faisait passer `/api/skills/uninstall` pour
+ * une route testée, alors que le handler du runner n'était jamais monté. Les
+ * routes sont donc mesurées sur `apps/runner` uniquement.
+ *
+ * Ce croisement reste une mesure de CITATION, pas de preuve : il dit qu'un test
+ * parle de cette capacité, jamais qu'il en éprouve le comportement.
+ */
+function testStatus(needle, scope) {
   const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`['"\`]${esc}['"\`]|\\b${esc}\\b`);
-  const unit = testBlobs.filter((b) => re.test(b.txt)).map((b) => b.f);
+  const re = needle.includes('/')
+    ? { test: (txt) => txt.includes(needle) }
+    : new RegExp(`['"\`]${esc}['"\`]|\\b${esc}\\b`);
+  const inScope = (b) => !scope || b.f.split('\\').join('/').includes(scope);
+  const unit = testBlobs
+    .filter(inScope)
+    .filter((b) => re.test(b.txt))
+    .map((b) => b.f);
   const e2e = e2eBlobs.filter((b) => re.test(b.txt)).map((b) => b.f);
   return {
     unit: unit.length,
@@ -118,7 +150,8 @@ const inv = {};
   inv.routes = [...txt.matchAll(/app\.(get|post|put|delete)\('([^']+)'/g)].map((m) => ({
     method: m[1].toUpperCase(),
     path: m[2],
-    test: testStatus(m[2]),
+    // Portée : seul un test qui monte le serveur du runner éprouve une route.
+    test: testStatus(m[2], 'apps/runner'),
   }));
 }
 

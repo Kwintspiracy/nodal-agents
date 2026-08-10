@@ -225,6 +225,53 @@ Reste **8 unités** dans le tableau de danger (retirer une capacité, ouvrir un
 canal, surface publique), puis les 45 unités ordinaires et le test générique
 d'IDOR sur les lectures.
 
+### 2026-08-10 — le tableau de danger est vidé (et l'inventaire mentait sur un point)
+
+Les 8 unités restantes ont été traitées, mais elles n'étaient que **7** : le
+croisement de l'inventaire produisait un faux négatif franc.
+
+**`POST /webhooks/:slug/:secret` était déjà couvert.**
+`apps/runner/src/tests/routes/webhook.test.ts` (497 lignes) monte le vrai
+serveur via `createApp` et l'éprouve en douze tests : uniformité des 404,
+création de job, incréments concurrents, notify, enveloppe anti-injection,
+plafond de corps, limite de débit. L'inventaire le comptait « sans test » parce
+que `testStatus` cherchait la chaîne entre quotes immédiates ou entre frontières
+de mot — or elle apparaît dans `describe('POST /webhooks/:slug/:secret — …')`,
+et `\b` ne s'arme pas devant un `/`. Corrigé dans `scripts/inventory/collect.mjs` :
+les chemins sont désormais cherchés en sous-chaîne.
+
+Le premier correctif a créé le défaut inverse — `/api/skills/uninstall` passait
+pour testée parce qu'un test du dashboard vérifie l'URL qu'il appelle, sans
+jamais monter le handler du runner. Les routes sont donc mesurées sur
+`apps/runner` uniquement. État réel après correction : **11 routes sur 13
+couvertes**, les deux manquantes étant `/api/skills/acknowledge-update` et
+`/api/skills/install` (traitée ci-dessous).
+
+Ce croisement reste une mesure de CITATION, jamais de preuve. C'est écrit dans
+le code du collecteur pour que le prochain lecteur ne s'y trompe pas.
+
+**Les 7 unités réellement découvertes — 36 tests.**
+
+| Fichier | Unités | Ce qui est prouvé |
+|---|---|---|
+| `packages/tools/src/tests/meta-ops-links.test.ts` | `detach_agent`, `detach_connector`, `detach_mcp`, `detach_skill`, `attach_connector` | la bonne ligne de lien part, les voisines restent ; détacher ne supprime jamais la ressource ni l'agent ; un slug d'une autre entité ne résout rien ; `detach_agent` ne défait que le lien de MON orchestrateur ; `attach_connector` est idempotent et écrit le bon `entityId` |
+| `apps/web/src/lib/__tests__/channel-conversation-actions.test.ts` | `resolveChannelAllowedConversationAction` | approuver ne touche qu'une ligne ; une ligne déjà active ne peut pas être rejouée ; refuser supprime réellement ; la demande d'un autre espace n'est ni approuvée ni supprimée |
+| `apps/runner/src/tests/routes/skills-install.test.ts` | `POST /api/skills/install` | le secret est vérifié **avant** le corps ; un secret de bonne longueur mais faux est refusé ; l'allowlist d'hôtes rejette **avant tout téléchargement**, y compris sur la reprise sans schéma ; une erreur prévue devient un 400 lisible, jamais un 500 |
+
+Le garde Origin/Host qui ferme `/api/*` aux origines étrangères n'est pas
+redoublé ici : `trusted-origin.test.ts` l'éprouve déjà, et prouve qu'il passe
+avant l'authentification.
+
+**Mutations, à nouveau.** Trois gardes cassées : le `orchestratorId` du DELETE de
+`detach_agent`, la garde `status !== 'pending'` de l'action de canal, et la
+comparaison du secret runner remplacée par un test de préfixe. Chacune a fait
+tomber son test, et lui seul. Fichiers restaurés.
+
+Un accident de test corrigé au passage, qui vaut d'être noté : le premier jet du
+test d'authentification envoyait un secret VALIDE — il partait donc réellement
+sur le réseau au lieu de s'arrêter au 403. Un test d'auth qui télécharge est un
+test qui ne prouve pas ce qu'il annonce.
+
 ### L'ordre qui reste — par danger, pas par ordre alphabétique
 
 Sur les 62 unités non couvertes, **17 détruisent, ouvrent ou authentifient**.
@@ -235,13 +282,21 @@ Elles valent les 45 autres réunies :
 | ~~**Détruisent**~~ ✅ | ~~`deleteConversationAction`, `deleteWorkspaceFileAction`, `removeAgentWorkspaceAction`, `uninstallCommunitySkillAction`~~ |
 | ~~**Ouvrent l'exécution de code**~~ ✅ | ~~`setLanCommandYoloAction`, `setSkillScriptsAuthorizedAction`, `setSkillFilesWritableAction`~~ |
 | ~~**Manipulent des secrets**~~ ✅ | ~~`updateConnectorApiKeyAction`, `updateMcpServerApiKeyAction`~~ |
-| **Ouvrent un canal** | `resolveChannelAllowedConversationAction` |
-| **Retirent une capacité** | `detach_agent`, `detach_connector`, `detach_mcp`, `detach_skill`, `attach_connector` |
-| **Surface publique** | `POST /webhooks/:slug/:secret`, `POST /api/skills/install` |
+| ~~**Ouvrent un canal**~~ ✅ | ~~`resolveChannelAllowedConversationAction`~~ |
+| ~~**Retirent une capacité**~~ ✅ | ~~`detach_agent`, `detach_connector`, `detach_mcp`, `detach_skill`, `attach_connector`~~ |
+| ~~**Surface publique**~~ ✅ | ~~`POST /webhooks/:slug/:secret`~~ (l'était déjà), ~~`POST /api/skills/install`~~ |
+
+**Le tableau de danger est vidé.** Ce qui suit est de l'ordinaire : les 45 unités
+restantes n'ouvrent rien et ne détruisent rien.
 
 Les 18 lectures (`get*`, `list*`) ne méritent pas 18 tests : un seul test
 générique d'IDOR — est-ce qu'elles fuient les données d'un autre espace ? —
-couvre le seul risque réel.
+couvre le seul risque réel. **C'est la prochaine chose à faire**, avant les
+écritures ordinaires.
+
+Restent aussi trois routes du runner jamais montées dans un test :
+`/api/skills/uninstall`, `/api/skills/update`, `/api/skills/acknowledge-update`.
+Le décor est écrit (`skills-install.test.ts`) — les couvrir coûte peu.
 
 Notes pour la reprise, toutes payées une fois :
 
