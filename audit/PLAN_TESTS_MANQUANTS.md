@@ -182,27 +182,37 @@ nom et non la force d'une assertion.
 
 Reste **33 actions** sur les 39.
 
-### Point bloquant — piste sérieuse, à ne pas relancer à l'aveugle
+### Question tranchée — la suppression n'a PAS de cascade
 
-`setLanCommandYoloAction` n'est PAS couvert. Ce qui a été établi par une sonde
-instrumentée, à ne pas refaire :
+`apps/web/src/lib/__tests__/delete-cascade.test.ts` répond à la suspicion la plus
+grave ouverte par le lot 1 : **le produit va bien**. `deleteWorkspaceAction`
+supprime exactement une ligne ; le voisin et l'espace de la session restent
+intacts. La disparition observée venait de la base de test partagée entre suites,
+pas d'une cascade.
 
-- **L'action fonctionne.** Jouée seule, elle bascule bien `lan_command_yolo` de
-  `false` à `true` sur la bonne entité, vérifié en lisant la table.
-- **Le test échoue dès qu'il suit la suite des espaces de travail.** La ligne du
-  workspace de test n'est alors plus dans la table du tout — d'où le `undefined`.
-- **Le séparer dans un autre fichier ne suffit pas** : les deux suites partagent
-  la même base de test.
+Le test est conservé comme régression : une cascade ajoutée plus tard ferait
+perdre des espaces à des utilisateurs sans que rien ne le dise.
 
-**Ce qu'il faut vérifier en priorité, et ce n'est pas un détail de test.**
-Est-ce que `deleteWorkspaceAction` supprime plus que l'espace visé ? Une cascade
-trop large emporterait des entités voisines. Si c'est le cas, ce n'est pas un
-artefact de test mais un défaut produit — et il est plus grave que les 33 actions
-restantes.
+Conséquence pour la reprise : `setLanCommandYoloAction` se règle par l'isolation
+de la base entre suites, pas par un correctif produit.
 
-À faire : appeler `deleteWorkspaceAction` sur un espace créé pour l'occasion,
-puis compter les lignes de `entities` avant et après. Trois lignes de test
-répondent à la question.
+### L'ordre qui reste — par danger, pas par ordre alphabétique
+
+Sur les 62 unités non couvertes, **17 détruisent, ouvrent ou authentifient**.
+Elles valent les 45 autres réunies :
+
+| Priorité | Unités |
+|---|---|
+| **Détruisent** | `deleteConversationAction`, `deleteWorkspaceFileAction`, `removeAgentWorkspaceAction`, `uninstallCommunitySkillAction` |
+| **Ouvrent l'exécution de code** | `setLanCommandYoloAction`, `setSkillScriptsAuthorizedAction`, `setSkillFilesWritableAction` |
+| **Manipulent des secrets** | `updateConnectorApiKeyAction`, `updateMcpServerApiKeyAction` |
+| **Ouvrent un canal** | `resolveChannelAllowedConversationAction` |
+| **Retirent une capacité** | `detach_agent`, `detach_connector`, `detach_mcp`, `detach_skill`, `attach_connector` |
+| **Surface publique** | `POST /webhooks/:slug/:secret`, `POST /api/skills/install` |
+
+Les 18 lectures (`get*`, `list*`) ne méritent pas 18 tests : un seul test
+générique d'IDOR — est-ce qu'elles fuient les données d'un autre espace ? —
+couvre le seul risque réel.
 
 Note pour la reprise : le mock de `@/lib/server.ts` doit exporter
 `ACTIVE_ENTITY_COOKIE`, sinon `switchWorkspaceAction` lève à l'import.
