@@ -109,8 +109,24 @@ async function completeOnboardingIfNeeded(page: Page): Promise<void> {
   await page.getByLabel(/^name$/i).fill('E2E Setup Agent');
   await page.getByRole('button', { name: /create agent/i }).click();
 
-  // Onboarding hands over to the dashboard once the agent lands.
-  await page.waitForURL((u) => !u.pathname.startsWith('/onboarding'), { timeout: 30_000 });
+  // Creating the agent does NOT hand back to the dashboard: onboarding stays on
+  // its own route and goes on with steps 3-6 (meet the agent, interview,
+  // autonomy). What we came for is already done, so we leave through the front
+  // door and let the dashboard itself tell us whether it still bounces us —
+  // `agentCount > 0` is the only condition that matters, and this asks it
+  // directly instead of trusting a navigation that was never going to happen.
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    await page.goto('/');
+    if (!page.url().includes('/onboarding')) break;
+    if (Date.now() > deadline) {
+      throw new Error(
+        'Walked onboarding through "Create agent" but the dashboard still redirects to ' +
+          '/onboarding — the agent was not created. Check createAgentAction in the web logs.',
+      );
+    }
+    await page.waitForTimeout(1_000);
+  }
   console.log('[global-setup] fresh install — walked onboarding to create the first agent');
 }
 
