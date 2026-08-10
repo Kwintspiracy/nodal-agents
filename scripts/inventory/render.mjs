@@ -348,7 +348,8 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
         <li><b>Telegram.</b> Prouvé en live une fois — approbation livrée et résolue en 45 secondes. <b>Discord, Slack, WhatsApp : jamais éprouvés en vrai.</b> Ce point-là ne se mesure pas : il repose sur le souvenir des sessions, pas sur le code.</li>
         <li><b>Les ${num.models} modèles.</b> Intégrité vérifiée hors-ligne, dérive vérifiée contre l'API en direct — mais <b>aucun n'a été exécuté</b>. Un identifiant valide n'est pas un modèle qui répond.</li>
         <li><b>Windows.</b> Tout mon travail est vérifié sur ta machine ; la CI ne teste que Linux. Les pièges qui te coûtent du temps — kills d'arbres de processus, ports réservés, chemins — ne sont vus par personne.</li>
-        <li><b>Les ${num.pages} pages du dashboard.</b> Les 15 routes du dashboard sont désormais chargées par Playwright, qui exige un 200 et un <code>h1</code> sur chacune — mais en local seulement, et c'est un contrôle de rendu, pas de comportement.</li>
+        <li><b>Les ${num.pages} pages du dashboard.</b> Playwright charge les 15 routes statiques et exige un 200 plus un <code>h1</code> sur chacune — mais en local seulement, et c'est un contrôle de rendu, pas de comportement. Les 7 restantes sont des routes à paramètre (<code>/agents/[id]/edit</code>, <code>/jobs/[id]</code>…) : aucune n'est chargée.</li>
+        <li><b>La boucle de réflexion et le curateur.</b> 43 tests unitaires — cycle de vie des skills, patch inter-agents, convergence. L'angle mort n'est donc pas l'absence de test : c'est qu'elles sont livrées OFF (<code>entities.reflection_enabled</code> par défaut <code>false</code>) et n'ont quasi jamais tourné en conditions réelles. Ce qu'elles écrivent passe maintenant par <code>lintSkillContent</code>, branché sur <code>create_skill</code> et <code>update_skill</code>.</li>
       </ul>
     </article>
 
@@ -359,9 +360,8 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
         <li><b>Playwright en CI.</b> Le job n'avait jamais dépassé son <code>global-setup</code> : il exigeait une authentification que le mode par défaut ne sert pas. Corrigé le 10 août — les specs s'exécutent enfin, 2 passent en CI. Les 2 autres tombent parce que la stack CI est <b>vierge</b> : sans clé LLM elle affiche l'onboarding, pas le dashboard que les specs décrivent. En local, 7 verts. Le job reste <code>continue-on-error</code>, donc il ne garde encore rien.</li>
         <li><b>Les ${num.e2eSpecs} tests Playwright</b>, dont 8 seulement tournent en CI. Deux des trois parcours du job étaient périmés de deux refontes d'UI — routes supprimées, onglets passés de <code>button</code> à <code>tab</code>. Rien ne dit que les autres aient mieux vieilli : ils n'ont pas été rejoués.</li>
         <li><b>${num.harnessesUndriven} harnais de fournisseurs sur ${num.harnesses}.</b> Le registre en déclare ${num.harnesses} (<code>CAPABILITY_MATRIX</code>) ; tous sauf un n'ont jamais été pilotés avec leurs propres identifiants natifs. GLM via OpenRouter éprouve le harnais <code>openrouter</code>, pas les autres.</li>
-        <li><b>La boucle de réflexion et le curateur.</b> Désactivées par défaut, presque jamais exercées. Elles écrivent des skills — et jusqu'à hier, sans lint.</li>
-        <li><b>Le plafond de coût.</b> Ne se déclenche que sur OpenRouter. Sur les 11 autres fournisseurs, seul le budget de tokens protège.</li>
-        <li><b>La survie au terminal.</b> <code>up</code> reste au premier plan : fermer le terminal arrête tout. Donc aucun cron, aucun watcher, aucune permanence.</li>
+        <li><b>Le plafond de coût.</b> Ne se déclenche que chez les fournisseurs qui rapportent le coût par appel — OpenRouter avec <code>usage:{include:true}</code>. Sur les ${num.harnesses - 1} autres, il ne part jamais et seul le budget de tokens protège.</li>
+        <li><b>La survie au terminal.</b> <code>up</code> reste au premier plan : fermer le terminal arrête tout. Les crons du runner existent — planifications, curateur, veille des mises à jour de skills — mais ils meurent avec lui. Ni <code>--detach</code>, ni mode service, ni image Docker.</li>
       </ul>
     </article>
   </div>
