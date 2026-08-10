@@ -298,9 +298,9 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
     <article class="tier tier--hi">
       <header><span class="dot"></span><h3>Sûr</h3><span class="tag">une exécution échouerait bruyamment</span></header>
       <ul>
-        <li><b>Le paquet démarre.</b> <code>smoke-pack</code> en CI : pack → installation vierge → boot → rendu d'une vraie page, sur une machine Linux qui n'a jamais vu Nodal. Vert le 9 août.</li>
+        <li><b>Le paquet démarre.</b> <code>smoke-pack</code> en CI : pack → installation vierge → boot → rendu d'une vraie page, sur une machine Linux qui n'a jamais vu Nodal. Vert à chaque passage depuis le 9 août.</li>
         <li><b>Les 20 décisions du gate.</b> Mesurées contre le vrai <code>executeTool</code>, métrique <code>exact</code> : tout mouvement, dans un sens comme dans l'autre, sort en rouge.</li>
-        <li><b>Les invariants #1, #2, #6.</b> 28 packages scannés à chaque run. Ils ont trouvé 8 violations réelles cette semaine.</li>
+        <li><b>Les invariants #1, #2, #6.</b> Le banc scanne 29 répertoires à chaque run ; 28 portent en plus leur propre suite (le 29ᵉ est <code>packages/bench</code>, l'outil de mesure lui-même). Ils ont trouvé 8 violations réelles cette semaine.</li>
         <li><b>Le cadrage du contenu tiers.</b> Un job réel lit un fichier empoisonné ; l'assertion porte sur le transcript persisté, pas sur un retour de fonction.</li>
         <li><b>La rédaction des secrets.</b> 9 formes de credentials + contre-épreuve sur du texte ordinaire (UUID, hashes, URL).</li>
         <li><b>L'épinglage du pack.</b> 46 dépendances runtime, <code>next</code> exact, zéro caret — vérifié dans le <code>package.json</code> généré, pas dans l'intention.</li>
@@ -312,7 +312,7 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
     <article class="tier tier--mid">
       <header><span class="dot"></span><h3>Moyennement sûr</h3><span class="tag">testé, avec un angle mort nommé</span></header>
       <ul>
-        <li><b>Les 64 outils intégrés.</b> 57 apparaissent dans des tests — mais le compte mesure la citation, pas la force de l'assertion.</li>
+        <li><b>Les 64 outils intégrés.</b> 62 apparaissent dans des tests, 2 dans aucun — mais le compte mesure la citation, pas la force de l'assertion.</li>
         <li><b>Les 12 adaptateurs.</b> Suites par package avec mocks aux frontières HTTP : le comportement est prouvé, l'intégration réelle ne l'est pas.</li>
         <li><b>Telegram.</b> Prouvé en live une fois — approbation livrée et résolue en 45 secondes. <b>Discord, Slack, WhatsApp : jamais éprouvés en vrai.</b></li>
         <li><b>Les 51 modèles.</b> Intégrité vérifiée hors-ligne, dérive vérifiée contre l'API en direct — mais <b>aucun n'a été exécuté</b>. Un identifiant valide n'est pas un modèle qui répond.</li>
@@ -327,7 +327,7 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
         <li><b>16 skills du catalogue.</b> Du texte livré à tous les agents de toutes les installations. C'est là que j'ai trouvé un nom d'agent personnel.</li>
         <li><b>Playwright en CI.</b> Le job n'avait jamais dépassé son <code>global-setup</code> : il exigeait une authentification que le mode par défaut ne sert pas. Corrigé le 10 août — les specs s'exécutent enfin, 2 passent en CI. Les 2 autres tombent parce que la stack CI est <b>vierge</b> : sans clé LLM elle affiche l'onboarding, pas le dashboard que les specs décrivent. En local, 7 verts. Le job reste <code>continue-on-error</code>, donc il ne garde encore rien.</li>
         <li><b>Les 83 autres specs Playwright.</b> Deux des trois parcours du job étaient périmés de deux refontes d'UI — routes supprimées, onglets passés de <code>button</code> à <code>tab</code>. Rien ne dit que les 83 restantes aient mieux vieilli : elles n'ont pas été rejouées.</li>
-        <li><b>11 harnais de fournisseurs sur 12.</b> Jamais pilotés avec leurs propres identifiants natifs. GLM via OpenRouter éprouve le harnais <code>openrouter</code>, pas les autres.</li>
+        <li><b>10 harnais de fournisseurs sur 11.</b> Le registre en déclare onze (<code>CAPABILITY_MATRIX</code>) ; dix n'ont jamais été pilotés avec leurs propres identifiants natifs. GLM via OpenRouter éprouve le harnais <code>openrouter</code>, pas les autres.</li>
         <li><b>La boucle de réflexion et le curateur.</b> Désactivées par défaut, presque jamais exercées. Elles écrivent des skills — et jusqu'à hier, sans lint.</li>
         <li><b>Le plafond de coût.</b> Ne se déclenche que sur OpenRouter. Sur les 11 autres fournisseurs, seul le budget de tokens protège.</li>
         <li><b>La survie au terminal.</b> <code>up</code> reste au premier plan : fermer le terminal arrête tout. Donc aucun cron, aucun watcher, aucune permanence.</li>
