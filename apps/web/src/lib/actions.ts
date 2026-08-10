@@ -1165,8 +1165,19 @@ export async function addAgentWorkspaceAction(
     return ok({ id: row.id });
   } catch (err: unknown) {
     console.error('[addAgentWorkspaceAction]', err);
-    const msg = err instanceof Error ? err.message : '';
-    if (msg.includes('unique') || msg.includes('23505')) {
+    // Drizzle wraps the Postgres error: the outer message is only
+    // "Failed query: insert into ...", and the 23505 lives in err.cause.
+    // Testing the outer message alone made this branch dead — the user got
+    // "Failed to add workspace" instead of the label conflict. Same fix the
+    // repos in packages/db already carry.
+    const msg = err instanceof Error ? err.message : String(err);
+    const causeMsg = err instanceof Error && err.cause instanceof Error ? err.cause.message : '';
+    if (
+      msg.includes('unique') ||
+      msg.includes('23505') ||
+      causeMsg.includes('unique') ||
+      causeMsg.includes('23505')
+    ) {
       return fail('conflict', 'A workspace with this label already exists for this agent');
     }
     return fail('db_error', 'Failed to add workspace');

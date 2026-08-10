@@ -187,3 +187,90 @@ describe('switchWorkspaceAction', () => {
     expect(r.ok, r.ok ? '' : r.message).toBe(true);
   });
 });
+
+// Le fuseau paraît anodin — il ne l'est pas : c'est lui qui décide de l'heure à
+// laquelle les tâches planifiées partent. Le risque n'est pas d'écrire une
+// mauvaise valeur, c'est de l'écrire dans TOUS les espaces : la requête ne tient
+// que par son `where`. D'où l'espace témoin, présent dans chaque cas.
+describe('setWorkspaceTimezoneAction', () => {
+  /** Un espace tiers, avec un fuseau connu, qui ne doit jamais bouger. */
+  async function espaceTemoin(): Promise<string> {
+    const [row] = await testDb
+      .insert(entities)
+      .values({
+        userId: seed.userId,
+        name: 'Témoin fuseau',
+        slug: `temoin-tz-${Date.now()}-${Math.round(performance.now())}`,
+        timezone: 'Pacific/Auckland',
+      })
+      .returning();
+    return row!.id;
+  }
+
+  async function fuseauDe(entityId: string): Promise<string | null> {
+    const [row] = await testDb
+      .select({ timezone: entities.timezone })
+      .from(entities)
+      .where(eq(entities.id, entityId));
+    return row?.timezone ?? null;
+  }
+
+  it('écrit le fuseau de l’espace courant — et de lui seul', async () => {
+    const { setWorkspaceTimezoneAction } = await actions();
+    const temoin = await espaceTemoin();
+
+    const r = await setWorkspaceTimezoneAction({ timezone: 'Europe/Paris' });
+    expect(r.ok, r.ok ? '' : r.message).toBe(true);
+
+    expect(await fuseauDe(seed.entityId)).toBe('Europe/Paris');
+    expect(await fuseauDe(temoin), 'le fuseau d’un autre espace a été réécrit').toBe(
+      'Pacific/Auckland',
+    );
+  });
+
+  it('refuse une zone qui n’existe pas, et laisse la précédente en place', async () => {
+    const { setWorkspaceTimezoneAction } = await actions();
+    await setWorkspaceTimezoneAction({ timezone: 'America/New_York' });
+
+    const r = await setWorkspaceTimezoneAction({ timezone: 'Mars/Olympus_Mons' });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+    expect(await fuseauDe(seed.entityId), 'une zone inventée a été écrite').toBe(
+      'America/New_York',
+    );
+  });
+
+  it('refuse une chaîne vide et une chaîne trop longue', async () => {
+    const { setWorkspaceTimezoneAction } = await actions();
+    await setWorkspaceTimezoneAction({ timezone: 'UTC' });
+
+    const vide = await setWorkspaceTimezoneAction({ timezone: '' });
+    const tropLongue = await setWorkspaceTimezoneAction({ timezone: 'Europe/' + 'x'.repeat(60) });
+
+    expect(vide.ok).toBe(false);
+    expect(tropLongue.ok).toBe(false);
+    expect(await fuseauDe(seed.entityId)).toBe('UTC');
+  });
+
+  it('refuse un corps qui n’a pas la bonne forme', async () => {
+    const { setWorkspaceTimezoneAction } = await actions();
+    await setWorkspaceTimezoneAction({ timezone: 'UTC' });
+
+    const r = await setWorkspaceTimezoneAction({ tz: 'Europe/Paris' });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('validation_failed');
+    expect(await fuseauDe(seed.entityId)).toBe('UTC');
+  });
+
+  it('accepte de repasser deux fois la même zone — l’écriture est idempotente', async () => {
+    const { setWorkspaceTimezoneAction } = await actions();
+
+    await setWorkspaceTimezoneAction({ timezone: 'Asia/Tokyo' });
+    const second = await setWorkspaceTimezoneAction({ timezone: 'Asia/Tokyo' });
+
+    expect(second.ok).toBe(true);
+    expect(await fuseauDe(seed.entityId)).toBe('Asia/Tokyo');
+  });
+});
