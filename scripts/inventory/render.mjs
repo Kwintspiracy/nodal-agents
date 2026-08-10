@@ -305,6 +305,7 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
         <li><b>La rédaction des secrets.</b> 9 formes de credentials + contre-épreuve sur du texte ordinaire (UUID, hashes, URL).</li>
         <li><b>L'épinglage du pack.</b> 46 dépendances runtime, <code>next</code> exact, zéro caret — vérifié dans le <code>package.json</code> généré, pas dans l'intention.</li>
         <li><b>Origin et Host.</b> Les 6 requêtes de l'audit — Host falsifié, Origin attaquant, <code>text/plain</code>, Origin+Host cohérents en <code>evil.test</code> — rejetées sur les deux ports.</li>
+        <li><b>Les 135 actions serveur.</b> Plus une seule sans test depuis le 10 août. Ce qui les fait monter ici, ce n'est pas le compte : c'est que chaque garde a été éprouvée par MUTATION — on casse le filtre dans le code de production et on exige que le test vire au rouge. Un test qui survit à sa mutation est retiré ou durci.</li>
       </ul>
     </article>
 
@@ -316,16 +317,16 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
         <li><b>Telegram.</b> Prouvé en live une fois — approbation livrée et résolue en 45 secondes. <b>Discord, Slack, WhatsApp : jamais éprouvés en vrai.</b></li>
         <li><b>Les 51 modèles.</b> Intégrité vérifiée hors-ligne, dérive vérifiée contre l'API en direct — mais <b>aucun n'a été exécuté</b>. Un identifiant valide n'est pas un modèle qui répond.</li>
         <li><b>Windows.</b> Tout mon travail est vérifié sur ta machine ; la CI ne teste que Linux. Les pièges qui te coûtent du temps — kills d'arbres de processus, ports réservés, chemins — ne sont vus par personne.</li>
-        <li><b>Les 22 pages du dashboard.</b> Rendu vérifié à la main sur quelques-unes ; aucune n'a de garde automatique tant que Playwright ne passe pas.</li>
+        <li><b>Les 22 pages du dashboard.</b> Les 15 routes du dashboard sont désormais chargées par Playwright, qui exige un 200 et un <code>h1</code> sur chacune — mais en local seulement, et c'est un contrôle de rendu, pas de comportement.</li>
       </ul>
     </article>
 
     <article class="tier tier--lo">
       <header><span class="dot"></span><h3>Pas sûr du tout</h3><span class="tag">aucun contrôle mécanique</span></header>
       <ul>
-        <li><b>39 actions serveur.</b> Ce sont elles qui écrivent en base. C'est exactement là qu'était le bouton « Toujours pour ce serveur » qui n'enregistrait rien tout en annonçant un succès.</li>
         <li><b>16 skills du catalogue.</b> Du texte livré à tous les agents de toutes les installations. C'est là que j'ai trouvé un nom d'agent personnel.</li>
-        <li><b>Playwright.</b> 85 tests, jamais verts en CI. Le job existe depuis hier et a échoué à son premier passage.</li>
+        <li><b>Playwright en CI.</b> Le job n'avait jamais dépassé son <code>global-setup</code> : il exigeait une authentification que le mode par défaut ne sert pas. Corrigé le 10 août — les specs s'exécutent enfin, 2 passent en CI. Les 2 autres tombent parce que la stack CI est <b>vierge</b> : sans clé LLM elle affiche l'onboarding, pas le dashboard que les specs décrivent. En local, 7 verts. Le job reste <code>continue-on-error</code>, donc il ne garde encore rien.</li>
+        <li><b>Les 83 autres specs Playwright.</b> Deux des trois parcours du job étaient périmés de deux refontes d'UI — routes supprimées, onglets passés de <code>button</code> à <code>tab</code>. Rien ne dit que les 83 restantes aient mieux vieilli : elles n'ont pas été rejouées.</li>
         <li><b>11 harnais de fournisseurs sur 12.</b> Jamais pilotés avec leurs propres identifiants natifs. GLM via OpenRouter éprouve le harnais <code>openrouter</code>, pas les autres.</li>
         <li><b>La boucle de réflexion et le curateur.</b> Désactivées par défaut, presque jamais exercées. Elles écrivent des skills — et jusqu'à hier, sans lint.</li>
         <li><b>Le plafond de coût.</b> Ne se déclenche que sur OpenRouter. Sur les 11 autres fournisseurs, seul le budget de tokens protège.</li>
@@ -335,8 +336,8 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
   </div>
 
   <div class="note">
-    <strong>Ce que tu peux modifier sereinement.</strong> Le gate d'approbation, les frontières de confiance, le catalogue de modèles, les invariants d'architecture : le banc te dit dans les secondes qui suivent si un chiffre a bougé, et lequel.<br><br>
-    <strong>Ce qui demande de la prudence.</strong> Les actions serveur, les textes de skills, les handlers de canaux, la boucle de réflexion : <em>rien ne parlera</em>. Une régression y sera découverte par toi, en usage, comme les trois de cette semaine.
+    <strong>Ce que tu peux modifier sereinement.</strong> Le gate d'approbation, les frontières de confiance, le catalogue de modèles, les invariants d'architecture : le banc te dit dans les secondes qui suivent si un chiffre a bougé, et lequel. Depuis le 10 août, l'interface aussi : les 135 actions serveur ont chacune un test, et ces tests ont été éprouvés en cassant le code exprès.<br><br>
+    <strong>Ce qui demande de la prudence.</strong> Les textes de skills, les handlers de canaux, la boucle de réflexion : <em>rien ne parlera</em>. Une régression y sera découverte par toi, en usage.
   </div>
 
   <h2 class="h2big">Capacités</h2>
