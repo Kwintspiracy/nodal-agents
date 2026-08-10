@@ -267,6 +267,42 @@ const inv = {};
 }
 
 // ── 13. Compteurs globaux de tests ────────────────────────────────────────────
+//
+// Les trois derniers comptent des choses que la carte de confiance affirmait en
+// DUR, et qui avaient dérivé sans que rien ne le signale : le nombre de harnais
+// LLM (la carte annonçait un dénominateur de 12 qui n'a jamais existé), le
+// nombre de dépendances runtime du paquet publié, et le nombre de specs
+// Playwright. Les mesurer ici, c'est ce qui empêche la prochaine dérive au lieu
+// de la rattraper.
+
+/** Entrées de CAPABILITY_MATRIX — un harnais de fournisseur par entrée. */
+function countLlmHarnesses() {
+  const src = readFileSync(join(ROOT, 'packages/llm/src/providers/registry.ts'), 'utf-8');
+  const at = src.search(/CAPABILITY_MATRIX[^=]*=\s*\{/);
+  if (at < 0) return 0;
+  const start = src.indexOf('{', at);
+  let depth = 0;
+  let end = start;
+  for (; end < src.length; end++) {
+    if (src[end] === '{') depth++;
+    else if (src[end] === '}' && --depth === 0) break;
+  }
+  return [...src.slice(start, end).matchAll(/^ {2}'?([\w-]+)'?\s*:/gm)].length;
+}
+
+/** Dépendances runtime déclarées dans le manifeste du paquet publié. */
+function countPackRuntimeDeps() {
+  const src = readFileSync(join(ROOT, 'scripts/build-pack.mjs'), 'utf-8');
+  const at = src.indexOf('dependencies: {', src.indexOf('const packPkg = {'));
+  if (at < 0) return 0;
+  const rest = src.slice(at);
+  const block = rest.slice(0, rest.indexOf('\n  },'));
+  return block
+    .split('\n')
+    .slice(1)
+    .filter((l) => /^\s*'?[\w@/.-]+'?\s*:\s*'/.test(l)).length;
+}
+
 inv.meta = {
   generatedFor: 'nodal-agents',
   testFiles: testFiles.length,
@@ -274,6 +310,9 @@ inv.meta = {
   archTests:
     walk(join(ROOT, 'packages'), (f) => /architecture\.test\.ts$/.test(f)).length +
     walk(join(ROOT, 'apps'), (f) => /architecture\.test\.ts$/.test(f)).length,
+  llmHarnesses: countLlmHarnesses(),
+  packRuntimeDeps: countPackRuntimeDeps(),
+  e2eSpecs: e2eBlobs.reduce((n, { txt }) => n + (txt.match(/^\s*test\(/gm)?.length ?? 0), 0),
 };
 
 writeFileSync(OUT, JSON.stringify(inv, null, 2), 'utf-8');

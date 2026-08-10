@@ -85,6 +85,37 @@ const covered =
   inv.skills.length;
 const pct = Math.round(((covered - untestedTotal) / covered) * 100);
 
+// ── Chiffres cités par la carte de confiance ─────────────────────────────────
+// Ces paliers sont de la PROSE écrite à la main : rien ne dit quand une phrase
+// devient fausse. Le 10 août, cinq chiffres écrits en dur avaient dérivé en
+// silence — outils testés (57 → 62), packages scannés (28 → 29), harnais LLM
+// (dénominateur 12 qui n'a jamais existé), specs Playwright (85 → 99), et une
+// date. Tout ce qui est mesurable est donc interpolé ici, pour que la prochaine
+// dérive soit impossible plutôt que rattrapée à la relecture.
+const nSansTest = (arr) => arr.filter((x) => x.test.unit === 0 && x.test.e2e === 0).length;
+const benchMetric = (sectionId, metricId) =>
+  inv.bench.find((b) => b.id === sectionId)?.metrics.find((m) => m.id === metricId)?.value ?? '?';
+
+const num = {
+  builtinTools: inv.builtinTools.length,
+  builtinTested: inv.builtinTools.length - nSansTest(inv.builtinTools),
+  builtinUntested: nSansTest(inv.builtinTools),
+  serverActions: inv.serverActions.length,
+  adapters: inv.connectors.length,
+  models: modelCount,
+  pages: inv.pages.length,
+  skillsUntested: nSansTest(inv.skills),
+  skillsTotal: inv.skills.length,
+  archSuites: inv.meta.archTests,
+  packagesScanned: benchMetric('architecture', 'packages_scanned'),
+  gateDecisions: benchMetric('gate', 'decisions_total'),
+  thirdPartyFamilies: benchMetric('trust-boundary', 'third_party_families_covered'),
+  harnesses: inv.meta.llmHarnesses,
+  harnessesUndriven: inv.meta.llmHarnesses - 1, // seul `openrouter` a été piloté en vrai
+  packDeps: inv.meta.packRuntimeDeps,
+  e2eSpecs: inv.meta.e2eSpecs,
+};
+
 // ── Banc ──────────────────────────────────────────────────────────────────────
 const benchCards = inv.bench
   .map(
@@ -299,35 +330,35 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
       <header><span class="dot"></span><h3>Sûr</h3><span class="tag">une exécution échouerait bruyamment</span></header>
       <ul>
         <li><b>Le paquet démarre.</b> <code>smoke-pack</code> en CI : pack → installation vierge → boot → rendu d'une vraie page, sur une machine Linux qui n'a jamais vu Nodal. Vert à chaque passage depuis le 9 août.</li>
-        <li><b>Les 20 décisions du gate.</b> Mesurées contre le vrai <code>executeTool</code>, métrique <code>exact</code> : tout mouvement, dans un sens comme dans l'autre, sort en rouge.</li>
-        <li><b>Les invariants #1, #2, #6.</b> Le banc scanne 29 répertoires à chaque run ; 28 portent en plus leur propre suite (le 29ᵉ est <code>packages/bench</code>, l'outil de mesure lui-même). Ils ont trouvé 8 violations réelles cette semaine.</li>
-        <li><b>Le cadrage du contenu tiers.</b> Un job réel lit un fichier empoisonné ; l'assertion porte sur le transcript persisté, pas sur un retour de fonction.</li>
+        <li><b>Les ${num.gateDecisions} décisions du gate.</b> Mesurées contre le vrai <code>executeTool</code>, métrique <code>exact</code> : tout mouvement, dans un sens comme dans l'autre, sort en rouge.</li>
+        <li><b>Les invariants #1, #2, #6.</b> Le banc scanne ${num.packagesScanned} répertoires à chaque run ; ${num.archSuites} portent en plus leur propre suite (le dernier est <code>packages/bench</code>, l'outil de mesure lui-même). Ils ont trouvé 8 violations réelles cette semaine.</li>
+        <li><b>Le cadrage du contenu tiers.</b> Un job réel lit un fichier empoisonné ; l'assertion porte sur le transcript persisté, pas sur un retour de fonction. ${num.thirdPartyFamilies} familles tierces cadrées.</li>
         <li><b>La rédaction des secrets.</b> 9 formes de credentials + contre-épreuve sur du texte ordinaire (UUID, hashes, URL).</li>
-        <li><b>L'épinglage du pack.</b> 46 dépendances runtime, <code>next</code> exact, zéro caret — vérifié dans le <code>package.json</code> généré, pas dans l'intention.</li>
+        <li><b>L'épinglage du pack.</b> ${num.packDeps} dépendances runtime, <code>next</code> exact, zéro caret — réécrites en versions exactes à la construction, et le build sort en erreur si l'une d'elles ne résout pas. Vérifié dans le <code>package.json</code> généré, pas dans l'intention.</li>
         <li><b>Origin et Host.</b> Les 6 requêtes de l'audit — Host falsifié, Origin attaquant, <code>text/plain</code>, Origin+Host cohérents en <code>evil.test</code> — rejetées sur les deux ports.</li>
-        <li><b>Les 135 actions serveur.</b> Plus une seule sans test depuis le 10 août. Ce qui les fait monter ici, ce n'est pas le compte : c'est que chaque garde a été éprouvée par MUTATION — on casse le filtre dans le code de production et on exige que le test vire au rouge. Un test qui survit à sa mutation est retiré ou durci.</li>
+        <li><b>Les ${num.serverActions} actions serveur.</b> Plus une seule sans test depuis le 10 août. Ce qui les fait monter ici, ce n'est pas le compte : c'est que chaque garde a été éprouvée par MUTATION — on casse le filtre dans le code de production et on exige que le test vire au rouge. Un test qui survit à sa mutation est retiré ou durci.</li>
       </ul>
     </article>
 
     <article class="tier tier--mid">
       <header><span class="dot"></span><h3>Moyennement sûr</h3><span class="tag">testé, avec un angle mort nommé</span></header>
       <ul>
-        <li><b>Les 64 outils intégrés.</b> 62 apparaissent dans des tests, 2 dans aucun — mais le compte mesure la citation, pas la force de l'assertion.</li>
-        <li><b>Les 12 adaptateurs.</b> Suites par package avec mocks aux frontières HTTP : le comportement est prouvé, l'intégration réelle ne l'est pas.</li>
-        <li><b>Telegram.</b> Prouvé en live une fois — approbation livrée et résolue en 45 secondes. <b>Discord, Slack, WhatsApp : jamais éprouvés en vrai.</b></li>
-        <li><b>Les 51 modèles.</b> Intégrité vérifiée hors-ligne, dérive vérifiée contre l'API en direct — mais <b>aucun n'a été exécuté</b>. Un identifiant valide n'est pas un modèle qui répond.</li>
+        <li><b>Les ${num.builtinTools} outils intégrés.</b> ${num.builtinTested} apparaissent dans des tests, ${num.builtinUntested} dans aucun — mais le compte mesure la citation, pas la force de l'assertion.</li>
+        <li><b>Les ${num.adapters} adaptateurs.</b> Suites par package avec mocks aux frontières HTTP : le comportement est prouvé, l'intégration réelle ne l'est pas.</li>
+        <li><b>Telegram.</b> Prouvé en live une fois — approbation livrée et résolue en 45 secondes. <b>Discord, Slack, WhatsApp : jamais éprouvés en vrai.</b> Ce point-là ne se mesure pas : il repose sur le souvenir des sessions, pas sur le code.</li>
+        <li><b>Les ${num.models} modèles.</b> Intégrité vérifiée hors-ligne, dérive vérifiée contre l'API en direct — mais <b>aucun n'a été exécuté</b>. Un identifiant valide n'est pas un modèle qui répond.</li>
         <li><b>Windows.</b> Tout mon travail est vérifié sur ta machine ; la CI ne teste que Linux. Les pièges qui te coûtent du temps — kills d'arbres de processus, ports réservés, chemins — ne sont vus par personne.</li>
-        <li><b>Les 22 pages du dashboard.</b> Les 15 routes du dashboard sont désormais chargées par Playwright, qui exige un 200 et un <code>h1</code> sur chacune — mais en local seulement, et c'est un contrôle de rendu, pas de comportement.</li>
+        <li><b>Les ${num.pages} pages du dashboard.</b> Les 15 routes du dashboard sont désormais chargées par Playwright, qui exige un 200 et un <code>h1</code> sur chacune — mais en local seulement, et c'est un contrôle de rendu, pas de comportement.</li>
       </ul>
     </article>
 
     <article class="tier tier--lo">
       <header><span class="dot"></span><h3>Pas sûr du tout</h3><span class="tag">aucun contrôle mécanique</span></header>
       <ul>
-        <li><b>16 skills du catalogue.</b> Du texte livré à tous les agents de toutes les installations. C'est là que j'ai trouvé un nom d'agent personnel.</li>
+        <li><b>${num.skillsUntested} skills du catalogue</b> sur ${num.skillsTotal}. Du texte livré à tous les agents de toutes les installations. C'est là que j'ai trouvé un nom d'agent personnel.</li>
         <li><b>Playwright en CI.</b> Le job n'avait jamais dépassé son <code>global-setup</code> : il exigeait une authentification que le mode par défaut ne sert pas. Corrigé le 10 août — les specs s'exécutent enfin, 2 passent en CI. Les 2 autres tombent parce que la stack CI est <b>vierge</b> : sans clé LLM elle affiche l'onboarding, pas le dashboard que les specs décrivent. En local, 7 verts. Le job reste <code>continue-on-error</code>, donc il ne garde encore rien.</li>
-        <li><b>Les 83 autres specs Playwright.</b> Deux des trois parcours du job étaient périmés de deux refontes d'UI — routes supprimées, onglets passés de <code>button</code> à <code>tab</code>. Rien ne dit que les 83 restantes aient mieux vieilli : elles n'ont pas été rejouées.</li>
-        <li><b>10 harnais de fournisseurs sur 11.</b> Le registre en déclare onze (<code>CAPABILITY_MATRIX</code>) ; dix n'ont jamais été pilotés avec leurs propres identifiants natifs. GLM via OpenRouter éprouve le harnais <code>openrouter</code>, pas les autres.</li>
+        <li><b>Les ${num.e2eSpecs} tests Playwright</b>, dont 8 seulement tournent en CI. Deux des trois parcours du job étaient périmés de deux refontes d'UI — routes supprimées, onglets passés de <code>button</code> à <code>tab</code>. Rien ne dit que les autres aient mieux vieilli : ils n'ont pas été rejoués.</li>
+        <li><b>${num.harnessesUndriven} harnais de fournisseurs sur ${num.harnesses}.</b> Le registre en déclare ${num.harnesses} (<code>CAPABILITY_MATRIX</code>) ; tous sauf un n'ont jamais été pilotés avec leurs propres identifiants natifs. GLM via OpenRouter éprouve le harnais <code>openrouter</code>, pas les autres.</li>
         <li><b>La boucle de réflexion et le curateur.</b> Désactivées par défaut, presque jamais exercées. Elles écrivent des skills — et jusqu'à hier, sans lint.</li>
         <li><b>Le plafond de coût.</b> Ne se déclenche que sur OpenRouter. Sur les 11 autres fournisseurs, seul le budget de tokens protège.</li>
         <li><b>La survie au terminal.</b> <code>up</code> reste au premier plan : fermer le terminal arrête tout. Donc aucun cron, aucun watcher, aucune permanence.</li>
