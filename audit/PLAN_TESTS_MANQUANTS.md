@@ -182,22 +182,27 @@ nom et non la force d'une assertion.
 
 Reste **33 actions** sur les 39.
 
-### Point bloquant à reprendre
+### Point bloquant — piste sérieuse, à ne pas relancer à l'aveugle
 
-`setLanCommandYoloAction` / `getLanCommandYoloAction` résistent. Ce qui est établi :
+`setLanCommandYoloAction` n'est PAS couvert. Ce qui a été établi par une sonde
+instrumentée, à ne pas refaire :
 
-- l'action renvoie `ok`, donc elle a bien trouvé l'entité par `session.entityId`
-  (sa garde `if (!entityRow) return fail('not_found')` n'a pas tiré) ;
-- une relecture immédiate de `entities` par `eq(entities.id, seed.entityId)` rend
-  une ligne **indéfinie**, alors que le même motif fonctionne pour
-  `renameWorkspaceAction` dans le même fichier ;
-- ce n'est pas un effet d'ordre : isolé dans son propre fichier, le
-  comportement est identique.
+- **L'action fonctionne.** Jouée seule, elle bascule bien `lan_command_yolo` de
+  `false` à `true` sur la bonne entité, vérifié en lisant la table.
+- **Le test échoue dès qu'il suit la suite des espaces de travail.** La ligne du
+  workspace de test n'est alors plus dans la table du tout — d'où le `undefined`.
+- **Le séparer dans un autre fichier ne suffit pas** : les deux suites partagent
+  la même base de test.
 
-L'hypothèse restante est que `session.entityId` ne vaut pas `seed.entityId` dans
-ce contexte de mock — l'action écrirait alors sur une autre entité, existante,
-et la relecture porterait sur la bonne. À vérifier en imprimant la valeur
-retournée par `getSession()` sous ce mock, ce qui n'a pas été fait.
+**Ce qu'il faut vérifier en priorité, et ce n'est pas un détail de test.**
+Est-ce que `deleteWorkspaceAction` supprime plus que l'espace visé ? Une cascade
+trop large emporterait des entités voisines. Si c'est le cas, ce n'est pas un
+artefact de test mais un défaut produit — et il est plus grave que les 33 actions
+restantes.
 
-Note pour la reprise : `@/lib/server.ts` doit exporter `ACTIVE_ENTITY_COOKIE`
-dans le mock, sinon `switchWorkspaceAction` lève à l'import.
+À faire : appeler `deleteWorkspaceAction` sur un espace créé pour l'occasion,
+puis compter les lignes de `entities` avant et après. Trois lignes de test
+répondent à la question.
+
+Note pour la reprise : le mock de `@/lib/server.ts` doit exporter
+`ACTIVE_ENTITY_COOKIE`, sinon `switchWorkspaceAction` lève à l'import.
