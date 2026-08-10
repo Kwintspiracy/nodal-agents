@@ -602,8 +602,16 @@ export default function OnboardingFlow() {
                 sub="The brain your agent thinks with. Your key stays on this machine."
               />
 
-              <label className="mt-5 block text-medium-12 text-ink-3">Provider</label>
+              {/* Chaque champ de cet écran porte un id lié à son <label>. Ils
+                  n'en avaient aucun : un lecteur d'écran annonçait des champs
+                  anonymes sur le TOUT PREMIER écran d'une installation neuve,
+                  et rien ne pouvait le piloter — ni un test, ni un utilisateur
+                  au clavier cliquant le libellé. */}
+              <label className="mt-5 block text-medium-12 text-ink-3" htmlFor="onboarding-provider">
+                Provider
+              </label>
               <Select
+                id="onboarding-provider"
                 value={provider.value}
                 onChange={(e) => pickProvider(e.target.value)}
                 className="mt-1.5 bg-canvas text-body-14"
@@ -623,18 +631,22 @@ export default function OnboardingFlow() {
                 </p>
               )}
 
-              <label className="mt-4 block text-medium-12 text-ink-3">Base URL</label>
+              <label className="mt-4 block text-medium-12 text-ink-3" htmlFor="onboarding-base-url">
+                Base URL
+              </label>
               <TextInput
+                id="onboarding-base-url"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://…"
                 className="mt-1.5 bg-canvas text-body-14"
               />
 
-              <label className="mt-4 block text-medium-12 text-ink-3">
+              <label className="mt-4 block text-medium-12 text-ink-3" htmlFor="onboarding-api-key">
                 API key {provider.needsKey ? '' : '(optional for local)'}
               </label>
               <TextInput
+                id="onboarding-api-key"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 type="password"
@@ -683,16 +695,28 @@ export default function OnboardingFlow() {
                 sub="A name and a personality. It also ships with built-in codes of conduct (safe tool use, verify before done, task planning…)."
               />
 
-              <label className="mt-5 block text-medium-12 text-ink-3">Name</label>
+              <label
+                className="mt-5 block text-medium-12 text-ink-3"
+                htmlFor="onboarding-agent-name"
+              >
+                Name
+              </label>
               <TextInput
+                id="onboarding-agent-name"
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder="e.g. Friday"
                 className="mt-1.5 bg-canvas text-body-14"
               />
 
-              <label className="mt-4 block text-medium-12 text-ink-3">Personality</label>
+              <label
+                className="mt-4 block text-medium-12 text-ink-3"
+                htmlFor="onboarding-personality"
+              >
+                Personality
+              </label>
               <TextArea
+                id="onboarding-personality"
                 value={personality}
                 onChange={(e) => setPersonality(e.target.value)}
                 rows={11}

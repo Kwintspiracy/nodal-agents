@@ -25,7 +25,7 @@
  * empty state would turn that into 30 confusing spec failures.
  */
 
-import { chromium, type FullConfig } from '@playwright/test';
+import { chromium, type FullConfig, type Page } from '@playwright/test';
 import path from 'path';
 import { mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -66,6 +66,7 @@ async function setupWithoutAuth(baseURL: string): Promise<void> {
           `dashboard to render in local-trust mode.`,
       );
     }
+    await completeOnboardingIfNeeded(page);
     await context.storageState({ path: AUTH_STATE_PATH });
     console.log(
       `[global-setup] local-trust detected — cookie-free state saved → ${AUTH_STATE_PATH}`,
@@ -73,6 +74,44 @@ async function setupWithoutAuth(baseURL: string): Promise<void> {
   } finally {
     await browser.close();
   }
+}
+
+/**
+ * Bring a FRESH install to the state every spec assumes: one agent exists.
+ *
+ * `apps/cli/src/lib/seed.ts` deliberately seeds a user and an entity but NO
+ * agent ("the user creates their first agent intentionally from the dashboard —
+ * no surprise rows in their DB"), and the dashboard layout redirects to
+ * /onboarding whenever `agentCount === 0`. So a CI stack always starts in
+ * onboarding, whatever LLM key it has — which is why `sidebar` and
+ * `agent → task → job` failed there while passing locally on a configured
+ * machine. It was never about the key.
+ *
+ * We walk the REAL onboarding flow rather than inserting a row: seeding the
+ * assertion data is what makes an e2e suite lie. The side benefit is that the
+ * first screen of a fresh install finally gets exercised by something.
+ */
+async function completeOnboardingIfNeeded(page: Page): Promise<void> {
+  if (!page.url().includes('/onboarding')) return;
+
+  // Step 0 → 1. Button labels are taken verbatim from OnboardingFlow.tsx.
+  await page.getByRole('button', { name: /get started/i }).click();
+
+  // Step 1 — the key. CI has no real credentials, and `createLlmKeyAction`
+  // stores what it is given without calling the provider, so a placeholder is
+  // enough to move on; nothing here ever reaches a model. The provider defaults
+  // to OpenRouter and the model to the first catalogue entry, so both are
+  // already valid — we only fill what is empty.
+  await page.getByLabel(/^api key/i).fill('e2e-placeholder-key');
+  await page.getByRole('button', { name: /continue/i }).click();
+
+  // Step 2 — the agent. Its existence is the whole point of this detour.
+  await page.getByLabel(/^name$/i).fill('E2E Setup Agent');
+  await page.getByRole('button', { name: /create agent/i }).click();
+
+  // Onboarding hands over to the dashboard once the agent lands.
+  await page.waitForURL((u) => !u.pathname.startsWith('/onboarding'), { timeout: 30_000 });
+  console.log('[global-setup] fresh install — walked onboarding to create the first agent');
 }
 
 async function globalSetup(config: FullConfig): Promise<void> {
@@ -189,6 +228,7 @@ async function globalSetup(config: FullConfig): Promise<void> {
     );
   }
 
+  await completeOnboardingIfNeeded(page);
   await context.storageState({ path: AUTH_STATE_PATH });
   await browser.close();
 
