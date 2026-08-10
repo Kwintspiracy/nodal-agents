@@ -196,6 +196,35 @@ perdre des espaces à des utilisateurs sans que rien ne le dise.
 Conséquence pour la reprise : `setLanCommandYoloAction` se règle par l'isolation
 de la base entre suites, pas par un correctif produit.
 
+### 2026-08-10 — les 9 unités les plus dangereuses sont couvertes
+
+Les trois blocs de tête du tableau ci-dessous (détruisent / ouvrent l'exécution
+de code / manipulent des secrets) sont faits : **39 tests**, tous sur des lignes
+réelles, des fichiers réels ou le corps de la requête sortante.
+
+| Fichier | Actions | Ce qui est prouvé |
+|---|---|---|
+| `destructive-actions.test.ts` | `deleteConversationAction`, `removeAgentWorkspaceAction`, `deleteWorkspaceFileAction`, `uninstallCommunitySkillAction` | la cible part, le voisin reste ; l'entité d'à côté est hors d'atteinte ; `../secret.txt` ne sort pas du dossier ; le corps envoyé au runner porte bien le slug ET l'entityId |
+| `grant-actions.test.ts` | `setSkillScriptsAuthorizedAction`, `setSkillFilesWritableAction`, `setLanCommandYoloAction` | l'interrupteur bascule dans les deux sens ; un non-propriétaire est refusé **et la colonne reste à false** ; scripts et fichiers sont deux portes distinctes ; l'espace voisin n'est jamais ouvert |
+| `secret-rotation-actions.test.ts` | `updateConnectorApiKeyAction`, `updateMcpServerApiKeyAction` | la clé est stockée chiffrée, jamais en clair ; pas de double chiffrement ; **une clé refusée n'écrase pas celle qui marche** ; un préfixe hors catalogue n'entraîne aucun appel réseau |
+
+**Ces tests ont été éprouvés par mutation**, parce qu'une suite verte ne prouve
+rien tant qu'on ne l'a pas vue échouer. Trois gardes cassées volontairement dans
+`actions.ts` — la garde propriétaire de `setLanCommandYoloAction`, le scoping par
+entité du `DELETE` de `deleteConversationAction`, le chiffrement de
+`updateConnectorApiKeyAction` — ont fait tomber exactement le test correspondant,
+et lui seul. Le fichier a été restauré ensuite.
+
+Un constat consigné au passage, sans le traiter comme un défaut :
+`deleteConversationAction` renvoie `ok` quand l'identifiant est inconnu ou
+appartient à une autre entité. L'écriture est sûre — rien ne part — mais le
+message est optimiste. Un test le fixe pour qu'un changement de ce contrat soit
+un choix, pas une surprise.
+
+Reste **8 unités** dans le tableau de danger (retirer une capacité, ouvrir un
+canal, surface publique), puis les 45 unités ordinaires et le test générique
+d'IDOR sur les lectures.
+
 ### L'ordre qui reste — par danger, pas par ordre alphabétique
 
 Sur les 62 unités non couvertes, **17 détruisent, ouvrent ou authentifient**.
@@ -203,9 +232,9 @@ Elles valent les 45 autres réunies :
 
 | Priorité | Unités |
 |---|---|
-| **Détruisent** | `deleteConversationAction`, `deleteWorkspaceFileAction`, `removeAgentWorkspaceAction`, `uninstallCommunitySkillAction` |
-| **Ouvrent l'exécution de code** | `setLanCommandYoloAction`, `setSkillScriptsAuthorizedAction`, `setSkillFilesWritableAction` |
-| **Manipulent des secrets** | `updateConnectorApiKeyAction`, `updateMcpServerApiKeyAction` |
+| ~~**Détruisent**~~ ✅ | ~~`deleteConversationAction`, `deleteWorkspaceFileAction`, `removeAgentWorkspaceAction`, `uninstallCommunitySkillAction`~~ |
+| ~~**Ouvrent l'exécution de code**~~ ✅ | ~~`setLanCommandYoloAction`, `setSkillScriptsAuthorizedAction`, `setSkillFilesWritableAction`~~ |
+| ~~**Manipulent des secrets**~~ ✅ | ~~`updateConnectorApiKeyAction`, `updateMcpServerApiKeyAction`~~ |
 | **Ouvrent un canal** | `resolveChannelAllowedConversationAction` |
 | **Retirent une capacité** | `detach_agent`, `detach_connector`, `detach_mcp`, `detach_skill`, `attach_connector` |
 | **Surface publique** | `POST /webhooks/:slug/:secret`, `POST /api/skills/install` |
@@ -214,5 +243,13 @@ Les 18 lectures (`get*`, `list*`) ne méritent pas 18 tests : un seul test
 générique d'IDOR — est-ce qu'elles fuient les données d'un autre espace ? —
 couvre le seul risque réel.
 
-Note pour la reprise : le mock de `@/lib/server.ts` doit exporter
-`ACTIVE_ENTITY_COOKIE`, sinon `switchWorkspaceAction` lève à l'import.
+Notes pour la reprise, toutes payées une fois :
+
+- le mock de `@/lib/server.ts` doit exporter `ACTIVE_ENTITY_COOKIE`, sinon
+  `switchWorkspaceAction` lève à l'import ;
+- le champ d'erreur d'`ActionResult` s'appelle `code`, pas `error` ;
+- `env.ts` fige `process.env` à son premier chargement : poser `WORKER_SECRET`
+  dans `beforeAll`, avant le premier `import('../actions.ts')` ;
+- pour rendre la session non-propriétaire, basculer `entities.userId` vers un
+  second utilisateur le temps du test, puis restaurer — c'est la seule façon
+  d'éprouver les gardes owner-only avec un mock d'auth fixe.
