@@ -378,19 +378,38 @@ export default function AgentForm(props: Props) {
               </Select>
             )}
             {!modelInDropdown && (
-              <TextInput
-                id="agent-model"
-                name="model"
-                type="text"
-                required
-                value={model}
-                onChange={(e) => handleModelChange(e.target.value)}
-                placeholder={
-                  MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
-                  'e.g. claude-haiku-4-5-20251001'
-                }
-                className="rounded-lg font-mono"
-              />
+              <>
+                {/* Picking "Custom…" leaves the dropdown on screen AND opens this
+                    field. Both used to carry id="agent-model": invalid HTML, and
+                    the visible <label htmlFor="agent-model"> bound to the select
+                    only — so the field the user actually types in had no
+                    accessible name, and clicking the label never focused it.
+                    When the dropdown is present, the custom field takes its own
+                    id and its own label; when there is no catalog at all, it IS
+                    the model field and keeps the original id. */}
+                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                  <label className="sr-only" htmlFor="agent-model-custom">
+                    Custom model id
+                  </label>
+                )}
+                <TextInput
+                  id={
+                    modelCatalog.length > 0 || extraLiveIds.length > 0
+                      ? 'agent-model-custom'
+                      : 'agent-model'
+                  }
+                  name="model"
+                  type="text"
+                  required
+                  value={model}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  placeholder={
+                    MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                    'e.g. claude-haiku-4-5-20251001'
+                  }
+                  className="rounded-lg font-mono"
+                />
+              </>
             )}
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
               <ModelToolsLegend className="mt-1.5" />
@@ -632,19 +651,38 @@ export default function AgentForm(props: Props) {
               </Select>
             )}
             {!modelInDropdown && (
-              <TextInput
-                id="agent-model"
-                name="model"
-                type="text"
-                required
-                value={model}
-                onChange={(e) => handleModelChange(e.target.value)}
-                placeholder={
-                  MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
-                  'e.g. claude-haiku-4-5-20251001'
-                }
-                className="rounded-lg font-mono"
-              />
+              <>
+                {/* Picking "Custom…" leaves the dropdown on screen AND opens this
+                    field. Both used to carry id="agent-model": invalid HTML, and
+                    the visible <label htmlFor="agent-model"> bound to the select
+                    only — so the field the user actually types in had no
+                    accessible name, and clicking the label never focused it.
+                    When the dropdown is present, the custom field takes its own
+                    id and its own label; when there is no catalog at all, it IS
+                    the model field and keeps the original id. */}
+                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                  <label className="sr-only" htmlFor="agent-model-custom">
+                    Custom model id
+                  </label>
+                )}
+                <TextInput
+                  id={
+                    modelCatalog.length > 0 || extraLiveIds.length > 0
+                      ? 'agent-model-custom'
+                      : 'agent-model'
+                  }
+                  name="model"
+                  type="text"
+                  required
+                  value={model}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  placeholder={
+                    MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                    'e.g. claude-haiku-4-5-20251001'
+                  }
+                  className="rounded-lg font-mono"
+                />
+              </>
             )}
             {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
               <ModelToolsLegend className="mt-1.5" />

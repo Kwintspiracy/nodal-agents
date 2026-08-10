@@ -163,11 +163,15 @@ jobs:
           done
           echo "dashboard never answered on :3000"; exit 1
 
-      - name: Three journeys — boot, agent creation, approval
+      # agent-flows.spec.ts is deliberately NOT in this list. It calls
+      # requireLmStudio(), which probes a local LLM server on localhost:1234 —
+      # it cannot exist on a GitHub runner, so the spec fails at its first line
+      # ("LM_Studio_unresponsive") no matter how healthy the stack is. It stays
+      # a local-only suite until those journeys run against a stubbed LLM.
+      - name: Two journeys — boot/navigation and the autonomy tab
         run: >
           pnpm --filter @nodal-agents/web exec playwright test
           tests/e2e/smoke.spec.ts
-          tests/e2e/agent-flows.spec.ts
           tests/e2e/autonomy-approvals.spec.ts
 
       - name: Upload the report on failure

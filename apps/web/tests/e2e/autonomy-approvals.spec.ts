@@ -16,6 +16,12 @@
  *
  * All assertions target real rendered HTML + real DB rows — no call-count
  * assertions.
+ *
+ * Tab lookup uses role="tab", not role="button": the DS `Tabs` primitive
+ * (components/ui/Tabs.tsx) renders each tab as a `role="tab"` div, because the
+ * label+count content is richer than a bare <button>. This spec predates that
+ * primitive and kept looking for buttons, so every assertion here failed on
+ * "element(s) not found" long before it could test anything about autonomy.
  */
 
 import { test, expect } from '@playwright/test';
@@ -56,7 +62,7 @@ test.describe('Autonomy / Approvals tab', () => {
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
     // The tab bar should contain an "Autonomy" tab.
-    const autonomyTab = page.getByRole('button', { name: /^autonomy$/i });
+    const autonomyTab = page.getByRole('tab', { name: /^autonomy$/i });
     await expect(autonomyTab).toBeVisible({ timeout: 10_000 });
   });
 
@@ -69,7 +75,7 @@ test.describe('Autonomy / Approvals tab', () => {
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
     // Click the Autonomy tab.
-    await page.getByRole('button', { name: /^autonomy$/i }).click();
+    await page.getByRole('tab', { name: /^autonomy$/i }).click();
 
     // Should show either the empty state OR the tool list — but never an error.
     const hasEmptyState = page
@@ -99,7 +105,7 @@ test.describe('Autonomy / Approvals tab', () => {
     await page.goto(firstAgentEditUrl);
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
 
-    await page.getByRole('button', { name: /^autonomy$/i }).click();
+    await page.getByRole('tab', { name: /^autonomy$/i }).click();
 
     // Skip if there are no gateable tools (empty state agent).
     const toolList = page.locator('[data-testid="autonomy-tool-list"]');
@@ -129,7 +135,7 @@ test.describe('Autonomy / Approvals tab', () => {
     // Reload to verify persistence.
     await page.reload();
     await page.waitForLoadState('networkidle', { timeout: 10_000 });
-    await page.getByRole('button', { name: /^autonomy$/i }).click();
+    await page.getByRole('tab', { name: /^autonomy$/i }).click();
 
     // The "Ask first" button should still be the active selection.
     // We verify by checking that the button has the active styling (bg-warn class).
