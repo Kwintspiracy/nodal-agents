@@ -1,12 +1,12 @@
 {
   "sectionId": "architecture",
-  "gitSha": "2805c3e",
-  "acceptedAt": "2026-08-11T11:30:02.865Z",
+  "gitSha": "b5832d0",
+  "acceptedAt": "2026-08-11T12:04:43.349Z",
   "metrics": [
     {
       "id": "packages_scanned",
       "label": "Packages scannés",
-      "value": 29,
+      "value": 30,
       "unit": "packages",
       "direction": "higher-is-better"
     },

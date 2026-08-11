@@ -1,7 +1,7 @@
 {
   "sectionId": "catalog",
-  "gitSha": "2805c3e",
-  "acceptedAt": "2026-08-11T11:30:02.865Z",
+  "gitSha": "b5832d0",
+  "acceptedAt": "2026-08-11T12:04:43.349Z",
   "metrics": [
     {
       "id": "providers",
@@ -45,10 +45,7 @@
       "value": 2,
       "unit": "modèles",
       "direction": "lower-is-better",
-      "detail": [
-        "groq/llama-3.3-70b-versatile",
-        "mistral/mistral-large-latest"
-      ]
+      "detail": ["groq/llama-3.3-70b-versatile", "mistral/mistral-large-latest"]
     },
     {
       "id": "duplicate_ids",
@@ -64,10 +61,7 @@
       "value": 2,
       "unit": "modèles",
       "direction": "lower-is-better",
-      "detail": [
-        "deepseek/deepseek-chat",
-        "deepseek/deepseek-reasoner"
-      ]
+      "detail": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"]
     }
   ]
 }
