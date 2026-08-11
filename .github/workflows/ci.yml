@@ -102,13 +102,15 @@ jobs:
   # tenus, séparateurs de chemin, casse du système de fichiers — n'étaient donc
   # vus par personne avant lui.
   #
-  # `continue-on-error` au départ, comme e2e-smoke l'a été : un job requis qui
-  # échoue dès son premier passage se fait désactiver dans la semaine. Il
-  # devient bloquant une fois vert plusieurs jours d'affilée.
+  # BLOQUANT depuis le 11/08, sur décision de Quentin. Il a été vert dès son
+  # premier passage utile — après avoir rendu deux défauts réels de comparaison
+  # de chemins, dont un qui cassait la livraison de fichiers temporaires sur
+  # macOS. La série est courte : si ce job se met à flaker, la réponse n'est PAS
+  # de remettre `continue-on-error` mais de traiter la cause, sinon on retombe
+  # dans l'angle mort qu'il vient de fermer.
   ci-windows:
     runs-on: windows-latest
     timeout-minutes: 25
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
@@ -156,19 +158,25 @@ jobs:
   # PERF-001 (audit 2026-08-07). 31 spec files, 85 tests, never run by CI —
   # so every UI regression this suite could catch had to be found by hand.
   #
-  # Non-blocking on purpose, for now. The suite needs a real stack (web +
-  # runner + embedded Postgres) and has never run on a CI runner: making it
-  # required on day one would turn its first flake into a merge blocker and get
-  # it disabled within a week. It reports; it does not gate. Flip
-  # `continue-on-error` off once it has been green for a stretch.
+  # BLOQUANT depuis le 11/08, sur décision de Quentin — après quatre passages
+  # verts d'affilée. Il gate désormais au lieu de seulement rapporter.
   #
-  # Three journeys only, the ones from the remediation plan: the app boots, an
-  # agent can be created, an approval can be resolved. Running all 31 would take
-  # the CI budget an order of magnitude past what this earns today.
+  # Ce qu'il a fallu pour en arriver là : le job n'avait JAMAIS dépassé son
+  # global-setup depuis sa création. Il réclamait une authentification que le
+  # mode par défaut ne sert pas, puis butait sur une installation neuve qui n'a
+  # aucun agent et part en onboarding. Deux de ses trois parcours décrivaient
+  # en plus un produit disparu depuis deux refontes d'UI.
+  #
+  # Si ce job flake, la cause est à traiter — pas le drapeau à remettre.
+  #
+  # Deux parcours, pas trois : l'app démarre et se navigue, l'onglet Autonomie
+  # répond. Le troisième du plan (agent-flows) est sorti le 10/08 — il sonde un
+  # LLM local sur localhost:1234, qu'aucun runner n'aura jamais. Lancer les 31
+  # fichiers coûterait un ordre de grandeur de plus que ce que ça rapporte
+  # aujourd'hui.
   e2e-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
