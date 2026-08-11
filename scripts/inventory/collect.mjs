@@ -220,11 +220,31 @@ const inv = {};
 // ── 10. Skills du catalogue ───────────────────────────────────────────────────
 {
   const base = join(ROOT, 'packages/catalog/src/skills');
+
+  // Une skill peut être couverte de deux façons, et le compteur doit voir les
+  // deux. Par CITATION : son slug apparaît dans un fichier de test. Ou
+  // STRUCTURELLEMENT : un test itère sur `systemSkills` et applique ses
+  // assertions au lot entier — chaque skill y passe, nommée ou non.
+  //
+  // Sans ce second cas, le catalogue restait affiché « 16 sans test » alors que
+  // les vingt venaient d'être couvertes, et le chiffre aurait poussé à écrire
+  // vingt tests redondants pour satisfaire un compteur myope.
+  const structurels = testBlobs
+    .filter(({ txt }) => /\bsystemSkills\b/.test(txt) && /for\s*\(\s*const\s+\w+\s+of/.test(txt))
+    .map(({ f }) => f);
+
   inv.skills = walk(base, isSrc)
     .map((f) => f.split('\\').pop().replace('.ts', ''))
     .filter((n) => n !== 'index')
     .sort()
-    .map((n) => ({ name: n, test: testStatus(n) }));
+    .map((n) => {
+      const cite = testStatus(n);
+      const fichiers = [...new Set([...cite.files, ...structurels])];
+      return {
+        name: n,
+        test: { unit: fichiers.length, e2e: cite.e2e, files: fichiers },
+      };
+    });
 }
 
 // ── 11. Serveurs MCP du catalogue ─────────────────────────────────────────────
