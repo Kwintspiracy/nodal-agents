@@ -47,6 +47,7 @@ export async function POST(req: Request): Promise<Response> {
     .select({
       voiceProvider: agents.voiceProvider,
       voiceId: agents.voiceId,
+      voiceModel: agents.voiceModel,
     })
     .from(agents)
     .where(and(eq(agents.id, parsed.data.agentId), eq(agents.entityId, guard.entityId)))
@@ -88,15 +89,70 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'no_key_for_provider', provider }, { status: 409 });
   }
 
+  const request = {
+    text: parsed.data.text,
+    voiceId: agent.voiceId,
+    ...(parsed.data.language ? { language: parsed.data.language } : {}),
+    ...(agent.voiceModel ? { model: agent.voiceModel } : {}),
+  };
+  const apiKey = decrypt(key.apiKey);
+
   try {
-    const result = await adapter.synthesize(
-      {
-        text: parsed.data.text,
-        voiceId: agent.voiceId,
-        ...(parsed.data.language ? { language: parsed.data.language } : {}),
-      },
-      decrypt(key.apiKey),
-    );
+    // ── Streaming path ──────────────────────────────────────────────────────
+    // Taken whenever the provider can emit audio progressively, because the
+    // whole product difference lives here. Waiting for a finished file costs
+    // 4.0 s of silence before anything is audible; the first MiniMax frames
+    // arrive in ~0.5 s and that figure does NOT grow with the length of the
+    // reply. Anything that re-buffers this response on the way out — a proxy
+    // without `x-accel-buffering: no`, a client that awaits `.blob()` — throws
+    // the entire gain away while still looking like it works.
+    const streamOutput = adapter.capabilities.streamOutput;
+    if (streamOutput && adapter.synthesizeStream) {
+      // Declared BEFORE the stream: `pull` can fire synchronously during
+      // construction, and a `const` referenced from there would be in its
+      // temporal dead zone.
+      const iterator = adapter.synthesizeStream(request, apiKey)[Symbol.asyncIterator]();
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          // Pulled one chunk at a time rather than looped eagerly, so the
+          // vendor connection stays paced by the consumer and a client that
+          // navigates away stops costing synthesis.
+          try {
+            const { done, value } = await iterator.next();
+            if (done) controller.close();
+            else controller.enqueue(value);
+          } catch (err) {
+            // A vendor failure MID-STREAM cannot become an HTTP status: the
+            // headers are long gone. Erroring the stream is what makes the
+            // client's read reject instead of it hearing a reply that stops
+            // mid-word and assuming the agent finished.
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          void iterator.return?.(reason);
+        },
+      });
+
+      return new Response(body, {
+        headers: {
+          'content-type': streamOutput,
+          // No content-length: the size is unknown until the vendor is done,
+          // and a wrong one truncates the audio.
+          'x-nodal-stream': '1',
+          'cache-control': 'no-store',
+          // Nginx and friends buffer a response by default, which would hold
+          // every frame until the last one and silently restore the 4 s wait.
+          'x-accel-buffering': 'no',
+        },
+      });
+    }
+
+    // ── One-shot path ───────────────────────────────────────────────────────
+    // Providers that genuinely cannot stream (Gemini TTS returns a finished
+    // file). Kept working rather than dropped: an install with only a Google
+    // key still speaks, just not as quickly.
+    const result = await adapter.synthesize(request, apiKey);
     return new Response(result.audio as unknown as BodyInit, {
       headers: {
         'content-type': result.mimeType,

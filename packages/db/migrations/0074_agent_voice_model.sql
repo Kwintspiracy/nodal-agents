@@ -1,0 +1,20 @@
+-- Modèle de synthèse par agent (2026-08-11).
+--
+-- Pourquoi une colonne de plus, alors que 0073 vient d'en poser deux : parce
+-- que le fournisseur ne suffit pas à décider. MiniMax expose une ligne rapide
+-- (speech-02-turbo) et une ligne haute fidélité (speech-02-hd) derrière la même
+-- API et la même voix. Le choix entre les deux est un arbitrage entre latence et
+-- timbre, et cet arbitrage appartient à l'agent : un assistant conversationnel
+-- veut le premier son au plus vite, un agent qui lit un texte long veut le plus
+-- beau. Le figer dans le code déciderait à la place de l'utilisateur, ce qui est
+-- exactement ce qu'il nous a reproché.
+--
+-- NULL = « le défaut du fournisseur », pas « rien ». Les agents existants
+-- gardent donc le comportement d'avant à l'octet près, et un fournisseur ajouté
+-- plus tard n'a pas besoin qu'on remplisse quoi que ce soit ici.
+--
+-- Texte libre, et volontairement HORS du CHECK de cohérence de 0073 : les noms
+-- de modèles bougent au rythme des fournisseurs, pas des migrations, et une
+-- contrainte qui refuserait un modèle sorti la semaine dernière serait pire que
+-- l'absence de contrainte.
+ALTER TABLE "agents" ADD COLUMN "voice_model" text;

@@ -35,6 +35,7 @@ import {
   inArray,
   notInArray,
   sql,
+  appSettings,
   agents,
   agentAssignments,
   agentJobs,
@@ -94,7 +95,13 @@ import {
   MemoryDuplicateError,
 } from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
-import { SPEECH_PROVIDERS } from '@nodal-agents/speech';
+import {
+  SPEECH_PROVIDERS,
+  getSpeechAdapter,
+  speechProviders,
+  transcriptionProviders,
+  type SpeechProvider,
+} from '@nodal-agents/speech';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent } from '@nodal-agents/orchestration';
 import { getLanAddresses } from './network.ts';
@@ -487,6 +494,8 @@ export type AgentRow = {
   // that don't select them stay valid; the edit loader populates both.
   voiceProvider?: string | null;
   voiceId?: string | null;
+  // null = the provider's own default (migration 0074).
+  voiceModel?: string | null;
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
@@ -904,7 +913,14 @@ const UpdateAgentSchema = z.object({
   // The provider is validated against what this build actually carries, so a
   // stale form cannot write a name nothing can resolve.
   voice: z
-    .object({ provider: z.enum(SPEECH_PROVIDERS), voiceId: z.string().min(1).max(120) })
+    .object({
+      provider: z.enum(SPEECH_PROVIDERS),
+      voiceId: z.string().min(1).max(120),
+      // Free text and OPTIONAL: absent means the provider's default, and model
+      // names move at the vendors' pace, so an enum here would reject a model
+      // released last week.
+      model: z.string().max(120).nullable().optional(),
+    })
     .nullable()
     .optional(),
   role: z.enum(['worker', 'router', 'planner']),
@@ -1030,6 +1046,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     if (voice !== undefined) {
       patch['voiceProvider'] = voice?.provider ?? null;
       patch['voiceId'] = voice?.voiceId ?? null;
+      patch['voiceModel'] = voice?.model ?? null;
     }
 
     // Whole mutation is one transaction (F-19, audit #2 + R4 follow-up): the
@@ -8317,6 +8334,165 @@ function redactKey(message: string, apiKey: string | undefined): string {
   return message.replaceAll(apiKey, '[REDACTED]');
 }
 
+// ── Listening (transcription) ─────────────────────────────────────────────────
+//
+// Machine-global, unlike the SPEAKING voice which belongs to each agent: there
+// is one microphone and one voice page. Kept in app_settings rather than in the
+// code because a model chosen once in a commit is a model nobody revisits —
+// which is exactly how the voice mode ended up on a route that took 3.5 s and
+// got the transcript wrong half the time.
+
+/** Must match the keys the transcribe route reads. */
+const STT_PROVIDER_KEY = 'voice.transcription.provider';
+const STT_MODEL_KEY = 'voice.transcription.model';
+
+export interface TranscriptionChoice {
+  /** '' = the built-in default, whatever the route considers best today. */
+  provider: string;
+  /** '' = the provider's own default model. */
+  model: string;
+  /** The providers this build can actually listen with. */
+  available: string[];
+}
+
+export async function getTranscriptionChoiceAction(): Promise<ActionResult<TranscriptionChoice>> {
+  try {
+    await getSession();
+    const db = getDb();
+    const rows = await db
+      .select({ key: appSettings.key, value: appSettings.value })
+      .from(appSettings)
+      .where(inArray(appSettings.key, [STT_PROVIDER_KEY, STT_MODEL_KEY]));
+    const byKey = new Map(rows.map((r) => [r.key, r.value]));
+    return ok({
+      provider: byKey.get(STT_PROVIDER_KEY) ?? '',
+      model: byKey.get(STT_MODEL_KEY) ?? '',
+      available: [...transcriptionProviders()],
+    });
+  } catch (err) {
+    return fail('unexpected', err instanceof Error ? err.message : 'could not read the setting');
+  }
+}
+
+export async function setTranscriptionChoiceAction(input: {
+  provider: string;
+  model: string;
+}): Promise<ActionResult<null>> {
+  try {
+    await getSession();
+    const parsed = z
+      .object({
+        // '' is valid and means "use the default" — the enum applies only to a
+        // non-empty choice, so clearing the setting never needs a magic value.
+        provider: z.union([z.literal(''), z.enum(SPEECH_PROVIDERS)]),
+        model: z.string().max(120),
+      })
+      .safeParse(input);
+    if (!parsed.success) return fail('validation_failed', 'Unknown transcription provider');
+
+    const provider = parsed.data.provider;
+    // Refused rather than saved: a provider this build cannot listen with would
+    // break every turn, and the failure would surface as "transcription failed"
+    // long after the setting was changed.
+    if (provider !== '' && !transcriptionProviders().includes(provider as SpeechProvider)) {
+      return fail('validation_failed', `${provider} cannot transcribe in this build`);
+    }
+
+    const db = getDb();
+    for (const [key, value] of [
+      [STT_PROVIDER_KEY, provider],
+      [STT_MODEL_KEY, parsed.data.model.trim()],
+    ] as const) {
+      await db
+        .insert(appSettings)
+        .values({ key, value })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
+    }
+    revalidatePath('/settings');
+    return ok(null);
+  } catch (err) {
+    return fail('unexpected', err instanceof Error ? err.message : 'could not save the setting');
+  }
+}
+
+/** One voice a picker can offer, carrying the provider it belongs to. */
+export interface VoiceOption {
+  provider: SpeechProvider;
+  id: string;
+  label: string;
+  description?: string;
+  languages: readonly string[];
+}
+
+/** What a provider offers a picker, once its key is known to exist. */
+export interface VoiceProviderOption {
+  provider: SpeechProvider;
+  voices: VoiceOption[];
+  models: { id: string; label: string; note?: string }[];
+  streams: boolean;
+  /** Set when the catalogue could not be read — shown instead of pretending the
+   *  provider has no voices, which would read as "nothing to choose here". */
+  error?: string;
+}
+
+/**
+ * Every voice this install can actually speak with, provider by provider.
+ *
+ * The picker used to offer Google's list and nothing else, with the provider
+ * written into the save call as the literal 'google'. That made the streaming
+ * provider unreachable from the UI — the fast path existed and could not be
+ * selected — and it was hardcoded vendor metadata in a component besides
+ * (invariant #1). Asking the registry means a provider added later appears here
+ * without this function changing.
+ *
+ * A provider with no key is skipped silently: offering voices that cannot be
+ * synthesised would only produce a failure at speaking time.
+ */
+export async function listVoiceOptionsAction(): Promise<ActionResult<VoiceProviderOption[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+
+    const keys = await db
+      .select({ provider: entityLlmKeys.provider, apiKey: entityLlmKeys.apiKey })
+      .from(entityLlmKeys)
+      .where(and(eq(entityLlmKeys.entityId, session.entityId), eq(entityLlmKeys.isActive, true)));
+    const keyByProvider = new Map(keys.map((k) => [k.provider, k.apiKey]));
+
+    const out: VoiceProviderOption[] = [];
+    for (const provider of speechProviders()) {
+      const adapter = getSpeechAdapter(provider);
+      const encrypted = keyByProvider.get(provider);
+      if (!encrypted) continue;
+
+      const entry: VoiceProviderOption = {
+        provider,
+        voices: [],
+        models: [...(adapter.capabilities.models ?? [])],
+        streams: Boolean(adapter.capabilities.streamOutput),
+      };
+      try {
+        // Static catalogues cost nothing; a dynamic one is a network call, which
+        // is why this runs on the server and not per keystroke in the browser.
+        const voices = await adapter.listVoices(decrypt(encrypted));
+        entry.voices = voices.map((v) => ({
+          provider,
+          id: v.id,
+          label: v.label,
+          languages: v.languages,
+          ...(v.description ? { description: v.description } : {}),
+        }));
+      } catch (err) {
+        entry.error = err instanceof Error ? err.message : 'catalogue unavailable';
+      }
+      out.push(entry);
+    }
+    return ok(out);
+  } catch (err) {
+    return fail('unexpected', err instanceof Error ? err.message : 'could not list voices');
+  }
+}
+
 export async function listLlmKeysAction(): Promise<ActionResult<LlmKeyUiRow[]>> {
   try {
     const session = await getSession();
@@ -9486,6 +9662,17 @@ export async function listConversationsAction(): Promise<
      *  IS: with a voice, speaking is a conversation — the turn is sent and the
      *  reply is read back. Without one, it is dictation into the composer. */
     rootHasVoice: boolean;
+    /**
+     * Whether that voice arrives as a STREAM.
+     *
+     * The voice page needs this before it speaks, not after. A streaming
+     * provider is fed the whole reply in one request and starts sounding in
+     * ~0.5 s; a non-streaming one has to be fed sentence by sentence, or the
+     * user waits out the synthesis of the entire answer in silence. Those are
+     * two different strategies and the choice cannot be made from the first
+     * response — by then the request has already been shaped.
+     */
+    rootVoiceStreams: boolean;
     conversations: ConversationView[];
   }>
 > {
@@ -9494,14 +9681,33 @@ export async function listConversationsAction(): Promise<
     const db = getDb();
     const { rootAgentId, rootName } = await resolveRoot(db, session.entityId);
     if (!rootAgentId)
-      return ok({ rootAgentId: null, rootName: null, rootHasVoice: false, conversations: [] });
+      return ok({
+        rootAgentId: null,
+        rootName: null,
+        rootHasVoice: false,
+        rootVoiceStreams: false,
+        conversations: [],
+      });
 
     const [rootVoice] = await db
-      .select({ voiceId: agents.voiceId })
+      .select({ voiceId: agents.voiceId, voiceProvider: agents.voiceProvider })
       .from(agents)
       .where(eq(agents.id, rootAgentId))
       .limit(1);
     const rootHasVoice = Boolean(rootVoice?.voiceId);
+    // Asked of the registry rather than hardcoded: a provider added later
+    // announces its own capability, and this line keeps telling the truth.
+    let rootVoiceStreams = false;
+    if (rootHasVoice && rootVoice?.voiceProvider) {
+      try {
+        rootVoiceStreams = Boolean(
+          getSpeechAdapter(rootVoice.voiceProvider as SpeechProvider).capabilities.streamOutput,
+        );
+      } catch {
+        // A provider this build does not carry. The speak route answers that
+        // with a clear 409; here it simply is not a streaming voice.
+      }
+    }
 
     const rows = await db
       .select({
@@ -9548,7 +9754,7 @@ export async function listConversationsAction(): Promise<
       preview: previewByConv.get(r.id) ?? '',
       updatedAt: r.updatedAt,
     }));
-    return ok({ rootAgentId, rootName, rootHasVoice, conversations: list });
+    return ok({ rootAgentId, rootName, rootHasVoice, rootVoiceStreams, conversations: list });
   } catch (err) {
     console.error('[listConversationsAction]', err);
     return fail('db_error', 'Failed to load conversations');

@@ -1,5 +1,5 @@
 import 'server-only';
-import { eq, and, entityLlmKeys } from '@nodal-agents/db';
+import { eq, and, inArray, entityLlmKeys, appSettings } from '@nodal-agents/db';
 import { getDb } from '@/lib/server.ts';
 import { decrypt } from '@nodal-agents/secrets';
 import {
@@ -25,15 +25,63 @@ import { guardVoiceRequest, isGuardFailure } from '../_guard.ts';
  *  is a claim. */
 const MAX_BYTES = 20 * 1024 * 1024;
 
-/** The provider is fixed rather than taken from the request. Letting the client
- *  choose would let a page pick whichever vendor has a key configured. */
-const PROVIDER: SpeechProvider = 'google';
+/**
+ * Settings keys holding the listening choice, machine-global because there is
+ * one microphone and one voice page — unlike the SPEAKING voice, which belongs
+ * to each agent.
+ *
+ * Read from the DB rather than baked in: the whole reason this route was slow
+ * is that a model was chosen once, in a commit, and never revisited. Measured
+ * on 2026-08-11, same audio, four passes — voxtral 1378 ms and exact 4/4,
+ * gemini-2.5-flash direct 3543 ms and exact only 2/4. Whoever finds a better one
+ * next month must not need a release to use it.
+ */
+const STT_PROVIDER_KEY = 'voice.transcription.provider';
+const STT_MODEL_KEY = 'voice.transcription.model';
+
+/** Used when nothing has been chosen. The fastest and steadiest route measured;
+ *  see packages/speech/src/providers/openrouter.ts for the table. */
+const DEFAULT_PROVIDER: SpeechProvider = 'openrouter';
+
+/** The provider is never taken from the REQUEST. Letting the client choose
+ *  would let any page pick whichever vendor has a key configured. */
+async function readSttChoice(
+  db: ReturnType<typeof getDb>,
+): Promise<{ provider: SpeechProvider; model?: string }> {
+  const rows = await db
+    .select({ key: appSettings.key, value: appSettings.value })
+    .from(appSettings)
+    .where(inArray(appSettings.key, [STT_PROVIDER_KEY, STT_MODEL_KEY]));
+
+  const byKey = new Map(rows.map((r) => [r.key, r.value.trim()]));
+  const provider = byKey.get(STT_PROVIDER_KEY);
+  const model = byKey.get(STT_MODEL_KEY);
+  return {
+    provider: provider ? (provider as SpeechProvider) : DEFAULT_PROVIDER,
+    ...(model ? { model } : {}),
+  };
+}
 
 export async function POST(req: Request): Promise<Response> {
   const guard = await guardVoiceRequest(req);
   if (isGuardFailure(guard)) return guard.response;
 
-  const adapter = getTranscriptionAdapter(PROVIDER);
+  const db = getDb();
+  const choice = await readSttChoice(db);
+
+  let adapter;
+  try {
+    adapter = getTranscriptionAdapter(choice.provider);
+  } catch {
+    // The setting is free text, so it can name a provider this build does not
+    // carry. Fail loud and name it — a generic "transcription failed" would
+    // send the user hunting their microphone.
+    return Response.json(
+      { error: 'unknown_transcription_provider', provider: choice.provider },
+      { status: 409 },
+    );
+  }
+  const PROVIDER = choice.provider;
 
   // `audio/webm;codecs=opus` is what a Chrome MediaRecorder emits; the
   // parameters are stripped so the container is matched, not the codec string.
@@ -65,7 +113,6 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'audio_too_large', maxBytes: MAX_BYTES }, { status: 413 });
   }
 
-  const db = getDb();
   const [key] = await db
     .select({ apiKey: entityLlmKeys.apiKey })
     .from(entityLlmKeys)
@@ -88,10 +135,23 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const result = await adapter.transcribe(
-      language ? { audio, mimeType, language } : { audio, mimeType },
+      {
+        audio,
+        mimeType,
+        ...(language ? { language } : {}),
+        ...(choice.model ? { model: choice.model } : {}),
+      },
       decrypt(key.apiKey),
     );
-    return Response.json({ text: result.text, latencyMs: result.latencyMs });
+    // The provider and model travel back so the voice page can show what it is
+    // actually using — the previous version gave the user no way to tell which
+    // model was answering, which is how a slow one survived unnoticed.
+    return Response.json({
+      text: result.text,
+      latencyMs: result.latencyMs,
+      provider: PROVIDER,
+      model: choice.model ?? null,
+    });
   } catch (err) {
     if (err instanceof SpeechError) {
       // The vendor's own wording is what separates "your key is out of credit"

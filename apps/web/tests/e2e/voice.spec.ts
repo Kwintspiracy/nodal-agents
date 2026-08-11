@@ -29,7 +29,13 @@ async function openVoiceField(page: import('@playwright/test').Page) {
   // from a wrapping <label> carries the surrounding whitespace, so an exact
   // string comparison never matched a control the snapshot plainly showed as
   // `combobox "Voice"`. Role-based name matching normalises it.
-  const voice = page.getByRole('combobox', { name: 'Voice' });
+  //
+  // `exact` matters since a second control appeared beside it: picking a
+  // streaming voice reveals "Voice quality", and a substring match then
+  // resolves to two elements and fails in strict mode. Role-based name
+  // matching normalises whitespace even when exact, which is why this works
+  // where getByLabel with exact:true did not.
+  const voice = page.getByRole('combobox', { name: 'Voice', exact: true });
   await expect(async () => {
     await page.getByRole('tab', { name: 'Settings' }).click();
     await expect(voice).toBeVisible({ timeout: 2_000 });
@@ -95,12 +101,23 @@ test.describe('Voice — picking a voice and hearing an agent', () => {
       }
 
       // ── Choose one, save ───────────────────────────────────────────────────
-      await voice.selectOption('Kore');
+      // The value carries the PROVIDER, not just the voice id. It used to be
+      // "Kore" alone, with 'google' written as a literal in the save call —
+      // which made every other provider unreachable from the UI, including the
+      // streaming one the whole voice mode now depends on.
+      //
+      // A voice DIFFERENT from the current one, never a fixed name: an agent
+      // that already carries the target leaves Save disabled ("No changes to
+      // save") and the run dies ten seconds later on a click timeout that
+      // points at the button rather than at the cause. Latent since this spec
+      // was written; it surfaced the first time a run left Kore behind.
+      const target = originalValue === 'google:Kore' ? 'google:Puck' : 'google:Kore';
+      await voice.selectOption(target);
       await saveAgent(page);
 
       // Saved means: it survives a reload, not that a toast appeared.
       await page.reload();
-      await expect(await openVoiceField(page)).toHaveValue('Kore');
+      await expect(await openVoiceField(page)).toHaveValue(target);
 
       // ── And the agent now speaks ───────────────────────────────────────────
       const spoken = await request.post('/api/voice/speak', {
@@ -109,6 +126,10 @@ test.describe('Voice — picking a voice and hearing an agent', () => {
       });
       expect(spoken.status(), await spoken.text().catch(() => '')).toBe(200);
       expect(spoken.headers()['content-type']).toBe('audio/wav');
+      // Google cannot stream, so this response must NOT claim to: the client
+      // branches on the header, and a false claim would send it down the Media
+      // Source path with a finished file.
+      expect(spoken.headers()['x-nodal-stream']).toBeUndefined();
 
       const audio = await spoken.body();
       // A real WAV whose header describes its payload — not an empty 200
@@ -130,6 +151,82 @@ test.describe('Voice — picking a voice and hearing an agent', () => {
           await openVoiceField(page),
           'FAILED TO RESTORE the agent voice — it will keep speaking, and billing',
         ).toHaveValue(originalValue);
+      }
+    }
+  });
+
+  test('a streaming voice sends its first bytes long before the last', async ({
+    page,
+    request,
+  }) => {
+    // The measurement this whole lot exists for. A finished file means silence
+    // until the entire reply is rendered — 4 s, and the user's verdict on that
+    // was that typing was faster. Streaming puts the first sound at ~0.5 s and
+    // that figure does not grow with the length of the answer.
+    test.setTimeout(180_000);
+    await page.goto('/agents');
+    const editLink = page.locator('a[href*="/agents/"][href$="/edit"]').first();
+    await expect(editLink).toBeVisible({ timeout: 10_000 });
+    const href = await editLink.getAttribute('href');
+    const agentId = href!.split('/')[2]!;
+
+    await page.goto(href!);
+    const voice = await openVoiceField(page);
+    const originalValue = await voice.inputValue();
+
+    // Only where a MiniMax key exists — the picker lists a provider exactly
+    // when this install can pay for it, so its absence is a skip, not a fail.
+    const streaming = voice.locator('option[value^="minimax:"]').first();
+    if ((await streaming.count()) === 0) {
+      test.skip(true, 'no MiniMax key on this install — nothing streams here');
+      return;
+    }
+    const streamingValue = (await streaming.getAttribute('value'))!;
+
+    try {
+      await voice.selectOption(streamingValue);
+      await saveAgent(page);
+
+      const started = Date.now();
+      const spoken = await request.post('/api/voice/speak', {
+        data: {
+          agentId,
+          text:
+            'Le mode vocal permet de parler à un agent sans passer par le clavier. ' +
+            'La transcription part chez le fournisseur, la réponse revient en texte, ' +
+            'puis la synthèse la rend audible.',
+          language: 'fr-FR',
+        },
+        timeout: 120_000,
+      });
+      expect(spoken.status(), await spoken.text().catch(() => '')).toBe(200);
+      // The three headers the client branches on. Without the first it falls
+      // back to buffering the whole reply and the gain silently disappears.
+      expect(spoken.headers()['x-nodal-stream']).toBe('1');
+      expect(spoken.headers()['content-type']).toBe('audio/mpeg');
+      expect(spoken.headers()['x-accel-buffering']).toBe('no');
+      // No content-length: the size is unknown until the vendor finishes, and a
+      // wrong one truncates the audio.
+      expect(spoken.headers()['content-length']).toBeUndefined();
+
+      const audio = await spoken.body();
+      const elapsed = Date.now() - started;
+      // MP3 frames: either an ID3 tag or a frame sync. Proves it is audio and
+      // not an error page served with the right content type.
+      const head = audio.subarray(0, 3);
+      const isMp3 =
+        head.toString('ascii') === 'ID3' || (head[0] === 0xff && (head[1]! & 0xe0) === 0xe0);
+      expect(isMp3, 'the body is not MP3').toBe(true);
+      expect(audio.length).toBeGreaterThan(10_000);
+      // Delivered faster than it plays: ~17 s of speech in a few seconds of
+      // wall clock. If this ever fails, something is buffering the response.
+      expect(elapsed).toBeLessThan(30_000);
+    } finally {
+      await page.goto(href!);
+      const back = await openVoiceField(page);
+      if ((await back.inputValue()) !== originalValue) {
+        await back.selectOption(originalValue);
+        await saveAgent(page);
       }
     }
   });

@@ -9,6 +9,7 @@ export type {
   TranscribeResult,
   TranscriptionAdapter,
   TranscriptionCapabilities,
+  SpeechModel,
   Voice,
 } from './speech-adapter.ts';
 

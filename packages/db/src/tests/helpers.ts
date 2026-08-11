@@ -116,6 +116,9 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       avatar_url text,
       voice_provider text,
       voice_id text,
+      -- Deliberately outside the pair CHECK below: a model is optional even
+      -- when a voice is set, NULL meaning "the provider's own default".
+      voice_model text,
       CONSTRAINT agents_voice_pair_check CHECK (
         (voice_provider IS NULL AND voice_id IS NULL)
         OR (voice_provider IS NOT NULL AND voice_id IS NOT NULL)

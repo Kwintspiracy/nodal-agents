@@ -15,8 +15,8 @@ import {
   getAgentDiscordConfigAction,
   getAgentSlackConfigAction,
   getChannelAllowedConversationsAction,
+  listVoiceOptionsAction,
 } from '@/lib/actions.ts';
-import { getSpeechAdapter } from '@nodal-agents/speech';
 import AgentComposer from './AgentComposer.tsx';
 
 export const dynamic = 'force-dynamic';
@@ -41,9 +41,11 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   // Resolved on the SERVER and passed down: the voice catalogue belongs to
   // packages/speech, and re-typing it in a picker would be exactly the
   // hardcoded metadata invariant #1 forbids — plus the provider module pulls in
-  // Node APIs that have no business in a browser bundle. Google's list is a
-  // constant, so this costs no network call.
-  const voiceOptions = [...(await getSpeechAdapter('google').listVoices(''))];
+  // Node APIs that have no business in a browser bundle. Every provider with a
+  // key, not just Google: the form used to write 'google' as a literal, which
+  // left the streaming provider selectable nowhere.
+  const voicesResult = await listVoiceOptionsAction();
+  const voiceProviders = voicesResult.ok ? voicesResult.data : [];
 
   // Peer agents: all agents in entity excluding the one being edited
   // (an orchestrator cannot be its own sub-agent).
@@ -124,7 +126,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   return (
     <AgentComposer
       agent={agent}
-      voiceOptions={voiceOptions}
+      voiceProviders={voiceProviders}
       peers={peers}
       allAgents={peersResult.ok ? peersResult.data : []}
       llmKeys={llmKeys}

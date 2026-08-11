@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Microphone, Stop, CircleNotch, SpeakerHigh, Warning } from '@phosphor-icons/react';
 import { createConversationAction, sendChatMessageAction, listChatAction } from '@/lib/actions.ts';
+import { startCapture, MicrophoneError, type Capture } from '@/lib/mic-capture.ts';
 import {
   speakReply,
   splitForSpeech,
@@ -29,57 +30,35 @@ import IconButton from '@/components/ui/IconButton';
  * gesture, and a reply lands seconds after the press — so without priming, the
  * answer cannot start by itself and the mode collapses into "click to hear what
  * you already read".
+ *
+ * Recording lives in `mic-capture.ts` and playback in `speak-reply.ts`; what is
+ * left here is the loop and what the user sees of it.
  */
 
 type Phase = 'idle' | 'listening' | 'thinking' | 'speaking';
 
-const PREFERRED_TYPES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
-  'audio/ogg;codecs=opus',
-  'audio/ogg',
-  'audio/mp4',
-];
-
-/** A turn longer than this is a forgotten microphone, not a sentence. */
-const MAX_RECORDING_MS = 120_000;
-
-/** Silence after which the turn is considered finished. */
-const SILENCE_MS = 900;
-/**
- * How much ACTUAL speech a turn needs before it counts as one.
- *
- * A fixed threshold was the bug behind the loop re-firing on its own: room
- * noise crosses any absolute floor on some machines, so the recorder decided
- * something had been said, waited out the silence, and sent a few hundred
- * milliseconds of hum to be transcribed. Requiring sustained voiced frames —
- * not one spike — is what separates a sentence from a fan.
- */
-const MIN_SPEECH_MS = 400;
-/** Voiced frames must beat the measured room floor by this factor. Relative,
- *  because "quiet" on a laptop in a café and in an office are different
- *  numbers, and an absolute one is wrong in both. */
-const SPEECH_OVER_FLOOR = 3.5;
-/** Absolute floor under which nothing is ever treated as speech, whatever the
- *  room measured — protects against a calibration taken during a silence so
- *  perfect that 3.5× it is still nothing. */
-const MIN_ABSOLUTE_RMS = 0.008;
-/** The first moments of a recording are spent measuring the room, not judging
- *  it. */
-const CALIBRATION_MS = 350;
+/** How long to wait for the runner to write a reply before giving up. */
+const REPLY_DEADLINE_MS = 60_000;
 
 interface Props {
   agentId: string | null;
   agentName: string | null;
   hasVoice: boolean;
+  /**
+   * Whether the agent's voice arrives as a stream.
+   *
+   * It decides how the reply is spoken, and the two strategies are opposites.
+   * A streaming voice takes the WHOLE reply in one request and starts sounding
+   * in ~0.5 s no matter how long it is. A non-streaming one must be fed
+   * sentence by sentence, because a single request for the whole answer means
+   * waiting out its entire synthesis — 4 s of silence — before a word is heard.
+   * Chunking a streaming voice would be strictly worse: several round trips and
+   * an audible gap at every seam.
+   */
+  voiceStreams: boolean;
 }
 
-function pickMimeType(): string | null {
-  if (typeof MediaRecorder === 'undefined') return null;
-  return PREFERRED_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) ?? null;
-}
-
-export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
+export default function JarvisClient({ agentId, agentName, hasVoice, voiceStreams }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   /** True while the loop should keep going: speak → answer → listen again. */
   const [live, setLive] = useState(false);
@@ -88,10 +67,7 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
   const [latency, setLatency] = useState<number | null>(null);
 
   const conversationRef = useRef<string | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const analyserRef = useRef<{ ctx: AudioContext; raf: number } | null>(null);
+  const captureRef = useRef<Capture | null>(null);
   /** Read by callbacks that outlive a render — `live` in state is for the UI. */
   const liveRef = useRef(false);
   /**
@@ -99,38 +75,18 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
    * loop. One of the two has to be reached through a ref, or the first would
    * close over a binding that does not exist yet.
    */
-  const handleTurnRef = useRef<(blob: Blob) => void>(() => {});
+  const handleTurnRef = useRef<(wav: Uint8Array) => void>(() => {});
   /** Same reason, the other direction: `listen` re-arms itself. */
   const listenRef = useRef<() => void>(() => {});
-
-  const clearTimers = useCallback(() => {
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current = [];
-  }, []);
-
-  const teardownAnalyser = useCallback(() => {
-    if (analyserRef.current) {
-      cancelAnimationFrame(analyserRef.current.raf);
-      void analyserRef.current.ctx.close();
-      analyserRef.current = null;
-    }
-  }, []);
-
-  const releaseMic = useCallback(() => {
-    recorderRef.current?.stream.getTracks().forEach((t) => t.stop());
-    recorderRef.current = null;
-    teardownAnalyser();
-    clearTimers();
-  }, [clearTimers, teardownAnalyser]);
 
   const stopEverything = useCallback(() => {
     liveRef.current = false;
     setLive(false);
-    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-    releaseMic();
+    captureRef.current?.stop();
+    captureRef.current = null;
     stopSpeaking();
     setPhase('idle');
-  }, [releaseMic]);
+  }, []);
 
   useEffect(() => stopEverything, [stopEverything]);
 
@@ -151,122 +107,52 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
     [stopEverything],
   );
 
-  // ── One turn: record until silence, transcribe, answer, speak, repeat ──────
-  const listen = useCallback(async () => {
-    const mimeType = pickMimeType();
-    if (!mimeType) {
-      toast.error('This browser cannot record audio.');
-      stopEverything();
-      return;
-    }
+  /** Nothing was said — a cough, a door, a fan. Listen again rather than
+   *  ending: going idle would let a noise close the conversation. */
+  const nothingSaid = useCallback(() => {
+    if (liveRef.current) listenRef.current();
+    else setPhase('idle');
+  }, []);
 
-    let stream: MediaStream;
+  // ── One turn: record until silence, then hand the bytes on ─────────────────
+  const listen = useCallback(async () => {
+    let capture: Capture;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      capture = await startCapture();
     } catch (err) {
-      const name = err instanceof Error ? err.name : '';
       toast.error(
-        name === 'NotAllowedError'
-          ? 'Microphone access was refused — check the site permission in your browser.'
-          : 'No microphone found on this machine.',
+        err instanceof MicrophoneError ? err.message : 'The microphone could not be opened.',
       );
       stopEverything();
       return;
     }
-
-    const recorder = new MediaRecorder(stream, { mimeType });
-    recorderRef.current = recorder;
-    chunksRef.current = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: mimeType });
-      releaseMic();
-      // Header bytes and no speech — nothing was said. Listen again rather
-      // than spending a transcription to be told the turn was empty.
-      if (blob.size < 2048) {
-        if (liveRef.current) listenRef.current();
-        else setPhase('idle');
-        return;
-      }
-      handleTurnRef.current(blob);
-    };
-
-    recorder.start();
+    captureRef.current = capture;
     setPhase('listening');
 
-    // ── Stop on silence ────────────────────────────────────────────────────
-    // The whole point of the mode: you stop talking and it answers. Requiring a
-    // second click to end the turn would put a button back between every
-    // sentence, which is the thing this page exists to remove.
-    const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    source.connect(analyser);
-    const buf = new Float32Array(analyser.fftSize);
-    const startedAt = performance.now();
-    let floor = 0;
-    let floorSamples = 0;
-    let quietSince: number | null = null;
-    let speechMs = 0;
-    let lastFrame = startedAt;
-
-    const tick = (): void => {
-      const now = performance.now();
-      const dt = now - lastFrame;
-      lastFrame = now;
-
-      analyser.getFloatTimeDomainData(buf);
-      let sum = 0;
-      for (const v of buf) sum += v * v;
-      const rms = Math.sqrt(sum / buf.length);
-
-      // Measure the room first, judge afterwards.
-      if (now - startedAt < CALIBRATION_MS) {
-        floor = (floor * floorSamples + rms) / (floorSamples + 1);
-        floorSamples += 1;
-      } else {
-        const threshold = Math.max(floor * SPEECH_OVER_FLOOR, MIN_ABSOLUTE_RMS);
-        if (rms > threshold) {
-          speechMs += dt;
-          quietSince = null;
-        } else if (speechMs >= MIN_SPEECH_MS) {
-          // The silence timer only runs once REAL speech has accumulated — the
-          // pause before you begin must not end the turn, and neither must a
-          // room that happens to be noisy.
-          quietSince ??= now;
-          if (now - quietSince > SILENCE_MS) {
-            if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-            return;
-          }
-        }
-      }
-      if (analyserRef.current) analyserRef.current.raf = requestAnimationFrame(tick);
-    };
-    analyserRef.current = { ctx, raf: requestAnimationFrame(tick) };
-
-    timersRef.current.push(
-      setTimeout(() => {
-        if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-      }, MAX_RECORDING_MS),
-    );
-  }, [releaseMic, stopEverything]);
+    const { wav } = await capture.result;
+    captureRef.current = null;
+    if (!liveRef.current) return;
+    if (!wav) {
+      nothingSaid();
+      return;
+    }
+    handleTurnRef.current(wav);
+  }, [nothingSaid, stopEverything]);
 
   // ── Transcribe → send → speak the reply → listen again ────────────────────
   const handleTurn = useCallback(
-    async (blob: Blob) => {
+    async (wav: Uint8Array) => {
       setPhase('thinking');
       setSaid('');
 
-      // 1. What was said.
+      // 1. What was said. WAV rather than the browser's own recording format:
+      //    the transcription model refuses WebM, which is all Chrome produces.
       let text: string;
       try {
         const res = await fetch('/api/voice/transcribe', {
           method: 'POST',
-          headers: { 'content-type': blob.type, 'x-nodal-language': navigator.language },
-          body: blob,
+          headers: { 'content-type': 'audio/wav', 'x-nodal-language': navigator.language },
+          body: wav as unknown as BodyInit,
         });
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as {
@@ -292,13 +178,10 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
       // A second net, after the recorder's. Room noise that slipped through
       // still comes back as something — an empty string, a stray "hm", or the
       // transcriber's polite note that it heard nothing. Sending that to the
-      // agent is what made the loop answer questions nobody asked. Listening
-      // again is the right response to "nothing was said": going idle would
-      // make a cough end the conversation.
+      // agent is what made the loop answer questions nobody asked.
       const meaningful = text.trim().replace(/^[\s"'“”.,!?…-]+|[\s"'“”.,!?…-]+$/g, '');
       if (meaningful.length < 2) {
-        if (liveRef.current) listenRef.current();
-        else setPhase('idle');
+        nothingSaid();
         return;
       }
       setHeard(text);
@@ -325,10 +208,10 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
       // The reply is written by the runner, so it is polled for rather than
       // returned. The chat page waits two full seconds before even LOOKING,
       // which is invisible when you are reading and unbearable when you are
-      // waiting to be answered — a short reply was costing 2 s of pure delay.
-      // Fast at first, then backing off so a long think does not hammer the DB.
+      // waiting to be answered. Fast at first, then backing off so a long think
+      // does not hammer the DB.
       let reply = '';
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + REPLY_DEADLINE_MS;
       let wait = 250;
       while (!reply && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, wait));
@@ -345,34 +228,47 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
         return;
       }
 
-      // 3. Say it — sentence by sentence, so sound starts before the whole
-      //    reply has been synthesised. Speaking the entire text as one request
-      //    meant waiting out its full 3.5–4.4 s AFTER the text had already
-      //    appeared: you read the answer, then heard it read back to you.
+      // 3. Say it.
       if (!agentId) return;
       setPhase('speaking');
+
+      const onFinished = (): void => {
+        if (liveRef.current) listenRef.current();
+        else setPhase('idle');
+      };
+
+      if (voiceStreams) {
+        // One request for the whole reply: the sound starts while the rest is
+        // still being synthesised, so cutting it up would only add round trips
+        // and a gap at each seam.
+        const spoken = await speakReply(agentId, reply, onFinished);
+        if (!spoken.ok) {
+          outcomeFailure(spoken);
+          return;
+        }
+        setSaid(reply);
+        setLatency(spoken.latencyMs);
+        return;
+      }
+
+      // Non-streaming provider: sentence by sentence, so sound starts before
+      // the whole reply has been synthesised. Asking for the entire text at
+      // once meant waiting out its full 3.5–4.4 s AFTER the text had already
+      // appeared — you read the answer, then heard it read back to you.
       const chunks = splitForSpeech(reply);
       let firstLatency: number | null = null;
       for (let i = 0; i < chunks.length; i++) {
         if (!liveRef.current) return;
         const isLast = i === chunks.length - 1;
-        const spoken = await new Promise<SpeakOutcome>((resolve) => {
-          void speakReply(agentId, chunks[i]!, () => {
-            if (isLast) {
-              if (liveRef.current) listenRef.current();
-              else setPhase('idle');
-            }
-          }).then(resolve);
-        });
+        const spoken = await speakReply(agentId, chunks[i]!, isLast ? onFinished : undefined);
         if (!spoken.ok) {
           outcomeFailure(spoken);
           return;
         }
-        // AFTER the audio has started, never before. Setting it beforehand —
-        // which is what this did — put the text on screen a full four seconds
-        // ahead of the voice, so the answer was read before it was heard and
-        // the whole point of the page was lost. `speakReply` resolves once
-        // playback has begun, so this line is the right side of that.
+        // AFTER the audio has started, never before. Setting it beforehand put
+        // the text on screen a full four seconds ahead of the voice, so the
+        // answer was read before it was heard and the point of the page was
+        // lost. `speakReply` resolves once playback has begun.
         setSaid(chunks.slice(0, i + 1).join(' '));
         firstLatency ??= spoken.latencyMs;
         // Wait for this chunk to finish before starting the next, or they talk
@@ -381,11 +277,11 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
       }
       setLatency(firstLatency);
     },
-    [agentId, outcomeFailure, stopEverything],
+    [agentId, nothingSaid, outcomeFailure, stopEverything, voiceStreams],
   );
 
   useEffect(() => {
-    handleTurnRef.current = (blob) => void handleTurn(blob);
+    handleTurnRef.current = (wav) => void handleTurn(wav);
     listenRef.current = () => void listen();
   }, [handleTurn, listen]);
 

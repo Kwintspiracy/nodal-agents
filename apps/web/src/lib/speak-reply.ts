@@ -52,6 +52,95 @@ export function unlockAudio(): void {
     });
 }
 
+/** Raised when the browser refuses to start audio. Distinguished from a real
+ *  failure because the answer is a play button, not an error. */
+class AutoplayBlocked extends Error {}
+
+/** Can this browser play the streamed container through Media Source?
+ *
+ *  Checked rather than assumed: Safari exposes ManagedMediaSource instead, and
+ *  a page that assumed MediaSource would silently play nothing there — the
+ *  worst possible failure for a feature whose entire output is sound. */
+function canStream(mimeType: string): boolean {
+  return (
+    typeof MediaSource !== 'undefined' && mimeType !== '' && MediaSource.isTypeSupported(mimeType)
+  );
+}
+
+/**
+ * Feed a fetch stream into the player and start it at the first chunk.
+ *
+ * Returns the milliseconds until sound actually began — the only latency figure
+ * worth showing, since it is the one the user lives through.
+ */
+async function playStream(
+  audio: HTMLAudioElement,
+  body: ReadableStream<Uint8Array>,
+  mimeType: string,
+  startedAt: number,
+): Promise<number> {
+  const mediaSource = new MediaSource();
+  const url = URL.createObjectURL(mediaSource);
+  audio.src = url;
+  currentUrl = url;
+
+  await new Promise<void>((resolve) => {
+    mediaSource.addEventListener('sourceopen', () => resolve(), { once: true });
+  });
+  const buffer = mediaSource.addSourceBuffer(mimeType);
+
+  /** Appends are serialised: `appendBuffer` throws InvalidStateError if the
+   *  previous one has not finished, and the frames arrive faster than they are
+   *  consumed. */
+  const append = (bytes: Uint8Array): Promise<void> =>
+    new Promise((resolve, reject) => {
+      buffer.addEventListener('updateend', () => resolve(), { once: true });
+      buffer.addEventListener('error', () => reject(new Error('audio buffer rejected a chunk')), {
+        once: true,
+      });
+      buffer.appendBuffer(bytes as unknown as ArrayBufferView<ArrayBuffer>);
+    });
+
+  const reader = body.getReader();
+  let started = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value.length) continue;
+      await append(value);
+      if (started === 0) {
+        // Playback begins on the FIRST chunk — waiting for a comfortable buffer
+        // would hand back the very delay this path exists to remove. If the
+        // network stalls mid-reply the element simply waits, which is what it
+        // is built to do.
+        try {
+          await audio.play();
+        } catch {
+          throw new AutoplayBlocked('playback refused without a user gesture');
+        }
+        started = Date.now() - startedAt;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (mediaSource.readyState === 'open') {
+    // Without this the element never fires `ended`, so a hands-free loop would
+    // wait for ever instead of listening again.
+    if (buffer.updating) {
+      await new Promise<void>((r) =>
+        buffer.addEventListener('updateend', () => r(), { once: true }),
+      );
+    }
+    mediaSource.endOfStream();
+  }
+
+  if (started === 0) throw new Error('the reply carried no audio');
+  return started;
+}
+
 /** Stop whatever is speaking and release its blob. */
 export function stopSpeaking(): void {
   if (player) {
@@ -70,7 +159,7 @@ export function stopSpeaking(): void {
 }
 
 export type SpeakOutcome =
-  | { ok: true; latencyMs: number }
+  | { ok: true; latencyMs: number; streamed: boolean }
   /** The browser refused to start audio without a fresh user gesture. Not an
    *  error to shout about — the caller offers a play button instead. */
   | { ok: false; reason: 'autoplay_blocked' }
@@ -133,6 +222,10 @@ export async function speakReply(
   onEnded?: () => void,
 ): Promise<SpeakOutcome> {
   stopSpeaking();
+  // Timed from BEFORE the request: what the user experiences as the wait is the
+  // gap between finishing their sentence and hearing anything, and that
+  // includes the round trip. Timing only the vendor would flatter the number.
+  const startedAt = Date.now();
 
   let res: Response;
   try {
@@ -151,19 +244,44 @@ export async function speakReply(
     return { ok: false, reason: 'failed', message: body.message ?? body.error ?? 'speech failed' };
   }
 
-  const latencyMs = Number(res.headers.get('x-nodal-latency-ms') ?? '0');
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
   const audio = player ?? new Audio();
   player = audio;
   audio.volume = 1;
+  if (onEnded) audio.addEventListener('ended', onEnded, { once: true });
+
+  // ── Streaming path ────────────────────────────────────────────────────────
+  // The reply is played WHILE it is being synthesised. This is the difference
+  // the whole feature turns on: a finished file means 4.0 s of silence before
+  // any sound, and the first frames of a stream arrive in ~0.5 s regardless of
+  // how long the answer is.
+  const contentType = (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
+  if (res.headers.get('x-nodal-stream') === '1' && res.body && canStream(contentType)) {
+    try {
+      const latencyMs = await playStream(audio, res.body, contentType, startedAt);
+      return { ok: true, latencyMs, streamed: true };
+    } catch (err) {
+      stopSpeaking();
+      if (err instanceof AutoplayBlocked) return { ok: false, reason: 'autoplay_blocked' };
+      return {
+        ok: false,
+        reason: 'failed',
+        message: err instanceof Error ? err.message : 'playback failed',
+      };
+    }
+  }
+
+  // ── One-shot path ─────────────────────────────────────────────────────────
+  // Providers that cannot stream, and browsers without Media Source (Safari
+  // exposes a different one). Correct, just slower — never a silent failure.
+  const latencyMs = Number(res.headers.get('x-nodal-latency-ms') ?? '0');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
   audio.src = url;
   currentUrl = url;
-  if (onEnded) audio.addEventListener('ended', onEnded, { once: true });
 
   try {
     await audio.play();
-    return { ok: true, latencyMs };
+    return { ok: true, latencyMs, streamed: false };
   } catch {
     // Chrome blocks programmatic playback until the user has interacted with
     // the origin. Speaking a reply to a turn the user DICTATED normally

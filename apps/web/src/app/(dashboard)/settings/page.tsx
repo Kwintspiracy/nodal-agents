@@ -9,6 +9,7 @@ import {
   getLanCommandYoloAction,
   getInstallNotesAction,
   getWorkspaceTimezoneAction,
+  getTranscriptionChoiceAction,
   type WorkspaceRow,
 } from '@/lib/actions.ts';
 import { DEFAULT_ROOT_GRANTS } from '@nodal-agents/shared';
@@ -19,6 +20,7 @@ import RootAgentSection from './RootAgentSection.tsx';
 import LanCommandYoloSection from './LanCommandYoloSection.tsx';
 import InstallNotesForm from './InstallNotesForm.tsx';
 import TimezoneForm from './TimezoneForm.tsx';
+import VoiceListeningForm from './VoiceListeningForm.tsx';
 import PageShell from '@/components/ui/PageShell';
 import { SetBlock } from '@/components/ui/SetBlock.tsx';
 import { SetPane } from '@/components/ui/SetPane.tsx';
@@ -41,6 +43,7 @@ export default async function SettingsPage() {
     lanYoloResult,
     installNotesResult,
     tzResult,
+    sttResult,
   ] = await Promise.all([
     getSettingsAction(),
     getSecuritySettingsAction(),
@@ -51,6 +54,7 @@ export default async function SettingsPage() {
     getLanCommandYoloAction(),
     getInstallNotesAction(),
     getWorkspaceTimezoneAction(),
+    getTranscriptionChoiceAction(),
   ]);
   const workspaces: WorkspaceRow[] = wsResult.ok ? wsResult.data : [];
 
@@ -103,6 +107,19 @@ export default async function SettingsPage() {
             lede="The zone your agents use to tell the time and schedule automations."
           >
             <TimezoneForm initial={tzResult.data.timezone} isExplicit={tzResult.data.isExplicit} />
+          </SetBlock>
+        )}
+
+        {sttResult.ok && (
+          <SetBlock
+            label="Voice — listening"
+            lede="Which model turns what you say into text. The speaking voice is set per agent."
+          >
+            <VoiceListeningForm
+              initialProvider={sttResult.data.provider}
+              initialModel={sttResult.data.model}
+              available={sttResult.data.available}
+            />
           </SetBlock>
         )}
 

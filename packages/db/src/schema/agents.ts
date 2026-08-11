@@ -70,6 +70,12 @@ export const agents = pgTable(
     // time, which is exactly the silent fallback invariant #4 forbids.
     voiceProvider: text('voice_provider'),
     voiceId: text('voice_id'),
+    // Which of the provider's synthesis models to use (migration 0074). NULL
+    // means "the provider's own default", not "none" — MiniMax ships a fast
+    // line and a high-fidelity line behind the same voice, and choosing between
+    // latency and timbre belongs to the agent, not to this file. Deliberately
+    // outside the 0073 CHECK: a model name is optional even when a voice is set.
+    voiceModel: text('voice_model'),
     systemAgent: boolean('system_agent').default(false),
     maxTokensPerJob: integer('max_tokens_per_job').default(0).notNull(),
     // Cap on characters of agent_memory injected into the system prompt per job

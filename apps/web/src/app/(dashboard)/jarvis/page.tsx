@@ -7,7 +7,9 @@ export const dynamic = 'force-dynamic';
 export default async function VoicePage() {
   // Same source as the chat page: the ROOT agent, and whether it can speak.
   const res = await listConversationsAction();
-  const data = res.ok ? res.data : { rootAgentId: null, rootName: null, rootHasVoice: false };
+  const data = res.ok
+    ? res.data
+    : { rootAgentId: null, rootName: null, rootHasVoice: false, rootVoiceStreams: false };
 
   return (
     <>
@@ -17,6 +19,7 @@ export default async function VoicePage() {
           agentId={data.rootAgentId}
           agentName={data.rootName}
           hasVoice={data.rootHasVoice}
+          voiceStreams={data.rootVoiceStreams}
         />
       </div>
     </>

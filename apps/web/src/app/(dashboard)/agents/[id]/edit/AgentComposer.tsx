@@ -50,6 +50,10 @@ import {
   type SlackConfigRow,
   type ChannelAllowedConversationView,
 } from '@/lib/actions.ts';
+import type { VoiceProviderOption } from '@/lib/actions.ts';
+// Type-only: the speech package pulls in Node APIs that have no business in a
+// browser bundle, and `import type` is erased entirely at build time.
+import type { SpeechProvider } from '@nodal-agents/speech';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import {
   MODEL_CATALOG,
@@ -184,11 +188,37 @@ const REASONING_LABELS: Record<string, string> = {
   max: 'Max',
 };
 
+/**
+ * Split "provider:voiceId" back into the pair the save action expects.
+ *
+ * The two halves travel as ONE string through the select because a select
+ * carries one value, and keeping them apart in the form is how the previous
+ * version ended up writing a hardcoded provider next to a user-chosen voice.
+ * A voice id may itself contain no colon in any catalogue seen so far, but the
+ * split is bounded to the FIRST one regardless, so a vendor that adds one later
+ * does not silently truncate the id.
+ */
+function parseVoiceSelection(
+  selection: string,
+  model: string,
+): { provider: SpeechProvider; voiceId: string; model: string | null } | null {
+  if (!selection) return null;
+  const separator = selection.indexOf(':');
+  if (separator <= 0) return null;
+  return {
+    provider: selection.slice(0, separator) as SpeechProvider,
+    voiceId: selection.slice(separator + 1),
+    model: model || null,
+  };
+}
+
 interface Props {
   agent: AgentEditRow;
-  /** The speaking voices this build offers, resolved on the server from
-   *  packages/speech so no catalogue is re-typed in a picker (invariant #1). */
-  voiceOptions: Array<{ id: string; label: string; description?: string }>;
+  /** Every voice this install can actually speak with, grouped by provider and
+   *  resolved on the server from packages/speech so no catalogue is re-typed in
+   *  a picker (invariant #1). Providers with no key are absent: offering a voice
+   *  that cannot be synthesised only produces a failure at speaking time. */
+  voiceProviders: VoiceProviderOption[];
   /** Peers = every OTHER agent (sub-agent picker; excludes self). */
   peers: AgentRow[];
   /** All agents in the entity, canonical order — drives the picker pills so
@@ -221,7 +251,7 @@ interface Props {
 
 export default function AgentComposer({
   agent,
-  voiceOptions,
+  voiceProviders,
   peers,
   allAgents,
   llmKeys,
@@ -278,7 +308,14 @@ export default function AgentComposer({
   // '' = Auto (provider default). Levels offered come from the catalog.
   const [reasoningEffort, setReasoningEffort] = useState<string>(agent.reasoningEffort ?? '');
   // '' = Silent, which is what a NULL pair in the DB means (migration 0073).
-  const [voiceId, setVoiceId] = useState<string>(agent.voiceId ?? '');
+  // The value carries the PROVIDER too ("minimax:French_CasualMan"): the two
+  // halves are meaningless apart, and the previous form wrote the provider as a
+  // literal 'google', which made every other provider unreachable from the UI.
+  const [voiceSelection, setVoiceSelection] = useState<string>(
+    agent.voiceProvider && agent.voiceId ? `${agent.voiceProvider}:${agent.voiceId}` : '',
+  );
+  // '' = the provider's own default (migration 0074).
+  const [voiceModel, setVoiceModel] = useState<string>(agent.voiceModel ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
   // Live model ids fetched from the provider's /models endpoint — keyed by keyId
   // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
@@ -349,7 +386,9 @@ export default function AgentComposer({
     JSON.stringify(fallbackChain) !== JSON.stringify(agent.fallbackChain ?? []) ||
     model !== (agent.model ?? '') ||
     reasoningEffort !== (agent.reasoningEffort ?? '') ||
-    voiceId !== (agent.voiceId ?? '') ||
+    voiceSelection !==
+      (agent.voiceProvider && agent.voiceId ? `${agent.voiceProvider}:${agent.voiceId}` : '') ||
+    voiceModel !== (agent.voiceModel ?? '') ||
     avatarUrl !== (agent.avatarUrl ?? null);
 
   // ── handlers ─────────────────────────────────────────────────────────────
@@ -455,7 +494,7 @@ export default function AgentComposer({
       reasoningEffort: reasoningEffort || null,
       // Sent as a pair or as null — never half of one. The DB refuses the half
       // (agents_voice_pair_check) and the speak route would have to guess.
-      voice: voiceId ? { provider: 'google' as const, voiceId } : null,
+      voice: parseVoiceSelection(voiceSelection, voiceModel),
     };
     startTransition(async () => {
       const result = await updateAgentAction(payload);
@@ -478,7 +517,10 @@ export default function AgentComposer({
     setFallbackChain(agent.fallbackChain ?? []);
     setModel(agent.model ?? '');
     setReasoningEffort(agent.reasoningEffort ?? '');
-    setVoiceId(agent.voiceId ?? '');
+    setVoiceSelection(
+      agent.voiceProvider && agent.voiceId ? `${agent.voiceProvider}:${agent.voiceId}` : '',
+    );
+    setVoiceModel(agent.voiceModel ?? '');
     setAvatarUrl(agent.avatarUrl ?? null);
   }
 
@@ -616,8 +658,9 @@ export default function AgentComposer({
             selectedKey={selectedKey}
             model={model}
             reasoningEffort={reasoningEffort}
-            voiceId={voiceId}
-            voiceOptions={voiceOptions}
+            voiceSelection={voiceSelection}
+            voiceModel={voiceModel}
+            voiceProviders={voiceProviders}
             noLlmKeys={noLlmKeys}
             workspaces={workspaces}
             workspacesLoaded={workspacesLoaded}
@@ -637,7 +680,8 @@ export default function AgentComposer({
             onChangeLlmKey={handleLlmKeyChange}
             onChangeModel={handleModelChange}
             onChangeReasoningEffort={setReasoningEffort}
-            onChangeVoiceId={setVoiceId}
+            onChangeVoiceSelection={setVoiceSelection}
+            onChangeVoiceModel={setVoiceModel}
             onSave={handleSave}
             onReset={handleReset}
             liveModelsCache={liveModelsCache}
@@ -2129,8 +2173,9 @@ function SettingsTab(props: {
   reasoningEffort: string;
   /** Empty string = Silent. The provider is implied: only Google carries a
    *  voice catalogue in this build, and the save path names it explicitly. */
-  voiceId: string;
-  voiceOptions: Array<{ id: string; label: string; description?: string }>;
+  voiceSelection: string;
+  voiceModel: string;
+  voiceProviders: VoiceProviderOption[];
   noLlmKeys: boolean;
   workspaces: AgentWorkspaceRow[];
   workspacesLoaded: boolean;
@@ -2150,7 +2195,8 @@ function SettingsTab(props: {
   onChangeLlmKey: (id: string) => void;
   onChangeModel: (v: string) => void;
   onChangeReasoningEffort: (v: string) => void;
-  onChangeVoiceId: (v: string) => void;
+  onChangeVoiceSelection: (v: string) => void;
+  onChangeVoiceModel: (v: string) => void;
   onSave: () => void;
   onReset: () => void;
   liveModelsCache: Record<string, string[]>;
@@ -2172,8 +2218,9 @@ function SettingsTab(props: {
     selectedKey,
     model,
     reasoningEffort,
-    voiceId,
-    voiceOptions,
+    voiceSelection,
+    voiceModel,
+    voiceProviders,
     noLlmKeys,
     workspaces,
     workspacesLoaded,
@@ -2193,7 +2240,8 @@ function SettingsTab(props: {
     onChangeLlmKey,
     onChangeModel,
     onChangeReasoningEffort,
-    onChangeVoiceId,
+    onChangeVoiceSelection,
+    onChangeVoiceModel,
     onSave,
     onReset,
     liveModelsCache,
@@ -2201,6 +2249,11 @@ function SettingsTab(props: {
   } = props;
 
   // Candidate fallback keys = every active key except the current primary.
+  // The models of the provider the chosen voice belongs to. Empty when nothing
+  // is chosen, or when that provider ships a single line.
+  const selectedVoiceModels =
+    voiceProviders.find((p) => p.provider === voiceSelection.split(':')[0])?.models ?? [];
+
   const otherKeys = activeKeys.filter((k) => k.id !== llmKeyId);
 
   // Reasoning levels the selected primary model really offers ([] = hide field).
@@ -2560,24 +2613,57 @@ function SettingsTab(props: {
           )}
           <Field
             label="Voice"
-            hint="Read replies aloud in the chat. Needs a Google key; speaking is billed per reply."
+            hint={
+              voiceProviders.length === 0
+                ? 'Add a Google or MiniMax key in LLM providers to give this agent a voice.'
+                : 'Read replies aloud. Speaking is billed per reply.'
+            }
           >
             <Select
-              value={voiceId}
-              onChange={(e) => onChangeVoiceId(e.target.value)}
+              value={voiceSelection}
+              onChange={(e) => onChangeVoiceSelection(e.target.value)}
               className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
             >
               {/* Silent is first AND the default: choosing a voice is a
                   deliberate act. A default here would give every existing agent
                   a voice on upgrade, and bill the synthesis of every reply. */}
               <option value="">Silent</option>
-              {voiceOptions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.description ? `${v.label} — ${v.description}` : v.label}
-                </option>
+              {voiceProviders.map((p) => (
+                // Grouped by provider because the choice between them is not
+                // cosmetic: one starts speaking in half a second, the other
+                // takes four. The group label says which.
+                <optgroup
+                  key={p.provider}
+                  label={`${p.provider}${p.streams ? ' — starts instantly' : ''}`}
+                >
+                  {p.voices.map((v) => (
+                    <option key={`${p.provider}:${v.id}`} value={`${p.provider}:${v.id}`}>
+                      {v.description ? `${v.label} — ${v.description}` : v.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </Select>
           </Field>
+          {/* Only where there is a real choice to make. A single-model provider
+              would get a select with one entry, which is furniture, not a
+              control. */}
+          {selectedVoiceModels.length > 0 && (
+            <Field label="Voice quality">
+              <Select
+                value={voiceModel}
+                onChange={(e) => onChangeVoiceModel(e.target.value)}
+                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+              >
+                <option value="">Provider default</option>
+                {selectedVoiceModels.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.note ? `${m.label} — ${m.note}` : m.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
         </div>
         {!noLlmKeys && (
           <div className="mt-3">

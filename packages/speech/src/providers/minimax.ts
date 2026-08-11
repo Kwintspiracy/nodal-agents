@@ -227,6 +227,18 @@ export const minimaxSpeechAdapter: SpeechAdapter = {
     // both enormous and wrong.
     dynamicVoices: true,
     streamOutput: STREAM_OUTPUT,
+    // Same API, same voices, different trade. Measured 2026-08-11: turbo puts
+    // the first sound at ~0.5 s, which is what makes the loop feel like a
+    // conversation. HD is the one to pick when the recording matters more than
+    // the wait.
+    models: [
+      {
+        id: 'speech-02-turbo',
+        label: 'Turbo',
+        note: 'Fastest — first sound in about half a second',
+      },
+      { id: 'speech-02-hd', label: 'HD', note: 'Richer voice, slower to start' },
+    ],
   },
 
   async listVoices(apiKey: string): Promise<readonly Voice[]> {

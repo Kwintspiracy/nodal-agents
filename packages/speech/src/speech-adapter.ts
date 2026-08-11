@@ -129,6 +129,22 @@ export interface SpeechCapabilities {
    * conversation.
    */
   streamOutput?: AudioMimeType;
+  /**
+   * The vendor's synthesis models worth choosing between, most useful first.
+   *
+   * Declared here rather than typed into a picker: which models a vendor offers
+   * is knowledge about that vendor, and a copy of it in the UI is the hardcoded
+   * metadata invariant #1 forbids. Empty for vendors with a single line.
+   */
+  models?: readonly SpeechModel[];
+}
+
+/** One selectable synthesis model. `note` is what the user needs to choose —
+ *  faster or richer — not a marketing line. */
+export interface SpeechModel {
+  id: string;
+  label: string;
+  note?: string;
 }
 
 export interface TranscriptionCapabilities {

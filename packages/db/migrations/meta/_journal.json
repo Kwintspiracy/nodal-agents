@@ -512,6 +512,13 @@
       "when": 1785300000000,
       "tag": "0073_agent_voice",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1785400000000,
+      "tag": "0074_agent_voice_model",
+      "breakpoints": true
     }
   ]
 }
