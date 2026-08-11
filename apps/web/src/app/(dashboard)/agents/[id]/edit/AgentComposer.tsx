@@ -723,9 +723,13 @@ function HeroCard({
         {/* Title + meta */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="m-0 text-display-22 leading-none! tracking-[-0.01em] text-ink">
+            {/* h2, pas h1 : la page porte déjà « Edit agent » comme h1. Deux h1
+                sur une même page privent un lecteur d'écran du repère qui dit
+                DE QUELLE page il s'agit. La classe porte la taille, donc rien
+                ne bouge à l'écran. */}
+            <h2 className="m-0 text-display-22 leading-none! tracking-[-0.01em] text-ink">
               {name}
-            </h1>
+            </h2>
             <StatusPill variant="idle" label="Idle" />
           </div>
           <p className="mt-2 text-body-14 leading-[1.55]! text-ink-3">{personaPreview}</p>

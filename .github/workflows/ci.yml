@@ -97,6 +97,39 @@ jobs:
   # Its own job, in parallel with `ci`: it runs a full `next build` plus a real
   # Postgres boot (~15 min), and folding that into `ci` would double the feedback
   # loop for every typo-level failure.
+  # Quentin développe et fait tourner Nodal sur Windows ; la CI ne voyait que
+  # Linux. Les pièges qui lui coûtent le plus — arbres de processus, ports
+  # tenus, séparateurs de chemin, casse du système de fichiers — n'étaient donc
+  # vus par personne avant lui.
+  #
+  # `continue-on-error` au départ, comme e2e-smoke l'a été : un job requis qui
+  # échoue dès son premier passage se fait désactiver dans la semaine. Il
+  # devient bloquant une fois vert plusieurs jours d'affilée.
+  ci-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Typecheck et tests seulement : lint et format ne dépendent pas de l'OS,
+      # les refaire ici doublerait le coût sans rien apprendre.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test -- --concurrency=3
+
   pack-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30

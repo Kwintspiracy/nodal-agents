@@ -169,4 +169,38 @@ test.describe('settings pages render without runtime errors', () => {
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 5_000 });
     }
   });
+
+  // Les routes à paramètre étaient le trou de cette liste : 15 routes statiques
+  // chargées, et zéro des 7 qui portent un id. Ce sont pourtant les pages où
+  // l'on passe le plus de temps — l'éditeur d'agent, le détail d'un run. On les
+  // atteint par les liens de l'application plutôt qu'en fabriquant des ids :
+  // un id inventé prouverait seulement que la page sait rendre un 404.
+  test('les routes à paramètre rendent, atteintes par les liens de l’app', async ({ page }) => {
+    await page.goto('/agents');
+    const lienEdition = page.locator('a[href*="/agents/"][href$="/edit"]').first();
+    await expect(lienEdition, 'aucun agent dans la liste — le parcours amont a échoué').toBeVisible(
+      {
+        timeout: 10_000,
+      },
+    );
+
+    const hrefEdition = await lienEdition.getAttribute('href');
+    const rEdition = await page.goto(hrefEdition!);
+    expect(rEdition?.status(), `${hrefEdition} HTTP status`).toBeLessThan(400);
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
+
+    // Le détail d'un run n'existe que s'il y a eu un run. Sur une installation
+    // fraîche il n'y en a pas, et exiger le contraire ferait échouer la CI pour
+    // une raison qui n'est pas un défaut — on saute, en le disant.
+    await page.goto('/jobs');
+    const lienRun = page.locator('a[href*="/jobs/"]').first();
+    if ((await lienRun.count()) === 0) {
+      test.info().annotations.push({ type: 'skip', description: 'aucun run dans cet espace' });
+      return;
+    }
+    const hrefRun = await lienRun.getAttribute('href');
+    const rRun = await page.goto(hrefRun!);
+    expect(rRun?.status(), `${hrefRun} HTTP status`).toBeLessThan(400);
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
+  });
 });
