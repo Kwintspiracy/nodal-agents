@@ -26,7 +26,12 @@
  * whisper.cpp server) are the obvious next entries and are exactly why this is
  * an interface: they plug in without a caller changing.
  */
-export type SpeechProvider = 'google' | 'minimax';
+export const SPEECH_PROVIDERS = ['google', 'minimax'] as const;
+
+/** Derived from the tuple above, never written twice: a validator needs the
+ *  runtime list (zod enums, a form's options) and the compiler needs the type,
+ *  and two hand-kept copies drift the day a provider is added. */
+export type SpeechProvider = (typeof SPEECH_PROVIDERS)[number];
 
 /** Audio container/codec, as an IANA media type. Kept as a plain string union
  *  rather than a free-form string so a caller cannot ask for a format no

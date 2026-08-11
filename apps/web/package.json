@@ -32,6 +32,7 @@
     "@nodal-agents/orchestration": "workspace:*",
     "@nodal-agents/runner-adapters": "workspace:*",
     "@nodal-agents/secrets": "workspace:*",
+    "@nodal-agents/speech": "workspace:*",
     "@nodal-agents/shared": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
     "cron-parser": "^5.5.0",

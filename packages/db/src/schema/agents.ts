@@ -60,6 +60,16 @@ export const agents = pgTable(
       .default(sql`'{}'::text[]`),
     taskContextTemplate: text('task_context_template'),
     avatarUrl: text('avatar_url'),
+    // The voice this agent speaks with (migration 0073). BOTH NULL = mute, and
+    // that is the default on purpose: a default voice would make every existing
+    // agent start talking after an upgrade, and bill the synthesis of every one
+    // of their messages. Free text on both, like reasoningEffort above — the
+    // voice catalogue lives in packages/speech and moves at the vendors' pace,
+    // not at the migrations'. A DB CHECK keeps the pair coherent: a provider
+    // without a voice would have to be resolved by guessing one at speaking
+    // time, which is exactly the silent fallback invariant #4 forbids.
+    voiceProvider: text('voice_provider'),
+    voiceId: text('voice_id'),
     systemAgent: boolean('system_agent').default(false),
     maxTokensPerJob: integer('max_tokens_per_job').default(0).notNull(),
     // Cap on characters of agent_memory injected into the system prompt per job

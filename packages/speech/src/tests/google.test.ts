@@ -187,16 +187,37 @@ describe('googleTranscriptionAdapter.transcribe', () => {
   });
 
   it('refuses a container Gemini does not accept, before sending', async () => {
-    // audio/webm is exactly what a Chrome MediaRecorder produces by default,
-    // and exactly what Gemini does not document. Catching it here is the
-    // difference between a clear message and an opaque 400.
+    // Catching it here is the difference between a clear message and an
+    // opaque 400 after the user has already spoken.
     const calls = mockGemini(textAnswer('x'));
     await expect(
-      googleTranscriptionAdapter.transcribe({ audio: wav, mimeType: 'audio/webm' }, 'k'),
-    ).rejects.toThrow(/does not accept "audio\/webm"/);
+      googleTranscriptionAdapter.transcribe({ audio: wav, mimeType: 'audio/flac' }, 'k'),
+    ).resolves.toBeTruthy(); // flac IS accepted — sanity, so the next line means something
+    calls.length = 0;
+    await expect(
+      // Not in the union at all; cast so the runtime guard is what is tested.
+      googleTranscriptionAdapter.transcribe({ audio: wav, mimeType: 'audio/aiff' as never }, 'k'),
+    ).rejects.toThrow(/does not accept "audio\/aiff"/);
     expect(calls).toHaveLength(0);
-    expect(googleTranscriptionAdapter.capabilities.accepts).not.toContain('audio/webm');
+  });
+
+  it('accepts what a browser microphone actually produces', async () => {
+    // The two containers a MediaRecorder emits: webm on Chromium, ogg on
+    // Firefox. webm is NOT in Google's documented list and IS accepted —
+    // measured 2026-08-11 against the live API, HTTP 200 with an exact
+    // transcript. Had we trusted the doc, every turn would have needed a WAV
+    // re-encode in the browser and five times the upload.
+    expect(googleTranscriptionAdapter.capabilities.accepts).toContain('audio/webm');
     expect(googleTranscriptionAdapter.capabilities.accepts).toContain('audio/ogg');
+
+    const calls = mockGemini(textAnswer('bonjour'));
+    const out = await googleTranscriptionAdapter.transcribe(
+      { audio: wav, mimeType: 'audio/webm' },
+      'k',
+    );
+    expect(out.text).toBe('bonjour');
+    const body = calls[0]!.body as { contents: { parts: Record<string, never>[] }[] };
+    expect(body.contents[0]!.parts[1]!['inlineData']).toMatchObject({ mimeType: 'audio/webm' });
   });
 
   it('refuses empty audio before sending', async () => {

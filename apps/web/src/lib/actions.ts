@@ -94,6 +94,7 @@ import {
   MemoryDuplicateError,
 } from '@nodal-agents/memory';
 import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
+import { SPEECH_PROVIDERS } from '@nodal-agents/speech';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent } from '@nodal-agents/orchestration';
 import { getLanAddresses } from './network.ts';
@@ -482,6 +483,10 @@ export type AgentRow = {
   fallbackChain?: Array<{ keyId: string; model: string; reasoningEffort?: string }> | null;
   // Reasoning effort for the primary model — null/absent = Auto.
   reasoningEffort?: string | null;
+  // The agent's voice. Both null = mute (the default). Optional so list queries
+  // that don't select them stay valid; the edit loader populates both.
+  voiceProvider?: string | null;
+  voiceId?: string | null;
   active: boolean | null;
   isDefault: boolean | null;
   role: string | null;
@@ -892,6 +897,16 @@ const UpdateAgentSchema = z.object({
   // Level-vs-model coherence is enforced by the UI (options come from the
   // catalog's reasoningControl); the runtime drops an invalid value loudly.
   reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']).nullable().optional(),
+  // The agent's voice. `null` = mute, which is the default and the pre-feature
+  // behaviour. Sent as ONE object rather than two fields so "mute" cannot be
+  // expressed halfway: a provider without a voice id (or the reverse) has no
+  // meaning, and the DB refuses it anyway (agents_voice_pair_check, 0073).
+  // The provider is validated against what this build actually carries, so a
+  // stale form cannot write a name nothing can resolve.
+  voice: z
+    .object({ provider: z.enum(SPEECH_PROVIDERS), voiceId: z.string().min(1).max(120) })
+    .nullable()
+    .optional(),
   role: z.enum(['worker', 'router', 'planner']),
   subAgentIds: z.array(z.string().guid()).default([]),
   // Per-sub-agent routing instructions (agent_assignments.instructions), keyed
@@ -942,6 +957,7 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
       subAgentInstructions,
       avatarUrl,
       reasoningEffort,
+      voice,
     } = parsed.data;
     const db = getDb();
 
@@ -1007,6 +1023,13 @@ export async function updateAgentAction(raw: unknown): Promise<ActionResult<void
     // Reasoning effort: undefined = don't touch (legacy clients); null = Auto.
     if (reasoningEffort !== undefined) {
       patch['reasoningEffort'] = reasoningEffort;
+    }
+    // Voice: undefined = don't touch; null = mute. Written as a PAIR, always
+    // both columns together — writing one of them alone is what the DB check
+    // constraint exists to catch, and it should never get that far.
+    if (voice !== undefined) {
+      patch['voiceProvider'] = voice?.provider ?? null;
+      patch['voiceId'] = voice?.voiceId ?? null;
     }
 
     // Whole mutation is one transaction (F-19, audit #2 + R4 follow-up): the

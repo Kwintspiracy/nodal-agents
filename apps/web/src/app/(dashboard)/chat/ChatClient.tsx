@@ -14,6 +14,7 @@ import {
   X,
 } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
+import VoiceInputButton from '@/components/VoiceInputButton.tsx';
 import RowActionButton from '@/components/ui/RowActionButton';
 import IconButton from '@/components/ui/IconButton';
 import Drawer from '@/components/ui/Drawer';
@@ -444,6 +445,16 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                 >
                   <At size={15} />
                 </IconButton>
+                {/* The transcript lands in the composer, it does not send.
+                    Speech-to-text mishears, and a turn that leaves before you
+                    can read it is a turn you cannot correct — the whole reason
+                    the button hands back text instead of submitting. */}
+                <VoiceInputButton
+                  disabled={sending}
+                  onTranscript={(text) =>
+                    setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+                  }
+                />
                 <span className="pl-1 text-legacy-11 text-ink-3">⌘ ↵ to send</span>
               </div>
               <IconButton

@@ -114,6 +114,12 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       capabilities text[] DEFAULT '{}',
       task_context_template text,
       avatar_url text,
+      voice_provider text,
+      voice_id text,
+      CONSTRAINT agents_voice_pair_check CHECK (
+        (voice_provider IS NULL AND voice_id IS NULL)
+        OR (voice_provider IS NOT NULL AND voice_id IS NOT NULL)
+      ),
       system_agent boolean DEFAULT false,
       max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
       memory_token_budget integer NOT NULL DEFAULT 1500,

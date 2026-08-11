@@ -12,6 +12,7 @@ export type {
   Voice,
 } from './speech-adapter.ts';
 
+export { SPEECH_PROVIDERS } from './speech-adapter.ts';
 export { SpeechError, type SpeechErrorCode } from './errors.ts';
 export {
   getSpeechAdapter,

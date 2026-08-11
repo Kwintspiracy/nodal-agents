@@ -186,6 +186,9 @@ const REASONING_LABELS: Record<string, string> = {
 
 interface Props {
   agent: AgentEditRow;
+  /** The speaking voices this build offers, resolved on the server from
+   *  packages/speech so no catalogue is re-typed in a picker (invariant #1). */
+  voiceOptions: Array<{ id: string; label: string; description?: string }>;
   /** Peers = every OTHER agent (sub-agent picker; excludes self). */
   peers: AgentRow[];
   /** All agents in the entity, canonical order — drives the picker pills so
@@ -218,6 +221,7 @@ interface Props {
 
 export default function AgentComposer({
   agent,
+  voiceOptions,
   peers,
   allAgents,
   llmKeys,
@@ -273,6 +277,8 @@ export default function AgentComposer({
   const [model, setModel] = useState<string>(agent.model ?? '');
   // '' = Auto (provider default). Levels offered come from the catalog.
   const [reasoningEffort, setReasoningEffort] = useState<string>(agent.reasoningEffort ?? '');
+  // '' = Silent, which is what a NULL pair in the DB means (migration 0073).
+  const [voiceId, setVoiceId] = useState<string>(agent.voiceId ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
   // Live model ids fetched from the provider's /models endpoint — keyed by keyId
   // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
@@ -343,6 +349,7 @@ export default function AgentComposer({
     JSON.stringify(fallbackChain) !== JSON.stringify(agent.fallbackChain ?? []) ||
     model !== (agent.model ?? '') ||
     reasoningEffort !== (agent.reasoningEffort ?? '') ||
+    voiceId !== (agent.voiceId ?? '') ||
     avatarUrl !== (agent.avatarUrl ?? null);
 
   // ── handlers ─────────────────────────────────────────────────────────────
@@ -446,6 +453,9 @@ export default function AgentComposer({
       subAgentInstructions,
       avatarUrl,
       reasoningEffort: reasoningEffort || null,
+      // Sent as a pair or as null — never half of one. The DB refuses the half
+      // (agents_voice_pair_check) and the speak route would have to guess.
+      voice: voiceId ? { provider: 'google' as const, voiceId } : null,
     };
     startTransition(async () => {
       const result = await updateAgentAction(payload);
@@ -468,6 +478,7 @@ export default function AgentComposer({
     setFallbackChain(agent.fallbackChain ?? []);
     setModel(agent.model ?? '');
     setReasoningEffort(agent.reasoningEffort ?? '');
+    setVoiceId(agent.voiceId ?? '');
     setAvatarUrl(agent.avatarUrl ?? null);
   }
 
@@ -605,6 +616,8 @@ export default function AgentComposer({
             selectedKey={selectedKey}
             model={model}
             reasoningEffort={reasoningEffort}
+            voiceId={voiceId}
+            voiceOptions={voiceOptions}
             noLlmKeys={noLlmKeys}
             workspaces={workspaces}
             workspacesLoaded={workspacesLoaded}
@@ -624,6 +637,7 @@ export default function AgentComposer({
             onChangeLlmKey={handleLlmKeyChange}
             onChangeModel={handleModelChange}
             onChangeReasoningEffort={setReasoningEffort}
+            onChangeVoiceId={setVoiceId}
             onSave={handleSave}
             onReset={handleReset}
             liveModelsCache={liveModelsCache}
@@ -2113,6 +2127,10 @@ function SettingsTab(props: {
   selectedKey: LlmKeyUiRow | null;
   model: string;
   reasoningEffort: string;
+  /** Empty string = Silent. The provider is implied: only Google carries a
+   *  voice catalogue in this build, and the save path names it explicitly. */
+  voiceId: string;
+  voiceOptions: Array<{ id: string; label: string; description?: string }>;
   noLlmKeys: boolean;
   workspaces: AgentWorkspaceRow[];
   workspacesLoaded: boolean;
@@ -2132,6 +2150,7 @@ function SettingsTab(props: {
   onChangeLlmKey: (id: string) => void;
   onChangeModel: (v: string) => void;
   onChangeReasoningEffort: (v: string) => void;
+  onChangeVoiceId: (v: string) => void;
   onSave: () => void;
   onReset: () => void;
   liveModelsCache: Record<string, string[]>;
@@ -2153,6 +2172,8 @@ function SettingsTab(props: {
     selectedKey,
     model,
     reasoningEffort,
+    voiceId,
+    voiceOptions,
     noLlmKeys,
     workspaces,
     workspacesLoaded,
@@ -2172,6 +2193,7 @@ function SettingsTab(props: {
     onChangeLlmKey,
     onChangeModel,
     onChangeReasoningEffort,
+    onChangeVoiceId,
     onSave,
     onReset,
     liveModelsCache,
@@ -2518,7 +2540,10 @@ function SettingsTab(props: {
             )}
           </Field>
           {reasoningOptions.length > 0 && (
-            <Field label="Reasoning">
+            <Field
+              label="Reasoning"
+              hint="How hard this model thinks before answering. Auto keeps the provider default."
+            >
               <Select
                 value={reasoningOptions.includes(reasoningEffort) ? reasoningEffort : ''}
                 onChange={(e) => onChangeReasoningEffort(e.target.value)}
@@ -2531,11 +2556,28 @@ function SettingsTab(props: {
                   </option>
                 ))}
               </Select>
-              <p className="mt-1.5 text-body-13 text-ink-4">
-                How hard this model thinks before answering. Auto keeps the provider default.
-              </p>
             </Field>
           )}
+          <Field
+            label="Voice"
+            hint="Read replies aloud in the chat. Needs a Google key; speaking is billed per reply."
+          >
+            <Select
+              value={voiceId}
+              onChange={(e) => onChangeVoiceId(e.target.value)}
+              className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+            >
+              {/* Silent is first AND the default: choosing a voice is a
+                  deliberate act. A default here would give every existing agent
+                  a voice on upgrade, and bill the synthesis of every reply. */}
+              <option value="">Silent</option>
+              {voiceOptions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.description ? `${v.label} — ${v.description}` : v.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
         {!noLlmKeys && (
           <div className="mt-3">
@@ -2882,11 +2924,43 @@ function SettingsTab(props: {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * A labelled row on the agent form.
+ *
+ * The `<label>` WRAPS its control instead of sitting beside it. It sat beside
+ * it until 2026-08-11, with no `htmlFor` — so not one field on this page had an
+ * accessible name: eleven selects, inputs and textareas that a screen reader
+ * announced as "combo box", "edit text", with no clue which. Wrapping is the
+ * fix that needs no ids at all: HTML associates a label with the first
+ * labelable element among its descendants.
+ *
+ * That rule is also its limit. Four of these Fields hold a GROUP (a list of
+ * peer agents, a fallback chain) rather than a single control, and there the
+ * name lands on the group's first control. Still a strict improvement on
+ * nothing, and the honest fix for those is a `<fieldset>`/`<legend>` — a
+ * separate change, noted rather than smuggled in here.
+ */
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  /** Explanatory line under the control. A separate prop, NOT part of
+   *  `children`, because the label wraps children: a hint left inside would be
+   *  read as part of the field's NAME. Measured — the reasoning select
+   *  announced itself as "Reasoning How hard this model thinks before
+   *  answering. Auto keeps the provider default." */
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-mono-11 uppercase tracking-[0.1em] text-ink-4">{label}</label>
-      <div>{children}</div>
+      <label className="flex flex-col gap-1.5">
+        <span className="text-mono-11 uppercase tracking-[0.1em] text-ink-4">{label}</span>
+        <div>{children}</div>
+      </label>
+      {hint && <p className="text-body-13 text-ink-4">{hint}</p>}
     </div>
   );
 }

@@ -79,14 +79,28 @@ const GOOGLE_VOICES: readonly Voice[] = [
 
 const VOICE_IDS = new Set(GOOGLE_VOICES.map((v) => v.id));
 
-/** Media types Gemini documents as acceptable audio input. `audio/webm` is
- *  absent from that list — which matters, because it is exactly what a Chrome
- *  MediaRecorder produces by default. A client intersects with this and picks
- *  `audio/ogg` instead, rather than discovering the rejection at send time. */
+/**
+ * Media types this adapter will send. A client intersects its own recording
+ * support with this list and picks one, instead of discovering a rejection
+ * after the user has already spoken.
+ *
+ * `audio/webm` is here on MEASUREMENT, not on documentation: Google's page does
+ * not list it, and it matters enormously because it is the only container a
+ * Chrome MediaRecorder produces. Probed on 2026-08-11 with a real Opus-in-WebM
+ * file — HTTP 200, transcription exact, same as ogg and mp4. Taking the doc at
+ * its word would have cost the client a WAV re-encode in the browser and five
+ * times the upload for every turn.
+ *
+ * It is also the one entry that could disappear without warning, being
+ * undocumented. That is survivable precisely because this list is the single
+ * place it is stated: a client that reads `capabilities.accepts` falls back to
+ * a documented container on its own the day it stops being offered.
+ */
 const ACCEPTED_INPUT: readonly AudioMimeType[] = [
+  'audio/webm',
+  'audio/ogg',
   'audio/wav',
   'audio/mpeg',
-  'audio/ogg',
   'audio/flac',
   'audio/mp4',
 ];
