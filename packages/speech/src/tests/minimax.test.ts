@@ -217,8 +217,9 @@ describe('minimax — voice catalogue', () => {
             JSON.stringify({
               base_resp: { status_code: 0 },
               system_voice: [
-                { voice_id: 'French_CasualMan', voice_name: 'Casual Man' },
                 { voice_id: 'Wise_Woman', voice_name: 'Wise Woman' },
+                { voice_id: 'English_Trustworth_Man', voice_name: 'Trustworthy Man' },
+                { voice_id: 'French_CasualMan', voice_name: 'Casual Man' },
               ],
             }),
             { status: 200 },
@@ -226,9 +227,21 @@ describe('minimax — voice catalogue', () => {
       ),
     );
     const voices = await minimaxSpeechAdapter.listVoices('k');
+    // Order matters as much as content. The real catalogue is 332 entries with
+    // six French ones scattered through it, and on the first live run the user
+    // picked an ENGLISH voice to read French — the language was nowhere on
+    // screen. Grouped by language, and the language carried in `description`
+    // so every picker shows it without knowing anything about MiniMax.
     expect(voices).toEqual([
-      { id: 'French_CasualMan', label: 'Casual Man', languages: ['fr'] },
-      // "Wise" is not a language: no tag is better than a wrong one.
+      {
+        id: 'English_Trustworth_Man',
+        label: 'Trustworthy Man',
+        languages: ['en'],
+        description: 'English',
+      },
+      { id: 'French_CasualMan', label: 'Casual Man', languages: ['fr'], description: 'French' },
+      // "Wise" is not a language: no tag is better than a wrong one, and an
+      // untagged voice sorts last rather than being dropped.
       { id: 'Wise_Woman', label: 'Wise Woman', languages: [] },
     ]);
   });

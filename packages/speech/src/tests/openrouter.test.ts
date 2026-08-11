@@ -65,10 +65,15 @@ describe('openrouter — the request it builds', () => {
     }
   });
 
-  it('defaults to voxtral — fastest and steadiest of the three measured routes', async () => {
+  it('defaults to the model that is RIGHT on questions, not the fastest', async () => {
+    // voxtral was the default for exactly one bench, chosen on a declarative
+    // paragraph where it scored 4/4 at 1378 ms. Re-run on short French
+    // questions — the only thing anyone says to a voice assistant — it scored
+    // 0/6: it answered "Quelle heure est-il à Tokyo ?" in English with an
+    // invented time. gemini-2.5-flash is 600 ms slower and 6/6.
     const fn = mockReply('ok');
     await adapter.transcribe({ audio, mimeType: 'audio/wav' }, 'k');
-    expect(sentBody(fn).model).toBe('mistralai/voxtral-small-24b-2507');
+    expect(sentBody(fn).model).toBe('google/gemini-2.5-flash');
   });
 
   it('uses the model it is given, so the choice can live in the UI', async () => {
@@ -91,13 +96,26 @@ describe('openrouter — the request it builds', () => {
     expect(text).toMatch(/verbatim/i);
     expect(text).toMatch(/never answer, translate or summarise/i);
     expect(text).toMatch(/even when the audio is a question/i);
+    // The clause that cost a whole live session: without it, French speech came
+    // back as English because the caller was passing the browser's UI locale as
+    // the spoken language. Naming the output language RELATIVE to the speech is
+    // what makes a wrong hint harmless.
+    expect(text).toMatch(/same language as the speech itself/i);
   });
 
-  it('passes the language hint through', async () => {
-    const fn = mockReply('ok');
-    await adapter.transcribe({ audio, mimeType: 'audio/wav', language: 'fr-FR' }, 'k');
-    const text = sentBody(fn).messages[0]!.content.find((c) => c.type === 'text')!.text!;
-    expect(text).toContain('fr-FR');
+  it('never claims a language, even when the caller insists on one', async () => {
+    // The hint is not a clue to these models, it is an order. Measured on
+    // French speech: no hint → French; "the audio is in de-DE" → a whole German
+    // sentence nobody said. So it is dropped in the adapter, not merely omitted
+    // by today's client — that is what stops the next caller reintroducing it.
+    for (const language of ['fr-FR', 'en-US', 'de-DE']) {
+      const fn = mockReply('ok');
+      await adapter.transcribe({ audio, mimeType: 'audio/wav', language }, 'k');
+      const text = sentBody(fn).messages[0]!.content.find((c) => c.type === 'text')!.text!;
+      expect(text, language).not.toContain(language);
+      expect(text, language).not.toMatch(/The audio is in/i);
+      vi.unstubAllGlobals();
+    }
   });
 
   it('carries the key in the header, never in the URL', async () => {

@@ -231,6 +231,85 @@ test.describe('Voice — picking a voice and hearing an agent', () => {
     }
   });
 
+  test('French in, French out — the whole chain, no fixture', async ({ page, request }) => {
+    // The regression that shipped. For a whole live session the user spoke
+    // French and the agent answered in English, and it was not the agent: the
+    // client sent `navigator.language` as the SPOKEN language, so the prompt
+    // read "the audio is in en-US" over French speech and the model obliged.
+    // "Est-ce que tu m'entends ?" was stored as "Can you hear me?".
+    //
+    // Proven by round trip rather than by a committed audio file: the app
+    // speaks the sentence and then listens to itself, so the test exercises
+    // BOTH routes and needs no binary in the repo.
+    test.setTimeout(180_000);
+    await page.goto('/agents');
+    const editLink = page.locator('a[href*="/agents/"][href$="/edit"]').first();
+    await expect(editLink).toBeVisible({ timeout: 10_000 });
+    const href = await editLink.getAttribute('href');
+    const agentId = href!.split('/')[2]!;
+
+    await page.goto(href!);
+    const voice = await openVoiceField(page);
+    const originalValue = await voice.inputValue();
+
+    // A FRENCH voice, or the sentence comes out with an accent thick enough to
+    // make the transcription a test of the speaker rather than of the chain.
+    const french = voice.locator('option[value*=":French"]').first();
+    if ((await french.count()) === 0) {
+      test.skip(true, 'no French voice available on this install');
+      return;
+    }
+    const frenchValue = (await french.getAttribute('value'))!;
+
+    const PHRASE = 'Est-ce que tu m’entends ?';
+    try {
+      if (originalValue !== frenchValue) {
+        await voice.selectOption(frenchValue);
+        await saveAgent(page);
+      }
+
+      const spoken = await request.post('/api/voice/speak', {
+        data: { agentId, text: PHRASE, language: 'fr-FR' },
+        timeout: 120_000,
+      });
+      expect(spoken.status(), await spoken.text().catch(() => '')).toBe(200);
+      const audio = await spoken.body();
+      expect(audio.length).toBeGreaterThan(2_000);
+
+      const heard = await request.post('/api/voice/transcribe', {
+        headers: {
+          // The container the speak route just produced — asked for, not assumed.
+          'content-type': spoken.headers()['content-type']!,
+          // Deliberately WRONG, and that is the point. The original bug was a
+          // caller passing a language it had no business claiming; the chain
+          // must now be immune to it rather than merely un-triggered by
+          // today's client. Sending the right one would prove nothing.
+          'x-nodal-language': 'en-US',
+        },
+        data: audio,
+        timeout: 120_000,
+      });
+      expect(heard.status(), await heard.text().catch(() => '')).toBe(200);
+      const { text } = (await heard.json()) as { text: string };
+
+      // The assertion that would have caught the bug on day one: the words come
+      // back in the language they were said in.
+      expect(text, `transcribed as "${text}" — the chain translated`).toMatch(
+        /est-ce que tu m['’]entends/i,
+      );
+      expect(text, 'the chain answered instead of transcribing').not.toMatch(
+        /can you hear|i can hear|oui, je t/i,
+      );
+    } finally {
+      await page.goto(href!);
+      const back = await openVoiceField(page);
+      if ((await back.inputValue()) !== originalValue) {
+        await back.selectOption(originalValue);
+        await saveAgent(page);
+      }
+    }
+  });
+
   test('the chat composer offers the microphone', async ({ page }) => {
     await page.goto('/chat');
     // Over http://localhost the origin is secure, so the control is live. Over

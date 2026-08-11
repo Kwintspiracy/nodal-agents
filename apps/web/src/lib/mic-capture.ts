@@ -21,8 +21,20 @@
 /** A turn longer than this is a forgotten microphone, not a sentence. */
 const MAX_RECORDING_MS = 120_000;
 
-/** Silence after which the turn is considered finished. */
-const SILENCE_MS = 900;
+/**
+ * Silence after which the turn is considered finished.
+ *
+ * Pure felt latency: it is counted AFTER the last word, before anything else
+ * starts, so it is added to every single turn. 900 ms was picked without
+ * evidence and sits at the slow end of what conversational systems use;
+ * 700 leaves an ordinary mid-sentence pause intact while giving back a fifth of
+ * a second on every exchange.
+ *
+ * This is the number to move if turns get cut off mid-sentence — raise it — or
+ * if the wait after speaking still feels long — lower it. Below roughly 500 ms
+ * a natural pause before a subordinate clause starts ending turns early.
+ */
+const SILENCE_MS = 700;
 
 /**
  * How much ACTUAL speech a turn needs before it counts as one.

@@ -34,8 +34,27 @@ import type {
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
-/** Fastest and steadiest of the three routes measured above. */
-const DEFAULT_MODEL = 'mistralai/voxtral-small-24b-2507';
+/**
+ * Chosen on the case that actually occurs, after a first choice that was made on
+ * the case that was easy to test.
+ *
+ * The first bench used a declarative PARAGRAPH and voxtral scored 4/4 at
+ * 1378 ms, so it shipped. In a voice mode nearly every utterance is a QUESTION,
+ * and re-run on short French questions — six passes, 2026-08-12 — the table
+ * reversed completely:
+ *
+ *   OR voxtral-small        median  940 ms   exact 0/6
+ *   OR gemini-2.5-flash     median 1491 ms   exact 6/6
+ *   OR gemini-2.5-flash-lite median 1460 ms  exact 0/6   (drops words)
+ *   google direct 2.5-flash median 2931 ms   exact 3/6   (drops "à Tokyo")
+ *
+ * Voxtral is not merely imprecise there: asked to transcribe "Quelle heure
+ * est-il à Tokyo ?" it ANSWERED, in English, with an invented time — Voxtral
+ * Small is a conversational audio model, not a recogniser, and no wording of
+ * the instruction below held it. 600 ms slower and right every time beats
+ * fastest and wrong.
+ */
+const DEFAULT_MODEL = 'google/gemini-2.5-flash';
 
 /**
  * Containers this adapter will send.
@@ -82,7 +101,14 @@ const FORMAT_BY_MIME: Readonly<Record<string, string>> = {
 const TRANSCRIBE_INSTRUCTION =
   'Transcribe this audio verbatim. Output only the transcription, with no ' +
   'preamble, no quotation marks and no commentary. Never answer, translate or ' +
-  'summarise what is said, even when the audio is a question addressed to you.';
+  'summarise what is said, even when the audio is a question addressed to you. ' +
+  // The last sentence names the OUTPUT language relative to the speech instead
+  // of naming an input language nobody knows. Without it, French in came back
+  // as English out on a live install for a whole session: the caller was
+  // passing the BROWSER's UI locale as `language`, so the prompt read "the
+  // audio is in en-US" over French speech and the model obliged.
+  'Write the transcription in the same language as the speech itself, never in ' +
+  'any other language.';
 
 interface ChatResponse {
   choices?: { message?: { content?: unknown } }[];
@@ -107,9 +133,27 @@ export const openrouterTranscriptionAdapter: TranscriptionAdapter = {
       );
     }
 
-    const prompt = req.language
-      ? `${TRANSCRIBE_INSTRUCTION} The audio is in ${req.language}.`
-      : TRANSCRIBE_INSTRUCTION;
+    // `req.language` is DELIBERATELY not put into the prompt, and this is the
+    // most important line in the file.
+    //
+    // These models do not read a language hint as "here is a clue about the
+    // speaker"; they read it as "produce this language". Measured 2026-08-12 on
+    // French speech, three passes each: no hint → French 3/3; "the audio is in
+    // en-US" → English; "the audio is in de-DE" → German, an entire sentence
+    // invented in a language nobody spoke. Strengthening the instruction did
+    // not hold it, which is why this is a code decision and not a wording one.
+    //
+    // The bug this prevents ran for a whole live session: the browser client
+    // passed `navigator.language` — the language of the browser's INTERFACE,
+    // not of the person speaking — so every French turn was stored, and
+    // answered, in English. The client no longer sends it; ignoring it here as
+    // well is what makes it impossible for the next caller to do it again.
+    //
+    // Not a silent fallback (invariant #4): nothing is being guessed. A claim
+    // that measurably corrupts the output is refused, and the model detects the
+    // spoken language on its own — which is the accurate answer, not a
+    // degraded one.
+    const prompt = TRANSCRIBE_INSTRUCTION;
 
     const t0 = Date.now();
     let res: Response;

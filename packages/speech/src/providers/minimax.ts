@@ -265,20 +265,36 @@ export const minimaxSpeechAdapter: SpeechAdapter = {
       );
     }
 
-    return (json.system_voice ?? [])
-      .filter((v): v is { voice_id: string; voice_name?: string } => typeof v.voice_id === 'string')
-      .map((v) => {
-        // The vendor encodes the language in the id ("French_CasualMan"), never
-        // in a field. Surfacing it lets a picker group by language without a
-        // second call; guessing beyond that prefix would be inventing data.
-        const prefix = v.voice_id.split('_')[0] ?? '';
-        const tag = Object.entries(LANGUAGE_BOOST).find(([, name]) => name === prefix)?.[0];
-        return {
-          id: v.voice_id,
-          label: v.voice_name ?? v.voice_id,
-          languages: tag ? [tag] : [],
-        };
-      });
+    return (
+      (json.system_voice ?? [])
+        .filter(
+          (v): v is { voice_id: string; voice_name?: string } => typeof v.voice_id === 'string',
+        )
+        .map((v) => {
+          // The vendor encodes the language in the id ("French_CasualMan"),
+          // never in a field. Surfacing it is not cosmetic: this catalogue is
+          // 332 entries long, the six French ones are scattered through it, and
+          // a user picking by name alone lands on an English voice reading
+          // French — which is exactly what happened on the first live run.
+          const prefix = v.voice_id.split('_')[0] ?? '';
+          const tag = Object.entries(LANGUAGE_BOOST).find(([, name]) => name === prefix)?.[0];
+          return {
+            id: v.voice_id,
+            label: v.voice_name ?? v.voice_id,
+            languages: tag ? [tag] : [],
+            // Shown beside the name by every picker, so the language is read
+            // before the choice is made rather than heard after it.
+            ...(tag ? { description: prefix } : {}),
+          };
+        })
+        // Grouped by language, then by name. A flat vendor-ordered list buries
+        // the handful of voices anyone can actually use.
+        .sort(
+          (a, b) =>
+            (a.languages[0] ?? '￿').localeCompare(b.languages[0] ?? '￿') ||
+            a.label.localeCompare(b.label),
+        )
+    );
   },
 
   async synthesize(req: SynthesizeRequest, apiKey: string): Promise<SynthesizeResult> {

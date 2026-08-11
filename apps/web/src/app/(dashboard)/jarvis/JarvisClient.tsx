@@ -40,6 +40,14 @@ type Phase = 'idle' | 'listening' | 'thinking' | 'speaking';
 /** How long to wait for the runner to write a reply before giving up. */
 const REPLY_DEADLINE_MS = 60_000;
 
+/** Gap between checks while the answer is plausibly imminent. The query is a
+ *  local read; the wasted silence it removes is worth far more than it costs. */
+const POLL_FAST_MS = 200;
+
+/** How long to keep checking at that rate. Past this the agent is doing real
+ *  work — running tools, thinking — and hammering the DB buys nothing. */
+const POLL_FAST_WINDOW_MS = 15_000;
+
 interface Props {
   agentId: string | null;
   agentName: string | null;
@@ -151,7 +159,13 @@ export default function JarvisClient({ agentId, agentName, hasVoice, voiceStream
       try {
         const res = await fetch('/api/voice/transcribe', {
           method: 'POST',
-          headers: { 'content-type': 'audio/wav', 'x-nodal-language': navigator.language },
+          // NO language header. `navigator.language` is the language of the
+          // browser's INTERFACE, not of the person speaking, and sending it
+          // told the transcriber "this audio is in en-US" over French speech —
+          // which it faithfully obeyed, translating every French turn into
+          // English for a whole session. The model detects the spoken language
+          // perfectly well; the instruction forbids changing it.
+          headers: { 'content-type': 'audio/wav' },
           body: wav as unknown as BodyInit,
         });
         if (!res.ok) {
@@ -211,11 +225,20 @@ export default function JarvisClient({ agentId, agentName, hasVoice, voiceStream
       // waiting to be answered. Fast at first, then backing off so a long think
       // does not hammer the DB.
       let reply = '';
-      const deadline = Date.now() + REPLY_DEADLINE_MS;
-      let wait = 250;
+      const startedWaiting = Date.now();
+      const deadline = startedWaiting + REPLY_DEADLINE_MS;
+      let wait = POLL_FAST_MS;
       while (!reply && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, wait));
-        wait = Math.min(wait * 1.4, 2_000);
+        // Backing off from 250 ms by 1.4× reached a 1.9 s gap by the sixth
+        // poll, so a reply that landed at 4.3 s was not noticed until 6.0 s —
+        // nearly two seconds of silence with the answer already written. A
+        // fixed short interval costs a few cheap local queries and removes it;
+        // the backoff only starts once waiting has become genuinely long.
+        wait =
+          Date.now() - startedWaiting < POLL_FAST_WINDOW_MS
+            ? POLL_FAST_MS
+            : Math.min(wait * 1.4, 2_000);
         if (!liveRef.current) return;
         const thread = await listChatAction(convId);
         if (!thread.ok) continue;
