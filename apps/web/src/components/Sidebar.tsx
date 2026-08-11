@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   House,
   ChatCircle,
+  Microphone,
   Graph,
   Sparkle,
   UsersThree,
@@ -66,6 +67,9 @@ const NAV: Group[] = [
     section: 'Overview',
     items: [
       { href: '/', label: 'Home', icon: House },
+      // Above Chat on purpose: it is a different way to work, not a variant of
+      // the chat window. Reaching it through Chat would have said the opposite.
+      { href: '/jarvis', label: 'Voice', icon: Microphone },
       { href: '/chat', label: 'Chat', icon: ChatCircle },
       { href: '/jobs', label: 'Runs', icon: Graph },
       { href: '/llm-providers', label: 'LLM Providers', icon: Sparkle },

@@ -10,15 +10,56 @@
  * stopping the first is the only behaviour that sounds like a conversation.
  */
 
-let current: HTMLAudioElement | null = null;
+/**
+ * ONE element, reused for every reply.
+ *
+ * This is what makes hands-free playback possible at all. Browsers refuse a
+ * `play()` that is not connected to a user gesture — and a reply arrives
+ * several seconds after the click that asked for it, so a freshly created
+ * element is always refused. An element that was played ONCE during a real
+ * gesture stays playable afterwards, so `unlockAudio()` primes this one on the
+ * click and every later reply reuses it.
+ *
+ * Without that, the voice mode degrades to "click the speaker to hear the
+ * answer you have already finished reading" — which is not a voice mode.
+ */
+let player: HTMLAudioElement | null = null;
 let currentUrl: string | null = null;
+let unlocked = false;
+
+/** A one-sample silent WAV. Playing it costs nothing and is inaudible. */
+const SILENCE =
+  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
+/**
+ * Call this SYNCHRONOUSLY from a click handler, before any await.
+ *
+ * Safe to call repeatedly; only the first call does anything.
+ */
+export function unlockAudio(): void {
+  if (unlocked) return;
+  const a = new Audio(SILENCE);
+  a.volume = 0;
+  void a
+    .play()
+    .then(() => {
+      unlocked = true;
+      player = a;
+    })
+    .catch(() => {
+      // Refused even during a gesture (rare — an OS-level mute, a policy).
+      // Playback will fall back to the on-demand control.
+    });
+}
 
 /** Stop whatever is speaking and release its blob. */
 export function stopSpeaking(): void {
-  if (current) {
-    current.pause();
-    current.src = '';
-    current = null;
+  if (player) {
+    player.pause();
+    // The element is KEPT — throwing it away would throw away its unlocked
+    // state with it, and the next reply would be refused again.
+    player.removeAttribute('src');
+    player.load();
   }
   if (currentUrl) {
     // Not revoking leaks the decoded audio for the life of the tab — a few
@@ -42,7 +83,13 @@ export type SpeakOutcome =
  * Returns rather than throws: every caller here has a sensible fallback, and a
  * reply that could not be spoken must never lose the reply.
  */
-export async function speakReply(agentId: string, text: string): Promise<SpeakOutcome> {
+export async function speakReply(
+  agentId: string,
+  text: string,
+  /** Fired when the audio finishes. The hands-free loop uses it to listen
+   *  again — the agent stops talking, the microphone opens. */
+  onEnded?: () => void,
+): Promise<SpeakOutcome> {
   stopSpeaking();
 
   let res: Response;
@@ -65,10 +112,12 @@ export async function speakReply(agentId: string, text: string): Promise<SpeakOu
   const latencyMs = Number(res.headers.get('x-nodal-latency-ms') ?? '0');
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  current = audio;
+  const audio = player ?? new Audio();
+  player = audio;
+  audio.volume = 1;
+  audio.src = url;
   currentUrl = url;
-  audio.addEventListener('ended', stopSpeaking, { once: true });
+  if (onEnded) audio.addEventListener('ended', onEnded, { once: true });
 
   try {
     await audio.play();
