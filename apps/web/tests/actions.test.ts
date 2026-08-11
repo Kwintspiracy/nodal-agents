@@ -4361,6 +4361,7 @@ describe('listConversationsAction', () => {
     currentDb = makeDbSeq([
       [{ rootAgentId: rootId }], // entity lookup
       [{ name: 'Conciergus' }], // root agent name
+      [{ voiceId: null }], // root agent's voice — none
       [
         { id: 'c1', title: 'Q2 board deck', updatedAt: new Date() },
         { id: 'c2', title: 'Weekend backlog', updatedAt: new Date() },
@@ -4380,7 +4381,29 @@ describe('listConversationsAction', () => {
       expect(r.data.conversations).toHaveLength(2);
       expect(r.data.conversations[0]!.title).toBe('Q2 board deck');
       expect(r.data.conversations[0]!.preview).toBe('Compiled the revenue + burn tables.');
+      // No voice on the ROOT agent ⇒ the chat's microphone is dictation.
+      expect(r.data.rootHasVoice).toBe(false);
     }
+  });
+
+  it('reports rootHasVoice when the ROOT agent has one', async () => {
+    // This boolean decides what the chat's microphone IS: with a voice, a
+    // spoken turn is sent and the reply is read back; without one it fills the
+    // composer and waits. Getting it wrong silently turns the feature into the
+    // other one.
+    const rootId = 'aaaaaaaa-0000-0000-0000-000000000311';
+    currentDb = makeDbSeq([
+      [{ rootAgentId: rootId }],
+      [{ name: 'Conciergus' }],
+      [{ voiceId: 'Kore' }],
+      [{ id: 'c1', title: 'Q2 board deck', updatedAt: new Date() }],
+      [{ conversationId: 'c1', content: 'Done.' }],
+    ]) as typeof currentDb;
+
+    const { listConversationsAction } = await import('../src/lib/actions.ts');
+    const r = await listConversationsAction();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.rootHasVoice).toBe(true);
   });
 });
 
