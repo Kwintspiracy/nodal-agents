@@ -4,7 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Microphone, Stop, CircleNotch, SpeakerHigh, Warning } from '@phosphor-icons/react';
 import { createConversationAction, sendChatMessageAction, listChatAction } from '@/lib/actions.ts';
-import { speakReply, stopSpeaking, unlockAudio } from '@/lib/speak-reply.ts';
+import {
+  speakReply,
+  splitForSpeech,
+  stopSpeaking,
+  unlockAudio,
+  waitForPlaybackEnd,
+  type SpeakOutcome,
+} from '@/lib/speak-reply.ts';
 import IconButton from '@/components/ui/IconButton';
 
 /**
@@ -37,11 +44,29 @@ const PREFERRED_TYPES = [
 /** A turn longer than this is a forgotten microphone, not a sentence. */
 const MAX_RECORDING_MS = 120_000;
 
-/** Silence after which we consider the turn finished, in milliseconds. */
-const SILENCE_MS = 1_500;
-/** Below this RMS the microphone is considered quiet. Empirical: room noise on
- *  a laptop sits well under 0.01, speech peaks an order of magnitude above. */
-const SILENCE_THRESHOLD = 0.012;
+/** Silence after which the turn is considered finished. */
+const SILENCE_MS = 900;
+/**
+ * How much ACTUAL speech a turn needs before it counts as one.
+ *
+ * A fixed threshold was the bug behind the loop re-firing on its own: room
+ * noise crosses any absolute floor on some machines, so the recorder decided
+ * something had been said, waited out the silence, and sent a few hundred
+ * milliseconds of hum to be transcribed. Requiring sustained voiced frames —
+ * not one spike — is what separates a sentence from a fan.
+ */
+const MIN_SPEECH_MS = 400;
+/** Voiced frames must beat the measured room floor by this factor. Relative,
+ *  because "quiet" on a laptop in a café and in an office are different
+ *  numbers, and an absolute one is wrong in both. */
+const SPEECH_OVER_FLOOR = 3.5;
+/** Absolute floor under which nothing is ever treated as speech, whatever the
+ *  room measured — protects against a calibration taken during a silence so
+ *  perfect that 3.5× it is still nothing. */
+const MIN_ABSOLUTE_RMS = 0.008;
+/** The first moments of a recording are spent measuring the room, not judging
+ *  it. */
+const CALIBRATION_MS = 350;
 
 interface Props {
   agentId: string | null;
@@ -109,6 +134,23 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
 
   useEffect(() => stopEverything, [stopEverything]);
 
+  /** Say why there is no sound. A mode whose entire purpose is sound must
+   *  never fall silent without a reason on screen. */
+  const outcomeFailure = useCallback(
+    (outcome: SpeakOutcome) => {
+      if (outcome.ok) return;
+      toast.error(
+        outcome.reason === 'autoplay_blocked'
+          ? 'The browser blocked playback.'
+          : outcome.reason === 'no_voice'
+            ? 'This agent has no voice.'
+            : outcome.message,
+      );
+      stopEverything();
+    },
+    [stopEverything],
+  );
+
   // ── One turn: record until silence, transcribe, answer, speak, repeat ──────
   const listen = useCallback(async () => {
     const mimeType = pickMimeType();
@@ -164,25 +206,41 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
     analyser.fftSize = 2048;
     source.connect(analyser);
     const buf = new Float32Array(analyser.fftSize);
+    const startedAt = performance.now();
+    let floor = 0;
+    let floorSamples = 0;
     let quietSince: number | null = null;
-    let spokeAtAll = false;
+    let speechMs = 0;
+    let lastFrame = startedAt;
 
     const tick = (): void => {
+      const now = performance.now();
+      const dt = now - lastFrame;
+      lastFrame = now;
+
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
       for (const v of buf) sum += v * v;
       const rms = Math.sqrt(sum / buf.length);
 
-      if (rms > SILENCE_THRESHOLD) {
-        spokeAtAll = true;
-        quietSince = null;
-      } else if (spokeAtAll) {
-        // Only start counting silence AFTER something was said — otherwise the
-        // pause before you begin ends the turn immediately.
-        quietSince ??= performance.now();
-        if (performance.now() - quietSince > SILENCE_MS) {
-          if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-          return;
+      // Measure the room first, judge afterwards.
+      if (now - startedAt < CALIBRATION_MS) {
+        floor = (floor * floorSamples + rms) / (floorSamples + 1);
+        floorSamples += 1;
+      } else {
+        const threshold = Math.max(floor * SPEECH_OVER_FLOOR, MIN_ABSOLUTE_RMS);
+        if (rms > threshold) {
+          speechMs += dt;
+          quietSince = null;
+        } else if (speechMs >= MIN_SPEECH_MS) {
+          // The silence timer only runs once REAL speech has accumulated — the
+          // pause before you begin must not end the turn, and neither must a
+          // room that happens to be noisy.
+          quietSince ??= now;
+          if (now - quietSince > SILENCE_MS) {
+            if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+            return;
+          }
         }
       }
       if (analyserRef.current) analyserRef.current.raf = requestAnimationFrame(tick);
@@ -230,6 +288,19 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
         stopEverything();
         return;
       }
+
+      // A second net, after the recorder's. Room noise that slipped through
+      // still comes back as something — an empty string, a stray "hm", or the
+      // transcriber's polite note that it heard nothing. Sending that to the
+      // agent is what made the loop answer questions nobody asked. Listening
+      // again is the right response to "nothing was said": going idle would
+      // make a cough end the conversation.
+      const meaningful = text.trim().replace(/^[\s"'“”.,!?…-]+|[\s"'“”.,!?…-]+$/g, '');
+      if (meaningful.length < 2) {
+        if (liveRef.current) listenRef.current();
+        else setPhase('idle');
+        return;
+      }
       setHeard(text);
 
       // 2. The agent's answer. Same conversation for the whole session, so the
@@ -252,10 +323,16 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
       }
 
       // The reply is written by the runner, so it is polled for rather than
-      // returned. Same budget as the chat page's poll.
+      // returned. The chat page waits two full seconds before even LOOKING,
+      // which is invisible when you are reading and unbearable when you are
+      // waiting to be answered — a short reply was costing 2 s of pure delay.
+      // Fast at first, then backing off so a long think does not hammer the DB.
       let reply = '';
-      for (let i = 0; i < 30 && !reply; i++) {
-        await new Promise((r) => setTimeout(r, 2000));
+      const deadline = Date.now() + 60_000;
+      let wait = 250;
+      while (!reply && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, wait));
+        wait = Math.min(wait * 1.4, 2_000);
         if (!liveRef.current) return;
         const thread = await listChatAction(convId);
         if (!thread.ok) continue;
@@ -267,31 +344,41 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
         stopEverything();
         return;
       }
-      setSaid(reply);
 
-      // 3. Say it, then listen again the moment it stops.
+      // 3. Say it — sentence by sentence, so sound starts before the whole
+      //    reply has been synthesised. Speaking the entire text as one request
+      //    meant waiting out its full 3.5–4.4 s AFTER the text had already
+      //    appeared: you read the answer, then heard it read back to you.
       if (!agentId) return;
       setPhase('speaking');
-      const outcome = await speakReply(agentId, reply, () => {
-        if (liveRef.current) listenRef.current();
-        else setPhase('idle');
-      });
-      if (outcome.ok) {
-        setLatency(outcome.latencyMs);
-      } else {
-        // Never silently: a mode whose whole purpose is sound must say when
-        // there is none.
-        toast.error(
-          outcome.reason === 'autoplay_blocked'
-            ? 'The browser blocked playback.'
-            : outcome.reason === 'no_voice'
-              ? 'This agent has no voice.'
-              : outcome.message,
-        );
-        stopEverything();
+      const chunks = splitForSpeech(reply);
+      let firstLatency: number | null = null;
+      for (let i = 0; i < chunks.length; i++) {
+        if (!liveRef.current) return;
+        const isLast = i === chunks.length - 1;
+        // The text appears AS it is spoken, never before — the point of this
+        // page is to be answered, not to be given something to read.
+        setSaid(chunks.slice(0, i + 1).join(' '));
+        const spoken = await new Promise<SpeakOutcome>((resolve) => {
+          void speakReply(agentId, chunks[i]!, () => {
+            if (isLast) {
+              if (liveRef.current) listenRef.current();
+              else setPhase('idle');
+            }
+          }).then(resolve);
+        });
+        if (!spoken.ok) {
+          outcomeFailure(spoken);
+          return;
+        }
+        firstLatency ??= spoken.latencyMs;
+        // Wait for this chunk to finish before starting the next, or they talk
+        // over each other — one player, on purpose (see speak-reply.ts).
+        if (!isLast) await waitForPlaybackEnd();
       }
+      setLatency(firstLatency);
     },
-    [agentId, stopEverything],
+    [agentId, outcomeFailure, stopEverything],
   );
 
   useEffect(() => {

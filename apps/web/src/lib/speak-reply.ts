@@ -83,6 +83,48 @@ export type SpeakOutcome =
  * Returns rather than throws: every caller here has a sensible fallback, and a
  * reply that could not be spoken must never lose the reply.
  */
+/**
+ * Cut a reply into speakable chunks, so the FIRST sound arrives sooner.
+ *
+ * Synthesis cost is roughly proportional to length: the whole reply took 3.5–4.4 s
+ * to come back, a first sentence takes a fraction of that. Speaking sentence by
+ * sentence while the next one is being synthesised is the difference between
+ * "wait, then hear everything" and "it starts answering".
+ *
+ * Chunks are merged up to a floor because one-word sentences ("Oui.") cost a
+ * whole round trip each and arrive as stutter.
+ */
+/**
+ * Resolve when whatever is playing has finished (or immediately if nothing is).
+ *
+ * Needed because the reply is spoken in chunks through ONE element: starting
+ * the next chunk before the current one ends would cut it off mid-word.
+ */
+export function waitForPlaybackEnd(): Promise<void> {
+  const el = player;
+  if (!el || el.paused || el.ended) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = (): void => resolve();
+    el.addEventListener('ended', done, { once: true });
+    el.addEventListener('pause', done, { once: true });
+  });
+}
+
+export function splitForSpeech(text: string, minChars = 90): string[] {
+  const pieces = text
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/(?<=[.!?…:])\s+/)
+    .filter((p) => p.trim() !== '');
+  const out: string[] = [];
+  for (const piece of pieces) {
+    const last = out[out.length - 1];
+    if (last !== undefined && last.length < minChars) out[out.length - 1] = `${last} ${piece}`;
+    else out.push(piece);
+  }
+  return out;
+}
+
 export async function speakReply(
   agentId: string,
   text: string,
