@@ -143,6 +143,24 @@ test.describe('Voice — picking a voice and hearing an agent', () => {
     await expect(mic).toBeVisible({ timeout: 15_000 });
   });
 
+  test('the app does not forbid its own microphone', async ({ request }) => {
+    // The bug this pins, found by using the feature: the app shipped
+    // `Permissions-Policy: microphone=()`, which disables the device for the
+    // WHOLE origin. getUserMedia then rejects with NotAllowedError whatever the
+    // user clicks in the prompt — so the voice button reported "microphone
+    // access was refused" and the refusal was ours. Nothing in the browser, the
+    // component or the routes could have revealed it; only a header can.
+    const res = await request.get('/chat');
+    const policy = res.headers()['permissions-policy'] ?? '';
+    expect(policy, 'the dashboard must be allowed to ask for the microphone').toMatch(
+      /microphone=\(\s*self\s*\)/,
+    );
+    // The other two stay fully off — no feature asks for them, and widening
+    // this header by copy-paste is exactly how they would drift open.
+    expect(policy).toContain('camera=()');
+    expect(policy).toContain('geolocation=()');
+  });
+
   test('the synthesis route refuses a foreign origin', async ({ request }) => {
     // Route handlers get no origin check from Next — server actions do. Without
     // the guard, any page in a browser already logged in here could burn the

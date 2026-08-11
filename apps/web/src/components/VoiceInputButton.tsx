@@ -170,10 +170,20 @@ export default function VoiceInputButton({ onTranscript, language, disabled }: P
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
       // A refusal is a decision, not a bug: say what happened, once.
+      // NotAllowedError covers two very different things, and telling them
+      // apart matters: the user clicking "Block", and the PAGE forbidding the
+      // device via Permissions-Policy. The second one shipped for a while and
+      // read exactly like the first — the button said "refused" while the
+      // refusal was the app's own header. The hint sends the reader to the
+      // right place; e2e pins the header so it cannot happen again.
       const name = err instanceof Error ? err.name : '';
-      toast.error(
-        name === 'NotAllowedError' ? 'Microphone access was refused.' : 'No microphone available.',
-      );
+      if (name === 'NotAllowedError') {
+        toast.error('Microphone access was refused — check the site permission in your browser.');
+      } else if (name === 'NotFoundError') {
+        toast.error('No microphone found on this machine.');
+      } else {
+        toast.error('The microphone could not be opened.');
+      }
       return;
     }
 

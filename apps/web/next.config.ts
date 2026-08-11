@@ -135,7 +135,14 @@ const nextConfig: NextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          // `microphone=(self)` — the dashboard's own pages may ask, nothing
+          // embedded may. It read `microphone=()` until 2026-08-11, which
+          // disables the device for the WHOLE origin: `getUserMedia` then
+          // rejects with NotAllowedError no matter what the user clicks in the
+          // permission prompt, so the voice button looked like a browser
+          // refusal and was in fact this line. Camera and geolocation stay
+          // fully off — no feature asks for them.
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=()' },
           { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
         ],
       },
