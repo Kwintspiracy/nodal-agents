@@ -26,7 +26,7 @@
  * whisper.cpp server) are the obvious next entries and are exactly why this is
  * an interface: they plug in without a caller changing.
  */
-export const SPEECH_PROVIDERS = ['google', 'minimax'] as const;
+export const SPEECH_PROVIDERS = ['google', 'minimax', 'openrouter'] as const;
 
 /** Derived from the tuple above, never written twice: a validator needs the
  *  runtime list (zod enums, a form's options) and the compiler needs the type,
@@ -65,6 +65,17 @@ export interface SynthesizeRequest {
   voiceId: string;
   /** BCP-47 hint. Providers that infer language from the text ignore it. */
   language?: string;
+  /**
+   * Vendor model id, when the vendor has more than one worth choosing —
+   * MiniMax ships a fast line and a high-fidelity line, and which one an agent
+   * should use is a judgement about that agent, not a constant of the codebase.
+   *
+   * Optional, and each adapter documents its own default. Left out of the
+   * `SPEECH_PROVIDERS`-style union on purpose: model names move at the vendors'
+   * pace, and a build that cannot name a model released last week is worse than
+   * one that passes an unknown string through and reports the vendor's refusal.
+   */
+  model?: string;
 }
 
 export interface SynthesizeResult {
@@ -88,6 +99,8 @@ export interface TranscribeRequest {
   mimeType: AudioMimeType;
   /** BCP-47 hint; improves accuracy on short utterances for most vendors. */
   language?: string;
+  /** Vendor model id; see `SynthesizeRequest.model`. */
+  model?: string;
 }
 
 export interface TranscribeResult {
@@ -103,6 +116,19 @@ export interface SpeechCapabilities {
   /** Voices can be listed at runtime rather than being a fixed catalogue —
    *  true for vendors with user-cloned voices. */
   dynamicVoices: boolean;
+  /**
+   * The container `synthesizeStream` emits, present ONLY when the adapter
+   * implements it. A caller reads this to set a response content type without
+   * knowing the vendor, and its absence is how it learns to fall back to the
+   * one-shot `synthesize`.
+   *
+   * This is the single most important capability in the file. Measured on
+   * 2026-08-11: waiting for a whole reply costs 4.0 s before any sound; the
+   * first bytes of the same reply arrive in 0.5 s. The perceived difference is
+   * not "a bit quicker", it is the difference between a broken feature and a
+   * conversation.
+   */
+  streamOutput?: AudioMimeType;
 }
 
 export interface TranscriptionCapabilities {
@@ -122,6 +148,19 @@ export interface SpeechAdapter {
    *  dynamic-voice vendor can be added later without changing the signature. */
   listVoices(apiKey: string): Promise<readonly Voice[]>;
   synthesize(req: SynthesizeRequest, apiKey: string): Promise<SynthesizeResult>;
+  /**
+   * Emit the audio as the vendor produces it, in `capabilities.streamOutput`.
+   *
+   * Optional, and the optionality is the point: a vendor that only returns a
+   * finished file (Gemini TTS) genuinely cannot do this, and pretending
+   * otherwise — by yielding the whole buffer as one chunk — would let a caller
+   * believe it has a low time-to-first-sound when it does not. Callers branch
+   * on `streamOutput` instead.
+   *
+   * Yields nothing before the first real audio byte, so the caller can measure
+   * time-to-first-sound simply by timing the first iteration.
+   */
+  synthesizeStream?(req: SynthesizeRequest, apiKey: string): AsyncIterable<Uint8Array>;
 }
 
 /** Audio → text. */

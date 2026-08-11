@@ -128,6 +128,38 @@ export function makeDbClient() {
 }
 
 /**
+ * Delete the agents a spec created, by exact name.
+ *
+ * Every spec that creates an agent through the UI must call this when it is
+ * done. Without it each run leaves a row behind for ever: on 2026-08-11 a
+ * dogfooding install held ELEVEN "E2E Agent e2e-…" rows and a "Test Dogfood
+ * Agent", all with zero conversations — one per replay since the specs were
+ * written. That is not merely untidy. Those rows show up in the agent picker of
+ * every task form, in the sidebar counts, and in the model-usage screens the
+ * user reads to judge their own install, so the test suite was quietly
+ * corrupting the product's own numbers.
+ *
+ * Every table that points at an agent declares `onDelete: 'cascade'`, so one
+ * DELETE takes the jobs, memories, bindings and workspaces with it.
+ *
+ * Deliberately swallows its own failure: cleanup runs in an `afterAll`, and a
+ * cleanup that throws would turn a PASSING spec red and hide the real result.
+ * It reports on stderr instead — the litter is visible in the next run's purge.
+ */
+export async function deleteAgentsNamed(...names: string[]): Promise<void> {
+  if (names.length === 0) return;
+  const { agents, inArray } = await import('@nodal-agents/db');
+  const { db, close } = makeDbClient();
+  try {
+    await db.delete(agents).where(inArray(agents.name, names));
+  } catch (err) {
+    console.error(`e2e cleanup: could not delete ${names.join(', ')} — ${(err as Error).message}`);
+  } finally {
+    await close();
+  }
+}
+
+/**
  * Poll a DB query until the predicate returns a non-null truthy value or the
  * timeout (ms) elapses. Returns the first truthy value.
  */

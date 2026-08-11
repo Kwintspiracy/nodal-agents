@@ -21,3 +21,4 @@ export {
   transcriptionProviders,
 } from './registry.ts';
 export { pcmToWav, sampleRateFromMimeType } from './wav.ts';
+export { isAudioChunk, languageBoostFor } from './providers/minimax.ts';

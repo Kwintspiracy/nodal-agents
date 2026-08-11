@@ -17,7 +17,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { requireLiveStack, testSlugSuffix } from './helpers.ts';
+import { requireLiveStack, testSlugSuffix, deleteAgentsNamed } from './helpers.ts';
 
 test.beforeAll(async () => {
   await requireLiveStack();
@@ -68,11 +68,22 @@ test.describe('dashboard navigation', () => {
 });
 
 test.describe('agent → task → job flow', () => {
+  /** Names this file created, emptied in afterAll. A spec that creates through
+   *  the UI has to clean up through the DB — there is no "delete everything I
+   *  made" button, and the alternative is one permanent row per replay. */
+  const createdAgents: string[] = [];
+  test.afterAll(async () => {
+    await deleteAgentsNamed(...createdAgents);
+  });
+
   test('creates an agent, sends a task, and shows the job in the list', async ({ page }) => {
     await page.goto('/agents');
 
     const slug = testSlugSuffix();
     const agentName = `E2E Agent ${slug}`;
+    // Recorded BEFORE the UI call: if creation half-succeeds — the row lands and
+    // an assertion below fails — the cleanup must still know the name.
+    createdAgents.push(agentName);
 
     // ── Create agent ──────────────────────────────────────────────────────
     // AgentForm is hidden behind "+ New agent" button — click to open modal.
