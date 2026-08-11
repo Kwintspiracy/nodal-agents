@@ -356,9 +356,6 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
       for (let i = 0; i < chunks.length; i++) {
         if (!liveRef.current) return;
         const isLast = i === chunks.length - 1;
-        // The text appears AS it is spoken, never before — the point of this
-        // page is to be answered, not to be given something to read.
-        setSaid(chunks.slice(0, i + 1).join(' '));
         const spoken = await new Promise<SpeakOutcome>((resolve) => {
           void speakReply(agentId, chunks[i]!, () => {
             if (isLast) {
@@ -371,6 +368,12 @@ export default function JarvisClient({ agentId, agentName, hasVoice }: Props) {
           outcomeFailure(spoken);
           return;
         }
+        // AFTER the audio has started, never before. Setting it beforehand —
+        // which is what this did — put the text on screen a full four seconds
+        // ahead of the voice, so the answer was read before it was heard and
+        // the whole point of the page was lost. `speakReply` resolves once
+        // playback has begun, so this line is the right side of that.
+        setSaid(chunks.slice(0, i + 1).join(' '));
         firstLatency ??= spoken.latencyMs;
         // Wait for this chunk to finish before starting the next, or they talk
         // over each other — one player, on purpose (see speak-reply.ts).
