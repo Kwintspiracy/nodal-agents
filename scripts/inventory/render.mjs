@@ -111,7 +111,10 @@ const num = {
   gateDecisions: benchMetric('gate', 'decisions_total'),
   thirdPartyFamilies: benchMetric('trust-boundary', 'third_party_families_covered'),
   harnesses: inv.meta.llmHarnesses,
-  harnessesUndriven: inv.meta.llmHarnesses - 1, // seul `openrouter` a été piloté en vrai
+  // Pilotés en vrai à ce jour : `openrouter` (via GLM) et `google` (conformance
+  // du 10/08, 7 sondes conformes sur 10). `anthropic` a été tenté le même jour
+  // et n'a rien prouvé — la clé n'a plus de crédit.
+  harnessesUndriven: inv.meta.llmHarnesses - 2,
   packDeps: inv.meta.packRuntimeDeps,
   e2eSpecs: inv.meta.e2eSpecs,
 };
@@ -343,7 +346,7 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
     <article class="tier tier--mid">
       <header><span class="dot"></span><h3>Moyennement sûr</h3><span class="tag">testé, avec un angle mort nommé</span></header>
       <ul>
-        <li><b>Les ${num.builtinTools} outils intégrés.</b> ${num.builtinTested} apparaissent dans des tests, ${num.builtinUntested} dans aucun — mais le compte mesure la citation, pas la force de l'assertion.</li>
+        <li><b>Les ${num.builtinTools} outils intégrés.</b> Tous cités par au moins un test depuis le 10 août — mais <b>cité n'est pas éprouvé</b>. Deux seulement (<code>update_agent</code>, <code>toggle_schedule</code>) ont vu leurs gardes cassées exprès pour vérifier que le test vire au rouge. Les ${num.builtinTools - 2} autres passent un test dont personne n'a prouvé qu'il attrape quoi que ce soit.</li>
         <li><b>Les ${num.adapters} adaptateurs.</b> Suites par package avec mocks aux frontières HTTP : le comportement est prouvé, l'intégration réelle ne l'est pas.</li>
         <li><b>Telegram.</b> Prouvé en live une fois — approbation livrée et résolue en 45 secondes. <b>Discord, Slack, WhatsApp : jamais éprouvés en vrai.</b> Ce point-là ne se mesure pas : il repose sur le souvenir des sessions, pas sur le code.</li>
         <li><b>Les ${num.models} modèles.</b> Intégrité vérifiée hors-ligne, dérive vérifiée contre l'API en direct — mais <b>aucun n'a été exécuté</b>. Un identifiant valide n'est pas un modèle qui répond.</li>
@@ -359,7 +362,7 @@ footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--rule);
       <header><span class="dot"></span><h3>Pas sûr du tout</h3><span class="tag">aucun contrôle mécanique</span></header>
       <ul>
         <li><b>Les ${num.e2eSpecs} tests Playwright</b>, dont 8 seulement tournent en CI. Deux des trois parcours du job étaient périmés de deux refontes d'UI — routes supprimées, onglets passés de <code>button</code> à <code>tab</code>. Rien ne dit que les autres aient mieux vieilli : ils n'ont pas été rejoués.</li>
-        <li><b>${num.harnessesUndriven} harnais de fournisseurs sur ${num.harnesses}.</b> Le registre en déclare ${num.harnesses} (<code>CAPABILITY_MATRIX</code>) ; tous sauf un n'ont jamais été pilotés avec leurs propres identifiants natifs. GLM via OpenRouter éprouve le harnais <code>openrouter</code>, pas les autres.</li>
+        <li><b>${num.harnessesUndriven} harnais de fournisseurs sur ${num.harnesses}.</b> Le registre en déclare ${num.harnesses} (<code>CAPABILITY_MATRIX</code>). Deux ont été pilotés avec leurs propres identifiants : <code>openrouter</code> (via GLM) et <code>google</code>, passé au harnais de conformance le 10 août — 7 sondes conformes sur 10, et <b>un vrai défaut trouvé du premier coup</b> : le round-trip d'appel d'outil échoue, l'API Gemini réclamant un <code>thought_signature</code> que le harnais ne lui renvoie pas. Les agents sur Gemini ont donc des appels d'outils dégradés. <code>anthropic</code> a été tenté le même jour et n'a rien prouvé — la clé n'a plus de crédit.</li>
         <li><b>Le plafond de coût.</b> Ne se déclenche que chez les fournisseurs qui rapportent le coût par appel — OpenRouter avec <code>usage:{include:true}</code>. Sur les ${num.harnesses - 1} autres, il ne part jamais et seul le budget de tokens protège.</li>
         <li><b>La survie au terminal.</b> <code>up</code> reste au premier plan : fermer le terminal arrête tout. Les crons du runner existent — planifications, curateur, veille des mises à jour de skills — mais ils meurent avec lui. Ni <code>--detach</code>, ni mode service, ni image Docker.</li>
       </ul>
