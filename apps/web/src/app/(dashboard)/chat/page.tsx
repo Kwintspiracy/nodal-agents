@@ -7,7 +7,9 @@ export const dynamic = 'force-dynamic';
 
 export default async function ChatPage() {
   const res = await listConversationsAction();
-  const data = res.ok ? res.data : { rootAgentId: null, rootName: null, conversations: [] };
+  const data = res.ok
+    ? res.data
+    : { rootAgentId: null, rootName: null, rootHasVoice: false, conversations: [] };
 
   // Chat is a full-height surface, so it wears the shared header directly (the
   // one component every page uses) and keeps a viewport-filling body rather than
@@ -35,7 +37,12 @@ export default async function ChatPage() {
     <>
       <PageHeader title="Chat" subtitle={data.rootName ? `with ${data.rootName}` : undefined} />
       <div className="flex h-[calc(100vh-9rem)] flex-col px-5 pt-4 pb-4 sm:px-8 lg:px-9">
-        <ChatClient initialConversations={data.conversations} rootName={data.rootName} />
+        <ChatClient
+          initialConversations={data.conversations}
+          rootName={data.rootName}
+          rootAgentId={data.rootAgentId}
+          rootHasVoice={data.rootHasVoice}
+        />
       </div>
     </>
   );

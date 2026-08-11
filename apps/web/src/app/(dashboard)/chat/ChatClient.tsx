@@ -9,12 +9,14 @@ import {
   MagnifyingGlass,
   PaperPlaneTilt,
   Paperclip,
+  SpeakerHigh,
   Plus,
   Trash,
   X,
 } from '@phosphor-icons/react';
 import ConfirmDialog from '@/components/ConfirmDialog.tsx';
 import VoiceInputButton from '@/components/VoiceInputButton.tsx';
+import { speakReply, stopSpeaking } from '@/lib/speak-reply.ts';
 import RowActionButton from '@/components/ui/RowActionButton';
 import IconButton from '@/components/ui/IconButton';
 import Drawer from '@/components/ui/Drawer';
@@ -47,11 +49,19 @@ const TERMINAL_JOB = new Set(['completed', 'failed', 'cancelled']);
 interface Props {
   initialConversations: ConversationView[];
   rootName: string | null;
+  rootAgentId: string | null;
+  /** Whether the ROOT agent has a voice — see listConversationsAction. */
+  rootHasVoice: boolean;
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function ChatClient({ initialConversations, rootName }: Props) {
+export default function ChatClient({
+  initialConversations,
+  rootName,
+  rootAgentId,
+  rootHasVoice,
+}: Props) {
   const [conversations, setConversations] = useState<ConversationView[]>(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(initialConversations[0]?.id ?? null);
   const [messages, setMessages] = useState<ChatMessageView[]>([]);
@@ -79,6 +89,10 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
   // window persisted the user message but failed job creation). When the poll
   // exhausts, we switch to an honest "no reply" row with a resend affordance.
   const [replyTimedOut, setReplyTimedOut] = useState(false);
+
+  // Leaving the chat (or switching thread) must not leave a voice talking to
+  // an empty room.
+  useEffect(() => stopSpeaking, []);
 
   const pinToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -213,7 +227,7 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
   }
 
   // ── Send a message ─────────────────────────────────────────────────────────
-  async function sendMessage(message: string) {
+  async function sendMessage(message: string, spokenTurn = false) {
     setSending(true);
     setReplyTimedOut(false);
 
@@ -242,6 +256,25 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
     // Reconcile against the persisted thread (both turns written by runner)
     const refreshed = await listChatAction(convId);
     if (refreshed.ok) setMessages(refreshed.data.messages);
+
+    // ── Read the reply back, when the turn was SPOKEN ──────────────────────
+    // Only then. Typing a message and having the room start talking is a
+    // surprise nobody asked for; speaking one and being answered in silence is
+    // not a conversation. The mode follows how the turn was made, so the same
+    // window serves both without a switch to remember.
+    if (spokenTurn && rootAgentId && refreshed.ok) {
+      const reply = [...refreshed.data.messages].reverse().find((m) => m.role !== 'user');
+      if (reply?.content) {
+        const outcome = await speakReply(rootAgentId, reply.content);
+        if (!outcome.ok && outcome.reason === 'autoplay_blocked') {
+          // Never silent about silence: the reply is on screen, and the reason
+          // it was not read is actionable.
+          toast.info('The browser blocked playback. Use the speaker on the reply.');
+        } else if (!outcome.ok && outcome.reason === 'failed') {
+          toast.error(outcome.message);
+        }
+      }
+    }
 
     // Refresh sidebar for updated title/recency
     await refreshConversations();
@@ -377,7 +410,12 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                   </span>
                 </div>
                 {messages.map((m) => (
-                  <MessageBubble key={m.id} message={m} rootName={rootName} />
+                  <MessageBubble
+                    key={m.id}
+                    message={m}
+                    rootName={rootName}
+                    speakableAgentId={rootHasVoice ? rootAgentId : null}
+                  />
                 ))}
                 {lastIsUser && !replyTimedOut && (
                   <div className="flex gap-3">
@@ -451,9 +489,20 @@ export default function ChatClient({ initialConversations, rootName }: Props) {
                     the button hands back text instead of submitting. */}
                 <VoiceInputButton
                   disabled={sending}
-                  onTranscript={(text) =>
-                    setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
-                  }
+                  language="fr-FR"
+                  onTranscript={(text) => {
+                    // With a voice, speaking IS the conversation: the turn goes
+                    // straight out and the reply comes back spoken. Without
+                    // one, the transcript lands in the composer and waits —
+                    // sending a turn nobody could hear answered would just be
+                    // dictation that presses Enter for you.
+                    if (rootHasVoice) {
+                      setInput('');
+                      void sendMessage(text, true);
+                    } else {
+                      setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+                    }
+                  }}
                 />
                 <span className="pl-1 text-legacy-11 text-ink-3">⌘ ↵ to send</span>
               </div>
@@ -582,9 +631,13 @@ function AgentAvatar({ rootName }: { rootName: string | null }) {
 function MessageBubble({
   message,
   rootName,
+  speakableAgentId,
 }: {
   message: ChatMessageView;
   rootName: string | null;
+  /** The agent whose voice can read this reply, or null when it has none.
+   *  Present ⇒ a speaker appears beside the name. */
+  speakableAgentId: string | null;
 }) {
   if (message.role === 'user') {
     // Only a persisted message has round-tripped through the runner — the
@@ -615,6 +668,9 @@ function MessageBubble({
         <div className="flex items-baseline gap-1.5">
           <span className="text-medium-13 text-ink">{rootName ?? 'Agent'}</span>
           {/* Time slot — no per-message timestamp in the data, so left empty. */}
+          {speakableAgentId && message.content.trim() !== '' && (
+            <ReplaySpeaker agentId={speakableAgentId} text={message.content} />
+          )}
         </div>
         {message.content.trim() !== '' && (
           <p className="mt-0.5 whitespace-pre-wrap text-body-13 leading-[1.6]! text-ink">
@@ -624,6 +680,39 @@ function MessageBubble({
         {message.jobId && <DispatchCard jobId={message.jobId} />}
       </div>
     </div>
+  );
+}
+
+/**
+ * Read one reply aloud, on demand.
+ *
+ * Two jobs at once: hearing a reply again, and the fallback when the browser
+ * refuses to start audio by itself — which it does until the user has
+ * interacted with the origin. Without this control that refusal would be a dead
+ * end, and the reply simply never speaks.
+ */
+function ReplaySpeaker({ agentId, text }: { agentId: string; text: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <IconButton
+      ghost
+      type="button"
+      disabled={busy}
+      aria-label={busy ? 'Speaking' : 'Read this reply aloud'}
+      title="Read aloud"
+      className="!size-6 !rounded-md !text-ink-4 hover:!bg-hover hover:!text-ink-2"
+      onClick={() => {
+        setBusy(true);
+        void speakReply(agentId, text)
+          .then((r) => {
+            if (!r.ok && r.reason === 'failed') toast.error(r.message);
+            if (!r.ok && r.reason === 'no_voice') toast.info('This agent has no voice yet.');
+          })
+          .finally(() => setBusy(false));
+      }}
+    >
+      <SpeakerHigh size={13} weight={busy ? 'fill' : 'regular'} />
+    </IconButton>
   );
 }
 

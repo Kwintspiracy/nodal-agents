@@ -9482,6 +9482,10 @@ export async function listConversationsAction(): Promise<
   ActionResult<{
     rootAgentId: string | null;
     rootName: string | null;
+    /** Whether the ROOT agent has a voice. Decides what the chat's microphone
+     *  IS: with a voice, speaking is a conversation — the turn is sent and the
+     *  reply is read back. Without one, it is dictation into the composer. */
+    rootHasVoice: boolean;
     conversations: ConversationView[];
   }>
 > {
@@ -9489,7 +9493,15 @@ export async function listConversationsAction(): Promise<
     const session = await getSession();
     const db = getDb();
     const { rootAgentId, rootName } = await resolveRoot(db, session.entityId);
-    if (!rootAgentId) return ok({ rootAgentId: null, rootName: null, conversations: [] });
+    if (!rootAgentId)
+      return ok({ rootAgentId: null, rootName: null, rootHasVoice: false, conversations: [] });
+
+    const [rootVoice] = await db
+      .select({ voiceId: agents.voiceId })
+      .from(agents)
+      .where(eq(agents.id, rootAgentId))
+      .limit(1);
+    const rootHasVoice = Boolean(rootVoice?.voiceId);
 
     const rows = await db
       .select({
@@ -9536,7 +9548,7 @@ export async function listConversationsAction(): Promise<
       preview: previewByConv.get(r.id) ?? '',
       updatedAt: r.updatedAt,
     }));
-    return ok({ rootAgentId, rootName, conversations: list });
+    return ok({ rootAgentId, rootName, rootHasVoice, conversations: list });
   } catch (err) {
     console.error('[listConversationsAction]', err);
     return fail('db_error', 'Failed to load conversations');
