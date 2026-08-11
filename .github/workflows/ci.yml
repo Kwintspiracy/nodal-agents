@@ -127,8 +127,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # `--concurrency` est un drapeau TURBO : le passer par `pnpm test -- …`
+      # le transmet à vitest, qui le refuse (`Unknown option --concurrency`).
+      # Le job Linux le dit déjà en commentaire ; j'ai copié la ligne sans le
+      # lire, et le premier passage Windows est mort là-dessus.
       - name: Unit tests
-        run: pnpm test -- --concurrency=3
+        run: pnpm exec turbo run test --concurrency=3
 
   pack-smoke:
     runs-on: ubuntu-latest
