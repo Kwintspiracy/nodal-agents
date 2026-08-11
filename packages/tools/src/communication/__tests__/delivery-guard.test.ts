@@ -37,7 +37,7 @@
 //     - happy path → returns the exact bytes
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
-import { mkdtemp, writeFile, rm, symlink, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, symlink, mkdir, realpath } from 'node:fs/promises';
 import { mkdtempSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -479,7 +479,15 @@ describe('assertLocalSourceAllowed', () => {
   let skillStoreDir: string;
 
   beforeAll(async () => {
-    rootDir = await mkdtemp(path.join(tmpdir(), 'dg-confinement-'));
+    // realpath obligatoire ici : `assertLocalSourceAllowed` rend le chemin
+    // RÉSOLU (c'est le chemin vérifié, celui qu'un appelant doit ouvrir), donc
+    // comparer au chemin brut suppose `realpath(x) === x`. Vrai sur Linux et
+    // sur une machine où les deux formes coïncident, faux dès qu'elles
+    // divergent : le runner Windows de la CI tourne sous `runneradmin`, dont
+    // le dossier temporaire porte la forme courte `C:\Users\RUNNER~1\…`, et
+    // les trois cas « autorisé » échouaient sur cette seule différence
+    // d'écriture. macOS ferait pareil (/var → /private/var).
+    rootDir = await realpath(await mkdtemp(path.join(tmpdir(), 'dg-confinement-')));
 
     // workspaceDir/skillStoreDir live OUTSIDE the OS temp dir (inside the
     // package's own checkout) — tmpdir() is unconditionally an allowed root,
@@ -490,6 +498,11 @@ describe('assertLocalSourceAllowed', () => {
     skillStoreDir = path.join(outsideDir, 'skills');
     await mkdir(workspaceDir, { recursive: true });
     await mkdir(skillStoreDir, { recursive: true });
+    // Même raison que rootDir ci-dessus — mais APRÈS la création, realpath
+    // échouant sur un dossier qui n'existe pas encore.
+    outsideDir = await realpath(outsideDir);
+    workspaceDir = await realpath(workspaceDir);
+    skillStoreDir = await realpath(skillStoreDir);
   });
 
   afterAll(async () => {
