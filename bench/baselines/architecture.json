@@ -1,7 +1,7 @@
 {
   "sectionId": "architecture",
-  "gitSha": "b2d0577",
-  "acceptedAt": "2026-08-08T16:26:11.558Z",
+  "gitSha": "2805c3e",
+  "acceptedAt": "2026-08-11T11:30:02.865Z",
   "metrics": [
     {
       "id": "packages_scanned",

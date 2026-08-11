@@ -69,6 +69,20 @@ export interface RunUpOptions {
    * page load, far faster iteration loop. Off by default.
    */
   dev?: boolean;
+  /**
+   * Hand the terminal back once everything is healthy, leaving the services
+   * running. `nodal-agents down` stops them, `nodal-agents logs` reads them.
+   *
+   * Without this, `up` is the whole product's lifetime: closing the terminal —
+   * or logging out, or rebooting — takes down the runner, and with it every
+   * schedule, the curator, and the community-skill update watch. Those crons
+   * exist and are correct; they simply never got to run overnight.
+   *
+   * Not a service manager. It survives the terminal, not the reboot; the
+   * machine's own supervisor (Task Scheduler, systemd, launchd) is still what
+   * puts Nodal back after a restart, and it can call `up --detach` to do it.
+   */
+  detach?: boolean;
 }
 
 export async function runUp(opts: RunUpOptions = {}): Promise<void> {
@@ -373,7 +387,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
 
   const runnerEnv = buildEnvForRunner(config, databaseUrl);
   const runnerSpinner = ora('Starting runner…').start();
-  const runnerProcess = spawnRunner(runnerEnv);
+  const runnerProcess = spawnRunner(runnerEnv, { detach: opts.detach });
   const runnerPid = runnerProcess.pid ?? 0;
   runnerSpinner.succeed(chalk.green(`Runner started (pid ${runnerPid})`));
 
@@ -382,7 +396,7 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   const webEnv = buildEnvForWeb(config, databaseUrl);
   const webSpinnerLabel = opts.dev ? 'Starting web (dev — HMR)…' : 'Starting web…';
   const webSpinner = ora(webSpinnerLabel).start();
-  const webProcess = spawnWeb(webEnv, { dev: opts.dev });
+  const webProcess = spawnWeb(webEnv, { dev: opts.dev, detach: opts.detach });
   const webPid = webProcess.pid ?? 0;
   webSpinner.succeed(chalk.green(`Web started (pid ${webPid})`));
 
@@ -483,6 +497,26 @@ export async function runUp(opts: RunUpOptions = {}): Promise<void> {
   if (config.bind === 'lan') {
     console.log(chalk.cyan(`  LAN mode — sign up at ${webUrl}/login`));
   }
+
+  // ── 9b. Detached: hand the terminal back and leave everything running ─────
+  // The order matters. We return only AFTER the health + render checks above,
+  // so a detached start that comes back to the prompt is a start that WORKED —
+  // the failure path further up already tore the children down and threw.
+  //
+  // And we return BEFORE registering the shutdown handlers below: those exist
+  // to kill the services when the foreground CLI dies, which is precisely what
+  // must not happen here.
+  if (opts.detach) {
+    console.log(chalk.gray('  Detached — the terminal is yours again.'));
+    console.log(chalk.gray('  nodal-agents logs runner   follow a service'));
+    console.log(chalk.gray('  nodal-agents down          stop everything'));
+    console.log('');
+    // The children were unref'd at spawn and Postgres is its own pg_ctl daemon,
+    // so nothing here holds the loop — except the fire-and-forget version check
+    // above, whose 3s timer would otherwise sit between the user and the prompt.
+    process.exit(0);
+  }
+
   console.log(chalk.gray('  Ctrl+C to stop all services'));
   console.log('');
 

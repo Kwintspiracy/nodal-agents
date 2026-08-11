@@ -76,3 +76,6 @@ packages/tools/Python/
 # Généré par `pnpm inventory` — la source est scripts/inventory/
 audit/inventaire.html
 audit/inventory.json
+
+# Diagnostic screenshots dropped by local Playwright runs
+apps/web/tests/e2e/.artifacts/

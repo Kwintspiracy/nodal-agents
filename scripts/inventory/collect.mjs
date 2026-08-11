@@ -1,6 +1,7 @@
 // Inventaire exhaustif des capacités de Nodal-Agents, extrait du code.
 // Écrit inventory.json ; n'imprime que des compteurs.
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 import { dirname, resolve, sep } from 'node:path';
@@ -32,7 +33,27 @@ const isTest = (f) => /\.(test|spec)\.tsx?$/.test(f);
 // ── Corpus de tests : tout le texte des fichiers de test du repo ──────────────
 const testFiles = [...walk(join(ROOT, 'packages'), isTest), ...walk(join(ROOT, 'apps'), isTest)];
 const testBlobs = testFiles.map((f) => ({ f, txt: readFileSync(f, 'utf-8') }));
-const e2eFiles = walk(join(ROOT, 'apps/web/tests/e2e'), (f) => /\.spec\.ts$/.test(f));
+/**
+ * Les specs Playwright VERSIONNÉES, pas celles présentes sur le disque.
+ *
+ * Sept fichiers de `apps/web/tests/e2e` sont dans .gitignore — des sondes de
+ * diagnostic écrites en session live, qui codent en dur des chemins Windows et
+ * réclament une pile locale. En parcourant le répertoire, l'inventaire les
+ * comptait : « 99 specs » sur cette machine, une quinzaine de moins sur un
+ * clone neuf. Un chiffre qui dépend de la machine qui le calcule n'est pas une
+ * mesure (invariant #6). `git ls-files` ne rend que ce qu'un clone reçoit.
+ */
+function trackedE2eSpecs() {
+  const out = execFileSync('git', ['ls-files', 'apps/web/tests/e2e'], {
+    cwd: ROOT,
+    encoding: 'utf-8',
+  });
+  return out
+    .split('\n')
+    .filter((p) => p.endsWith('.spec.ts'))
+    .map((p) => join(ROOT, p));
+}
+const e2eFiles = trackedE2eSpecs();
 const e2eBlobs = e2eFiles.map((f) => ({ f, txt: readFileSync(f, 'utf-8') }));
 
 /**
@@ -215,6 +236,13 @@ const inv = {};
     models: ms,
     count: ms.length,
   }));
+
+  // Combien portent un tarif. Sans tarif, `estimateModelCostUsd` rend 0 et le
+  // plafond de coût (garde 1e) ne peut jamais se déclencher sur ce modèle —
+  // c'est donc un chiffre de sûreté, pas de complétude. Compté ici plutôt
+  // qu'écrit à la main dans la carte : c'est exactement le genre de nombre qui
+  // dérive en silence. `pricing-coverage.test.ts` tient l'autre bout.
+  inv.meta_pricedModels = lines.filter((l) => l.includes('pricing: {')).length;
 }
 
 // ── 10. Skills du catalogue ───────────────────────────────────────────────────
@@ -332,9 +360,11 @@ inv.meta = {
     walk(join(ROOT, 'apps'), (f) => /architecture\.test\.ts$/.test(f)).length,
   llmHarnesses: countLlmHarnesses(),
   packRuntimeDeps: countPackRuntimeDeps(),
+  pricedModels: inv.meta_pricedModels,
   e2eSpecs: e2eBlobs.reduce((n, { txt }) => n + (txt.match(/^\s*test\(/gm)?.length ?? 0), 0),
 };
 
+delete inv.meta_pricedModels; // recopié dans inv.meta ci-dessus, pas deux fois dans le JSON
 writeFileSync(OUT, JSON.stringify(inv, null, 2), 'utf-8');
 
 const untested = (arr, key = 'test') =>

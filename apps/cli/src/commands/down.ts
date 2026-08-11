@@ -3,23 +3,30 @@
 import chalk from 'chalk';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { readPids, clearPids } from '../lib/processes.ts';
+import { readPids, clearPids, isPidAlive, killPidTree } from '../lib/processes.ts';
 import { PG_DATA_DIR } from '../lib/config.ts';
 
-function killPid(pid: number, label: string): boolean {
-  try {
-    process.kill(pid, 'SIGTERM');
-    console.log(chalk.green(`  Stopped ${label} (pid ${pid})`));
-    return true;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ESRCH') {
-      console.log(chalk.gray(`  ${label} (pid ${pid}) was already stopped`));
-      return false;
-    }
-    console.log(chalk.red(`  Failed to stop ${label}: ${String(err)}`));
+/**
+ * Stop one service by pid, tree and all, and report what actually happened.
+ *
+ * `process.kill(pid,'SIGTERM')` used to stand here, and it lied twice over on
+ * Windows: it terminates only the named pid — in dev layout that's the cmd.exe
+ * wrapper, leaving node.exe alive on :3000 — and it returns success either way,
+ * so `down` printed "Stopped web" over a web that was still serving. Now the
+ * whole tree is killed and the pid is re-probed before anything is claimed.
+ */
+async function killPid(pid: number, label: string): Promise<boolean> {
+  if (!isPidAlive(pid)) {
+    console.log(chalk.gray(`  ${label} (pid ${pid}) was already stopped`));
     return false;
   }
+  await killPidTree(pid);
+  if (isPidAlive(pid)) {
+    console.log(chalk.red(`  ${label} (pid ${pid}) is STILL RUNNING after SIGTERM then SIGKILL`));
+    return false;
+  }
+  console.log(chalk.green(`  Stopped ${label} (pid ${pid})`));
+  return true;
 }
 
 /**
@@ -71,8 +78,8 @@ export async function runDown(): Promise<void> {
 
   let stopped = 0;
 
-  if (pids?.runner) stopped += killPid(pids.runner, 'runner') ? 1 : 0;
-  if (pids?.web) stopped += killPid(pids.web, 'web') ? 1 : 0;
+  if (pids?.runner) stopped += (await killPid(pids.runner, 'runner')) ? 1 : 0;
+  if (pids?.web) stopped += (await killPid(pids.web, 'web')) ? 1 : 0;
 
   if (await stopPostgresGracefully()) stopped++;
 

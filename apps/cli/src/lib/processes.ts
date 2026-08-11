@@ -1,7 +1,7 @@
 // processes.ts — spawn runner and web as child processes
 
-import { execa, type ResultPromise } from 'execa';
-import { createWriteStream, writeFileSync, readFileSync, existsSync } from 'fs';
+import { execa, type Options, type ResultPromise } from 'execa';
+import { createWriteStream, openSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'node:url';
 import { PID_DIR, LOG_DIR, CONFIG_DIR } from './config.ts';
@@ -23,7 +23,22 @@ export type SpawnResult = ResultPromise;
 export async function killProcessTree(child: ResultPromise): Promise<void> {
   const pid = child.pid;
   if (!pid) return;
+  await killPidTree(pid);
+}
 
+/**
+ * Same escalation as `killProcessTree`, driven by a bare PID rather than a live
+ * child handle.
+ *
+ * `nodal-agents down` needs exactly this: after `up --detach` the CLI that
+ * spawned the services is long gone, so all `down` has is the number in
+ * ~/.nodalai/pids/processes.json. It used to `process.kill(pid,'SIGTERM')`,
+ * which on Windows terminates ONLY that pid — and in dev layout that pid is the
+ * cmd.exe wrapper around the .CMD launcher, so node.exe survived it, kept :3000
+ * held, and the next `up` failed on a port it had just been told was free. Kill
+ * the tree instead, on both platforms.
+ */
+export async function killPidTree(pid: number): Promise<void> {
   if (process.platform === 'win32') {
     try {
       // /T = kill children too. /F = force. We don't care if it failed (the
@@ -36,18 +51,25 @@ export async function killProcessTree(child: ResultPromise): Promise<void> {
     return;
   }
 
-  try {
-    child.kill('SIGTERM');
-    // Give it ~1.5s to flush, then escalate.
-    await new Promise((r) => setTimeout(r, 1500));
+  // A detached child leads its own process group (see spawnRunner/spawnWeb), so
+  // signalling -pid reaches every descendant. A non-detached child has no such
+  // group; the negative signal then throws ESRCH and we fall back to the pid.
+  const signalTree = (sig: NodeJS.Signals): void => {
     try {
-      child.kill('SIGKILL');
+      process.kill(-pid, sig);
     } catch {
-      /* already dead */
+      try {
+        process.kill(pid, sig);
+      } catch {
+        /* already dead */
+      }
     }
-  } catch {
-    /* already dead */
-  }
+  };
+
+  signalTree('SIGTERM');
+  // Give it ~1.5s to flush, then escalate.
+  await new Promise((r) => setTimeout(r, 1500));
+  if (isPidAlive(pid)) signalTree('SIGKILL');
 }
 
 /**
@@ -121,6 +143,56 @@ function resolveAppDir(appName: string): string {
 }
 
 /**
+ * How a spawned service is wired to its log file and to the CLI's lifetime.
+ *
+ * ATTACHED (the default, `nodal-agents up`): the child's stdout/stderr are
+ * pipes, forwarded into ~/.nodalai/logs/<svc>.log by the CLI itself. The CLI
+ * stays in the foreground and tears the children down on Ctrl+C.
+ *
+ * DETACHED (`up --detach`): the child must OUTLIVE the CLI, which changes both
+ * halves. Piping is no longer usable — the read end of a pipe belongs to the
+ * CLI, and once it exits the child's first write past the buffer takes EPIPE
+ * and the service dies minutes later for no visible reason. So the log file is
+ * opened here and handed to the child as its own fd. And `detached:true` +
+ * `unref()` gives the child its own process group (its own console on Windows,
+ * hidden), so closing the terminal no longer reaches it.
+ */
+export interface SpawnServiceOptions {
+  /** Survive the CLI process — see the interface doc for what that changes. */
+  detach?: boolean;
+}
+
+/**
+ * stdio + process-group wiring for one service, per the mode above.
+ *
+ * Detached opens the log file HERE and hands the raw descriptor to the child,
+ * so the write path involves nobody else once the CLI is gone. Two tempting
+ * alternatives both fail, and the second failed under test before this landed:
+ *
+ *   - `stdout: 'pipe'` + `child.stdout.pipe(file)` — the read end belongs to
+ *     the CLI; when it exits the child takes EPIPE on its next flush and dies.
+ *   - execa's `stdout: {file, append}` — reads like exactly what we want, but
+ *     it is mediated by a stream in the PARENT. `up --detach` then never
+ *     returned to the prompt at all: the launcher stayed alive holding that
+ *     stream open for as long as the service ran.
+ *
+ * 'a' matters too — `logs` and every previous run share this file, so a
+ * truncating open would erase the history at each start.
+ *
+ * The cast is on `stdio` alone: execa's types only admit the string forms, but
+ * the value is forwarded verbatim to child_process.spawn, which has taken raw
+ * descriptors since forever.
+ */
+export function spawnWiring(logFile: string, detach: boolean): Partial<Options> {
+  if (!detach) return { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', detached: false };
+  const fd = openSync(logFile, 'a');
+  return {
+    stdio: ['ignore', fd, fd] as unknown as Options['stdio'],
+    detached: true,
+  };
+}
+
+/**
  * Spawn the runner as a child process.
  *
  * - Bundled mode: `node <pack>/runner.js` (single-file esbuild bundle).
@@ -128,7 +200,10 @@ function resolveAppDir(appName: string): string {
  *   apps/runner's devDeps. On Windows we resolve the .CMD wrapper
  *   explicitly because Node's spawn doesn't auto-add the .CMD extension.
  */
-export function spawnRunner(env: Record<string, string>): ResultPromise {
+export function spawnRunner(
+  env: Record<string, string>,
+  opts: SpawnServiceOptions = {},
+): ResultPromise {
   const logFile = join(LOG_DIR, 'runner.log');
   const outStream = createWriteStream(logFile, { flags: 'a' });
 
@@ -155,23 +230,29 @@ export function spawnRunner(env: Record<string, string>): ResultPromise {
       `env keys: ${Object.keys(env).join(',')}\n\n`,
   );
 
+  const wiring = spawnWiring(logFile, opts.detach === true);
   const child = execa(bin, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    ...wiring,
+    windowsHide: true,
     reject: false,
     // Only need a shell wrapper to invoke the .CMD tsx launcher on Windows.
     // process.execPath is the literal node binary, no shell needed.
     shell: !BUNDLED_ROOT && process.platform === 'win32',
   });
 
-  child.stdout?.pipe(outStream);
-  child.stderr?.pipe(outStream);
+  if (opts.detach) {
+    child.unref();
+  } else {
+    child.stdout?.pipe(outStream);
+    child.stderr?.pipe(outStream);
+  }
 
   return child;
 }
 
-export interface SpawnWebOptions {
+export interface SpawnWebOptions extends SpawnServiceOptions {
   /**
    * When true, spawn `next dev` (HMR enabled, no build required).
    * When false (default), spawn `next start` against a prebuilt `.next/` dir.
@@ -229,16 +310,22 @@ export function spawnWeb(env: Record<string, string>, opts: SpawnWebOptions = {}
       `env keys: ${Object.keys(env).join(',')}\n\n`,
   );
 
+  const wiring = spawnWiring(logFile, opts.detach === true);
   const child = execa(bin, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    ...wiring,
+    windowsHide: true,
     reject: false,
     shell: !BUNDLED_ROOT && process.platform === 'win32',
   });
 
-  child.stdout?.pipe(outStream);
-  child.stderr?.pipe(outStream);
+  if (opts.detach) {
+    child.unref();
+  } else {
+    child.stdout?.pipe(outStream);
+    child.stderr?.pipe(outStream);
+  }
 
   return child;
 }
