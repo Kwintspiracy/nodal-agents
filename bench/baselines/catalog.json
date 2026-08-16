@@ -45,10 +45,7 @@
       "value": 2,
       "unit": "modèles",
       "direction": "lower-is-better",
-      "detail": [
-        "groq/llama-3.3-70b-versatile",
-        "mistral/mistral-large-latest"
-      ]
+      "detail": ["groq/llama-3.3-70b-versatile", "mistral/mistral-large-latest"]
     },
     {
       "id": "duplicate_ids",
@@ -64,10 +61,7 @@
       "value": 2,
       "unit": "modèles",
       "direction": "lower-is-better",
-      "detail": [
-        "deepseek/deepseek-chat",
-        "deepseek/deepseek-reasoner"
-      ]
+      "detail": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"]
     }
   ]
 }
