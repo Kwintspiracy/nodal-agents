@@ -182,8 +182,8 @@ describe('listCodingProcessesAction', () => {
     const parentJobId = await makeJob(agentId, 'completed');
     const childJobId = await makeJob(agentId, 'completed', parentJobId);
 
-    // The parent must be a CANDIDATE job — give it a cli_runs row (path (a) of
-    // the plan: "dont l'id apparaît dans cli_runs.job_id").
+    // Cost still comes from cli_runs; the QUALIFYING signal is the child's
+    // review_verdict, which ROLLS UP to the parent (pipeline root).
     await _testDb!.insert(cliRuns).values({
       entityId: _testEntityId,
       agentId,
@@ -215,8 +215,8 @@ describe('listCodingProcessesAction', () => {
     expect(parentRow).toBeTruthy();
     expect(parentRow?.stage).toBe('done_approved');
 
-    // The child itself is not a candidate job (no cli_runs row, no code_task
-    // tool_call of its own) — it should not appear as its own list entry.
+    // The child carries the verdict SIGNAL but is a delegated child — it
+    // rolls up to the parent and never appears as its own list entry.
     const childRow = result.data.find((r) => r.id === childJobId);
     expect(childRow).toBeUndefined();
   });
@@ -232,6 +232,15 @@ describe('listCodingProcessesAction', () => {
       mode: 'read',
       costUsd: 0.05,
     });
+    // Qualifying signal (a cli_runs row alone is NOT coding since the
+    // signals-only rule): one shell call.
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'cli:Bash',
+      toolInput: { command: 'pnpm test' },
+      toolOutput: 'ok',
+    });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
     const result = await listCodingProcessesAction();
@@ -240,6 +249,32 @@ describe('listCodingProcessesAction', () => {
 
     const row = result.data.find((r) => r.id === jobId);
     expect(row?.stage).toBe('done');
+  });
+
+  it('a read-only CLI job (cli_runs + cli:Read only) is EXCLUDED — not a coding session', async () => {
+    const agentId = await makeAgent('Audit Code ReadOnly Agent');
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(cliRuns).values({
+      entityId: _testEntityId,
+      agentId,
+      jobId,
+      provider: 'claude',
+      mode: 'read',
+      costUsd: 0.3,
+    });
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'cli:Read',
+      toolInput: { file_path: '/repo/readme.md' },
+      toolOutput: 'contents',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
   });
 
   it('a failed job surfaces with stage "failed"', async () => {
@@ -252,6 +287,13 @@ describe('listCodingProcessesAction', () => {
       provider: 'claude',
       mode: 'write',
       costUsd: 0.02,
+    });
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'cli:Write',
+      toolInput: { file_path: '/repo/x.ts', content: 'x' },
+      toolOutput: 'ok',
     });
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');

@@ -10365,28 +10365,46 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
     const db = getDb();
     const entityId = session.entityId;
 
-    // ── Candidate job ids: cli_runs.job_id OR a code_task tool_call ─────────
-    const cliRunJobIdRows = await db
-      .selectDistinct({ jobId: cliRuns.jobId })
-      .from(cliRuns)
-      .where(and(eq(cliRuns.entityId, entityId), isNotNull(cliRuns.jobId)));
-    const codeTaskJobIdRows = await db
+    // ── Candidate job ids: REAL coding signals only (Quentin, 19/08: this
+    // tab shows CODING SESSIONS, not every job that touched the CLI — a
+    // runtime agent's read-only Q&A or a cron routine is not coding).
+    // Signals: a CLI write/shell tool, an explicit code_task delegation, or
+    // a review verdict. cli:Read / cli:Glob alone do NOT qualify.
+    const CODING_SIGNAL_TOOLS = [
+      'code_task',
+      'review_verdict',
+      'cli:Edit',
+      'cli:Write',
+      'cli:MultiEdit',
+      'cli:NotebookEdit',
+      'cli:Bash',
+    ];
+    const signalJobIdRows = await db
       .selectDistinct({ jobId: toolCalls.jobId })
       .from(toolCalls)
       .where(
         and(
           eq(toolCalls.entityId, entityId),
-          eq(toolCalls.toolName, 'code_task'),
+          inArray(toolCalls.toolName, CODING_SIGNAL_TOOLS),
           isNotNull(toolCalls.jobId),
         ),
       );
-    const candidateJobIds = Array.from(
-      new Set(
-        [...cliRunJobIdRows, ...codeTaskJobIdRows]
-          .map((r) => r.jobId)
-          .filter((id): id is string => id !== null),
-      ),
+    const signalJobIds = Array.from(
+      new Set(signalJobIdRows.map((r) => r.jobId).filter((id): id is string => id !== null)),
     );
+
+    // Roll up to the PIPELINE root: a signal inside a delegated child (the
+    // reviewer's verdict, a delegated dev worker's edits) qualifies its
+    // parent — the process the user launched — and a child is never its own
+    // list row.
+    let candidateJobIds: string[] = [];
+    if (signalJobIds.length > 0) {
+      const signalJobs = await db
+        .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+        .from(agentJobs)
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, signalJobIds)));
+      candidateJobIds = Array.from(new Set(signalJobs.map((j) => j.parentJobId ?? j.id)));
+    }
 
     let jobRows: CodingProcessRow[] = [];
     if (candidateJobIds.length > 0) {
@@ -10508,50 +10526,12 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       }));
     }
 
-    // ── Chat sessions: cli_runs with job_id NULL, grouped by session_id ─────
-    const chatRunRows = await db
-      .select({
-        sessionId: cliRuns.sessionId,
-        agentId: cliRuns.agentId,
-        agentName: agents.name,
-        costUsd: cliRuns.costUsd,
-        createdAt: cliRuns.createdAt,
-      })
-      .from(cliRuns)
-      .leftJoin(agents, eq(agents.id, cliRuns.agentId))
-      .where(and(eq(cliRuns.entityId, entityId), isNull(cliRuns.jobId)))
-      .orderBy(desc(cliRuns.createdAt))
-      .limit(200);
-
-    const bySession = new Map<
-      string,
-      { agentId: string | null; agentName: string | null; cost: number; lastAt: Date }
-    >();
-    for (const r of chatRunRows) {
-      if (!r.sessionId || !r.createdAt) continue;
-      const existing = bySession.get(r.sessionId);
-      bySession.set(r.sessionId, {
-        agentId: existing?.agentId ?? r.agentId,
-        agentName: existing?.agentName ?? r.agentName,
-        cost: (existing?.cost ?? 0) + (r.costUsd ?? 0),
-        lastAt: existing && existing.lastAt > r.createdAt ? existing.lastAt : r.createdAt,
-      });
-    }
-    const chatRows: CodingProcessRow[] = Array.from(bySession.entries()).map(([sessionId, v]) => ({
-      id: sessionId,
-      kind: 'chat' as const,
-      agentId: v.agentId,
-      agentName: v.agentName,
-      origin: 'chat',
-      status: null,
-      stage: 'chat',
-      task: 'Runtime chat session',
-      costUsd: v.cost,
-      filesChanged: 0,
-      activityAt: v.lastAt.toISOString(),
-    }));
-
-    const merged = [...jobRows, ...chatRows]
+    // Chat runtime sessions are EXCLUDED on purpose (Quentin, 19/08): the
+    // schema has no tool_calls↔session link, so a chat session cannot prove
+    // it did any coding — listing them all was exactly the "everything
+    // mixed in" noise this tab must not have. A chat that delegates real
+    // code work spawns a job, and that job qualifies through its signals.
+    const merged = [...jobRows]
       .sort((a, b) => {
         const at = a.activityAt ? Date.parse(a.activityAt) : 0;
         const bt = b.activityAt ? Date.parse(b.activityAt) : 0;
