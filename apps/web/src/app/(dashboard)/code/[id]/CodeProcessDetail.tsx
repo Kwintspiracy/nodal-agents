@@ -35,6 +35,7 @@ import StatusPill, { type StatusVariant } from '@/components/ui/StatusPill';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
 import DisclosureButton from '@/components/ui/DisclosureButton';
 import TextButton from '@/components/ui/TextButton';
+import PillTabs from '@/components/ui/PillTabs';
 import { relativeTime } from '@/lib/format-time';
 
 const POLL_INTERVAL = 4000;
@@ -59,6 +60,36 @@ function stageVariant(stage: string): StatusVariant {
 
 function stageLabel(stage: string): string {
   return STAGE_LABEL[stage] ?? stage;
+}
+
+/**
+ * PathTail — truncates a long path from the START, keeping the filename
+ * (the end) visible instead of the drive/root (Quentin, 19/08 fifth pass).
+ * Standard CSS trick: the container flips to `dir="rtl"` + `text-align:
+ * left`, so the browser's ellipsis cuts the LEFT side of the box; the `<bdi
+ * dir="ltr">` inside keeps the path's own characters (and punctuation like
+ * `:` or `\`) reading left-to-right rather than being reversed by the outer
+ * RTL context. Full path always available via the native `title` tooltip.
+ */
+function PathTail({
+  text,
+  title,
+  className = '',
+}: {
+  text: string;
+  /** Full path for the hover tooltip, when `text` is only a fragment (e.g. FileListRow's separate name/dir lines). Defaults to `text`. */
+  title?: string;
+  className?: string;
+}) {
+  return (
+    <span
+      dir="rtl"
+      title={title ?? text}
+      className={`block overflow-hidden text-left text-ellipsis whitespace-nowrap ${className}`}
+    >
+      <bdi dir="ltr">{text}</bdi>
+    </span>
+  );
 }
 
 export default function CodeProcessDetail({
@@ -95,6 +126,18 @@ export default function CodeProcessDetail({
   // changed the file set, with no synchronous setState-in-effect needed.
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const selectedGroup = changes.find((g) => g.filePath === selectedFilePath) ?? changes[0] ?? null;
+
+  // Agent filter for the Activity trail — only worth showing once delegation
+  // actually happened (root + at least one distinct delegated agent).
+  const [agentFilter, setAgentFilter] = useState('all');
+  const agentFilters = buildAgentFilters(activity, header.agentName);
+  const totalCalls = activity.filter((item) => item.kind === 'call').length;
+  // Turn markers are pipeline-wide, not per-agent — they only make sense in
+  // the "All" view (Quentin, 19/08).
+  const visibleActivity =
+    agentFilter === 'all'
+      ? activity
+      : activity.filter((item) => item.kind === 'call' && agentKeyForCall(item) === agentFilter);
 
   return (
     <div className="space-y-6">
@@ -168,11 +211,11 @@ export default function CodeProcessDetail({
         <div className="min-w-0 space-y-6">
           {selectedGroup && (
             <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-              <h2
-                className="truncate border-b border-rule-2 px-4 py-3 font-mono text-body-13 text-ink"
-                title={selectedGroup.filePath}
-              >
-                {selectedGroup.filePath}
+              <h2 className="border-b border-rule-2 px-4 py-3">
+                <PathTail
+                  text={selectedGroup.filePath}
+                  className="font-mono text-body-13 text-ink"
+                />
               </h2>
               <div className="max-h-[70vh] space-y-3 overflow-y-auto px-4 py-4">
                 {selectedGroup.edits.map((edit, i) => (
@@ -187,6 +230,19 @@ export default function CodeProcessDetail({
             <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
               Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
             </h2>
+            {agentFilters.length > 1 && (
+              <div className="border-b border-rule-2 px-4 py-2.5">
+                <PillTabs
+                  tabs={[
+                    { value: 'all', label: 'All', count: totalCalls },
+                    ...agentFilters.map((a) => ({ value: a.key, label: a.label, count: a.count })),
+                  ]}
+                  value={agentFilter}
+                  onChange={setAgentFilter}
+                  variant="inset"
+                />
+              </div>
+            )}
             {activity.length === 0 ? (
               <p className="px-4 py-6 text-body-13 text-ink-4">
                 {header.kind === 'chat'
@@ -195,7 +251,7 @@ export default function CodeProcessDetail({
               </p>
             ) : (
               <div className="max-h-[70vh] overflow-y-auto">
-                {activity.map((item, i) =>
+                {visibleActivity.map((item, i) =>
                   item.kind === 'turn' ? (
                     <TurnMarkerRow key={`turn-${i}`} item={item} />
                   ) : (
@@ -243,10 +299,8 @@ function FileListRow({
       }`}
     >
       <div className="min-w-0 flex-1">
-        <div className="truncate font-mono text-body-13 text-ink" title={group.filePath}>
-          {base}
-        </div>
-        {dir && <div className="truncate text-mono-11 text-ink-4">{dir}</div>}
+        <PathTail text={base} title={group.filePath} className="font-mono text-body-13 text-ink" />
+        {dir && <PathTail text={dir} title={group.filePath} className="text-mono-11 text-ink-4" />}
       </div>
       <div className="shrink-0 text-mono-11">
         <span className="text-ok">+{group.addedLines}</span>{' '}
@@ -364,19 +418,29 @@ const FILE_TOOL_LABEL: Record<string, string> = {
   file_write: 'Write file',
 };
 
-function summarizeToolCall(tc: CodingToolCallView): { shortName: string; summary: string } {
+function summarizeToolCall(tc: CodingToolCallView): {
+  shortName: string;
+  summary: string;
+  /** Whether `summary` is a file path (tail-truncate it) vs a command/description (truncate normally — the START matters more there). */
+  isPath: boolean;
+} {
   const input = (tc.toolInput ?? {}) as Record<string, unknown>;
   if (tc.toolName === 'code_task') {
     return {
       shortName: 'Code Task',
       summary: typeof input['task'] === 'string' ? input['task'] : '',
+      isPath: false,
     };
   }
   if (tc.toolName === 'review_verdict') {
-    return { shortName: 'Review', summary: '' };
+    return { shortName: 'Review', summary: '', isPath: false };
   }
   if (FILE_TOOL_LABEL[tc.toolName]) {
-    return { shortName: FILE_TOOL_LABEL[tc.toolName]!, summary: inputFilePath(input) };
+    return {
+      shortName: FILE_TOOL_LABEL[tc.toolName]!,
+      summary: inputFilePath(input),
+      isPath: true,
+    };
   }
   if (tc.toolName.startsWith('cli:')) {
     const bare = tc.toolName.slice('cli:'.length);
@@ -384,11 +448,42 @@ function summarizeToolCall(tc: CodingToolCallView): { shortName: string; summary
       return {
         shortName: 'Bash',
         summary: typeof input['command'] === 'string' ? input['command'] : '',
+        isPath: false,
       };
     }
-    return { shortName: bare, summary: inputFilePath(input) };
+    // cli:Read / cli:Glob / cli:Grep etc. — still path-shaped targets.
+    return { shortName: bare, summary: inputFilePath(input), isPath: true };
   }
-  return { shortName: tc.toolName, summary: '' };
+  return { shortName: tc.toolName, summary: '', isPath: false };
+}
+
+/** Groups a 'call' activity item to its owning agent — root job (sentinel key) or a delegated child, grouped by AGENT NAME (Quentin, 19/08: "chaque agent délégué DISTINCT", not per job — two delegate jobs to the same reviewer agent share one chip). Falls back to the job id only when the child has no resolvable agent name. */
+function agentKeyForCall(item: Extract<CodingActivityItem, { kind: 'call' }>): string {
+  if (!item.delegatedFrom) return '__root__';
+  return item.delegatedFrom.agentName ?? `job:${item.delegatedFrom.jobId}`;
+}
+
+type AgentFilterOption = { key: string; label: string; count: number };
+
+function buildAgentFilters(
+  activity: CodingActivityItem[],
+  rootAgentName: string | null,
+): AgentFilterOption[] {
+  const byKey = new Map<string, AgentFilterOption>();
+  for (const item of activity) {
+    if (item.kind !== 'call') continue;
+    const key = agentKeyForCall(item);
+    const label = item.delegatedFrom
+      ? (item.delegatedFrom.agentName ?? 'Delegated agent')
+      : (rootAgentName ?? 'Unknown agent');
+    const existing = byKey.get(key);
+    if (existing) existing.count += 1;
+    else byKey.set(key, { key, label, count: 1 });
+  }
+  // Root first, then delegated agents in first-appearance order.
+  const root = byKey.get('__root__');
+  const rest = Array.from(byKey.values()).filter((o) => o.key !== '__root__');
+  return root ? [root, ...rest] : rest;
 }
 
 function dotColorForTool(toolName: string): string {
@@ -401,7 +496,7 @@ function dotColorForTool(toolName: string): string {
 
 function ActivityRow({ tc }: { tc: CodingToolCallView }) {
   const [open, setOpen] = useState(false);
-  const { shortName, summary } = summarizeToolCall(tc);
+  const { shortName, summary, isPath } = summarizeToolCall(tc);
   return (
     <div className="border-b border-rule-2 last:border-0">
       <DisclosureButton open={open} onClick={() => setOpen((v) => !v)}>
@@ -410,7 +505,16 @@ function ActivityRow({ tc }: { tc: CodingToolCallView }) {
           aria-hidden
         />
         <span className="w-24 shrink-0 text-medium-13 text-ink">{shortName}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-body-13 text-ink-3">{summary}</span>
+        {isPath ? (
+          <PathTail text={summary} className="min-w-0 flex-1 font-mono text-body-13 text-ink-3" />
+        ) : (
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-body-13 text-ink-3"
+            title={summary}
+          >
+            {summary}
+          </span>
+        )}
         {tc.delegatedFrom && (
           <MonoMicroTag tone="agent" className="shrink-0">
             delegated{tc.delegatedFrom.agentName ? ` · ${tc.delegatedFrom.agentName}` : ''}
