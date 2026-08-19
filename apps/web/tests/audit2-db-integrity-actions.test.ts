@@ -349,6 +349,70 @@ describe('setCliDefaultsAction — merges per-provider, empty state collapses to
   });
 });
 
+// ─── setCliProviderEnabledAction — owner allow-flag per coding-CLI provider ──
+
+describe('setCliProviderEnabledAction — per-provider allow-flag on cli_defaults', () => {
+  it('disabling stores enabled:false; re-enabling collapses back to NULL', async () => {
+    const agentId = await makeAgent('Audit2 CliEnabled Agent');
+    const { setCliProviderEnabledAction } = await import('../src/lib/actions.ts');
+
+    const off = await setCliProviderEnabledAction({ agentId, provider: 'codex', enabled: false });
+    expect(off.ok).toBe(true);
+    let [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliDefaults).toEqual({ codex: { enabled: false } });
+
+    const on = await setCliProviderEnabledAction({ agentId, provider: 'codex', enabled: true });
+    expect(on.ok).toBe(true);
+    [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    // true = absent: back to the pre-feature NULL, not `{codex:{enabled:true}}`.
+    expect(row?.cliDefaults).toBeNull();
+  });
+
+  it('REFUSES disabling the last enabled provider', async () => {
+    const agentId = await makeAgent('Audit2 CliEnabled Last Agent');
+    const { setCliProviderEnabledAction } = await import('../src/lib/actions.ts');
+
+    await setCliProviderEnabledAction({ agentId, provider: 'claude', enabled: false });
+    const result = await setCliProviderEnabledAction({
+      agentId,
+      provider: 'codex',
+      enabled: false,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain('At least one');
+
+    const [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    // codex untouched — only claude carries the flag.
+    expect(row?.cliDefaults).toEqual({ claude: { enabled: false } });
+  });
+
+  it('saving model/effort defaults PRESERVES a stored enabled:false', async () => {
+    const agentId = await makeAgent('Audit2 CliEnabled Preserve Agent');
+    const { setCliProviderEnabledAction, setCliDefaultsAction } =
+      await import('../src/lib/actions.ts');
+
+    await setCliProviderEnabledAction({ agentId, provider: 'claude', enabled: false });
+    await setCliDefaultsAction({ agentId, provider: 'claude', model: 'opus', effort: 'high' });
+
+    const [row] = await _testDb!
+      .select({ cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliDefaults).toEqual({
+      claude: { model: 'opus', effort: 'high', enabled: false },
+    });
+  });
+});
+
 // ─── setReviewerReadOnlyPresetAction — bulk block, delete-only-block on off ───
 
 const READONLY_PRESET_TOOLS = [

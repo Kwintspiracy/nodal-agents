@@ -6,6 +6,7 @@ import {
   assignSkillAction,
   unassignSkillAction,
   setCliDefaultsAction,
+  setCliProviderEnabledAction,
   type SkillRow,
   type AgentRow,
 } from '@/lib/actions.ts';
@@ -213,6 +214,13 @@ function CodeTaskConfigPanel({
   agentId: string;
   cliDefaults: AgentRow['cliDefaults'];
 }) {
+  // Optimistic view of the per-provider enabled flags — the server prop only
+  // refreshes on navigation, and the toggle must feel immediate.
+  const [enabledByProvider, setEnabledByProvider] = useState<{ claude: boolean; codex: boolean }>({
+    claude: cliDefaults?.claude?.enabled !== false,
+    codex: cliDefaults?.codex?.enabled !== false,
+  });
+
   async function handleSaveDefaults(
     provider: 'claude' | 'codex',
     model: string | null,
@@ -226,6 +234,20 @@ function CodeTaskConfigPanel({
     toast.success('Coding CLI defaults saved');
   }
 
+  async function handleToggleEnabled(provider: 'claude' | 'codex', enabled: boolean) {
+    const previous = enabledByProvider;
+    setEnabledByProvider((s) => ({ ...s, [provider]: enabled }));
+    const result = await setCliProviderEnabledAction({ agentId, provider, enabled });
+    if (!result.ok) {
+      setEnabledByProvider(previous);
+      toast.error(result.message);
+      return;
+    }
+    toast.success(enabled ? `${provider} enabled for this agent` : `${provider} disabled`);
+  }
+
+  const enabledCount = Number(enabledByProvider.claude) + Number(enabledByProvider.codex);
+
   return (
     <div className="space-y-2.5 border-t border-rule-2 p-4">
       <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
@@ -235,12 +257,18 @@ function CodeTaskConfigPanel({
         label="Claude Code"
         provider="claude"
         defaults={cliDefaults?.claude}
+        enabled={enabledByProvider.claude}
+        toggleLocked={enabledByProvider.claude && enabledCount === 1}
+        onToggleEnabled={(next) => handleToggleEnabled('claude', next)}
         onSaveDefaults={(model, effort) => handleSaveDefaults('claude', model, effort)}
       />
       <ProviderRow
         label="Codex"
         provider="codex"
         defaults={cliDefaults?.codex}
+        enabled={enabledByProvider.codex}
+        toggleLocked={enabledByProvider.codex && enabledCount === 1}
+        onToggleEnabled={(next) => handleToggleEnabled('codex', next)}
         onSaveDefaults={(model, effort) => handleSaveDefaults('codex', model, effort)}
       />
     </div>

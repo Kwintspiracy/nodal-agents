@@ -15,6 +15,18 @@
 //     worker lands on when dragged out of every team, so it can't disappear
 //     just because it's momentarily empty.
 //
+// Nested orchestrators (demande Quentin, 20/08): an orchestrator that is
+// itself assigned as another orchestrator's sub-agent no longer gets its own
+// top-level card — it renders NESTED under its parent, as an orchestrator row
+// with its own children indented beneath it.
+// The server payload and the DnD state model stay FLAT (one AgentGroup per
+// orchestrator, exactly as before): only the JSX composition changes, so
+// every existing drag interaction (reorder, cross-team move, drop on the
+// nested team's list) keeps working against the same container ids.
+// Nesting depth is capped at MAX_NEST_DEPTH (mirrors maxDelegationDepth);
+// an orchestrator in a parent-cycle with no top-level root, or deeper than
+// the cap, falls back to its own top-level card rather than disappearing.
+//
 // Drag-and-drop scoping (dnd-kit), single DndContext for the whole board:
 //   - GROUP HEADERS reorder among themselves via one `<SortableContext>` over
 //     the orchestrator ids. Dragging a card header moves the whole team.
@@ -98,6 +110,45 @@ const ACTIVITY_POLL_MS = 5000;
  *  row's sortable id and its enclosing container's droppable id can safely
  *  coexist in the same DndContext. */
 const STANDALONE_KEY = '__standalone__';
+
+/** Max nesting depth for orchestrator-under-orchestrator display — mirrors
+ *  the runtime's maxDelegationDepth (3). Anything deeper falls back to a
+ *  top-level card. */
+const MAX_NEST_DEPTH = 3;
+
+/** The set of orchestrator ids that render NESTED under a parent card:
+ *  reachable from a top-level (unparented) orchestrator within
+ *  MAX_NEST_DEPTH, breadth-first. An orchestrator that is someone's worker
+ *  but NOT in this set (parent-cycle with no root, or too deep) keeps its
+ *  own top-level card — it must never disappear from the board. */
+function computeNestedOrchestratorIds(groups: AgentGroup[]): Set<string> {
+  const orchIds = new Set<string>();
+  for (const g of groups) if (g.orchestrator) orchIds.add(g.orchestrator.id);
+  const parented = new Set<string>();
+  for (const g of groups) {
+    if (!g.orchestrator) continue;
+    for (const w of g.workers) if (orchIds.has(w.id)) parented.add(w.id);
+  }
+  const byId = new Map<string, AgentGroup>();
+  for (const g of groups) if (g.orchestrator) byId.set(g.orchestrator.id, g);
+
+  const nested = new Set<string>();
+  const queue: Array<{ id: string; depth: number }> = [];
+  for (const id of orchIds) if (!parented.has(id)) queue.push({ id, depth: 0 });
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+    if (depth >= MAX_NEST_DEPTH) continue;
+    const g = byId.get(id);
+    if (!g) continue;
+    for (const w of g.workers) {
+      if (orchIds.has(w.id) && !nested.has(w.id)) {
+        nested.add(w.id);
+        queue.push({ id: w.id, depth: depth + 1 });
+      }
+    }
+  }
+  return nested;
+}
 
 function containerIdOf(group: AgentGroup): string {
   return `container:${group.orchestrator?.id ?? STANDALONE_KEY}`;
@@ -386,9 +437,17 @@ export default function AgentsList({ initialGroups, initialActivity, agents, llm
     return <EmptyState title="No agents yet. Create one above." />;
   }
 
+  // Nested-orchestrator resolution (see file header): which orchestrator
+  // groups render inside their parent's card instead of top-level.
+  const nestedOrchIds = computeNestedOrchestratorIds(groups);
+  const groupByOrchId = new Map<string, AgentGroup>();
+  for (const g of groups) if (g.orchestrator) groupByOrchId.set(g.orchestrator.id, g);
+
+  // Only TOP-LEVEL cards participate in the header-reorder SortableContext —
+  // a nested orchestrator moves as a worker row, not as a card header.
   const orchestratorIds = groups
-    .map((g) => g.orchestrator?.id)
-    .filter((id): id is string => Boolean(id));
+    .filter((g) => g.orchestrator && !nestedOrchIds.has(g.orchestrator.id))
+    .map((g) => g.orchestrator!.id);
 
   const addWorkerOrchestrator = addWorkerForId
     ? (groups.find((g) => g.orchestrator?.id === addWorkerForId)?.orchestrator ?? null)
@@ -426,7 +485,9 @@ export default function AgentsList({ initialGroups, initialActivity, agents, llm
   // Render order: orchestrator cards → "New orchestrator" CTA → Unassigned.
   // The CTA sits between the teams it creates and the bucket it feeds from,
   // inside the same gap-5 column so spacing stays uniform.
-  const orchGroups = groups.filter((g) => g.orchestrator !== null);
+  const orchGroups = groups.filter(
+    (g) => g.orchestrator !== null && !nestedOrchIds.has(g.orchestrator.id),
+  );
   const standaloneGroup = groups.find((g) => g.orchestrator === null) ?? null;
 
   if (!mounted) {
@@ -438,6 +499,8 @@ export default function AgentsList({ initialGroups, initialActivity, agents, llm
             group={g}
             activityByAgent={activityByAgent}
             onAddWorker={setAddWorkerForId}
+            groupByOrchId={groupByOrchId}
+            nestedOrchIds={nestedOrchIds}
           />
         ))}
         {newOrchestratorButton}
@@ -447,6 +510,8 @@ export default function AgentsList({ initialGroups, initialActivity, agents, llm
             group={standaloneGroup}
             activityByAgent={activityByAgent}
             onAddWorker={setAddWorkerForId}
+            groupByOrchId={groupByOrchId}
+            nestedOrchIds={nestedOrchIds}
           />
         )}
         {modals}
@@ -472,6 +537,8 @@ export default function AgentsList({ initialGroups, initialActivity, agents, llm
                 disabled={isPending}
                 activityByAgent={activityByAgent}
                 onAddWorker={setAddWorkerForId}
+                groupByOrchId={groupByOrchId}
+                nestedOrchIds={nestedOrchIds}
               />
             ))}
           </SortableContext>
@@ -483,6 +550,8 @@ export default function AgentsList({ initialGroups, initialActivity, agents, llm
               disabled={isPending}
               activityByAgent={activityByAgent}
               onAddWorker={setAddWorkerForId}
+              groupByOrchId={groupByOrchId}
+              nestedOrchIds={nestedOrchIds}
             />
           )}
         </div>
@@ -537,11 +606,15 @@ function SortableAgentCard({
   disabled,
   activityByAgent,
   onAddWorker,
+  groupByOrchId,
+  nestedOrchIds,
 }: {
   group: AgentGroup;
   disabled: boolean;
   activityByAgent: Map<string, ActiveAgentRow>;
   onAddWorker: (orchestratorId: string) => void;
+  groupByOrchId: Map<string, AgentGroup>;
+  nestedOrchIds: Set<string>;
 }) {
   const orchestrator = group.orchestrator;
   const containerId = containerIdOf(group);
@@ -566,19 +639,133 @@ function SortableAgentCard({
           strategy={verticalListSortingStrategy}
         >
           <div ref={setDropRef} className="flex w-full flex-col gap-2">
-            {group.workers.map((w) => (
-              <SortableWorkerRow
-                key={w.id}
-                agent={w}
-                disabled={disabled}
-                activity={activityByAgent.get(w.id) ?? null}
-              />
-            ))}
+            {group.workers.map((w) =>
+              nestedOrchIds.has(w.id) && groupByOrchId.has(w.id) ? (
+                <SortableNestedOrchestratorRow
+                  key={w.id}
+                  agent={w}
+                  group={groupByOrchId.get(w.id)!}
+                  depth={1}
+                  disabled={disabled}
+                  activityByAgent={activityByAgent}
+                  onAddWorker={onAddWorker}
+                  groupByOrchId={groupByOrchId}
+                  nestedOrchIds={nestedOrchIds}
+                />
+              ) : (
+                <SortableWorkerRow
+                  key={w.id}
+                  agent={w}
+                  disabled={disabled}
+                  activity={activityByAgent.get(w.id) ?? null}
+                />
+              ),
+            )}
             {group.workers.length === 0 && <EmptyDropHint />}
           </div>
         </SortableContext>
       }
     />
+  );
+}
+
+// ─── Nested orchestrator row (an orchestrator rendered inside its parent) ────
+//
+// Draggable as a WORKER of its parent (sortable id = its agent id, same as a
+// plain worker row), with its own team indented beneath: its children list is
+// its own SortableContext + droppable container (`container:<id>`), so every
+// existing cross-container drag interaction targets it exactly as it did when
+// it was a top-level card. Recursion is bounded by MAX_NEST_DEPTH upstream
+// (computeNestedOrchestratorIds) plus the depth guard here.
+
+function SortableNestedOrchestratorRow({
+  agent,
+  group,
+  depth,
+  disabled,
+  activityByAgent,
+  onAddWorker,
+  groupByOrchId,
+  nestedOrchIds,
+}: {
+  agent: AgentRow;
+  group: AgentGroup;
+  depth: number;
+  disabled: boolean;
+  activityByAgent: Map<string, ActiveAgentRow>;
+  onAddWorker: (orchestratorId: string) => void;
+  groupByOrchId: Map<string, AgentGroup>;
+  nestedOrchIds: Set<string>;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: agent.id,
+    disabled,
+    data: { type: 'worker' },
+  });
+  const { setNodeRef: setDropRef } = useDroppable({
+    id: containerIdOf(group),
+    data: { type: 'container' },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`w-full rounded-[10px] border border-rule-2 bg-hover p-[10px] ${isDragging ? 'opacity-50' : ''}`}
+    >
+      <div className="group flex w-full items-center gap-[10px]">
+        <span
+          {...attributes}
+          {...listeners}
+          aria-label="Drag row"
+          title="Drag to reorder or move to another team"
+          className="shrink-0 cursor-grab touch-none select-none text-ink-4 transition-colors hover:text-ink-3 active:cursor-grabbing"
+        >
+          <DotsSixVertical size={13} />
+        </span>
+        <NestedOrchestratorRowContent
+          agent={agent}
+          activity={activityByAgent.get(agent.id) ?? null}
+        />
+      </div>
+      <div className="pl-5 pt-2.5">
+        <div className="flex flex-col gap-2 border-l border-dashed border-rule-2 pl-[14px]">
+          <SortableContext
+            items={group.workers.map((w) => w.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div ref={setDropRef} className="flex w-full flex-col gap-2">
+              {group.workers.map((w) =>
+                depth < MAX_NEST_DEPTH && nestedOrchIds.has(w.id) && groupByOrchId.has(w.id) ? (
+                  <SortableNestedOrchestratorRow
+                    key={w.id}
+                    agent={w}
+                    group={groupByOrchId.get(w.id)!}
+                    depth={depth + 1}
+                    disabled={disabled}
+                    activityByAgent={activityByAgent}
+                    onAddWorker={onAddWorker}
+                    groupByOrchId={groupByOrchId}
+                    nestedOrchIds={nestedOrchIds}
+                  />
+                ) : (
+                  <SortableWorkerRow
+                    key={w.id}
+                    agent={w}
+                    disabled={disabled}
+                    activity={activityByAgent.get(w.id) ?? null}
+                  />
+                ),
+              )}
+              {group.workers.length === 0 && <EmptyDropHint />}
+            </div>
+          </SortableContext>
+          <EdAddButton size="sm" onClick={() => onAddWorker(agent.id)}>
+            Add worker
+          </EdAddButton>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -658,10 +845,14 @@ function StaticAgentCard({
   group,
   activityByAgent,
   onAddWorker,
+  groupByOrchId,
+  nestedOrchIds,
 }: {
   group: AgentGroup;
   activityByAgent: Map<string, ActiveAgentRow>;
   onAddWorker: (orchestratorId: string) => void;
+  groupByOrchId: Map<string, AgentGroup>;
+  nestedOrchIds: Set<string>;
 }) {
   const orchestrator = group.orchestrator;
   return (
@@ -685,22 +876,79 @@ function StaticAgentCard({
         )
       }
       workersZone={
-        <div className="flex w-full flex-col gap-2">
-          {group.workers.map((w) => (
-            <div
-              key={w.id}
-              className="group flex w-full items-center gap-[10px] rounded-[10px] border border-rule-2 bg-hover p-[10px]"
-            >
+        <StaticWorkersZone
+          group={group}
+          depth={1}
+          activityByAgent={activityByAgent}
+          onAddWorker={onAddWorker}
+          groupByOrchId={groupByOrchId}
+          nestedOrchIds={nestedOrchIds}
+        />
+      }
+    />
+  );
+}
+
+/** Static (SSR) worker list — mirrors the sortable zone's nesting rules. */
+function StaticWorkersZone({
+  group,
+  depth,
+  activityByAgent,
+  onAddWorker,
+  groupByOrchId,
+  nestedOrchIds,
+}: {
+  group: AgentGroup;
+  depth: number;
+  activityByAgent: Map<string, ActiveAgentRow>;
+  onAddWorker: (orchestratorId: string) => void;
+  groupByOrchId: Map<string, AgentGroup>;
+  nestedOrchIds: Set<string>;
+}) {
+  return (
+    <div className="flex w-full flex-col gap-2">
+      {group.workers.map((w) =>
+        depth <= MAX_NEST_DEPTH && nestedOrchIds.has(w.id) && groupByOrchId.has(w.id) ? (
+          <div key={w.id} className="w-full rounded-[10px] border border-rule-2 bg-hover p-[10px]">
+            <div className="group flex w-full items-center gap-[10px]">
               <span className="shrink-0 text-ink-4" aria-hidden>
                 <DotsSixVertical size={13} />
               </span>
-              <WorkerRowContent agent={w} activity={activityByAgent.get(w.id) ?? null} />
+              <NestedOrchestratorRowContent
+                agent={w}
+                activity={activityByAgent.get(w.id) ?? null}
+              />
             </div>
-          ))}
-          {group.workers.length === 0 && <EmptyDropHint />}
-        </div>
-      }
-    />
+            <div className="pl-5 pt-2.5">
+              <div className="flex flex-col gap-2 border-l border-dashed border-rule-2 pl-[14px]">
+                <StaticWorkersZone
+                  group={groupByOrchId.get(w.id)!}
+                  depth={depth + 1}
+                  activityByAgent={activityByAgent}
+                  onAddWorker={onAddWorker}
+                  groupByOrchId={groupByOrchId}
+                  nestedOrchIds={nestedOrchIds}
+                />
+                <EdAddButton size="sm" onClick={() => onAddWorker(w.id)}>
+                  Add worker
+                </EdAddButton>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div
+            key={w.id}
+            className="group flex w-full items-center gap-[10px] rounded-[10px] border border-rule-2 bg-hover p-[10px]"
+          >
+            <span className="shrink-0 text-ink-4" aria-hidden>
+              <DotsSixVertical size={13} />
+            </span>
+            <WorkerRowContent agent={w} activity={activityByAgent.get(w.id) ?? null} />
+          </div>
+        ),
+      )}
+      {group.workers.length === 0 && <EmptyDropHint />}
+    </div>
   );
 }
 
@@ -722,6 +970,30 @@ function OrchestratorHeaderContent({ orchestrator }: { orchestrator: AgentRow })
         <p className="text-micro-10 uppercase tracking-[0.08em] text-ink-3">Orchestrator</p>
         <p className="truncate text-sm text-ink">{orchestrator.name}</p>
         <p className="truncate text-body-12 text-ink-3">{orchestrator.personality}</p>
+      </div>
+    </>
+  );
+}
+
+/** Row content for a NESTED orchestrator — a worker row wearing its
+ *  "Orchestrator" tag, so the hierarchy reads at a glance. */
+function NestedOrchestratorRowContent({
+  agent,
+  activity,
+}: {
+  agent: AgentRow;
+  activity: ActiveAgentRow | null;
+}) {
+  return (
+    <>
+      <DsAgentAvatar name={agent.name} imageUrl={agent.avatarUrl} size="md" />
+      <div className="min-w-0 flex-1">
+        <p className="text-micro-10 uppercase tracking-[0.08em] text-ink-3">Orchestrator</p>
+        <p className="truncate text-body-13 text-ink">{agent.name}</p>
+      </div>
+      <ActivityBadge agent={agent} activity={activity} />
+      <div className="flex shrink-0 items-center gap-2">
+        <RowActions agent={agent} />
       </div>
     </>
   );

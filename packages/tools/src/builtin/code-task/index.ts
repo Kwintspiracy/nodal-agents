@@ -29,6 +29,7 @@ import {
 } from './providers';
 import {
   assertCliBudget,
+  assertCliProviderEnabled,
   assertNotReadOnlyAgent,
   recordCliRun,
   acquireWorkspaceLock,
@@ -36,8 +37,19 @@ import {
 } from './db';
 
 export { runCliDoctor, type CliDoctorReport } from './doctor';
-export { CliBudgetExceededError, WorkspaceLockedError, ReadOnlyAgentError } from './db';
-export { assertCliBudget, recordCliRun, acquireWorkspaceLock, releaseWorkspaceLock } from './db';
+export {
+  CliBudgetExceededError,
+  CliProviderDisabledError,
+  WorkspaceLockedError,
+  ReadOnlyAgentError,
+} from './db';
+export {
+  assertCliBudget,
+  assertCliProviderEnabled,
+  recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+} from './db';
 export { CLAUDE_READONLY_DISALLOWED } from './providers';
 export {
   buildProviderArgs,
@@ -189,6 +201,10 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
 
     // Budget gate BEFORE any spawn (fail loud, run never starts).
     const cliConfig = await assertCliBudget(ctx.db, ctx.agentId);
+
+    // Owner allow-list: a provider the owner switched off is refused loud
+    // BEFORE resolving the binary (invariant #9 at the provider level).
+    assertCliProviderEnabled(cliConfig.defaults, input.provider);
 
     // Resolve the binary — "absent" and "not logged in" are different
     // failures with different fixes (étape-A finding 6).

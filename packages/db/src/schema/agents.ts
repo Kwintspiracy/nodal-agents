@@ -79,9 +79,13 @@ export const agents = pgTable(
     // inputs). NULL / absent key = the CLI's own default (pre-feature
     // behavior). Values are free strings — the CLI is the source of truth for
     // what it accepts, and a bad value fails loud at run time.
+    // `enabled` (demande Quentin, 20/08): the owner can restrict WHICH
+    // providers this agent may call through code_task. Absent/true = allowed
+    // (back-compat); `false` = code_task refuses that provider loud. The
+    // action layer guarantees at least one provider stays enabled.
     cliDefaults: jsonb('cli_defaults').$type<{
-      claude?: { model?: string; effort?: string };
-      codex?: { model?: string; effort?: string };
+      claude?: { model?: string; effort?: string; enabled?: boolean };
+      codex?: { model?: string; effort?: string; enabled?: boolean };
     } | null>(),
     // Which harness drives this agent (étape E). 'nodal' (default) = the
     // Nodal runner loop. 'claude-code' = the agent IS a Claude Code session:

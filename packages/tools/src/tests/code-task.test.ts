@@ -23,10 +23,12 @@ import {
 import { buildSpawnArgv, resolveCliPath } from '../builtin/code-task/process';
 import {
   assertCliBudget,
+  assertCliProviderEnabled,
   recordCliRun,
   acquireWorkspaceLock,
   releaseWorkspaceLock,
   CliBudgetExceededError,
+  CliProviderDisabledError,
   WorkspaceLockedError,
 } from '../builtin/code-task/db';
 import { buildChildEnv } from '../builtin/child-env';
@@ -246,6 +248,34 @@ describe('buildSpawnArgv', () => {
     const native = { path: 'C:\\bin\\claude.exe', isBatch: false };
     const { argv } = buildSpawnArgv(native, ['--resume', 'x&whoami'], 'win32');
     expect(argv).toContain('x&whoami');
+  });
+});
+
+// ─── Owner provider allow-list (demande Quentin 20/08) ───────────────────────
+
+describe('assertCliProviderEnabled', () => {
+  it('refuses a disabled provider loud, naming the one still enabled', () => {
+    const defaults = { codex: { enabled: false } };
+    expect(() => assertCliProviderEnabled(defaults, 'codex')).toThrow(CliProviderDisabledError);
+    try {
+      assertCliProviderEnabled(defaults, 'codex');
+    } catch (err) {
+      expect((err as Error).message).toContain('provider_disabled');
+      expect((err as Error).message).toContain('"claude"');
+    }
+  });
+
+  it('absent config, absent entry, or enabled:true all allow (back-compat)', () => {
+    expect(() => assertCliProviderEnabled(null, 'claude')).not.toThrow();
+    expect(() => assertCliProviderEnabled({}, 'codex')).not.toThrow();
+    expect(() => assertCliProviderEnabled({ claude: { model: 'opus' } }, 'claude')).not.toThrow();
+    expect(() => assertCliProviderEnabled({ codex: { enabled: true } }, 'codex')).not.toThrow();
+  });
+
+  it('a disabled provider with defaults saved still refuses (flag wins over entry presence)', () => {
+    expect(() =>
+      assertCliProviderEnabled({ claude: { model: 'opus', enabled: false } }, 'claude'),
+    ).toThrow(CliProviderDisabledError);
   });
 });
 

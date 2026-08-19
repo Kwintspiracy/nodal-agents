@@ -33,11 +33,43 @@ export class CliBudgetExceededError extends Error {
 }
 
 export interface CliAgentConfig {
-  /** Per-provider model/effort defaults (étape B-bis). Null = CLI defaults. */
+  /**
+   * Per-provider model/effort defaults (étape B-bis) + owner allow-flag
+   * (demande Quentin 20/08). Null = CLI defaults, everything allowed.
+   * `enabled` absent/true = allowed; false = provider refused loud.
+   */
   defaults: {
-    claude?: { model?: string; effort?: string };
-    codex?: { model?: string; effort?: string };
+    claude?: { model?: string; effort?: string; enabled?: boolean };
+    codex?: { model?: string; effort?: string; enabled?: boolean };
   } | null;
+}
+
+export class CliProviderDisabledError extends Error {
+  constructor(provider: string, enabledProviders: string[]) {
+    super(
+      `provider_disabled: the "${provider}" coding CLI is disabled for this agent by its owner. ` +
+        (enabledProviders.length > 0
+          ? `Use provider ${enabledProviders.map((p) => `"${p}"`).join(' or ')} instead.`
+          : `No coding CLI provider is currently enabled for this agent.`),
+    );
+    this.name = 'CliProviderDisabledError';
+  }
+}
+
+/**
+ * Owner allow-list gate (invariant #9 at the provider level): refuse a
+ * code_task call for a provider the owner switched off. Absent config or
+ * absent `enabled` = allowed (back-compat with pre-feature rows). Pure —
+ * exported for unit tests.
+ */
+export function assertCliProviderEnabled(
+  defaults: CliAgentConfig['defaults'],
+  provider: 'claude' | 'codex',
+): void {
+  if (defaults?.[provider]?.enabled === false) {
+    const enabled = (['claude', 'codex'] as const).filter((p) => defaults?.[p]?.enabled !== false);
+    throw new CliProviderDisabledError(provider, enabled);
+  }
 }
 
 /**
