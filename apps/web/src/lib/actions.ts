@@ -52,6 +52,7 @@ import {
   mcpServers,
   agentMcpServers,
   toolCalls,
+  llmCalls,
   agentSchedules,
   webhookTriggers,
   entityLlmKeys,
@@ -10687,6 +10688,16 @@ export type CodingChangeView = {
   newText: string | null;
 };
 
+/** One file's full edit history in this pipeline — the Changes panel's unit (v4, Quentin 19/08 third pass). */
+export type CodingFileChangeGroup = {
+  filePath: string;
+  /** Summed across every edit to this file — churn, not a single merged diff. */
+  addedLines: number;
+  removedLines: number;
+  /** Chronological, root + direct children merged. Each rendered as its own hunk — an edit acts on the PREVIOUS edit's result, so concatenating them into one blob would misrepresent the sequence. */
+  edits: CodingChangeView[];
+};
+
 export type CodingVerdictView = {
   jobId: string;
   verdict: string | null;
@@ -10695,11 +10706,37 @@ export type CodingVerdictView = {
   counts: Record<string, number> | null;
 };
 
+/**
+ * One entry in the Activity trail: either a real tool_call (compact — no
+ * diff/output content, see CodeProcessDetail.tsx) or a turn marker giving the
+ * token/cost honest granularity (v4): 'call' events come from tool_calls;
+ * 'turn' events come from llm_calls (Nodal job turns, turn = the turn
+ * number) or cli_runs (a runtime CLI invocation, turn = null — the CLI has
+ * no Nodal turn concept). Never synthesized for a turn with no llm_calls/
+ * cli_runs row — an old job with no token data simply has no markers.
+ */
+export type CodingActivityItem =
+  | ({ kind: 'call' } & CodingToolCallView)
+  | {
+      kind: 'turn';
+      jobId: string;
+      /** null = a CLI invocation marker (cli_runs), not a Nodal job turn. */
+      turn: number | null;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+    };
+
 export type CodingProcessDetail = {
-  header: CodingProcessRow & { durationMs: number | null };
-  toolCalls: CodingToolCallView[];
+  header: CodingProcessRow & {
+    durationMs: number | null;
+    /** SUM(llm_calls.input_tokens) + SUM(cli_runs.input_tokens) across root + direct children. */
+    inputTokens: number;
+    outputTokens: number;
+  };
+  activity: CodingActivityItem[];
   verdicts: CodingVerdictView[];
-  changes: CodingChangeView[];
+  changes: CodingFileChangeGroup[];
 };
 
 const CodingProcessDetailSchema = z.union([
@@ -10781,12 +10818,43 @@ export async function getCodingProcessDetailAction(
               )
           : [];
 
-      // Cost = the PIPELINE's cost (root + direct children), matching the list.
-      const [costRow] = await db
-        .select({ cost: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)` })
+      // Tokens/cost, at the HONEST granularity (v4): per turn, never per
+      // tool — that data doesn't exist. llm_calls carries the Nodal job
+      // loop's inference cost (turn-tagged); cli_runs carries the coding
+      // CLI's own invocations (no Nodal turn concept — turn stays null).
+      // Both are pipeline-wide (root + direct children), matching the list.
+      const llmCallRows = await db
+        .select({
+          jobId: llmCalls.jobId,
+          turn: llmCalls.turn,
+          inputTokens: llmCalls.inputTokens,
+          outputTokens: llmCalls.outputTokens,
+          costUsd: llmCalls.costUsd,
+          createdAt: llmCalls.createdAt,
+        })
+        .from(llmCalls)
+        .where(and(eq(llmCalls.entityId, entityId), inArray(llmCalls.jobId, allRelevantIds)));
+
+      const cliRunRows = await db
+        .select({
+          jobId: cliRuns.jobId,
+          inputTokens: cliRuns.inputTokens,
+          outputTokens: cliRuns.outputTokens,
+          costUsd: cliRuns.costUsd,
+          createdAt: cliRuns.createdAt,
+        })
         .from(cliRuns)
         .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)));
-      const costUsd = Number(costRow?.cost ?? 0);
+
+      const inputTokens =
+        llmCallRows.reduce((s, r) => s + (r.inputTokens ?? 0), 0) +
+        cliRunRows.reduce((s, r) => s + (r.inputTokens ?? 0), 0);
+      const outputTokens =
+        llmCallRows.reduce((s, r) => s + (r.outputTokens ?? 0), 0) +
+        cliRunRows.reduce((s, r) => s + (r.outputTokens ?? 0), 0);
+      const costUsd =
+        llmCallRows.reduce((s, r) => s + (r.costUsd ?? 0), 0) +
+        cliRunRows.reduce((s, r) => s + (r.costUsd ?? 0), 0);
 
       const verdictOutputsByJob = new Map<string, string[]>();
       for (const v of verdictRows) {
@@ -10810,19 +10878,113 @@ export async function getCodingProcessDetailAction(
           };
         });
 
-      // Changes = every edit-shaped tool_call across the whole merged
-      // timeline (root + direct children): cli:Edit/Write/MultiEdit/
-      // NotebookEdit AND the Nodal file_edit/file_write tools (v3 — files
-      // modified/created is the coding definition, not just the CLI's own
-      // tools).
-      const changes: CodingChangeView[] = [];
-      const filesTouched = new Set<string>();
+      // Changes = the file-grouped view (v4 — Changes is now the MAIN
+      // content, not a sidebar). Every edit-shaped tool_call across the
+      // merged timeline: cli:Edit/Write/MultiEdit/NotebookEdit AND the
+      // Nodal file_edit/file_write tools (v3 — files modified/created is
+      // the coding definition, not just the CLI's own tools). Grouped by
+      // file, edits kept in order as separate hunks (never concatenated —
+      // edit N acts on edit N-1's result, not the original file).
+      const changeGroups = new Map<string, CodingFileChangeGroup>();
       for (const tc of toolCallRows) {
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
-        filesTouched.add(change.filePath);
-        changes.push(change);
+        const group = changeGroups.get(change.filePath) ?? {
+          filePath: change.filePath,
+          addedLines: 0,
+          removedLines: 0,
+          edits: [],
+        };
+        group.addedLines += change.newText ? change.newText.split('\n').length : 0;
+        group.removedLines += change.oldText ? change.oldText.split('\n').length : 0;
+        group.edits.push(change);
+        changeGroups.set(change.filePath, group);
       }
+      const changes = Array.from(changeGroups.values());
+
+      // Activity = tool_calls + turn markers, one merged chronological trail.
+      // A marker is placed just before the first llm_calls/cli_runs row it
+      // summarizes (never guessed — no marker without a real row backing it).
+      const turnAgg = new Map<
+        string,
+        {
+          jobId: string;
+          turn: number;
+          inputTokens: number;
+          outputTokens: number;
+          costUsd: number;
+          firstAt: number;
+        }
+      >();
+      for (const r of llmCallRows) {
+        if (r.turn === null || !r.jobId) continue;
+        const key = `${r.jobId}:${r.turn}`;
+        const t = r.createdAt ? r.createdAt.getTime() : 0;
+        const cur = turnAgg.get(key) ?? {
+          jobId: r.jobId,
+          turn: r.turn,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          firstAt: t,
+        };
+        cur.inputTokens += r.inputTokens ?? 0;
+        cur.outputTokens += r.outputTokens ?? 0;
+        cur.costUsd += r.costUsd ?? 0;
+        cur.firstAt = Math.min(cur.firstAt, t);
+        turnAgg.set(key, cur);
+      }
+
+      const events: Array<{ sortKey: number; item: CodingActivityItem }> = [];
+      for (const tc of toolCallRows) {
+        events.push({
+          sortKey: tc.createdAt ? tc.createdAt.getTime() : 0,
+          item: {
+            kind: 'call',
+            id: tc.id,
+            toolName: tc.toolName,
+            toolInput: tc.toolInput,
+            toolOutput: tc.toolOutput,
+            durationMs: tc.durationMs,
+            createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
+            delegatedFrom:
+              tc.jobId && tc.jobId !== jobId
+                ? { jobId: tc.jobId, agentName: childAgentNameById.get(tc.jobId) ?? null }
+                : null,
+          },
+        });
+      }
+      for (const agg of turnAgg.values()) {
+        events.push({
+          sortKey: agg.firstAt - 1, // sorts just before this turn's earliest llm_calls row
+          item: {
+            kind: 'turn',
+            jobId: agg.jobId,
+            turn: agg.turn,
+            inputTokens: agg.inputTokens,
+            outputTokens: agg.outputTokens,
+            costUsd: agg.costUsd,
+          },
+        });
+      }
+      for (const r of cliRunRows) {
+        if (!r.jobId) continue;
+        events.push({
+          sortKey: (r.createdAt ? r.createdAt.getTime() : 0) - 1,
+          item: {
+            kind: 'turn',
+            jobId: r.jobId,
+            turn: null,
+            inputTokens: r.inputTokens ?? 0,
+            outputTokens: r.outputTokens ?? 0,
+            costUsd: r.costUsd ?? 0,
+          },
+        });
+      }
+      events.sort((a, b) => a.sortKey - b.sortKey);
+      const activity = events.map((e) => e.item);
+
+      const filesChanged = changeGroups.size;
 
       return ok({
         header: {
@@ -10835,22 +10997,13 @@ export async function getCodingProcessDetailAction(
           stage,
           task: job.task,
           costUsd,
-          filesChanged: filesTouched.size,
+          filesChanged,
           activityAt: job.createdAt ? job.createdAt.toISOString() : null,
           durationMs: job.totalDurationMs ?? null,
+          inputTokens,
+          outputTokens,
         },
-        toolCalls: toolCallRows.map((tc) => ({
-          id: tc.id,
-          toolName: tc.toolName,
-          toolInput: tc.toolInput,
-          toolOutput: tc.toolOutput,
-          durationMs: tc.durationMs,
-          createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
-          delegatedFrom:
-            tc.jobId && tc.jobId !== jobId
-              ? { jobId: tc.jobId, agentName: childAgentNameById.get(tc.jobId) ?? null }
-              : null,
-        })),
+        activity,
         verdicts,
         changes,
       });
@@ -10867,6 +11020,8 @@ export async function getCodingProcessDetailAction(
         agentId: cliRuns.agentId,
         agentName: agents.name,
         costUsd: cliRuns.costUsd,
+        inputTokens: cliRuns.inputTokens,
+        outputTokens: cliRuns.outputTokens,
         createdAt: cliRuns.createdAt,
       })
       .from(cliRuns)
@@ -10882,6 +11037,8 @@ export async function getCodingProcessDetailAction(
     if (runs.length === 0) return fail('not_found', 'Process not found');
 
     const totalCost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+    const totalInputTokens = runs.reduce((sum, r) => sum + (r.inputTokens ?? 0), 0);
+    const totalOutputTokens = runs.reduce((sum, r) => sum + (r.outputTokens ?? 0), 0);
     const lastRun = runs[0]!;
 
     return ok({
@@ -10898,8 +11055,10 @@ export async function getCodingProcessDetailAction(
         filesChanged: 0,
         activityAt: lastRun.createdAt ? lastRun.createdAt.toISOString() : null,
         durationMs: null,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
       },
-      toolCalls: [],
+      activity: [],
       verdicts: [],
       changes: [],
     });
