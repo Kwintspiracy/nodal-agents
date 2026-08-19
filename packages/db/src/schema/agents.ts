@@ -73,6 +73,16 @@ export const agents = pgTable(
     // against this cap, bounded by the per-call timeout instead). 0 = no cap.
     // Enforced in the code_task builtin against SUM(cli_runs.cost_usd) today.
     cliDailyBudgetUsd: real('cli_daily_budget_usd').default(10).notNull(),
+    // Per-provider defaults for code_task runs (étape B-bis): which model and
+    // reasoning effort each coding CLI uses BY DEFAULT for this agent. The
+    // LLM may still override per task (code_task's optional model/effort
+    // inputs). NULL / absent key = the CLI's own default (pre-feature
+    // behavior). Values are free strings — the CLI is the source of truth for
+    // what it accepts, and a bad value fails loud at run time.
+    cliDefaults: jsonb('cli_defaults').$type<{
+      claude?: { model?: string; effort?: string };
+      codex?: { model?: string; effort?: string };
+    } | null>(),
     // User-controlled order on the /agents page (Brique A, migration 0019).
     // Default 0 — ties are broken by `name ASC` in the list query. Newly
     // created agents land at the front of their group by default; the user

@@ -40,6 +40,9 @@ export const cliRuns = pgTable(
     source: text('source').notNull().default('subscription'),
     /** claude session_id / codex thread_id — the resume handle. */
     sessionId: text('session_id'),
+    /** Model/effort EXPLICITLY requested (input > agent default). NULL = CLI default. */
+    model: text('model'),
+    effort: text('effort'),
     /** Notional USD cost (claude reports it even under subscription; codex: null). */
     costUsd: real('cost_usd'),
     inputTokens: integer('input_tokens'),

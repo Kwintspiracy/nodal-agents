@@ -26,10 +26,16 @@ import {
   type CodeTaskMode,
   type CodeTaskProvider,
 } from './providers';
-import { assertCliBudget, recordCliRun, acquireWorkspaceLock, releaseWorkspaceLock } from './db';
+import {
+  assertCliBudget,
+  assertNotReadOnlyAgent,
+  recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+} from './db';
 
 export { runCliDoctor, type CliDoctorReport } from './doctor';
-export { CliBudgetExceededError, WorkspaceLockedError } from './db';
+export { CliBudgetExceededError, WorkspaceLockedError, ReadOnlyAgentError } from './db';
 export {
   buildProviderArgs,
   parseClaudeOutput,
@@ -93,6 +99,27 @@ const codeTaskSchema = z.object({
         '"write": the CLI may edit files inside the workspace (one write run per workspace at ' +
         'a time). Use "read" unless the task requires changes.',
     ),
+  model: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[\w.:/-]+$/, 'model must be a plain model name or alias')
+    .optional()
+    .describe(
+      'Optional model override for THIS run (e.g. "opus", "sonnet", or a full model name for ' +
+        "claude; a model id for codex). Omit to use the agent's configured default, or the " +
+        "CLI's own default. The CLI decides what it accepts; a bad value fails loudly.",
+    ),
+  effort: z
+    .string()
+    .min(1)
+    .max(20)
+    .regex(/^[A-Za-z0-9_-]+$/, 'effort must be a plain level name')
+    .optional()
+    .describe(
+      'Optional reasoning-effort override for THIS run (e.g. "low", "medium", "high"). Omit to ' +
+        "use the agent's configured default, or the CLI's own default.",
+    ),
   cwd: z
     .string()
     .max(1000)
@@ -121,6 +148,9 @@ export interface CodeTaskOutput {
   /** Which pool paid: étape B always 'subscription' (no key is ever injected). */
   source: 'subscription';
   cliVersion: string;
+  /** Model/effort actually REQUESTED (input > agent default). null = CLI default. */
+  requestedModel: string | null;
+  requestedEffort: string | null;
   /** claude session_id / codex thread_id — keep it to resume later (étape E). */
   sessionId: string | null;
   /** The CLI agent's final answer. On isError, the CLI's own error message. */
@@ -152,7 +182,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     const cwd = await resolveAndCheckPath(ctx, input.cwd ?? '.');
 
     // Budget gate BEFORE any spawn (fail loud, run never starts).
-    await assertCliBudget(ctx.db, ctx.agentId);
+    const cliConfig = await assertCliBudget(ctx.db, ctx.agentId);
 
     // Resolve the binary — "absent" and "not logged in" are different
     // failures with different fixes (étape-A finding 6).
@@ -185,7 +215,18 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     const cliVersion = versionRun.stdout.trim().split('\n')[0]!.trim();
 
     const mode: CodeTaskMode = input.mode;
-    const args = buildProviderArgs(input.provider, mode, input.task);
+    // Read-only agents (owner blocked file_write — the reviewer preset) must
+    // not get a write hole through the CLI (étape C).
+    if (mode === 'write') {
+      await assertNotReadOnlyAgent(ctx.db, ctx.agentId);
+    }
+    // Model/effort resolution (étape B-bis): task input > agent default >
+    // undefined (the CLI's own default). What was requested is recorded in
+    // cli_runs and echoed in the output — never guessed after the fact.
+    const providerDefaults = cliConfig.defaults?.[input.provider];
+    const model = input.model ?? providerDefaults?.model;
+    const effort = input.effort ?? providerDefaults?.effort;
+    const args = buildProviderArgs(input.provider, mode, input.task, { model, effort });
     const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
 
     // One WRITE run per workspace at a time. The lock key is the workspace
@@ -200,7 +241,17 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
       const run = await runCli(cli, args, { cwd, timeoutMs, env });
 
       if (run.timedOut) {
-        await safeRecord(ctx, input, cliVersion, null, run.durationMs, run.exitCode);
+        await safeRecord(
+          ctx,
+          input,
+          cliVersion,
+          null,
+          run.durationMs,
+          run.exitCode,
+          null,
+          model,
+          effort,
+        );
         throw new Error(
           `cli_timeout: the ${input.provider} run exceeded ${String(timeoutMs / 1000)}s and was ` +
             `killed (with its process tree). Partial stdout: ${run.stdout.slice(0, 500)}`,
@@ -213,7 +264,17 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
       try {
         parsed = parseProviderOutput(input.provider, run.stdout);
       } catch (err) {
-        await safeRecord(ctx, input, cliVersion, null, run.durationMs, run.exitCode);
+        await safeRecord(
+          ctx,
+          input,
+          cliVersion,
+          null,
+          run.durationMs,
+          run.exitCode,
+          null,
+          model,
+          effort,
+        );
         if (err instanceof CliOutputError) {
           throw new Error(
             `${err.message} (exit ${String(run.exitCode)}; stderr: ${run.stderr.slice(0, 400)})`,
@@ -240,6 +301,8 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         run.durationMs,
         run.exitCode,
         parsed.sessionId,
+        model,
+        effort,
       );
 
       return {
@@ -247,6 +310,8 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         mode,
         source: 'subscription' as const,
         cliVersion,
+        requestedModel: model ?? null,
+        requestedEffort: effort ?? null,
         sessionId: parsed.sessionId,
         resultText: parsed.resultText,
         isError: parsed.isError || run.exitCode !== 0,
@@ -304,6 +369,8 @@ async function safeRecord(
   durationMs: number,
   exitCode: number | null,
   sessionId: string | null = null,
+  model: string | undefined = undefined,
+  effort: string | undefined = undefined,
 ): Promise<void> {
   try {
     await recordCliRun(ctx.db, {
@@ -314,6 +381,8 @@ async function safeRecord(
       mode: input.mode,
       source: 'subscription',
       sessionId,
+      model: model ?? null,
+      effort: effort ?? null,
       costUsd: parsed?.costUsd ?? null,
       inputTokens: parsed?.usage?.inputTokens ?? null,
       outputTokens: parsed?.usage?.outputTokens ?? null,

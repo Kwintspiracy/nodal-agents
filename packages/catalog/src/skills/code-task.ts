@@ -30,8 +30,20 @@ This skill unlocks the \`code_task\` tool: it hands a complete dev task to the *
 2. **One task, one call.** A run takes minutes. Give one complete task and wait for the result. NEVER re-call \`code_task\` for the same goal because you are unsure — re-running costs the owner real subscription usage.
 3. **Pick the mode honestly.** Default \`mode: "read"\` — the CLI cannot modify files or run shell commands. Use \`mode: "write"\` ONLY when the task requires changing files; say so in \`purpose\` and fill \`impact\`.
 4. **Pick the directory.** \`cwd\` is workspace-relative (e.g. \`"repos/myapp"\`). The run is confined to the workspace.
+4b. **Model and effort.** The owner sets per-provider defaults in the agent settings; omit \`model\`/\`effort\` to use them. Override per task only when the task warrants it (e.g. \`model: "opus", effort: "high"\` for a deep review; a cheaper model for a mechanical rename) — and say why in \`purpose\`.
 5. **Read the result as data.** \`resultText\` is the CLI's final answer. \`isError: true\` means the run failed — read \`errorDetail\`, fix the cause (or report it), do NOT blindly retry. \`errorDetail\` starting with \`subscription_limit_reached\` means the owner's plan window is exhausted: report it and stop — retrying cannot help until the window resets.
 6. **Report costs honestly.** \`costUsd\` is the notional cost the CLI reports (informative under subscription). Each agent has a daily cap; when it is hit the tool refuses to start and tells you why.
+
+### Review-required (write-mode work)
+
+Code you changed is NOT done until it has been reviewed. This is a hard rule, learned from harnesses that let coders self-certify.
+
+1. **Never conclude "done" directly after a successful write-mode \`code_task\` (or hand-written code changes).** The work's state is "review-required".
+2. **If you can delegate** (you have an \`assign_*\` tool whose description names a code reviewer), delegate the review yourself: pass WHAT was asked, WHAT changed (files + one-line each), and how to verify. The reviewer answers with a structured verdict (\`approve\` / \`request_changes\` + findings).
+3. **If you cannot delegate** (you are a worker), end your \`return_result\` with a prominent \`REVIEW-REQUIRED\` marker plus the list of changed files and how to verify — your orchestrator dispatches the review from that. Never present write-mode work as finished without it.
+4. **On \`request_changes\`**: fix the findings (one more write-mode run), then request the review ONCE more. Maximum 2 review rounds total.
+5. **After 2 failed rounds, escalate — do not loop.** Tell the owner on their channel what was attempted, what still fails (the remaining findings), and finish with \`return_result\` status "blocked". Retrying past 2 rounds only burns budget and anti-loop caps.
+6. **If no reviewer exists anywhere**, say so explicitly in your final result: the work is delivered UNREVIEWED and the owner should review it or attach a reviewer agent.
 
 ### Approval vs Yolo
 

@@ -72,13 +72,27 @@ export const CLAUDE_READONLY_DISALLOWED = 'Write,Edit,MultiEdit,NotebookEdit,Bas
  * must NEVER inherit the user's personal MCP servers / claude.ai connectors
  * (A-bis finding 5, étape-A finding 5).
  */
+export interface ProviderRunOptions {
+  /**
+   * Model/effort to request (étape B-bis) — resolved by the caller as
+   * task input > agent default > undefined (CLI's own default). Free strings:
+   * the CLI is the source of truth for what it accepts; a bad value fails
+   * loud at run time, never silently remapped.
+   */
+  model?: string;
+  effort?: string;
+}
+
 export function buildProviderArgs(
   provider: CodeTaskProvider,
   mode: CodeTaskMode,
   task: string,
+  opts: ProviderRunOptions = {},
 ): string[] {
   if (provider === 'claude') {
     const args = ['-p', task, '--output-format', 'json', '--strict-mcp-config'];
+    if (opts.model) args.push('--model', opts.model);
+    if (opts.effort) args.push('--effort', opts.effort);
     if (mode === 'read') {
       args.push('--disallowedTools', CLAUDE_READONLY_DISALLOWED);
     } else {
@@ -89,7 +103,9 @@ export function buildProviderArgs(
     }
     return args;
   }
-  // codex — task LAST (positional prompt).
+  // codex — task LAST (positional prompt). Effort is a TOML config override
+  // (`-c model_reasoning_effort="high"`); the quotes are part of the TOML
+  // string value and travel inside ONE argv element.
   const args = [
     'exec',
     '--json',
@@ -98,8 +114,10 @@ export function buildProviderArgs(
     '--skip-git-repo-check',
     '-c',
     'mcp_servers={}',
-    task,
   ];
+  if (opts.model) args.push('-m', opts.model);
+  if (opts.effort) args.push('-c', `model_reasoning_effort="${opts.effort}"`);
+  args.push(task);
   return args;
 }
 

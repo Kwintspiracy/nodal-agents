@@ -22,6 +22,7 @@ import { META_TOOLS } from './meta-ops';
 import { SKILL_TOOLS, skillFileWriteTool } from './skill-ops';
 import { runCommandTool } from './run-command';
 import { codeTaskTool } from './code-task';
+import { reviewVerdictTool } from './review-verdict';
 import { runSkillScriptTool } from './run-skill-script';
 import { skillViewTool } from './skill-view';
 import { listModelsTool } from './list-models';
@@ -72,6 +73,8 @@ export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
 export { codeTaskTool, runCliDoctor } from './code-task';
 export type { CodeTaskInput, CodeTaskOutput, CliDoctorReport } from './code-task';
+export { reviewVerdictTool } from './review-verdict';
+export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
 export { buildChildEnv } from './child-env';
@@ -129,6 +132,10 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // runner). Spawns the owner's own coding CLI (claude/codex) under their
   // subscription.
   registry.register(codeTaskTool);
+  // review_verdict — gated behind the "code-review" skill via requiredBuiltins,
+  // NOT always-on. Pure validation/normalization of a structured review
+  // verdict (étape C) — writes nothing, riskLevel 'read'.
+  registry.register(reviewVerdictTool);
   // run_skill_script — gated by per-skill×agent script authorization
   // (agent_skill_assignments.scripts_authorized), NOT always-on and NOT via
   // requiredBuiltins. The runner adds it to the whitelist only when the agent

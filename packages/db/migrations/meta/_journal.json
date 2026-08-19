@@ -512,6 +512,13 @@
       "when": 1785500000000,
       "tag": "0073_cli_runs_and_workspace_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1785600000000,
+      "tag": "0074_cli_defaults_model_effort",
+      "breakpoints": true
     }
   ]
 }

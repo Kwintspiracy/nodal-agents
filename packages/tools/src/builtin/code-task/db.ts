@@ -8,6 +8,7 @@ import {
   agents,
   cliRuns,
   workspaceLocks,
+  approvalRules,
   eq,
   and,
   sql,
@@ -31,18 +32,28 @@ export class CliBudgetExceededError extends Error {
   }
 }
 
+export interface CliAgentConfig {
+  /** Per-provider model/effort defaults (étape B-bis). Null = CLI defaults. */
+  defaults: {
+    claude?: { model?: string; effort?: string };
+    codex?: { model?: string; effort?: string };
+  } | null;
+}
+
 /**
- * Enforce the per-agent daily cap on notional CLI cost BEFORE spawning.
+ * Enforce the per-agent daily cap on notional CLI cost BEFORE spawning, and
+ * return the agent's CLI config (one roundtrip serves both needs).
  * Budget 0 = uncapped. Fails loud — never silently skips the run.
  */
-export async function assertCliBudget(db: AnyDrizzleDb, agentId: string): Promise<void> {
+export async function assertCliBudget(db: AnyDrizzleDb, agentId: string): Promise<CliAgentConfig> {
   const [agentRow] = await db
-    .select({ budget: agents.cliDailyBudgetUsd })
+    .select({ budget: agents.cliDailyBudgetUsd, defaults: agents.cliDefaults })
     .from(agents)
     .where(eq(agents.id, agentId))
     .limit(1);
+  const config: CliAgentConfig = { defaults: agentRow?.defaults ?? null };
   const budget = agentRow?.budget ?? 0;
-  if (budget <= 0) return; // 0 = no cap (same convention as daily_token_limit)
+  if (budget <= 0) return config; // 0 = no cap (same convention as daily_token_limit)
 
   const [row] = await db
     .select({
@@ -56,6 +67,39 @@ export async function assertCliBudget(db: AnyDrizzleDb, agentId: string): Promis
   if (spent >= budget) {
     throw new CliBudgetExceededError(spent, budget);
   }
+  return config;
+}
+
+export class ReadOnlyAgentError extends Error {
+  constructor() {
+    super(
+      `read_only_agent_write_mode: this agent is read-only (the owner blocked its write tools ` +
+        `via approval rules), so code_task mode "write" is refused too. This is intentional — ` +
+        `do NOT retry or work around it. Use mode "read", or report findings instead of fixing.`,
+    );
+    this.name = 'ReadOnlyAgentError';
+  }
+}
+
+/**
+ * Data-driven read-only detection (étape C): an agent whose owner blocked
+ * `file_write` via an approval rule is a read-only agent (that is exactly
+ * what the "Read-only (reviewer)" preset writes). code_task mode "write"
+ * must honor the same posture — the CLI would otherwise be a write hole.
+ */
+export async function assertNotReadOnlyAgent(db: AnyDrizzleDb, agentId: string): Promise<void> {
+  const [row] = await db
+    .select({ id: approvalRules.id })
+    .from(approvalRules)
+    .where(
+      and(
+        eq(approvalRules.agentId, agentId),
+        eq(approvalRules.toolName, 'file_write'),
+        eq(approvalRules.action, 'block'),
+      ),
+    )
+    .limit(1);
+  if (row) throw new ReadOnlyAgentError();
 }
 
 /** Record one CLI invocation (success or failure — the cost is real either way). */

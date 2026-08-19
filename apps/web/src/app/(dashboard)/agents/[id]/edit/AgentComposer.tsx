@@ -31,9 +31,9 @@ import {
   setAgentApprovalRuleAction,
   setRunCommandYoloAction,
   setCodeTaskYoloAction,
-  codeTaskDoctorAction,
   setCliDailyBudgetAction,
   getCliUsageTodayAction,
+  setReviewerReadOnlyPresetAction,
   setSkillScriptsAuthorizedAction,
   setSkillFilesWritableAction,
   assignSkillAction,
@@ -561,6 +561,7 @@ export default function AgentComposer({
             agentId={agent.id}
             attachedSkills={attachedSkills}
             allSkills={allSkills}
+            cliDefaults={agent.cliDefaults}
             onChanged={() => router.refresh()}
           />
         )}
@@ -1557,6 +1558,13 @@ function AutonomyTab({
         cliDailyBudgetUsd={cliDailyBudgetUsd}
       />
 
+      <ReadOnlyAgentSection
+        agentId={agentId}
+        rules={rules}
+        onRulesChange={setRules}
+        isOwner={isOwner}
+      />
+
       <ScriptAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
       <FileWriteAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
     </div>
@@ -1762,17 +1770,13 @@ function CommandExecutionSection({
 //
 // Visible only when the agent has the `code-task` skill assigned. Mirrors
 // CommandExecutionSection's Yolo toggle (same gate, same dormant-rule copy)
-// plus two pieces code_task adds on top: a per-provider health check (proxied
-// to the runner) and a daily USD budget with today's spend.
+// plus the daily USD budget with today's spend. Model/effort defaults and the
+// per-provider health check are CAPABILITY CONFIGURATION, not an autonomy
+// setting — Quentin's correction moved those to the code-task tool group's
+// panel on the Tools tab (ToolsTabContent.tsx, CodeTaskConfigPanel).
 
 const CODE_TASK_SKILL_SLUG = 'code-task';
 const CODE_TASK_TOOL = 'code_task';
-
-type DoctorState =
-  | { state: 'idle' }
-  | { state: 'testing' }
-  | { state: 'pass'; message: string }
-  | { state: 'fail'; message: string };
 
 function CodeTaskSection({
   agentId,
@@ -1876,36 +1880,6 @@ function CodeTaskSection({
     toast.success('Daily budget saved');
   }
 
-  // ── Doctor (per-provider health check) ─────────────────────────────────────
-  const [doctor, setDoctor] = useState<Record<'claude' | 'codex', DoctorState>>({
-    claude: { state: 'idle' },
-    codex: { state: 'idle' },
-  });
-
-  async function handleTest(provider: 'claude' | 'codex') {
-    setDoctor((prev) => ({ ...prev, [provider]: { state: 'testing' } }));
-    const result = await codeTaskDoctorAction({ provider });
-    if (!result.ok) {
-      setDoctor((prev) => ({ ...prev, [provider]: { state: 'fail', message: result.message } }));
-      return;
-    }
-    const report = result.data;
-    if (report.binaryFound && report.loggedIn !== 'no') {
-      setDoctor((prev) => ({
-        ...prev,
-        [provider]: {
-          state: 'pass',
-          message: `${report.version ?? 'installed'} (logged in: ${report.loggedIn})`,
-        },
-      }));
-    } else {
-      setDoctor((prev) => ({
-        ...prev,
-        [provider]: { state: 'fail', message: report.fix ?? 'Not available on this machine.' },
-      }));
-    }
-  }
-
   if (!hasSkill) {
     return null;
   }
@@ -1995,15 +1969,9 @@ function CodeTaskSection({
         onCancel={() => setConfirmOpen(false)}
       />
 
-      <div className="mt-6 space-y-2.5">
-        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">Diagnostics</div>
-        <DoctorRow
-          label="Claude Code"
-          state={doctor.claude}
-          onTest={() => void handleTest('claude')}
-        />
-        <DoctorRow label="Codex" state={doctor.codex} onTest={() => void handleTest('codex')} />
-      </div>
+      <p className="mt-4 text-body-12 text-ink-4">
+        Model, effort and diagnostics live in the Tools tab.
+      </p>
 
       <div className="mt-6">
         <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
@@ -2039,39 +2007,137 @@ function CodeTaskSection({
   );
 }
 
-function DoctorRow({
-  label,
-  state,
-  onTest,
+// ─── Read-only agent (reviewer preset) ────────────────────────────────────────
+//
+// Visible for EVERY agent — no skill gate, unlike CommandExecutionSection /
+// CodeTaskSection above. Read-only is a posture any agent can adopt, not a
+// capability that needs unlocking first. Blocking these 5 tools is exactly
+// what code_task's own read-only detection already keys off of
+// (assertNotReadOnlyAgent, packages/tools/src/builtin/code-task/db.ts, checks
+// file_write specifically) — this section is the UI affordance for that.
+
+const READONLY_PRESET_TOOLS = [
+  'file_write',
+  'file_edit',
+  'skill_file_write',
+  'run_command',
+  'run_skill_script',
+] as const;
+
+function ReadOnlyAgentSection({
+  agentId,
+  rules,
+  onRulesChange,
+  isOwner,
 }: {
-  label: string;
-  state: DoctorState;
-  onTest: () => void;
+  agentId: string;
+  rules: ApprovalRuleUiRow[];
+  onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
+  /** Whether the current user is the workspace owner. */
+  isOwner: boolean;
 }) {
+  const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const canToggle = isLocalTrust || isOwner;
+
+  const blockedCount = READONLY_PRESET_TOOLS.filter((toolName) =>
+    rules.some((r) => r.toolName === toolName && r.action === 'block'),
+  ).length;
+  const allBlocked = blockedCount === READONLY_PRESET_TOOLS.length;
+  // Some, but not all, of the 5 tools are already blocked (set individually
+  // in the tool list above) — the toggle shows OFF (it didn't create this
+  // state) with a note explaining why, rather than a misleading partial ON.
+  const partiallyBlocked = blockedCount > 0 && !allBlocked;
+  const enabled = allBlocked;
+
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  function applyOptimistic(next: boolean) {
+    const presetTools: readonly string[] = READONLY_PRESET_TOOLS;
+    onRulesChange(
+      next
+        ? [
+            ...rules.filter((r) => !presetTools.includes(r.toolName)),
+            ...READONLY_PRESET_TOOLS.map((toolName) => ({
+              id: '',
+              toolName,
+              action: 'block' as const,
+            })),
+          ]
+        : rules.filter((r) => !(presetTools.includes(r.toolName) && r.action === 'block')),
+    );
+  }
+
+  function handleToggle(next: boolean) {
+    if (next) {
+      setConfirmOpen(true);
+    } else {
+      void doSet(false);
+    }
+  }
+
+  async function doSet(next: boolean) {
+    setSaving(true);
+    applyOptimistic(next);
+    const result = await setReviewerReadOnlyPresetAction({ agentId, enabled: next });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      applyOptimistic(!next);
+    } else {
+      toast.success(
+        next
+          ? 'Read-only agent enabled. Write tools are blocked.'
+          : 'Read-only agent disabled. Write tools are unblocked.',
+      );
+    }
+  }
+
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-rule-2 px-3 py-2.5">
-      <div className="min-w-0 flex-1">
-        <div className="text-body-13 text-ink">{label}</div>
-        {state.state === 'pass' && (
-          <div className="mt-1 rounded-md border border-ok/30 bg-ok-bg px-2 py-1 text-body-12 text-ok">
-            {state.message}
-          </div>
-        )}
-        {state.state === 'fail' && (
-          <div className="mt-1 rounded-md border border-err/30 bg-warn-bg px-2 py-1 text-body-12 text-err break-all">
-            {state.message}
-          </div>
-        )}
+    <SectionCard>
+      <SectionHead
+        label="Read-only agent"
+        hint="Blocks all write tools for this agent. Meant for reviewer agents."
+      />
+
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <span className="text-medium-14 text-ink">Block write tools</span>
+          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+            Blocks file writes, shell commands, and skill scripts for this agent. Reversible any
+            time.
+          </p>
+          {partiallyBlocked && (
+            <p className="mt-2 text-body-12 text-ink-4">
+              Some write tools are already blocked individually.
+            </p>
+          )}
+        </div>
+
+        <Switch
+          checked={enabled}
+          onChange={() => handleToggle(!enabled)}
+          disabled={saving || !canToggle}
+          trackClassName={
+            enabled ? 'mt-0.5 border-ok/40 bg-ok/20' : 'mt-0.5 border-rule-2 bg-canvas'
+          }
+          thumbClassName={enabled ? 'translate-x-[18px] bg-ok' : 'translate-x-[2px] bg-ink-3'}
+        />
       </div>
-      <PrimaryButton
-        variant="neutral"
-        type="button"
-        onClick={onTest}
-        disabled={state.state === 'testing'}
-      >
-        {state.state === 'testing' ? 'Testing…' : 'Test'}
-      </PrimaryButton>
-    </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Make this agent read-only?"
+        message="This blocks file writes, shell commands, and skill scripts for this agent. Meant for reviewer agents that should never modify anything."
+        confirmLabel="Make read-only"
+        destructive={false}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void doSet(true);
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </SectionCard>
   );
 }
 

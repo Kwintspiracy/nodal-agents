@@ -12,6 +12,9 @@
 //                               Nodal never touches credentials, not even to
 //                               peek). Honest 'unknown' beats a fake green.
 
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
 import type { CodeTaskProvider } from './providers';
@@ -27,6 +30,40 @@ export interface CliDoctorReport {
   loggedIn: 'yes' | 'no' | 'unknown';
   /** One actionable instruction when something is wrong; null when healthy. */
   fix: string | null;
+  /**
+   * Model choices for the defaults dropdown. claude: the CLI's stable aliases
+   * (a full model name is still accepted via free entry). codex: read from
+   * the CLI's OWN local cache (~/.codex/models_cache.json — model metadata,
+   * no credentials); null when the cache is absent/unreadable.
+   */
+  models: string[] | null;
+  /**
+   * Valid reasoning-effort levels, PROBED on 2026-08-19: claude enumerates
+   * them in its own --effort warning ("Valid values: low, medium, high,
+   * xhigh, max"); codex's API returned its enum in an invalid_enum_value
+   * error ("none, minimal, low, medium, high, xhigh, max").
+   */
+  efforts: string[];
+}
+
+/** claude model ALIASES (stable CLI feature; full model names typed freely). */
+const CLAUDE_MODEL_ALIASES = ['opus', 'sonnet', 'haiku'];
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/** codex's own model list, from its local metadata cache. Never throws. */
+function readCodexModelCache(): string[] | null {
+  try {
+    const raw = readFileSync(join(homedir(), '.codex', 'models_cache.json'), 'utf8');
+    const parsed = JSON.parse(raw) as { models?: Array<{ slug?: string; id?: string }> };
+    if (!Array.isArray(parsed.models)) return null;
+    const slugs = parsed.models
+      .map((m) => m.slug ?? m.id)
+      .filter((s): s is string => typeof s === 'string' && s !== '');
+    return slugs.length > 0 ? slugs : null;
+  } catch {
+    return null;
+  }
 }
 
 const INSTALL_HINTS: Record<CodeTaskProvider, string> = {
@@ -57,6 +94,7 @@ export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDocto
       version: null,
       loggedIn: 'unknown',
       fix: INSTALL_HINTS[provider],
+      ...providerCatalog(provider),
     };
   }
 
@@ -81,6 +119,7 @@ export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDocto
         `The ${bin} binary is present (${resolved.path}) but \`${bin} --version\` failed ` +
         `(exit ${String(versionRun.exitCode)}${versionRun.timedOut ? ', timeout' : ''}). ` +
         `Reinstalling the CLI is the most likely fix.`,
+      ...providerCatalog(provider),
     };
   }
 
@@ -99,6 +138,7 @@ export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDocto
       version,
       loggedIn: loggedIn ? 'yes' : 'no',
       fix: loggedIn ? null : LOGIN_HINTS[provider],
+      ...providerCatalog(provider),
     };
   }
 
@@ -112,5 +152,16 @@ export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDocto
     version,
     loggedIn: 'unknown',
     fix: null,
+    ...providerCatalog(provider),
   };
+}
+
+/** Dropdown material per provider — the machine's own lists, never a stale web catalog. */
+function providerCatalog(provider: CodeTaskProvider): {
+  models: string[] | null;
+  efforts: string[];
+} {
+  return provider === 'claude'
+    ? { models: CLAUDE_MODEL_ALIASES, efforts: CLAUDE_EFFORTS }
+    : { models: readCodexModelCache(), efforts: CODEX_EFFORTS };
 }

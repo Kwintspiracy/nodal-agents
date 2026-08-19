@@ -92,6 +92,25 @@ describe('buildProviderArgs', () => {
     expect(args).toContain('workspace-write');
   });
 
+  it('model/effort overrides land as flags — claude native, codex TOML override', () => {
+    const claude = buildProviderArgs('claude', 'read', 't', { model: 'opus', effort: 'high' });
+    expect(claude).toContain('--model');
+    expect(claude[claude.indexOf('--model') + 1]).toBe('opus');
+    expect(claude[claude.indexOf('--effort') + 1]).toBe('high');
+
+    const codex = buildProviderArgs('codex', 'read', 't', { model: 'o3', effort: 'low' });
+    expect(codex[codex.indexOf('-m') + 1]).toBe('o3');
+    expect(codex).toContain('model_reasoning_effort="low"');
+    // the task stays LAST for codex (positional prompt)
+    expect(codex[codex.length - 1]).toBe('t');
+  });
+
+  it('omitted model/effort adds NO flags (CLI defaults untouched)', () => {
+    const args = buildProviderArgs('claude', 'read', 't');
+    expect(args).not.toContain('--model');
+    expect(args).not.toContain('--effort');
+  });
+
   it('a hostile task string stays ONE argv element — no shell traversal', () => {
     const hostile = 'x" & del C:\\Windows\\system32 & echo "y';
     const args = buildProviderArgs('claude', 'read', hostile);

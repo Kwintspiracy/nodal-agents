@@ -199,7 +199,18 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
   }
 
   if (effectiveAction === 'block') {
-    const result: ToolExecutionResult = { outcome: 'error', error: 'blocked' };
+    // Prescriptive, like the delegation refusals (delegation_depth_exceeded…):
+    // the bare word "blocked" gave the model nothing to correct with — it
+    // would retry the same tool or probe for workarounds (étape C, review
+    // loop: a read-only reviewer needs to be TOLD the posture is intentional).
+    const result: ToolExecutionResult = {
+      outcome: 'error',
+      error:
+        `blocked: an approval rule forbids "${tool.name}" for this agent. This is an ` +
+        `intentional restriction set by the owner — do NOT retry it and do NOT work around it ` +
+        `via other tools or sub-agents. Use your allowed tools, or report the limitation in ` +
+        `your result.`,
+    };
     await _writeToolCall(
       ctx,
       tool.name,

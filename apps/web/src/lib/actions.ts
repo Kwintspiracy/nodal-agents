@@ -493,6 +493,11 @@ export type AgentRow = {
   position: number;
   /** Daily notional-USD cap on code_task (coding CLI) runs. 0 = no cap. */
   cliDailyBudgetUsd: number;
+  /** Per-provider model/effort defaults for code_task. NULL/absent key = the CLI's own default. */
+  cliDefaults: {
+    claude?: { model?: string; effort?: string };
+    codex?: { model?: string; effort?: string };
+  } | null;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -5600,6 +5605,10 @@ export type CliDoctorReportView = {
   version: string | null;
   loggedIn: 'yes' | 'no' | 'unknown';
   fix: string | null;
+  /** Model choices for the defaults dropdown. NULL = no catalog (free entry only). */
+  models: string[] | null;
+  /** Valid reasoning-effort levels for the defaults dropdown. */
+  efforts: string[];
 };
 
 export async function codeTaskDoctorAction(
@@ -5727,6 +5736,191 @@ export async function getCliUsageTodayAction(
   } catch (err) {
     console.error('[getCliUsageTodayAction]', err);
     return fail('db_error', 'Failed to load coding CLI usage');
+  }
+}
+
+// ─── Coding CLI per-provider defaults (model / effort) ───────────────────────
+//
+// agents.cli_defaults (migration 0074) — { claude?: {model?, effort?}, codex?:
+// {model?, effort?} }. code_task resolves model/effort as: per-task input >
+// this agent default > the CLI's own default (NULL/absent key). Free strings —
+// the CLI is the source of truth for what it accepts; a bad value fails loud
+// at run time, so this deliberately has no catalog dropdown.
+//
+// The payload is the FULL desired state for one provider (both fields, either
+// may be null to clear). An empty resulting provider entry is dropped from the
+// object rather than stored as `{}`, and an empty resulting object is stored
+// as NULL rather than `{}` — mirrors the DB comment's "NULL = CLI's own
+// default" contract exactly (an empty object would be a different, untested
+// state for the runner to interpret).
+
+const CLI_MODEL_RE = /^[\w.:/-]{1,100}$/;
+const CLI_EFFORT_RE = /^[A-Za-z0-9_-]{1,20}$/;
+
+const SetCliDefaultsSchema = z.object({
+  agentId: z.string().guid(),
+  provider: z.enum(['claude', 'codex']),
+  model: z
+    .string()
+    .regex(CLI_MODEL_RE, 'Model may only contain letters, digits, . : / _ - (max 100 chars)')
+    .nullable(),
+  effort: z
+    .string()
+    .regex(CLI_EFFORT_RE, 'Effort may only contain letters, digits, _ - (max 20 chars)')
+    .nullable(),
+});
+
+type CliDefaults = {
+  claude?: { model?: string; effort?: string };
+  codex?: { model?: string; effort?: string };
+};
+
+export async function setCliDefaultsAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCliDefaultsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, provider, model, effort } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as the budget/Yolo actions above.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change the coding CLI defaults.');
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, cliDefaults: agents.cliDefaults })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const current: CliDefaults = agent.cliDefaults ?? {};
+    const entry: { model?: string; effort?: string } = {};
+    if (model) entry.model = model;
+    if (effort) entry.effort = effort;
+
+    const next: CliDefaults = { ...current };
+    if (Object.keys(entry).length > 0) {
+      next[provider] = entry;
+    } else {
+      delete next[provider];
+    }
+    const nextValue: CliDefaults | null = Object.keys(next).length > 0 ? next : null;
+
+    await db
+      .update(agents)
+      .set({ cliDefaults: nextValue, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCliDefaultsAction]', err);
+    return fail('db_error', 'Failed to save coding CLI defaults');
+  }
+}
+
+// ─── Reviewer read-only preset ────────────────────────────────────────────────
+//
+// A "read-only agent" = approval_rules action='block' on every write tool the
+// canonical preset covers. code_task's own read-only detection
+// (assertNotReadOnlyAgent, packages/tools/src/builtin/code-task/db.ts) keys
+// off exactly one of these — file_write blocked ⇒ mode "write" refused too —
+// so this preset is the UI affordance for a posture that tool already
+// understands; the list must stay a superset containing 'file_write'.
+//
+// enabled=true  → upsert a 'block' row per tool (bulk insert + onConflictDoUpdate,
+//                 same shape as setRootAgentAction's meta-tool sync above).
+// enabled=false → delete ONLY the rows this preset itself would have set
+//                 (action='block' on these exact tools) — a require_approval
+//                 or auto_approve rule the user set by hand on, say,
+//                 run_command is a separate, deliberate choice and survives.
+
+const READONLY_PRESET_TOOLS = [
+  'file_write',
+  'file_edit',
+  'skill_file_write',
+  'run_command',
+  'run_skill_script',
+] as const;
+
+const SetReviewerReadOnlyPresetSchema = z.object({
+  agentId: z.string().guid(),
+  enabled: z.boolean(),
+});
+
+export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetReviewerReadOnlyPresetSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, enabled } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as setCodeTaskYoloAction.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change the read-only preset.');
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    if (enabled) {
+      await db
+        .insert(approvalRules)
+        .values(
+          READONLY_PRESET_TOOLS.map((toolName) => ({
+            entityId: session.entityId,
+            agentId,
+            toolName,
+            action: 'block' as const,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+          set: { action: 'block', updatedAt: new Date() },
+        });
+    } else {
+      await db
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            eq(approvalRules.agentId, agentId),
+            inArray(approvalRules.toolName, READONLY_PRESET_TOOLS as unknown as string[]),
+            eq(approvalRules.action, 'block'),
+          ),
+        );
+    }
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setReviewerReadOnlyPresetAction]', err);
+    return fail('db_error', 'Failed to save the read-only preset');
   }
 }
 
