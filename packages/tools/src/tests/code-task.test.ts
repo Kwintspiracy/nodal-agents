@@ -218,9 +218,9 @@ describe('resolveCliPath', () => {
 
 describe('buildChildEnv secret-shaped extras', () => {
   it('THROWS on an unexempted secret-shaped extra instead of dropping it silently', () => {
-    expect(() =>
-      buildChildEnv({ PATH: 'x' }, { ANTHROPIC_API_KEY: 'sk-ant-xxx' }),
-    ).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => buildChildEnv({ PATH: 'x' }, { ANTHROPIC_API_KEY: 'sk-ant-xxx' })).toThrow(
+      /ANTHROPIC_API_KEY/,
+    );
   });
 
   it('passes a secret-shaped extra through when exempted BY NAME', () => {

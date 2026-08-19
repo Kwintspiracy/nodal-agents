@@ -90,7 +90,8 @@ export async function runCliDoctor(provider: CodeTaskProvider): Promise<CliDocto
       timeoutMs: 15_000,
       env,
     });
-    const loggedIn = loginRun.exitCode === 0 && /logged in/i.test(loginRun.stdout + loginRun.stderr);
+    const loggedIn =
+      loginRun.exitCode === 0 && /logged in/i.test(loginRun.stdout + loginRun.stderr);
     return {
       provider,
       binaryFound: true,

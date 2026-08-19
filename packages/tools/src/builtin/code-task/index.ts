@@ -16,10 +16,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../../types';
-import {
-  assertWorkspacesConfigured,
-  resolveAndCheckPath,
-} from '../file-ops/workspace';
+import { assertWorkspacesConfigured, resolveAndCheckPath } from '../file-ops/workspace';
 import { buildChildEnv } from '../child-env';
 import { resolveCliPath, runCli } from './process';
 import {
@@ -29,12 +26,7 @@ import {
   type CodeTaskMode,
   type CodeTaskProvider,
 } from './providers';
-import {
-  assertCliBudget,
-  recordCliRun,
-  acquireWorkspaceLock,
-  releaseWorkspaceLock,
-} from './db';
+import { assertCliBudget, recordCliRun, acquireWorkspaceLock, releaseWorkspaceLock } from './db';
 
 export { runCliDoctor, type CliDoctorReport } from './doctor';
 export { CliBudgetExceededError, WorkspaceLockedError } from './db';
@@ -82,7 +74,7 @@ const codeTaskSchema = z.object({
     .enum(['claude', 'codex'])
     .describe(
       'Which coding CLI runs the task: "claude" (Claude Code) or "codex" (OpenAI Codex). ' +
-        'Both consume the OWNER\'s subscription on the runner machine.',
+        "Both consume the OWNER's subscription on the runner machine.",
     ),
   task: z
     .string()
@@ -240,7 +232,15 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         errorDetail = `subscription_limit_reached — the owner's ${input.provider} plan usage window is exhausted; it resets on its own schedule. ${errorDetail ?? ''}`;
       }
 
-      await safeRecord(ctx, input, cliVersion, parsed, run.durationMs, run.exitCode, parsed.sessionId);
+      await safeRecord(
+        ctx,
+        input,
+        cliVersion,
+        parsed,
+        run.durationMs,
+        run.exitCode,
+        parsed.sessionId,
+      );
 
       return {
         provider: input.provider,
@@ -252,7 +252,9 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
         isError: parsed.isError || run.exitCode !== 0,
         errorDetail:
           errorDetail ??
-          (run.exitCode !== 0 ? `exit_code=${String(run.exitCode)}; stderr: ${run.stderr.slice(0, 300)}` : null),
+          (run.exitCode !== 0
+            ? `exit_code=${String(run.exitCode)}; stderr: ${run.stderr.slice(0, 300)}`
+            : null),
         costUsd: parsed.costUsd,
         usage: parsed.usage,
         exitCode: run.exitCode,

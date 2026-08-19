@@ -41,8 +41,7 @@ export function resolveCliPath(
 ): ResolvedCli | null {
   const pathVar = env['PATH'] ?? env['Path'] ?? '';
   const dirs = pathVar.split(delimiter).filter((d) => d !== '');
-  const candidates =
-    platform === 'win32' ? [`${bin}.exe`, `${bin}.cmd`, `${bin}.bat`] : [bin];
+  const candidates = platform === 'win32' ? [`${bin}.exe`, `${bin}.cmd`, `${bin}.bat`] : [bin];
   for (const dir of dirs) {
     for (const name of candidates) {
       const full = join(dir, name);
@@ -66,15 +65,7 @@ export function buildSpawnArgv(
 ): { argv: string[]; envExtra: Record<string, string> } {
   if (platform === 'win32' && cli.isBatch) {
     return {
-      argv: [
-        'cmd.exe',
-        '/d',
-        '/v:off',
-        '/s',
-        '/c',
-        `%${WINDOWS_BATCH_EXECUTABLE_ENV}%`,
-        ...args,
-      ],
+      argv: ['cmd.exe', '/d', '/v:off', '/s', '/c', `%${WINDOWS_BATCH_EXECUTABLE_ENV}%`, ...args],
       envExtra: { [WINDOWS_BATCH_EXECUTABLE_ENV]: `"${cli.path}"` },
     };
   }
@@ -193,7 +184,11 @@ export function runCli(
     }, opts.timeoutMs);
 
     child.on('error', (err: Error) => {
-      stderr = append(stderr, Buffer.from(`${stderr ? '\n' : ''}spawn_error: ${err.message}`), MAX_STDERR_CHARS);
+      stderr = append(
+        stderr,
+        Buffer.from(`${stderr ? '\n' : ''}spawn_error: ${err.message}`),
+        MAX_STDERR_CHARS,
+      );
       finish(null);
     });
     child.on('close', (code: number | null) => finish(code));

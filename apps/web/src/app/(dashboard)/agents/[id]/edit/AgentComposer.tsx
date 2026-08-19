@@ -1927,13 +1927,13 @@ function CodeTaskSection({
           </div>
           <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
             When on, this agent runs coding CLI tasks immediately with no approval gate. Runs are
-            still logged and count against the daily budget below. Only enable for agents you
-            fully trust.
+            still logged and count against the daily budget below. Only enable for agents you fully
+            trust.
           </p>
           {isDormant && canManage && (
             <p className="mt-2 text-body-12 text-warn">
-              This agent&apos;s Yolo is <b className="font-semibold">dormant</b>. Workspace Yolo
-              is off, so its coding tasks still require approval. Turn it off here to clear it, or
+              This agent&apos;s Yolo is <b className="font-semibold">dormant</b>. Workspace Yolo is
+              off, so its coding tasks still require approval. Turn it off here to clear it, or
               re-enable Yolo in{' '}
               <Link
                 href="/settings"
@@ -1958,8 +1958,8 @@ function CodeTaskSection({
           )}
           {!yoloAllowed && lanCommandYolo && !isOwner && (
             <p className="mt-2 text-body-12 text-ink-4">
-              The workspace owner has enabled Yolo for this workspace, but only the owner can
-              toggle it per agent.
+              The workspace owner has enabled Yolo for this workspace, but only the owner can toggle
+              it per agent.
             </p>
           )}
         </div>
@@ -1997,7 +1997,11 @@ function CodeTaskSection({
 
       <div className="mt-6 space-y-2.5">
         <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">Diagnostics</div>
-        <DoctorRow label="Claude Code" state={doctor.claude} onTest={() => void handleTest('claude')} />
+        <DoctorRow
+          label="Claude Code"
+          state={doctor.claude}
+          onTest={() => void handleTest('claude')}
+        />
         <DoctorRow label="Codex" state={doctor.codex} onTest={() => void handleTest('codex')} />
       </div>
 
@@ -2059,7 +2063,12 @@ function DoctorRow({
           </div>
         )}
       </div>
-      <PrimaryButton variant="neutral" type="button" onClick={onTest} disabled={state.state === 'testing'}>
+      <PrimaryButton
+        variant="neutral"
+        type="button"
+        onClick={onTest}
+        disabled={state.state === 'testing'}
+      >
         {state.state === 'testing' ? 'Testing…' : 'Test'}
       </PrimaryButton>
     </div>

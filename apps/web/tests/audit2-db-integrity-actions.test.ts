@@ -244,7 +244,8 @@ describe('setCodeTaskYoloAction — re-toggle never leaves a duplicate row', () 
 
   it('does not touch a run_command rule on the same agent (distinct tool_name rows)', async () => {
     const agentId = await makeAgent('Audit2 CodeTask And RunCommand Agent');
-    const { setRunCommandYoloAction, setCodeTaskYoloAction } = await import('../src/lib/actions.ts');
+    const { setRunCommandYoloAction, setCodeTaskYoloAction } =
+      await import('../src/lib/actions.ts');
 
     await setRunCommandYoloAction({ agentId, enabled: true });
     await setCodeTaskYoloAction({ agentId, enabled: true });
