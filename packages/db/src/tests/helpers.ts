@@ -117,6 +117,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       system_agent boolean DEFAULT false,
       max_tokens_per_job integer NOT NULL DEFAULT 0 CHECK (max_tokens_per_job >= 0),
       memory_token_budget integer NOT NULL DEFAULT 1500,
+      cli_daily_budget_usd real NOT NULL DEFAULT 10,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
@@ -646,6 +647,33 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       expires_at timestamptz NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    -- code_task (étape B, subscription-runtimes plan) — mirrors migration 0073
+    CREATE TABLE IF NOT EXISTS cli_runs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      provider text NOT NULL CHECK (provider IN ('claude', 'codex')),
+      mode text NOT NULL CHECK (mode IN ('read', 'write')),
+      source text NOT NULL DEFAULT 'subscription' CHECK (source IN ('subscription', 'api')),
+      session_id text,
+      cost_usd real,
+      input_tokens integer,
+      output_tokens integer,
+      cached_tokens integer,
+      duration_ms integer,
+      cli_version text,
+      exit_code integer,
+      created_at timestamptz DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_locks (
+      workspace_path text PRIMARY KEY,
+      job_id uuid NOT NULL,
+      agent_id uuid,
+      acquired_at timestamptz NOT NULL DEFAULT now()
     );
   `);
 

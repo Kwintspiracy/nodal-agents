@@ -1615,6 +1615,10 @@ async function runJob(
   if (authMode !== 'local-trust') {
     const CODE_EXECUTION_TOOLS = [
       'run_command',
+      // code_task spawns the owner's coding CLI (claude/codex) — same trust
+      // class as a shell (étape B, subscription-runtimes plan): a LAN caller
+      // must not benefit from a Yolo rule the master-switch has not blessed.
+      'code_task',
       'run_skill_script',
       'skill_file_write',
       'create_mcp',
@@ -1839,35 +1843,49 @@ async function runJob(
                 action: 'auto_approve',
               },
             ];
-            const execResult = await executeTool(
-              toolDef,
-              req.toolInput,
-              {
-                jobId: jobId as string,
-                agentId: agentRow.id,
-                entityId: job.entityId ?? '',
-                db,
-                jobChatId: job.chatId ?? null,
-                jobChannel: job.channel,
-                activeChannels,
-                notifyChannelOverride,
-                embeddingClient: deps.embeddingClient,
-                workspaces: agentWorkspacesList,
-                skillStoreDir: skillStore,
-                assignedSkillSlugs,
-                scriptAuthorizedSkillSlugs,
-                fileWritableSkillSlugs,
-                provisioning: TOOL_PROVISIONING,
-                searchBackend,
-                resolveAgentToolNames: (targetAgentId: string) =>
-                  resolveAgentToolNames(db, targetAgentId),
-              },
-              {
-                approvalRules: resumeApprovalRules,
-                autonomy: workspaceAutonomy,
-                onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
-              },
-            );
+            // Heartbeat during the resume-replay too: the serial/parallel tool
+            // paths keep updated_at fresh via a 60 s touchJob interval, but this
+            // replay path historically had NONE — an approved long tool (a
+            // 10-minute code_task, a slow run_command) was reaped at 5 min by
+            // resetOrphanedJobs precisely BECAUSE the human approved it. Same
+            // idiom as the serial path; cleared in `finally` so it never leaks.
+            const resumeHbInterval = setInterval(() => {
+              void touchJob(db, jobId as string).catch(() => {});
+            }, 60_000);
+            let execResult!: Awaited<ReturnType<typeof executeTool>>;
+            try {
+              execResult = await executeTool(
+                toolDef,
+                req.toolInput,
+                {
+                  jobId: jobId as string,
+                  agentId: agentRow.id,
+                  entityId: job.entityId ?? '',
+                  db,
+                  jobChatId: job.chatId ?? null,
+                  jobChannel: job.channel,
+                  activeChannels,
+                  notifyChannelOverride,
+                  embeddingClient: deps.embeddingClient,
+                  workspaces: agentWorkspacesList,
+                  skillStoreDir: skillStore,
+                  assignedSkillSlugs,
+                  scriptAuthorizedSkillSlugs,
+                  fileWritableSkillSlugs,
+                  provisioning: TOOL_PROVISIONING,
+                  searchBackend,
+                  resolveAgentToolNames: (targetAgentId: string) =>
+                    resolveAgentToolNames(db, targetAgentId),
+                },
+                {
+                  approvalRules: resumeApprovalRules,
+                  autonomy: workspaceAutonomy,
+                  onApprovalRequired: (r: ApprovalGateRequest) => notifyApprovalCreated(deps, r),
+                },
+              );
+            } finally {
+              clearInterval(resumeHbInterval);
+            }
             if (execResult.outcome === 'success') {
               // INJECT-001: the resume path executes the SAME tool the gate
               // suspended, so it needs the same framing. A boundary that is

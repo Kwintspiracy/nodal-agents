@@ -30,6 +30,10 @@ import {
   listAgentApprovalRulesAction,
   setAgentApprovalRuleAction,
   setRunCommandYoloAction,
+  setCodeTaskYoloAction,
+  codeTaskDoctorAction,
+  setCliDailyBudgetAction,
+  getCliUsageTodayAction,
   setSkillScriptsAuthorizedAction,
   setSkillFilesWritableAction,
   assignSkillAction,
@@ -586,6 +590,7 @@ export default function AgentComposer({
             attachedSkills={attachedSkills}
             lanCommandYolo={lanCommandYolo}
             isOwner={isOwner}
+            cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
           />
         )}
         {tab === 'settings' && (
@@ -1370,6 +1375,7 @@ function AutonomyTab({
   attachedSkills,
   lanCommandYolo,
   isOwner,
+  cliDailyBudgetUsd,
 }: {
   agentId: string;
   connectors: AgentConnectorRow[];
@@ -1378,6 +1384,7 @@ function AutonomyTab({
   attachedSkills: SkillRow[];
   lanCommandYolo: boolean;
   isOwner: boolean;
+  cliDailyBudgetUsd: number;
 }) {
   const [rules, setRules] = useState<ApprovalRuleUiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1538,6 +1545,16 @@ function AutonomyTab({
         onRulesChange={setRules}
         lanCommandYolo={lanCommandYolo}
         isOwner={isOwner}
+      />
+
+      <CodeTaskSection
+        agentId={agentId}
+        attachedSkills={attachedSkills}
+        rules={rules}
+        onRulesChange={setRules}
+        lanCommandYolo={lanCommandYolo}
+        isOwner={isOwner}
+        cliDailyBudgetUsd={cliDailyBudgetUsd}
       />
 
       <ScriptAuthSection agentId={agentId} attachedSkills={attachedSkills} isOwner={isOwner} />
@@ -1738,6 +1755,314 @@ function CommandExecutionSection({
         onCancel={() => setConfirmOpen(false)}
       />
     </SectionCard>
+  );
+}
+
+// ─── Coding CLI (code_task) section ───────────────────────────────────────────
+//
+// Visible only when the agent has the `code-task` skill assigned. Mirrors
+// CommandExecutionSection's Yolo toggle (same gate, same dormant-rule copy)
+// plus two pieces code_task adds on top: a per-provider health check (proxied
+// to the runner) and a daily USD budget with today's spend.
+
+const CODE_TASK_SKILL_SLUG = 'code-task';
+const CODE_TASK_TOOL = 'code_task';
+
+type DoctorState =
+  | { state: 'idle' }
+  | { state: 'testing' }
+  | { state: 'pass'; message: string }
+  | { state: 'fail'; message: string };
+
+function CodeTaskSection({
+  agentId,
+  attachedSkills,
+  rules,
+  onRulesChange,
+  lanCommandYolo,
+  isOwner,
+  cliDailyBudgetUsd,
+}: {
+  agentId: string;
+  attachedSkills: SkillRow[];
+  rules: ApprovalRuleUiRow[];
+  onRulesChange: (rules: ApprovalRuleUiRow[]) => void;
+  /** Whether the workspace owner has opted into Yolo in non-local-trust mode. */
+  lanCommandYolo: boolean;
+  /** Whether the current user is the workspace owner. */
+  isOwner: boolean;
+  /** agents.cli_daily_budget_usd — 0 means no cap. */
+  cliDailyBudgetUsd: number;
+}) {
+  const hasSkill = attachedSkills.some((s) => s.slug === CODE_TASK_SKILL_SLUG);
+
+  // Read auth mode client-side — mirrors CommandExecutionSection.
+  const isLocalTrust = (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const yoloAllowed = isLocalTrust || (lanCommandYolo && isOwner);
+
+  const [saving, setSaving] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const yoloEnabled = rules.some(
+    (r) => r.toolName === CODE_TASK_TOOL && r.action === 'auto_approve',
+  );
+  const canManage = isLocalTrust || isOwner;
+  const canToggle = yoloAllowed || (yoloEnabled && canManage);
+  const isDormant = yoloEnabled && !yoloAllowed;
+
+  function applyOptimistic(enabled: boolean) {
+    onRulesChange(
+      enabled
+        ? [
+            ...rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
+            { id: '', toolName: CODE_TASK_TOOL, action: 'auto_approve' as const },
+          ]
+        : rules.filter((r) => r.toolName !== CODE_TASK_TOOL),
+    );
+  }
+
+  function handleToggle(next: boolean) {
+    if (next) {
+      setConfirmOpen(true);
+    } else {
+      void doSet(false);
+    }
+  }
+
+  async function doSet(enabled: boolean) {
+    setSaving(true);
+    applyOptimistic(enabled);
+    const result = await setCodeTaskYoloAction({ agentId, enabled });
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      applyOptimistic(!enabled);
+    } else {
+      toast.success(
+        enabled
+          ? 'Yolo mode enabled. Coding tasks run without approval.'
+          : 'Yolo mode disabled. Coding tasks require approval again.',
+      );
+    }
+  }
+
+  // ── Daily budget + today's spend ───────────────────────────────────────────
+  const [budgetInput, setBudgetInput] = useState<string>(String(cliDailyBudgetUsd));
+  const [savingBudget, setSavingBudget] = useState(false);
+  const [spentUsd, setSpentUsd] = useState<number | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasSkill) return;
+    getCliUsageTodayAction(agentId).then((result) => {
+      if (result.ok) setSpentUsd(result.data.spentUsd);
+      else setUsageError(result.message);
+    });
+  }, [agentId, hasSkill]);
+
+  async function handleSaveBudget() {
+    const parsed = Number(budgetInput);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000) {
+      toast.error('Enter a number between 0 and 1000');
+      return;
+    }
+    setSavingBudget(true);
+    const result = await setCliDailyBudgetAction({ agentId, budgetUsd: parsed });
+    setSavingBudget(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success('Daily budget saved');
+  }
+
+  // ── Doctor (per-provider health check) ─────────────────────────────────────
+  const [doctor, setDoctor] = useState<Record<'claude' | 'codex', DoctorState>>({
+    claude: { state: 'idle' },
+    codex: { state: 'idle' },
+  });
+
+  async function handleTest(provider: 'claude' | 'codex') {
+    setDoctor((prev) => ({ ...prev, [provider]: { state: 'testing' } }));
+    const result = await codeTaskDoctorAction({ provider });
+    if (!result.ok) {
+      setDoctor((prev) => ({ ...prev, [provider]: { state: 'fail', message: result.message } }));
+      return;
+    }
+    const report = result.data;
+    if (report.binaryFound && report.loggedIn !== 'no') {
+      setDoctor((prev) => ({
+        ...prev,
+        [provider]: {
+          state: 'pass',
+          message: `${report.version ?? 'installed'} (logged in: ${report.loggedIn})`,
+        },
+      }));
+    } else {
+      setDoctor((prev) => ({
+        ...prev,
+        [provider]: { state: 'fail', message: report.fix ?? 'Not available on this machine.' },
+      }));
+    }
+  }
+
+  if (!hasSkill) {
+    return null;
+  }
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Coding CLI"
+        hint="Runs delegate work to the coding CLI installed on this machine, under your subscription. Treat it the same as Command execution."
+      />
+
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-medium-14 text-ink">
+              Auto-run coding tasks without approval (Yolo)
+            </span>
+            <MonoMicroTag tone="err">irreversible</MonoMicroTag>
+          </div>
+          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+            When on, this agent runs coding CLI tasks immediately with no approval gate. Runs are
+            still logged and count against the daily budget below. Only enable for agents you
+            fully trust.
+          </p>
+          {isDormant && canManage && (
+            <p className="mt-2 text-body-12 text-warn">
+              This agent&apos;s Yolo is <b className="font-semibold">dormant</b>. Workspace Yolo
+              is off, so its coding tasks still require approval. Turn it off here to clear it, or
+              re-enable Yolo in{' '}
+              <Link
+                href="/settings"
+                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+              >
+                Settings → Command execution
+              </Link>
+              .
+            </p>
+          )}
+          {!yoloAllowed && !isDormant && !isLocalTrust && !lanCommandYolo && (
+            <p className="mt-2 text-body-12 text-ink-4">
+              Yolo is off for this workspace. The owner can enable it in{' '}
+              <Link
+                href="/settings"
+                className="underline decoration-rule underline-offset-[3px] hover:decoration-ink-3"
+              >
+                Settings → Command execution
+              </Link>
+              , or switch to loopback mode.
+            </p>
+          )}
+          {!yoloAllowed && lanCommandYolo && !isOwner && (
+            <p className="mt-2 text-body-12 text-ink-4">
+              The workspace owner has enabled Yolo for this workspace, but only the owner can
+              toggle it per agent.
+            </p>
+          )}
+        </div>
+
+        <Switch
+          checked={yoloEnabled}
+          onChange={() => handleToggle(!yoloEnabled)}
+          disabled={saving || !canToggle}
+          trackClassName={
+            isDormant
+              ? 'mt-0.5 border-ink-4/40 bg-ink-4/20'
+              : yoloEnabled
+                ? 'mt-0.5 border-err/40 bg-err/20'
+                : 'mt-0.5 border-rule-2 bg-canvas'
+          }
+          thumbClassName={[
+            yoloEnabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
+            isDormant ? 'bg-ink-4' : yoloEnabled ? 'bg-err' : 'bg-ink-3',
+          ].join(' ')}
+        />
+      </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Enable Yolo mode?"
+        message="Yolo mode lets this agent run coding CLI tasks on this machine with no approval, using your subscription. Only enable for an agent you fully trust. Runs are still logged."
+        confirmLabel="Enable Yolo"
+        destructive
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void doSet(true);
+        }}
+        onCancel={() => setConfirmOpen(false)}
+      />
+
+      <div className="mt-6 space-y-2.5">
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">Diagnostics</div>
+        <DoctorRow label="Claude Code" state={doctor.claude} onTest={() => void handleTest('claude')} />
+        <DoctorRow label="Codex" state={doctor.codex} onTest={() => void handleTest('codex')} />
+      </div>
+
+      <div className="mt-6">
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+          Daily budget (USD)
+        </div>
+        <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
+        <div className="mt-2 flex items-center gap-2">
+          <TextInput
+            type="number"
+            min={0}
+            max={1000}
+            step={0.5}
+            value={budgetInput}
+            onChange={(e) => setBudgetInput(e.target.value)}
+            className="w-28 font-mono"
+          />
+          <PrimaryButton
+            variant="neutral"
+            type="button"
+            onClick={() => void handleSaveBudget()}
+            disabled={savingBudget}
+          >
+            {savingBudget ? 'Saving…' : 'Save'}
+          </PrimaryButton>
+        </div>
+        <p className="mt-2 text-body-13 text-ink-3">
+          {spentUsd !== null
+            ? `Spent today: $${spentUsd.toFixed(2)}`
+            : (usageError ?? 'Loading spend…')}
+        </p>
+      </div>
+    </SectionCard>
+  );
+}
+
+function DoctorRow({
+  label,
+  state,
+  onTest,
+}: {
+  label: string;
+  state: DoctorState;
+  onTest: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-rule-2 px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <div className="text-body-13 text-ink">{label}</div>
+        {state.state === 'pass' && (
+          <div className="mt-1 rounded-md border border-ok/30 bg-ok-bg px-2 py-1 text-body-12 text-ok">
+            {state.message}
+          </div>
+        )}
+        {state.state === 'fail' && (
+          <div className="mt-1 rounded-md border border-err/30 bg-warn-bg px-2 py-1 text-body-12 text-err break-all">
+            {state.message}
+          </div>
+        )}
+      </div>
+      <PrimaryButton variant="neutral" type="button" onClick={onTest} disabled={state.state === 'testing'}>
+        {state.state === 'testing' ? 'Testing…' : 'Test'}
+      </PrimaryButton>
+    </div>
   );
 }
 

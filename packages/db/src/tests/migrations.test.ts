@@ -41,6 +41,8 @@ const expectedTables = [
   'sessions',
   'accounts',
   'verifications',
+  'cli_runs',
+  'workspace_locks',
 ];
 
 describe('migrations: all tables exist', () => {

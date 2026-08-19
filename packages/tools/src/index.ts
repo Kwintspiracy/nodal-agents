@@ -65,8 +65,9 @@ export {
   dashboardPublishTool,
   DashboardPublishInputSchema,
   buildChildEnv,
+  runCliDoctor,
 } from './builtin/index';
-export type { AlwaysOnTool, DashboardPublishInput } from './builtin/index';
+export type { AlwaysOnTool, DashboardPublishInput, CliDoctorReport } from './builtin/index';
 
 // Communication tools (capability-driven — registered per-agent based on agent config)
 export {

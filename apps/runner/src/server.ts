@@ -14,6 +14,7 @@ import { approveRoute } from './routes/approve.ts';
 import { cronRoute } from './routes/cron.ts';
 import { chatRoute } from './routes/chat.ts';
 import { webhookRoute } from './routes/webhook.ts';
+import { codeTaskDoctorRoute } from './routes/code-task-doctor.ts';
 import {
   installSkillRoute,
   uninstallSkillRoute,
@@ -197,6 +198,7 @@ export function createApp(
   app.use('/api/approve', requireRunnerAuth);
   app.use('/api/cron', requireRunnerAuth);
   app.use('/api/whatsapp/pairing', requireRunnerAuth);
+  app.use('/api/code-task/doctor', requireRunnerAuth);
 
   // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -226,6 +228,10 @@ export function createApp(
   // one; the routes answer 503 rather than crash).
   app.get('/api/whatsapp/pairing', (c) => whatsappPairingStatusRoute(c, deps, whatsappManager));
   app.post('/api/whatsapp/pairing', (c) => whatsappPairingStartRoute(c, deps, whatsappManager));
+
+  // Coding-CLI doctor (étape B) — probes claude/codex health on this machine
+  // for the capability UI's "Tester" button. Free (no subscription usage).
+  app.post('/api/code-task/doctor', (c) => codeTaskDoctorRoute(c));
 
   // Inbound webhooks (Brique 5) — intentionally OUTSIDE requireRunnerAuth
   // (that gate is a literal-path app.use on the four /api/* routes above, so

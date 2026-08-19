@@ -195,6 +195,71 @@ describe('setRunCommandYoloAction — re-toggle never leaves a duplicate row —
   });
 });
 
+// ─── setCodeTaskYoloAction — mirrors setRunCommandYoloAction's R2 guarantee ───
+
+describe('setCodeTaskYoloAction — re-toggle never leaves a duplicate row', () => {
+  it('enable, then enable again (re-toggle race) leaves exactly ONE auto_approve row', async () => {
+    const agentId = await makeAgent('Audit2 CodeTask Yolo Agent');
+    const { setCodeTaskYoloAction } = await import('../src/lib/actions.ts');
+
+    const first = await setCodeTaskYoloAction({ agentId, enabled: true });
+    expect(first.ok).toBe(true);
+    const second = await setCodeTaskYoloAction({ agentId, enabled: true });
+    expect(second.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ action: approvalRules.action })
+      .from(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, _testEntityId),
+          eq(approvalRules.agentId, agentId),
+          eq(approvalRules.toolName, 'code_task'),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.action).toBe('auto_approve');
+  });
+
+  it('disable removes the row', async () => {
+    const agentId = await makeAgent('Audit2 CodeTask Yolo Agent Off');
+    const { setCodeTaskYoloAction } = await import('../src/lib/actions.ts');
+
+    await setCodeTaskYoloAction({ agentId, enabled: true });
+    const off = await setCodeTaskYoloAction({ agentId, enabled: false });
+    expect(off.ok).toBe(true);
+
+    const rows = await _testDb!
+      .select({ action: approvalRules.action })
+      .from(approvalRules)
+      .where(
+        and(
+          eq(approvalRules.entityId, _testEntityId),
+          eq(approvalRules.agentId, agentId),
+          eq(approvalRules.toolName, 'code_task'),
+        ),
+      );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('does not touch a run_command rule on the same agent (distinct tool_name rows)', async () => {
+    const agentId = await makeAgent('Audit2 CodeTask And RunCommand Agent');
+    const { setRunCommandYoloAction, setCodeTaskYoloAction } = await import('../src/lib/actions.ts');
+
+    await setRunCommandYoloAction({ agentId, enabled: true });
+    await setCodeTaskYoloAction({ agentId, enabled: true });
+
+    const rows = await _testDb!
+      .select({ toolName: approvalRules.toolName, action: approvalRules.action })
+      .from(approvalRules)
+      .where(and(eq(approvalRules.entityId, _testEntityId), eq(approvalRules.agentId, agentId)));
+
+    const toolNames = rows.map((r) => r.toolName).sort();
+    expect(toolNames).toEqual(['code_task', 'run_command']);
+    expect(rows.every((r) => r.action === 'auto_approve')).toBe(true);
+  });
+});
+
 // ─── F-18/F-19: updateAgentAction sub-agent rewrite ───────────────────────────
 
 describe('updateAgentAction — sub-agent rewrite is atomic and deduped — F-18/F-19', () => {

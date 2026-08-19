@@ -6,6 +6,7 @@ import {
   uuid,
   boolean,
   integer,
+  real,
   bigint,
   timestamp,
   jsonb,
@@ -66,6 +67,12 @@ export const agents = pgTable(
     // (Memory Sprint 2). Pure char budget — token estimation done at call site
     // (length/4). 1500 chars ≈ ~375 tokens, similar to Hermes' 2200+1375 split.
     memoryTokenBudget: integer('memory_token_budget').default(1500).notNull(),
+    // Daily budget for coding-CLI runs (code_task, étape B of the
+    // subscription-runtimes plan), in NOTIONAL USD — the cost the claude CLI
+    // reports even under subscription (codex reports none; its runs count 0
+    // against this cap, bounded by the per-call timeout instead). 0 = no cap.
+    // Enforced in the code_task builtin against SUM(cli_runs.cost_usd) today.
+    cliDailyBudgetUsd: real('cli_daily_budget_usd').default(10).notNull(),
     // User-controlled order on the /agents page (Brique A, migration 0019).
     // Default 0 — ties are broken by `name ASC` in the list query. Newly
     // created agents land at the front of their group by default; the user

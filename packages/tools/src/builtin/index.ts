@@ -21,6 +21,7 @@ import { OFFICE_TOOLS } from './office-ops';
 import { META_TOOLS } from './meta-ops';
 import { SKILL_TOOLS, skillFileWriteTool } from './skill-ops';
 import { runCommandTool } from './run-command';
+import { codeTaskTool } from './code-task';
 import { runSkillScriptTool } from './run-skill-script';
 import { skillViewTool } from './skill-view';
 import { listModelsTool } from './list-models';
@@ -69,6 +70,8 @@ export {
 } from './skill-ops';
 export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
+export { codeTaskTool, runCliDoctor } from './code-task';
+export type { CodeTaskInput, CodeTaskOutput, CliDoctorReport } from './code-task';
 export { runSkillScriptTool } from './run-skill-script';
 export type { RunSkillScriptInput, RunSkillScriptOutput } from './run-skill-script';
 export { buildChildEnv } from './child-env';
@@ -119,6 +122,13 @@ export function registerBuiltins(registry: ToolRegistry): void {
   // NOT always-on. Safe-by-default (defaultApproval='require_approval'); a
   // per-agent auto_approve rule ("Yolo") overrides the human-in-the-loop gate.
   registry.register(runCommandTool);
+  // code_task — gated behind the "code-task" skill via requiredBuiltins, NOT
+  // always-on. Safe-by-default like run_command (defaultApproval
+  // 'require_approval'; per-agent Yolo rule overrides; LAN master-switch
+  // neutralizes Yolo outside local-trust — see CODE_EXECUTION_TOOLS in the
+  // runner). Spawns the owner's own coding CLI (claude/codex) under their
+  // subscription.
+  registry.register(codeTaskTool);
   // run_skill_script — gated by per-skill×agent script authorization
   // (agent_skill_assignments.scripts_authorized), NOT always-on and NOT via
   // requiredBuiltins. The runner adds it to the whitelist only when the agent

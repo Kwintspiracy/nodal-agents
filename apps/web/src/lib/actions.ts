@@ -72,6 +72,7 @@ import {
   listChannelBindings,
   getChannelBinding,
   getMcpApprovalContext,
+  cliRuns,
 } from '@nodal-agents/db';
 import type { JobTriggerContext } from '@nodal-agents/db';
 import {
@@ -490,6 +491,8 @@ export type AgentRow = {
   telegramBotToken: string | null;
   lastSeenChatIdTelegram: string | null;
   position: number;
+  /** Daily notional-USD cap on code_task (coding CLI) runs. 0 = no cap. */
+  cliDailyBudgetUsd: number;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -5479,6 +5482,251 @@ export async function setRunCommandYoloAction(raw: unknown): Promise<ActionResul
   } catch (err) {
     console.error('[setRunCommandYoloAction]', err);
     return fail('db_error', 'Failed to save command execution setting');
+  }
+}
+
+// ─── Coding CLI (code_task) actions ──────────────────────────────────────────
+//
+// code_task hands a complete dev task to the coding CLI (Claude Code / Codex)
+// that the workspace owner has installed and logged in on the runner machine
+// (packages/tools/src/builtin/code-task). Same safety shape as run_command:
+// defaultApproval:'require_approval', so "Yolo mode" is an explicit
+// auto_approve row — see setRunCommandYoloAction above, which this mirrors
+// exactly (same gate, same transactional delete-then-insert on the
+// UNIQUE(entity_id, agent_id, tool_name) row).
+
+const SetCodeTaskYoloSchema = z.object({
+  agentId: z.string().guid(),
+  enabled: z.boolean(),
+});
+
+export async function setCodeTaskYoloAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCodeTaskYoloSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, enabled } = parsed.data;
+
+    // Gate (non-local-trust only): only the workspace owner may change a
+    // per-agent Yolo rule — in EITHER direction, same reasoning as
+    // setRunCommandYoloAction. Enabling additionally requires the workspace
+    // opt-in (lan_command_yolo) — code_task reuses that same master switch
+    // rather than introducing a second one.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId, lanCommandYolo: entities.lanCommandYolo })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change coding CLI auto-run.');
+      }
+      if (enabled && !entityRow.lanCommandYolo) {
+        return fail(
+          'forbidden',
+          'Yolo mode is not enabled for this workspace. Enable it in Settings → Command execution first.',
+        );
+      }
+    }
+
+    const db = getDb();
+
+    // Verify agent belongs to active entity
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    // Delete-then-insert wrapped in a transaction (R2, mirrors
+    // setRunCommandYoloAction) — approval_rules carries a
+    // UNIQUE(entity_id, agent_id, tool_name) constraint, so two overlapping
+    // calls could otherwise race on the insert.
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.entityId, session.entityId),
+            eq(approvalRules.agentId, agentId),
+            eq(approvalRules.toolName, 'code_task'),
+          ),
+        );
+
+      if (enabled) {
+        await tx
+          .insert(approvalRules)
+          .values({
+            entityId: session.entityId,
+            agentId,
+            toolName: 'code_task',
+            action: 'auto_approve',
+          })
+          .onConflictDoUpdate({
+            target: [approvalRules.entityId, approvalRules.agentId, approvalRules.toolName],
+            set: { action: 'auto_approve', updatedAt: new Date() },
+          });
+      }
+    });
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCodeTaskYoloAction]', err);
+    return fail('db_error', 'Failed to save coding CLI auto-run setting');
+  }
+}
+
+// ─── Coding CLI doctor (runner probe) ────────────────────────────────────────
+//
+// Proxies the runner's POST /api/code-task/doctor — a read-only probe of the
+// CLI binary's presence/version/login state on the RUNNER machine (which may
+// not be this Next process — LAN mode). Never touches credentials (D0 red
+// line). The remote body is a typed CliDoctorReport we trust structurally,
+// but on a non-OK response we surface only our own message, never the raw
+// remote body — mirrors resolveApprovalAction / startWhatsAppPairingAction.
+
+const CodeTaskDoctorSchema = z.object({
+  provider: z.enum(['claude', 'codex']),
+});
+
+export type CliDoctorReportView = {
+  provider: 'claude' | 'codex';
+  binaryFound: boolean;
+  path: string | null;
+  version: string | null;
+  loggedIn: 'yes' | 'no' | 'unknown';
+  fix: string | null;
+};
+
+export async function codeTaskDoctorAction(
+  raw: unknown,
+): Promise<ActionResult<CliDoctorReportView>> {
+  try {
+    await getSession();
+    const parsed = CodeTaskDoctorSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+
+    if (!env.WORKER_SECRET) {
+      console.error('[codeTaskDoctorAction] WORKER_SECRET missing');
+      return fail('config_error', 'WORKER_SECRET is not set');
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(`${env.RUNNER_URL}/api/code-task/doctor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.WORKER_SECRET}`,
+        },
+        body: JSON.stringify(parsed.data),
+      });
+    } catch (fetchErr) {
+      console.error('[codeTaskDoctorAction] fetch failed', fetchErr);
+      return fail('runner_unreachable', 'Runner did not respond');
+    }
+
+    if (!res.ok) {
+      return fail('doctor_failed', `Runner rejected the check (${res.status})`);
+    }
+
+    const body = (await res.json()) as CliDoctorReportView;
+    return ok(body);
+  } catch (err) {
+    console.error('[codeTaskDoctorAction]', err);
+    return fail('db_error', 'Failed to check coding CLI status');
+  }
+}
+
+// ─── Coding CLI daily budget ──────────────────────────────────────────────────
+//
+// agents.cliDailyBudgetUsd (migration already shipped, default 10, 0 = no
+// cap) is what the code_task builtin enforces against SUM(cli_runs.cost_usd).
+// This action only writes the cap; getCliUsageTodayAction below reads today's
+// spend for the same agent so the UI can show both side by side.
+
+const SetCliDailyBudgetSchema = z.object({
+  agentId: z.string().guid(),
+  budgetUsd: z.number().finite().min(0).max(1000),
+});
+
+export async function setCliDailyBudgetAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCliDailyBudgetSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, budgetUsd } = parsed.data;
+
+    // Owner-only (non-local-trust) — a spend-control knob, same gate shape as
+    // the Yolo enable path above.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', 'Only the workspace owner can change the coding CLI budget.');
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ cliDailyBudgetUsd: budgetUsd, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCliDailyBudgetAction]', err);
+    return fail('db_error', 'Failed to save daily budget');
+  }
+}
+
+export type CliUsageTodayView = { spentUsd: number };
+
+export async function getCliUsageTodayAction(
+  agentId: string,
+): Promise<ActionResult<CliUsageTodayView>> {
+  try {
+    const session = await getSession();
+    if (!z.string().guid().safeParse(agentId).success) {
+      return fail('validation_failed', 'Invalid agent id');
+    }
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const [row] = await db
+      .select({ spent: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)` })
+      .from(cliRuns)
+      .where(
+        and(
+          eq(cliRuns.agentId, agentId),
+          eq(cliRuns.entityId, session.entityId),
+          sql`${cliRuns.createdAt} >= date_trunc('day', now())`,
+        ),
+      );
+
+    return ok({ spentUsd: Number(row?.spent ?? 0) });
+  } catch (err) {
+    console.error('[getCliUsageTodayAction]', err);
+    return fail('db_error', 'Failed to load coding CLI usage');
   }
 }
 

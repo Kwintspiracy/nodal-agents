@@ -27,6 +27,7 @@ import { safeToolUseSkill } from './skills/safe-tool-use';
 import { workspaceHygieneSkill } from './skills/workspace-hygiene';
 import { officeEditingSkill } from './skills/office-editing';
 import { commandExecutionSkill } from './skills/command-execution';
+import { codeTaskSkill } from './skills/code-task';
 import { toolCreateMcpSkill } from './skills/tool-create-mcp';
 import { toolCreateAgentSkill } from './skills/tool-create-agent';
 import { toolUpdateAgentSkill } from './skills/tool-update-agent';
@@ -36,6 +37,7 @@ import { toolSchedulesSkill } from './skills/tool-schedules';
 
 export { officeEditingSkill } from './skills/office-editing';
 export { commandExecutionSkill } from './skills/command-execution';
+export { codeTaskSkill } from './skills/code-task';
 
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
@@ -52,6 +54,7 @@ export const systemSkills: SystemSkill[] = [
   workspaceHygieneSkill,
   officeEditingSkill,
   commandExecutionSkill,
+  codeTaskSkill,
   // Tool usage guides — loaded on demand via skill_view, not auto-injected.
   toolCreateMcpSkill,
   toolCreateAgentSkill,
