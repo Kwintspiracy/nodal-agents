@@ -162,8 +162,15 @@ const opsTable = (ops: OperationDescriptor[]): string => {
   for (const risk of RISK_ORDER) {
     const group = ops.filter((o) => o.risk === risk);
     if (group.length === 0) continue;
+    // The connectors pages are .mdx — a raw `<name>` token in a description
+    // (e.g. cloudflare's https://<name>.<account>.workers.dev) is parsed as an
+    // unclosed JSX tag and breaks the whole docs build. Same escape as the
+    // skill/MCP/builtin pages.
     const rows = group
-      .map((o) => `| \`${o.slug}\` | ${cell(o.name)} | ${cell(o.description ?? '')} |`)
+      .map(
+        (o) =>
+          `| \`${o.slug}\` | ${cell(o.name)} | ${escapeAnglesOutsideCode(cell(o.description ?? ''))} |`,
+      )
       .join('\n');
     sections.push(
       `### ${RISK_LABEL[risk]} (${group.length})\n\n` +
@@ -197,7 +204,7 @@ ${authLine}
 
 **Slug:** \`${c.slug}\`
 
-**Setup:** ${c.docsHint}
+**Setup:** ${escapeAnglesOutsideCode(c.docsHint)}
 
 > **Destructive operations** (delete, overwrite) can be disabled per-agent: in
 > the agent's **Connectors** tab, the "enabled operations" allowlist controls
