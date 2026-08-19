@@ -126,7 +126,12 @@ describe('parseClaudeOutput', () => {
     expect(r.sessionId).toBe('f57aa1f6-192f-4b78-bd30-b300bf97e233');
     expect(r.resultText).toBe('OK');
     expect(r.costUsd).toBeCloseTo(0.184598, 5);
-    expect(r.usage).toEqual({ inputTokens: 2, outputTokens: 4, cachedTokens: 25638 });
+    expect(r.usage).toEqual({
+      inputTokens: 2,
+      outputTokens: 4,
+      cachedTokens: 25638,
+      cacheCreationTokens: 7937,
+    });
     expect(r.isError).toBe(false);
     expect(r.numTurns).toBe(1);
   });
@@ -158,7 +163,14 @@ describe('parseCodexOutput', () => {
     expect(r.sessionId).toBe('01a0178d-e516-7292-840f-a7a097590970');
     expect(r.resultText).toBe('OK');
     expect(r.costUsd).toBeNull(); // codex reports no cost — documented asymmetry
-    expect(r.usage).toEqual({ inputTokens: 18537, outputTokens: 5, cachedTokens: 6912 });
+    // input normalisé HORS cache (18537 bruts - 6912 cachés) : une seule
+    // sémantique dans cli_runs, quel que soit le provider.
+    expect(r.usage).toEqual({
+      inputTokens: 11625,
+      outputTokens: 5,
+      cachedTokens: 6912,
+      cacheCreationTokens: 0,
+    });
     expect(r.isError).toBe(false);
   });
 

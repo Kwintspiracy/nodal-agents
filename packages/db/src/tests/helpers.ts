@@ -670,6 +670,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       input_tokens integer,
       output_tokens integer,
       cached_tokens integer,
+      cache_creation_tokens integer,
       duration_ms integer,
       cli_version text,
       exit_code integer,

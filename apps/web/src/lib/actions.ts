@@ -10722,17 +10722,29 @@ export type CodingActivityItem =
       jobId: string;
       /** null = a CLI invocation marker (cli_runs), not a Nodal job turn. */
       turn: number | null;
+      /**
+       * EFFECTIVE input — hors lectures de cache, quelle que soit la source
+       * (audit tokens 19/08 : llm_calls.input_tokens INCLUT le cache lu,
+       * cli_runs.input_tokens l'EXCLUT — les deux sont normalisés ici pour
+       * qu'un tour Nodal et un tour CLI soient comparables dans la même liste).
+       */
       inputTokens: number;
       outputTokens: number;
+      /** Lectures de cache (~10 % du prix input). */
+      cachedTokens: number;
+      /** Écritures de cache (1,25× le prix input) — CLI claude seulement, null ailleurs. */
+      cacheCreationTokens: number | null;
       costUsd: number;
     };
 
 export type CodingProcessDetail = {
   header: CodingProcessRow & {
     durationMs: number | null;
-    /** SUM(llm_calls.input_tokens) + SUM(cli_runs.input_tokens) across root + direct children. */
+    /** EFFECTIVE input (hors cache lu), root + direct children — même normalisation que les turn markers. */
     inputTokens: number;
     outputTokens: number;
+    /** Lectures de cache totales — affichées à côté de l'effectif, jamais mélangées dedans. */
+    cachedTokens: number;
   };
   activity: CodingActivityItem[];
   verdicts: CodingVerdictView[];
@@ -10829,6 +10841,7 @@ export async function getCodingProcessDetailAction(
           turn: llmCalls.turn,
           inputTokens: llmCalls.inputTokens,
           outputTokens: llmCalls.outputTokens,
+          cachedTokens: llmCalls.cachedTokens,
           costUsd: llmCalls.costUsd,
           createdAt: llmCalls.createdAt,
         })
@@ -10840,15 +10853,25 @@ export async function getCodingProcessDetailAction(
           jobId: cliRuns.jobId,
           inputTokens: cliRuns.inputTokens,
           outputTokens: cliRuns.outputTokens,
+          cachedTokens: cliRuns.cachedTokens,
+          cacheCreationTokens: cliRuns.cacheCreationTokens,
           costUsd: cliRuns.costUsd,
           createdAt: cliRuns.createdAt,
         })
         .from(cliRuns)
         .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)));
 
+      // Normalisation (audit tokens 19/08) : llm_calls.input_tokens INCLUT le
+      // cache lu (sémantique AI SDK), cli_runs.input_tokens l'EXCLUT
+      // (sémantique CLI claude). L'effectif = hors cache, partout.
+      const effectiveLlmInput = (r: { inputTokens: number | null; cachedTokens: number | null }) =>
+        Math.max(0, (r.inputTokens ?? 0) - (r.cachedTokens ?? 0));
       const inputTokens =
-        llmCallRows.reduce((s, r) => s + (r.inputTokens ?? 0), 0) +
+        llmCallRows.reduce((s, r) => s + effectiveLlmInput(r), 0) +
         cliRunRows.reduce((s, r) => s + (r.inputTokens ?? 0), 0);
+      const cachedTokens =
+        llmCallRows.reduce((s, r) => s + (r.cachedTokens ?? 0), 0) +
+        cliRunRows.reduce((s, r) => s + (r.cachedTokens ?? 0), 0);
       const outputTokens =
         llmCallRows.reduce((s, r) => s + (r.outputTokens ?? 0), 0) +
         cliRunRows.reduce((s, r) => s + (r.outputTokens ?? 0), 0);
@@ -10912,6 +10935,7 @@ export async function getCodingProcessDetailAction(
           turn: number;
           inputTokens: number;
           outputTokens: number;
+          cachedTokens: number;
           costUsd: number;
           firstAt: number;
         }
@@ -10925,11 +10949,13 @@ export async function getCodingProcessDetailAction(
           turn: r.turn,
           inputTokens: 0,
           outputTokens: 0,
+          cachedTokens: 0,
           costUsd: 0,
           firstAt: t,
         };
-        cur.inputTokens += r.inputTokens ?? 0;
+        cur.inputTokens += effectiveLlmInput(r);
         cur.outputTokens += r.outputTokens ?? 0;
+        cur.cachedTokens += r.cachedTokens ?? 0;
         cur.costUsd += r.costUsd ?? 0;
         cur.firstAt = Math.min(cur.firstAt, t);
         turnAgg.set(key, cur);
@@ -10963,6 +10989,8 @@ export async function getCodingProcessDetailAction(
             turn: agg.turn,
             inputTokens: agg.inputTokens,
             outputTokens: agg.outputTokens,
+            cachedTokens: agg.cachedTokens,
+            cacheCreationTokens: null,
             costUsd: agg.costUsd,
           },
         });
@@ -10977,6 +11005,8 @@ export async function getCodingProcessDetailAction(
             turn: null,
             inputTokens: r.inputTokens ?? 0,
             outputTokens: r.outputTokens ?? 0,
+            cachedTokens: r.cachedTokens ?? 0,
+            cacheCreationTokens: r.cacheCreationTokens,
             costUsd: r.costUsd ?? 0,
           },
         });
@@ -11002,6 +11032,7 @@ export async function getCodingProcessDetailAction(
           durationMs: job.totalDurationMs ?? null,
           inputTokens,
           outputTokens,
+          cachedTokens,
         },
         activity,
         verdicts,
@@ -11022,6 +11053,7 @@ export async function getCodingProcessDetailAction(
         costUsd: cliRuns.costUsd,
         inputTokens: cliRuns.inputTokens,
         outputTokens: cliRuns.outputTokens,
+        cachedTokens: cliRuns.cachedTokens,
         createdAt: cliRuns.createdAt,
       })
       .from(cliRuns)
@@ -11039,6 +11071,7 @@ export async function getCodingProcessDetailAction(
     const totalCost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
     const totalInputTokens = runs.reduce((sum, r) => sum + (r.inputTokens ?? 0), 0);
     const totalOutputTokens = runs.reduce((sum, r) => sum + (r.outputTokens ?? 0), 0);
+    const totalCachedTokens = runs.reduce((sum, r) => sum + (r.cachedTokens ?? 0), 0);
     const lastRun = runs[0]!;
 
     return ok({
@@ -11057,6 +11090,7 @@ export async function getCodingProcessDetailAction(
         durationMs: null,
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
+        cachedTokens: totalCachedTokens,
       },
       activity: [],
       verdicts: [],

@@ -178,6 +178,7 @@ export async function runCliRuntimeJob(args: {
       inputTokens: turn.usage?.inputTokens ?? null,
       outputTokens: turn.usage?.outputTokens ?? null,
       cachedTokens: turn.usage?.cachedTokens ?? null,
+      cacheCreationTokens: turn.usage?.cacheCreationTokens ?? null,
       durationMs: turn.durationMs,
       cliVersion: null,
       exitCode: turn.exitCode,

@@ -37,10 +37,21 @@ export interface NormalizedCliResult {
   /** Notional USD cost — claude only; null for codex (no cost in its JSON). */
   costUsd: number | null;
   usage: {
+    /**
+     * Input HORS cache, quel que soit le provider. claude rapporte déjà
+     * input_tokens hors cache ; codex (sémantique OpenAI) rapporte le total
+     * cache inclus — on soustrait cached_input_tokens à la normalisation
+     * pour que cli_runs.input_tokens ait UNE seule sémantique.
+     */
     inputTokens: number;
     outputTokens: number;
     /** Prompt-cache reads (claude cache_read / codex cached_input). */
     cachedTokens: number;
+    /**
+     * Prompt-cache WRITES (claude cache_creation_input_tokens) — le poste de
+     * coût dominant d'un run. null = provider sans la donnée (codex).
+     */
+    cacheCreationTokens: number | null;
   } | null;
   /** True when the CLI itself reported the run as failed. */
   isError: boolean;
@@ -144,6 +155,7 @@ export function parseClaudeOutput(stdout: string): NormalizedCliResult {
         inputTokens: asNumber(usageRaw['input_tokens']),
         outputTokens: asNumber(usageRaw['output_tokens']),
         cachedTokens: asNumber(usageRaw['cache_read_input_tokens']),
+        cacheCreationTokens: asNumber(usageRaw['cache_creation_input_tokens']),
       }
     : null;
   const isError = obj['is_error'] === true;
@@ -200,10 +212,20 @@ export function parseCodexOutput(stdout: string): NormalizedCliResult {
       sawTurnCompleted = true;
       const u = evt['usage'] as Record<string, unknown> | undefined;
       if (u) {
+        // Sémantique OpenAI : input_tokens INCLUT cached_input_tokens.
+        // Normalisé en input hors cache (voir NormalizedCliResult.usage).
+        const rawIn = asNumber(u['input_tokens']);
+        const cached = asNumber(u['cached_input_tokens']);
         usage = {
-          inputTokens: asNumber(u['input_tokens']),
+          inputTokens: Math.max(0, rawIn - cached),
           outputTokens: asNumber(u['output_tokens']),
-          cachedTokens: asNumber(u['cached_input_tokens']),
+          cachedTokens: cached,
+          // cache_write_input_tokens existe dans le flux codex (fixture A) —
+          // capturé quand présent, null quand absent (jamais 0 deviné).
+          cacheCreationTokens:
+            typeof u['cache_write_input_tokens'] === 'number'
+              ? u['cache_write_input_tokens']
+              : null,
         };
       }
     } else if (type === 'turn.failed' || type === 'error') {

@@ -55,6 +55,9 @@ describe('handleStreamLine on the recorded real stream', () => {
     expect(result.numTurns).toBe(2);
     expect(result.costUsd).toBeGreaterThan(0);
     expect(result.usage!.inputTokens).toBeGreaterThan(0);
+    // Les écritures de cache — le poste de coût dominant — sont extraites du
+    // result event (audit tokens 19/08), pas devinées.
+    expect(result.usage!.cacheCreationTokens).toBe(31725);
     expect(result.sessionId).toBe('8c97f2a2-2ed9-4453-b193-15848ae3a3e5');
   });
 

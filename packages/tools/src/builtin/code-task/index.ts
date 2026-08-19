@@ -162,7 +162,12 @@ export interface CodeTaskOutput {
   errorDetail: string | null;
   /** Notional USD cost (claude only — reported even under subscription; codex: null). */
   costUsd: number | null;
-  usage: { inputTokens: number; outputTokens: number; cachedTokens: number } | null;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    cacheCreationTokens: number | null;
+  } | null;
   exitCode: number | null;
   timedOut: boolean;
   durationMs: number;
@@ -366,7 +371,12 @@ async function safeRecord(
   cliVersion: string,
   parsed: {
     costUsd: number | null;
-    usage: { inputTokens: number; outputTokens: number; cachedTokens: number } | null;
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      cachedTokens: number;
+      cacheCreationTokens: number | null;
+    } | null;
   } | null,
   durationMs: number,
   exitCode: number | null,
@@ -389,6 +399,7 @@ async function safeRecord(
       inputTokens: parsed?.usage?.inputTokens ?? null,
       outputTokens: parsed?.usage?.outputTokens ?? null,
       cachedTokens: parsed?.usage?.cachedTokens ?? null,
+      cacheCreationTokens: parsed?.usage?.cacheCreationTokens ?? null,
       durationMs,
       cliVersion,
       exitCode,

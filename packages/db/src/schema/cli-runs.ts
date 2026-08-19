@@ -55,9 +55,17 @@ export const cliRuns = pgTable(
     effort: text('effort'),
     /** Notional USD cost (claude reports it even under subscription; codex: null). */
     costUsd: real('cost_usd'),
+    /** NON-cached input (le CLI rapporte input_tokens HORS cache — l'inverse de llm_calls). */
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
+    /** Lectures de cache (cache_read_input_tokens). */
     cachedTokens: integer('cached_tokens'),
+    /**
+     * Écritures de cache (cache_creation_input_tokens) — le poste de coût
+     * dominant d'un run CLI (facturé 1,25× l'input). NULL = donnée absente
+     * (run antérieur à 0077, ou codex qui ne l'expose pas) — jamais 0 deviné.
+     */
+    cacheCreationTokens: integer('cache_creation_tokens'),
     durationMs: integer('duration_ms'),
     cliVersion: text('cli_version'),
     exitCode: integer('exit_code'),

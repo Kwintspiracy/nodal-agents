@@ -44,7 +44,15 @@ export interface ClaudeTurnResult {
   finalText: string;
   isError: boolean;
   errorDetail: string | null;
-  usage: { inputTokens: number; outputTokens: number; cachedTokens: number } | null;
+  usage: {
+    /** input_tokens du CLI = input HORS cache. */
+    inputTokens: number;
+    outputTokens: number;
+    /** Lectures de cache (cache_read_input_tokens). */
+    cachedTokens: number;
+    /** Écritures de cache (cache_creation_input_tokens) — le poste de coût dominant. */
+    cacheCreationTokens: number;
+  } | null;
   costUsd: number | null;
   numTurns: number | null;
   durationMs: number;
@@ -227,6 +235,7 @@ export function finishTurn(
           inputTokens: num(usageRaw['input_tokens']),
           outputTokens: num(usageRaw['output_tokens']),
           cachedTokens: num(usageRaw['cache_read_input_tokens']),
+          cacheCreationTokens: num(usageRaw['cache_creation_input_tokens']),
         }
       : null,
     costUsd: typeof r['total_cost_usd'] === 'number' ? r['total_cost_usd'] : null,

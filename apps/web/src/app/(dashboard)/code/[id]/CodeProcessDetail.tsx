@@ -156,7 +156,7 @@ export default function CodeProcessDetail({
           )}
         </div>
         <p className="text-body-14 leading-[1.5]! text-ink-2">{header.task}</p>
-        <div className="grid grid-cols-2 gap-2 text-body-13 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2 text-body-13 sm:grid-cols-3 lg:grid-cols-7">
           {[
             ['Cost', header.costUsd > 0 ? `$${header.costUsd.toFixed(2)}` : '—'],
             [
@@ -165,6 +165,7 @@ export default function CodeProcessDetail({
             ],
             ['Input tokens', header.inputTokens > 0 ? header.inputTokens.toLocaleString() : '—'],
             ['Output tokens', header.outputTokens > 0 ? header.outputTokens.toLocaleString() : '—'],
+            ['Cache reads', header.cachedTokens > 0 ? header.cachedTokens.toLocaleString() : '—'],
             ['Files changed', String(header.filesChanged)],
             ['Activity', relativeTime(header.activityAt)],
           ].map(([label, value]) => (
@@ -538,13 +539,35 @@ function ActivityRow({ tc }: { tc: CodingToolCallView }) {
 
 function TurnMarkerRow({ item }: { item: Extract<CodingActivityItem, { kind: 'turn' }> }) {
   const label = item.turn !== null ? `Turn ${item.turn}` : 'CLI turn';
+  // inputTokens est l'EFFECTIF (hors cache lu) — même sémantique pour les
+  // tours Nodal et CLI. Le détail cache vit dans le title (hover).
+  const cacheParts = [
+    item.cachedTokens > 0 ? `${item.cachedTokens.toLocaleString()} cache reads` : null,
+    item.cacheCreationTokens != null && item.cacheCreationTokens > 0
+      ? `${item.cacheCreationTokens.toLocaleString()} cache writes`
+      : null,
+  ].filter(Boolean);
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-rule-2 bg-canvas/50 px-4 py-2 text-mono-11 text-ink-4 last:border-0">
+    <div
+      className="flex flex-wrap items-center gap-2 border-b border-rule-2 bg-canvas/50 px-4 py-2 text-mono-11 text-ink-4 last:border-0"
+      title={cacheParts.length > 0 ? cacheParts.join(' · ') : undefined}
+    >
       <span className="tracking-wider uppercase">{label}</span>
       <span>·</span>
       <span>
         {item.inputTokens.toLocaleString()} in / {item.outputTokens.toLocaleString()} out
       </span>
+      {item.cachedTokens > 0 && (
+        <>
+          <span>·</span>
+          <span>
+            {Math.round(
+              (item.cachedTokens / (item.cachedTokens + Math.max(1, item.inputTokens))) * 100,
+            )}
+            % cached
+          </span>
+        </>
+      )}
       {item.costUsd > 0 && (
         <>
           <span>·</span>
