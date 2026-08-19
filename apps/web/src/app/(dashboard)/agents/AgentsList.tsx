@@ -962,12 +962,25 @@ function EmptyDropHint() {
 
 // ─── Shared, non-hook content pieces (used by both card variants) ────────────
 
+/**
+ * What drives this agent, displayed honestly (retour Quentin 20/08) : a
+ * runtime agent IS a Claude Code session — showing its stored Nodal model
+ * (kept for a switch back) read as « toujours glm » despite the assignment.
+ */
+function agentEngineLabel(agent: AgentRow): string | null {
+  if (agent.runtime === 'claude-code') return 'Claude Code (subscription)';
+  return agent.model || null;
+}
+
 function OrchestratorHeaderContent({ orchestrator }: { orchestrator: AgentRow }) {
+  const engine = agentEngineLabel(orchestrator);
   return (
     <>
       <DsAgentAvatar name={orchestrator.name} imageUrl={orchestrator.avatarUrl} size="lg" />
       <div className="min-w-0 flex-1">
-        <p className="text-micro-10 uppercase tracking-[0.08em] text-ink-3">Orchestrator</p>
+        <p className="truncate text-micro-10 uppercase tracking-[0.08em] text-ink-3">
+          Orchestrator{engine ? ` · ${engine}` : ''}
+        </p>
         <p className="truncate text-sm text-ink">{orchestrator.name}</p>
         <p className="truncate text-body-12 text-ink-3">{orchestrator.personality}</p>
       </div>
@@ -984,11 +997,14 @@ function NestedOrchestratorRowContent({
   agent: AgentRow;
   activity: ActiveAgentRow | null;
 }) {
+  const engine = agentEngineLabel(agent);
   return (
     <>
       <DsAgentAvatar name={agent.name} imageUrl={agent.avatarUrl} size="md" />
       <div className="min-w-0 flex-1">
-        <p className="text-micro-10 uppercase tracking-[0.08em] text-ink-3">Orchestrator</p>
+        <p className="truncate text-micro-10 uppercase tracking-[0.08em] text-ink-3">
+          Orchestrator{engine ? ` · ${engine}` : ''}
+        </p>
         <p className="truncate text-body-13 text-ink">{agent.name}</p>
       </div>
       <ActivityBadge agent={agent} activity={activity} />
@@ -1006,12 +1022,13 @@ function WorkerRowContent({
   agent: AgentRow;
   activity: ActiveAgentRow | null;
 }) {
+  const engine = agentEngineLabel(agent);
   return (
     <>
       <DsAgentAvatar name={agent.name} imageUrl={agent.avatarUrl} size="md" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-body-13 text-ink">{agent.name}</p>
-        {agent.model && <p className="truncate text-body-12 text-ink-3">{agent.model}</p>}
+        {engine && <p className="truncate text-body-12 text-ink-3">{engine}</p>}
       </div>
       <ActivityBadge agent={agent} activity={activity} />
       <div className="flex shrink-0 items-center gap-2">
