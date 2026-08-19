@@ -50,11 +50,10 @@ const CODEX_SUCCESS_JSONL = [
 // ─── buildProviderArgs ───────────────────────────────────────────────────────
 
 describe('buildProviderArgs', () => {
-  it('claude read: -p task, JSON output, strict MCP, write tools hidden', () => {
-    const args = buildProviderArgs('claude', 'read', 'analyse ce repo');
+  it('claude read: -p (prompt via STDIN), JSON output, strict MCP, write tools hidden', () => {
+    const args = buildProviderArgs('claude', 'read');
     expect(args).toEqual([
       '-p',
-      'analyse ce repo',
       '--output-format',
       'json',
       '--strict-mcp-config',
@@ -66,15 +65,15 @@ describe('buildProviderArgs', () => {
   });
 
   it('claude write: acceptEdits instead of disallowed tools', () => {
-    const args = buildProviderArgs('claude', 'write', 'corrige le bug');
+    const args = buildProviderArgs('claude', 'write');
     expect(args).toContain('--permission-mode');
     expect(args).toContain('acceptEdits');
     expect(args).not.toContain('--disallowedTools');
     expect(args).toContain('--strict-mcp-config');
   });
 
-  it('codex read: sandbox read-only + personal MCP servers neutralized', () => {
-    const args = buildProviderArgs('codex', 'read', 'analyse');
+  it('codex read: stdin sentinel `-`, sandbox read-only, personal MCP servers neutralized', () => {
+    const args = buildProviderArgs('codex', 'read');
     expect(args).toEqual([
       'exec',
       '--json',
@@ -83,38 +82,42 @@ describe('buildProviderArgs', () => {
       '--skip-git-repo-check',
       '-c',
       'mcp_servers={}',
-      'analyse',
+      '-',
     ]);
   });
 
   it('codex write: sandbox workspace-write', () => {
-    const args = buildProviderArgs('codex', 'write', 'fixe');
+    const args = buildProviderArgs('codex', 'write');
     expect(args).toContain('workspace-write');
   });
 
   it('model/effort overrides land as flags — claude native, codex TOML override', () => {
-    const claude = buildProviderArgs('claude', 'read', 't', { model: 'opus', effort: 'high' });
+    const claude = buildProviderArgs('claude', 'read', { model: 'opus', effort: 'high' });
     expect(claude).toContain('--model');
     expect(claude[claude.indexOf('--model') + 1]).toBe('opus');
     expect(claude[claude.indexOf('--effort') + 1]).toBe('high');
 
-    const codex = buildProviderArgs('codex', 'read', 't', { model: 'o3', effort: 'low' });
+    const codex = buildProviderArgs('codex', 'read', { model: 'o3', effort: 'low' });
     expect(codex[codex.indexOf('-m') + 1]).toBe('o3');
     expect(codex).toContain('model_reasoning_effort="low"');
-    // the task stays LAST for codex (positional prompt)
-    expect(codex[codex.length - 1]).toBe('t');
+    // the stdin sentinel stays LAST for codex (positional prompt slot)
+    expect(codex[codex.length - 1]).toBe('-');
   });
 
   it('omitted model/effort adds NO flags (CLI defaults untouched)', () => {
-    const args = buildProviderArgs('claude', 'read', 't');
+    const args = buildProviderArgs('claude', 'read');
     expect(args).not.toContain('--model');
     expect(args).not.toContain('--effort');
   });
 
-  it('a hostile task string stays ONE argv element — no shell traversal', () => {
-    const hostile = 'x" & del C:\\Windows\\system32 & echo "y';
-    const args = buildProviderArgs('claude', 'read', hostile);
-    expect(args[1]).toBe(hostile); // verbatim, unsplit, unquoted
+  it('the task NEVER appears in argv — free text is stdin-only (anti-injection)', () => {
+    const hostile = 'x&whoami';
+    for (const provider of ['claude', 'codex'] as const) {
+      const args = buildProviderArgs(provider, 'read');
+      expect(args).not.toContain(hostile);
+      // and the argv is fully static apart from validated model/effort flags
+      expect(args.every((a) => typeof a === 'string')).toBe(true);
+    }
   });
 });
 
@@ -222,6 +225,27 @@ describe('buildSpawnArgv', () => {
     );
     expect(argv).toEqual(['C:\\Users\\x\\.local\\bin\\claude.exe', '-p', 'tâche']);
     expect(envExtra).toEqual({});
+  });
+
+  it('REJECTS cmd.exe metacharacters on the shim path — the BatBadBut class fails loud', () => {
+    const shim = { path: 'C:\\npm\\codex.cmd', isBatch: true };
+    // `x&whoami` has no whitespace ⇒ Node passes it UNQUOTED to cmd.exe,
+    // which would execute `whoami` — the exact injection the review found.
+    for (const hostile of ['x&whoami', 'a|b', 'a<b', 'a>b', 'a^b', '%PATH%', 'a\nb', 'a\rb']) {
+      expect(() => buildSpawnArgv(shim, ['exec', hostile], 'win32')).toThrow(/cmd_unsafe_argument/);
+    }
+  });
+
+  it("accepts codex's legitimate TOML quotes on the shim path", () => {
+    const shim = { path: 'C:\\npm\\codex.cmd', isBatch: true };
+    const { argv } = buildSpawnArgv(shim, ['-c', 'model_reasoning_effort="high"'], 'win32');
+    expect(argv).toContain('model_reasoning_effort="high"');
+  });
+
+  it('does NOT validate on the native (non-batch) path — no cmd.exe re-parse there', () => {
+    const native = { path: 'C:\\bin\\claude.exe', isBatch: false };
+    const { argv } = buildSpawnArgv(native, ['--resume', 'x&whoami'], 'win32');
+    expect(argv).toContain('x&whoami');
   });
 });
 

@@ -16,7 +16,15 @@ import {
   sql,
   type AnyDrizzleDb,
 } from '@nodal-agents/db';
-import { assertCliBudget, recordCliRun } from '@nodal-agents/tools';
+import { randomUUID } from 'node:crypto';
+import {
+  assertCliBudget,
+  recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+  WorkspaceLockedError,
+} from '@nodal-agents/tools';
+import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
 import type { CliRuntimeAgentRow } from './run-job.ts';
@@ -90,6 +98,21 @@ export async function runCliRuntimeChatTurn(args: {
     }
   };
 
+  // Single write-slot per workspace, same contract as code_task/run-job. A
+  // chat turn has no jobId — the lock token is a synthetic uuid (the column
+  // is a bare uuid, not an FK), released in finally.
+  const lockToken = mode === 'write' ? randomUUID() : null;
+  if (lockToken) {
+    try {
+      await acquireWorkspaceLock(db, cwd, lockToken, agentRow.id);
+    } catch (err) {
+      if (err instanceof WorkspaceLockedError) {
+        return { ok: false, error: err.message.slice(0, 300) };
+      }
+      throw err;
+    }
+  }
+
   let turn: Awaited<ReturnType<typeof runClaudeTurn>>;
   try {
     turn = await runClaudeTurn({
@@ -102,6 +125,8 @@ export async function runCliRuntimeChatTurn(args: {
       effort: defaults.effort,
       resumeSessionId: existing?.sessionId,
       timeoutMs: RUNTIME_CHAT_TIMEOUT_MS,
+      // Same anti-loop cap as the job path (invariant #8).
+      maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
     });
   } catch (err) {
@@ -109,6 +134,12 @@ export async function runCliRuntimeChatTurn(args: {
       return { ok: false, error: err.message.slice(0, 300) };
     }
     throw err;
+  } finally {
+    if (lockToken) {
+      await releaseWorkspaceLock(db, cwd, lockToken).catch((err: unknown) => {
+        console.warn('[cli-runtime] chat workspace lock release failed:', err);
+      });
+    }
   }
 
   try {

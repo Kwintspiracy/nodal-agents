@@ -2610,10 +2610,24 @@ async function runJob(
       // provider's cache (Anthropic cache_read, OpenRouter/DeepSeek cached_tokens).
       // The AI SDK reports `inputTokens` as the TOTAL (incl. cached) and
       // `cachedInputTokens` as the cached subset — verified for @ai-sdk/anthropic
-      // and @openrouter/ai-sdk-provider. Effective (fresh) input = total − cached.
+      // and @openrouter/ai-sdk-provider. For Anthropic the total ALSO includes
+      // cache WRITES (providerMetadata.anthropic.cacheCreationInputTokens,
+      // verified on @ai-sdk/anthropic 3.0.76) — effective (fresh) input =
+      // total − cache reads − cache writes (review 2026-08-20: without the
+      // writes term, a cache-priming turn inflated effective input by its
+      // entire system prompt).
       const cachedT = Number(usage?.cachedInputTokens ?? 0);
+      const antMeta = (
+        response.providerMetadata as Record<string, Record<string, unknown> | undefined> | undefined
+      )?.['anthropic'];
+      const cacheWriteRaw = antMeta?.['cacheCreationInputTokens'];
+      const cacheWriteT =
+        typeof cacheWriteRaw === 'number' && Number.isFinite(cacheWriteRaw) ? cacheWriteRaw : 0;
       const promptTok = Number.isFinite(promptT) ? promptT : 0;
-      const effectiveT = Math.max(0, promptTok - (Number.isFinite(cachedT) ? cachedT : 0));
+      const effectiveT = Math.max(
+        0,
+        promptTok - (Number.isFinite(cachedT) ? cachedT : 0) - cacheWriteT,
+      );
       inputTokens += promptTok;
       outputTokens += Number.isFinite(completionT) ? completionT : 0;
       effectiveInputTokens += effectiveT;

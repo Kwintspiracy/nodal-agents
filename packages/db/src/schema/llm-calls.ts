@@ -42,9 +42,18 @@ export const llmCalls = pgTable(
     toolNames: text('tool_names').array(),
     /** sha256 of the sorted tool-name list — cheap drift detection across calls. */
     toolsHash: text('tools_hash'),
+    /** AI SDK semantics: input CACHE INCLUS (lectures ET écritures — Anthropic). */
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
+    /** Lectures de cache (usage.cachedInputTokens). */
     cachedTokens: integer('cached_tokens'),
+    /**
+     * Écritures de cache (providerMetadata.anthropic.cacheCreationInputTokens,
+     * facturées 1,25× l'input) — indispensables pour dériver l'input EFFECTIF
+     * (= input - lectures - écritures), comparable à cli_runs.input_tokens.
+     * NULL = provider sans la donnée ou ligne pré-0078 — jamais 0 deviné.
+     */
+    cacheCreationTokens: integer('cache_creation_tokens'),
     costUsd: real('cost_usd'),
     durationMs: integer('duration_ms'),
     /** True when this call was served by a fallback link, not the primary. */

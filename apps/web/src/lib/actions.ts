@@ -10723,16 +10723,21 @@ export type CodingActivityItem =
       /** null = a CLI invocation marker (cli_runs), not a Nodal job turn. */
       turn: number | null;
       /**
-       * EFFECTIVE input — hors lectures de cache, quelle que soit la source
-       * (audit tokens 19/08 : llm_calls.input_tokens INCLUT le cache lu,
-       * cli_runs.input_tokens l'EXCLUT — les deux sont normalisés ici pour
-       * qu'un tour Nodal et un tour CLI soient comparables dans la même liste).
+       * EFFECTIVE input — hors cache (lectures ET écritures), quelle que soit
+       * la source : llm_calls.input_tokens INCLUT lectures + écritures
+       * (sémantique AI SDK), cli_runs.input_tokens exclut les deux (sémantique
+       * CLI). Normalisés ici pour qu'un tour Nodal et un tour CLI soient
+       * comparables dans la même liste (audit tokens 19-20/08).
        */
       inputTokens: number;
       outputTokens: number;
       /** Lectures de cache (~10 % du prix input). */
       cachedTokens: number;
-      /** Écritures de cache (1,25× le prix input) — CLI claude seulement, null ailleurs. */
+      /**
+       * Écritures de cache (1,25× le prix input). null = donnée absente de la
+       * ligne source (provider sans la donnée, ou ligne pré-0077/0078) —
+       * jamais 0 deviné.
+       */
       cacheCreationTokens: number | null;
       costUsd: number;
     };
@@ -10740,7 +10745,7 @@ export type CodingActivityItem =
 export type CodingProcessDetail = {
   header: CodingProcessRow & {
     durationMs: number | null;
-    /** EFFECTIVE input (hors cache lu), root + direct children — même normalisation que les turn markers. */
+    /** EFFECTIVE input (hors cache, lectures ET écritures), root + direct children — même normalisation que les turn markers. */
     inputTokens: number;
     outputTokens: number;
     /** Lectures de cache totales — affichées à côté de l'effectif, jamais mélangées dedans. */
@@ -10842,6 +10847,7 @@ export async function getCodingProcessDetailAction(
           inputTokens: llmCalls.inputTokens,
           outputTokens: llmCalls.outputTokens,
           cachedTokens: llmCalls.cachedTokens,
+          cacheCreationTokens: llmCalls.cacheCreationTokens,
           costUsd: llmCalls.costUsd,
           createdAt: llmCalls.createdAt,
         })
@@ -10861,23 +10867,33 @@ export async function getCodingProcessDetailAction(
         .from(cliRuns)
         .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)));
 
-      // Normalisation (audit tokens 19/08) : llm_calls.input_tokens INCLUT le
-      // cache lu (sémantique AI SDK), cli_runs.input_tokens l'EXCLUT
-      // (sémantique CLI claude). L'effectif = hors cache, partout.
-      const effectiveLlmInput = (r: { inputTokens: number | null; cachedTokens: number | null }) =>
-        Math.max(0, (r.inputTokens ?? 0) - (r.cachedTokens ?? 0));
-      const inputTokens =
-        llmCallRows.reduce((s, r) => s + effectiveLlmInput(r), 0) +
-        cliRunRows.reduce((s, r) => s + (r.inputTokens ?? 0), 0);
-      const cachedTokens =
-        llmCallRows.reduce((s, r) => s + (r.cachedTokens ?? 0), 0) +
-        cliRunRows.reduce((s, r) => s + (r.cachedTokens ?? 0), 0);
-      const outputTokens =
-        llmCallRows.reduce((s, r) => s + (r.outputTokens ?? 0), 0) +
-        cliRunRows.reduce((s, r) => s + (r.outputTokens ?? 0), 0);
-      const costUsd =
-        llmCallRows.reduce((s, r) => s + (r.costUsd ?? 0), 0) +
-        cliRunRows.reduce((s, r) => s + (r.costUsd ?? 0), 0);
+      // Normalisation (audit tokens 19-20/08) : llm_calls.input_tokens INCLUT
+      // le cache — lectures ET écritures (sémantique AI SDK / Anthropic) —
+      // quand cli_runs.input_tokens exclut les deux (sémantique CLI).
+      // L'effectif = hors cache, partout. UNE boucle par tableau : la seule
+      // asymétrie porteuse (normaliser llm, pas cli) est énoncée une fois.
+      const effectiveLlmInput = (r: {
+        inputTokens: number | null;
+        cachedTokens: number | null;
+        cacheCreationTokens: number | null;
+      }) =>
+        Math.max(0, (r.inputTokens ?? 0) - (r.cachedTokens ?? 0) - (r.cacheCreationTokens ?? 0));
+      let inputTokens = 0;
+      let cachedTokens = 0;
+      let outputTokens = 0;
+      let costUsd = 0;
+      for (const r of llmCallRows) {
+        inputTokens += effectiveLlmInput(r);
+        cachedTokens += r.cachedTokens ?? 0;
+        outputTokens += r.outputTokens ?? 0;
+        costUsd += r.costUsd ?? 0;
+      }
+      for (const r of cliRunRows) {
+        inputTokens += r.inputTokens ?? 0;
+        cachedTokens += r.cachedTokens ?? 0;
+        outputTokens += r.outputTokens ?? 0;
+        costUsd += r.costUsd ?? 0;
+      }
 
       const verdictOutputsByJob = new Map<string, string[]>();
       for (const v of verdictRows) {
@@ -10936,6 +10952,9 @@ export async function getCodingProcessDetailAction(
           inputTokens: number;
           outputTokens: number;
           cachedTokens: number;
+          cacheCreationTokens: number;
+          /** True once at least one row REPORTED the field — null otherwise (never 0 guessed). */
+          cacheCreationKnown: boolean;
           costUsd: number;
           firstAt: number;
         }
@@ -10950,12 +10969,18 @@ export async function getCodingProcessDetailAction(
           inputTokens: 0,
           outputTokens: 0,
           cachedTokens: 0,
+          cacheCreationTokens: 0,
+          cacheCreationKnown: false,
           costUsd: 0,
           firstAt: t,
         };
         cur.inputTokens += effectiveLlmInput(r);
         cur.outputTokens += r.outputTokens ?? 0;
         cur.cachedTokens += r.cachedTokens ?? 0;
+        if (r.cacheCreationTokens !== null) {
+          cur.cacheCreationTokens += r.cacheCreationTokens;
+          cur.cacheCreationKnown = true;
+        }
         cur.costUsd += r.costUsd ?? 0;
         cur.firstAt = Math.min(cur.firstAt, t);
         turnAgg.set(key, cur);
@@ -10990,7 +11015,7 @@ export async function getCodingProcessDetailAction(
             inputTokens: agg.inputTokens,
             outputTokens: agg.outputTokens,
             cachedTokens: agg.cachedTokens,
-            cacheCreationTokens: null,
+            cacheCreationTokens: agg.cacheCreationKnown ? agg.cacheCreationTokens : null,
             costUsd: agg.costUsd,
           },
         });
@@ -11068,10 +11093,16 @@ export async function getCodingProcessDetailAction(
       .orderBy(desc(cliRuns.createdAt));
     if (runs.length === 0) return fail('not_found', 'Process not found');
 
-    const totalCost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
-    const totalInputTokens = runs.reduce((sum, r) => sum + (r.inputTokens ?? 0), 0);
-    const totalOutputTokens = runs.reduce((sum, r) => sum + (r.outputTokens ?? 0), 0);
-    const totalCachedTokens = runs.reduce((sum, r) => sum + (r.cachedTokens ?? 0), 0);
+    let totalCost = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalCachedTokens = 0;
+    for (const r of runs) {
+      totalCost += r.costUsd ?? 0;
+      totalInputTokens += r.inputTokens ?? 0;
+      totalOutputTokens += r.outputTokens ?? 0;
+      totalCachedTokens += r.cachedTokens ?? 0;
+    }
     const lastRun = runs[0]!;
 
     return ok({

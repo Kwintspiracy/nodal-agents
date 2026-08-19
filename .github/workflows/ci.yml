@@ -193,8 +193,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `--with-deps` shells out to apt-get, which can hang forever on a stuck
+      # mirror (2026-08-19: two consecutive 25-min hangs ate the whole job
+      # budget). Bound each attempt to 5 min and retry once — fail LOUD and
+      # fast instead of timing out the job.
       - name: Install Playwright browsers
-        run: pnpm --filter @nodal-agents/web exec playwright install --with-deps chromium
+        timeout-minutes: 12
+        run: |
+          for i in 1 2; do
+            timeout 300 pnpm --filter @nodal-agents/web exec playwright install --with-deps chromium && exit 0
+            echo "playwright install attempt $i failed or hung — retrying"
+          done
+          exit 1
 
       # NOT `pnpm --filter @nodal-agents/web e2e:up`: that wrapper shells out to
       # a globally-installed `nodal-agents` binary, which does not exist on a

@@ -716,6 +716,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       input_tokens integer,
       output_tokens integer,
       cached_tokens integer,
+      cache_creation_tokens integer,
       cost_usd real,
       duration_ms integer,
       failover boolean NOT NULL DEFAULT false,

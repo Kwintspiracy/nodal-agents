@@ -77,6 +77,27 @@ describe('handleStreamLine on the recorded real stream', () => {
   });
 });
 
+describe('finishTurn anti-loop guard (invariant #8)', () => {
+  it('a hit cap forces isError with tool_call_limit_exceeded — even if a result raced in', () => {
+    const state = newStreamParseState();
+    for (const line of FIXTURE.split('\n')) handleStreamLine(state, line);
+    // The fixture ends with a real successful result event; the cap verdict
+    // must still win — the run was killed, its "result" is not trustworthy.
+    const result = finishTurn(state, null, false, 500, '', 50);
+    expect(result.isError).toBe(true);
+    expect(result.errorDetail).toContain('tool_call_limit_exceeded');
+    expect(result.errorDetail).toContain('50');
+  });
+
+  it('a killed stream with no result event reports the cap, not cli_stream_incomplete', () => {
+    const state = newStreamParseState();
+    handleStreamLine(state, '{"type":"system","subtype":"init","session_id":"s1"}');
+    const result = finishTurn(state, null, false, 100, '', 50);
+    expect(result.isError).toBe(true);
+    expect(result.errorDetail).toContain('tool_call_limit_exceeded');
+  });
+});
+
 describe('buildClaudeTurnArgs', () => {
   const base = {
     message: 'salut',
@@ -85,14 +106,18 @@ describe('buildClaudeTurnArgs', () => {
     mode: 'read' as const,
     timeoutMs: 1000,
   };
+  const PERSONA_FILE = 'D:\\tmp\\persona.txt';
 
-  it('read mode hides the write tools and keeps strict MCP + persona', () => {
-    const args = buildClaudeTurnArgs(base);
-    expect(args.slice(0, 2)).toEqual(['-p', 'salut']);
+  it('read mode: prompt via STDIN (bare -p), persona via FILE, write tools hidden', () => {
+    const args = buildClaudeTurnArgs(base, PERSONA_FILE);
+    // Anti-injection contract: neither free-text field may appear in argv.
+    expect(args).not.toContain('salut');
+    expect(args).not.toContain('Tu es Jarvis.');
+    expect(args[0]).toBe('-p');
     expect(args).toContain('stream-json');
     expect(args).toContain('--verbose');
     expect(args).toContain('--strict-mcp-config');
-    expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('Tu es Jarvis.');
+    expect(args[args.indexOf('--append-system-prompt-file') + 1]).toBe(PERSONA_FILE);
     const disallowed = args[args.indexOf('--disallowedTools') + 1]!;
     expect(disallowed).toContain('Write');
     expect(disallowed).toContain('Bash');
@@ -100,21 +125,27 @@ describe('buildClaudeTurnArgs', () => {
   });
 
   it('write mode uses acceptEdits; extras still land in disallowed', () => {
-    const args = buildClaudeTurnArgs({ ...base, mode: 'write', extraDisallowed: ['WebSearch'] });
+    const args = buildClaudeTurnArgs(
+      { ...base, mode: 'write', extraDisallowed: ['WebSearch'] },
+      PERSONA_FILE,
+    );
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('acceptEdits');
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('WebSearch');
   });
 
   it('resume, model and effort flags appear only when provided', () => {
-    const bare = buildClaudeTurnArgs(base);
+    const bare = buildClaudeTurnArgs(base, PERSONA_FILE);
     expect(bare).not.toContain('--resume');
     expect(bare).not.toContain('--model');
-    const full = buildClaudeTurnArgs({
-      ...base,
-      resumeSessionId: 'sess-1',
-      model: 'opus',
-      effort: 'high',
-    });
+    const full = buildClaudeTurnArgs(
+      {
+        ...base,
+        resumeSessionId: 'sess-1',
+        model: 'opus',
+        effort: 'high',
+      },
+      PERSONA_FILE,
+    );
     expect(full[full.indexOf('--resume') + 1]).toBe('sess-1');
     expect(full[full.indexOf('--model') + 1]).toBe('opus');
     expect(full[full.indexOf('--effort') + 1]).toBe('high');

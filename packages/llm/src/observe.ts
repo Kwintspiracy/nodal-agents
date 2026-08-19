@@ -39,9 +39,17 @@ export interface LlmCallObservation {
   /** Names of the tools OFFERED on this call (null = no tools). */
   toolNames: string[] | null;
   usage: {
+    /** AI SDK semantics: input CACHE INCLUS (reads AND writes for Anthropic). */
     inputTokens: number | null;
     outputTokens: number | null;
+    /** Cache READS (usage.cachedInputTokens). */
     cachedTokens: number | null;
+    /**
+     * Cache WRITES (providerMetadata.anthropic.cacheCreationInputTokens,
+     * billed 1.25× input) — needed to derive effective (non-cached) input.
+     * null = provider does not report it — never a guessed 0.
+     */
+    cacheCreationTokens: number | null;
   } | null;
   /** Provider-reported USD cost when available (OpenRouter usage accounting). */
   costUsd: number | null;
@@ -88,7 +96,10 @@ export function buildLlmCallObservation(args: {
       outputTokens?: unknown;
       cachedInputTokens?: unknown;
     };
-    providerMetadata?: { openrouter?: { usage?: { cost?: unknown } } };
+    providerMetadata?: {
+      openrouter?: { usage?: { cost?: unknown } };
+      anthropic?: { cacheCreationInputTokens?: unknown };
+    };
     response?: { modelId?: unknown };
   };
   const usageRaw = args.result != null ? r.usage : undefined;
@@ -97,6 +108,9 @@ export function buildLlmCallObservation(args: {
         inputTokens: num(usageRaw.inputTokens),
         outputTokens: num(usageRaw.outputTokens),
         cachedTokens: num(usageRaw.cachedInputTokens),
+        // Cache writes live in provider metadata (verified on the installed
+        // @ai-sdk/anthropic 3.0.76) — null for providers that don't report it.
+        cacheCreationTokens: num(r.providerMetadata?.anthropic?.cacheCreationInputTokens),
       }
     : null;
 

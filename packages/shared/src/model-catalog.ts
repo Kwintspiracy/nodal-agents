@@ -800,6 +800,28 @@ export const MODEL_CATALOG: Record<string, ModelCatalogEntry[]> = {
       contextWindow: 1_048_576,
       pricing: { inputPerMillionUsd: 0.76, outputPerMillionUsd: 2.42 },
     },
+    {
+      modelId: 'z-ai/glm-5.3',
+      label: 'GLM 5.3',
+      // Same family posture as 5.2: reasoning model, NATIVE OpenAI tool calls
+      // (no parser middleware — detectAgenticFamily only wraps glm-4.5/4.7),
+      // forcedToolChoice:false. Upstream accepts low/high/max efforts with
+      // max as ITS default; the four catalog levels stay the UI contract and
+      // OpenRouter normalizes 'medium' to the nearest supported level.
+      // Pricing/context verified on openrouter.ai/z-ai/glm-5.3 (2026-08-20).
+      capabilities: {
+        tools: true,
+        forcedToolChoice: false,
+        reasoning: true,
+        reasoningControl: {
+          kind: 'effort',
+          levels: ['low', 'medium', 'high', 'max'],
+          mandatory: true,
+        },
+      },
+      contextWindow: 1_048_576,
+      pricing: { inputPerMillionUsd: 1.4, outputPerMillionUsd: 4.4 },
+    },
     // Moonshot (Kimi)
     {
       modelId: 'moonshotai/kimi-k2.6',

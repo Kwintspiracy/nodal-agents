@@ -1,7 +1,9 @@
 // cli-runtime/claude-turn.ts — one conversation turn of a RUNTIME agent
 // (étape E): the agent IS a Claude Code session. Nodal spawns the user's own
 // `claude` binary headless with `--output-format stream-json`, injects the
-// persona from DB (--append-system-prompt, proven A-bis), confines the run to
+// persona from DB (--append-system-prompt-file + message via stdin — free
+// text NEVER enters argv, which cmd.exe re-parses on the .cmd-shim path;
+// both proven live 2026-08-20), confines the run to
 // the workspace (cwd), maps the permission posture from data, resumes the
 // conversation's existing session when one exists, and RELAYS the final text
 // verbatim (invariant #2: the LLM speaks, Nodal relays).
@@ -22,11 +24,17 @@
 // logs them so CLI drift is visible instead of silent.
 
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import {
   resolveCliPath,
   buildSpawnArgv,
   buildChildEnv,
+  extractClaudeUsage,
   CLAUDE_READONLY_DISALLOWED,
+  type NormalizedCliResult,
 } from '@nodal-agents/tools';
 
 export interface ClaudeTurnEvent {
@@ -44,15 +52,12 @@ export interface ClaudeTurnResult {
   finalText: string;
   isError: boolean;
   errorDetail: string | null;
-  usage: {
-    /** input_tokens du CLI = input HORS cache. */
-    inputTokens: number;
-    outputTokens: number;
-    /** Lectures de cache (cache_read_input_tokens). */
-    cachedTokens: number;
-    /** Écritures de cache (cache_creation_input_tokens) — le poste de coût dominant. */
-    cacheCreationTokens: number;
-  } | null;
+  /**
+   * The parsers' shared normalized shape (extractClaudeUsage — one extractor,
+   * two write paths, zero drift). input HORS cache ; cacheCreationTokens null
+   * quand le flux ne rapporte pas le champ (jamais 0 deviné).
+   */
+  usage: NormalizedCliResult['usage'];
   costUsd: number | null;
   numTurns: number | null;
   durationMs: number;
@@ -76,22 +81,34 @@ export interface ClaudeTurnOptions {
   effort?: string;
   resumeSessionId?: string;
   timeoutMs: number;
+  /**
+   * Anti-loop guard (invariant #8): kill the CLI past this many tool_use
+   * events in one turn. The Nodal loop's maxToolCallsPerTurn does not see a
+   * CLI-internal loop — this is its equivalent at the runtime seam.
+   */
+  maxToolCalls?: number;
   onEvent?: (evt: ClaudeTurnEvent) => void;
 }
 
-/** Build the argv tail for one runtime turn — pure, unit-tested. */
-export function buildClaudeTurnArgs(opts: ClaudeTurnOptions): string[] {
+/**
+ * Build the argv tail for one runtime turn — pure, unit-tested.
+ * The user MESSAGE goes via stdin and the PERSONA via a temp file
+ * (`--append-system-prompt-file`) — the two free-text fields never enter
+ * argv, which cmd.exe re-parses on the Windows .cmd-shim path (command
+ * injection; see process.ts CMD_UNSAFE_CHARS). Both flags proven live
+ * (2026-08-20).
+ */
+export function buildClaudeTurnArgs(opts: ClaudeTurnOptions, personalityFile: string): string[] {
   const args = [
     '-p',
-    opts.message,
     '--output-format',
     'stream-json',
     // stream-json in print mode emits the full event stream only with
     // --verbose (verified on the recorded fixture).
     '--verbose',
     '--strict-mcp-config',
-    '--append-system-prompt',
-    opts.personality,
+    '--append-system-prompt-file',
+    personalityFile,
   ];
   if (opts.resumeSessionId) args.push('--resume', opts.resumeSessionId);
   if (opts.model) args.push('--model', opts.model);
@@ -191,24 +208,36 @@ export function handleStreamLine(
   state.unknownEventTypes.add(String(type));
 }
 
-/** Reduce the parse state + process outcome into the turn result. */
+/**
+ * Reduce the parse state + process outcome into the turn result.
+ * `toolCapExceeded` (the cap value, when the guard fired) forces isError —
+ * even if a result event raced in before the kill landed.
+ */
 export function finishTurn(
   state: StreamParseState,
   exitCode: number | null,
   timedOut: boolean,
   durationMs: number,
   stderrExcerpt: string,
+  toolCapExceeded?: number,
 ): ClaudeTurnResult {
+  const capDetail =
+    toolCapExceeded !== undefined
+      ? `tool_call_limit_exceeded: the CLI exceeded ${String(toolCapExceeded)} tool calls in one ` +
+        `turn and was killed (anti-loop guard, invariant #8)`
+      : null;
   const r = state.finalResult;
   if (!r) {
     return {
       sessionId: state.sessionId,
       finalText: '',
       isError: true,
-      errorDetail: timedOut
-        ? 'cli_timeout: the run exceeded its time budget and was killed'
-        : `cli_stream_incomplete: the stream ended without a result event ` +
-          `(exit ${String(exitCode)}). stderr: ${stderrExcerpt.slice(0, 400)}`,
+      errorDetail:
+        capDetail ??
+        (timedOut
+          ? 'cli_timeout: the run exceeded its time budget and was killed'
+          : `cli_stream_incomplete: the stream ended without a result event ` +
+            `(exit ${String(exitCode)}). stderr: ${stderrExcerpt.slice(0, 400)}`),
       usage: null,
       costUsd: null,
       numTurns: null,
@@ -220,24 +249,18 @@ export function finishTurn(
       unknownEventTypes: [...state.unknownEventTypes],
     };
   }
-  const usageRaw = r['usage'] as Record<string, unknown> | undefined;
   const denials = Array.isArray(r['permission_denials']) ? r['permission_denials'].length : 0;
-  const isError = r['is_error'] === true || (exitCode !== null && exitCode !== 0);
+  const isError =
+    r['is_error'] === true || (exitCode !== null && exitCode !== 0) || capDetail !== null;
   return {
     sessionId: typeof r['session_id'] === 'string' ? r['session_id'] : state.sessionId,
     finalText: typeof r['result'] === 'string' ? r['result'] : '',
     isError,
     errorDetail: isError
-      ? `terminal_reason=${String(r['terminal_reason'])} api_error_status=${String(r['api_error_status'])}`
+      ? (capDetail ??
+        `terminal_reason=${String(r['terminal_reason'])} api_error_status=${String(r['api_error_status'])}`)
       : null,
-    usage: usageRaw
-      ? {
-          inputTokens: num(usageRaw['input_tokens']),
-          outputTokens: num(usageRaw['output_tokens']),
-          cachedTokens: num(usageRaw['cache_read_input_tokens']),
-          cacheCreationTokens: num(usageRaw['cache_creation_input_tokens']),
-        }
-      : null,
+    usage: extractClaudeUsage(r['usage'] as Record<string, unknown> | undefined),
     costUsd: typeof r['total_cost_usd'] === 'number' ? r['total_cost_usd'] : null,
     numTurns: typeof r['num_turns'] === 'number' ? r['num_turns'] : null,
     durationMs,
@@ -247,10 +270,6 @@ export function finishTurn(
     permissionDenials: denials,
     unknownEventTypes: [...state.unknownEventTypes],
   };
-}
-
-function num(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 export class ClaudeCliNotFoundError extends Error {
@@ -265,10 +284,29 @@ export class ClaudeCliNotFoundError extends Error {
 
 /** Run one turn. Rejects only for setup failures (binary missing); every
  *  runtime failure comes back as a structured result (fail loud, not thrown). */
-export function runClaudeTurn(opts: ClaudeTurnOptions): Promise<ClaudeTurnResult> {
+export async function runClaudeTurn(opts: ClaudeTurnOptions): Promise<ClaudeTurnResult> {
   const cli = resolveCliPath('claude');
   if (!cli) throw new ClaudeCliNotFoundError();
-  const { argv, envExtra } = buildSpawnArgv(cli, buildClaudeTurnArgs(opts));
+
+  // Persona → temp FILE, message → STDIN: the two free-text fields never
+  // enter argv (cmd.exe re-parses it on the .cmd-shim path — injection).
+  const personaDir = await mkdtemp(join(tmpdir(), 'nodal-cli-turn-'));
+  const personaFile = join(personaDir, 'persona.txt');
+  await writeFile(personaFile, opts.personality, 'utf8');
+
+  try {
+    return await spawnClaudeTurn(opts, cli, personaFile);
+  } finally {
+    await rm(personaDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function spawnClaudeTurn(
+  opts: ClaudeTurnOptions,
+  cli: NonNullable<ReturnType<typeof resolveCliPath>>,
+  personaFile: string,
+): Promise<ClaudeTurnResult> {
+  const { argv, envExtra } = buildSpawnArgv(cli, buildClaudeTurnArgs(opts, personaFile));
   const [command, ...rest] = argv;
   const env = { ...buildChildEnv(process.env), ...envExtra };
   const isWindows = process.platform === 'win32';
@@ -280,40 +318,91 @@ export function runClaudeTurn(opts: ClaudeTurnOptions): Promise<ClaudeTurnResult
       shell: false,
       detached: !isWindows,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: env as unknown as NodeJS.ProcessEnv,
     });
+
+    // The message is written then CLOSED — a piped-but-open stdin stalls the
+    // CLI (étape-A finding 1). EPIPE (child died first) is not our failure.
+    child.stdin?.on('error', () => {});
+    child.stdin?.end(opts.message);
 
     const state = newStreamParseState();
     let stdoutBuffer = '';
     let stderr = '';
     let timedOut = false;
     let settled = false;
+    // Anti-loop guard (invariant #8): count tool_use events, kill past the cap.
+    let toolCalls = 0;
+    let toolCapExceeded: number | undefined;
+
+    const onEvent = (evt: ClaudeTurnEvent): void => {
+      if (
+        evt.kind === 'tool_use' &&
+        opts.maxToolCalls !== undefined &&
+        toolCapExceeded === undefined
+      ) {
+        toolCalls += 1;
+        if (toolCalls > opts.maxToolCalls) {
+          toolCapExceeded = opts.maxToolCalls;
+          killTree();
+          graceTimer = setTimeout(() => finish(null), 3000);
+        }
+      }
+      opts.onEvent?.(evt);
+    };
+
+    // One decoder per stream — chunk boundaries do not align with UTF-8
+    // character boundaries; per-chunk toString() corrupts split characters.
+    const outDecoder = new StringDecoder('utf8');
+    const errDecoder = new StringDecoder('utf8');
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf8');
+      stdoutBuffer += outDecoder.write(chunk);
       let nl: number;
       while ((nl = stdoutBuffer.indexOf('\n')) >= 0) {
         const line = stdoutBuffer.slice(0, nl);
         stdoutBuffer = stdoutBuffer.slice(nl + 1);
         try {
-          handleStreamLine(state, line, opts.onEvent);
+          handleStreamLine(state, line, onEvent);
         } catch (err) {
           console.warn('[cli-runtime] stream line handling failed:', err);
         }
       }
     });
     child.stderr?.on('data', (chunk: Buffer) => {
-      if (stderr.length < 50_000) stderr += chunk.toString('utf8');
+      if (stderr.length < 50_000) stderr += errDecoder.write(chunk);
     });
 
     const killTree = (): void => {
       if (child.pid) {
         if (isWindows) {
+          // taskkill /T resolves the tree from a live snapshot — killing the
+          // parent first orphans the children. taskkill alone (it kills the
+          // root too); child.kill only once taskkill failed.
           try {
-            spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+            const tk = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+              windowsHide: true,
+            });
+            tk.on('close', (code) => {
+              if (code !== 0) {
+                try {
+                  child.kill('SIGKILL');
+                } catch {
+                  /* already dead */
+                }
+              }
+            });
+            tk.on('error', () => {
+              try {
+                child.kill('SIGKILL');
+              } catch {
+                /* already dead */
+              }
+            });
+            return;
           } catch {
-            /* fall through */
+            /* taskkill unavailable — fall through */
           }
         } else {
           try {
@@ -338,14 +427,16 @@ export function runClaudeTurn(opts: ClaudeTurnOptions): Promise<ClaudeTurnResult
       if (graceTimer) clearTimeout(graceTimer);
       // Flush a trailing unterminated line (the result line usually ends with \n,
       // but never assume).
-      if (stdoutBuffer.trim() !== '') handleStreamLine(state, stdoutBuffer, opts.onEvent);
+      if (stdoutBuffer.trim() !== '') handleStreamLine(state, stdoutBuffer, onEvent);
       if (state.unknownEventTypes.size > 0) {
         console.warn(
           `[cli-runtime] unknown stream event types (CLI drift?): ` +
             [...state.unknownEventTypes].join(', '),
         );
       }
-      resolve(finishTurn(state, exitCode, timedOut, Date.now() - startedAt, stderr));
+      resolve(
+        finishTurn(state, exitCode, timedOut, Date.now() - startedAt, stderr, toolCapExceeded),
+      );
     };
 
     const timer = setTimeout(() => {

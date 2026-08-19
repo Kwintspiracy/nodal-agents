@@ -77,10 +77,15 @@ export type { CodeTaskInput, CodeTaskOutput, CliDoctorReport } from './code-task
 export {
   resolveCliPath,
   buildSpawnArgv,
+  extractClaudeUsage,
   CLAUDE_READONLY_DISALLOWED,
   assertCliBudget,
   recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+  WorkspaceLockedError,
 } from './code-task';
+export type { NormalizedCliResult } from './code-task';
 export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';

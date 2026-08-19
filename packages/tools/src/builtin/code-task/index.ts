@@ -25,6 +25,7 @@ import {
   CliOutputError,
   type CodeTaskMode,
   type CodeTaskProvider,
+  type NormalizedCliResult,
 } from './providers';
 import {
   assertCliBudget,
@@ -36,13 +37,15 @@ import {
 
 export { runCliDoctor, type CliDoctorReport } from './doctor';
 export { CliBudgetExceededError, WorkspaceLockedError, ReadOnlyAgentError } from './db';
-export { assertCliBudget, recordCliRun } from './db';
+export { assertCliBudget, recordCliRun, acquireWorkspaceLock, releaseWorkspaceLock } from './db';
 export { CLAUDE_READONLY_DISALLOWED } from './providers';
 export {
   buildProviderArgs,
   parseClaudeOutput,
   parseCodexOutput,
+  extractClaudeUsage,
   CliOutputError,
+  type NormalizedCliResult,
 } from './providers';
 export { resolveCliPath, buildSpawnArgv } from './process';
 
@@ -162,12 +165,8 @@ export interface CodeTaskOutput {
   errorDetail: string | null;
   /** Notional USD cost (claude only — reported even under subscription; codex: null). */
   costUsd: number | null;
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    cacheCreationTokens: number | null;
-  } | null;
+  /** Single source of truth: the parsers' normalized shape (no hand copies). */
+  usage: NormalizedCliResult['usage'];
   exitCode: number | null;
   timedOut: boolean;
   durationMs: number;
@@ -233,7 +232,7 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     const providerDefaults = cliConfig.defaults?.[input.provider];
     const model = input.model ?? providerDefaults?.model;
     const effort = input.effort ?? providerDefaults?.effort;
-    const args = buildProviderArgs(input.provider, mode, input.task, { model, effort });
+    const args = buildProviderArgs(input.provider, mode, { model, effort });
     const timeoutMs = (input.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
 
     // One WRITE run per workspace at a time. The lock key is the workspace
@@ -245,7 +244,9 @@ export const codeTaskTool: ToolDefinition<typeof codeTaskSchema, CodeTaskOutput>
     }
 
     try {
-      const run = await runCli(cli, args, { cwd, timeoutMs, env });
+      // The task travels via stdin — the only injection-safe channel for
+      // free text on the Windows .cmd shim path (process.ts).
+      const run = await runCli(cli, args, { cwd, timeoutMs, env, stdin: input.task });
 
       if (run.timedOut) {
         await safeRecord(
@@ -369,15 +370,7 @@ async function safeRecord(
   ctx: { db: Parameters<typeof recordCliRun>[0]; jobId: string; agentId: string; entityId: string },
   input: CodeTaskInput,
   cliVersion: string,
-  parsed: {
-    costUsd: number | null;
-    usage: {
-      inputTokens: number;
-      outputTokens: number;
-      cachedTokens: number;
-      cacheCreationTokens: number | null;
-    } | null;
-  } | null,
+  parsed: { costUsd: number | null; usage: NormalizedCliResult['usage'] } | null,
   durationMs: number,
   exitCode: number | null,
   sessionId: string | null = null,

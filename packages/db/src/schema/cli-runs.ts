@@ -61,9 +61,10 @@ export const cliRuns = pgTable(
     /** Lectures de cache (cache_read_input_tokens). */
     cachedTokens: integer('cached_tokens'),
     /**
-     * Écritures de cache (cache_creation_input_tokens) — le poste de coût
-     * dominant d'un run CLI (facturé 1,25× l'input). NULL = donnée absente
-     * (run antérieur à 0077, ou codex qui ne l'expose pas) — jamais 0 deviné.
+     * Écritures de cache (claude cache_creation_input_tokens / codex
+     * cache_write_input_tokens) — le poste de coût dominant d'un run claude
+     * (facturé 1,25× l'input). NULL = le champ était ABSENT du flux ou la
+     * ligne est antérieure à 0077 — jamais 0 deviné ; 0 = zéro rapporté.
      */
     cacheCreationTokens: integer('cache_creation_tokens'),
     durationMs: integer('duration_ms'),

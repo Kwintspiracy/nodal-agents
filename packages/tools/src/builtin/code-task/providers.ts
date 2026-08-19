@@ -48,8 +48,10 @@ export interface NormalizedCliResult {
     /** Prompt-cache reads (claude cache_read / codex cached_input). */
     cachedTokens: number;
     /**
-     * Prompt-cache WRITES (claude cache_creation_input_tokens) — le poste de
-     * coût dominant d'un run. null = provider sans la donnée (codex).
+     * Prompt-cache WRITES (claude cache_creation_input_tokens / codex
+     * cache_write_input_tokens) — le poste de coût dominant d'un run claude.
+     * null = le champ était ABSENT du flux (jamais 0 deviné, invariant #4) ;
+     * 0 = le CLI a réellement rapporté zéro écriture.
      */
     cacheCreationTokens: number | null;
   } | null;
@@ -75,9 +77,11 @@ export const CLAUDE_READONLY_DISALLOWED = 'Write,Edit,MultiEdit,NotebookEdit,Bas
 
 /**
  * Build the argv TAIL (everything after the executable) for a one-shot run.
- * The task prompt is passed as a single argv element — it NEVER traverses a
- * shell string (anti-injection; the Windows .cmd shim in process.ts quotes
- * only the executable, never the args).
+ * The task prompt is NOT an argv element — it goes via stdin (`claude -p`
+ * reads stdin; codex gets the explicit `-` sentinel), because on the Windows
+ * .cmd shim path cmd.exe re-parses argv and free text there is command
+ * injection (see process.ts CMD_UNSAFE_CHARS). Proven live on both CLIs
+ * (2026-08-20).
  *
  * --strict-mcp-config (claude) / mcp_servers={} (codex): a Nodal-spawned run
  * must NEVER inherit the user's personal MCP servers / claude.ai connectors
@@ -97,11 +101,11 @@ export interface ProviderRunOptions {
 export function buildProviderArgs(
   provider: CodeTaskProvider,
   mode: CodeTaskMode,
-  task: string,
   opts: ProviderRunOptions = {},
 ): string[] {
   if (provider === 'claude') {
-    const args = ['-p', task, '--output-format', 'json', '--strict-mcp-config'];
+    // `-p` with no inline prompt: claude reads the prompt from stdin.
+    const args = ['-p', '--output-format', 'json', '--strict-mcp-config'];
     if (opts.model) args.push('--model', opts.model);
     if (opts.effort) args.push('--effort', opts.effort);
     if (mode === 'read') {
@@ -114,7 +118,8 @@ export function buildProviderArgs(
     }
     return args;
   }
-  // codex — task LAST (positional prompt). Effort is a TOML config override
+  // codex — `-` LAST: "if `-` is used, instructions are read from stdin"
+  // (codex exec --help). Effort is a TOML config override
   // (`-c model_reasoning_effort="high"`); the quotes are part of the TOML
   // string value and travel inside ONE argv element.
   const args = [
@@ -128,11 +133,35 @@ export function buildProviderArgs(
   ];
   if (opts.model) args.push('-m', opts.model);
   if (opts.effort) args.push('-c', `model_reasoning_effort="${opts.effort}"`);
-  args.push(task);
+  args.push('-');
   return args;
 }
 
 // ─── Output parsers ──────────────────────────────────────────────────────────
+
+/**
+ * THE claude usage extractor — the one place that knows the claude result
+ * JSON's usage field names. Shared by parseClaudeOutput (one-shot code_task)
+ * AND the runner's stream-json finishTurn (étape E) so the two write paths of
+ * cli_runs can never drift apart on semantics again.
+ * cacheCreationTokens: null when the field is absent from the stream (a CLI
+ * version that doesn't emit it) — NEVER a guessed 0 (invariant #4).
+ */
+export function extractClaudeUsage(
+  usageRaw: Record<string, unknown> | undefined,
+): NormalizedCliResult['usage'] {
+  if (!usageRaw) return null;
+  return {
+    inputTokens: asNumber(usageRaw['input_tokens']),
+    outputTokens: asNumber(usageRaw['output_tokens']),
+    cachedTokens: asNumber(usageRaw['cache_read_input_tokens']),
+    cacheCreationTokens:
+      typeof usageRaw['cache_creation_input_tokens'] === 'number' &&
+      Number.isFinite(usageRaw['cache_creation_input_tokens'])
+        ? usageRaw['cache_creation_input_tokens']
+        : null,
+  };
+}
 
 /** `claude -p --output-format json` prints exactly ONE JSON object on stdout. */
 export function parseClaudeOutput(stdout: string): NormalizedCliResult {
@@ -149,15 +178,7 @@ export function parseClaudeOutput(stdout: string): NormalizedCliResult {
   if (typeof obj !== 'object' || obj === null || obj['type'] !== 'result') {
     throw new CliOutputError('claude', 'JSON is not a result object', trimmed);
   }
-  const usageRaw = obj['usage'] as Record<string, unknown> | undefined;
-  const usage = usageRaw
-    ? {
-        inputTokens: asNumber(usageRaw['input_tokens']),
-        outputTokens: asNumber(usageRaw['output_tokens']),
-        cachedTokens: asNumber(usageRaw['cache_read_input_tokens']),
-        cacheCreationTokens: asNumber(usageRaw['cache_creation_input_tokens']),
-      }
-    : null;
+  const usage = extractClaudeUsage(obj['usage'] as Record<string, unknown> | undefined);
   const isError = obj['is_error'] === true;
   const apiErrorStatus = obj['api_error_status'];
   return {

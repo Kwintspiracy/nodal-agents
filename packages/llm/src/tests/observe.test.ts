@@ -31,7 +31,13 @@ describe('buildLlmCallObservation', () => {
       error: null,
       durationMs: 4200,
     });
-    expect(obs.usage).toEqual({ inputTokens: 1200, outputTokens: 340, cachedTokens: 900 });
+    expect(obs.usage).toEqual({
+      inputTokens: 1200,
+      outputTokens: 340,
+      cachedTokens: 900,
+      // OpenRouter reports no cache-write metadata — null, never a guessed 0.
+      cacheCreationTokens: null,
+    });
     expect(obs.costUsd).toBeCloseTo(0.0123, 6);
     expect(obs.modelReported).toBe('z-ai/glm-5.2:nitro');
     expect(obs.modelConfigured).toBe('z-ai/glm-5.2');
@@ -39,6 +45,30 @@ describe('buildLlmCallObservation', () => {
     expect(obs.toolNames).toEqual(['file_read', 'return_result', 'code_task']);
     expect(obs.meta.chainIndex).toBe(1);
     expect(obs.error).toBeNull();
+  });
+
+  it('captures Anthropic cache WRITES from providerMetadata (the 1.25× cost term)', () => {
+    const obs = buildLlmCallObservation({
+      ...BASE,
+      provider: 'anthropic',
+      modelConfigured: 'claude-sonnet-5',
+      callArgs: {},
+      // Shape verified on the installed @ai-sdk/anthropic 3.0.76:
+      // usage.inputTokens = fresh + cache reads + cache WRITES;
+      // the writes live only in providerMetadata.anthropic.
+      result: {
+        usage: { inputTokens: 20500, outputTokens: 120, cachedInputTokens: 0 },
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 20000 } },
+      },
+      error: null,
+      durationMs: 900,
+    });
+    expect(obs.usage).toEqual({
+      inputTokens: 20500,
+      outputTokens: 120,
+      cachedTokens: 0,
+      cacheCreationTokens: 20000,
+    });
   });
 
   it('degrades to nulls on a minimal result — never throws on shape drift', () => {

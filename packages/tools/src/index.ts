@@ -68,11 +68,20 @@ export {
   runCliDoctor,
   resolveCliPath,
   buildSpawnArgv,
+  extractClaudeUsage,
   CLAUDE_READONLY_DISALLOWED,
   assertCliBudget,
   recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+  WorkspaceLockedError,
 } from './builtin/index';
-export type { AlwaysOnTool, DashboardPublishInput, CliDoctorReport } from './builtin/index';
+export type {
+  AlwaysOnTool,
+  DashboardPublishInput,
+  CliDoctorReport,
+  NormalizedCliResult,
+} from './builtin/index';
 
 // Communication tools (capability-driven — registered per-agent based on agent config)
 export {

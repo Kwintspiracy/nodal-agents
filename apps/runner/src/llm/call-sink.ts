@@ -84,6 +84,7 @@ export function makeLlmCallSink(db: AnyDrizzleDb, ctx: LlmCallSinkContext): LlmC
           inputTokens,
           outputTokens,
           cachedTokens: obs.usage?.cachedTokens ?? null,
+          cacheCreationTokens: obs.usage?.cacheCreationTokens ?? null,
           costUsd,
           durationMs: obs.durationMs,
           failover: (obs.meta.chainIndex ?? 0) > 0,

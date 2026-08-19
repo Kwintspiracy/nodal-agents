@@ -539,14 +539,21 @@ function ActivityRow({ tc }: { tc: CodingToolCallView }) {
 
 function TurnMarkerRow({ item }: { item: Extract<CodingActivityItem, { kind: 'turn' }> }) {
   const label = item.turn !== null ? `Turn ${item.turn}` : 'CLI turn';
-  // inputTokens est l'EFFECTIF (hors cache lu) — même sémantique pour les
-  // tours Nodal et CLI. Le détail cache vit dans le title (hover).
+  // inputTokens est l'EFFECTIF (hors cache, lectures ET écritures) — même
+  // sémantique pour les tours Nodal et CLI. Le détail cache vit dans le
+  // title (hover).
   const cacheParts = [
     item.cachedTokens > 0 ? `${item.cachedTokens.toLocaleString()} cache reads` : null,
     item.cacheCreationTokens != null && item.cacheCreationTokens > 0
       ? `${item.cacheCreationTokens.toLocaleString()} cache writes`
       : null,
   ].filter(Boolean);
+  // % du prompt servi par le cache = lectures / (lectures + écritures +
+  // effectif). Les écritures comptent au dénominateur : un run qui AMORCE son
+  // cache (writes >> reads) n'est pas « caché », il paie plein pot ×1,25.
+  const promptTotal =
+    item.cachedTokens + (item.cacheCreationTokens ?? 0) + Math.max(0, item.inputTokens);
+  const cachedPct = promptTotal > 0 ? Math.round((item.cachedTokens / promptTotal) * 100) : 0;
   return (
     <div
       className="flex flex-wrap items-center gap-2 border-b border-rule-2 bg-canvas/50 px-4 py-2 text-mono-11 text-ink-4 last:border-0"
@@ -560,12 +567,7 @@ function TurnMarkerRow({ item }: { item: Extract<CodingActivityItem, { kind: 'tu
       {item.cachedTokens > 0 && (
         <>
           <span>·</span>
-          <span>
-            {Math.round(
-              (item.cachedTokens / (item.cachedTokens + Math.max(1, item.inputTokens))) * 100,
-            )}
-            % cached
-          </span>
+          <span>{cachedPct}% cached</span>
         </>
       )}
       {item.costUsd > 0 && (

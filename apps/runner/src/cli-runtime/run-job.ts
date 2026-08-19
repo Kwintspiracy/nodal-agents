@@ -24,7 +24,14 @@ import {
   resolveTransportChannel,
   listActiveChannelsForAgent,
 } from '@nodal-agents/delivery';
-import { assertCliBudget, recordCliRun } from '@nodal-agents/tools';
+import {
+  assertCliBudget,
+  recordCliRun,
+  acquireWorkspaceLock,
+  releaseWorkspaceLock,
+  WorkspaceLockedError,
+} from '@nodal-agents/tools';
+import { DEFAULT_LIMITS } from '@nodal-agents/orchestration';
 import { redactSecretsForAudit } from '@nodal-agents/shared';
 import { failJob, completeJob, touchJob } from '../job/state.ts';
 import { runClaudeTurn, ClaudeCliNotFoundError, type ClaudeTurnEvent } from './claude-turn.ts';
@@ -136,6 +143,18 @@ export async function runCliRuntimeJob(args: {
     }
   };
 
+  // Same single-write-slot contract as code_task: a write-mode CLI session
+  // must not run concurrently with another write run (code_task or a second
+  // runtime turn) in the same workspace — git index/deps state would race.
+  if (mode === 'write') {
+    try {
+      await acquireWorkspaceLock(db, cwd, jobId, agentRow.id);
+    } catch (err) {
+      if (err instanceof WorkspaceLockedError) return fail(err.message.slice(0, 300));
+      throw err;
+    }
+  }
+
   // Keep the job alive under the 5-minute reaper for the whole CLI run.
   const heartbeat = setInterval(() => {
     void touchJob(db, jobId).catch(() => {});
@@ -153,14 +172,23 @@ export async function runCliRuntimeJob(args: {
       effort: defaults.effort,
       resumeSessionId,
       timeoutMs: RUNTIME_TURN_TIMEOUT_MS,
+      // The CLI runs its own internal loop the Nodal counters never see —
+      // apply the SAME per-turn cap at this seam (invariant #8).
+      maxToolCalls: DEFAULT_LIMITS.maxToolCallsPerTurn,
       onEvent,
     });
   } catch (err) {
     clearInterval(heartbeat);
+    if (mode === 'write') await releaseWorkspaceLock(db, cwd, jobId).catch(() => {});
     if (err instanceof ClaudeCliNotFoundError) return fail(err.message.slice(0, 300));
     throw err;
   }
   clearInterval(heartbeat);
+  if (mode === 'write') {
+    await releaseWorkspaceLock(db, cwd, jobId).catch((err: unknown) => {
+      console.warn(`[cli-runtime] workspace lock release failed (job=${jobId}):`, err);
+    });
+  }
 
   // Audit — one cli_runs row per turn, success or failure (the cost is real).
   try {
@@ -209,14 +237,16 @@ export async function runCliRuntimeJob(args: {
   }
 
   if (turn.isError || turn.finalText === '') {
-    // An exhausted subscription window must read as exactly that (D0/risques).
+    // An exhausted subscription window must read as exactly that (D0/risques)
+    // — as a machine CODE + data, never runner-authored prose (invariant #2:
+    // the LLM speaks or the runner stays silent; error fields carry codes).
     const limitHit = turn.rateLimit && turn.rateLimit.status !== 'allowed';
     const code = limitHit
-      ? `subscription_limit_reached: the owner's Claude plan window is exhausted` +
+      ? `subscription_limit_reached` +
         (turn.rateLimit?.resetsAt
-          ? ` (resets at ${new Date(turn.rateLimit.resetsAt * 1000).toISOString()})`
+          ? ` resets_at=${new Date(turn.rateLimit.resetsAt * 1000).toISOString()}`
           : '') +
-        `. ${turn.errorDetail ?? ''}`
+        (turn.errorDetail ? ` ${turn.errorDetail}` : '')
       : `cli_runtime_error: ${turn.errorDetail ?? 'no final text'}`;
     return fail(code.slice(0, 400));
   }

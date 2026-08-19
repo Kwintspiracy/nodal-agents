@@ -62,9 +62,42 @@ describe('makeLlmCallSink', () => {
     expect(row.inputTokens).toBe(1000);
     expect(row.outputTokens).toBe(200);
     expect(row.cachedTokens).toBe(300);
+    // OpenRouter reports no cache-write metadata — NULL in the row, never 0.
+    expect(row.cacheCreationTokens).toBeNull();
     expect(row.costUsd).toBeCloseTo(0.004, 6);
     expect(row.failover).toBe(true); // chainIndex 2 > 0
     expect(row.error).toBeNull();
+  });
+
+  it('persists Anthropic cache WRITES from providerMetadata into cache_creation_tokens', async () => {
+    const sink = makeLlmCallSink(db, {
+      source: 'cron',
+      entityId: seed.entityId,
+      agentId: seed.agentId,
+    });
+    sink(
+      buildLlmCallObservation({
+        kind: 'generateText',
+        provider: 'anthropic',
+        modelConfigured: 'claude-sonnet-5',
+        reasoningEffort: null,
+        callArgs: {},
+        result: {
+          usage: { inputTokens: 20500, outputTokens: 50, cachedInputTokens: 0 },
+          providerMetadata: { anthropic: { cacheCreationInputTokens: 20000 } },
+        },
+        error: null,
+        durationMs: 700,
+        meta: {},
+      }),
+    );
+    await flush();
+
+    const rows = await db.select().from(llmCalls).where(eq(llmCalls.provider, 'anthropic'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.inputTokens).toBe(20500);
+    expect(rows[0]!.cachedTokens).toBe(0);
+    expect(rows[0]!.cacheCreationTokens).toBe(20000);
   });
 
   it('writes the ERROR attempt too (the failed primary of a failover pair)', async () => {
