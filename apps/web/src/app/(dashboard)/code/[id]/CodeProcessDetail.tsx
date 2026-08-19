@@ -161,6 +161,23 @@ export default function CodeProcessDetail({
 
 // ─── Tool-call row + typed expanded cards ──────────────────────────────────
 
+/** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
+function inputFilePath(input: Record<string, unknown>): string {
+  if (typeof input['file_path'] === 'string') return input['file_path'];
+  if (typeof input['notebook_path'] === 'string') return input['notebook_path'];
+  if (typeof input['path'] === 'string') return input['path'];
+  return '';
+}
+
+const FILE_TOOL_LABEL: Record<string, string> = {
+  'cli:Edit': 'Edit',
+  'cli:Write': 'Write',
+  'cli:MultiEdit': 'MultiEdit',
+  'cli:NotebookEdit': 'NotebookEdit',
+  file_edit: 'Edit file',
+  file_write: 'Write file',
+};
+
 function summarizeToolCall(tc: CodingToolCallView): { shortName: string; summary: string } {
   const input = (tc.toolInput ?? {}) as Record<string, unknown>;
   if (tc.toolName === 'code_task') {
@@ -172,6 +189,9 @@ function summarizeToolCall(tc: CodingToolCallView): { shortName: string; summary
   if (tc.toolName === 'review_verdict') {
     return { shortName: 'Review', summary: '' };
   }
+  if (FILE_TOOL_LABEL[tc.toolName]) {
+    return { shortName: FILE_TOOL_LABEL[tc.toolName]!, summary: inputFilePath(input) };
+  }
   if (tc.toolName.startsWith('cli:')) {
     const bare = tc.toolName.slice('cli:'.length);
     if (bare === 'Bash') {
@@ -180,16 +200,13 @@ function summarizeToolCall(tc: CodingToolCallView): { shortName: string; summary
         summary: typeof input['command'] === 'string' ? input['command'] : '',
       };
     }
-    return {
-      shortName: bare,
-      summary: typeof input['file_path'] === 'string' ? input['file_path'] : '',
-    };
+    return { shortName: bare, summary: inputFilePath(input) };
   }
   return { shortName: tc.toolName, summary: '' };
 }
 
 function dotColorForTool(toolName: string): string {
-  if (toolName === 'cli:Edit' || toolName === 'cli:Write') return 'bg-ok';
+  if (FILE_TOOL_LABEL[toolName]) return 'bg-ok';
   if (toolName === 'cli:Bash') return 'bg-warn';
   if (toolName === 'review_verdict') return 'bg-run';
   if (toolName === 'code_task') return 'bg-agent-vivid';
@@ -208,6 +225,11 @@ function ToolCallRow({ tc }: { tc: CodingToolCallView }) {
         />
         <span className="w-24 shrink-0 text-medium-13 text-ink">{shortName}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-body-13 text-ink-3">{summary}</span>
+        {tc.delegatedFrom && (
+          <MonoMicroTag tone="agent" className="shrink-0">
+            delegated{tc.delegatedFrom.agentName ? ` · ${tc.delegatedFrom.agentName}` : ''}
+          </MonoMicroTag>
+        )}
         {tc.durationMs != null && (
           <span className="shrink-0 text-mono-11 text-ink-4">{tc.durationMs}ms</span>
         )}
@@ -235,23 +257,53 @@ function safeJsonParse<T>(raw: string): T | null {
 function renderToolCallCard(tc: CodingToolCallView) {
   const input = (tc.toolInput ?? {}) as Record<string, unknown>;
 
-  if (tc.toolName === 'cli:Edit') {
-    const filePath = typeof input['file_path'] === 'string' ? input['file_path'] : 'Unknown file';
+  if (tc.toolName === 'cli:Edit' || tc.toolName === 'file_edit') {
+    const filePath = inputFilePath(input) || 'Unknown file';
     const oldText = typeof input['old_string'] === 'string' ? input['old_string'] : null;
     const newText = typeof input['new_string'] === 'string' ? input['new_string'] : null;
     return <DiffBlock filePath={filePath} oldText={oldText} newText={newText} />;
   }
-  if (tc.toolName === 'cli:Write') {
-    const filePath = typeof input['file_path'] === 'string' ? input['file_path'] : 'Unknown file';
+  if (tc.toolName === 'cli:Write' || tc.toolName === 'file_write') {
+    const filePath = inputFilePath(input) || 'Unknown file';
     const content = typeof input['content'] === 'string' ? input['content'] : null;
     return <DiffBlock filePath={filePath} oldText={null} newText={content} />;
+  }
+  if (tc.toolName === 'cli:MultiEdit') {
+    const filePath = inputFilePath(input) || 'Unknown file';
+    const edits = Array.isArray(input['edits']) ? input['edits'] : [];
+    const olds: string[] = [];
+    const news: string[] = [];
+    for (const e of edits) {
+      if (!e || typeof e !== 'object') continue;
+      const rec = e as Record<string, unknown>;
+      if (typeof rec['old_string'] === 'string') olds.push(rec['old_string']);
+      if (typeof rec['new_string'] === 'string') news.push(rec['new_string']);
+    }
+    return (
+      <DiffBlock
+        filePath={filePath}
+        oldText={olds.length > 0 ? olds.join('\n') : null}
+        newText={news.length > 0 ? news.join('\n') : null}
+      />
+    );
+  }
+  if (tc.toolName === 'cli:NotebookEdit') {
+    const filePath = inputFilePath(input) || 'Unknown notebook';
+    const oldText = typeof input['old_source'] === 'string' ? input['old_source'] : null;
+    const newText =
+      typeof input['new_source'] === 'string'
+        ? input['new_source']
+        : typeof input['content'] === 'string'
+          ? input['content']
+          : null;
+    return <DiffBlock filePath={filePath} oldText={oldText} newText={newText} />;
   }
   if (tc.toolName === 'cli:Bash') {
     const command = typeof input['command'] === 'string' ? input['command'] : '';
     return <TerminalBlock command={command} output={tc.toolOutput} />;
   }
   if (tc.toolName === 'cli:Read') {
-    const filePath = typeof input['file_path'] === 'string' ? input['file_path'] : 'Unknown file';
+    const filePath = inputFilePath(input) || 'Unknown file';
     return <ReadBlock filePath={filePath} content={tc.toolOutput} />;
   }
   if (tc.toolName === 'review_verdict') {

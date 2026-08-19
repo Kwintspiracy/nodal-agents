@@ -177,13 +177,15 @@ describe('listCodingProcessesAction', () => {
     expect(row?.agentId).toBe(agentId);
   });
 
-  it('an approve review_verdict on a direct child marks the completed parent "done_approved"', async () => {
+  it('a file_edit in a direct child + an approve review_verdict qualifies the pipeline (condition C) and marks the completed parent "done_approved" with filesChanged >= 1', async () => {
     const agentId = await makeAgent('Audit Code Reviewer Parent Agent');
     const parentJobId = await makeJob(agentId, 'completed');
     const childJobId = await makeJob(agentId, 'completed', parentJobId);
 
-    // Cost still comes from cli_runs; the QUALIFYING signal is the child's
-    // review_verdict, which ROLLS UP to the parent (pipeline root).
+    // Cost comes from cli_runs on the root; the QUALIFYING signal is
+    // condition C — a Nodal file_edit in the child PLUS a dev marker
+    // (the review_verdict itself, also in the child) elsewhere in the
+    // pipeline. Neither alone would qualify (v3).
     await _testDb!.insert(cliRuns).values({
       entityId: _testEntityId,
       agentId,
@@ -193,18 +195,27 @@ describe('listCodingProcessesAction', () => {
       costUsd: 0.1,
     });
 
-    await _testDb!.insert(toolCalls).values({
-      entityId: _testEntityId,
-      jobId: childJobId,
-      toolName: 'review_verdict',
-      toolInput: { summary: 'Looks good' },
-      toolOutput: JSON.stringify({
-        verdict: 'approve',
-        summary: 'Looks good',
-        findings: [],
-        counts: { blocking: 0 },
-      }),
-    });
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId: childJobId,
+        toolName: 'file_edit',
+        toolInput: { path: '/repo/src/reviewed.ts', old_string: 'a', new_string: 'b' },
+        toolOutput: 'ok',
+      },
+      {
+        entityId: _testEntityId,
+        jobId: childJobId,
+        toolName: 'review_verdict',
+        toolInput: { summary: 'Looks good' },
+        toolOutput: JSON.stringify({
+          verdict: 'approve',
+          summary: 'Looks good',
+          findings: [],
+          counts: { blocking: 0 },
+        }),
+      },
+    ]);
 
     const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
     const result = await listCodingProcessesAction();
@@ -214,14 +225,15 @@ describe('listCodingProcessesAction', () => {
     const parentRow = result.data.find((r) => r.id === parentJobId);
     expect(parentRow).toBeTruthy();
     expect(parentRow?.stage).toBe('done_approved');
+    expect(parentRow?.filesChanged).toBeGreaterThanOrEqual(1);
 
-    // The child carries the verdict SIGNAL but is a delegated child — it
+    // The child carries the qualifying signals but is a delegated child — it
     // rolls up to the parent and never appears as its own list entry.
     const childRow = result.data.find((r) => r.id === childJobId);
     expect(childRow).toBeUndefined();
   });
 
-  it('a completed job with no review_verdict anywhere is plain "done"', async () => {
+  it('a completed job with an edit but no review_verdict anywhere is plain "done"', async () => {
     const agentId = await makeAgent('Audit Code Plain Done Agent');
     const jobId = await makeJob(agentId, 'completed');
     await _testDb!.insert(cliRuns).values({
@@ -232,13 +244,13 @@ describe('listCodingProcessesAction', () => {
       mode: 'read',
       costUsd: 0.05,
     });
-    // Qualifying signal (a cli_runs row alone is NOT coding since the
-    // signals-only rule): one shell call.
+    // Qualifying signal (condition A) — a bare shell call would NOT qualify
+    // under v3 (cli:Bash never qualifies alone), so this uses a real edit.
     await _testDb!.insert(toolCalls).values({
       entityId: _testEntityId,
       jobId,
-      toolName: 'cli:Bash',
-      toolInput: { command: 'pnpm test' },
+      toolName: 'cli:Write',
+      toolInput: { file_path: '/repo/src/done.ts', content: 'done' },
       toolOutput: 'ok',
     });
 
@@ -249,6 +261,42 @@ describe('listCodingProcessesAction', () => {
 
     const row = result.data.find((r) => r.id === jobId);
     expect(row?.stage).toBe('done');
+  });
+
+  it('a code_task in read mode (analysis, no edits) is EXCLUDED — v3 condition B requires write mode', async () => {
+    const agentId = await makeAgent('Audit Code ReadCodeTask Agent');
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'code_task',
+      toolInput: { provider: 'claude', mode: 'read', task: 'Explain this codebase' },
+      toolOutput: JSON.stringify({ resultText: 'Here is an explanation…', isError: false }),
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
+  });
+
+  it('a bare file_write with no dev marker anywhere is EXCLUDED (the Office-agent guard, condition C)', async () => {
+    const agentId = await makeAgent('Audit Code Office Agent');
+    const jobId = await makeJob(agentId, 'completed');
+    await _testDb!.insert(toolCalls).values({
+      entityId: _testEntityId,
+      jobId,
+      toolName: 'file_write',
+      toolInput: { path: '/workspace/quarterly-report.pptx', content: 'binary-ish content' },
+      toolOutput: 'ok',
+    });
+
+    const { listCodingProcessesAction } = await import('../src/lib/actions.ts');
+    const result = await listCodingProcessesAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.find((r) => r.id === jobId)).toBeUndefined();
   });
 
   it('a read-only CLI job (cli_runs + cli:Read only) is EXCLUDED — not a coding session', async () => {

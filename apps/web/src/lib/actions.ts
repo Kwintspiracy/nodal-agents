@@ -10359,52 +10359,169 @@ function deriveJobStage(
   return s;
 }
 
+// ── Coding qualification (v3, Quentin 19/08 second pass) ───────────────────
+//
+// "Une session de coding = des fichiers modifiés/créés dans un contexte de
+// dev." A PIPELINE (root job + its DIRECT children, one rollup level — same
+// as the stage rules below) qualifies iff:
+//   (A) it contains ≥1 real edit: cli:Edit/Write/MultiEdit/NotebookEdit; OR
+//   (B) it contains a code_task tool_call with tool_input.mode === 'write'
+//       (a code_task in read mode is analysis, not coding); OR
+//   (C) it contains ≥1 Nodal file_edit/file_write AND a dev marker elsewhere
+//       in the pipeline (any cli:*, code_task, or review_verdict) — the
+//       double condition so an Office agent writing a .pptx via file_write
+//       never becomes a "coding session" on file_write alone.
+// cli:Bash, cli:Read/Glob, review_verdict, and a read-mode code_task do NOT
+// qualify by themselves — nor does merely having a cli_runs row.
+const EDIT_TOOL_NAMES = new Set(['cli:Edit', 'cli:Write', 'cli:MultiEdit', 'cli:NotebookEdit']);
+const FILE_TOOL_NAMES = new Set([...EDIT_TOOL_NAMES, 'file_edit', 'file_write']);
+
+/** file_path (cli:Edit/Write/MultiEdit), notebook_path (cli:NotebookEdit), or path (file_edit/file_write). */
+function extractFilePath(input: Record<string, unknown> | null): string | null {
+  if (!input) return null;
+  if (typeof input['file_path'] === 'string') return input['file_path'];
+  if (typeof input['notebook_path'] === 'string') return input['notebook_path'];
+  if (typeof input['path'] === 'string') return input['path'];
+  return null;
+}
+
+/**
+ * A diff/change entry from one edit-shaped tool_call, for the detail view's
+ * Changes panel. cli:MultiEdit applies several old/new pairs to one file —
+ * concatenated (not merged into a real multi-hunk diff) so the card still
+ * shows every sub-edit's before/after without a bespoke multi-hunk renderer.
+ * cli:NotebookEdit rarely reports an old_source (the CLI usually only sends
+ * the new cell content), so it renders as a write when none is present.
+ */
+function extractChange(toolName: string, rawInput: unknown): CodingChangeView | null {
+  const input = (rawInput ?? null) as Record<string, unknown> | null;
+  const filePath = extractFilePath(input);
+  if (!filePath || !input) return null;
+
+  if (toolName === 'cli:Edit' || toolName === 'file_edit') {
+    return {
+      filePath,
+      kind: 'edit',
+      oldText: typeof input['old_string'] === 'string' ? input['old_string'] : null,
+      newText: typeof input['new_string'] === 'string' ? input['new_string'] : null,
+    };
+  }
+  if (toolName === 'cli:Write' || toolName === 'file_write') {
+    return {
+      filePath,
+      kind: 'write',
+      oldText: null,
+      newText: typeof input['content'] === 'string' ? input['content'] : null,
+    };
+  }
+  if (toolName === 'cli:MultiEdit') {
+    const edits = Array.isArray(input['edits']) ? input['edits'] : [];
+    const olds: string[] = [];
+    const news: string[] = [];
+    for (const e of edits) {
+      if (!e || typeof e !== 'object') continue;
+      const rec = e as Record<string, unknown>;
+      if (typeof rec['old_string'] === 'string') olds.push(rec['old_string']);
+      if (typeof rec['new_string'] === 'string') news.push(rec['new_string']);
+    }
+    return {
+      filePath,
+      kind: 'edit',
+      oldText: olds.length > 0 ? olds.join('\n') : null,
+      newText: news.length > 0 ? news.join('\n') : null,
+    };
+  }
+  if (toolName === 'cli:NotebookEdit') {
+    const oldText = typeof input['old_source'] === 'string' ? input['old_source'] : null;
+    const newText =
+      typeof input['new_source'] === 'string'
+        ? input['new_source']
+        : typeof input['content'] === 'string'
+          ? input['content']
+          : null;
+    return { filePath, kind: oldText !== null ? 'edit' : 'write', oldText, newText };
+  }
+  return null;
+}
+
+function pipelineQualifiesAsCoding(
+  calls: Array<{ toolName: string; toolInput: unknown }>,
+): boolean {
+  if (calls.some((c) => EDIT_TOOL_NAMES.has(c.toolName))) return true;
+  const hasWriteCodeTask = calls.some((c) => {
+    if (c.toolName !== 'code_task') return false;
+    const input = c.toolInput as { mode?: string } | null;
+    return input?.mode === 'write';
+  });
+  if (hasWriteCodeTask) return true;
+  const hasNodalFileWrite = calls.some(
+    (c) => c.toolName === 'file_edit' || c.toolName === 'file_write',
+  );
+  if (!hasNodalFileWrite) return false;
+  return calls.some(
+    (c) =>
+      c.toolName.startsWith('cli:') ||
+      c.toolName === 'code_task' ||
+      c.toolName === 'review_verdict',
+  );
+}
+
 export async function listCodingProcessesAction(): Promise<ActionResult<CodingProcessRow[]>> {
   try {
     const session = await getSession();
     const db = getDb();
     const entityId = session.entityId;
 
-    // ── Candidate job ids: REAL coding signals only (Quentin, 19/08: this
-    // tab shows CODING SESSIONS, not every job that touched the CLI — a
-    // runtime agent's read-only Q&A or a cron routine is not coding).
-    // Signals: a CLI write/shell tool, an explicit code_task delegation, or
-    // a review verdict. cli:Read / cli:Glob alone do NOT qualify.
-    const CODING_SIGNAL_TOOLS = [
-      'code_task',
-      'review_verdict',
-      'cli:Edit',
-      'cli:Write',
-      'cli:MultiEdit',
-      'cli:NotebookEdit',
-      'cli:Bash',
-    ];
-    const signalJobIdRows = await db
-      .selectDistinct({ jobId: toolCalls.jobId })
+    // ── One scan of the tool_calls that CAN carry a coding signal, rolled up
+    // to each pipeline's root (job racine + enfants directs). Bounded by a
+    // recency window (5000 rows) — a full unbounded entity-wide scan doesn't
+    // belong on a page that only ever shows the top ~50 anyway.
+    const relevantCalls = await db
+      .select({
+        jobId: toolCalls.jobId,
+        toolName: toolCalls.toolName,
+        toolInput: toolCalls.toolInput,
+      })
       .from(toolCalls)
       .where(
         and(
           eq(toolCalls.entityId, entityId),
-          inArray(toolCalls.toolName, CODING_SIGNAL_TOOLS),
           isNotNull(toolCalls.jobId),
+          or(
+            sql`${toolCalls.toolName} LIKE 'cli:%'`,
+            inArray(toolCalls.toolName, ['code_task', 'review_verdict', 'file_edit', 'file_write']),
+          ),
         ),
-      );
-    const signalJobIds = Array.from(
-      new Set(signalJobIdRows.map((r) => r.jobId).filter((id): id is string => id !== null)),
-    );
+      )
+      .orderBy(desc(toolCalls.createdAt))
+      .limit(5000);
 
-    // Roll up to the PIPELINE root: a signal inside a delegated child (the
-    // reviewer's verdict, a delegated dev worker's edits) qualifies its
-    // parent — the process the user launched — and a child is never its own
-    // list row.
-    let candidateJobIds: string[] = [];
-    if (signalJobIds.length > 0) {
-      const signalJobs = await db
+    const referencedJobIds = Array.from(
+      new Set(relevantCalls.map((c) => c.jobId).filter((id): id is string => id !== null)),
+    );
+    const parentOf = new Map<string, string | null>();
+    if (referencedJobIds.length > 0) {
+      const rows = await db
         .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
         .from(agentJobs)
-        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, signalJobIds)));
-      candidateJobIds = Array.from(new Set(signalJobs.map((j) => j.parentJobId ?? j.id)));
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, referencedJobIds)));
+      for (const r of rows) parentOf.set(r.id, r.parentJobId);
     }
+    // One rollup level — "job racine + enfants directs", never further.
+    const rootOf = (jobId: string): string => parentOf.get(jobId) ?? jobId;
+
+    const callsByRoot = new Map<string, Array<{ toolName: string; toolInput: unknown }>>();
+    for (const c of relevantCalls) {
+      if (!c.jobId) continue;
+      const root = rootOf(c.jobId);
+      const arr = callsByRoot.get(root) ?? [];
+      arr.push({ toolName: c.toolName, toolInput: c.toolInput });
+      callsByRoot.set(root, arr);
+    }
+
+    const candidateJobIds = Array.from(callsByRoot.entries())
+      .filter(([, calls]) => pipelineQualifiesAsCoding(calls))
+      .map(([root]) => root);
 
     let jobRows: CodingProcessRow[] = [];
     if (candidateJobIds.length > 0) {
@@ -10444,44 +10561,50 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       }
       const allRelevantIds = [...jobIds, ...children.map((c) => c.id)];
 
-      // Cost per job (SUM cli_runs.cost_usd).
+      // Maps ANY pipeline member (the root itself, or one of its direct
+      // children) back to the root id — used to fold cli_runs cost rows onto
+      // the right pipeline below.
+      const rootForPipelineMember = new Map<string, string>();
+      for (const id of jobIds) rootForPipelineMember.set(id, id);
+      for (const c of children) {
+        if (c.parentJobId) rootForPipelineMember.set(c.id, c.parentJobId);
+      }
+
+      // Cost = the PIPELINE's cost (root + its direct children), not the root
+      // job alone — a delegated child's own cli_runs rows (its own code_task
+      // calls) are part of the same coding session the user is looking at.
       const costRows =
-        jobIds.length > 0
+        allRelevantIds.length > 0
           ? await db
               .select({
                 jobId: cliRuns.jobId,
                 cost: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)`,
               })
               .from(cliRuns)
-              .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, jobIds)))
+              .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)))
               .groupBy(cliRuns.jobId)
           : [];
-      const costByJob = new Map(costRows.map((r) => [r.jobId, Number(r.cost)]));
+      const costByRoot = new Map<string, number>();
+      for (const r of costRows) {
+        if (!r.jobId) continue;
+        const root = rootForPipelineMember.get(r.jobId) ?? r.jobId;
+        costByRoot.set(root, (costByRoot.get(root) ?? 0) + Number(r.cost));
+      }
 
-      // Files touched — read cli:Edit/cli:Write tool_input.file_path in JS,
-      // not jsonb SQL (the plan's call — simpler, and this list is bounded).
-      const editWriteRows =
-        jobIds.length > 0
-          ? await db
-              .select({ jobId: toolCalls.jobId, toolInput: toolCalls.toolInput })
-              .from(toolCalls)
-              .where(
-                and(
-                  eq(toolCalls.entityId, entityId),
-                  inArray(toolCalls.jobId, jobIds),
-                  inArray(toolCalls.toolName, ['cli:Edit', 'cli:Write']),
-                ),
-              )
-          : [];
-      const filesByJob = new Map<string, Set<string>>();
-      for (const row of editWriteRows) {
-        if (!row.jobId) continue;
-        const input = row.toolInput as { file_path?: string } | null;
-        const fp = input?.file_path;
-        if (!fp) continue;
-        const set = filesByJob.get(row.jobId) ?? new Set<string>();
-        set.add(fp);
-        filesByJob.set(row.jobId, set);
+      // Files touched = the PIPELINE's files (root + direct children), from
+      // callsByRoot — already rolled up above, already scoped to the tool
+      // names that can carry a file path. Read tool_input in JS, not jsonb
+      // SQL (the plan's call — simpler, and this list is bounded).
+      const filesByRoot = new Map<string, Set<string>>();
+      for (const [root, calls] of callsByRoot) {
+        if (!candidateJobIds.includes(root)) continue;
+        const set = new Set<string>();
+        for (const c of calls) {
+          if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
+          const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
+          if (fp) set.add(fp);
+        }
+        filesByRoot.set(root, set);
       }
 
       // review_verdict outputs — for each job AND its direct children.
@@ -10520,8 +10643,8 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
           verdictOutputsByJob,
         ),
         task: truncateForList(j.task, 120),
-        costUsd: costByJob.get(j.id) ?? 0,
-        filesChanged: filesByJob.get(j.id)?.size ?? 0,
+        costUsd: costByRoot.get(j.id) ?? 0,
+        filesChanged: filesByRoot.get(j.id)?.size ?? 0,
         activityAt: (j.updatedAt ?? j.createdAt)?.toISOString() ?? null,
       }));
     }
@@ -10553,6 +10676,8 @@ export type CodingToolCallView = {
   toolOutput: string | null;
   durationMs: number | null;
   createdAt: string | null;
+  /** Set when this call happened in a DIRECT CHILD job (a delegated worker), not the root itself. */
+  delegatedFrom: { jobId: string; agentName: string | null } | null;
 };
 
 export type CodingChangeView = {
@@ -10612,16 +10737,25 @@ export async function getCodingProcessDetailAction(
         .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, entityId)));
       if (!job) return fail('not_found', 'Process not found');
 
+      // Direct children WITH agent name — cheap to fetch alongside the id and
+      // gives the timeline a real "delegated to <agent>" label instead of a
+      // bare "delegated" placeholder.
       const children = await db
-        .select({ id: agentJobs.id })
+        .select({ id: agentJobs.id, agentName: agents.name })
         .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
         .where(and(eq(agentJobs.entityId, entityId), eq(agentJobs.parentJobId, jobId)));
       const childIds = children.map((c) => c.id);
+      const childAgentNameById = new Map(children.map((c) => [c.id, c.agentName]));
       const allRelevantIds = [jobId, ...childIds];
 
+      // Timeline = the ROOT's tool_calls merged chronologically with its
+      // DIRECT children's — a delegated worker's edits/commands are part of
+      // the same coding session, not a separate hidden trail.
       const toolCallRows = await db
         .select({
           id: toolCalls.id,
+          jobId: toolCalls.jobId,
           toolName: toolCalls.toolName,
           toolInput: toolCalls.toolInput,
           toolOutput: toolCalls.toolOutput,
@@ -10629,7 +10763,7 @@ export async function getCodingProcessDetailAction(
           createdAt: toolCalls.createdAt,
         })
         .from(toolCalls)
-        .where(and(eq(toolCalls.entityId, entityId), eq(toolCalls.jobId, jobId)))
+        .where(and(eq(toolCalls.entityId, entityId), inArray(toolCalls.jobId, allRelevantIds)))
         .orderBy(toolCalls.createdAt);
 
       // review_verdict — this job AND its direct children (same rule as the list).
@@ -10647,10 +10781,11 @@ export async function getCodingProcessDetailAction(
               )
           : [];
 
+      // Cost = the PIPELINE's cost (root + direct children), matching the list.
       const [costRow] = await db
         .select({ cost: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)` })
         .from(cliRuns)
-        .where(and(eq(cliRuns.entityId, entityId), eq(cliRuns.jobId, jobId)));
+        .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, allRelevantIds)));
       const costUsd = Number(costRow?.cost ?? 0);
 
       const verdictOutputsByJob = new Map<string, string[]>();
@@ -10675,26 +10810,18 @@ export async function getCodingProcessDetailAction(
           };
         });
 
+      // Changes = every edit-shaped tool_call across the whole merged
+      // timeline (root + direct children): cli:Edit/Write/MultiEdit/
+      // NotebookEdit AND the Nodal file_edit/file_write tools (v3 — files
+      // modified/created is the coding definition, not just the CLI's own
+      // tools).
       const changes: CodingChangeView[] = [];
       const filesTouched = new Set<string>();
       for (const tc of toolCallRows) {
-        if (tc.toolName !== 'cli:Edit' && tc.toolName !== 'cli:Write') continue;
-        const input = tc.toolInput as {
-          file_path?: string;
-          old_string?: string;
-          new_string?: string;
-          content?: string;
-        } | null;
-        const filePath = input?.file_path;
-        if (!filePath) continue;
-        filesTouched.add(filePath);
-        changes.push({
-          filePath,
-          kind: tc.toolName === 'cli:Edit' ? 'edit' : 'write',
-          oldText: tc.toolName === 'cli:Edit' ? (input?.old_string ?? null) : null,
-          newText:
-            tc.toolName === 'cli:Edit' ? (input?.new_string ?? null) : (input?.content ?? null),
-        });
+        const change = extractChange(tc.toolName, tc.toolInput);
+        if (!change) continue;
+        filesTouched.add(change.filePath);
+        changes.push(change);
       }
 
       return ok({
@@ -10719,6 +10846,10 @@ export async function getCodingProcessDetailAction(
           toolOutput: tc.toolOutput,
           durationMs: tc.durationMs,
           createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
+          delegatedFrom:
+            tc.jobId && tc.jobId !== jobId
+              ? { jobId: tc.jobId, agentName: childAgentNameById.get(tc.jobId) ?? null }
+              : null,
         })),
         verdicts,
         changes,
