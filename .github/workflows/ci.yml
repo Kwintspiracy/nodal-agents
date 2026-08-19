@@ -19,7 +19,10 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 → 20 (2026-08-19): the job crept up to 14-15 min as the codebase grew
+    # (code_task + runtime agents + Code tab) and a slow runner tipped the
+    # Build step over the cap with every check already green.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
