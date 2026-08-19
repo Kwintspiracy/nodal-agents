@@ -30,6 +30,7 @@ import {
   eq,
   and,
   isNull,
+  isNotNull,
   or,
   desc,
   inArray,
@@ -10266,5 +10267,533 @@ export async function getChatJobStatusAction(jobId: string): Promise<ActionResul
   } catch (err) {
     console.error('[getChatJobStatusAction]', err);
     return fail('db_error', 'Failed to load job status');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Coding processes (Code tab — étape V, mission control for code_task /
+// claude-code runtime work). Unifies two DB-native shapes into one list:
+//   (a) JOBS that did coding — a cli_runs row points at them, or they carry a
+//       code_task tool_call (delegation to the CLI).
+//   (b) CHAT SESSIONS — cli_runs rows with job_id NULL (a runtime='claude-code'
+//       agent answering a chat turn outside the job pipeline), grouped by
+//       cli_runs.session_id.
+// tool_calls has no FK back to a chat session (only job_id, nullable for chat
+// turns) — a session's DETAIL view can therefore only show its cli_runs
+// history, never a tool-call/diff timeline. Documented at the
+// getCodingProcessDetailAction session branch below — not a shortcut, a real
+// schema gap.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type CodingProcessRow = {
+  /** agent_jobs.id for kind='job', cli_runs.session_id for kind='chat'. */
+  id: string;
+  kind: 'job' | 'chat';
+  agentId: string | null;
+  agentName: string | null;
+  /** job.channel ('api'|'telegram'|'internal'|…) or 'chat' for a runtime session. */
+  origin: string;
+  /** agent_jobs.status; null for chat sessions (no job status applies). */
+  status: string | null;
+  /** 'coding'|'delegated'|'review'|'done'|'done_approved'|'failed'|'chat'|(raw job status as fallback). */
+  stage: string;
+  task: string;
+  costUsd: number;
+  filesChanged: number;
+  activityAt: string | null;
+};
+
+const REVIEW_APPROVE_MARKER = '"verdict":"approve"';
+
+/** '<n chars>…' — a local copy of format-time.ts's truncate: this is server-only code, that helper is client-tagged-free but lives under lib/ for web components, not worth importing across the boundary for one string op. */
+function truncateForList(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+type VerdictJson = {
+  verdict?: string;
+  summary?: string;
+  findings?: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
+  counts?: Record<string, number>;
+};
+
+function parseVerdictJson(raw: string): VerdictJson | null {
+  try {
+    return JSON.parse(raw) as VerdictJson;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stage derivation (the plan's exact rules):
+ *   processing/pending            → 'coding'
+ *   awaiting_delegation           → 'review' if a CHILD job has a review_verdict
+ *                                    tool_call, else 'delegated'
+ *   completed                     → 'done_approved' if a review_verdict with
+ *                                    the approve marker exists on this job OR
+ *                                    a direct child, else 'done'
+ *   failed                        → 'failed'
+ *   anything else (cancelled, awaiting_approval, …) → passed through as-is
+ */
+function deriveJobStage(
+  status: string | null,
+  jobId: string,
+  childIds: string[],
+  verdictOutputsByJob: Map<string, string[]>,
+): string {
+  const s = status ?? 'pending';
+  if (s === 'processing' || s === 'pending') return 'coding';
+  if (s === 'awaiting_delegation') {
+    const hasChildVerdict = childIds.some((cid) => (verdictOutputsByJob.get(cid) ?? []).length > 0);
+    return hasChildVerdict ? 'review' : 'delegated';
+  }
+  if (s === 'completed') {
+    const outputs = [
+      ...(verdictOutputsByJob.get(jobId) ?? []),
+      ...childIds.flatMap((cid) => verdictOutputsByJob.get(cid) ?? []),
+    ];
+    return outputs.some((o) => o.includes(REVIEW_APPROVE_MARKER)) ? 'done_approved' : 'done';
+  }
+  if (s === 'failed') return 'failed';
+  return s;
+}
+
+export async function listCodingProcessesAction(): Promise<ActionResult<CodingProcessRow[]>> {
+  try {
+    const session = await getSession();
+    const db = getDb();
+    const entityId = session.entityId;
+
+    // ── Candidate job ids: cli_runs.job_id OR a code_task tool_call ─────────
+    const cliRunJobIdRows = await db
+      .selectDistinct({ jobId: cliRuns.jobId })
+      .from(cliRuns)
+      .where(and(eq(cliRuns.entityId, entityId), isNotNull(cliRuns.jobId)));
+    const codeTaskJobIdRows = await db
+      .selectDistinct({ jobId: toolCalls.jobId })
+      .from(toolCalls)
+      .where(
+        and(
+          eq(toolCalls.entityId, entityId),
+          eq(toolCalls.toolName, 'code_task'),
+          isNotNull(toolCalls.jobId),
+        ),
+      );
+    const candidateJobIds = Array.from(
+      new Set(
+        [...cliRunJobIdRows, ...codeTaskJobIdRows]
+          .map((r) => r.jobId)
+          .filter((id): id is string => id !== null),
+      ),
+    );
+
+    let jobRows: CodingProcessRow[] = [];
+    if (candidateJobIds.length > 0) {
+      const jobs = await db
+        .select({
+          id: agentJobs.id,
+          agentId: agentJobs.agentId,
+          agentName: agents.name,
+          channel: agentJobs.channel,
+          status: agentJobs.status,
+          task: agentJobs.task,
+          createdAt: agentJobs.createdAt,
+          updatedAt: agentJobs.updatedAt,
+        })
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.id, candidateJobIds)))
+        .orderBy(desc(agentJobs.createdAt))
+        .limit(50);
+
+      const jobIds = jobs.map((j) => j.id);
+
+      // Direct children — needed for the awaiting_delegation/completed stage rules.
+      const children =
+        jobIds.length > 0
+          ? await db
+              .select({ id: agentJobs.id, parentJobId: agentJobs.parentJobId })
+              .from(agentJobs)
+              .where(and(eq(agentJobs.entityId, entityId), inArray(agentJobs.parentJobId, jobIds)))
+          : [];
+      const childIdsByParent = new Map<string, string[]>();
+      for (const c of children) {
+        if (!c.parentJobId) continue;
+        const arr = childIdsByParent.get(c.parentJobId) ?? [];
+        arr.push(c.id);
+        childIdsByParent.set(c.parentJobId, arr);
+      }
+      const allRelevantIds = [...jobIds, ...children.map((c) => c.id)];
+
+      // Cost per job (SUM cli_runs.cost_usd).
+      const costRows =
+        jobIds.length > 0
+          ? await db
+              .select({
+                jobId: cliRuns.jobId,
+                cost: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)`,
+              })
+              .from(cliRuns)
+              .where(and(eq(cliRuns.entityId, entityId), inArray(cliRuns.jobId, jobIds)))
+              .groupBy(cliRuns.jobId)
+          : [];
+      const costByJob = new Map(costRows.map((r) => [r.jobId, Number(r.cost)]));
+
+      // Files touched — read cli:Edit/cli:Write tool_input.file_path in JS,
+      // not jsonb SQL (the plan's call — simpler, and this list is bounded).
+      const editWriteRows =
+        jobIds.length > 0
+          ? await db
+              .select({ jobId: toolCalls.jobId, toolInput: toolCalls.toolInput })
+              .from(toolCalls)
+              .where(
+                and(
+                  eq(toolCalls.entityId, entityId),
+                  inArray(toolCalls.jobId, jobIds),
+                  inArray(toolCalls.toolName, ['cli:Edit', 'cli:Write']),
+                ),
+              )
+          : [];
+      const filesByJob = new Map<string, Set<string>>();
+      for (const row of editWriteRows) {
+        if (!row.jobId) continue;
+        const input = row.toolInput as { file_path?: string } | null;
+        const fp = input?.file_path;
+        if (!fp) continue;
+        const set = filesByJob.get(row.jobId) ?? new Set<string>();
+        set.add(fp);
+        filesByJob.set(row.jobId, set);
+      }
+
+      // review_verdict outputs — for each job AND its direct children.
+      const verdictRows =
+        allRelevantIds.length > 0
+          ? await db
+              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+              .from(toolCalls)
+              .where(
+                and(
+                  eq(toolCalls.entityId, entityId),
+                  inArray(toolCalls.jobId, allRelevantIds),
+                  eq(toolCalls.toolName, 'review_verdict'),
+                ),
+              )
+          : [];
+      const verdictOutputsByJob = new Map<string, string[]>();
+      for (const v of verdictRows) {
+        if (!v.jobId || !v.toolOutput) continue;
+        const arr = verdictOutputsByJob.get(v.jobId) ?? [];
+        arr.push(v.toolOutput);
+        verdictOutputsByJob.set(v.jobId, arr);
+      }
+
+      jobRows = jobs.map((j) => ({
+        id: j.id,
+        kind: 'job' as const,
+        agentId: j.agentId,
+        agentName: j.agentName,
+        origin: j.channel,
+        status: j.status,
+        stage: deriveJobStage(
+          j.status,
+          j.id,
+          childIdsByParent.get(j.id) ?? [],
+          verdictOutputsByJob,
+        ),
+        task: truncateForList(j.task, 120),
+        costUsd: costByJob.get(j.id) ?? 0,
+        filesChanged: filesByJob.get(j.id)?.size ?? 0,
+        activityAt: (j.updatedAt ?? j.createdAt)?.toISOString() ?? null,
+      }));
+    }
+
+    // ── Chat sessions: cli_runs with job_id NULL, grouped by session_id ─────
+    const chatRunRows = await db
+      .select({
+        sessionId: cliRuns.sessionId,
+        agentId: cliRuns.agentId,
+        agentName: agents.name,
+        costUsd: cliRuns.costUsd,
+        createdAt: cliRuns.createdAt,
+      })
+      .from(cliRuns)
+      .leftJoin(agents, eq(agents.id, cliRuns.agentId))
+      .where(and(eq(cliRuns.entityId, entityId), isNull(cliRuns.jobId)))
+      .orderBy(desc(cliRuns.createdAt))
+      .limit(200);
+
+    const bySession = new Map<
+      string,
+      { agentId: string | null; agentName: string | null; cost: number; lastAt: Date }
+    >();
+    for (const r of chatRunRows) {
+      if (!r.sessionId || !r.createdAt) continue;
+      const existing = bySession.get(r.sessionId);
+      bySession.set(r.sessionId, {
+        agentId: existing?.agentId ?? r.agentId,
+        agentName: existing?.agentName ?? r.agentName,
+        cost: (existing?.cost ?? 0) + (r.costUsd ?? 0),
+        lastAt: existing && existing.lastAt > r.createdAt ? existing.lastAt : r.createdAt,
+      });
+    }
+    const chatRows: CodingProcessRow[] = Array.from(bySession.entries()).map(([sessionId, v]) => ({
+      id: sessionId,
+      kind: 'chat' as const,
+      agentId: v.agentId,
+      agentName: v.agentName,
+      origin: 'chat',
+      status: null,
+      stage: 'chat',
+      task: 'Runtime chat session',
+      costUsd: v.cost,
+      filesChanged: 0,
+      activityAt: v.lastAt.toISOString(),
+    }));
+
+    const merged = [...jobRows, ...chatRows]
+      .sort((a, b) => {
+        const at = a.activityAt ? Date.parse(a.activityAt) : 0;
+        const bt = b.activityAt ? Date.parse(b.activityAt) : 0;
+        return bt - at;
+      })
+      .slice(0, 50);
+
+    return ok(merged);
+  } catch (err) {
+    console.error('[listCodingProcessesAction]', err);
+    return fail('db_error', 'Failed to load coding processes');
+  }
+}
+
+export type CodingToolCallView = {
+  id: string;
+  toolName: string;
+  toolInput: unknown;
+  toolOutput: string | null;
+  durationMs: number | null;
+  createdAt: string | null;
+};
+
+export type CodingChangeView = {
+  filePath: string;
+  kind: 'edit' | 'write';
+  oldText: string | null;
+  newText: string | null;
+};
+
+export type CodingVerdictView = {
+  jobId: string;
+  verdict: string | null;
+  summary: string | null;
+  findings: Array<{ file?: string; line?: number; severity?: string; issue?: string }>;
+  counts: Record<string, number> | null;
+};
+
+export type CodingProcessDetail = {
+  header: CodingProcessRow & { durationMs: number | null };
+  toolCalls: CodingToolCallView[];
+  verdicts: CodingVerdictView[];
+  changes: CodingChangeView[];
+};
+
+const CodingProcessDetailSchema = z.union([
+  z.object({ jobId: z.string().guid() }),
+  z.object({ sessionId: z.string().min(1).max(200) }),
+]);
+
+export async function getCodingProcessDetailAction(
+  raw: unknown,
+): Promise<ActionResult<CodingProcessDetail>> {
+  try {
+    const session = await getSession();
+    const parsed = CodingProcessDetailSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const db = getDb();
+    const entityId = session.entityId;
+
+    if ('jobId' in parsed.data) {
+      const { jobId } = parsed.data;
+      const [job] = await db
+        .select({
+          id: agentJobs.id,
+          agentId: agentJobs.agentId,
+          agentName: agents.name,
+          channel: agentJobs.channel,
+          status: agentJobs.status,
+          task: agentJobs.task,
+          createdAt: agentJobs.createdAt,
+          totalDurationMs: agentJobs.totalDurationMs,
+        })
+        .from(agentJobs)
+        .leftJoin(agents, eq(agents.id, agentJobs.agentId))
+        .where(and(eq(agentJobs.id, jobId), eq(agentJobs.entityId, entityId)));
+      if (!job) return fail('not_found', 'Process not found');
+
+      const children = await db
+        .select({ id: agentJobs.id })
+        .from(agentJobs)
+        .where(and(eq(agentJobs.entityId, entityId), eq(agentJobs.parentJobId, jobId)));
+      const childIds = children.map((c) => c.id);
+      const allRelevantIds = [jobId, ...childIds];
+
+      const toolCallRows = await db
+        .select({
+          id: toolCalls.id,
+          toolName: toolCalls.toolName,
+          toolInput: toolCalls.toolInput,
+          toolOutput: toolCalls.toolOutput,
+          durationMs: toolCalls.durationMs,
+          createdAt: toolCalls.createdAt,
+        })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.entityId, entityId), eq(toolCalls.jobId, jobId)))
+        .orderBy(toolCalls.createdAt);
+
+      // review_verdict — this job AND its direct children (same rule as the list).
+      const verdictRows =
+        allRelevantIds.length > 0
+          ? await db
+              .select({ jobId: toolCalls.jobId, toolOutput: toolCalls.toolOutput })
+              .from(toolCalls)
+              .where(
+                and(
+                  eq(toolCalls.entityId, entityId),
+                  inArray(toolCalls.jobId, allRelevantIds),
+                  eq(toolCalls.toolName, 'review_verdict'),
+                ),
+              )
+          : [];
+
+      const [costRow] = await db
+        .select({ cost: sql<string>`coalesce(sum(${cliRuns.costUsd}), 0)` })
+        .from(cliRuns)
+        .where(and(eq(cliRuns.entityId, entityId), eq(cliRuns.jobId, jobId)));
+      const costUsd = Number(costRow?.cost ?? 0);
+
+      const verdictOutputsByJob = new Map<string, string[]>();
+      for (const v of verdictRows) {
+        if (!v.jobId || !v.toolOutput) continue;
+        const arr = verdictOutputsByJob.get(v.jobId) ?? [];
+        arr.push(v.toolOutput);
+        verdictOutputsByJob.set(v.jobId, arr);
+      }
+      const stage = deriveJobStage(job.status, job.id, childIds, verdictOutputsByJob);
+
+      const verdicts: CodingVerdictView[] = verdictRows
+        .filter((v): v is { jobId: string; toolOutput: string } => !!v.jobId && !!v.toolOutput)
+        .map((v) => {
+          const parsedVerdict = parseVerdictJson(v.toolOutput);
+          return {
+            jobId: v.jobId,
+            verdict: parsedVerdict?.verdict ?? null,
+            summary: parsedVerdict?.summary ?? null,
+            findings: parsedVerdict?.findings ?? [],
+            counts: parsedVerdict?.counts ?? null,
+          };
+        });
+
+      const changes: CodingChangeView[] = [];
+      const filesTouched = new Set<string>();
+      for (const tc of toolCallRows) {
+        if (tc.toolName !== 'cli:Edit' && tc.toolName !== 'cli:Write') continue;
+        const input = tc.toolInput as {
+          file_path?: string;
+          old_string?: string;
+          new_string?: string;
+          content?: string;
+        } | null;
+        const filePath = input?.file_path;
+        if (!filePath) continue;
+        filesTouched.add(filePath);
+        changes.push({
+          filePath,
+          kind: tc.toolName === 'cli:Edit' ? 'edit' : 'write',
+          oldText: tc.toolName === 'cli:Edit' ? (input?.old_string ?? null) : null,
+          newText:
+            tc.toolName === 'cli:Edit' ? (input?.new_string ?? null) : (input?.content ?? null),
+        });
+      }
+
+      return ok({
+        header: {
+          id: job.id,
+          kind: 'job',
+          agentId: job.agentId,
+          agentName: job.agentName,
+          origin: job.channel,
+          status: job.status,
+          stage,
+          task: job.task,
+          costUsd,
+          filesChanged: filesTouched.size,
+          activityAt: job.createdAt ? job.createdAt.toISOString() : null,
+          durationMs: job.totalDurationMs ?? null,
+        },
+        toolCalls: toolCallRows.map((tc) => ({
+          id: tc.id,
+          toolName: tc.toolName,
+          toolInput: tc.toolInput,
+          toolOutput: tc.toolOutput,
+          durationMs: tc.durationMs,
+          createdAt: tc.createdAt ? tc.createdAt.toISOString() : null,
+        })),
+        verdicts,
+        changes,
+      });
+    }
+
+    // ── Chat session detail ──────────────────────────────────────────────────
+    // tool_calls has NO foreign key back to a chat session (only job_id,
+    // nullable for chat turns) — so a session's detail can only ever show its
+    // cli_runs history, never a tool-call/diff timeline. Honest limitation of
+    // the schema, not a shortcut: toolCalls/changes/verdicts stay empty here.
+    const { sessionId } = parsed.data;
+    const runs = await db
+      .select({
+        agentId: cliRuns.agentId,
+        agentName: agents.name,
+        costUsd: cliRuns.costUsd,
+        createdAt: cliRuns.createdAt,
+      })
+      .from(cliRuns)
+      .leftJoin(agents, eq(agents.id, cliRuns.agentId))
+      .where(
+        and(
+          eq(cliRuns.entityId, entityId),
+          eq(cliRuns.sessionId, sessionId),
+          isNull(cliRuns.jobId),
+        ),
+      )
+      .orderBy(desc(cliRuns.createdAt));
+    if (runs.length === 0) return fail('not_found', 'Process not found');
+
+    const totalCost = runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+    const lastRun = runs[0]!;
+
+    return ok({
+      header: {
+        id: sessionId,
+        kind: 'chat',
+        agentId: lastRun.agentId,
+        agentName: lastRun.agentName,
+        origin: 'chat',
+        status: null,
+        stage: 'chat',
+        task: 'Runtime chat session',
+        costUsd: totalCost,
+        filesChanged: 0,
+        activityAt: lastRun.createdAt ? lastRun.createdAt.toISOString() : null,
+        durationMs: null,
+      },
+      toolCalls: [],
+      verdicts: [],
+      changes: [],
+    });
+  } catch (err) {
+    console.error('[getCodingProcessDetailAction]', err);
+    return fail('db_error', 'Failed to load process detail');
   }
 }
