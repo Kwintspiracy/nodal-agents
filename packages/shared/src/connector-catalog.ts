@@ -150,6 +150,16 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     docsHint: 'Firecrawl API key — firecrawl.dev/account.',
   },
   {
+    slug: 'cloudflare',
+    label: 'Cloudflare',
+    authType: 'api_key',
+    category: 'DevTools',
+    docsHint:
+      'Cloudflare API Token — dash.cloudflare.com → My Profile → API Tokens → template ' +
+      '"Edit Cloudflare Workers" (includes Workers Scripts:Write, Account Settings:Read). ' +
+      'Scope it to ONE account.',
+  },
+  {
     slug: 'tavily',
     label: 'Tavily',
     authType: 'api_key',

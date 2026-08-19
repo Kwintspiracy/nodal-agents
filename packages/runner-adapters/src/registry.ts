@@ -25,6 +25,7 @@ import {
 import { createSheetsTools, SHEETS_OPERATIONS } from '@nodal-agents/adapter-google-sheets';
 import { createDocsTools, DOCS_OPERATIONS } from '@nodal-agents/adapter-google-docs';
 import { createFirecrawlTools, FIRECRAWL_OPERATIONS } from '@nodal-agents/adapter-firecrawl';
+import { createCloudflareTools, CLOUDFLARE_OPERATIONS } from '@nodal-agents/adapter-cloudflare';
 import { createApifyTools, APIFY_OPERATIONS } from '@nodal-agents/adapter-apify';
 import { createTavilyTools, TAVILY_OPERATIONS } from '@nodal-agents/adapter-tavily';
 import { createPoyoTools, POYO_OPERATIONS } from '@nodal-agents/adapter-poyo';
@@ -151,6 +152,14 @@ export const ADAPTER_REGISTRY: Record<string, AdapterEntry> = {
     toolFactory: (t) =>
       createFirecrawlTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
     operations: FIRECRAWL_OPERATIONS,
+  },
+  // cloudflare: API Token (template « Edit Cloudflare Workers ») via
+  // connectors.api_key. Deploy runs wrangler; list/delete use the official SDK.
+  cloudflare: {
+    credentialType: 'api_key',
+    toolFactory: (t) =>
+      createCloudflareTools({ accessToken: t }) as ToolDefinition<z.ZodTypeAny, unknown>[],
+    operations: CLOUDFLARE_OPERATIONS,
   },
   apify: {
     credentialType: 'api_key',

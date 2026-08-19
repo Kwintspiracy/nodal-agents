@@ -20,6 +20,7 @@ const EXPECTED_SLUGS = [
   'airtable-oauth',
   'airtable',
   'firecrawl',
+  'cloudflare',
   'apify',
   'tavily',
   'poyo',

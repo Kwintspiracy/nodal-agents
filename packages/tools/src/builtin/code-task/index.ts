@@ -59,7 +59,7 @@ export {
   CliOutputError,
   type NormalizedCliResult,
 } from './providers';
-export { resolveCliPath, buildSpawnArgv } from './process';
+export { resolveCliPath, buildSpawnArgv, runCli } from './process';
 
 // ─── Limits ─────────────────────────────────────────────────────────────────
 

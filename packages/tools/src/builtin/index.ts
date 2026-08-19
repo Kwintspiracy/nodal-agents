@@ -73,10 +73,12 @@ export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
 export { codeTaskTool, runCliDoctor } from './code-task';
 export type { CodeTaskInput, CodeTaskOutput, CliDoctorReport } from './code-task';
-// CLI plumbing reused by the runner's runtime-agent path (étape E).
+// CLI plumbing reused by the runner's runtime-agent path (étape E) and by
+// adapters that spawn an official CLI (adapter-cloudflare → wrangler).
 export {
   resolveCliPath,
   buildSpawnArgv,
+  runCli,
   extractClaudeUsage,
   CLAUDE_READONLY_DISALLOWED,
   assertCliBudget,
@@ -86,6 +88,10 @@ export {
   WorkspaceLockedError,
 } from './code-task';
 export type { NormalizedCliResult } from './code-task';
+// Workspace confinement, reused by adapters that touch workspace files
+// (adapter-cloudflare deploys a built directory) — ONE resolution/escape
+// check implementation, never a per-adapter copy.
+export { assertWorkspacesConfigured, resolveAndCheckPath } from './file-ops/workspace';
 export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';
