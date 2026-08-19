@@ -1,15 +1,20 @@
 'use client';
 
-// CodeProcessDetail — the /code/[id] mission-control view (v4, Quentin 19/08
-// third pass): Changes (the files touched) is the MAIN content, not a
-// sidebar — a card per file, path + churn counter, its edits expandable.
-// Activity is a compact, secondary trail: one line per tool_call (icon,
-// short name, target, duration, delegated badge) with NO diff/output content
-// inline — expanding a row shows only its raw input/output JSON. Review
-// verdicts keep their own rich card (a synthesis, not a routine tool call).
-// Turn markers (from llm_calls / cli_runs — never guessed) are intercalated
-// into Activity to show token/cost at the only granularity the data actually
-// supports: per turn, never per tool.
+// CodeProcessDetail — the /code/[id] mission-control view (v5, Quentin 19/08
+// fourth pass): an accordion of every file's full diff didn't scale (15
+// files × 2000 lines). Layout now:
+//   - Left sidebar: the list of changed files (name + churn counter). Click
+//     to select; first file selected by default.
+//   - Central panel: the SELECTED file's diff only, independently
+//     scrollable, with the compact Activity trail underneath it.
+// Activity itself is unchanged in content from the previous pass: one line
+// per tool_call (icon, short name, target, duration, delegated badge) with
+// NO diff/output content inline — expanding a row shows only its raw
+// input/output JSON. Review verdicts keep their own rich card (a synthesis,
+// not a routine tool call), above the two-column layout. Turn markers (from
+// llm_calls / cli_runs — never guessed) are intercalated into Activity for
+// the only token/cost granularity the data actually supports: per turn,
+// never per tool.
 //
 // Polls getCodingProcessDetailAction every 4s while the process is still in
 // the 'coding' stage — same interval-effect shape as CodeProcessesTable's
@@ -34,8 +39,6 @@ import { relativeTime } from '@/lib/format-time';
 
 const POLL_INTERVAL = 4000;
 const LINE_LIMIT = 16;
-/** Files start expanded when there are only a handful — beyond that, collapsed by default. */
-const AUTO_EXPAND_FILE_THRESHOLD = 3;
 
 const STAGE_LABEL: Record<string, string> = {
   coding: 'Coding',
@@ -85,7 +88,13 @@ export default function CodeProcessDetail({
   }, [detail.header.stage]);
 
   const { header, activity, verdicts, changes } = detail;
-  const autoExpandFiles = changes.length > 0 && changes.length <= AUTO_EXPAND_FILE_THRESHOLD;
+
+  // Selected file for the central panel. Derived at render time (never an
+  // effect): falls back to the first file whenever the current selection
+  // isn't in the list — covers both the initial mount and a poll that
+  // changed the file set, with no synchronous setState-in-effect needed.
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const selectedGroup = changes.find((g) => g.filePath === selectedFilePath) ?? changes[0] ?? null;
 
   return (
     <div className="space-y-6">
@@ -124,7 +133,7 @@ export default function CodeProcessDetail({
         </div>
       </div>
 
-      {/* Review verdicts — a synthesis, kept near the header, above Changes. */}
+      {/* Review verdicts — a synthesis, kept near the header, above the layout below. */}
       {verdicts.length > 0 && (
         <div className="space-y-3 rounded-xl border border-rule-2 bg-paper p-5">
           <h2 className="text-mono-11 tracking-wider text-ink-4 uppercase">Review verdicts</h2>
@@ -134,82 +143,120 @@ export default function CodeProcessDetail({
         </div>
       )}
 
-      {/* Changes — the MAIN content: what actually changed. */}
-      <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-        <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-          Changes
-          {changes.length > 0 ? ` · ${changes.length} file${changes.length === 1 ? '' : 's'}` : ''}
-        </h2>
-        {changes.length === 0 ? (
-          <p className="px-4 py-6 text-body-13 text-ink-4">No files changed yet.</p>
-        ) : (
-          <div>
-            {changes.map((group) => (
-              <FileChangeCard key={group.filePath} group={group} defaultOpen={autoExpandFiles} />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Files sidebar + central panel (selected file's diff, then Activity). */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr] lg:items-start">
+        <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper lg:sticky lg:top-6">
+          <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
+            Files{changes.length > 0 ? ` · ${changes.length}` : ''}
+          </h2>
+          {changes.length === 0 ? (
+            <p className="px-4 py-6 text-body-13 text-ink-4">No files changed yet.</p>
+          ) : (
+            <div className="max-h-[70vh] overflow-y-auto">
+              {changes.map((group) => (
+                <FileListRow
+                  key={group.filePath}
+                  group={group}
+                  active={group.filePath === selectedGroup?.filePath}
+                  onSelect={() => setSelectedFilePath(group.filePath)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
 
-      {/* Activity — compact secondary trail: metrics only, no content. */}
-      <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
-        <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
-          Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
-        </h2>
-        {activity.length === 0 ? (
-          <p className="px-4 py-6 text-body-13 text-ink-4">
-            {header.kind === 'chat'
-              ? "Chat sessions don't record a tool-call trail yet, only their run history."
-              : 'No activity recorded yet.'}
-          </p>
-        ) : (
-          <div>
-            {activity.map((item, i) =>
-              item.kind === 'turn' ? (
-                <TurnMarkerRow key={`turn-${i}`} item={item} />
-              ) : (
-                <ActivityRow key={item.id} tc={item} />
-              ),
+        <div className="min-w-0 space-y-6">
+          {selectedGroup && (
+            <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+              <h2
+                className="truncate border-b border-rule-2 px-4 py-3 font-mono text-body-13 text-ink"
+                title={selectedGroup.filePath}
+              >
+                {selectedGroup.filePath}
+              </h2>
+              <div className="max-h-[70vh] space-y-3 overflow-y-auto px-4 py-4">
+                {selectedGroup.edits.map((edit, i) => (
+                  <EditHunk key={i} edit={edit} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Activity — compact secondary trail: metrics only, no content. */}
+          <div className="overflow-hidden rounded-xl border border-rule-2 bg-paper">
+            <h2 className="border-b border-rule-2 px-4 py-3 text-mono-11 tracking-wider text-ink-4 uppercase">
+              Activity{activity.length > 0 ? ` · ${activity.length}` : ''}
+            </h2>
+            {activity.length === 0 ? (
+              <p className="px-4 py-6 text-body-13 text-ink-4">
+                {header.kind === 'chat'
+                  ? "Chat sessions don't record a tool-call trail yet, only their run history."
+                  : 'No activity recorded yet.'}
+              </p>
+            ) : (
+              <div className="max-h-[70vh] overflow-y-auto">
+                {activity.map((item, i) =>
+                  item.kind === 'turn' ? (
+                    <TurnMarkerRow key={`turn-${i}`} item={item} />
+                  ) : (
+                    <ActivityRow key={item.id} tc={item} />
+                  ),
+                )}
+              </div>
             )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
 }
 
-// ─── Changes (main content) ─────────────────────────────────────────────────
+// ─── Files sidebar ──────────────────────────────────────────────────────────
 
-function FileChangeCard({
+/** Splits on the last path separator (either / or \) — CLI tool_input paths are POSIX, Nodal file_edit/file_write can be either. */
+function splitFilePath(path: string): { dir: string; base: string } {
+  const idx = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  if (idx === -1) return { dir: '', base: path };
+  return { dir: path.slice(0, idx), base: path.slice(idx + 1) };
+}
+
+function FileListRow({
   group,
-  defaultOpen,
+  active,
+  onSelect,
 }: {
   group: CodingFileChangeGroup;
-  defaultOpen: boolean;
+  active: boolean;
+  onSelect: () => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const { dir, base } = splitFilePath(group.filePath);
   return (
-    <div className="border-b border-rule-2 last:border-0">
-      <DisclosureButton open={open} onClick={() => setOpen((v) => !v)}>
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-body-13 text-ink"
-          title={group.filePath}
-        >
-          {group.filePath}
-        </span>
-        <span className="shrink-0 text-mono-12 text-ok">+{group.addedLines}</span>
-        <span className="shrink-0 text-mono-12 text-err">−{group.removedLines}</span>
-      </DisclosureButton>
-      {open && (
-        <div className="space-y-3 px-4 pb-4 pl-9">
-          {group.edits.map((edit, i) => (
-            <EditHunk key={i} edit={edit} />
-          ))}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') onSelect();
+      }}
+      className={`flex cursor-pointer items-center gap-2 border-l-2 px-4 py-2.5 transition-colors ${
+        active ? 'border-ink bg-hover' : 'border-transparent hover:bg-hover'
+      }`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-mono text-body-13 text-ink" title={group.filePath}>
+          {base}
         </div>
-      )}
+        {dir && <div className="truncate text-mono-11 text-ink-4">{dir}</div>}
+      </div>
+      <div className="shrink-0 text-mono-11">
+        <span className="text-ok">+{group.addedLines}</span>{' '}
+        <span className="text-err">−{group.removedLines}</span>
+      </div>
     </div>
   );
 }
+
+// ─── Central panel: selected file's diff ───────────────────────────────────
 
 function prefixLines(text: string, prefix: string): string {
   return text
