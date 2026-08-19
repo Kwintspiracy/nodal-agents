@@ -32,6 +32,7 @@ import { systemSkillSlugs } from '@nodal-agents/catalog';
 // consolidated content authored by a model, with no human in the loop.
 import { lintSkillContent } from '@nodal-agents/tools';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
 
 const CURATOR_TRACE = '[curator]';
 
@@ -186,6 +187,9 @@ export async function runCuratorConsolidation(
             model: ag.model ?? '',
             reasoningEffort: ag.reasoningEffort ?? null,
           },
+      undefined,
+      // étape D: curator passes were invisible LLM consumers.
+      makeLlmCallSink(db, { source: 'curator', entityId, agentId: ag.id }),
     );
     if (r.ok) {
       resolvedClient = r;

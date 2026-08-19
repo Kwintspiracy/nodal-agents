@@ -16,6 +16,10 @@ export const toolCalls = pgTable(
     toolOutput: text('tool_output'),
     durationMs: integer('duration_ms'),
     turn: integer('turn'),
+    // The AI SDK tool-call id of the originating tool_use block (étape D):
+    // makes this row JOINABLE to the transcript message and to llm_calls by
+    // turn — the full-copy tool_output was previously unlinkable.
+    toolCallId: text('tool_call_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (table) => [

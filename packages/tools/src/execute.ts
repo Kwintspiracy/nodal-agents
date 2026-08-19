@@ -238,6 +238,9 @@ export async function executeTool<TInput extends z.ZodTypeAny, TOutput>(
         // Encrypting the secret fields at rest here (and decrypting on re-exec)
         // is the tracked follow-up.
         toolInput: validatedInput as Record<string, unknown>,
+        // étape D: the originating tool_use id — lets the resume path target
+        // the EXACT awaiting marker instead of matching by toolName alone.
+        toolCallId: ctx.toolCallId ?? null,
         status: 'pending',
       })
       .returning();
@@ -434,10 +437,20 @@ async function _writeToolCall(
       toolInput: redactSecretsForAudit(input) as Record<string, unknown>,
       toolOutput: output,
       durationMs,
+      // étape D: turn + tool_use id make this row joinable to the transcript
+      // and to llm_calls — the full-copy output was previously unlinkable.
+      turn: ctx.turn ?? null,
+      toolCallId: ctx.toolCallId ?? null,
     });
-  } catch {
-    // Audit write failure must never crash the tool execution path.
-    // The runner can detect missing audit rows via monitoring, not via exceptions.
+  } catch (err) {
+    // Audit write failure must never crash the tool execution path — but it
+    // must never be INVISIBLE either (reproducibility audit 2026-08-19: the
+    // silent catch made missing trace rows undiagnosable; no monitoring ever
+    // existed despite the old comment claiming so).
+    console.warn(
+      `[tools] tool_calls audit insert failed (job=${ctx.jobId}, tool=${toolName}):`,
+      err,
+    );
   }
 }
 

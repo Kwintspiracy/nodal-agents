@@ -519,6 +519,13 @@
       "when": 1785600000000,
       "tag": "0074_cli_defaults_model_effort",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1785700000000,
+      "tag": "0075_llm_calls_and_tool_call_ids",
+      "breakpoints": true
     }
   ]
 }

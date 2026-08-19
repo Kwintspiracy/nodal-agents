@@ -12,6 +12,7 @@ import { agents, chatMessages, conversations, agentJobs } from '@nodal-agents/db
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
 import {
   BUDGET_CHARS as HISTORY_BUDGET_CHARS,
@@ -253,12 +254,23 @@ export async function runChatTurn(opts: {
 
   // 2. Resolve the per-agent LLM client + failover chain (shared with executeJob
   //    via resolveAgentLlmClient so the chain logic can't drift — Guard 2).
-  const resolved = await resolveAgentLlmClient(db, {
-    llmKeyId: agentRow.llmKeyId,
-    fallbackChain: agentRow.fallbackChain ?? null,
-    model: agentRow.model ?? DEFAULT_MODEL,
-    reasoningEffort: agentRow.reasoningEffort ?? null,
-  });
+  const resolved = await resolveAgentLlmClient(
+    db,
+    {
+      llmKeyId: agentRow.llmKeyId,
+      fallbackChain: agentRow.fallbackChain ?? null,
+      model: agentRow.model ?? DEFAULT_MODEL,
+      reasoningEffort: agentRow.reasoningEffort ?? null,
+    },
+    undefined,
+    // étape D: a chat turn makes up to 3 LLM calls (main, escalation recheck,
+    // no-tools retry) — all previously invisible. One sink covers them all.
+    makeLlmCallSink(db, {
+      source: 'chat',
+      entityId: agentRow.entityId ?? null,
+      agentId: agentRow.id,
+    }),
+  );
   if (!resolved.ok) {
     return {
       ok: false,

@@ -264,6 +264,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       tool_output text,
       duration_ms integer,
       turn integer,
+      tool_call_id text,
       created_at timestamptz DEFAULT now()
     );
 
@@ -274,6 +275,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       agent_id uuid REFERENCES agents(id) ON DELETE CASCADE,
       tool_name text NOT NULL,
       tool_input jsonb NOT NULL,
+      tool_call_id text,
       status text DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
       requested_at timestamptz DEFAULT now(),
       resolved_at timestamptz,
@@ -677,6 +679,32 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       job_id uuid NOT NULL,
       agent_id uuid,
       acquired_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    -- llm_calls (étape D) — mirrors migration 0075
+    CREATE TABLE IF NOT EXISTS llm_calls (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+      job_id uuid REFERENCES agent_jobs(id) ON DELETE SET NULL,
+      source text NOT NULL,
+      turn integer,
+      model_requested text,
+      model_effective text NOT NULL,
+      provider text NOT NULL,
+      llm_key_id uuid,
+      reasoning_effort text,
+      tool_choice text,
+      tool_names text[],
+      tools_hash text,
+      input_tokens integer,
+      output_tokens integer,
+      cached_tokens integer,
+      cost_usd real,
+      duration_ms integer,
+      failover boolean NOT NULL DEFAULT false,
+      error text,
+      created_at timestamptz DEFAULT now()
     );
   `);
 

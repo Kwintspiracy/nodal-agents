@@ -23,6 +23,20 @@ export interface ToolContext {
   entityId: string;
   db: AnyDrizzleDb;
   /**
+   * Job-loop turn this call belongs to (étape D — written into tool_calls.turn
+   * so the full-copy audit rows join back to the transcript and to llm_calls).
+   * Set by the runner on every ToolContext it builds inside the turn loop;
+   * absent in lightweight test contexts (column stays NULL).
+   */
+  turn?: number;
+  /**
+   * The AI SDK tool-call id (`tool_use` block id) of THIS call (étape D).
+   * Varies per call within a turn, so the runner spreads it per call:
+   * `{ ...sharedToolCtx, toolCallId: call.id }`. Written into tool_calls and
+   * approval_requests.
+   */
+  toolCallId?: string;
+  /**
    * The conversationId that originated this job (set by the Telegram inbound
    * handler today — the name predates multichannel and stays `jobChatId` for
    * now; renaming it is cleanup-phase work, not S3).

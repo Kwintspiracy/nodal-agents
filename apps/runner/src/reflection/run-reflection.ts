@@ -35,6 +35,7 @@ import { systemSkillSlugs } from '@nodal-agents/catalog';
 // human in the loop, so it is the path that needed the check most.
 import { lintSkillContent } from '@nodal-agents/tools';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { buildReflectionSystemPrompt } from './prompt.ts';
 
 // Per tool-result cap inside the reflection transcript. The agent loop already
@@ -228,6 +229,14 @@ export async function runReflection(
           model: agentRow.model ?? '',
           reasoningEffort: agentRow.reasoningEffort ?? null,
         },
+    undefined,
+    // étape D: reflection passes were invisible LLM consumers.
+    makeLlmCallSink(db, {
+      source: 'reflection',
+      entityId,
+      agentId: agentRow.id,
+      getJobId: () => job.id,
+    }),
   );
   if (!resolved.ok) {
     console.warn(`${REFLECTION_TRACE} no LLM for agent ${agentRow.slug}: ${resolved.reason}`);

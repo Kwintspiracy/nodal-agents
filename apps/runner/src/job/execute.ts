@@ -53,6 +53,7 @@ import {
 } from '@nodal-agents/llm';
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
+import { makeLlmCallSink } from '../llm/call-sink.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import {
   computeToolWhitelist,
@@ -963,6 +964,15 @@ async function runJob(
         reasoningEffort: agentRow.reasoningEffort ?? null,
       },
       (info) => trace('fallback_key_skipped', info),
+      // étape D: every LLM attempt of this job lands in llm_calls. getTurn
+      // reads the loop counter lexically — the client outlives many turns.
+      makeLlmCallSink(db, {
+        source: 'job',
+        entityId: job.entityId ?? null,
+        agentId: agentRow.id,
+        getJobId: () => jobId as string,
+        getTurn: () => turn,
+      }),
     );
     if (!resolved.ok) {
       const code =
@@ -1862,6 +1872,11 @@ async function runJob(
                   agentId: agentRow.id,
                   entityId: job.entityId ?? '',
                   db,
+                  // étape D: the replayed call keeps its ORIGINAL tool_use id
+                  // (stamped on the approval_requests row at gate time) so the
+                  // audit row joins back to the transcript block it answers.
+                  turn,
+                  toolCallId: req.toolCallId ?? undefined,
                   jobChatId: job.chatId ?? null,
                   jobChannel: job.channel,
                   activeChannels,
@@ -2970,6 +2985,9 @@ async function runJob(
         agentId: agentRow.id,
         entityId: job.entityId ?? '',
         db,
+        // étape D: stamp every tool_calls row of this turn with the turn
+        // number; the per-call toolCallId is spread at each executeTool site.
+        turn,
         jobChatId: job.chatId ?? null,
         jobChannel: job.channel,
         activeChannels,
@@ -3030,7 +3048,12 @@ async function runJob(
                 if (!def) return { id: c.id, r: null };
                 return {
                   id: c.id,
-                  r: await executeTool(def, c.input, sharedToolCtx, sharedToolOpts),
+                  r: await executeTool(
+                    def,
+                    c.input,
+                    { ...sharedToolCtx, toolCallId: c.id },
+                    sharedToolOpts,
+                  ),
                 };
               }),
             );
@@ -3252,6 +3275,8 @@ async function runJob(
                 agentId: agentRow.id,
                 entityId: job.entityId ?? '',
                 db,
+                turn,
+                toolCallId: call.id,
                 jobChatId: job.chatId ?? null,
                 jobChannel: job.channel,
                 activeChannels,
@@ -3435,7 +3460,12 @@ async function runJob(
             void touchJob(db, jobId as string).catch(() => {});
           }, 60_000);
           try {
-            toolResult = await executeTool(toolDef, call.input, sharedToolCtx, sharedToolOpts);
+            toolResult = await executeTool(
+              toolDef,
+              call.input,
+              { ...sharedToolCtx, toolCallId: call.id },
+              sharedToolOpts,
+            );
           } finally {
             clearInterval(toolHbInterval);
           }

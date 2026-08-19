@@ -116,6 +116,28 @@ describe('blocked tool message', () => {
   });
 });
 
+// ─── turn + toolCallId audit stamping (étape D) ──────────────────────────────
+
+describe('tool_calls turn/toolCallId stamping', () => {
+  it('writes ctx.turn and ctx.toolCallId into the audit row', async () => {
+    const { toolCalls } = await import('@nodal-agents/db');
+    const { eq, and } = await import('@nodal-agents/db');
+    await executeTool(
+      reviewVerdictTool,
+      { verdict: 'approve', summary: 'stamp test', findings: [] },
+      { ...makeCtx(), turn: 5, toolCallId: 'call_stamp_42' },
+      makeOpts(),
+    );
+    const rows = await db
+      .select()
+      .from(toolCalls)
+      .where(and(eq(toolCalls.jobId, seed.jobId), eq(toolCalls.toolCallId, 'call_stamp_42')));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.turn).toBe(5);
+    expect(rows[0]!.toolName).toBe('review_verdict');
+  });
+});
+
 // ─── Read-only write-guard (code_task mode write) ────────────────────────────
 
 describe('assertNotReadOnlyAgent', () => {
