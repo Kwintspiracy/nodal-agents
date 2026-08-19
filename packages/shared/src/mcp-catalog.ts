@@ -398,6 +398,29 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
       'Create an API token in the Apify Console (Settings → API & Integrations) and paste it here as a Bearer token. The hosted server runs Actors on your behalf.',
     status: 'pending',
   },
+  // ── Image generation (stdio) ──────────────────────────────────────────────
+  {
+    slug: 'comfyui',
+    label: 'ComfyUI',
+    description:
+      'Drive your local ComfyUI — run workflow JSON files, watch jobs, fetch generated ' +
+      'outputs, inspect installed nodes and models. Official local comfy-mcp server ' +
+      '(docs.comfy.org/agent-tools/mcp), spawned via uvx.',
+    serverUrl: null,
+    transport: 'stdio',
+    authScheme: 'header',
+    authParamName: 'Authorization',
+    keyPrefix: [],
+    verifyToolName: null,
+    docsHint:
+      'Requires on the host: the `uv` package manager (uvx), Python 3.10+, comfy-cli ≥ 1.14 ' +
+      'on the PATH, and a RUNNING ComfyUI instance (`comfy launch` or your existing install). ' +
+      'No API key — the server talks to your local ComfyUI. (Alternative to uvx: ' +
+      '`pip install comfy-mcp` then command `comfy-mcp` with no args.)',
+    command: 'uvx',
+    args: ['comfy-mcp'],
+    status: 'pending',
+  },
   // ── 3D / rendering (stdio) ────────────────────────────────────────────────
   // Each needs a companion plugin/add-on INSIDE the app (running locally) plus a
   // local bridge server. Blender is live-verified; Unity/Unreal/KeyShot stay
