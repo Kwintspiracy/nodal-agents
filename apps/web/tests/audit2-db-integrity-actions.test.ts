@@ -435,6 +435,84 @@ describe('setReviewerReadOnlyPresetAction', () => {
   });
 });
 
+// ─── setAgentRuntimeAction — pose/repose runtime, refuses 'codex' ─────────────
+
+describe('setAgentRuntimeAction', () => {
+  it('sets runtime to claude-code, then back to nodal', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Agent');
+    const { setAgentRuntimeAction } = await import('../src/lib/actions.ts');
+
+    const toClaudeCode = await setAgentRuntimeAction({ agentId, runtime: 'claude-code' });
+    expect(toClaudeCode.ok).toBe(true);
+
+    const [afterSwitch] = await _testDb!
+      .select({ runtime: agents.runtime })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(afterSwitch?.runtime).toBe('claude-code');
+
+    const backToNodal = await setAgentRuntimeAction({ agentId, runtime: 'nodal' });
+    expect(backToNodal.ok).toBe(true);
+
+    const [afterRevert] = await _testDb!
+      .select({ runtime: agents.runtime })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(afterRevert?.runtime).toBe('nodal');
+  });
+
+  it('refuses "codex" at validation — the Zod enum only accepts nodal/claude-code', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Codex Refused Agent');
+    const { setAgentRuntimeAction } = await import('../src/lib/actions.ts');
+
+    const result = await setAgentRuntimeAction({ agentId, runtime: 'codex' });
+    expect(result.ok).toBe(false);
+
+    const [row] = await _testDb!
+      .select({ runtime: agents.runtime })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.runtime).toBe('nodal');
+  });
+});
+
+// ─── setCliRuntimeModeAction — merges mode, never erases extraDisallowed ──────
+
+describe('setCliRuntimeModeAction', () => {
+  it('merges mode onto existing cli_permissions without touching extraDisallowed', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Mode Agent');
+    // Seed a pre-existing permission shape the action must preserve untouched.
+    await _testDb!
+      .update(agents)
+      .set({ cliPermissions: { mode: 'read', extraDisallowed: ['WebSearch'] } })
+      .where(eq(agents.id, agentId));
+
+    const { setCliRuntimeModeAction } = await import('../src/lib/actions.ts');
+    const result = await setCliRuntimeModeAction({ agentId, mode: 'write' });
+    expect(result.ok).toBe(true);
+
+    const [row] = await _testDb!
+      .select({ cliPermissions: agents.cliPermissions })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliPermissions).toEqual({ mode: 'write', extraDisallowed: ['WebSearch'] });
+  });
+
+  it('sets mode on an agent with no prior cli_permissions row', async () => {
+    const agentId = await makeAgent('Audit2 Runtime Mode Fresh Agent');
+    const { setCliRuntimeModeAction } = await import('../src/lib/actions.ts');
+
+    const result = await setCliRuntimeModeAction({ agentId, mode: 'write' });
+    expect(result.ok).toBe(true);
+
+    const [row] = await _testDb!
+      .select({ cliPermissions: agents.cliPermissions })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(row?.cliPermissions).toEqual({ mode: 'write' });
+  });
+});
+
 // ─── F-18/F-19: updateAgentAction sub-agent rewrite ───────────────────────────
 
 describe('updateAgentAction — sub-agent rewrite is atomic and deduped — F-18/F-19', () => {

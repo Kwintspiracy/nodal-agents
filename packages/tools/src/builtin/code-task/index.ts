@@ -36,6 +36,8 @@ import {
 
 export { runCliDoctor, type CliDoctorReport } from './doctor';
 export { CliBudgetExceededError, WorkspaceLockedError, ReadOnlyAgentError } from './db';
+export { assertCliBudget, recordCliRun } from './db';
+export { CLAUDE_READONLY_DISALLOWED } from './providers';
 export {
   buildProviderArgs,
   parseClaudeOutput,

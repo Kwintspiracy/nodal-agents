@@ -54,6 +54,7 @@ import {
 import type { NodalLlmClient } from '@nodal-agents/llm';
 import { resolveAgentLlmClient } from './resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
+import { runCliRuntimeJob } from '../cli-runtime/run-job.ts';
 import { resolveAgentToolNames } from './resolve-agent-tools.ts';
 import {
   computeToolWhitelist,
@@ -894,6 +895,35 @@ async function runJob(
     } catch {
       // best-effort — a workspace we couldn't create is simply not offered
     }
+  }
+
+  // ── 3.55 Runtime divert (étape E) ─────────────────────────────────────────
+  // An agent whose runtime is not 'nodal' IS a coding-CLI session (Claude
+  // Code): the whole Nodal LLM loop below is skipped and the turn is served
+  // by the user's own CLI under their subscription. Returning through runJob's
+  // normal exit keeps the wrapper semantics intact (maybeResumeParent — a
+  // runtime agent can be a delegated worker in a team).
+  if ((agentRow.runtime ?? 'nodal') !== 'nodal') {
+    return await runCliRuntimeJob({
+      db,
+      jobId: jobId as string,
+      job: {
+        entityId: job.entityId ?? null,
+        chatId: job.chatId ?? null,
+        channel: job.channel ?? null,
+        conversationId: job.conversationId ?? null,
+        task: job.task ?? null,
+      },
+      agentRow: {
+        id: agentRow.id,
+        entityId: agentRow.entityId ?? null,
+        personality: agentRow.personality,
+        runtime: agentRow.runtime ?? 'nodal',
+        cliPermissions: agentRow.cliPermissions ?? null,
+        cliDefaults: agentRow.cliDefaults ?? null,
+      },
+      workspaces: agentWorkspacesList,
+    });
   }
 
   // ── 3.6 Skill-file access context ─────────────────────────────────────────

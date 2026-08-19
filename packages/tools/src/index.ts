@@ -66,6 +66,11 @@ export {
   DashboardPublishInputSchema,
   buildChildEnv,
   runCliDoctor,
+  resolveCliPath,
+  buildSpawnArgv,
+  CLAUDE_READONLY_DISALLOWED,
+  assertCliBudget,
+  recordCliRun,
 } from './builtin/index';
 export type { AlwaysOnTool, DashboardPublishInput, CliDoctorReport } from './builtin/index';
 

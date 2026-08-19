@@ -13,7 +13,17 @@
 // (single connection, no real session locks); the repo-house pattern is the
 // atomic conditional INSERT/UPDATE (see apps/runner/src/approvals/resolve.ts).
 
-import { pgTable, text, uuid, integer, real, timestamp, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  uuid,
+  integer,
+  real,
+  timestamp,
+  index,
+  check,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
@@ -78,3 +88,33 @@ export const workspaceLocks = pgTable('workspace_locks', {
 
 export type WorkspaceLockRow = typeof workspaceLocks.$inferSelect;
 export type WorkspaceLockInsert = typeof workspaceLocks.$inferInsert;
+
+// ─── cli_sessions ────────────────────────────────────────────────────────────
+//
+// Session continuity for RUNTIME agents (étape E): one row per
+// (agent, conversation) holding the coding CLI's session/thread id, so the
+// next inbound message on that conversation resumes the SAME CLI session
+// (`claude --resume <id>`) instead of starting cold.
+
+export const cliSessions = pgTable(
+  'cli_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entityId: uuid('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    /** conversationId (dashboard chat / job grouping) or the channel chatId. */
+    conversationKey: text('conversation_key').notNull(),
+    provider: text('provider').notNull(),
+    sessionId: text('session_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('cli_sessions_agent_conversation_unique').on(table.agentId, table.conversationKey),
+  ],
+);
+
+export type CliSessionRow = typeof cliSessions.$inferSelect;
+export type CliSessionInsert = typeof cliSessions.$inferInsert;

@@ -526,6 +526,13 @@
       "when": 1785700000000,
       "tag": "0075_llm_calls_and_tool_call_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1785800000000,
+      "tag": "0076_agent_runtime_and_cli_sessions",
+      "breakpoints": true
     }
   ]
 }

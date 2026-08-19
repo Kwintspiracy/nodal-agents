@@ -119,6 +119,8 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       memory_token_budget integer NOT NULL DEFAULT 1500,
       cli_daily_budget_usd real NOT NULL DEFAULT 10,
       cli_defaults jsonb,
+      runtime text NOT NULL DEFAULT 'nodal' CHECK (runtime IN ('nodal', 'claude-code', 'codex')),
+      cli_permissions jsonb,
       position integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
@@ -679,6 +681,19 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       job_id uuid NOT NULL,
       agent_id uuid,
       acquired_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    -- cli_sessions (étape E) — mirrors migration 0076
+    CREATE TABLE IF NOT EXISTS cli_sessions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id uuid REFERENCES entities(id) ON DELETE CASCADE,
+      agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      conversation_key text NOT NULL,
+      provider text NOT NULL,
+      session_id text NOT NULL,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      UNIQUE (agent_id, conversation_key)
     );
 
     -- llm_calls (étape D) — mirrors migration 0075

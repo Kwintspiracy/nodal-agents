@@ -13,6 +13,7 @@ import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent, AgentId, EntityId } from '@nodal-agents/orchestration';
 import { resolveAgentLlmClient } from '../job/resolve-llm.ts';
 import { makeLlmCallSink } from '../llm/call-sink.ts';
+import { runCliRuntimeChatTurn } from '../cli-runtime/run-chat.ts';
 import { getDeploymentContext } from '../job/deployment.ts';
 import {
   BUDGET_CHARS as HISTORY_BUDGET_CHARS,
@@ -229,7 +230,11 @@ export async function runChatTurn(opts: {
     .where(and(eq(agents.id, agentId), eq(agents.entityId, entityId)))
     .limit(1);
   if (!agentRow || !agentRow.active) return { ok: false, error: 'agent_not_found' };
-  if (!agentRow.llmKeyId) return { ok: false, error: 'agent_no_llm_configured' };
+  const isRuntimeAgent = (agentRow.runtime ?? 'nodal') !== 'nodal';
+  // A runtime agent (étape E) needs no Nodal LLM key — its brain is the CLI.
+  if (!agentRow.llmKeyId && !isRuntimeAgent) {
+    return { ok: false, error: 'agent_no_llm_configured' };
+  }
 
   // 1a. Verify the conversation belongs to this entity (the sidebar entry).
   const [conv] = await db
@@ -250,6 +255,27 @@ export async function runChatTurn(opts: {
     const title =
       message.trim().slice(0, TITLE_MAX) + (message.trim().length > TITLE_MAX ? '…' : '');
     await db.update(conversations).set({ title }).where(eq(conversations.id, conversationId));
+  }
+
+  // 1c. Runtime divert (étape E): the reply comes from the agent's Claude
+  // Code session, resumed per conversation; the CLI's text is relayed
+  // verbatim. Everything below (Nodal LLM client, system prompt, run_task)
+  // does not apply to a runtime agent.
+  if (isRuntimeAgent) {
+    return await runCliRuntimeChatTurn({
+      db,
+      entityId,
+      agentRow: {
+        id: agentRow.id,
+        entityId: agentRow.entityId ?? null,
+        personality: agentRow.personality,
+        runtime: agentRow.runtime ?? 'nodal',
+        cliPermissions: agentRow.cliPermissions ?? null,
+        cliDefaults: agentRow.cliDefaults ?? null,
+      },
+      conversationId,
+      message,
+    });
   }
 
   // 2. Resolve the per-agent LLM client + failover chain (shared with executeJob

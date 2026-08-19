@@ -73,6 +73,14 @@ export { runCommandTool } from './run-command';
 export type { RunCommandInput, RunCommandOutput } from './run-command';
 export { codeTaskTool, runCliDoctor } from './code-task';
 export type { CodeTaskInput, CodeTaskOutput, CliDoctorReport } from './code-task';
+// CLI plumbing reused by the runner's runtime-agent path (étape E).
+export {
+  resolveCliPath,
+  buildSpawnArgv,
+  CLAUDE_READONLY_DISALLOWED,
+  assertCliBudget,
+  recordCliRun,
+} from './code-task';
 export { reviewVerdictTool } from './review-verdict';
 export type { ReviewVerdictInput, ReviewVerdictOutput } from './review-verdict';
 export { runSkillScriptTool } from './run-skill-script';

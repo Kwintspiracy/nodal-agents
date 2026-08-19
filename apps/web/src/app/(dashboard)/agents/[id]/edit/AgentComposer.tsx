@@ -33,7 +33,10 @@ import {
   setCodeTaskYoloAction,
   setCliDailyBudgetAction,
   getCliUsageTodayAction,
+  setCliDefaultsAction,
   setReviewerReadOnlyPresetAction,
+  setAgentRuntimeAction,
+  setCliRuntimeModeAction,
   setSkillScriptsAuthorizedAction,
   setSkillFilesWritableAction,
   assignSkillAction,
@@ -86,6 +89,7 @@ import ConnectorsTabContent from './ConnectorsTabContent.tsx';
 import ChannelsTabContent from './ChannelsTabContent.tsx';
 import ToolsTab from './ToolsTabContent.tsx';
 import AgentDangerZone from './AgentDangerZone.tsx';
+import { ProviderRow } from './CodeTaskProviderRow.tsx';
 import type { OperationDescriptor } from '@nodal-agents/shared';
 import { isToolGroupSkill } from '@/lib/skill-tool-groups.ts';
 
@@ -278,6 +282,11 @@ export default function AgentComposer({
   // '' = Auto (provider default). Levels offered come from the catalog.
   const [reasoningEffort, setReasoningEffort] = useState<string>(agent.reasoningEffort ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent.avatarUrl ?? null);
+  // Runtime (étape E): 'nodal' | 'claude-code'. Saved immediately via its own
+  // action (setAgentRuntimeAction) — not part of the Save/Reset dirty flow.
+  // Lifted here (not local to SettingsTab) because Skills/Tools/Autonomy also
+  // need it, to show the "does not apply" banner without a full page reload.
+  const [runtime, setRuntime] = useState<string>(agent.runtime ?? 'nodal');
   // Live model ids fetched from the provider's /models endpoint — keyed by keyId
   // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
   const [liveModelsCache, setLiveModelsCache] = useState<Record<string, string[]>>({});
@@ -550,20 +559,26 @@ export default function AgentComposer({
           />
         )}
         {tab === 'skills' && (
-          <SkillsTab
-            agentId={agent.id}
-            attachedSkills={attachedNonToolSkills}
-            allSkills={nonToolSkills}
-          />
+          <>
+            {runtime === 'claude-code' && <RuntimeNoticeBanner />}
+            <SkillsTab
+              agentId={agent.id}
+              attachedSkills={attachedNonToolSkills}
+              allSkills={nonToolSkills}
+            />
+          </>
         )}
         {tab === 'tools' && (
-          <ToolsTab
-            agentId={agent.id}
-            attachedSkills={attachedSkills}
-            allSkills={allSkills}
-            cliDefaults={agent.cliDefaults}
-            onChanged={() => router.refresh()}
-          />
+          <>
+            {runtime === 'claude-code' && <RuntimeNoticeBanner />}
+            <ToolsTab
+              agentId={agent.id}
+              attachedSkills={attachedSkills}
+              allSkills={allSkills}
+              cliDefaults={agent.cliDefaults}
+              onChanged={() => router.refresh()}
+            />
+          </>
         )}
         {tab === 'connectors' && (
           <SectionCard>
@@ -583,16 +598,19 @@ export default function AgentComposer({
           />
         )}
         {tab === 'autonomy' && (
-          <AutonomyTab
-            agentId={agent.id}
-            connectors={connectors}
-            mcpServers={mcpServers}
-            hasTelegramBot={!!agent.telegramBotToken}
-            attachedSkills={attachedSkills}
-            lanCommandYolo={lanCommandYolo}
-            isOwner={isOwner}
-            cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
-          />
+          <>
+            {runtime === 'claude-code' && <RuntimeNoticeBanner />}
+            <AutonomyTab
+              agentId={agent.id}
+              connectors={connectors}
+              mcpServers={mcpServers}
+              hasTelegramBot={!!agent.telegramBotToken}
+              attachedSkills={attachedSkills}
+              lanCommandYolo={lanCommandYolo}
+              isOwner={isOwner}
+              cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
+            />
+          </>
         )}
         {tab === 'settings' && (
           <SettingsTab
@@ -634,6 +652,12 @@ export default function AgentComposer({
             onReset={handleReset}
             liveModelsCache={liveModelsCache}
             liveModelsLoading={liveModelsLoading}
+            runtime={runtime}
+            onChangeRuntime={setRuntime}
+            cliPermissions={agent.cliPermissions}
+            cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
+            cliDefaults={agent.cliDefaults}
+            isOwner={isOwner}
           />
         )}
       </div>
@@ -849,6 +873,19 @@ function TabsBar({
 
 function SectionCard({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl border border-rule-2 bg-paper p-6">{children}</div>;
+}
+
+// Shown at the top of Skills / Tools / Autonomy when the agent's runtime is
+// 'claude-code' (étape E) — those surfaces configure the Nodal loop, which
+// this agent doesn't run. Informational only: it does not block navigation
+// or editing (v1, per Quentin — no redesign of those tabs for this case).
+function RuntimeNoticeBanner() {
+  return (
+    <div className="mb-4 rounded-lg border border-rule-2 bg-hover px-3 py-2 text-body-13 text-ink-3">
+      This agent runs on the Claude Code harness. Skills, tools and per-tool approvals below do not
+      apply to it.
+    </div>
+  );
 }
 
 function SectionHead({
@@ -2536,6 +2573,13 @@ function SettingsTab(props: {
   onReset: () => void;
   liveModelsCache: Record<string, string[]>;
   liveModelsLoading: boolean;
+  /** 'nodal' | 'claude-code' (étape E) — lifted to AgentComposer, see its declaration. */
+  runtime: string;
+  onChangeRuntime: (v: string) => void;
+  cliPermissions: AgentRow['cliPermissions'];
+  cliDailyBudgetUsd: number;
+  cliDefaults: AgentRow['cliDefaults'];
+  isOwner: boolean;
 }) {
   const {
     name,
@@ -2576,7 +2620,45 @@ function SettingsTab(props: {
     onReset,
     liveModelsCache,
     liveModelsLoading,
+    runtime,
+    onChangeRuntime,
+    cliPermissions,
+    cliDailyBudgetUsd,
+    cliDefaults,
+    isOwner,
   } = props;
+
+  // ── Runtime picker (étape E) ───────────────────────────────────────────────
+  const isLocalTrustSettings =
+    (process.env['NEXT_PUBLIC_AUTH_MODE'] ?? 'local-trust') === 'local-trust';
+  const canChangeRuntime = isLocalTrustSettings || isOwner;
+  const [savingRuntime, setSavingRuntime] = useState(false);
+  const [confirmRuntimeOpen, setConfirmRuntimeOpen] = useState(false);
+
+  async function applyRuntime(next: 'nodal' | 'claude-code') {
+    setSavingRuntime(true);
+    const result = await setAgentRuntimeAction({ agentId, runtime: next });
+    setSavingRuntime(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    onChangeRuntime(next);
+    toast.success(
+      next === 'claude-code'
+        ? 'This agent now runs on Claude Code.'
+        : 'This agent is back on its Nodal model.',
+    );
+  }
+
+  function handleRuntimeSelect(next: string) {
+    if (next === runtime) return;
+    if (next === 'claude-code') {
+      setConfirmRuntimeOpen(true);
+    } else {
+      void applyRuntime('nodal');
+    }
+  }
 
   // Candidate fallback keys = every active key except the current primary.
   const otherKeys = activeKeys.filter((k) => k.id !== llmKeyId);
@@ -2809,255 +2891,310 @@ function SettingsTab(props: {
 
       {/* Model */}
       <SectionCard>
-        <SectionHead label="Model" hint="LLM key + model identifier passed to the runner." />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="LLM provider">
-            {noLlmKeys ? (
-              <p className="text-body-13 text-warn">
-                No active LLM keys.{' '}
-                <Link href="/llm-providers" className="underline">
-                  Add one
-                </Link>
-                .
-              </p>
-            ) : (
-              <Select
-                value={llmKeyId}
-                onChange={(e) => onChangeLlmKey(e.target.value)}
-                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
-              >
-                {activeKeys.map((k) => (
-                  <option key={k.id} value={k.id}>
-                    {(k.nickname ?? prettyProviderName(k.provider)) +
-                      ' (' +
-                      prettyProviderName(k.provider) +
-                      ')'}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field
-            label={
-              liveModelsLoading &&
-              selectedKey?.id !== undefined &&
-              liveModelsCache[selectedKey.id] === undefined
-                ? 'Model (loading…)'
-                : 'Model'
-            }
+        <SectionHead
+          label="Model"
+          hint={
+            runtime === 'claude-code'
+              ? "This agent's loop is driven by the Claude Code harness, not a Nodal LLM key."
+              : 'LLM key + model identifier passed to the runner.'
+          }
+        />
+        <Field label="Runtime">
+          <Select
+            value={runtime}
+            onChange={(e) => handleRuntimeSelect(e.target.value)}
+            disabled={savingRuntime || !canChangeRuntime}
+            className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
           >
-            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-              <Select
-                value={modelInDropdown ? model : '__custom__'}
-                onChange={(e) =>
-                  onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
-                }
-                className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
-              >
-                {groupModelCatalog(modelCatalog).map(({ group, models }) =>
-                  group ? (
-                    <optgroup key={group} label={group}>
-                      {models.map((m) => (
-                        <option
-                          key={m.modelId}
-                          value={m.modelId}
-                          disabled={requireTools && !m.capabilities.tools}
-                          title={
-                            requireTools && !m.capabilities.tools
-                              ? "Can't use tools (required for a router/planner)"
-                              : undefined
-                          }
-                        >
-                          {modelOptionLabel(m)}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : (
-                    models.map((m) => (
-                      <option
-                        key={m.modelId}
-                        value={m.modelId}
-                        disabled={requireTools && !m.capabilities.tools}
-                        title={
-                          requireTools && !m.capabilities.tools
-                            ? "Can't use tools (required for a router/planner)"
-                            : undefined
-                        }
-                      >
-                        {modelOptionLabel(m)}
-                      </option>
-                    ))
-                  ),
-                )}
-                {extraLiveIds.length > 0 && (
-                  <optgroup label="Live from provider">
-                    {extraLiveIds.map((id) => (
-                      <option key={id} value={id}>
-                        {id}
+            <option value="nodal">Nodal (this agent&apos;s own LLM)</option>
+            <optgroup label="Coding CLIs (subscription)">
+              <option value="claude-code">Claude Code (subscription)</option>
+            </optgroup>
+          </Select>
+          {!canChangeRuntime && (
+            <p className="mt-1.5 text-body-12 text-ink-4">
+              Only the workspace owner can change an agent&apos;s runtime.
+            </p>
+          )}
+        </Field>
+
+        <ConfirmDialog
+          open={confirmRuntimeOpen}
+          title="Switch to Claude Code?"
+          message={CLAUDE_CODE_DISCLAIMER}
+          confirmLabel="Switch to Claude Code"
+          destructive={false}
+          onConfirm={() => {
+            setConfirmRuntimeOpen(false);
+            void applyRuntime('claude-code');
+          }}
+          onCancel={() => setConfirmRuntimeOpen(false)}
+        />
+
+        {runtime === 'nodal' && (
+          <>
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="LLM provider">
+                {noLlmKeys ? (
+                  <p className="text-body-13 text-warn">
+                    No active LLM keys.{' '}
+                    <Link href="/llm-providers" className="underline">
+                      Add one
+                    </Link>
+                    .
+                  </p>
+                ) : (
+                  <Select
+                    value={llmKeyId}
+                    onChange={(e) => onChangeLlmKey(e.target.value)}
+                    className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+                  >
+                    {activeKeys.map((k) => (
+                      <option key={k.id} value={k.id}>
+                        {(k.nickname ?? prettyProviderName(k.provider)) +
+                          ' (' +
+                          prettyProviderName(k.provider) +
+                          ')'}
                       </option>
                     ))}
-                  </optgroup>
+                  </Select>
                 )}
-                <option value="__custom__">Custom…</option>
-              </Select>
-            )}
-            {!modelInDropdown && (
-              <TextInput
-                type="text"
-                value={model}
-                onChange={(e) => onChangeModel(e.target.value)}
-                placeholder={
-                  MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
-                  'e.g. claude-haiku-4-5-20251001'
+              </Field>
+              <Field
+                label={
+                  liveModelsLoading &&
+                  selectedKey?.id !== undefined &&
+                  liveModelsCache[selectedKey.id] === undefined
+                    ? 'Model (loading…)'
+                    : 'Model'
                 }
-                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
-              />
-            )}
-            {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
-              <ModelToolsLegend className="mt-1.5" />
-            )}
-          </Field>
-          {reasoningOptions.length > 0 && (
-            <Field label="Reasoning">
-              <Select
-                value={reasoningOptions.includes(reasoningEffort) ? reasoningEffort : ''}
-                onChange={(e) => onChangeReasoningEffort(e.target.value)}
-                className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
               >
-                <option value="">Auto</option>
-                {reasoningOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {REASONING_LABELS[v] ?? v}
-                  </option>
-                ))}
-              </Select>
-              <p className="mt-1.5 text-body-13 text-ink-4">
-                How hard this model thinks before answering. Auto keeps the provider default.
-              </p>
-            </Field>
-          )}
-        </div>
-        {!noLlmKeys && (
-          <div className="mt-3">
-            <Field label="Fallback providers (failover order)">
-              {otherKeys.length === 0 ? (
-                <p className="text-body-13 text-ink-4">
-                  Add another LLM key in{' '}
-                  <Link href="/llm-providers" className="underline">
-                    LLM providers
-                  </Link>{' '}
-                  to enable failover.
-                </p>
-              ) : (
-                <div className="space-y-2.5">
-                  <p className="text-body-13 text-ink-4">
-                    If the primary is down (5xx / timeout / quota) mid-job, the runner fails over to
-                    these in order. Pick the model each fallback should run on.
-                  </p>
-                  {otherKeys.map((k) => {
-                    const order = fallbackChain.findIndex((l) => l.keyId === k.id);
-                    const checked = order !== -1;
-                    const fbCatalog = MODEL_CATALOG[k.provider] ?? [];
-                    const fbModel = checked ? (fallbackChain[order]?.model ?? '') : '';
-                    const fbEffort = checked ? (fallbackChain[order]?.reasoningEffort ?? '') : '';
-                    const fbReasoningOptions = checked
-                      ? reasoningOptionValues(k.provider, fbModel)
-                      : [];
-                    return (
-                      <div key={k.id} className="space-y-1.5">
-                        <label className="flex cursor-pointer items-center gap-2.5 select-none">
-                          <Checkbox
-                            tone="ink"
-                            checked={checked}
-                            onChange={() => onToggleFallback(k.id)}
-                          />
-                          <span className="text-body-14 text-ink-2">
-                            {(k.nickname ?? prettyProviderName(k.provider)) +
-                              ' (' +
-                              prettyProviderName(k.provider) +
-                              ')'}
-                          </span>
-                          {checked && (
-                            <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 text-ink-4">
-                              #{order + 1}
-                            </span>
-                          )}
-                        </label>
-                        {checked &&
-                          (fbCatalog.length > 0 ? (
-                            <Select
-                              value={fbModel}
-                              onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                  <Select
+                    value={modelInDropdown ? model : '__custom__'}
+                    onChange={(e) =>
+                      onChangeModel(e.target.value === '__custom__' ? '' : e.target.value)
+                    }
+                    className="mb-2 !rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+                  >
+                    {groupModelCatalog(modelCatalog).map(({ group, models }) =>
+                      group ? (
+                        <optgroup key={group} label={group}>
+                          {models.map((m) => (
+                            <option
+                              key={m.modelId}
+                              value={m.modelId}
+                              disabled={requireTools && !m.capabilities.tools}
+                              title={
+                                requireTools && !m.capabilities.tools
+                                  ? "Can't use tools (required for a router/planner)"
+                                  : undefined
+                              }
                             >
-                              {groupModelCatalog(fbCatalog).map(({ group, models }) =>
-                                group ? (
-                                  <optgroup key={group} label={group}>
-                                    {models.map((m) => (
-                                      <option
-                                        key={m.modelId}
-                                        value={m.modelId}
-                                        disabled={requireTools && !m.capabilities.tools}
-                                        title={
-                                          requireTools && !m.capabilities.tools
-                                            ? "Can't use tools (required for a router/planner)"
-                                            : undefined
-                                        }
-                                      >
-                                        {modelOptionLabel(m)}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                ) : (
-                                  models.map((m) => (
-                                    <option
-                                      key={m.modelId}
-                                      value={m.modelId}
-                                      disabled={requireTools && !m.capabilities.tools}
-                                      title={
-                                        requireTools && !m.capabilities.tools
-                                          ? "Can't use tools (required for a router/planner)"
-                                          : undefined
-                                      }
-                                    >
-                                      {modelOptionLabel(m)}
-                                    </option>
-                                  ))
-                                ),
-                              )}
-                            </Select>
-                          ) : (
-                            <TextInput
-                              type="text"
-                              value={fbModel}
-                              onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
-                              placeholder="model id (e.g. llama-3.3-70b)"
-                              className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-mono-13"
-                            />
+                              {modelOptionLabel(m)}
+                            </option>
                           ))}
-                        {checked && fbReasoningOptions.length > 0 && (
-                          <Select
-                            value={fbReasoningOptions.includes(fbEffort) ? fbEffort : ''}
-                            onChange={(e) => onChangeFallbackEffort(k.id, e.target.value)}
-                            className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                        </optgroup>
+                      ) : (
+                        models.map((m) => (
+                          <option
+                            key={m.modelId}
+                            value={m.modelId}
+                            disabled={requireTools && !m.capabilities.tools}
+                            title={
+                              requireTools && !m.capabilities.tools
+                                ? "Can't use tools (required for a router/planner)"
+                                : undefined
+                            }
                           >
-                            <option value="">Reasoning: inherit agent setting</option>
-                            {fbReasoningOptions.map((v) => (
-                              <option key={v} value={v}>
-                                {'Reasoning: ' + (REASONING_LABELS[v] ?? v)}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                            {modelOptionLabel(m)}
+                          </option>
+                        ))
+                      ),
+                    )}
+                    {extraLiveIds.length > 0 && (
+                      <optgroup label="Live from provider">
+                        {extraLiveIds.map((id) => (
+                          <option key={id} value={id}>
+                            {id}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <option value="__custom__">Custom…</option>
+                  </Select>
+                )}
+                {!modelInDropdown && (
+                  <TextInput
+                    type="text"
+                    value={model}
+                    onChange={(e) => onChangeModel(e.target.value)}
+                    placeholder={
+                      MODEL_CATALOG[selectedKey?.provider ?? '']?.[0]?.modelId ??
+                      'e.g. claude-haiku-4-5-20251001'
+                    }
+                    className="!rounded-lg !bg-canvas !px-3 !py-2 !text-mono-13"
+                  />
+                )}
+                {(modelCatalog.length > 0 || extraLiveIds.length > 0) && (
+                  <ModelToolsLegend className="mt-1.5" />
+                )}
+              </Field>
+              {reasoningOptions.length > 0 && (
+                <Field label="Reasoning">
+                  <Select
+                    value={reasoningOptions.includes(reasoningEffort) ? reasoningEffort : ''}
+                    onChange={(e) => onChangeReasoningEffort(e.target.value)}
+                    className="!rounded-lg !bg-canvas !px-3 !py-2 !text-body-14"
+                  >
+                    <option value="">Auto</option>
+                    {reasoningOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {REASONING_LABELS[v] ?? v}
+                      </option>
+                    ))}
+                  </Select>
+                  <p className="mt-1.5 text-body-13 text-ink-4">
+                    How hard this model thinks before answering. Auto keeps the provider default.
+                  </p>
+                </Field>
               )}
-            </Field>
-          </div>
+            </div>
+            {!noLlmKeys && (
+              <div className="mt-3">
+                <Field label="Fallback providers (failover order)">
+                  {otherKeys.length === 0 ? (
+                    <p className="text-body-13 text-ink-4">
+                      Add another LLM key in{' '}
+                      <Link href="/llm-providers" className="underline">
+                        LLM providers
+                      </Link>{' '}
+                      to enable failover.
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <p className="text-body-13 text-ink-4">
+                        If the primary is down (5xx / timeout / quota) mid-job, the runner fails
+                        over to these in order. Pick the model each fallback should run on.
+                      </p>
+                      {otherKeys.map((k) => {
+                        const order = fallbackChain.findIndex((l) => l.keyId === k.id);
+                        const checked = order !== -1;
+                        const fbCatalog = MODEL_CATALOG[k.provider] ?? [];
+                        const fbModel = checked ? (fallbackChain[order]?.model ?? '') : '';
+                        const fbEffort = checked
+                          ? (fallbackChain[order]?.reasoningEffort ?? '')
+                          : '';
+                        const fbReasoningOptions = checked
+                          ? reasoningOptionValues(k.provider, fbModel)
+                          : [];
+                        return (
+                          <div key={k.id} className="space-y-1.5">
+                            <label className="flex cursor-pointer items-center gap-2.5 select-none">
+                              <Checkbox
+                                tone="ink"
+                                checked={checked}
+                                onChange={() => onToggleFallback(k.id)}
+                              />
+                              <span className="text-body-14 text-ink-2">
+                                {(k.nickname ?? prettyProviderName(k.provider)) +
+                                  ' (' +
+                                  prettyProviderName(k.provider) +
+                                  ')'}
+                              </span>
+                              {checked && (
+                                <span className="ml-auto rounded-full border border-rule-2 px-2 py-0.5 text-micro-11 text-ink-4">
+                                  #{order + 1}
+                                </span>
+                              )}
+                            </label>
+                            {checked &&
+                              (fbCatalog.length > 0 ? (
+                                <Select
+                                  value={fbModel}
+                                  onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
+                                  className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                                >
+                                  {groupModelCatalog(fbCatalog).map(({ group, models }) =>
+                                    group ? (
+                                      <optgroup key={group} label={group}>
+                                        {models.map((m) => (
+                                          <option
+                                            key={m.modelId}
+                                            value={m.modelId}
+                                            disabled={requireTools && !m.capabilities.tools}
+                                            title={
+                                              requireTools && !m.capabilities.tools
+                                                ? "Can't use tools (required for a router/planner)"
+                                                : undefined
+                                            }
+                                          >
+                                            {modelOptionLabel(m)}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ) : (
+                                      models.map((m) => (
+                                        <option
+                                          key={m.modelId}
+                                          value={m.modelId}
+                                          disabled={requireTools && !m.capabilities.tools}
+                                          title={
+                                            requireTools && !m.capabilities.tools
+                                              ? "Can't use tools (required for a router/planner)"
+                                              : undefined
+                                          }
+                                        >
+                                          {modelOptionLabel(m)}
+                                        </option>
+                                      ))
+                                    ),
+                                  )}
+                                </Select>
+                              ) : (
+                                <TextInput
+                                  type="text"
+                                  value={fbModel}
+                                  onChange={(e) => onChangeFallbackModel(k.id, e.target.value)}
+                                  placeholder="model id (e.g. llama-3.3-70b)"
+                                  className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-mono-13"
+                                />
+                              ))}
+                            {checked && fbReasoningOptions.length > 0 && (
+                              <Select
+                                value={fbReasoningOptions.includes(fbEffort) ? fbEffort : ''}
+                                onChange={(e) => onChangeFallbackEffort(k.id, e.target.value)}
+                                className="ml-[1.6rem] w-[calc(100%-1.6rem)] !rounded-lg !bg-canvas !px-3 !py-1.5 !text-body-13"
+                              >
+                                <option value="">Reasoning: inherit agent setting</option>
+                                {fbReasoningOptions.map((v) => (
+                                  <option key={v} value={v}>
+                                    {'Reasoning: ' + (REASONING_LABELS[v] ?? v)}
+                                  </option>
+                                ))}
+                              </Select>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Field>
+              </div>
+            )}
+          </>
         )}
       </SectionCard>
+
+      {runtime === 'claude-code' && (
+        <ClaudeCodeRuntimeCard
+          agentId={agentId}
+          cliPermissions={cliPermissions}
+          cliDailyBudgetUsd={cliDailyBudgetUsd}
+          cliDefaults={cliDefaults}
+          workspaces={workspaces}
+        />
+      )}
 
       {/* Knowledge — folder list + file upload. MCP servers live in Connectors tab. */}
       <SectionCard>
@@ -3279,6 +3416,194 @@ function SettingsTab(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Claude Code runtime card ──────────────────────────────────────────────────
+//
+// Shown in place of the Nodal LLM config once agents.runtime === 'claude-code'
+// (étape E). Nodal no longer drives this agent's loop — only the perimeter
+// (channels/cron/workspaces/CLI daily budget/approvals) stays Nodal's, which is
+// exactly what CLAUDE_CODE_DISCLAIMER says (reused verbatim as both the
+// permanent disclaimer here and the switch-to confirmation message above).
+// Reuses the exact same building blocks as CodeTaskSection/ProviderRow —
+// nothing here is a fork, just a different agent-level gate (runtime vs a
+// skill assignment) around the same code_task machinery.
+
+const CLAUDE_CODE_DISCLAIMER =
+  'This agent is driven by the Claude Code harness on this machine. Nodal relays its messages and enforces the perimeter (workspace, budget, approvals) but does not drive its loop. Runs use your subscription.';
+
+function ClaudeCodeRuntimeCard({
+  agentId,
+  cliPermissions,
+  cliDailyBudgetUsd,
+  cliDefaults,
+  workspaces,
+}: {
+  agentId: string;
+  cliPermissions: AgentRow['cliPermissions'];
+  cliDailyBudgetUsd: number;
+  cliDefaults: AgentRow['cliDefaults'];
+  workspaces: AgentWorkspaceRow[];
+}) {
+  const [mode, setMode] = useState<'read' | 'write'>(cliPermissions?.mode ?? 'read');
+  const [savingMode, setSavingMode] = useState(false);
+  const [confirmWriteOpen, setConfirmWriteOpen] = useState(false);
+
+  async function applyMode(next: 'read' | 'write') {
+    setSavingMode(true);
+    const result = await setCliRuntimeModeAction({ agentId, mode: next });
+    setSavingMode(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    setMode(next);
+    toast.success(next === 'write' ? 'Write mode enabled.' : 'Read only mode enabled.');
+  }
+
+  function handleModeToggle(next: 'read' | 'write') {
+    if (next === mode) return;
+    if (next === 'write') {
+      setConfirmWriteOpen(true);
+    } else {
+      void applyMode('read');
+    }
+  }
+
+  // ── Daily budget + today's spend — same actions as CodeTaskSection (Autonomy). ──
+  const [budgetInput, setBudgetInput] = useState<string>(String(cliDailyBudgetUsd));
+  const [savingBudget, setSavingBudget] = useState(false);
+  const [spentUsd, setSpentUsd] = useState<number | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCliUsageTodayAction(agentId).then((result) => {
+      if (result.ok) setSpentUsd(result.data.spentUsd);
+      else setUsageError(result.message);
+    });
+  }, [agentId]);
+
+  async function handleSaveBudget() {
+    const parsed = Number(budgetInput);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000) {
+      toast.error('Enter a number between 0 and 1000');
+      return;
+    }
+    setSavingBudget(true);
+    const result = await setCliDailyBudgetAction({ agentId, budgetUsd: parsed });
+    setSavingBudget(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success('Daily budget saved');
+  }
+
+  async function handleSaveDefaults(model: string | null, effort: string | null) {
+    const result = await setCliDefaultsAction({ agentId, provider: 'claude', model, effort });
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
+    }
+    toast.success('Coding CLI defaults saved');
+  }
+
+  const hasWorkspace = workspaces.length > 0;
+
+  return (
+    <SectionCard>
+      <SectionHead
+        label="Claude Code runtime"
+        hint="What Nodal still controls for an agent driven by the Claude Code harness."
+      />
+
+      <p className="text-body-13 leading-[1.5]! text-ink-3">{CLAUDE_CODE_DISCLAIMER}</p>
+
+      <div
+        className={`mt-3 rounded-md border px-3 py-2 text-body-13 ${
+          hasWorkspace ? 'border-ok/30 bg-ok-bg text-ok' : 'border-err/30 bg-warn-bg text-err'
+        }`}
+      >
+        {hasWorkspace ? 'Workspace configured.' : 'A workspace is required for a runtime agent.'}
+      </div>
+
+      <div className="mt-4 flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <span className="text-medium-14 text-ink">Write mode</span>
+          <p className="mt-1 text-body-13 leading-[1.4]! text-ink-3">
+            Read only hides the CLI&apos;s write tools. Write lets it edit files in the workspace.
+          </p>
+        </div>
+        <Switch
+          checked={mode === 'write'}
+          onChange={() => handleModeToggle(mode === 'write' ? 'read' : 'write')}
+          disabled={savingMode}
+          trackClassName={
+            mode === 'write' ? 'mt-0.5 border-err/40 bg-err/20' : 'mt-0.5 border-rule-2 bg-canvas'
+          }
+          thumbClassName={
+            mode === 'write' ? 'translate-x-[18px] bg-err' : 'translate-x-[2px] bg-ink-3'
+          }
+        />
+      </div>
+
+      <ConfirmDialog
+        open={confirmWriteOpen}
+        title="Allow Claude Code to write?"
+        message="Write mode lets the Claude Code harness edit files in this agent's workspace. Only enable for an agent you fully trust."
+        confirmLabel="Enable write mode"
+        destructive
+        onConfirm={() => {
+          setConfirmWriteOpen(false);
+          void applyMode('write');
+        }}
+        onCancel={() => setConfirmWriteOpen(false)}
+      />
+
+      <div className="mt-6 space-y-2.5">
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+          Diagnostics and defaults
+        </div>
+        <ProviderRow
+          label="Claude Code"
+          provider="claude"
+          defaults={cliDefaults?.claude}
+          onSaveDefaults={(model, effort) => handleSaveDefaults(model, effort)}
+        />
+      </div>
+
+      <div className="mt-6">
+        <div className="text-mono-11 uppercase tracking-[0.12em] text-ink-4">
+          Daily budget (USD)
+        </div>
+        <p className="mt-1 text-body-12 text-ink-4">0 means no cap.</p>
+        <div className="mt-2 flex items-center gap-2">
+          <TextInput
+            type="number"
+            min={0}
+            max={1000}
+            step={0.5}
+            value={budgetInput}
+            onChange={(e) => setBudgetInput(e.target.value)}
+            className="w-28 font-mono"
+          />
+          <PrimaryButton
+            variant="neutral"
+            type="button"
+            onClick={() => void handleSaveBudget()}
+            disabled={savingBudget}
+          >
+            {savingBudget ? 'Saving…' : 'Save'}
+          </PrimaryButton>
+        </div>
+        <p className="mt-2 text-body-13 text-ink-3">
+          {spentUsd !== null
+            ? `Spent today: $${spentUsd.toFixed(2)}`
+            : (usageError ?? 'Loading spend…')}
+        </p>
+      </div>
+    </SectionCard>
   );
 }
 

@@ -83,6 +83,21 @@ export const agents = pgTable(
       claude?: { model?: string; effort?: string };
       codex?: { model?: string; effort?: string };
     } | null>(),
+    // Which harness drives this agent (étape E). 'nodal' (default) = the
+    // Nodal runner loop. 'claude-code' = the agent IS a Claude Code session:
+    // persona from DB via --append-system-prompt, channels/cron/workspaces/
+    // budget/approvals stay Nodal's, but the LOOP, tools and context are the
+    // CLI's — said as-is to the user (dispatcher, not brain). 'codex' is
+    // reserved (fails loud runtime_not_supported until implemented). A DATA
+    // field, never a hardcoded per-agent branch (invariant #1).
+    runtime: text('runtime').default('nodal').notNull(),
+    // Runtime-agent permission posture, as DATA: mode 'read' (default when
+    // NULL) hides the CLI's write tools; 'write' allows workspace edits
+    // (acceptEdits). extraDisallowed adds CLI tool names on top of either.
+    cliPermissions: jsonb('cli_permissions').$type<{
+      mode?: 'read' | 'write';
+      extraDisallowed?: string[];
+    } | null>(),
     // User-controlled order on the /agents page (Brique A, migration 0019).
     // Default 0 — ties are broken by `name ASC` in the list query. Newly
     // created agents land at the front of their group by default; the user
@@ -100,6 +115,7 @@ export const agents = pgTable(
       sql`${table.orchestratorMode} IN ('router', 'planner') OR ${table.orchestratorMode} IS NULL`,
     ),
     check('agents_max_tokens_per_job_check', sql`${table.maxTokensPerJob} >= 0`),
+    check('agents_runtime_check', sql`${table.runtime} IN ('nodal', 'claude-code', 'codex')`),
     // F-6 (audit #2): slug was UNIQUE GLOBALLY, so a 2nd workspace/entity
     // installing the same community skill's companion agent (or any agent
     // sharing a slug with another entity's agent) would crash the insert —

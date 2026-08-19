@@ -498,6 +498,10 @@ export type AgentRow = {
     claude?: { model?: string; effort?: string };
     codex?: { model?: string; effort?: string };
   } | null;
+  /** 'nodal' (default) | 'claude-code' | 'codex' (reserved). See packages/db/src/schema/agents.ts. */
+  runtime: string;
+  /** Runtime-agent permission posture (étape E). NULL/absent mode = 'read'. */
+  cliPermissions: { mode?: 'read' | 'write'; extraDisallowed?: string[] } | null;
 };
 
 export async function listAgentsAction(): Promise<ActionResult<AgentRow[]>> {
@@ -5921,6 +5925,118 @@ export async function setReviewerReadOnlyPresetAction(raw: unknown): Promise<Act
   } catch (err) {
     console.error('[setReviewerReadOnlyPresetAction]', err);
     return fail('db_error', 'Failed to save the read-only preset');
+  }
+}
+
+// ─── Agent runtime (étape E — Claude Code as an agent's own harness) ─────────
+//
+// agents.runtime: 'nodal' (default) | 'claude-code' | 'codex' (reserved,
+// refused here — the Zod enum only accepts 'nodal'/'claude-code', so a
+// request for 'codex' fails validation the same way the runner fails loud on
+// it today). Switching to 'claude-code' hands the agent's LOOP, tools and
+// context to the Claude Code harness on this machine; channels, cron,
+// workspaces, the CLI daily budget and approvals stay Nodal's — see the
+// column comment in packages/db/src/schema/agents.ts for the full contract.
+
+const SetAgentRuntimeSchema = z.object({
+  agentId: z.string().guid(),
+  runtime: z.enum(['nodal', 'claude-code']),
+});
+
+export async function setAgentRuntimeAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetAgentRuntimeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, runtime } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as setCliDailyBudgetAction.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail('forbidden', "Only the workspace owner can change this agent's runtime.");
+      }
+    }
+
+    const db = getDb();
+    const updated = await db
+      .update(agents)
+      .set({ runtime, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)))
+      .returning({ id: agents.id });
+    if (updated.length === 0) return fail('not_found', 'Agent not found');
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setAgentRuntimeAction]', err);
+    return fail('db_error', 'Failed to save the agent runtime');
+  }
+}
+
+// ─── Runtime-agent permission mode (read / write) ─────────────────────────────
+//
+// agents.cli_permissions.mode: 'read' (default when NULL) hides the CLI's
+// write tools; 'write' allows workspace edits. Merges onto the existing JSONB
+// value — extraDisallowed (not exposed by this UI yet) must survive a mode
+// change untouched, same merge shape as setCliDefaultsAction above.
+
+const SetCliRuntimeModeSchema = z.object({
+  agentId: z.string().guid(),
+  mode: z.enum(['read', 'write']),
+});
+
+export async function setCliRuntimeModeAction(raw: unknown): Promise<ActionResult<void>> {
+  try {
+    const session = await getSession();
+    const parsed = SetCliRuntimeModeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return fail('validation_failed', parsed.error.issues[0]?.message ?? 'Invalid input');
+    }
+    const { agentId, mode } = parsed.data;
+
+    // Owner-only (non-local-trust) — same gate shape as setCliDailyBudgetAction.
+    if (env.AUTH_MODE !== 'local-trust') {
+      const db = getDb();
+      const [entityRow] = await db
+        .select({ userId: entities.userId })
+        .from(entities)
+        .where(eq(entities.id, session.entityId));
+      if (!entityRow) return fail('not_found', 'Workspace not found');
+      if (entityRow.userId !== session.userId) {
+        return fail(
+          'forbidden',
+          "Only the workspace owner can change this agent's runtime permissions.",
+        );
+      }
+    }
+
+    const db = getDb();
+    const [agent] = await db
+      .select({ id: agents.id, cliPermissions: agents.cliPermissions })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+    if (!agent) return fail('not_found', 'Agent not found');
+
+    const nextPermissions = { ...(agent.cliPermissions ?? {}), mode };
+
+    await db
+      .update(agents)
+      .set({ cliPermissions: nextPermissions, updatedAt: new Date() })
+      .where(and(eq(agents.id, agentId), eq(agents.entityId, session.entityId)));
+
+    revalidatePath(`/agents/${agentId}/edit`);
+    return ok(undefined);
+  } catch (err) {
+    console.error('[setCliRuntimeModeAction]', err);
+    return fail('db_error', 'Failed to save the runtime permission mode');
   }
 }
 
