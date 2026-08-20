@@ -80,6 +80,7 @@ export {
   buildSpawnArgv,
   runCli,
   extractClaudeUsage,
+  extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
   assertCliBudget,
   recordCliRun,

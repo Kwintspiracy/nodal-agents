@@ -13,6 +13,8 @@
 //     workspace-write, which on Windows is a distinct restricted-token
 //     implementation with weaker guarantees than the Linux one).
 
+import type { CliModelUsage } from '@nodal-agents/shared';
+
 export type CodeTaskProvider = 'claude' | 'codex';
 export type CodeTaskMode = 'read' | 'write';
 
@@ -55,6 +57,11 @@ export interface NormalizedCliResult {
      */
     cacheCreationTokens: number | null;
   } | null;
+  /**
+   * Per-model split of the run (0079) — a run can be served by several models
+   * (main + CLI-spawned sub-agents). null = the provider reports no breakdown.
+   */
+  modelUsage: CliModelUsage[] | null;
   /** True when the CLI itself reported the run as failed. */
   isError: boolean;
   /** Provider-reported failure detail when isError (e.g. api_error_status). */
@@ -139,6 +146,13 @@ export function buildProviderArgs(
 
 // ─── Output parsers ──────────────────────────────────────────────────────────
 
+/** A finite number, or null when the field is ABSENT/unusable — never a
+ *  guessed 0 (invariant #4). The counterpart of asNumber, which defaults to 0
+ *  for fields the CLIs always emit. */
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
 /**
  * THE claude usage extractor — the one place that knows the claude result
  * JSON's usage field names. Shared by parseClaudeOutput (one-shot code_task)
@@ -155,12 +169,36 @@ export function extractClaudeUsage(
     inputTokens: asNumber(usageRaw['input_tokens']),
     outputTokens: asNumber(usageRaw['output_tokens']),
     cachedTokens: asNumber(usageRaw['cache_read_input_tokens']),
-    cacheCreationTokens:
-      typeof usageRaw['cache_creation_input_tokens'] === 'number' &&
-      Number.isFinite(usageRaw['cache_creation_input_tokens'])
-        ? usageRaw['cache_creation_input_tokens']
-        : null,
+    cacheCreationTokens: finiteOrNull(usageRaw['cache_creation_input_tokens']),
   };
+}
+
+/**
+ * Per-model breakdown of a claude run (0079). The CLI reports `modelUsage` as
+ * an object keyed by model id, each carrying that model's own tokens AND its
+ * own notional cost — the only way to attribute a run's cost when the CLI
+ * spawned sub-agents on a different tier. Note the shape asymmetry with
+ * `usage` above: these keys are camelCase (cacheReadInputTokens), the
+ * aggregate's are snake_case (cache_read_input_tokens) — recorded fixture,
+ * not a guess. Returns null when the field is absent (older CLI, or codex,
+ * which reports no breakdown at all) — never a synthesized single entry.
+ */
+export function extractClaudeModelUsage(raw: unknown): CliModelUsage[] | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: CliModelUsage[] = [];
+  for (const [model, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue;
+    const u = value as Record<string, unknown>;
+    out.push({
+      model,
+      inputTokens: asNumber(u['inputTokens']),
+      outputTokens: asNumber(u['outputTokens']),
+      cachedTokens: asNumber(u['cacheReadInputTokens']),
+      cacheCreationTokens: finiteOrNull(u['cacheCreationInputTokens']),
+      costUsd: finiteOrNull(u['costUSD']),
+    });
+  }
+  return out.length > 0 ? out : null;
 }
 
 /** `claude -p --output-format json` prints exactly ONE JSON object on stdout. */
@@ -186,6 +224,7 @@ export function parseClaudeOutput(stdout: string): NormalizedCliResult {
     resultText: typeof obj['result'] === 'string' ? obj['result'] : '',
     costUsd: typeof obj['total_cost_usd'] === 'number' ? obj['total_cost_usd'] : null,
     usage,
+    modelUsage: extractClaudeModelUsage(obj['modelUsage']),
     isError,
     errorDetail: isError
       ? `terminal_reason=${String(obj['terminal_reason'])}${
@@ -265,6 +304,9 @@ export function parseCodexOutput(stdout: string): NormalizedCliResult {
     resultText: messages.join('\n\n'),
     costUsd: null,
     usage,
+    // codex reports ONE aggregate usage and no model attribution at all —
+    // synthesizing a single entry would invent a split it never made.
+    modelUsage: null,
     isError: failed !== null,
     errorDetail: failed,
     numTurns: null,

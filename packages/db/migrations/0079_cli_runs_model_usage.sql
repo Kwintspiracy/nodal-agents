@@ -1,0 +1,19 @@
+-- 0079 — cli_runs.model_usage : la ventilation PAR MODÈLE d'un run CLI
+-- (question Quentin 20/08, job 7385bf3c « pourquoi 53k tokens de sortie
+-- coûtent 2,27 $ »).
+--
+-- Un run CLI peut être servi par PLUSIEURS modèles : le modèle principal plus
+-- tout sous-agent que le CLI lance lui-même (souvent sur un palier moins cher).
+-- Le CLI claude rapporte ce détail (`modelUsage`, un objet par modèle avec ses
+-- tokens ET son propre costUSD) mais Nodal ne gardait que l'AGRÉGAT — d'où
+-- l'impossibilité de réconcilier le coût rapporté avec un calcul par token :
+-- reconstruire 2,05 $ depuis l'agrégat au tarif d'UN modèle tombait ~15 % à
+-- côté, sans pouvoir distinguer « un sous-agent sur un autre palier » d'une
+-- hypothèse fausse.
+--
+-- Forme stockée : tableau normalisé (voir CliModelUsage dans
+-- @nodal-agents/shared), pas le blob brut du CLI — une seule sémantique quel
+-- que soit le provider. NULL = le provider ne rapporte AUCUNE ventilation
+-- (codex aujourd'hui) : jamais une entrée unique synthétisée, qui inventerait
+-- une attribution de modèle que le CLI n'a pas faite (invariant #4).
+ALTER TABLE "cli_runs" ADD COLUMN IF NOT EXISTS "model_usage" jsonb;

@@ -100,7 +100,12 @@ import { encrypt, decrypt, isEncrypted, last4 } from '@nodal-agents/secrets';
 import { buildSystemPrompt } from '@nodal-agents/orchestration';
 import type { Agent } from '@nodal-agents/orchestration';
 import { getLanAddresses } from './network.ts';
-import type { AgentMemory, CredentialType, OperationDescriptor } from '@nodal-agents/shared';
+import type {
+  AgentMemory,
+  CliModelUsage,
+  CredentialType,
+  OperationDescriptor,
+} from '@nodal-agents/shared';
 import {
   type RootGrants,
   META_TOOL_NAMES,
@@ -10871,6 +10876,12 @@ export type CodingActivityItem =
        * jamais 0 deviné.
        */
       cacheCreationTokens: number | null;
+      /**
+       * Per-model split of a CLI turn (0079) — which model spent what, when
+       * the CLI spawned sub-agents on another tier. null = aggregate only
+       * (Nodal turns, codex, or a run older than 0079).
+       */
+      modelUsage: CliModelUsage[] | null;
       costUsd: number;
     };
 
@@ -10993,6 +11004,7 @@ export async function getCodingProcessDetailAction(
           outputTokens: cliRuns.outputTokens,
           cachedTokens: cliRuns.cachedTokens,
           cacheCreationTokens: cliRuns.cacheCreationTokens,
+          modelUsage: cliRuns.modelUsage,
           costUsd: cliRuns.costUsd,
           createdAt: cliRuns.createdAt,
         })
@@ -11153,6 +11165,9 @@ export async function getCodingProcessDetailAction(
             outputTokens: agg.outputTokens,
             cachedTokens: agg.cachedTokens,
             cacheCreationTokens: agg.cacheCreationKnown ? agg.cacheCreationTokens : null,
+            // Nodal turns already carry their model per llm_calls row; the
+            // per-model split is a CLI-run concept only.
+            modelUsage: null,
             costUsd: agg.costUsd,
           },
         });
@@ -11169,6 +11184,7 @@ export async function getCodingProcessDetailAction(
             outputTokens: r.outputTokens ?? 0,
             cachedTokens: r.cachedTokens ?? 0,
             cacheCreationTokens: r.cacheCreationTokens,
+            modelUsage: r.modelUsage,
             costUsd: r.costUsd ?? 0,
           },
         });

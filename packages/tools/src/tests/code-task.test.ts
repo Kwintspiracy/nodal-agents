@@ -141,6 +141,12 @@ describe('parseClaudeOutput', () => {
     expect(r.numTurns).toBe(1);
   });
 
+  it('modelUsage: absent from the recorded one-shot fixture → null, never invented', () => {
+    // The étape-A fixture predates modelUsage — the parser must degrade to
+    // null rather than synthesize a single entry from the aggregate.
+    expect(parseClaudeOutput(CLAUDE_SUCCESS_JSON).modelUsage).toBeNull();
+  });
+
   it('parses the recorded auth failure as isError with the 401 detail', () => {
     const r = parseClaudeOutput(CLAUDE_AUTH_ERROR_JSON);
     expect(r.isError).toBe(true);
@@ -168,6 +174,8 @@ describe('parseCodexOutput', () => {
     expect(r.sessionId).toBe('01a0178d-e516-7292-840f-a7a097590970');
     expect(r.resultText).toBe('OK');
     expect(r.costUsd).toBeNull(); // codex reports no cost — documented asymmetry
+    // ...and no per-model split either: null, not a synthesized single entry.
+    expect(r.modelUsage).toBeNull();
     // input normalisé HORS cache (18537 bruts - 6912 cachés) : une seule
     // sémantique dans cli_runs, quel que soit le provider.
     expect(r.usage).toEqual({

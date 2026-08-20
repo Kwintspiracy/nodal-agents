@@ -58,6 +58,18 @@ describe('handleStreamLine on the recorded real stream', () => {
     // Les écritures de cache — le poste de coût dominant — sont extraites du
     // result event (audit tokens 19/08), pas devinées.
     expect(result.usage!.cacheCreationTokens).toBe(31725);
+    // Ventilation PAR MODÈLE (0079) — extraite du modelUsage du result event
+    // (clés camelCase, contrairement à l'agrégat snake_case), avec son coût.
+    expect(result.modelUsage).toEqual([
+      {
+        model: 'claude-fable-5',
+        inputTokens: 4,
+        outputTokens: 224,
+        cachedTokens: 31452,
+        cacheCreationTokens: 31725,
+        costUsd: 0.677192,
+      },
+    ]);
     expect(result.sessionId).toBe('8c97f2a2-2ed9-4453-b193-15848ae3a3e5');
   });
 

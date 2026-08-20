@@ -555,26 +555,53 @@ function TurnMarkerRow({ item }: { item: Extract<CodingActivityItem, { kind: 'tu
     item.cachedTokens + (item.cacheCreationTokens ?? 0) + Math.max(0, item.inputTokens);
   const cachedPct = promptTotal > 0 ? Math.round((item.cachedTokens / promptTotal) * 100) : 0;
   return (
-    <div
-      className="flex flex-wrap items-center gap-2 border-b border-rule-2 bg-canvas/50 px-4 py-2 text-mono-11 text-ink-4 last:border-0"
-      title={cacheParts.length > 0 ? cacheParts.join(' · ') : undefined}
-    >
-      <span className="tracking-wider uppercase">{label}</span>
-      <span>·</span>
-      <span>
-        {item.inputTokens.toLocaleString()} in / {item.outputTokens.toLocaleString()} out
-      </span>
-      {item.cachedTokens > 0 && (
-        <>
-          <span>·</span>
-          <span>{cachedPct}% cached</span>
-        </>
-      )}
-      {item.costUsd > 0 && (
-        <>
-          <span>·</span>
-          <span>${item.costUsd.toFixed(4)}</span>
-        </>
+    <div className="border-b border-rule-2 bg-canvas/50 last:border-0">
+      <div
+        className="flex flex-wrap items-center gap-2 px-4 py-2 text-mono-11 text-ink-4"
+        title={cacheParts.length > 0 ? cacheParts.join(' · ') : undefined}
+      >
+        <span className="tracking-wider uppercase">{label}</span>
+        <span>·</span>
+        <span>
+          {item.inputTokens.toLocaleString()} in / {item.outputTokens.toLocaleString()} out
+        </span>
+        {item.cachedTokens > 0 && (
+          <>
+            <span>·</span>
+            <span>{cachedPct}% cached</span>
+          </>
+        )}
+        {item.costUsd > 0 && (
+          <>
+            <span>·</span>
+            <span>${item.costUsd.toFixed(4)}</span>
+          </>
+        )}
+      </div>
+      {/* Per-model split (0079): a CLI turn can be served by several models —
+          the main one plus any sub-agent the CLI spawned on another tier.
+          Rendered only when the provider actually reported the split, and only
+          when it says something the line above doesn't (2+ models). */}
+      {item.modelUsage && item.modelUsage.length > 1 && (
+        <div className="flex flex-col gap-0.5 px-4 pb-2 pl-6 text-mono-11 text-ink-4">
+          {item.modelUsage.map((m) => (
+            <div key={m.model} className="flex flex-wrap items-center gap-2">
+              <span className="text-ink-3">{m.model}</span>
+              <span>
+                {m.inputTokens.toLocaleString()} in / {m.outputTokens.toLocaleString()} out
+              </span>
+              {(m.cachedTokens > 0 || (m.cacheCreationTokens ?? 0) > 0) && (
+                <span>
+                  · {m.cachedTokens.toLocaleString()} cache reads
+                  {m.cacheCreationTokens != null
+                    ? ` / ${m.cacheCreationTokens.toLocaleString()} writes`
+                    : ''}
+                </span>
+              )}
+              {m.costUsd != null && m.costUsd > 0 && <span>· ${m.costUsd.toFixed(4)}</span>}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

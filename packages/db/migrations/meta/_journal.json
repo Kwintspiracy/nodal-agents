@@ -547,6 +547,13 @@
       "when": 1785950000000,
       "tag": "0078_cache_writes_and_codex_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0079_cli_runs_model_usage",
+      "breakpoints": true
     }
   ]
 }

@@ -20,6 +20,7 @@ export * from './entities/llm-key';
 export * from './entities/channel-binding';
 export * from './entities/channel-allowed-conversation';
 export * from './types/operation';
+export * from './types/cli-usage';
 export * from './oauth/providers';
 export * from './root-agent';
 export * from './system-prompt-cache';

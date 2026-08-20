@@ -19,12 +19,14 @@ import {
   uuid,
   integer,
   real,
+  jsonb,
   timestamp,
   index,
   check,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+import type { CliModelUsage } from '@nodal-agents/shared';
 import { entities } from './entities.ts';
 import { agents } from './agents.ts';
 import { agentJobs } from './jobs.ts';
@@ -67,6 +69,13 @@ export const cliRuns = pgTable(
      * ligne est antérieure à 0077 — jamais 0 deviné ; 0 = zéro rapporté.
      */
     cacheCreationTokens: integer('cache_creation_tokens'),
+    /**
+     * Ventilation PAR MODÈLE du run (0079) : un run peut être servi par
+     * plusieurs modèles (principal + sous-agents lancés par le CLI lui-même),
+     * et le coût agrégé ci-dessus ne dit pas lequel a dépensé quoi. NULL =
+     * provider sans ventilation (codex) ou ligne antérieure à 0079.
+     */
+    modelUsage: jsonb('model_usage').$type<CliModelUsage[] | null>(),
     durationMs: integer('duration_ms'),
     cliVersion: text('cli_version'),
     exitCode: integer('exit_code'),

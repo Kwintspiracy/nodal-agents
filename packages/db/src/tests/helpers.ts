@@ -671,6 +671,7 @@ export async function spinUpTestDb(): Promise<{ db: TestDb; pg: PGlite }> {
       output_tokens integer,
       cached_tokens integer,
       cache_creation_tokens integer,
+      model_usage jsonb,
       duration_ms integer,
       cli_version text,
       exit_code integer,

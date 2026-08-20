@@ -158,6 +158,7 @@ export async function runCliRuntimeChatTurn(args: {
       outputTokens: turn.usage?.outputTokens ?? null,
       cachedTokens: turn.usage?.cachedTokens ?? null,
       cacheCreationTokens: turn.usage?.cacheCreationTokens ?? null,
+      modelUsage: turn.modelUsage,
       durationMs: turn.durationMs,
       cliVersion: null,
       exitCode: turn.exitCode,

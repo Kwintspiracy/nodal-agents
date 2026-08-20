@@ -33,6 +33,7 @@ import {
   buildSpawnArgv,
   buildChildEnv,
   extractClaudeUsage,
+  extractClaudeModelUsage,
   CLAUDE_READONLY_DISALLOWED,
   type NormalizedCliResult,
 } from '@nodal-agents/tools';
@@ -58,6 +59,11 @@ export interface ClaudeTurnResult {
    * quand le flux ne rapporte pas le champ (jamais 0 deviné).
    */
   usage: NormalizedCliResult['usage'];
+  /**
+   * Per-model split of the turn (0079) — a CLI turn can be served by several
+   * models when the session spawns its own sub-agents. null = not reported.
+   */
+  modelUsage: NormalizedCliResult['modelUsage'];
   costUsd: number | null;
   numTurns: number | null;
   durationMs: number;
@@ -239,6 +245,7 @@ export function finishTurn(
           : `cli_stream_incomplete: the stream ended without a result event ` +
             `(exit ${String(exitCode)}). stderr: ${stderrExcerpt.slice(0, 400)}`),
       usage: null,
+      modelUsage: null,
       costUsd: null,
       numTurns: null,
       durationMs,
@@ -261,6 +268,7 @@ export function finishTurn(
         `terminal_reason=${String(r['terminal_reason'])} api_error_status=${String(r['api_error_status'])}`)
       : null,
     usage: extractClaudeUsage(r['usage'] as Record<string, unknown> | undefined),
+    modelUsage: extractClaudeModelUsage(r['modelUsage']),
     costUsd: typeof r['total_cost_usd'] === 'number' ? r['total_cost_usd'] : null,
     numTurns: typeof r['num_turns'] === 'number' ? r['num_turns'] : null,
     durationMs,
