@@ -292,6 +292,12 @@ export default function AgentComposer({
   // Written against the runtime being ≠ 'nodal' rather than === 'claude-code'
   // so the codex runtime inherits the same honesty for free when it ships.
   const isCliRuntime = runtime !== 'nodal';
+  // Lifted like `runtime` above: the CLI posture (read vs write) is edited in
+  // the runtime card but SHOWN in the hero, so both must read one state.
+  // Before this it lived only inside the card — buried under the LLM config in
+  // Settings — and a coding agent silently stuck read-only was invisible
+  // (Quentin 20/08: Dev C attempted 9 writes, all refused, for a full day).
+  const [cliMode, setCliMode] = useState<'read' | 'write'>(agent.cliPermissions?.mode ?? 'read');
   // Live model ids fetched from the provider's /models endpoint — keyed by keyId
   // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
   const [liveModelsCache, setLiveModelsCache] = useState<Record<string, string[]>>({});
@@ -506,6 +512,7 @@ export default function AgentComposer({
           slug={agent.slug}
           model={agent.model}
           isCliRuntime={isCliRuntime}
+          cliMode={cliMode}
           provider={llmKeys.find((k) => k.id === agent.llmKeyId)?.provider ?? null}
           llmKeyLabel={
             llmKeys.find((k) => k.id === agent.llmKeyId)?.nickname ??
@@ -666,6 +673,8 @@ export default function AgentComposer({
             liveModelsLoading={liveModelsLoading}
             runtime={runtime}
             onChangeRuntime={setRuntime}
+            cliMode={cliMode}
+            onChangeCliMode={setCliMode}
             cliPermissions={agent.cliPermissions}
             cliDailyBudgetUsd={agent.cliDailyBudgetUsd}
             cliDefaults={agent.cliDefaults}
@@ -722,6 +731,7 @@ function HeroCard({
   provider,
   llmKeyLabel,
   isCliRuntime,
+  cliMode,
   stats,
 }: {
   initial: string;
@@ -741,6 +751,8 @@ function HeroCard({
    * Quentin 20/08, same fix as the /agents list).
    */
   isCliRuntime: boolean;
+  /** CLI posture, surfaced here so a coding agent stuck read-only is obvious. */
+  cliMode: 'read' | 'write';
   stats: {
     connectors: number;
     mcps: number;
@@ -790,6 +802,22 @@ function HeroCard({
                 <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 text-mono-12 text-ink-2">
                   Claude Code (subscription)
                 </code>
+                {/* The posture, at a glance: a coding agent left read-only
+                    cannot write a single file, and used to be invisible. */}
+                <span
+                  title={
+                    cliMode === 'write'
+                      ? 'Can edit files in its workspace.'
+                      : 'Read-only: every write it attempts is refused by the harness.'
+                  }
+                  className={`rounded border px-1.5 py-0.5 text-mono-11 ${
+                    cliMode === 'write'
+                      ? 'border-ok/30 bg-ok-bg text-ok'
+                      : 'border-warn/30 bg-warn-bg text-warn'
+                  }`}
+                >
+                  {cliMode === 'write' ? 'write' : 'read-only'}
+                </span>
               </span>
             ) : (
               model && (
@@ -2654,6 +2682,9 @@ function SettingsTab(props: {
   /** 'nodal' | 'claude-code' (étape E) — lifted to AgentComposer, see its declaration. */
   runtime: string;
   onChangeRuntime: (v: string) => void;
+  /** CLI posture, lifted so the hero badge and the runtime card never disagree. */
+  cliMode: 'read' | 'write';
+  onChangeCliMode: (v: 'read' | 'write') => void;
   cliPermissions: AgentRow['cliPermissions'];
   cliDailyBudgetUsd: number;
   cliDefaults: AgentRow['cliDefaults'];
@@ -2700,6 +2731,8 @@ function SettingsTab(props: {
     liveModelsLoading,
     runtime,
     onChangeRuntime,
+    cliMode,
+    onChangeCliMode,
     cliPermissions,
     cliDailyBudgetUsd,
     cliDefaults,
@@ -2716,15 +2749,28 @@ function SettingsTab(props: {
   async function applyRuntime(next: 'nodal' | 'claude-code') {
     setSavingRuntime(true);
     const result = await setAgentRuntimeAction({ agentId, runtime: next });
-    setSavingRuntime(false);
     if (!result.ok) {
+      setSavingRuntime(false);
       toast.error(result.message);
       return;
     }
+    // Switching to a coding harness sets WRITE posture (Quentin 20/08). The
+    // read default was inherited from the code_task TOOL, where "analyse
+    // unless asked otherwise" is right; for a runtime agent the harness IS the
+    // agent, and shipping it unable to write produced exactly one outcome — an
+    // agent that attempted 9 writes, was refused 9 times, and looked healthy.
+    // The confirm dialog states this before it happens; read-only stays one
+    // toggle away in the runtime card, for a CLI reviewer agent.
+    if (next === 'claude-code') {
+      const modeResult = await setCliRuntimeModeAction({ agentId, mode: 'write' });
+      if (modeResult.ok) onChangeCliMode('write');
+      else toast.error(modeResult.message);
+    }
+    setSavingRuntime(false);
     onChangeRuntime(next);
     toast.success(
       next === 'claude-code'
-        ? 'This agent now runs on Claude Code.'
+        ? 'This agent now runs on Claude Code, in write mode.'
         : 'This agent is back on its Nodal model.',
     );
   }
@@ -2999,7 +3045,7 @@ function SettingsTab(props: {
         <ConfirmDialog
           open={confirmRuntimeOpen}
           title="Switch to Claude Code?"
-          message={CLAUDE_CODE_DISCLAIMER}
+          message={`${CLAUDE_CODE_DISCLAIMER} It starts in WRITE mode — it can edit files in this agent's workspace. Switch it to read-only below if you want a reviewer rather than a coder.`}
           confirmLabel="Switch to Claude Code"
           destructive={false}
           onConfirm={() => {
@@ -3267,7 +3313,8 @@ function SettingsTab(props: {
       {runtime === 'claude-code' && (
         <ClaudeCodeRuntimeCard
           agentId={agentId}
-          cliPermissions={cliPermissions}
+          mode={cliMode}
+          onChangeMode={onChangeCliMode}
           cliDailyBudgetUsd={cliDailyBudgetUsd}
           cliDefaults={cliDefaults}
           workspaces={workspaces}
@@ -3513,18 +3560,20 @@ const CLAUDE_CODE_DISCLAIMER =
 
 function ClaudeCodeRuntimeCard({
   agentId,
-  cliPermissions,
+  mode,
+  onChangeMode,
   cliDailyBudgetUsd,
   cliDefaults,
   workspaces,
 }: {
   agentId: string;
-  cliPermissions: AgentRow['cliPermissions'];
+  /** Lifted to AgentComposer — the hero badge renders the same value. */
+  mode: 'read' | 'write';
+  onChangeMode: (v: 'read' | 'write') => void;
   cliDailyBudgetUsd: number;
   cliDefaults: AgentRow['cliDefaults'];
   workspaces: AgentWorkspaceRow[];
 }) {
-  const [mode, setMode] = useState<'read' | 'write'>(cliPermissions?.mode ?? 'read');
   const [savingMode, setSavingMode] = useState(false);
   const [confirmWriteOpen, setConfirmWriteOpen] = useState(false);
 
@@ -3536,7 +3585,7 @@ function ClaudeCodeRuntimeCard({
       toast.error(result.message);
       return;
     }
-    setMode(next);
+    onChangeMode(next);
     toast.success(next === 'write' ? 'Write mode enabled.' : 'Read only mode enabled.');
   }
 
