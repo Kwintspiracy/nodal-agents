@@ -29,6 +29,7 @@ import { officeEditingSkill } from './skills/office-editing';
 import { commandExecutionSkill } from './skills/command-execution';
 import { codeTaskSkill } from './skills/code-task';
 import { codeReviewSkill } from './skills/code-review';
+import { requestReviewSkill } from './skills/request-review';
 import { toolCreateMcpSkill } from './skills/tool-create-mcp';
 import { toolCreateAgentSkill } from './skills/tool-create-agent';
 import { toolUpdateAgentSkill } from './skills/tool-update-agent';
@@ -40,6 +41,7 @@ export { officeEditingSkill } from './skills/office-editing';
 export { commandExecutionSkill } from './skills/command-execution';
 export { codeTaskSkill } from './skills/code-task';
 export { codeReviewSkill } from './skills/code-review';
+export { requestReviewSkill } from './skills/request-review';
 
 export const systemSkills: SystemSkill[] = [
   obsidianSkill,
@@ -58,6 +60,7 @@ export const systemSkills: SystemSkill[] = [
   commandExecutionSkill,
   codeTaskSkill,
   codeReviewSkill,
+  requestReviewSkill,
   // Tool usage guides — loaded on demand via skill_view, not auto-injected.
   toolCreateMcpSkill,
   toolCreateAgentSkill,
