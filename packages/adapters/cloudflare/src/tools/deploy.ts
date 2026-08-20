@@ -30,6 +30,16 @@ export const WORKER_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,52}[a-z0-9])?$/;
  *  it. A major bump is a deliberate edit here, never silent drift. */
 export const WRANGLER_SPEC = 'wrangler@4';
 
+/**
+ * Pinned Workers compatibility date, passed as a flag on EVERY deploy —
+ * wrangler REFUSES an upload without one (proven live on the first user run,
+ * 2026-08-20: the agent had to hand-write a wrangler config to work around
+ * it). Passing it here means no wrangler.toml/jsonc is ever needed in the
+ * deployed directory. Mostly inert for assets-only Workers; bumping it is a
+ * deliberate edit, never silent drift.
+ */
+export const COMPATIBILITY_DATE = '2026-08-15';
+
 const DEPLOY_TIMEOUT_MS = 300_000; // first run downloads wrangler via npx
 
 const DeployInput = z.object({
@@ -68,7 +78,17 @@ export type DeployOutput = {
  * buildSpawnArgv additionally validates, fail loud).
  */
 export function buildWranglerDeployArgs(name: string, assetsDir: string): string[] {
-  return ['--yes', WRANGLER_SPEC, 'deploy', '--name', name, '--assets', assetsDir];
+  return [
+    '--yes',
+    WRANGLER_SPEC,
+    'deploy',
+    '--name',
+    name,
+    '--assets',
+    assetsDir,
+    '--compatibility-date',
+    COMPATIBILITY_DATE,
+  ];
 }
 
 export function makeCloudflareDeployTool(

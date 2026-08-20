@@ -2,7 +2,12 @@
 // anti-injection guarantee on the npx .cmd shim path) and the wrangler argv.
 
 import { describe, it, expect } from 'vitest';
-import { WORKER_NAME_RE, buildWranglerDeployArgs, WRANGLER_SPEC } from '../index.ts';
+import {
+  WORKER_NAME_RE,
+  buildWranglerDeployArgs,
+  WRANGLER_SPEC,
+  COMPATIBILITY_DATE,
+} from '../index.ts';
 
 describe('WORKER_NAME_RE', () => {
   it('accepts real worker names', () => {
@@ -30,7 +35,7 @@ describe('WORKER_NAME_RE', () => {
 });
 
 describe('buildWranglerDeployArgs', () => {
-  it('pins the wrangler major and passes name + assets as separate argv elements', () => {
+  it('pins wrangler major + compatibility date — no wrangler config file ever needed', () => {
     const args = buildWranglerDeployArgs('my-site', 'D:\\ws\\dist');
     expect(args).toEqual([
       '--yes',
@@ -40,7 +45,12 @@ describe('buildWranglerDeployArgs', () => {
       'my-site',
       '--assets',
       'D:\\ws\\dist',
+      '--compatibility-date',
+      COMPATIBILITY_DATE,
     ]);
     expect(WRANGLER_SPEC).toMatch(/^wrangler@\d+$/); // major pin, never latest
+    // wrangler refuses an upload with no compatibility date (proven live
+    // 2026-08-20) — the flag must always be present, and pinned.
+    expect(COMPATIBILITY_DATE).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

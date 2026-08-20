@@ -45,4 +45,9 @@ export function createCloudflareTools(
 export { CloudflareApiError } from './errors.ts';
 export type { CloudflareErrorCode } from './errors.ts';
 export { CLOUDFLARE_OPERATIONS } from './operations.ts';
-export { WORKER_NAME_RE, buildWranglerDeployArgs, WRANGLER_SPEC } from './tools/deploy.ts';
+export {
+  WORKER_NAME_RE,
+  buildWranglerDeployArgs,
+  WRANGLER_SPEC,
+  COMPATIBILITY_DATE,
+} from './tools/deploy.ts';
