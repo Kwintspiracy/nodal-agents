@@ -69,7 +69,7 @@ import { prettyProviderName } from '@/lib/provider-names.ts';
 import { type ProviderSlug } from '@/lib/model-provider-detect.ts';
 import AvatarPicker from '@/components/AvatarPicker.tsx';
 import Disc from '@/components/ui/Disc';
-import Tabs from '@/components/ui/Tabs';
+import Tabs, { type TabItem } from '@/components/ui/Tabs';
 import AgentPill from '@/components/ui/AgentPill';
 import EdRow, { IcBtn } from '@/components/ui/EdRow';
 import { MonoMicroTag } from '@/components/ui/MonoMicroTag';
@@ -287,6 +287,11 @@ export default function AgentComposer({
   // Lifted here (not local to SettingsTab) because Skills/Tools/Autonomy also
   // need it, to show the "does not apply" banner without a full page reload.
   const [runtime, setRuntime] = useState<string>(agent.runtime ?? 'nodal');
+  // Any non-'nodal' runtime is a coding CLI harness: the runner hands it only
+  // the personality, so the Nodal-loop settings below are inert for it.
+  // Written against the runtime being ≠ 'nodal' rather than === 'claude-code'
+  // so the codex runtime inherits the same honesty for free when it ships.
+  const isCliRuntime = runtime !== 'nodal';
   // Live model ids fetched from the provider's /models endpoint — keyed by keyId
   // so re-selecting a key doesn't re-fetch. undefined = not yet fetched.
   const [liveModelsCache, setLiveModelsCache] = useState<Record<string, string[]>>({});
@@ -500,6 +505,7 @@ export default function AgentComposer({
           role={initialRole}
           slug={agent.slug}
           model={agent.model}
+          isCliRuntime={isCliRuntime}
           provider={llmKeys.find((k) => k.id === agent.llmKeyId)?.provider ?? null}
           llmKeyLabel={
             llmKeys.find((k) => k.id === agent.llmKeyId)?.nickname ??
@@ -531,7 +537,15 @@ export default function AgentComposer({
             connectors: assignedConnectors + assignedMcps,
             runs: totalRuns,
           }}
+          isCliRuntime={isCliRuntime}
         />
+
+        {/* A CLI-runtime agent reads none of these — show WHY instead of
+            controls that would silently do nothing (retour Quentin 20/08).
+            Reachable via a `?tab=` deep link or a runtime switch mid-edit. */}
+        {isCliRuntime && RUNTIME_INERT_TABS.has(tab) && (
+          <RuntimeInertTabPanel onOpenOverview={() => setTab('overview')} />
+        )}
 
         {tab === 'overview' && (
           <OverviewTab
@@ -539,8 +553,9 @@ export default function AgentComposer({
             attachedSkills={attachedNonToolSkills}
             connectorsAssigned={assignedConnectorRows}
             mcpsAssignedCount={assignedMcps}
-            onOpenSkills={() => setTab('skills')}
-            onOpenConnectors={() => setTab('connectors')}
+            // The Overview CTAs must not point at a tab this agent can't use.
+            onOpenSkills={isCliRuntime ? null : () => setTab('skills')}
+            onOpenConnectors={isCliRuntime ? null : () => setTab('connectors')}
           />
         )}
         {tab === 'channels' && (
@@ -558,9 +573,8 @@ export default function AgentComposer({
             whatsappAllowedConversations={whatsappAllowedConversations}
           />
         )}
-        {tab === 'skills' && (
+        {tab === 'skills' && !isCliRuntime && (
           <>
-            {runtime === 'claude-code' && <RuntimeNoticeBanner />}
             <SkillsTab
               agentId={agent.id}
               attachedSkills={attachedNonToolSkills}
@@ -568,9 +582,8 @@ export default function AgentComposer({
             />
           </>
         )}
-        {tab === 'tools' && (
+        {tab === 'tools' && !isCliRuntime && (
           <>
-            {runtime === 'claude-code' && <RuntimeNoticeBanner />}
             <ToolsTab
               agentId={agent.id}
               attachedSkills={attachedSkills}
@@ -580,7 +593,7 @@ export default function AgentComposer({
             />
           </>
         )}
-        {tab === 'connectors' && (
+        {tab === 'connectors' && !isCliRuntime && (
           <SectionCard>
             <ConnectorsTabContent
               key={agent.id}
@@ -597,9 +610,8 @@ export default function AgentComposer({
             agentId={agent.id}
           />
         )}
-        {tab === 'autonomy' && (
+        {tab === 'autonomy' && !isCliRuntime && (
           <>
-            {runtime === 'claude-code' && <RuntimeNoticeBanner />}
             <AutonomyTab
               agentId={agent.id}
               connectors={connectors}
@@ -709,6 +721,7 @@ function HeroCard({
   model,
   provider,
   llmKeyLabel,
+  isCliRuntime,
   stats,
 }: {
   initial: string;
@@ -721,6 +734,13 @@ function HeroCard({
   /** The saved LLM key's provider slug — drives the tools-capability badge. */
   provider: string | null;
   llmKeyLabel: string | null;
+  /**
+   * true ⇒ the agent runs on a coding CLI. Its stored Nodal model/LLM key are
+   * kept for a switch back but drive nothing — showing them here read as "this
+   * agent runs on glm-5.2" while it was actually running Claude Code (retour
+   * Quentin 20/08, same fix as the /agents list).
+   */
+  isCliRuntime: boolean;
   stats: {
     connectors: number;
     mcps: number;
@@ -764,16 +784,25 @@ function HeroCard({
           </div>
           <p className="mt-2 text-body-14 leading-[1.55]! text-ink-3">{personaPreview}</p>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-body-12 text-ink-3">
-            {model && (
+            {isCliRuntime ? (
               <span className="inline-flex items-center gap-1.5">
-                <span className="text-ink-4">Model:</span>{' '}
+                <span className="text-ink-4">Engine:</span>{' '}
                 <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 text-mono-12 text-ink-2">
-                  {model}
+                  Claude Code (subscription)
                 </code>
-                <ModelToolsBadge support={modelToolsSupport(provider ?? '', model)} />
               </span>
+            ) : (
+              model && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-ink-4">Model:</span>{' '}
+                  <code className="rounded border border-rule-2 bg-canvas px-1.5 py-0.5 text-mono-12 text-ink-2">
+                    {model}
+                  </code>
+                  <ModelToolsBadge support={modelToolsSupport(provider ?? '', model)} />
+                </span>
+              )
             )}
-            {llmKeyLabel && (
+            {!isCliRuntime && llmKeyLabel && (
               <>
                 <Sep />
                 <span>
@@ -844,19 +873,38 @@ function StatCell({ label, value, dim }: { label: string; value: string; dim?: b
 
 // ─── Tabs bar ─────────────────────────────────────────────────────────────────
 
+/**
+ * Tabs whose settings a CLI-runtime agent NEVER reads (retour Quentin 20/08).
+ * A runtime agent is handed exactly one thing by the runner — its personality,
+ * written to the CLI's persona file (apps/runner/src/cli-runtime/run-job.ts).
+ * No skills block, no tools, no connectors, no MCP, no per-tool approval
+ * rules, no memories. Everything that DOES apply to it lives in the
+ * "Claude Code runtime" card instead (write mode, model/effort, daily budget),
+ * plus Channels, Runs and Settings — so nothing reachable is lost by disabling
+ * these four.
+ */
+const RUNTIME_INERT_TABS: ReadonlySet<Tab> = new Set(['skills', 'tools', 'connectors', 'autonomy']);
+
+const RUNTIME_INERT_HINT =
+  'Not used: this agent runs on the Claude Code harness, which reads only its personality. ' +
+  'Its runtime settings are in the Model section on Overview.';
+
 function TabsBar({
   tab,
   onChange,
   counts,
+  isCliRuntime,
 }: {
   tab: Tab;
   onChange: (t: Tab) => void;
   counts: { skills: number; tools: number; connectors: number; runs: number };
+  /** true ⇒ the agent runs on a coding CLI, not the Nodal loop. */
+  isCliRuntime: boolean;
 }) {
   // Configure was removed entirely — it only ever jumped to the Settings tab
   // already sitting right here. Memory stays a header CTA (see HeroCard),
   // not a tab.
-  const TABS: { id: Tab; label: string; count?: number }[] = [
+  const BASE_TABS: TabItem<Tab>[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'channels', label: 'Channels' },
     { id: 'skills', label: 'Skills', count: counts.skills },
@@ -866,7 +914,39 @@ function TabsBar({
     { id: 'autonomy', label: 'Autonomy' },
     { id: 'settings', label: 'Settings' },
   ];
+  const TABS: TabItem<Tab>[] = BASE_TABS.map((t) =>
+    isCliRuntime && RUNTIME_INERT_TABS.has(t.id)
+      ? { ...t, disabled: true, disabledHint: RUNTIME_INERT_HINT }
+      : t,
+  );
   return <Tabs tabs={TABS} value={tab} onChange={onChange} />;
+}
+
+/**
+ * Shown INSTEAD of an inert tab's controls when the user still lands on one —
+ * a `?tab=skills` deep link, or the runtime being switched while the tab was
+ * open. Says plainly that nothing here reaches the agent and where the real
+ * settings are, rather than accepting edits that silently do nothing.
+ */
+function RuntimeInertTabPanel({ onOpenOverview }: { onOpenOverview: () => void }) {
+  return (
+    <SectionCard>
+      <p className="text-body-14 text-ink">
+        This agent runs on the Claude Code harness, not the Nodal loop.
+      </p>
+      <p className="mt-2 text-body-13 leading-[1.6]! text-ink-3">
+        The harness receives only this agent&apos;s personality — skills, tool groups, connectors,
+        MCP servers, per-tool approvals and memories are never sent to it, so changing them here
+        would have no effect. Put anything it must follow in its personality (Settings), and
+        configure the run itself — write mode, model, effort, daily budget — in the Model section.
+      </p>
+      <div className="mt-4">
+        <PrimaryButton variant="neutral" type="button" onClick={onOpenOverview}>
+          Go to Model settings
+        </PrimaryButton>
+      </div>
+    </SectionCard>
+  );
 }
 
 // ─── Section card wrapper ────────────────────────────────────────────────────
@@ -875,18 +955,11 @@ function SectionCard({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl border border-rule-2 bg-paper p-6">{children}</div>;
 }
 
-// Shown at the top of Skills / Tools / Autonomy when the agent's runtime is
-// 'claude-code' (étape E) — those surfaces configure the Nodal loop, which
-// this agent doesn't run. Informational only: it does not block navigation
-// or editing (v1, per Quentin — no redesign of those tabs for this case).
-function RuntimeNoticeBanner() {
-  return (
-    <div className="mb-4 rounded-lg border border-rule-2 bg-hover px-3 py-2 text-body-13 text-ink-3">
-      This agent runs on the Claude Code harness. Skills, tools and per-tool approvals below do not
-      apply to it.
-    </div>
-  );
-}
+// The v1 informational banner that used to sit on top of Skills / Tools /
+// Autonomy is gone (retour Quentin 20/08): it announced that the settings
+// below had no effect while still letting the user change them, which is the
+// trap it was supposed to prevent. Those tabs are now DISABLED for a CLI
+// runtime (RUNTIME_INERT_TABS), and RuntimeInertTabPanel explains why.
 
 function SectionHead({
   label,
@@ -922,8 +995,9 @@ function OverviewTab({
   attachedSkills: SkillRow[];
   connectorsAssigned: AgentConnectorRow[];
   mcpsAssignedCount: number;
-  onOpenSkills: () => void;
-  onOpenConnectors: () => void;
+  /** null ⇒ that tab is inert for this agent (CLI runtime) — render no CTA. */
+  onOpenSkills: (() => void) | null;
+  onOpenConnectors: (() => void) | null;
 }) {
   const hasSkills = attachedSkills.length > 0;
   const hasConnectors = connectorsAssigned.length > 0;
@@ -942,7 +1016,7 @@ function OverviewTab({
           <SectionHead
             label={`Connectors used · ${connectorsAssigned.length}`}
             right={
-              hasConnectors ? (
+              hasConnectors && onOpenConnectors ? (
                 <RowActionButton onClick={onOpenConnectors}>Manage</RowActionButton>
               ) : undefined
             }
@@ -956,7 +1030,9 @@ function OverviewTab({
           ) : (
             <p className="text-body-13 text-ink-3">
               No connectors assigned yet.{' '}
-              <RowActionButton onClick={onOpenConnectors}>Wire one →</RowActionButton>
+              {onOpenConnectors && (
+                <RowActionButton onClick={onOpenConnectors}>Wire one →</RowActionButton>
+              )}
             </p>
           )}
           {mcpsAssignedCount > 0 && (
@@ -973,7 +1049,9 @@ function OverviewTab({
         <SectionHead
           label={`Skills attached · ${attachedSkills.length}`}
           right={
-            hasSkills ? <RowActionButton onClick={onOpenSkills}>Manage</RowActionButton> : undefined
+            hasSkills && onOpenSkills ? (
+              <RowActionButton onClick={onOpenSkills}>Manage</RowActionButton>
+            ) : undefined
           }
         />
         {hasSkills ? (

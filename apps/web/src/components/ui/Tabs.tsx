@@ -7,6 +7,16 @@ export type TabItem<T extends string> = {
   label: ReactNode;
   /** Optional mono count shown after the label. Hidden when 0 or undefined. */
   count?: number;
+  /**
+   * Dim + make unselectable, for a tab whose settings genuinely do not apply
+   * in the current configuration (an agent on a CLI runtime does not read its
+   * Skills/Tools/Connectors/Autonomy). Showing them as ordinary tabs would let
+   * the user configure something that has no effect — the tab must SAY so
+   * rather than accept edits silently.
+   */
+  disabled?: boolean;
+  /** Tooltip explaining WHY the tab is disabled. Required to be useful. */
+  disabledHint?: string;
 };
 
 type Props<T extends string> = {
@@ -39,22 +49,33 @@ export default function Tabs<T extends string>({
     <div className={`flex gap-1 border-b border-rule-2 ${className}`} role="tablist">
       {tabs.map((t) => {
         const isActive = t.id === value;
+        const isDisabled = t.disabled === true;
         return (
           <div
             key={t.id}
             role="tab"
             aria-selected={isActive}
-            tabIndex={0}
-            onClick={() => onChange(t.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onChange(t.id);
-              }
-            }}
+            aria-disabled={isDisabled || undefined}
+            title={isDisabled ? t.disabledHint : undefined}
+            tabIndex={isDisabled ? -1 : 0}
+            onClick={isDisabled ? undefined : () => onChange(t.id)}
+            onKeyDown={
+              isDisabled
+                ? undefined
+                : (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onChange(t.id);
+                    }
+                  }
+            }
             className={[
-              'relative -mb-px cursor-pointer border-b-2 px-4 pt-2.5 pb-3 text-medium-14 transition-colors',
-              isActive ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2',
+              'relative -mb-px border-b-2 px-4 pt-2.5 pb-3 text-medium-14 transition-colors',
+              isDisabled
+                ? 'cursor-not-allowed border-transparent text-ink-4 opacity-50'
+                : isActive
+                  ? 'cursor-pointer border-ink text-ink'
+                  : 'cursor-pointer border-transparent text-ink-3 hover:text-ink-2',
             ].join(' ')}
           >
             {t.label}
