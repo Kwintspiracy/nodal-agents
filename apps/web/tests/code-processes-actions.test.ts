@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { _setMasterKeyForTests, _resetMasterKeyCacheForTests } from '@nodal-agents/secrets';
 import { spinUpTestDb, seedMinimal } from '@nodal-agents/db/test-utils';
 import type { TestDb } from '@nodal-agents/db/test-utils';
-import { agents, agentJobs, cliRuns, toolCalls } from '@nodal-agents/db';
+import { agents, agentJobs, agentWorkspaces, cliRuns, toolCalls } from '@nodal-agents/db';
 import type * as NodalMemory from '@nodal-agents/memory';
 
 // ─── Module-level state ───────────────────────────────────────────────────────
@@ -175,6 +175,58 @@ describe('listCodingProcessesAction', () => {
     expect(row?.costUsd).toBeCloseTo(0.42, 5);
     expect(row?.filesChanged).toBe(2);
     expect(row?.agentId).toBe(agentId);
+  });
+
+  it('the CLI absolute path and the Nodal workspace-relative path of the SAME file count as ONE (job cbdbfc6c)', async () => {
+    const agentId = await makeAgent('Audit Path Canon Agent');
+    // The agent's workspace root — the prefix the canonicalizer must strip.
+    await _testDb!.insert(agentWorkspaces).values({
+      entityId: _testEntityId,
+      agentId,
+      label: 'dev',
+      path: 'C:\\Users\\test\\Dev',
+    });
+    const jobId = await makeJob(agentId, 'completed');
+
+    // The recorded real shape of job cbdbfc6c: cli:Write with the ABSOLUTE
+    // Windows path, then file_write with the workspace-RELATIVE path — the
+    // same index.html, written twice through two tool families.
+    await _testDb!.insert(toolCalls).values([
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'cli:Write',
+        toolInput: {
+          file_path: 'C:\\Users\\test\\Dev\\outputs\\app\\index.html',
+          content: '<!DOCTYPE html>v1',
+        },
+        toolOutput: 'ok',
+      },
+      {
+        entityId: _testEntityId,
+        jobId,
+        toolName: 'file_write',
+        toolInput: { path: 'outputs/app/index.html', content: '<!DOCTYPE html>v2' },
+        toolOutput: 'ok',
+      },
+    ]);
+
+    const { listCodingProcessesAction, getCodingProcessDetailAction } =
+      await import('../src/lib/actions.ts');
+
+    const list = await listCodingProcessesAction();
+    expect(list.ok).toBe(true);
+    if (!list.ok) return;
+    expect(list.data.find((r) => r.id === jobId)?.filesChanged).toBe(1);
+
+    const detail = await getCodingProcessDetailAction({ jobId });
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) return;
+    expect(detail.data.header.filesChanged).toBe(1);
+    expect(detail.data.changes).toHaveLength(1);
+    // One group, the canonical (workspace-relative) name, BOTH edits kept.
+    expect(detail.data.changes[0]!.filePath).toBe('outputs/app/index.html');
+    expect(detail.data.changes[0]!.edits).toHaveLength(2);
   });
 
   it('a file_edit in a direct child + an approve review_verdict qualifies the pipeline (condition C) and marks the completed parent "done_approved" with filesChanged >= 1', async () => {

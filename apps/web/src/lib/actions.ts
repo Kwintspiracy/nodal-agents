@@ -10476,6 +10476,46 @@ function extractFilePath(input: Record<string, unknown> | null): string | null {
 }
 
 /**
+ * Canonicalize an edit path for file grouping/counting (retour Quentin
+ * 20/08, job cbdbfc6c) : the SAME file arrives as an ABSOLUTE path from the
+ * CLI's own tools (`C:\…\<ws-root>\outputs\app\index.html`) and as a
+ * WORKSPACE-RELATIVE path from the Nodal file tools
+ * (`outputs/app/index.html`) — raw-string grouping counted one file twice.
+ * Backslashes are normalized to `/` and a known workspace-root prefix is
+ * stripped (case-insensitively for Windows-style paths, whose filesystems
+ * are case-insensitive). Falls back to the slash-normalized original.
+ */
+function canonicalChangePath(rawPath: string, workspaceRoots: string[]): string {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+  const p = norm(rawPath.trim());
+  const isWindowsPath = /^[a-z]:\//i.test(p);
+  for (const root of workspaceRoots) {
+    const r = norm(root);
+    if (r === '') continue;
+    const matches = isWindowsPath
+      ? p.toLowerCase().startsWith(r.toLowerCase() + '/')
+      : p.startsWith(r + '/');
+    if (matches) return p.slice(r.length + 1);
+  }
+  return p.replace(/^\.\//, '');
+}
+
+/** All workspace roots of the entity's agents — one query, shared by the
+ *  coding list AND detail so both canonicalize edit paths identically. */
+async function entityWorkspaceRoots(
+  db: ReturnType<typeof getDb>,
+  entityId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ path: agentWorkspaces.path })
+    .from(agentWorkspaces)
+    .innerJoin(agents, eq(agents.id, agentWorkspaces.agentId))
+    .where(eq(agents.entityId, entityId));
+  // Longest roots first, so a nested workspace strips before its parent.
+  return rows.map((r) => r.path).sort((a, b) => b.length - a.length);
+}
+
+/**
  * A diff/change entry from one edit-shaped tool_call, for the detail view's
  * Changes panel. cli:MultiEdit applies several old/new pairs to one file —
  * concatenated (not merged into a real multi-hunk diff) so the card still
@@ -10685,6 +10725,9 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
       // callsByRoot — already rolled up above, already scoped to the tool
       // names that can carry a file path. Read tool_input in JS, not jsonb
       // SQL (the plan's call — simpler, and this list is bounded).
+      // Paths are CANONICALIZED (absolute CLI form vs workspace-relative
+      // Nodal form = the same file) so the count never doubles.
+      const workspaceRoots = await entityWorkspaceRoots(db, entityId);
       const filesByRoot = new Map<string, Set<string>>();
       for (const [root, calls] of callsByRoot) {
         if (!candidateJobIds.includes(root)) continue;
@@ -10692,7 +10735,7 @@ export async function listCodingProcessesAction(): Promise<ActionResult<CodingPr
         for (const c of calls) {
           if (!FILE_TOOL_NAMES.has(c.toolName)) continue;
           const fp = extractFilePath(c.toolInput as Record<string, unknown> | null);
-          if (fp) set.add(fp);
+          if (fp) set.add(canonicalChangePath(fp, workspaceRoots));
         }
         filesByRoot.set(root, set);
       }
@@ -11013,20 +11056,25 @@ export async function getCodingProcessDetailAction(
       // the coding definition, not just the CLI's own tools). Grouped by
       // file, edits kept in order as separate hunks (never concatenated —
       // edit N acts on edit N-1's result, not the original file).
+      // Grouping key = the CANONICAL path (see canonicalChangePath): the CLI's
+      // absolute form and the Nodal tools' workspace-relative form collapse
+      // onto one file instead of two (retour Quentin 20/08, job cbdbfc6c).
+      const workspaceRoots = await entityWorkspaceRoots(db, entityId);
       const changeGroups = new Map<string, CodingFileChangeGroup>();
       for (const tc of toolCallRows) {
         const change = extractChange(tc.toolName, tc.toolInput);
         if (!change) continue;
-        const group = changeGroups.get(change.filePath) ?? {
-          filePath: change.filePath,
+        const canonical = canonicalChangePath(change.filePath, workspaceRoots);
+        const group = changeGroups.get(canonical) ?? {
+          filePath: canonical,
           addedLines: 0,
           removedLines: 0,
           edits: [],
         };
         group.addedLines += change.newText ? change.newText.split('\n').length : 0;
         group.removedLines += change.oldText ? change.oldText.split('\n').length : 0;
-        group.edits.push(change);
-        changeGroups.set(change.filePath, group);
+        group.edits.push({ ...change, filePath: canonical });
+        changeGroups.set(canonical, group);
       }
       const changes = Array.from(changeGroups.values());
 
